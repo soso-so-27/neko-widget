@@ -209,16 +209,94 @@ archive_and_reset_permission_bootstrap() {
         fi
     done
 
-    # The UI test exercises the real authorization flow against an empty
-    # library. Remove only those known derived outputs before adding fixtures,
-    # so its empty scan cannot satisfy the later smoke-test log predicates.
+    # Remove the bootstrap logs and Widget outputs before adding fixtures so
+    # they cannot satisfy the later smoke predicates. Keep library-snapshot.json:
+    # it is both the baseline asset set and the owner of any PhotoKit album ID
+    # created during permission bootstrap, preventing a duplicate album.
     rm -rf -- \
         "$container/diagnostic-logs" \
         "$container/widget-cache"
     rm -f -- \
-        "$container/library-snapshot.json" \
         "$container/widget-manifest.json" \
         "$container/widget-timeline-lease.json"
+}
+
+wait_for_completed_snapshot() {
+    local timeout_seconds="$1"
+    local attempt=0
+    local container=""
+    local snapshot=""
+
+    for attempt in $(seq 1 "$timeout_seconds"); do
+        container="$(resolve_group_container || true)"
+        snapshot="$container/library-snapshot.json"
+        if [[ -n "$container" && -f "$snapshot" ]] && python3 - "$snapshot" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    snapshot = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+state = snapshot.get("scanState", {})
+raise SystemExit(
+    0
+    if state.get("phase") == "completed" and state.get("resultKind") == "final"
+    else 1
+)
+PY
+        then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+fixtures_are_ready() {
+    local container="$1"
+    local baseline_snapshot="$2"
+    local expected_count="$3"
+
+    python3 - \
+        "$container/library-snapshot.json" \
+        "$baseline_snapshot" \
+        "$expected_count" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    current = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+    baseline = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8-sig"))
+    expected_count = int(sys.argv[3])
+except (OSError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+baseline_ids = {
+    asset.get("localIdentifier")
+    for asset in baseline.get("assets", [])
+    if isinstance(asset, dict) and isinstance(asset.get("localIdentifier"), str)
+}
+fixtures = [
+    asset
+    for asset in current.get("assets", [])
+    if isinstance(asset, dict)
+    and isinstance(asset.get("localIdentifier"), str)
+    and asset.get("localIdentifier") not in baseline_ids
+]
+statuses = [asset.get("analysisStatus") for asset in fixtures]
+state = current.get("scanState", {})
+ready = (
+    state.get("phase") == "completed"
+    and state.get("resultKind") == "final"
+    and len(fixtures) >= expected_count
+    and all(status in {"detected", "noCat"} for status in statuses)
+    and any(status == "detected" for status in statuses)
+)
+raise SystemExit(0 if ready else 1)
+PY
 }
 
 launch_app() {
@@ -515,6 +593,11 @@ xcodebuild \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     test || PERMISSION_TEST_STATUS=$?
 
+if (( PERMISSION_TEST_STATUS == 0 )) \
+    && ! wait_for_completed_snapshot 30; then
+    echo "The permission bootstrap scan did not produce a completed baseline snapshot." >&2
+    PERMISSION_TEST_STATUS=1
+fi
 xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
 xcrun simctl terminate "$SIMULATOR_UDID" "$WIDGET_BUNDLE_ID" || true
 sleep 1
@@ -523,6 +606,11 @@ if (( PERMISSION_TEST_STATUS != 0 )); then
     exit "$PERMISSION_TEST_STATUS"
 fi
 archive_and_reset_permission_bootstrap
+BASELINE_SNAPSHOT="$ARTIFACT_DIRECTORY/permission-bootstrap-app-group/library-snapshot.json"
+if [[ ! -f "$BASELINE_SNAPSHOT" ]]; then
+    echo "The permission bootstrap baseline snapshot was not archived." >&2
+    exit 1
+fi
 
 shopt -s nullglob
 FIXTURES=("$FIXTURE_DIRECTORY"/*.png)
@@ -536,30 +624,48 @@ printf '%s\n' "${FIXTURES[@]}" > "$ARTIFACT_DIRECTORY/fixture-paths.txt"
 xcrun simctl addmedia "$SIMULATOR_UDID" "${FIXTURES[@]}"
 sleep 8
 
-launch_app "smoke"
-if ! wait_for_photo_authorization \
-    "Photo authorization checked" "authorized" 15; then
-    echo "PhotoKit was not authorized before the scan timeout window." >&2
-    exit 1
-fi
-
 TERMINAL_EVENT_FOUND="false"
-for attempt in $(seq 1 90); do
-    if ! kill -0 "$APP_PID" 2>/dev/null; then
-        echo "The app process exited before the smoke test completed." >&2
-        break
+MAX_SCAN_LAUNCH_ATTEMPTS=6
+for launch_attempt in $(seq 1 "$MAX_SCAN_LAUNCH_ATTEMPTS"); do
+    launch_app "smoke-$launch_attempt"
+    if ! wait_for_photo_authorization \
+        "Photo authorization checked" "authorized" 15; then
+        echo "PhotoKit was not authorized before the scan timeout window." >&2
+        exit 1
     fi
 
-    APP_GROUP_CONTAINER="$(resolve_group_container || true)"
-    if [[ -n "$APP_GROUP_CONTAINER" \
-        && -d "$APP_GROUP_CONTAINER/diagnostic-logs" ]] \
-        && grep -R -q 'Widget timeline reload requested' \
-            "$APP_GROUP_CONTAINER/diagnostic-logs"; then
-        TERMINAL_EVENT_FOUND="true"
-        printf 'Terminal log event found after %d second(s).\n' "$((attempt * 2))"
+    # `simctl addmedia` can publish PHAsset metadata before its local image
+    # resource is ready. The scanner deliberately retries unavailable/failed
+    # records on the next launch, so use bounded relaunches instead of a long,
+    # timing-sensitive fixed sleep.
+    for poll_attempt in $(seq 1 8); do
+        if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "The app process exited during scan attempt $launch_attempt." >&2
+            break
+        fi
+
+        APP_GROUP_CONTAINER="$(resolve_group_container || true)"
+        if [[ -n "$APP_GROUP_CONTAINER" \
+            && -d "$APP_GROUP_CONTAINER/diagnostic-logs" ]] \
+            && grep -R -q 'Widget timeline reload requested' \
+                "$APP_GROUP_CONTAINER/diagnostic-logs" \
+            && fixtures_are_ready \
+                "$APP_GROUP_CONTAINER" "$BASELINE_SNAPSHOT" "$FIXTURE_COUNT"; then
+            TERMINAL_EVENT_FOUND="true"
+            printf 'Fixtures and widget output became ready on launch %d after %d second(s).\n' \
+                "$launch_attempt" "$((poll_attempt * 2))"
+            break
+        fi
+        sleep 2
+    done
+
+    if [[ "$TERMINAL_EVENT_FOUND" == "true" ]]; then
         break
     fi
-    sleep 2
+    if (( launch_attempt < MAX_SCAN_LAUNCH_ATTEMPTS )); then
+        xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
+        sleep 3
+    fi
 done
 
 capture_screenshot
@@ -573,6 +679,7 @@ fi
 python3 "$VALIDATOR" \
     "$APP_GROUP_CONTAINER" \
     "$FIXTURE_COUNT" \
+    "$BASELINE_SNAPSHOT" \
     "$ARTIFACT_DIRECTORY/validation-report.json"
 
 if [[ "$TERMINAL_EVENT_FOUND" != "true" ]]; then

@@ -14,6 +14,12 @@ actor PhotoLibraryScanner {
         var record: AssetRecord
     }
 
+    private enum LocalThumbnailLoadResult {
+        case image(UIImage)
+        case unavailableLocally
+        case failed
+    }
+
     /// Performs a newest-first, two-stage scan. Inference runs four thumbnails
     /// at a time; each thumbnail is bounded to 1024px and never downloads from
     /// iCloud. Moving the app out of the foreground cancels the owning Task.
@@ -303,7 +309,12 @@ actor PhotoLibraryScanner {
         settings: AppSettings,
         previous: AssetRecord?
     ) -> AssetRecord {
-        guard let image = localThumbnail(for: asset), let cgImage = image.cgImage else {
+        let thumbnailResult = localThumbnail(for: asset)
+        let image: UIImage
+        switch thumbnailResult {
+        case .image(let loadedImage):
+            image = loadedImage
+        case .unavailableLocally:
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -312,6 +323,35 @@ actor PhotoLibraryScanner {
                 burstIdentifier: asset.burstIdentifier,
                 cat: .none,
                 analysisStatus: .unavailableLocally,
+                analysisFingerprint: settings.analysisFingerprint
+            ).preservingUserState(from: previous)
+        case .failed:
+            return AssetRecord(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                isFavorite: asset.isFavorite,
+                isScreenshot: false,
+                burstIdentifier: asset.burstIdentifier,
+                cat: .none,
+                analysisStatus: .failed,
+                analysisFingerprint: settings.analysisFingerprint
+            ).preservingUserState(from: previous)
+        }
+
+        guard let cgImage = image.cgImage else {
+            SharedLog.app.warning(
+                "image-load",
+                "Photo thumbnail had no CGImage backing",
+                metadata: ["asset": SharedLog.shortHash(asset.localIdentifier)]
+            )
+            return AssetRecord(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                isFavorite: asset.isFavorite,
+                isScreenshot: false,
+                burstIdentifier: asset.burstIdentifier,
+                cat: .none,
+                analysisStatus: .failed,
                 analysisFingerprint: settings.analysisFingerprint
             ).preservingUserState(from: previous)
         }
@@ -401,27 +441,82 @@ actor PhotoLibraryScanner {
         }
     }
 
-    private static func localThumbnail(for asset: PHAsset) -> UIImage? {
+    private static func localThumbnail(for asset: PHAsset) -> LocalThumbnailLoadResult {
         let options = PHImageRequestOptions()
         options.version = .current
-        options.deliveryMode = .fastFormat
+        // Synchronous PhotoKit requests only support high-quality delivery.
+        // Asking for `.fastFormat` here can produce PHPhotosErrorDomain 3303
+        // instead of a locally available thumbnail (observed on Simulator).
+        // Network access remains disabled so this never pulls iCloud originals.
+        options.deliveryMode = .highQualityFormat
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = false
         options.isSynchronous = true
 
         var output: UIImage?
+        var requestError: NSError?
+        var wasCancelled = false
+        var isInCloud = false
+        var isDegraded = false
         PHImageManager.default().requestImage(
             for: asset,
             targetSize: CGSize(width: 1_024, height: 1_024),
             contentMode: .aspectFit,
             options: options
         ) { image, info in
-            let cancelled = (info?[PHImageCancelledKey] as? Bool) == true
-            let error = info?[PHImageErrorKey] as? Error
-            if !cancelled, error == nil { output = image }
+            wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+            isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
+            isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+            requestError = info?[PHImageErrorKey] as? NSError
+            if !wasCancelled, requestError == nil { output = image }
         }
-        return output
+
+        if let output {
+            if thumbnailLogSampler.takeSuccess() {
+                let width = output.cgImage?.width
+                    ?? Int((output.size.width * output.scale).rounded())
+                let height = output.cgImage?.height
+                    ?? Int((output.size.height * output.scale).rounded())
+                SharedLog.app.debug(
+                    "image-load",
+                    "Photo thumbnail loaded (sampled)",
+                    metadata: [
+                        "asset": SharedLog.shortHash(asset.localIdentifier),
+                        "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
+                        "degraded": "\(isDegraded)",
+                        "deliveryMode": "highQualityFormat",
+                        "estimatedDecodedBytes": "\(width * height * 4)",
+                        "networkAllowed": "false",
+                        "outputPixels": "\(width)x\(height)",
+                        "targetPixels": "1024x1024"
+                    ]
+                )
+            }
+        } else if thumbnailLogSampler.takeFailure() {
+            SharedLog.app.warning(
+                "image-load",
+                "Photo thumbnail load failed (sampled)",
+                metadata: [
+                    "asset": SharedLog.shortHash(asset.localIdentifier),
+                    "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
+                    "cancelled": "\(wasCancelled)",
+                    "code": requestError.map { "\($0.code)" } ?? "none",
+                    "deliveryMode": "highQualityFormat",
+                    "degraded": "\(isDegraded)",
+                    "domain": requestError?.domain ?? "none",
+                    "inCloud": "\(isInCloud)",
+                    "networkAllowed": "false",
+                    "targetPixels": "1024x1024"
+                ]
+            )
+        }
+        if let output {
+            return .image(output)
+        }
+        return isInCloud ? .unavailableLocally : .failed
     }
+
+    private static let thumbnailLogSampler = ThumbnailLogSampler(limit: 12)
 
     private static func excludedRecord(
         asset: PHAsset,
@@ -439,6 +534,33 @@ actor PhotoLibraryScanner {
             analysisStatus: status,
             analysisFingerprint: analysisFingerprint
         ).preservingUserState(from: previous)
+    }
+}
+
+private final class ThumbnailLogSampler: @unchecked Sendable {
+    private let lock = NSLock()
+    private let limit: Int
+    private var successCount = 0
+    private var failureCount = 0
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func takeSuccess() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard successCount < limit else { return false }
+        successCount += 1
+        return true
+    }
+
+    func takeFailure() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard failureCount < limit else { return false }
+        failureCount += 1
+        return true
     }
 }
 

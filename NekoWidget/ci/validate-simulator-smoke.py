@@ -68,17 +68,19 @@ def jpeg_dimensions(path: Path) -> tuple[int, int] | None:
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         print(
             "usage: validate-simulator-smoke.py "
-            "<app-group-container> <fixture-count> <report-path>",
+            "<app-group-container> <fixture-count> "
+            "<baseline-snapshot> <report-path>",
             file=sys.stderr,
         )
         return 2
 
     group_container = Path(sys.argv[1])
     fixture_count = int(sys.argv[2])
-    report_path = Path(sys.argv[3])
+    baseline_snapshot_path = Path(sys.argv[3])
+    report_path = Path(sys.argv[4])
     log_directory = group_container / "diagnostic-logs"
     failures: list[str] = []
     malformed_lines: list[str] = []
@@ -175,17 +177,26 @@ def main() -> int:
         )
     if detected_cats < 1:
         failures.append("Vision did not detect a cat in the synthetic fixtures.")
-    if vision_failures:
-        failures.append(f"Vision reported {vision_failures} failed asset(s).")
-    if deferred_assets:
-        failures.append(
-            f"Vision deferred {deferred_assets} local simulator asset(s)."
-        )
     if vision_entries and not all(
         entry.get("metadata", {}).get("thumbnailTargetPixels") == "1024x1024"
         for entry in vision_entries
     ):
         failures.append("Vision thumbnail target was not consistently 1024x1024.")
+
+    thumbnail_load_entries = matching(
+        "Photo thumbnail loaded (sampled)", "image-load"
+    )
+    if len(thumbnail_load_entries) < fixture_count:
+        failures.append(
+            f"Only {len(thumbnail_load_entries)} sampled thumbnail load(s) "
+            f"were recorded; expected at least {fixture_count}."
+        )
+    if any(
+        entry.get("metadata", {}).get("targetPixels") != "1024x1024"
+        or "x" not in entry.get("metadata", {}).get("outputPixels", "")
+        for entry in thumbnail_load_entries
+    ):
+        failures.append("Thumbnail load diagnostics contain invalid pixel metadata.")
 
     error_entries = [entry for entry in entries if entry.get("level") == "error"]
     if error_entries:
@@ -215,6 +226,62 @@ def main() -> int:
     if int(scan_state.get("catAssets", 0) or 0) < 1:
         failures.append("Persisted scan state contains no detected cat assets.")
 
+    # A fresh Simulator runtime includes old sample-library records whose image
+    # resources are not actually present. Compare the live snapshot with the
+    # permission bootstrap snapshot so only assets added by `simctl addmedia`
+    # are treated as fixtures. Unrelated seed records may remain deferred or
+    # failed while network access is deliberately disabled.
+    baseline_snapshot: dict[str, Any] = {}
+    if not baseline_snapshot_path.is_file():
+        failures.append("The permission bootstrap baseline snapshot is missing.")
+    else:
+        try:
+            baseline_snapshot = json.loads(
+                baseline_snapshot_path.read_text(encoding="utf-8-sig")
+            )
+        except (json.JSONDecodeError, OSError) as error:
+            failures.append(f"Baseline snapshot is invalid: {error}")
+
+    baseline_raw_assets = (
+        baseline_snapshot.get("assets", [])
+        if isinstance(baseline_snapshot, dict)
+        else []
+    )
+    baseline_identifiers = {
+        asset.get("localIdentifier")
+        for asset in baseline_raw_assets
+        if isinstance(asset, dict) and isinstance(asset.get("localIdentifier"), str)
+    }
+    raw_assets = snapshot.get("assets", []) if isinstance(snapshot, dict) else []
+    snapshot_assets = [asset for asset in raw_assets if isinstance(asset, dict)]
+    fixture_assets = [
+        asset
+        for asset in snapshot_assets
+        if asset.get("localIdentifier") not in baseline_identifiers
+    ]
+    fixture_asset_statuses = [
+        str(asset.get("analysisStatus", "missing")) for asset in fixture_assets
+    ]
+    if len(fixture_assets) < fixture_count:
+        failures.append(
+            f"Snapshot contains only {len(fixture_assets)} imported fixture "
+            f"record(s); expected {fixture_count}."
+        )
+    nonclassified_fixture_statuses = [
+        status
+        for status in fixture_asset_statuses
+        if status not in {"detected", "noCat"}
+    ]
+    if nonclassified_fixture_statuses:
+        failures.append(
+            "Imported synthetic fixture records were not classified by Vision: "
+            + ", ".join(nonclassified_fixture_statuses)
+        )
+    if fixture_assets and not any(
+        asset.get("analysisStatus") == "detected" for asset in fixture_assets
+    ):
+        failures.append("Vision did not detect a cat among the imported fixture records.")
+
     if not matching("Album synchronization finished", "album"):
         failures.append("The generated PhotoKit album was not synchronized.")
     if not matching("Widget cache build completed", "widget-cache"):
@@ -238,7 +305,7 @@ def main() -> int:
 
     if not 15 <= len(manifest_items) <= 20:
         failures.append(
-            f"Widget manifest contains {len(manifest_items)} entries; expected 15–20."
+            f"Widget manifest contains {len(manifest_items)} entries; expected 15-20."
         )
 
     cache_directory = group_container / "widget-cache"
@@ -301,8 +368,12 @@ def main() -> int:
         "visionDetectedCats": detected_cats,
         "visionFailures": vision_failures,
         "visionDeferredAssets": deferred_assets,
+        "sampledThumbnailLoads": len(thumbnail_load_entries),
+        "baselineAssetCount": len(baseline_identifiers),
+        "importedFixtureAssetCount": len(fixture_assets),
         "snapshotTotalAssets": int(scan_state.get("totalAssets", 0) or 0),
         "snapshotCatAssets": int(scan_state.get("catAssets", 0) or 0),
+        "importedFixtureStatuses": fixture_asset_statuses,
         "manifestEntryCount": len(manifest_items),
         "uniqueCacheFileCount": len(referenced_cache_files),
         "cacheBytesMinimum": min(cache_byte_counts, default=0),
@@ -311,6 +382,9 @@ def main() -> int:
         "oversizedCacheFiles": oversized_cache_files,
         "failures": failures,
         "notes": [
+            "Deferred or failed baseline assets are allowed "
+            "because the hosted Simulator ships old sample records without "
+            "local image resources.",
             "Widget JSONL is optional because adding a widget to the simulated "
             "Home Screen is outside this headless smoke test."
         ],
