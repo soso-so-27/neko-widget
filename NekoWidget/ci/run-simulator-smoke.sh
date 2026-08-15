@@ -236,17 +236,42 @@ printf 'App bundle: %s\nWidget bundle: %s\nApp Group: %s\n' \
 codesign --verify --deep --strict "$APP_PATH"
 codesign --verify --strict "$EXTENSION_PATH"
 codesign --display --entitlements :- "$APP_PATH" \
-    > "$ARTIFACT_DIRECTORY/app-entitlements.plist" \
+    > "$ARTIFACT_DIRECTORY/app-codesign-entitlements.plist" \
     2> "$ARTIFACT_DIRECTORY/app-codesign.txt"
 codesign --display --entitlements :- "$EXTENSION_PATH" \
-    > "$ARTIFACT_DIRECTORY/widget-entitlements.plist" \
+    > "$ARTIFACT_DIRECTORY/widget-codesign-entitlements.plist" \
     2> "$ARTIFACT_DIRECTORY/widget-codesign.txt"
-plutil -lint "$ARTIFACT_DIRECTORY/app-entitlements.plist"
-plutil -lint "$ARTIFACT_DIRECTORY/widget-entitlements.plist"
+plutil -lint "$ARTIFACT_DIRECTORY/app-codesign-entitlements.plist"
+plutil -lint "$ARTIFACT_DIRECTORY/widget-codesign-entitlements.plist"
+
+# Xcode places restricted Simulator entitlements in a Mach-O section instead
+# of the ad-hoc code-signature dictionary. Validate the exact generated xcent
+# files that its linker embeds into the app and extension executables.
+APP_SIMULATOR_ENTITLEMENTS="$(
+    find "$DERIVED_DATA_DIRECTORY/Build/Intermediates.noindex" \
+        -type f -name 'NekoWidget.app-Simulated.xcent' -print -quit
+)"
+WIDGET_SIMULATOR_ENTITLEMENTS="$(
+    find "$DERIVED_DATA_DIRECTORY/Build/Intermediates.noindex" \
+        -type f -name 'NekoWidgetWidgetExtension.appex-Simulated.xcent' -print -quit
+)"
+if [[ -z "$APP_SIMULATOR_ENTITLEMENTS" \
+    || -z "$WIDGET_SIMULATOR_ENTITLEMENTS" ]]; then
+    echo "Xcode did not generate the expected Simulator entitlement files." >&2
+    exit 1
+fi
+cp "$APP_SIMULATOR_ENTITLEMENTS" \
+    "$ARTIFACT_DIRECTORY/app-simulator-entitlements.plist"
+cp "$WIDGET_SIMULATOR_ENTITLEMENTS" \
+    "$ARTIFACT_DIRECTORY/widget-simulator-entitlements.plist"
+plutil -lint "$ARTIFACT_DIRECTORY/app-simulator-entitlements.plist"
+plutil -lint "$ARTIFACT_DIRECTORY/widget-simulator-entitlements.plist"
 
 python3 - \
-    "$ARTIFACT_DIRECTORY/app-entitlements.plist" \
-    "$ARTIFACT_DIRECTORY/widget-entitlements.plist" \
+    "$ARTIFACT_DIRECTORY/app-simulator-entitlements.plist" \
+    "$ARTIFACT_DIRECTORY/widget-simulator-entitlements.plist" \
+    "$ARTIFACT_DIRECTORY/app-codesign-entitlements.plist" \
+    "$ARTIFACT_DIRECTORY/widget-codesign-entitlements.plist" \
     "$APP_GROUP_ID" \
     "$ARTIFACT_DIRECTORY/entitlement-validation.json" <<'PY'
 import json
@@ -256,21 +281,29 @@ from pathlib import Path
 
 app_path = Path(sys.argv[1])
 widget_path = Path(sys.argv[2])
-expected_group = sys.argv[3]
-report_path = Path(sys.argv[4])
+app_codesign_path = Path(sys.argv[3])
+widget_codesign_path = Path(sys.argv[4])
+expected_group = sys.argv[5]
+report_path = Path(sys.argv[6])
 
 with app_path.open("rb") as stream:
     app = plistlib.load(stream)
 with widget_path.open("rb") as stream:
     widget = plistlib.load(stream)
+with app_codesign_path.open("rb") as stream:
+    app_codesign = plistlib.load(stream)
+with widget_codesign_path.open("rb") as stream:
+    widget_codesign = plistlib.load(stream)
 
 key = "com.apple.security.application-groups"
 app_groups = app.get(key, [])
 widget_groups = widget.get(key, [])
 report = {
     "expectedAppGroup": expected_group,
-    "appGroups": app_groups,
-    "widgetGroups": widget_groups,
+    "simulatorAppGroups": app_groups,
+    "simulatorWidgetGroups": widget_groups,
+    "codeSignAppGroups": app_codesign.get(key, []),
+    "codeSignWidgetGroups": widget_codesign.get(key, []),
     "match": app_groups == widget_groups and expected_group in app_groups,
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
