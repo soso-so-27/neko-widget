@@ -65,7 +65,8 @@ resolve_group_container() {
 }
 
 photo_authorization_log_contains() {
-    local expected_status="$1"
+    local expected_message="$1"
+    local expected_status="$2"
     local container=""
     local log_directory=""
 
@@ -78,12 +79,13 @@ photo_authorization_log_contains() {
         return 1
     fi
 
-    python3 - "$log_directory" "$expected_status" <<'PY'
+    python3 - "$log_directory" "$expected_message" "$expected_status" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-expected_status = sys.argv[2]
+expected_message = sys.argv[2]
+expected_status = sys.argv[3]
 for path in Path(sys.argv[1]).glob("*.jsonl"):
     try:
         lines = path.read_text(encoding="utf-8-sig").splitlines()
@@ -96,7 +98,7 @@ for path in Path(sys.argv[1]).glob("*.jsonl"):
             continue
         if (
             entry.get("category") == "permission"
-            and entry.get("message") == "Photo authorization checked"
+            and entry.get("message") == expected_message
             and (
                 expected_status == "*"
                 or entry.get("metadata", {}).get("status") == expected_status
@@ -108,14 +110,16 @@ PY
 }
 
 wait_for_photo_authorization() {
-    local expected_status="$1"
-    local timeout_seconds="$2"
+    local expected_message="$1"
+    local expected_status="$2"
+    local timeout_seconds="$3"
     local attempt=""
 
     for attempt in $(seq 1 "$timeout_seconds"); do
-        if photo_authorization_log_contains "$expected_status"; then
-            printf 'Photo authorization status %s observed after %d second(s).\n' \
-                "$expected_status" "$attempt"
+        if photo_authorization_log_contains \
+            "$expected_message" "$expected_status"; then
+            printf 'Photo authorization event "%s" (%s) observed after %d second(s).\n' \
+                "$expected_message" "$expected_status" "$attempt"
             return 0
         fi
         if [[ -n "${APP_PID:-}" ]] && ! kill -0 "$APP_PID" 2>/dev/null; then
@@ -134,24 +138,17 @@ grant_photo_access() {
     {
         printf 'Grant attempt: %s\n' "$attempt_name"
         xcrun simctl privacy "$SIMULATOR_UDID" grant photos "$APP_BUNDLE_ID"
-        # `photos` is the read/write service used by PhotoKit. Granting the
-        # add-only service as well avoids a split TCC state on newer runtimes.
-        if xcrun simctl privacy \
-            "$SIMULATOR_UDID" grant photos-add "$APP_BUNDLE_ID"; then
-            echo "photos-add grant succeeded"
-        else
-            echo "photos-add is unavailable on this Simulator runtime"
-        fi
     } 2>&1 | tee "$output_file"
 }
 
 launch_app() {
     local attempt_name="$1"
     local launch_output=""
+    shift
 
     launch_output="$(
         xcrun simctl launch --terminate-running-process \
-            "$SIMULATOR_UDID" "$APP_BUNDLE_ID"
+            "$SIMULATOR_UDID" "$APP_BUNDLE_ID" "$@"
     )"
     printf '%s\n' "$launch_output" \
         | tee "$ARTIFACT_DIRECTORY/launch-$attempt_name.txt"
@@ -429,23 +426,24 @@ printf '%s\n' "${FIXTURES[@]}" > "$ARTIFACT_DIRECTORY/fixture-paths.txt"
 xcrun simctl addmedia "$SIMULATOR_UDID" "${FIXTURES[@]}"
 sleep 8
 
-# On a fresh iOS 26 Simulator, simctl can return success for an authorization
-# grant before TCC has registered the installed bundle, yet PhotoKit still sees
-# `.notDetermined`. This launch does no scan and exists only to register the app.
-launch_app "registration"
-if ! wait_for_photo_authorization "*" 10; then
-    echo "The registration launch did not report its PhotoKit status." >&2
-    exit 1
-fi
-xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
-
+# Exercise the real PhotoKit request path in a disposable DEBUG session. The
+# system prompt remains headless; simctl resolves it before the tested launch.
 xcrun simctl privacy "$SIMULATOR_UDID" reset photos "$APP_BUNDLE_ID"
 xcrun simctl privacy "$SIMULATOR_UDID" reset photos-add "$APP_BUNDLE_ID" \
     || true
+launch_app "registration" "--neko-simulator-smoke-request-photos"
+if ! wait_for_photo_authorization \
+    "Photo authorization request started" "*" 10; then
+    echo "The registration launch did not start its PhotoKit request." >&2
+    exit 1
+fi
+
 grant_photo_access "before-smoke-launch"
+xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
 sleep 2
 launch_app "smoke"
-if ! wait_for_photo_authorization "authorized" 15; then
+if ! wait_for_photo_authorization \
+    "Photo authorization checked" "authorized" 15; then
     echo "PhotoKit was not authorized before the scan timeout window." >&2
     exit 1
 fi
