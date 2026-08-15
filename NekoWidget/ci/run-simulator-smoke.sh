@@ -63,6 +63,105 @@ resolve_group_container() {
     return 1
 }
 
+photo_authorization_log_contains() {
+    local expected_status="$1"
+    local container=""
+    local log_directory=""
+
+    container="$(resolve_group_container || true)"
+    if [[ -z "$container" ]]; then
+        return 1
+    fi
+    log_directory="$container/diagnostic-logs"
+    if [[ ! -d "$log_directory" ]]; then
+        return 1
+    fi
+
+    python3 - "$log_directory" "$expected_status" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+expected_status = sys.argv[2]
+for path in Path(sys.argv[1]).glob("*.jsonl"):
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            entry.get("category") == "permission"
+            and entry.get("message") == "Photo authorization checked"
+            and (
+                expected_status == "*"
+                or entry.get("metadata", {}).get("status") == expected_status
+            )
+        ):
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+wait_for_photo_authorization() {
+    local expected_status="$1"
+    local timeout_seconds="$2"
+    local attempt=""
+
+    for attempt in $(seq 1 "$timeout_seconds"); do
+        if photo_authorization_log_contains "$expected_status"; then
+            printf 'Photo authorization status %s observed after %d second(s).\n' \
+                "$expected_status" "$attempt"
+            return 0
+        fi
+        if [[ -n "${APP_PID:-}" ]] && ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "The app exited while checking PhotoKit authorization." >&2
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+grant_photo_access() {
+    local attempt_name="$1"
+    local output_file="$ARTIFACT_DIRECTORY/privacy-$attempt_name.txt"
+
+    {
+        printf 'Grant attempt: %s\n' "$attempt_name"
+        xcrun simctl privacy "$SIMULATOR_UDID" grant photos "$APP_BUNDLE_ID"
+        # `photos` is the read/write service used by PhotoKit. Granting the
+        # add-only service as well avoids a split TCC state on newer runtimes.
+        if xcrun simctl privacy \
+            "$SIMULATOR_UDID" grant photos-add "$APP_BUNDLE_ID"; then
+            echo "photos-add grant succeeded"
+        else
+            echo "photos-add is unavailable on this Simulator runtime"
+        fi
+    } 2>&1 | tee "$output_file"
+}
+
+launch_app() {
+    local attempt_name="$1"
+    local launch_output=""
+
+    launch_output="$(
+        xcrun simctl launch --terminate-running-process \
+            "$SIMULATOR_UDID" "$APP_BUNDLE_ID"
+    )"
+    printf '%s\n' "$launch_output" \
+        | tee "$ARTIFACT_DIRECTORY/launch-$attempt_name.txt"
+    printf '%s\n' "$launch_output" >> "$ARTIFACT_DIRECTORY/launches.txt"
+    APP_PID="${launch_output##*: }"
+    if [[ ! "$APP_PID" =~ ^[0-9]+$ ]]; then
+        echo "simctl did not return a numeric app PID: $launch_output" >&2
+        return 1
+    fi
+}
+
 capture_screenshot() {
     if [[ -n "${SIMULATOR_UDID:-}" && "$SCREENSHOT_CAPTURED" != "true" ]]; then
         if xcrun simctl io "$SIMULATOR_UDID" \
@@ -313,6 +412,7 @@ if not report["match"]:
 PY
 
 xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"
+xcrun simctl help privacy > "$ARTIFACT_DIRECTORY/simctl-privacy-help.txt" 2>&1
 
 shopt -s nullglob
 FIXTURES=("$FIXTURE_DIRECTORY"/*.png)
@@ -326,15 +426,24 @@ printf '%s\n' "${FIXTURES[@]}" > "$ARTIFACT_DIRECTORY/fixture-paths.txt"
 xcrun simctl addmedia "$SIMULATOR_UDID" "${FIXTURES[@]}"
 sleep 8
 
-xcrun simctl privacy "$SIMULATOR_UDID" grant photos "$APP_BUNDLE_ID"
-LAUNCH_OUTPUT="$(
-    xcrun simctl launch --terminate-running-process \
-        "$SIMULATOR_UDID" "$APP_BUNDLE_ID"
-)"
-printf '%s\n' "$LAUNCH_OUTPUT" | tee "$ARTIFACT_DIRECTORY/launch.txt"
-APP_PID="${LAUNCH_OUTPUT##*: }"
-if [[ ! "$APP_PID" =~ ^[0-9]+$ ]]; then
-    echo "simctl did not return a numeric app PID: $LAUNCH_OUTPUT" >&2
+# On a fresh iOS 26 Simulator, simctl can return success for an authorization
+# grant before TCC has registered the installed bundle, yet PhotoKit still sees
+# `.notDetermined`. This launch does no scan and exists only to register the app.
+launch_app "registration"
+if ! wait_for_photo_authorization "*" 10; then
+    echo "The registration launch did not report its PhotoKit status." >&2
+    exit 1
+fi
+xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
+
+xcrun simctl privacy "$SIMULATOR_UDID" reset photos "$APP_BUNDLE_ID"
+xcrun simctl privacy "$SIMULATOR_UDID" reset photos-add "$APP_BUNDLE_ID" \
+    || true
+grant_photo_access "before-smoke-launch"
+sleep 2
+launch_app "smoke"
+if ! wait_for_photo_authorization "authorized" 15; then
+    echo "PhotoKit was not authorized before the scan timeout window." >&2
     exit 1
 fi
 
