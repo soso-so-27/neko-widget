@@ -14,14 +14,169 @@ actor PhotoLibraryScanner {
         var record: AssetRecord
     }
 
+    private struct LocalThumbnailRequestOutcome {
+        var image: UIImage?
+        var errorDomain: String?
+        var errorCode: Int?
+        var wasCancelled: Bool
+        var isInCloud: Bool
+        var isDegraded: Bool
+        var timedOut: Bool
+
+        static let taskCancelled = LocalThumbnailRequestOutcome(
+            image: nil,
+            errorDomain: nil,
+            errorCode: nil,
+            wasCancelled: true,
+            isInCloud: false,
+            isDegraded: false,
+            timedOut: false
+        )
+    }
+
     private enum LocalThumbnailLoadResult {
         case image(UIImage)
         case unavailableLocally
         case failed
     }
 
-    /// Performs a newest-first, two-stage scan. Inference runs four thumbnails
-    /// at a time; each thumbnail is bounded to 1024px and never downloads from
+    private final class LocalThumbnailRequest: @unchecked Sendable {
+        private let asset: PHAsset
+        private let manager = PHImageManager.default()
+        private let options: PHImageRequestOptions
+        private let timeoutNanoseconds: UInt64
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<LocalThumbnailRequestOutcome, Never>?
+        private var requestID: PHImageRequestID?
+        private var timeoutTask: Task<Void, Never>?
+        private var isFinished = false
+
+        init(
+            asset: PHAsset,
+            options: PHImageRequestOptions,
+            timeoutNanoseconds: UInt64
+        ) {
+            self.asset = asset
+            self.options = options
+            self.timeoutNanoseconds = timeoutNanoseconds
+        }
+
+        func value() async -> LocalThumbnailRequestOutcome {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if isFinished {
+                    lock.unlock()
+                    continuation.resume(returning: .taskCancelled)
+                    return
+                }
+                self.continuation = continuation
+                lock.unlock()
+
+                let identifier = manager.requestImage(
+                    for: asset,
+                    targetSize: CGSize(width: 1_024, height: 1_024),
+                    contentMode: .aspectFit,
+                    options: options
+                ) { [weak self] image, info in
+                    self?.handle(image: image, info: info)
+                }
+
+                lock.lock()
+                if isFinished {
+                    lock.unlock()
+                    manager.cancelImageRequest(identifier)
+                    return
+                }
+                requestID = identifier
+                lock.unlock()
+
+                let timeoutTask = Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await Task.sleep(nanoseconds: self.timeoutNanoseconds)
+                    } catch {
+                        return
+                    }
+                    self.finish(
+                        LocalThumbnailRequestOutcome(
+                            image: nil,
+                            errorDomain: "PhotoLibraryScanner.Timeout",
+                            errorCode: 1,
+                            wasCancelled: false,
+                            isInCloud: false,
+                            isDegraded: false,
+                            timedOut: true
+                        ),
+                        cancelImageRequest: true
+                    )
+                }
+                lock.lock()
+                if isFinished {
+                    lock.unlock()
+                    timeoutTask.cancel()
+                } else {
+                    self.timeoutTask = timeoutTask
+                    lock.unlock()
+                }
+            }
+        }
+
+        func cancel() {
+            finish(.taskCancelled, cancelImageRequest: true)
+        }
+
+        private func handle(image: UIImage?, info: [AnyHashable: Any]?) {
+            let wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+            let isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
+            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+            let error = info?[PHImageErrorKey] as? NSError
+
+            // A high-quality asynchronous request may first deliver a degraded
+            // image. Wait for the final callback unless the request has ended.
+            if isDegraded, !wasCancelled, error == nil {
+                return
+            }
+            finish(
+                LocalThumbnailRequestOutcome(
+                    image: wasCancelled || error != nil ? nil : image,
+                    errorDomain: error?.domain,
+                    errorCode: error?.code,
+                    wasCancelled: wasCancelled,
+                    isInCloud: isInCloud,
+                    isDegraded: isDegraded,
+                    timedOut: false
+                ),
+                cancelImageRequest: false
+            )
+        }
+
+        private func finish(
+            _ outcome: LocalThumbnailRequestOutcome,
+            cancelImageRequest: Bool
+        ) {
+            lock.lock()
+            guard !isFinished else {
+                lock.unlock()
+                return
+            }
+            isFinished = true
+            let continuation = self.continuation
+            let identifier = requestID
+            let timeoutTask = self.timeoutTask
+            self.continuation = nil
+            self.timeoutTask = nil
+            lock.unlock()
+
+            timeoutTask?.cancel()
+            if cancelImageRequest, let identifier {
+                manager.cancelImageRequest(identifier)
+            }
+            continuation?.resume(returning: outcome)
+        }
+    }
+
+    /// Performs a newest-first, two-stage scan. Inference runs up to four
+    /// thumbnails at a time; each is bounded to 1024px and never downloads from
     /// iCloud. Moving the app out of the foreground cancels the owning Task.
     func scan(
         existing: LibrarySnapshot,
@@ -150,7 +305,14 @@ actor PhotoLibraryScanner {
         phase: ScanPhase,
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws {
+#if targetEnvironment(simulator)
+        // Hosted Simulators don't expose an iPhone GPU/Neural Engine. Keep
+        // CPU-only Vision work narrowly parallel so the UI and XCTest stay
+        // responsive while bounded PhotoKit requests can still make progress.
+        let concurrency = 2
+#else
         let concurrency = 4
+#endif
         var batchStart = range.lowerBound
         var lastPublishedIndex = range.lowerBound
         var newlyAnalyzedCount = 0
@@ -213,13 +375,11 @@ actor PhotoLibraryScanner {
                 for (index, asset, previous) in pending {
                     group.addTask {
                         try Task.checkCancellation()
-                        let record = autoreleasepool {
-                            Self.analyze(
-                                asset: asset,
-                                settings: settings,
-                                previous: previous
-                            )
-                        }
+                        let record = try await Self.analyze(
+                            asset: asset,
+                            settings: settings,
+                            previous: previous
+                        )
                         return IndexedRecord(index: index, record: record)
                     }
                 }
@@ -308,8 +468,8 @@ actor PhotoLibraryScanner {
         asset: PHAsset,
         settings: AppSettings,
         previous: AssetRecord?
-    ) -> AssetRecord {
-        let thumbnailResult = localThumbnail(for: asset)
+    ) async throws -> AssetRecord {
+        let thumbnailResult = try await localThumbnail(for: asset)
         let image: UIImage
         switch thumbnailResult {
         case .image(let loadedImage):
@@ -358,6 +518,12 @@ actor PhotoLibraryScanner {
 
         do {
             let request = VNRecognizeAnimalsRequest()
+#if targetEnvironment(simulator)
+            // Vision's automatic compute-device selection can stall against
+            // the simulated Metal device. This affects CI only; devices keep
+            // the normal GPU/Neural Engine scheduling path.
+            request.usesCPUOnly = true
+#endif
             let handler = VNImageRequestHandler(
                 cgImage: cgImage,
                 orientation: CGImagePropertyOrientation(image.imageOrientation),
@@ -418,6 +584,8 @@ actor PhotoLibraryScanner {
                 analysisStatus: .detected,
                 analysisFingerprint: settings.analysisFingerprint
             ).preservingUserState(from: previous)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             let value = error as NSError
             SharedLog.app.error(
@@ -441,37 +609,33 @@ actor PhotoLibraryScanner {
         }
     }
 
-    private static func localThumbnail(for asset: PHAsset) -> LocalThumbnailLoadResult {
+    private static func localThumbnail(
+        for asset: PHAsset
+    ) async throws -> LocalThumbnailLoadResult {
         let options = PHImageRequestOptions()
         options.version = .current
-        // Synchronous PhotoKit requests only support high-quality delivery.
-        // Asking for `.fastFormat` here can produce PHPhotosErrorDomain 3303
-        // instead of a locally available thumbnail (observed on Simulator).
-        // Network access remains disabled so this never pulls iCloud originals.
+        // Keep the request asynchronous: malformed or partially imported
+        // PhotoKit records can fail to return from a synchronous request. The
+        // request wrapper enforces a bounded wait and cancels PhotoKit on
+        // timeout. Network access stays disabled to avoid iCloud downloads.
         options.deliveryMode = .highQualityFormat
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = false
-        options.isSynchronous = true
+        options.isSynchronous = false
 
-        var output: UIImage?
-        var requestError: NSError?
-        var wasCancelled = false
-        var isInCloud = false
-        var isDegraded = false
-        PHImageManager.default().requestImage(
-            for: asset,
-            targetSize: CGSize(width: 1_024, height: 1_024),
-            contentMode: .aspectFit,
-            options: options
-        ) { image, info in
-            wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
-            isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
-            isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
-            requestError = info?[PHImageErrorKey] as? NSError
-            if !wasCancelled, requestError == nil { output = image }
+        let request = LocalThumbnailRequest(
+            asset: asset,
+            options: options,
+            timeoutNanoseconds: 5_000_000_000
+        )
+        let outcome = await withTaskCancellationHandler {
+            await request.value()
+        } onCancel: {
+            request.cancel()
         }
+        try Task.checkCancellation()
 
-        if let output {
+        if let output = outcome.image {
             if thumbnailLogSampler.takeSuccess() {
                 let width = output.cgImage?.width
                     ?? Int((output.size.width * output.scale).rounded())
@@ -483,7 +647,7 @@ actor PhotoLibraryScanner {
                     metadata: [
                         "asset": SharedLog.shortHash(asset.localIdentifier),
                         "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
-                        "degraded": "\(isDegraded)",
+                        "degraded": "\(outcome.isDegraded)",
                         "deliveryMode": "highQualityFormat",
                         "estimatedDecodedBytes": "\(width * height * 4)",
                         "networkAllowed": "false",
@@ -499,21 +663,22 @@ actor PhotoLibraryScanner {
                 metadata: [
                     "asset": SharedLog.shortHash(asset.localIdentifier),
                     "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
-                    "cancelled": "\(wasCancelled)",
-                    "code": requestError.map { "\($0.code)" } ?? "none",
+                    "cancelled": "\(outcome.wasCancelled)",
+                    "code": outcome.errorCode.map { String($0) } ?? "none",
                     "deliveryMode": "highQualityFormat",
-                    "degraded": "\(isDegraded)",
-                    "domain": requestError?.domain ?? "none",
-                    "inCloud": "\(isInCloud)",
+                    "degraded": "\(outcome.isDegraded)",
+                    "domain": outcome.errorDomain ?? "none",
+                    "inCloud": "\(outcome.isInCloud)",
                     "networkAllowed": "false",
-                    "targetPixels": "1024x1024"
+                    "targetPixels": "1024x1024",
+                    "timedOut": "\(outcome.timedOut)"
                 ]
             )
         }
-        if let output {
+        if let output = outcome.image {
             return .image(output)
         }
-        return isInCloud ? .unavailableLocally : .failed
+        return outcome.isInCloud ? .unavailableLocally : .failed
     }
 
     private static let thumbnailLogSampler = ThumbnailLogSampler(limit: 12)

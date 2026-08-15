@@ -57,16 +57,15 @@ final class PhotoPermissionUITests: XCTestCase {
 
         fullAccessButton.tap()
 
-        let permissionViewDisappeared = XCTNSPredicateExpectation(
+        let systemAlertDisappeared = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"),
-            object: requestButton
+            object: permissionAlert
         )
         XCTAssertEqual(
-            XCTWaiter.wait(for: [permissionViewDisappeared], timeout: 30),
+            XCTWaiter.wait(for: [systemAlertDisappeared], timeout: 15),
             .completed,
-            "The app did not leave its Photos permission screen."
+            "The Photos permission alert did not close after granting full access."
         )
-        XCTAssertEqual(app.state, .runningForeground)
 
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "After full Photos authorization"

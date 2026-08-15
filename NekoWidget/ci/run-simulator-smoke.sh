@@ -593,8 +593,14 @@ xcodebuild \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     test || PERMISSION_TEST_STATUS=$?
 
+if (( PERMISSION_TEST_STATUS == 0 )); then
+    # XCTest may terminate the AUT when the test session ends. Start one
+    # explicit normal launch so the pre-fixture asset IDs are always persisted
+    # for the baseline comparison below.
+    launch_app "permission-baseline" || PERMISSION_TEST_STATUS=$?
+fi
 if (( PERMISSION_TEST_STATUS == 0 )) \
-    && ! wait_for_completed_snapshot 30; then
+    && ! wait_for_completed_snapshot 45; then
     echo "The permission bootstrap scan did not produce a completed baseline snapshot." >&2
     PERMISSION_TEST_STATUS=1
 fi
@@ -626,6 +632,7 @@ sleep 8
 
 TERMINAL_EVENT_FOUND="false"
 MAX_SCAN_LAUNCH_ATTEMPTS=6
+SCAN_POLLS_PER_LAUNCH=15
 for launch_attempt in $(seq 1 "$MAX_SCAN_LAUNCH_ATTEMPTS"); do
     launch_app "smoke-$launch_attempt"
     if ! wait_for_photo_authorization \
@@ -638,7 +645,7 @@ for launch_attempt in $(seq 1 "$MAX_SCAN_LAUNCH_ATTEMPTS"); do
     # resource is ready. The scanner deliberately retries unavailable/failed
     # records on the next launch, so use bounded relaunches instead of a long,
     # timing-sensitive fixed sleep.
-    for poll_attempt in $(seq 1 8); do
+    for poll_attempt in $(seq 1 "$SCAN_POLLS_PER_LAUNCH"); do
         if ! kill -0 "$APP_PID" 2>/dev/null; then
             echo "The app process exited during scan attempt $launch_attempt." >&2
             break
