@@ -125,7 +125,7 @@ actor PhotoAlbumService {
     private func performChanges(
         _ changes: @escaping () -> Void
     ) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges(changes) { success, error in
                 if let error {
                     continuation.resume(throwing: error)

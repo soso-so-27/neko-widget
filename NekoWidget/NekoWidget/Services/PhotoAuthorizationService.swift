@@ -1,4 +1,5 @@
 @preconcurrency import Photos
+import PhotosUI
 import UIKit
 
 struct PhotoAuthorizationService {
