@@ -8,6 +8,7 @@ VALIDATOR="$PROJECT_DIRECTORY/ci/validate-simulator-smoke.py"
 ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-smoke-artifacts"
 DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSmokeDerivedData"
 RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetSimulator.xcresult"
+TARGET_SIMULATOR_RUNTIME="${SMOKE_IOS_RUNTIME:-com.apple.CoreSimulator.SimRuntime.iOS-18-6}"
 
 SIMULATOR_UDID=""
 SIMULATOR_NAME=""
@@ -247,38 +248,40 @@ xcrun simctl list devices available --json \
 
 python3 - \
     "$ARTIFACT_DIRECTORY/available-simulators.json" \
-    "$ARTIFACT_DIRECTORY/selected-simulator.tsv" <<'PY'
+    "$ARTIFACT_DIRECTORY/selected-simulator.tsv" \
+    "$TARGET_SIMULATOR_RUNTIME" <<'PY'
 import json
-import re
 import sys
 from pathlib import Path
 
 source = Path(sys.argv[1])
 destination = Path(sys.argv[2])
+target_runtime = sys.argv[3]
 devices = json.loads(source.read_text(encoding="utf-8"))["devices"]
 
+candidates = [
+    device
+    for device in devices.get(target_runtime, [])
+    if device.get("isAvailable", False)
+    and str(device.get("name", "")).startswith("iPhone")
+]
+if not candidates:
+    available_ios_runtimes = sorted(
+        runtime
+        for runtime, runtime_devices in devices.items()
+        if ".iOS-" in runtime
+        and any(device.get("isAvailable", False) for device in runtime_devices)
+    )
+    raise SystemExit(
+        f"Requested Simulator runtime is unavailable: {target_runtime}; "
+        f"available iOS runtimes: {', '.join(available_ios_runtimes) or 'none'}"
+    )
 
-def version(runtime: str) -> tuple[int, ...]:
-    match = re.search(r"\.iOS-(\d+(?:-\d+)*)$", runtime)
-    return tuple(int(part) for part in match.group(1).split("-")) if match else ()
-
-
-for runtime in sorted(devices, key=version, reverse=True):
-    candidates = [
-        device
-        for device in devices[runtime]
-        if device.get("isAvailable", False)
-        and str(device.get("name", "")).startswith("iPhone")
-    ]
-    if candidates:
-        selected = candidates[0]
-        destination.write_text(
-            f"{selected['udid']}\t{selected['name']}\t{runtime}\n",
-            encoding="utf-8",
-        )
-        break
-else:
-    raise SystemExit("No available iPhone Simulator was found.")
+selected = candidates[0]
+destination.write_text(
+    f"{selected['udid']}\t{selected['name']}\t{target_runtime}\n",
+    encoding="utf-8",
+)
 PY
 
 IFS=$'\t' read -r SIMULATOR_UDID SIMULATOR_NAME SIMULATOR_RUNTIME \

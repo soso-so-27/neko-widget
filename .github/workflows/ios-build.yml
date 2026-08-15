@@ -73,6 +73,9 @@ jobs:
     timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      # iOS 26.2 accepts `simctl privacy grant photos` without changing
+      # PhotoKit's read/write status. Use the stable runtime for app smoke CI.
+      SMOKE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-18-6
 
     steps:
       - name: Check out repository
