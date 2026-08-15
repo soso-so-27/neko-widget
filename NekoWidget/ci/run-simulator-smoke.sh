@@ -193,6 +193,23 @@ Path(output).write_text(
 PY
 }
 
+tcc_snapshot_has_full_photo_access() {
+    local snapshot="$1"
+
+    python3 - "$snapshot" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+authorized = any(
+    row.get("service") == "kTCCServicePhotos" and row.get("auth_value") == 2
+    for row in report.get("rows", [])
+)
+raise SystemExit(0 if authorized else 1)
+PY
+}
+
 grant_photo_access() {
     local attempt_name="$1"
     local output_file="$ARTIFACT_DIRECTORY/privacy-$attempt_name.txt"
@@ -508,6 +525,27 @@ sleep 2
 capture_tcc_state "after-request"
 grant_photo_access "before-smoke-launch"
 capture_tcc_state "after-grant"
+
+# Hosted runners have returned a cached `.notDetermined` value even though
+# simctl persisted kTCCServicePhotos with auth_value=2. Reboot the Simulator so
+# tccd reloads the supported simctl state instead of editing its database.
+xcrun simctl shutdown "$SIMULATOR_UDID"
+xcrun simctl boot "$SIMULATOR_UDID"
+xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+xcrun simctl status_bar "$SIMULATOR_UDID" override \
+    --time 09:41 --batteryLevel 100 --batteryState charged || true
+capture_tcc_state "after-reboot"
+if ! tcc_snapshot_has_full_photo_access \
+    "$ARTIFACT_DIRECTORY/tcc-after-reboot.json"; then
+    echo "The full Photos grant did not survive reboot; applying it once more."
+    grant_photo_access "after-reboot"
+    capture_tcc_state "after-reboot-regrant"
+    if ! tcc_snapshot_has_full_photo_access \
+        "$ARTIFACT_DIRECTORY/tcc-after-reboot-regrant.json"; then
+        echo "TCC did not persist full Photos access after reboot." >&2
+        exit 1
+    fi
+fi
 sleep 2
 launch_app "smoke"
 if ! wait_for_photo_authorization \
