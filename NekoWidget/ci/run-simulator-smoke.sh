@@ -8,6 +8,7 @@ VALIDATOR="$PROJECT_DIRECTORY/ci/validate-simulator-smoke.py"
 ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-smoke-artifacts"
 DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSmokeDerivedData"
 RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetSimulator.xcresult"
+PERMISSION_RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetPhotoPermission.xcresult"
 TARGET_SIMULATOR_RUNTIME="${SMOKE_IOS_RUNTIME:-com.apple.CoreSimulator.SimRuntime.iOS-18-6}"
 
 SIMULATOR_UDID=""
@@ -19,6 +20,7 @@ APP_GROUP_ID=""
 APP_PID=""
 APP_GROUP_CONTAINER=""
 SCREENSHOT_CAPTURED="false"
+PERMISSION_TEST_STATUS=0
 
 mkdir -p "$ARTIFACT_DIRECTORY"
 exec > >(tee -a "$ARTIFACT_DIRECTORY/smoke-test.log") 2>&1
@@ -131,22 +133,6 @@ wait_for_photo_authorization() {
     return 1
 }
 
-wait_for_app_exit() {
-    local process_id="$1"
-    local attempt=""
-
-    for attempt in $(seq 1 10); do
-        if ! kill -0 "$process_id" 2>/dev/null; then
-            printf 'App process %s stopped after %d second(s).\n' \
-                "$process_id" "$attempt"
-            return 0
-        fi
-        sleep 1
-    done
-    echo "App process $process_id did not stop before the privacy grant." >&2
-    return 1
-}
-
 capture_tcc_state() {
     local label="$1"
     local database="$HOME/Library/Developer/CoreSimulator/Devices/$SIMULATOR_UDID/data/Library/TCC/TCC.db"
@@ -193,31 +179,46 @@ Path(output).write_text(
 PY
 }
 
-tcc_snapshot_has_full_photo_access() {
-    local snapshot="$1"
+archive_and_reset_permission_bootstrap() {
+    local container=""
+    local expected_prefix=""
+    local archive_directory="$ARTIFACT_DIRECTORY/permission-bootstrap-app-group"
+    local item=""
 
-    python3 - "$snapshot" <<'PY'
-import json
-import sys
-from pathlib import Path
+    container="$(resolve_group_container || true)"
+    if [[ -z "$container" || ! -d "$container" ]]; then
+        echo "The App Group container was unavailable after the permission UI test." >&2
+        return 1
+    fi
 
-report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-authorized = any(
-    row.get("service") == "kTCCServicePhotos" and row.get("auth_value") == 2
-    for row in report.get("rows", [])
-)
-raise SystemExit(0 if authorized else 1)
-PY
-}
+    expected_prefix="$HOME/Library/Developer/CoreSimulator/Devices/$SIMULATOR_UDID/data/Containers/Shared/AppGroup/"
+    if [[ "$container" != "$expected_prefix"* ]]; then
+        echo "Refusing to clean an unexpected App Group path: $container" >&2
+        return 1
+    fi
 
-grant_photo_access() {
-    local attempt_name="$1"
-    local output_file="$ARTIFACT_DIRECTORY/privacy-$attempt_name.txt"
+    mkdir -p "$archive_directory"
+    for item in \
+        diagnostic-logs \
+        library-snapshot.json \
+        widget-manifest.json \
+        widget-timeline-lease.json \
+        widget-cache; do
+        if [[ -e "$container/$item" ]]; then
+            cp -R "$container/$item" "$archive_directory/"
+        fi
+    done
 
-    {
-        printf 'Grant attempt: %s\n' "$attempt_name"
-        xcrun simctl privacy "$SIMULATOR_UDID" grant photos "$APP_BUNDLE_ID"
-    } 2>&1 | tee "$output_file"
+    # The UI test exercises the real authorization flow against an empty
+    # library. Remove only those known derived outputs before adding fixtures,
+    # so its empty scan cannot satisfy the later smoke-test log predicates.
+    rm -rf -- \
+        "$container/diagnostic-logs" \
+        "$container/widget-cache"
+    rm -f -- \
+        "$container/library-snapshot.json" \
+        "$container/widget-manifest.json" \
+        "$container/widget-timeline-lease.json"
 }
 
 launch_app() {
@@ -493,6 +494,36 @@ PY
 xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"
 xcrun simctl help privacy > "$ARTIFACT_DIRECTORY/simctl-privacy-help.txt" 2>&1
 
+# `simctl privacy grant photos` writes a legacy TCC row on current GitHub
+# Hosted Simulators but PhotoKit's `.readWrite` API remains `.notDetermined`.
+# Exercise the production permission button and expected system dialog through
+# Apple's UI-testing APIs instead. Parallel testing must stay disabled so the
+# authorization remains on this exact Simulator rather than a cloned device.
+xcodebuild \
+    -project NekoWidget.xcodeproj \
+    -scheme NekoWidget \
+    -configuration Debug \
+    -sdk iphonesimulator \
+    -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+    -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
+    -resultBundlePath "$PERMISSION_RESULT_BUNDLE" \
+    -only-testing:NekoWidgetUITests/PhotoPermissionUITests/testGrantFullPhotoLibraryAccess \
+    -parallel-testing-enabled NO \
+    COMPILER_INDEX_STORE_ENABLE=NO \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGN_IDENTITY=- \
+    AD_HOC_CODE_SIGNING_ALLOWED=YES \
+    test || PERMISSION_TEST_STATUS=$?
+
+xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
+xcrun simctl terminate "$SIMULATOR_UDID" "$WIDGET_BUNDLE_ID" || true
+sleep 1
+capture_tcc_state "after-ui-test"
+if (( PERMISSION_TEST_STATUS != 0 )); then
+    exit "$PERMISSION_TEST_STATUS"
+fi
+archive_and_reset_permission_bootstrap
+
 shopt -s nullglob
 FIXTURES=("$FIXTURE_DIRECTORY"/*.png)
 shopt -u nullglob
@@ -504,55 +535,6 @@ fi
 printf '%s\n' "${FIXTURES[@]}" > "$ARTIFACT_DIRECTORY/fixture-paths.txt"
 xcrun simctl addmedia "$SIMULATOR_UDID" "${FIXTURES[@]}"
 sleep 8
-
-# Exercise the real PhotoKit request path in a disposable DEBUG session. The
-# system prompt remains headless; simctl resolves it before the tested launch.
-xcrun simctl privacy "$SIMULATOR_UDID" reset photos "$APP_BUNDLE_ID"
-xcrun simctl privacy "$SIMULATOR_UDID" reset photos-add "$APP_BUNDLE_ID" \
-    || true
-launch_app "registration" "--neko-simulator-smoke-request-photos"
-if ! wait_for_photo_authorization \
-    "Photo authorization request started" "*" 10; then
-    echo "The registration launch did not start its PhotoKit request." >&2
-    exit 1
-fi
-
-xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
-wait_for_app_exit "$APP_PID"
-# Give SpringBoard/TCC time to start dismissing the interrupted system sheet.
-sleep 2
-capture_tcc_state "after-request"
-
-# First reboot: finish resolving the interrupted PhotoKit request and remove
-# the orphaned system prompt before applying the durable simctl grant.
-xcrun simctl shutdown "$SIMULATOR_UDID"
-xcrun simctl boot "$SIMULATOR_UDID"
-xcrun simctl bootstatus "$SIMULATOR_UDID" -b
-xcrun simctl status_bar "$SIMULATOR_UDID" override \
-    --time 09:41 --batteryLevel 100 --batteryState charged || true
-capture_tcc_state "after-request-reboot"
-
-grant_photo_access "after-request-reboot"
-capture_tcc_state "after-grant"
-if ! tcc_snapshot_has_full_photo_access \
-    "$ARTIFACT_DIRECTORY/tcc-after-grant.json"; then
-    echo "TCC did not persist full Photos access after simctl grant." >&2
-    exit 1
-fi
-
-# Second reboot: start tccd from the completed grant. Hosted runners otherwise
-# keep returning `.notDetermined` even while TCC.db already contains auth_value=2.
-xcrun simctl shutdown "$SIMULATOR_UDID"
-xcrun simctl boot "$SIMULATOR_UDID"
-xcrun simctl bootstatus "$SIMULATOR_UDID" -b
-xcrun simctl status_bar "$SIMULATOR_UDID" override \
-    --time 09:41 --batteryLevel 100 --batteryState charged || true
-capture_tcc_state "after-grant-reboot"
-if ! tcc_snapshot_has_full_photo_access \
-    "$ARTIFACT_DIRECTORY/tcc-after-grant-reboot.json"; then
-    echo "The full Photos grant did not survive the clean TCC reboot." >&2
-    exit 1
-fi
 
 launch_app "smoke"
 if ! wait_for_photo_authorization \

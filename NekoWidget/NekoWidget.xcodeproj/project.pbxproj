@@ -67,6 +67,7 @@
 		410000000000000000000003 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000505 /* SwiftUI.framework */; };
 		410000000000000000000004 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
 		500000000000000000000001 /* NekoWidgetWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000601 /* PhotoPermissionUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,6 +77,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = A00000000000000000000011;
 			remoteInfo = NekoWidgetWidgetExtension;
+		};
+		A00000000000000000000032 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000010;
+			remoteInfo = NekoWidget;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -152,6 +160,8 @@
 		F00000000000000000000505 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		F00000000000000000000506 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		F00000000000000000000507 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		F00000000000000000000601 /* PhotoPermissionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionUITests.swift; sourceTree = "<group>"; };
+		F00000000000000000000602 /* NekoWidgetUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NekoWidgetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -180,6 +190,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A00000000000000000000029 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -190,6 +207,7 @@
 				B00000000000000000000001 /* Shared */,
 				C00000000000000000000001 /* NekoWidget */,
 				D00000000000000000000001 /* NekoWidgetWidget */,
+				E00000000000000000000001 /* NekoWidgetUITests */,
 				A00000000000000000000004 /* Frameworks */,
 				A00000000000000000000003 /* Products */,
 			);
@@ -200,6 +218,7 @@
 			children = (
 				F00000000000000000000401 /* NekoWidget.app */,
 				F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */,
+				F00000000000000000000602 /* NekoWidgetUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -359,6 +378,14 @@
 			path = NekoWidgetWidget;
 			sourceTree = "<group>";
 		};
+		E00000000000000000000001 /* NekoWidgetUITests */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000601 /* PhotoPermissionUITests.swift */,
+			);
+			path = NekoWidgetUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -398,6 +425,24 @@
 			productReference = F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		A00000000000000000000012 /* NekoWidgetUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000043 /* Build configuration list for PBXNativeTarget "NekoWidgetUITests" */;
+			buildPhases = (
+				A00000000000000000000028 /* Sources */,
+				A00000000000000000000029 /* Frameworks */,
+				A0000000000000000000002A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000000000000000000033 /* PBXTargetDependency */,
+			);
+			name = NekoWidgetUITests;
+			productName = NekoWidgetUITests;
+			productReference = F00000000000000000000602 /* NekoWidgetUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -413,6 +458,10 @@
 					};
 					A00000000000000000000011 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					A00000000000000000000012 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = A00000000000000000000010;
 					};
 				};
 			};
@@ -432,6 +481,7 @@
 			targets = (
 				A00000000000000000000010 /* NekoWidget */,
 				A00000000000000000000011 /* NekoWidgetWidgetExtension */,
+				A00000000000000000000012 /* NekoWidgetUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -447,6 +497,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A00000000000000000000027 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000002A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -516,6 +573,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A00000000000000000000028 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -523,6 +588,11 @@
 			isa = PBXTargetDependency;
 			target = A00000000000000000000011 /* NekoWidgetWidgetExtension */;
 			targetProxy = A00000000000000000000030 /* PBXContainerItemProxy */;
+		};
+		A00000000000000000000033 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000010 /* NekoWidget */;
+			targetProxy = A00000000000000000000032 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -749,6 +819,42 @@
 			};
 			name = Release;
 		};
+		A00000000000000000000056 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(inherited)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = "$(inherited)";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = NekoWidget;
+			};
+			name = Debug;
+		};
+		A00000000000000000000057 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(inherited)";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = "$(inherited)";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = NekoWidget;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -775,6 +881,15 @@
 			buildConfigurations = (
 				A00000000000000000000054 /* Debug */,
 				A00000000000000000000055 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000043 /* Build configuration list for PBXNativeTarget "NekoWidgetUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000056 /* Debug */,
+				A00000000000000000000057 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

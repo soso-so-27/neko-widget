@@ -35,7 +35,7 @@ Macで署名する前に、3つとも利用するApple Development Teamで一意
 
 ## GitHub Actions
 
-push / pull requestでは`iOS build check`を実行します。最初のジョブはmacOS runner上でAppとWidgetを無署名コンパイルし、成功後のSimulatorジョブは[専用に生成したCC0の猫画像3枚](ci/fixtures/cats/README.md)を写真ライブラリへ投入します。ジョブはiOS 18.6 Simulatorを明示的に使い、DEBUG限定の起動引数で通常のPhotoKit権限要求を開始します。未完了のシステムプロンプトを最初の再起動で解消してから`simctl privacy`で許可し、2回目の再起動でTCCへ反映した後、本試験としてアプリを起動します。PhotoKit取得、Vision猫検出、App GroupへのJSONLログ／snapshot／Widget cache書き込みを検証し、起動画面、SharedLog、統合ログ、検証レポート、App Group成果物を7日間artifactに保存します。GitHub Hosted SimulatorのiOS 18.6／26.2では要求前の`simctl privacy`だけではPhotoKitの読み書き権限が未決定のままになる挙動を確認したため、この順序を採用しています。最新OSの権限フローは別途実機で確認します。この自動テストは許可済みフローだけが対象で、拒否／制限付きアクセス、ホーム画面へ配置したWidgetプロセスからの読み出しも実機確認の対象です。
+push / pull requestでは`iOS build check`を実行します。最初のジョブはmacOS runner上でAppとWidgetを無署名コンパイルします。成功後のSimulatorジョブはiOS 18.6 Simulator上でXCUITestを使い、アプリの写真許可ボタンから実際のシステムダイアログを開いてフルアクセスを許可します。その後、[専用に生成したCC0の猫画像3枚](ci/fixtures/cats/README.md)を写真ライブラリへ投入し、本試験としてアプリを通常起動します。PhotoKit取得、Vision猫検出、App GroupへのJSONLログ／snapshot／Widget cache書き込みを検証し、権限テスト結果、起動画面、SharedLog、統合ログ、検証レポート、App Group成果物を7日間artifactに保存します。GitHub Hosted SimulatorのiOS 18.6／26.2では、`simctl privacy grant photos`が成功しTCCへ許可行を保存してもPhotoKitの`.readWrite`判定が未決定のままになる挙動を確認したため、実際のダイアログを操作する方式を採用しています。最新OSの権限フローは別途実機で確認します。この自動テストはフルアクセス許可フローだけが対象で、拒否／制限付きアクセス、ホーム画面へ配置したWidgetプロセスからの読み出しも実機確認の対象です。
 
 TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使い、archive、IPA export、App Store Connectでの検証とアップロードを行います。
 

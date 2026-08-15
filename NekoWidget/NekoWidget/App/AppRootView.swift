@@ -34,15 +34,6 @@ struct AppRootView: View {
         }
         .task {
             await viewModel.start()
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains(
-                "--neko-simulator-smoke-request-photos"
-            ) {
-                // CI launches once with this argument so PhotoKit performs its
-                // normal authorization request before simctl grants access.
-                await viewModel.requestAccess()
-            }
-            #endif
         }
         .onOpenURL { url in
             viewModel.handleURL(url)

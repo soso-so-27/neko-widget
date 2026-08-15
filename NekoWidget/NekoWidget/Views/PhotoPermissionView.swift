@@ -34,6 +34,7 @@ struct PhotoPermissionView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .accessibilityIdentifier("photo-permission-primary")
 
             if status == .notDetermined {
                 Text("「制限付きアクセス」でも使えます。\n写真本体をアプリ内に複製することはありません。")
