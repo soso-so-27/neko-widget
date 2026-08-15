@@ -1,0 +1,785 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
+		100000000000000000000002 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000102 /* AppSettings.swift */; };
+		100000000000000000000003 /* AssetRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000103 /* AssetRecord.swift */; };
+		100000000000000000000004 /* CatDetection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000104 /* CatDetection.swift */; };
+		100000000000000000000005 /* LibrarySnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000105 /* LibrarySnapshot.swift */; };
+		100000000000000000000006 /* NekoWidgetError.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000106 /* NekoWidgetError.swift */; };
+		100000000000000000000007 /* NormalizedRect.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000107 /* NormalizedRect.swift */; };
+		100000000000000000000008 /* ProductConstraints.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000108 /* ProductConstraints.swift */; };
+		100000000000000000000009 /* ScanState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000109 /* ScanState.swift */; };
+		10000000000000000000000A /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
+		10000000000000000000000B /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
+		10000000000000000000000C /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
+		10000000000000000000000D /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
+		100000000000000000000101 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000201 /* AppRootView.swift */; };
+		100000000000000000000102 /* NekoWidgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000202 /* NekoWidgetApp.swift */; };
+		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
+		100000000000000000000111 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000211 /* LibraryStore.swift */; };
+		100000000000000000000112 /* PhotoAlbumService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000212 /* PhotoAlbumService.swift */; };
+		100000000000000000000113 /* PhotoAuthorizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000213 /* PhotoAuthorizationService.swift */; };
+		100000000000000000000114 /* PhotoImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000214 /* PhotoImageLoader.swift */; };
+		100000000000000000000115 /* PhotoLibraryObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000215 /* PhotoLibraryObserver.swift */; };
+		100000000000000000000116 /* PhotoLibraryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000216 /* PhotoLibraryScanner.swift */; };
+		100000000000000000000117 /* PhotoSelectors.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000217 /* PhotoSelectors.swift */; };
+		100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000218 /* WidgetCacheBuilder.swift */; };
+		100000000000000000000119 /* AppLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000219 /* AppLogStore.swift */; };
+		100000000000000000000120 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000220 /* AppViewModel.swift */; };
+		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
+		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
+		100000000000000000000132 /* LikedPhotosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000232 /* LikedPhotosView.swift */; };
+		100000000000000000000133 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000233 /* MainTabView.swift */; };
+		100000000000000000000134 /* PhotoAssetImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000234 /* PhotoAssetImageView.swift */; };
+		100000000000000000000135 /* PhotoPermissionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000235 /* PhotoPermissionView.swift */; };
+		100000000000000000000136 /* ScanStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000236 /* ScanStatusView.swift */; };
+		100000000000000000000137 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000237 /* SettingsView.swift */; };
+		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
+		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
+		200000000000000000000002 /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
+		200000000000000000000003 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
+		200000000000000000000004 /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
+		200000000000000000000010 /* NekoWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000310 /* NekoWidget.swift */; };
+		200000000000000000000011 /* NekoWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000311 /* NekoWidgetBundle.swift */; };
+		200000000000000000000012 /* NekoWidgetEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000312 /* NekoWidgetEntry.swift */; };
+		200000000000000000000013 /* NekoWidgetTimelineProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000313 /* NekoWidgetTimelineProvider.swift */; };
+		200000000000000000000014 /* NekoWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000314 /* NekoWidgetView.swift */; };
+		200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000315 /* WidgetCacheImageLoader.swift */; };
+		200000000000000000000016 /* WidgetManifestReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000316 /* WidgetManifestReader.swift */; };
+		300000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000205 /* PrivacyInfo.xcprivacy */; };
+		300000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000206 /* Assets.xcassets */; };
+		400000000000000000000001 /* Photos.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000501 /* Photos.framework */; };
+		400000000000000000000002 /* Vision.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000502 /* Vision.framework */; };
+		400000000000000000000003 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000503 /* WidgetKit.framework */; };
+		400000000000000000000004 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000504 /* ImageIO.framework */; };
+		400000000000000000000005 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000505 /* SwiftUI.framework */; };
+		400000000000000000000006 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
+		400000000000000000000007 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000507 /* CoreGraphics.framework */; };
+		410000000000000000000001 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000503 /* WidgetKit.framework */; };
+		410000000000000000000002 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000504 /* ImageIO.framework */; };
+		410000000000000000000003 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000505 /* SwiftUI.framework */; };
+		410000000000000000000004 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
+		500000000000000000000001 /* NekoWidgetWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00000000000000000000030 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000011;
+			remoteInfo = NekoWidgetWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A00000000000000000000024 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				500000000000000000000001 /* NekoWidgetWidgetExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		F00000000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		F00000000000000000000101 /* SharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContainer.swift; sourceTree = "<group>"; };
+		F00000000000000000000102 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		F00000000000000000000103 /* AssetRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetRecord.swift; sourceTree = "<group>"; };
+		F00000000000000000000104 /* CatDetection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatDetection.swift; sourceTree = "<group>"; };
+		F00000000000000000000105 /* LibrarySnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySnapshot.swift; sourceTree = "<group>"; };
+		F00000000000000000000106 /* NekoWidgetError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetError.swift; sourceTree = "<group>"; };
+		F00000000000000000000107 /* NormalizedRect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NormalizedRect.swift; sourceTree = "<group>"; };
+		F00000000000000000000108 /* ProductConstraints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductConstraints.swift; sourceTree = "<group>"; };
+		F00000000000000000000109 /* ScanState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanState.swift; sourceTree = "<group>"; };
+		F0000000000000000000010A /* WidgetManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifest.swift; sourceTree = "<group>"; };
+		F0000000000000000000010B /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
+		F0000000000000000000010C /* AtomicJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicJSON.swift; sourceTree = "<group>"; };
+		F0000000000000000000010D /* SharedLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLog.swift; sourceTree = "<group>"; };
+		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
+		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
+		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000204 /* NekoWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidget.entitlements; sourceTree = "<group>"; };
+		F00000000000000000000205 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F00000000000000000000206 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F00000000000000000000210 /* JSONExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONExporter.swift; sourceTree = "<group>"; };
+		F00000000000000000000211 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000212 /* PhotoAlbumService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAlbumService.swift; sourceTree = "<group>"; };
+		F00000000000000000000213 /* PhotoAuthorizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAuthorizationService.swift; sourceTree = "<group>"; };
+		F00000000000000000000214 /* PhotoImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoImageLoader.swift; sourceTree = "<group>"; };
+		F00000000000000000000215 /* PhotoLibraryObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryObserver.swift; sourceTree = "<group>"; };
+		F00000000000000000000216 /* PhotoLibraryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryScanner.swift; sourceTree = "<group>"; };
+		F00000000000000000000217 /* PhotoSelectors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoSelectors.swift; sourceTree = "<group>"; };
+		F00000000000000000000218 /* WidgetCacheBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheBuilder.swift; sourceTree = "<group>"; };
+		F00000000000000000000219 /* AppLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000220 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
+		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		F00000000000000000000232 /* LikedPhotosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LikedPhotosView.swift; sourceTree = "<group>"; };
+		F00000000000000000000233 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
+		F00000000000000000000234 /* PhotoAssetImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoAssetImageView.swift; sourceTree = "<group>"; };
+		F00000000000000000000235 /* PhotoPermissionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionView.swift; sourceTree = "<group>"; };
+		F00000000000000000000236 /* ScanStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStatusView.swift; sourceTree = "<group>"; };
+		F00000000000000000000237 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F00000000000000000000238 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
+		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
+		F00000000000000000000311 /* NekoWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetBundle.swift; sourceTree = "<group>"; };
+		F00000000000000000000312 /* NekoWidgetEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetEntry.swift; sourceTree = "<group>"; };
+		F00000000000000000000313 /* NekoWidgetTimelineProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetTimelineProvider.swift; sourceTree = "<group>"; };
+		F00000000000000000000314 /* NekoWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetView.swift; sourceTree = "<group>"; };
+		F00000000000000000000315 /* WidgetCacheImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheImageLoader.swift; sourceTree = "<group>"; };
+		F00000000000000000000316 /* WidgetManifestReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifestReader.swift; sourceTree = "<group>"; };
+		F00000000000000000000401 /* NekoWidget.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NekoWidget.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = NekoWidgetWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000501 /* Photos.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Photos.framework; path = System/Library/Frameworks/Photos.framework; sourceTree = SDKROOT; };
+		F00000000000000000000502 /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
+		F00000000000000000000503 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		F00000000000000000000504 /* ImageIO.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ImageIO.framework; path = System/Library/Frameworks/ImageIO.framework; sourceTree = SDKROOT; };
+		F00000000000000000000505 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		F00000000000000000000506 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		F00000000000000000000507 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00000000000000000000022 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				400000000000000000000001 /* Photos.framework in Frameworks */,
+				400000000000000000000002 /* Vision.framework in Frameworks */,
+				400000000000000000000003 /* WidgetKit.framework in Frameworks */,
+				400000000000000000000004 /* ImageIO.framework in Frameworks */,
+				400000000000000000000005 /* SwiftUI.framework in Frameworks */,
+				400000000000000000000006 /* UIKit.framework in Frameworks */,
+				400000000000000000000007 /* CoreGraphics.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000026 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				410000000000000000000001 /* WidgetKit.framework in Frameworks */,
+				410000000000000000000002 /* ImageIO.framework in Frameworks */,
+				410000000000000000000003 /* SwiftUI.framework in Frameworks */,
+				410000000000000000000004 /* UIKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000001 /* Config.xcconfig */,
+				B00000000000000000000001 /* Shared */,
+				C00000000000000000000001 /* NekoWidget */,
+				D00000000000000000000001 /* NekoWidgetWidget */,
+				A00000000000000000000004 /* Frameworks */,
+				A00000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000401 /* NekoWidget.app */,
+				F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000004 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000501 /* Photos.framework */,
+				F00000000000000000000502 /* Vision.framework */,
+				F00000000000000000000503 /* WidgetKit.framework */,
+				F00000000000000000000504 /* ImageIO.framework */,
+				F00000000000000000000505 /* SwiftUI.framework */,
+				F00000000000000000000506 /* UIKit.framework */,
+				F00000000000000000000507 /* CoreGraphics.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000001 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000002 /* AppGroup */,
+				B00000000000000000000003 /* Models */,
+				B00000000000000000000004 /* Routing */,
+				B00000000000000000000005 /* Storage */,
+				B00000000000000000000006 /* Logging */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000002 /* AppGroup */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000101 /* SharedContainer.swift */,
+			);
+			path = AppGroup;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000003 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000102 /* AppSettings.swift */,
+				F00000000000000000000103 /* AssetRecord.swift */,
+				F00000000000000000000104 /* CatDetection.swift */,
+				F00000000000000000000105 /* LibrarySnapshot.swift */,
+				F00000000000000000000106 /* NekoWidgetError.swift */,
+				F00000000000000000000107 /* NormalizedRect.swift */,
+				F00000000000000000000108 /* ProductConstraints.swift */,
+				F00000000000000000000109 /* ScanState.swift */,
+				F0000000000000000000010A /* WidgetManifest.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000004 /* Routing */ = {
+			isa = PBXGroup;
+			children = (
+				F0000000000000000000010B /* DeepLink.swift */,
+			);
+			path = Routing;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000005 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				F0000000000000000000010C /* AtomicJSON.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000006 /* Logging */ = {
+			isa = PBXGroup;
+			children = (
+				F0000000000000000000010D /* SharedLog.swift */,
+			);
+			path = Logging;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000001 /* NekoWidget */ = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000002 /* App */,
+				C00000000000000000000003 /* Services */,
+				C00000000000000000000004 /* ViewModels */,
+				C00000000000000000000005 /* Views */,
+				F00000000000000000000203 /* Info.plist */,
+				F00000000000000000000204 /* NekoWidget.entitlements */,
+				F00000000000000000000205 /* PrivacyInfo.xcprivacy */,
+				F00000000000000000000206 /* Assets.xcassets */,
+			);
+			path = NekoWidget;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000201 /* AppRootView.swift */,
+				F00000000000000000000202 /* NekoWidgetApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000003 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000210 /* JSONExporter.swift */,
+				F00000000000000000000211 /* LibraryStore.swift */,
+				F00000000000000000000212 /* PhotoAlbumService.swift */,
+				F00000000000000000000213 /* PhotoAuthorizationService.swift */,
+				F00000000000000000000214 /* PhotoImageLoader.swift */,
+				F00000000000000000000215 /* PhotoLibraryObserver.swift */,
+				F00000000000000000000216 /* PhotoLibraryScanner.swift */,
+				F00000000000000000000217 /* PhotoSelectors.swift */,
+				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
+				F00000000000000000000219 /* AppLogStore.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000004 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000220 /* AppViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000230 /* AppPresentationModels.swift */,
+				F00000000000000000000231 /* HomeView.swift */,
+				F00000000000000000000232 /* LikedPhotosView.swift */,
+				F00000000000000000000233 /* MainTabView.swift */,
+				F00000000000000000000234 /* PhotoAssetImageView.swift */,
+				F00000000000000000000235 /* PhotoPermissionView.swift */,
+				F00000000000000000000236 /* ScanStatusView.swift */,
+				F00000000000000000000237 /* SettingsView.swift */,
+				F00000000000000000000238 /* LogView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000001 /* NekoWidgetWidget */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000310 /* NekoWidget.swift */,
+				F00000000000000000000311 /* NekoWidgetBundle.swift */,
+				F00000000000000000000312 /* NekoWidgetEntry.swift */,
+				F00000000000000000000313 /* NekoWidgetTimelineProvider.swift */,
+				F00000000000000000000314 /* NekoWidgetView.swift */,
+				F00000000000000000000315 /* WidgetCacheImageLoader.swift */,
+				F00000000000000000000316 /* WidgetManifestReader.swift */,
+				F00000000000000000000301 /* Info.plist */,
+				F00000000000000000000302 /* NekoWidgetWidget.entitlements */,
+			);
+			path = NekoWidgetWidget;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000000000000000000010 /* NekoWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000041 /* Build configuration list for PBXNativeTarget "NekoWidget" */;
+			buildPhases = (
+				A00000000000000000000021 /* Sources */,
+				A00000000000000000000022 /* Frameworks */,
+				A00000000000000000000023 /* Resources */,
+				A00000000000000000000024 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000000000000000000031 /* PBXTargetDependency */,
+			);
+			name = NekoWidget;
+			productName = NekoWidget;
+			productReference = F00000000000000000000401 /* NekoWidget.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A00000000000000000000011 /* NekoWidgetWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000042 /* Build configuration list for PBXNativeTarget "NekoWidgetWidgetExtension" */;
+			buildPhases = (
+				A00000000000000000000025 /* Sources */,
+				A00000000000000000000026 /* Frameworks */,
+				A00000000000000000000027 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NekoWidgetWidgetExtension;
+			productName = NekoWidgetWidgetExtension;
+			productReference = F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					A00000000000000000000010 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					A00000000000000000000011 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = A00000000000000000000040 /* Build configuration list for PBXProject "NekoWidget" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = ja;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				ja,
+				en,
+				Base,
+			);
+			mainGroup = A00000000000000000000002;
+			productRefGroup = A00000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000000000000000000010 /* NekoWidget */,
+				A00000000000000000000011 /* NekoWidgetWidgetExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A00000000000000000000023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				300000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */,
+				300000000000000000000002 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000027 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00000000000000000000021 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000001 /* SharedContainer.swift in Sources */,
+				100000000000000000000002 /* AppSettings.swift in Sources */,
+				100000000000000000000003 /* AssetRecord.swift in Sources */,
+				100000000000000000000004 /* CatDetection.swift in Sources */,
+				100000000000000000000005 /* LibrarySnapshot.swift in Sources */,
+				100000000000000000000006 /* NekoWidgetError.swift in Sources */,
+				100000000000000000000007 /* NormalizedRect.swift in Sources */,
+				100000000000000000000008 /* ProductConstraints.swift in Sources */,
+				100000000000000000000009 /* ScanState.swift in Sources */,
+				10000000000000000000000A /* WidgetManifest.swift in Sources */,
+				10000000000000000000000B /* DeepLink.swift in Sources */,
+				10000000000000000000000C /* AtomicJSON.swift in Sources */,
+				10000000000000000000000D /* SharedLog.swift in Sources */,
+				100000000000000000000101 /* AppRootView.swift in Sources */,
+				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
+				100000000000000000000110 /* JSONExporter.swift in Sources */,
+				100000000000000000000111 /* LibraryStore.swift in Sources */,
+				100000000000000000000112 /* PhotoAlbumService.swift in Sources */,
+				100000000000000000000113 /* PhotoAuthorizationService.swift in Sources */,
+				100000000000000000000114 /* PhotoImageLoader.swift in Sources */,
+				100000000000000000000115 /* PhotoLibraryObserver.swift in Sources */,
+				100000000000000000000116 /* PhotoLibraryScanner.swift in Sources */,
+				100000000000000000000117 /* PhotoSelectors.swift in Sources */,
+				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,
+				100000000000000000000119 /* AppLogStore.swift in Sources */,
+				100000000000000000000120 /* AppViewModel.swift in Sources */,
+				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
+				100000000000000000000131 /* HomeView.swift in Sources */,
+				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
+				100000000000000000000133 /* MainTabView.swift in Sources */,
+				100000000000000000000134 /* PhotoAssetImageView.swift in Sources */,
+				100000000000000000000135 /* PhotoPermissionView.swift in Sources */,
+				100000000000000000000136 /* ScanStatusView.swift in Sources */,
+				100000000000000000000137 /* SettingsView.swift in Sources */,
+				100000000000000000000138 /* LogView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000025 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				200000000000000000000001 /* SharedContainer.swift in Sources */,
+				200000000000000000000002 /* WidgetManifest.swift in Sources */,
+				200000000000000000000003 /* DeepLink.swift in Sources */,
+				200000000000000000000004 /* SharedLog.swift in Sources */,
+				200000000000000000000010 /* NekoWidget.swift in Sources */,
+				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
+				200000000000000000000012 /* NekoWidgetEntry.swift in Sources */,
+				200000000000000000000013 /* NekoWidgetTimelineProvider.swift in Sources */,
+				200000000000000000000014 /* NekoWidgetView.swift in Sources */,
+				200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */,
+				200000000000000000000016 /* WidgetManifestReader.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A00000000000000000000031 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000011 /* NekoWidgetWidgetExtension */;
+			targetProxy = A00000000000000000000030 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000050 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A00000000000000000000051 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A00000000000000000000052 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(inherited)";
+				DEVELOPMENT_ASSET_PATHS = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NekoWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(inherited)";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A00000000000000000000053 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(inherited)";
+				DEVELOPMENT_ASSET_PATHS = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NekoWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = "$(inherited)";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PROVISIONING_PROFILE_SPECIFIER = "$(APP_PROVISIONING_PROFILE_SPECIFIER)";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A00000000000000000000054 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = NekoWidgetWidget/NekoWidgetWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(inherited)";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NekoWidgetWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = "$(inherited)";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(WIDGET_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A00000000000000000000055 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = NekoWidgetWidget/NekoWidgetWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = "$(inherited)";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NekoWidgetWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = "$(inherited)";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(WIDGET_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PROVISIONING_PROFILE_SPECIFIER = "$(WIDGET_PROVISIONING_PROFILE_SPECIFIER)";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000000000000000000040 /* Build configuration list for PBXProject "NekoWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000050 /* Debug */,
+				A00000000000000000000051 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000041 /* Build configuration list for PBXNativeTarget "NekoWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000052 /* Debug */,
+				A00000000000000000000053 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000042 /* Build configuration list for PBXNativeTarget "NekoWidgetWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000054 /* Debug */,
+				A00000000000000000000055 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000000000000000000001 /* Project object */;
+}

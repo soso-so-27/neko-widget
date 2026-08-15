@@ -1,0 +1,67 @@
+name: iOS build check
+
+on:
+  push:
+    paths:
+      - "NekoWidget/**"
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - "NekoWidget/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-without-signing:
+    name: Build app and widget without signing
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Xcode installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+
+      - name: Build app and widget for iOS Simulator
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/NekoWidgetBuild.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Upload build result bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-build-result-${{ github.run_id }}
+          path: ${{ runner.temp }}/NekoWidgetBuild.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

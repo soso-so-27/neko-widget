@@ -1,0 +1,422 @@
+name: Archive and upload to TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "CFBundleVersion。空欄ならこのworkflowのrun numberを使います"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-upload
+  cancel-in-progress: false
+
+jobs:
+  archive-export-upload:
+    name: Archive, export IPA, and upload
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: testflight
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PROJECT_DIRECTORY: NekoWidget
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Xcode installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Validate required secrets
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+          APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.APP_PROVISIONING_PROFILE_BASE64 }}
+          WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          required=(
+            APPLE_TEAM_ID
+            APP_STORE_CONNECT_KEY_ID
+            APP_STORE_CONNECT_ISSUER_ID
+            APP_STORE_CONNECT_PRIVATE_KEY_BASE64
+            APPLE_DISTRIBUTION_CERTIFICATE_BASE64
+            APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD
+            KEYCHAIN_PASSWORD
+            APP_PROVISIONING_PROFILE_BASE64
+            WIDGET_PROVISIONING_PROFILE_BASE64
+          )
+          for variable_name in "${required[@]}"; do
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "Missing GitHub environment secret: ${variable_name}" >&2
+              exit 1
+            fi
+          done
+          if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "APPLE_TEAM_ID must be a 10-character Team ID." >&2
+            exit 1
+          fi
+          if [[ ! "$APP_STORE_CONNECT_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "APP_STORE_CONNECT_KEY_ID must be a 10-character API Key ID." >&2
+            exit 1
+          fi
+          if [[ ! "$APP_STORE_CONNECT_ISSUER_ID" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+            echo "APP_STORE_CONNECT_ISSUER_ID must be an Issuer UUID." >&2
+            exit 1
+          fi
+
+      - name: Read and validate release identifiers
+        working-directory: NekoWidget
+        shell: bash
+        env:
+          REQUESTED_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+
+          read_xcconfig_value() {
+            local key="$1"
+            sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" Config.xcconfig \
+              | tail -n 1 \
+              | tr -d '\r' \
+              | xargs
+          }
+
+          app_bundle_id="$(read_xcconfig_value APP_BUNDLE_IDENTIFIER)"
+          widget_bundle_id="$(read_xcconfig_value WIDGET_BUNDLE_IDENTIFIER)"
+          app_group_id="$(read_xcconfig_value APP_GROUP_IDENTIFIER)"
+
+          if [[ -z "$app_bundle_id" || -z "$widget_bundle_id" || -z "$app_group_id" ]]; then
+            echo "Config.xcconfig contains an empty release identifier." >&2
+            exit 1
+          fi
+          if [[ "$app_bundle_id" == com.example.* || "$widget_bundle_id" == com.example.* || "$app_group_id" == group.com.example.* ]]; then
+            echo "Replace all placeholder identifiers in Config.xcconfig before uploading." >&2
+            exit 1
+          fi
+          if [[ "$app_group_id" != group.* ]]; then
+            echo "APP_GROUP_IDENTIFIER must start with group." >&2
+            exit 1
+          fi
+
+          build_number="$REQUESTED_BUILD_NUMBER"
+          if [[ -z "$build_number" ]]; then
+            build_number="$GITHUB_RUN_NUMBER"
+          fi
+          if [[ ! "$build_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "build_number must be a positive integer." >&2
+            exit 1
+          fi
+
+          {
+            echo "APP_BUNDLE_ID=$app_bundle_id"
+            echo "WIDGET_BUNDLE_ID=$widget_bundle_id"
+            echo "APP_GROUP_ID=$app_group_id"
+            echo "RELEASE_BUILD_NUMBER=$build_number"
+          } >> "$GITHUB_ENV"
+
+      - name: Install distribution certificate and provisioning profiles
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.APP_PROVISIONING_PROFILE_BASE64 }}
+          WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          certificate_path="$RUNNER_TEMP/apple-distribution.p12"
+          app_profile_path="$RUNNER_TEMP/app.mobileprovision"
+          widget_profile_path="$RUNNER_TEMP/widget.mobileprovision"
+          app_profile_plist="$RUNNER_TEMP/app-profile.plist"
+          widget_profile_plist="$RUNNER_TEMP/widget-profile.plist"
+          keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
+          profile_directory="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
+
+          echo "CI_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+
+          printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          printf '%s' "$APP_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$app_profile_path"
+          printf '%s' "$WIDGET_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$widget_profile_path"
+          chmod 600 "$certificate_path" "$app_profile_path" "$widget_profile_path"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          if ! security find-identity -v -p codesigning "$keychain_path" | grep -q 'Apple Distribution'; then
+            echo "The P12 does not contain a usable Apple Distribution identity." >&2
+            exit 1
+          fi
+
+          security cms -D -i "$app_profile_path" > "$app_profile_plist"
+          security cms -D -i "$widget_profile_path" > "$widget_profile_plist"
+
+          app_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$app_profile_plist")"
+          widget_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$widget_profile_plist")"
+          app_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$app_profile_plist")"
+          widget_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$widget_profile_plist")"
+          app_profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$app_profile_plist")"
+          widget_profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$widget_profile_plist")"
+          app_profile_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$app_profile_plist")"
+          widget_profile_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$widget_profile_plist")"
+          app_profile_groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$app_profile_plist" 2>/dev/null || true)"
+          widget_profile_groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$widget_profile_plist" 2>/dev/null || true)"
+
+          contains_exact_line() {
+            local expected="$1"
+            awk -v expected="$expected" '{ $1 = $1; if ($0 == expected) found = 1 } END { exit(found ? 0 : 1) }'
+          }
+
+          if [[ "$app_profile_team" != "$APPLE_TEAM_ID" || "$widget_profile_team" != "$APPLE_TEAM_ID" ]]; then
+            echo "A provisioning profile belongs to a different Apple Developer Team." >&2
+            exit 1
+          fi
+          if [[ "$app_profile_identifier" != *".$APP_BUNDLE_ID" ]]; then
+            echo "The app provisioning profile does not match APP_BUNDLE_IDENTIFIER." >&2
+            exit 1
+          fi
+          if [[ "$widget_profile_identifier" != *".$WIDGET_BUNDLE_ID" ]]; then
+            echo "The widget provisioning profile does not match WIDGET_BUNDLE_IDENTIFIER." >&2
+            exit 1
+          fi
+          if ! contains_exact_line "$APP_GROUP_ID" <<< "$app_profile_groups"; then
+            echo "The app provisioning profile does not contain APP_GROUP_IDENTIFIER." >&2
+            exit 1
+          fi
+          if ! contains_exact_line "$APP_GROUP_ID" <<< "$widget_profile_groups"; then
+            echo "The widget provisioning profile does not contain APP_GROUP_IDENTIFIER." >&2
+            exit 1
+          fi
+
+          mkdir -p "$profile_directory"
+          {
+            echo "APP_INSTALLED_PROFILE_PATH=$profile_directory/$app_profile_uuid.mobileprovision"
+            echo "WIDGET_INSTALLED_PROFILE_PATH=$profile_directory/$widget_profile_uuid.mobileprovision"
+          } >> "$GITHUB_ENV"
+          cp "$app_profile_path" "$profile_directory/$app_profile_uuid.mobileprovision"
+          cp "$widget_profile_path" "$profile_directory/$widget_profile_uuid.mobileprovision"
+
+          {
+            echo "APP_PROFILE_UUID=$app_profile_uuid"
+            echo "WIDGET_PROFILE_UUID=$widget_profile_uuid"
+            echo "APP_PROFILE_SPECIFIER=$app_profile_name"
+            echo "WIDGET_PROFILE_SPECIFIER=$widget_profile_name"
+          } >> "$GITHUB_ENV"
+
+      - name: Archive app and widget
+        working-directory: NekoWidget
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/NekoWidget.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/NekoWidgetArchive.xcresult" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
+            APP_PROVISIONING_PROFILE_SPECIFIER="$APP_PROFILE_SPECIFIER" \
+            WIDGET_PROVISIONING_PROFILE_SPECIFIER="$WIDGET_PROFILE_SPECIFIER" \
+            CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \
+            "OTHER_CODE_SIGN_FLAGS=--keychain $CI_KEYCHAIN_PATH" \
+            archive
+
+      - name: Verify archive signatures and App Group entitlements
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
+          widget_path="$app_path/PlugIns/NekoWidgetWidgetExtension.appex"
+          app_entitlements="$RUNNER_TEMP/archive-app-entitlements.plist"
+          widget_entitlements="$RUNNER_TEMP/archive-widget-entitlements.plist"
+
+          test -d "$app_path"
+          test -d "$widget_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign --verify --strict --verbose=2 "$widget_path"
+          codesign -d --entitlements :- "$app_path" > "$app_entitlements"
+          codesign -d --entitlements :- "$widget_path" > "$widget_entitlements"
+          plutil -lint "$app_entitlements"
+          plutil -lint "$widget_entitlements"
+
+          app_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$app_entitlements")"
+          widget_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$widget_entitlements")"
+          app_signed_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$app_entitlements")"
+          widget_signed_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$widget_entitlements")"
+          app_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$app_entitlements" 2>/dev/null || true)"
+          widget_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$widget_entitlements" 2>/dev/null || true)"
+
+          contains_exact_line() {
+            local expected="$1"
+            awk -v expected="$expected" '{ $1 = $1; if ($0 == expected) found = 1 } END { exit(found ? 0 : 1) }'
+          }
+
+          [[ "$app_signed_identifier" == *".$APP_BUNDLE_ID" ]]
+          [[ "$widget_signed_identifier" == *".$WIDGET_BUNDLE_ID" ]]
+          [[ "$app_signed_team" == "$APPLE_TEAM_ID" ]]
+          [[ "$widget_signed_team" == "$APPLE_TEAM_ID" ]]
+          contains_exact_line "$APP_GROUP_ID" <<< "$app_signed_groups"
+          contains_exact_line "$APP_GROUP_ID" <<< "$widget_signed_groups"
+
+      - name: Generate export options
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          sed \
+            -e "s|__APPLE_TEAM_ID__|$APPLE_TEAM_ID|g" \
+            -e "s|__APP_BUNDLE_ID__|$APP_BUNDLE_ID|g" \
+            -e "s|__WIDGET_BUNDLE_ID__|$WIDGET_BUNDLE_ID|g" \
+            -e "s|__APP_PROFILE_UUID__|$APP_PROFILE_UUID|g" \
+            -e "s|__WIDGET_PROFILE_UUID__|$WIDGET_PROFILE_UUID|g" \
+            "$PROJECT_DIRECTORY/ci/ExportOptions.plist.template" \
+            > "$RUNNER_TEMP/ExportOptions.plist"
+          plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Package archive and symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d "$RUNNER_TEMP/NekoWidget.xcarchive/dSYMs" ]]; then
+            ditto -c -k --sequesterRsrc --keepParent \
+              "$RUNNER_TEMP/NekoWidget.xcarchive/dSYMs" \
+              "$RUNNER_TEMP/NekoWidget-dSYMs.zip"
+          fi
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/NekoWidget.xcarchive" \
+            "$RUNNER_TEMP/NekoWidget.xcarchive.zip"
+
+      - name: Export IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/Export"
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/NekoWidget.xcarchive" \
+            -exportPath "$RUNNER_TEMP/Export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+          ipa_path="$(find "$RUNNER_TEMP/Export" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          if [[ -z "$ipa_path" ]]; then
+            echo "xcodebuild did not produce an IPA." >&2
+            exit 1
+          fi
+          echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+
+      - name: Install App Store Connect API private key
+        shell: bash
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          private_key_directory="$HOME/.appstoreconnect/private_keys"
+          private_key_path="$private_key_directory/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          echo "API_PRIVATE_KEY_PATH=$private_key_path" >> "$GITHUB_ENV"
+          mkdir -p "$private_key_directory"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 --decode > "$private_key_path"
+          chmod 600 "$private_key_path"
+
+      - name: Validate and upload IPA to TestFlight
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcrun altool \
+            --validate-app \
+            -f "$IPA_PATH" \
+            -t ios \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+          xcrun altool \
+            --upload-app \
+            -f "$IPA_PATH" \
+            -t ios \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [[ -n "${APP_INSTALLED_PROFILE_PATH:-}" ]]; then
+            rm -f "$APP_INSTALLED_PROFILE_PATH"
+          fi
+          if [[ -n "${WIDGET_INSTALLED_PROFILE_PATH:-}" ]]; then
+            rm -f "$WIDGET_INSTALLED_PROFILE_PATH"
+          fi
+          if [[ -n "${CI_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$CI_KEYCHAIN_PATH"
+          fi
+          if [[ -n "${API_PRIVATE_KEY_PATH:-}" ]]; then
+            rm -f "$API_PRIVATE_KEY_PATH"
+          fi
+          rm -f \
+            "$RUNNER_TEMP/apple-distribution.p12" \
+            "$RUNNER_TEMP/app.mobileprovision" \
+            "$RUNNER_TEMP/widget.mobileprovision" \
+            "$RUNNER_TEMP/app-profile.plist" \
+            "$RUNNER_TEMP/widget-profile.plist" \
+            "$RUNNER_TEMP/archive-app-entitlements.plist" \
+            "$RUNNER_TEMP/archive-widget-entitlements.plist" \
+            "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Upload IPA, symbols, and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nekowidget-testflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/Export/*.ipa
+            ${{ runner.temp }}/Export/DistributionSummary.plist
+            ${{ runner.temp }}/Export/ExportOptions.plist
+            ${{ runner.temp }}/NekoWidget-dSYMs.zip
+            ${{ runner.temp }}/NekoWidget.xcarchive.zip
+            ${{ runner.temp }}/NekoWidgetArchive.xcresult
+          if-no-files-found: warn
+          retention-days: 14

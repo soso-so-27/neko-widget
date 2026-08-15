@@ -1,0 +1,38 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.xcarchive
+*.xcresult
+*.xccovreport
+*.xccovarchive
+*.dSYM.zip
+*.dSYM
+
+# Signing (never commit)
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+AuthKey_*.p8
+*.p8
+*.pfx
+*.key
+*.pem
+*.provisionprofile
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
