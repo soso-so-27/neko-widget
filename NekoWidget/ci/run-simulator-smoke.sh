@@ -519,34 +519,41 @@ fi
 
 xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
 wait_for_app_exit "$APP_PID"
-# Give SpringBoard/TCC time to dismiss the interrupted system sheet before
-# applying the durable grant to the now-registered, non-running bundle.
+# Give SpringBoard/TCC time to start dismissing the interrupted system sheet.
 sleep 2
 capture_tcc_state "after-request"
-grant_photo_access "before-smoke-launch"
-capture_tcc_state "after-grant"
 
-# Hosted runners have returned a cached `.notDetermined` value even though
-# simctl persisted kTCCServicePhotos with auth_value=2. Reboot the Simulator so
-# tccd reloads the supported simctl state instead of editing its database.
+# First reboot: finish resolving the interrupted PhotoKit request and remove
+# the orphaned system prompt before applying the durable simctl grant.
 xcrun simctl shutdown "$SIMULATOR_UDID"
 xcrun simctl boot "$SIMULATOR_UDID"
 xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 xcrun simctl status_bar "$SIMULATOR_UDID" override \
     --time 09:41 --batteryLevel 100 --batteryState charged || true
-capture_tcc_state "after-reboot"
+capture_tcc_state "after-request-reboot"
+
+grant_photo_access "after-request-reboot"
+capture_tcc_state "after-grant"
 if ! tcc_snapshot_has_full_photo_access \
-    "$ARTIFACT_DIRECTORY/tcc-after-reboot.json"; then
-    echo "The full Photos grant did not survive reboot; applying it once more."
-    grant_photo_access "after-reboot"
-    capture_tcc_state "after-reboot-regrant"
-    if ! tcc_snapshot_has_full_photo_access \
-        "$ARTIFACT_DIRECTORY/tcc-after-reboot-regrant.json"; then
-        echo "TCC did not persist full Photos access after reboot." >&2
-        exit 1
-    fi
+    "$ARTIFACT_DIRECTORY/tcc-after-grant.json"; then
+    echo "TCC did not persist full Photos access after simctl grant." >&2
+    exit 1
 fi
-sleep 2
+
+# Second reboot: start tccd from the completed grant. Hosted runners otherwise
+# keep returning `.notDetermined` even while TCC.db already contains auth_value=2.
+xcrun simctl shutdown "$SIMULATOR_UDID"
+xcrun simctl boot "$SIMULATOR_UDID"
+xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+xcrun simctl status_bar "$SIMULATOR_UDID" override \
+    --time 09:41 --batteryLevel 100 --batteryState charged || true
+capture_tcc_state "after-grant-reboot"
+if ! tcc_snapshot_has_full_photo_access \
+    "$ARTIFACT_DIRECTORY/tcc-after-grant-reboot.json"; then
+    echo "The full Photos grant did not survive the clean TCC reboot." >&2
+    exit 1
+fi
+
 launch_app "smoke"
 if ! wait_for_photo_authorization \
     "Photo authorization checked" "authorized" 15; then
