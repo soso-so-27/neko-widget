@@ -131,6 +131,68 @@ wait_for_photo_authorization() {
     return 1
 }
 
+wait_for_app_exit() {
+    local process_id="$1"
+    local attempt=""
+
+    for attempt in $(seq 1 10); do
+        if ! kill -0 "$process_id" 2>/dev/null; then
+            printf 'App process %s stopped after %d second(s).\n' \
+                "$process_id" "$attempt"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "App process $process_id did not stop before the privacy grant." >&2
+    return 1
+}
+
+capture_tcc_state() {
+    local label="$1"
+    local database="$HOME/Library/Developer/CoreSimulator/Devices/$SIMULATOR_UDID/data/Library/TCC/TCC.db"
+    local output="$ARTIFACT_DIRECTORY/tcc-$label.json"
+
+    if [[ ! -f "$database" ]]; then
+        printf '{"error":"TCC database was not found"}\n' > "$output"
+        return 0
+    fi
+
+    python3 - "$database" "$APP_BUNDLE_ID" "$output" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+database, bundle_identifier, output = sys.argv[1:]
+report = {"bundleIdentifier": bundle_identifier, "rows": []}
+try:
+    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=2)
+    connection.row_factory = sqlite3.Row
+    schema_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'access'"
+    ).fetchone()
+    report["schema"] = schema_row[0] if schema_row else None
+    rows = connection.execute(
+        "SELECT * FROM access WHERE client = ? ORDER BY service",
+        (bundle_identifier,),
+    ).fetchall()
+    for row in rows:
+        report["rows"].append(
+            {
+                key: value.hex() if isinstance(value, bytes) else value
+                for key, value in dict(row).items()
+            }
+        )
+    connection.close()
+except Exception as error:  # Diagnostic capture must not mask the smoke result.
+    report["error"] = f"{type(error).__name__}: {error}"
+Path(output).write_text(
+    json.dumps(report, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
 grant_photo_access() {
     local attempt_name="$1"
     local output_file="$ARTIFACT_DIRECTORY/privacy-$attempt_name.txt"
@@ -438,8 +500,14 @@ if ! wait_for_photo_authorization \
     exit 1
 fi
 
-grant_photo_access "before-smoke-launch"
 xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
+wait_for_app_exit "$APP_PID"
+# Give SpringBoard/TCC time to dismiss the interrupted system sheet before
+# applying the durable grant to the now-registered, non-running bundle.
+sleep 2
+capture_tcc_state "after-request"
+grant_photo_access "before-smoke-launch"
+capture_tcc_state "after-grant"
 sleep 2
 launch_app "smoke"
 if ! wait_for_photo_authorization \
