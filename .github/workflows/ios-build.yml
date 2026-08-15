@@ -65,3 +65,31 @@ jobs:
           path: ${{ runner.temp }}/NekoWidgetBuild.xcresult
           if-no-files-found: ignore
           retention-days: 7
+
+  simulator-smoke-test:
+    name: Launch app and scan fixtures in Simulator
+    needs: build-without-signing
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run Simulator smoke test
+        working-directory: NekoWidget
+        shell: bash
+        run: bash ci/run-simulator-smoke.sh
+
+      - name: Upload Simulator smoke-test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-simulator-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-smoke-artifacts
+          if-no-files-found: warn
+          retention-days: 7

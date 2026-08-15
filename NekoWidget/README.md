@@ -4,7 +4,7 @@
 
 ## 現在の引き継ぎ状態
 
-ソースはWindows上で作成しているため、Xcodeビルド、コード署名、Simulator、iPhoneへのインストール、PhotoKit、WidgetKitおよびメモリ使用量は未検証です。MacとiOS 17.1以上のiPhoneで、[実機検証手順](docs/Mac実機検証手順.md)を最後まで実施してください。
+ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイルとSimulator上の起動・PhotoKit・Vision・App Groupスモークテストを実行しますが、配布署名、iPhoneへのインストール、Widgetの実配置およびメモリ使用量は未検証です。MacとiOS 17.1以上のiPhoneで、[実機検証手順](docs/Mac実機検証手順.md)を最後まで実施してください。
 
 TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレースホルダーApp IconとAsset Catalogを含めています。正式公開前には、商標・視認性・各外観での見え方を確認した最終アイコンへ差し替えてください。
 
@@ -35,7 +35,9 @@ Macで署名する前に、3つとも利用するApple Development Teamで一意
 
 ## GitHub Actions
 
-push / pull requestでは、macOS runner上でAppとWidgetを無署名コンパイルする`iOS build check`を実行します。TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使い、archive、IPA export、App Store Connectでの検証とアップロードを行います。
+push / pull requestでは`iOS build check`を実行します。最初のジョブはmacOS runner上でAppとWidgetを無署名コンパイルし、成功後のSimulatorジョブは[専用に生成したCC0の猫画像3枚](ci/fixtures/cats/README.md)を写真ライブラリへ投入します。写真権限を事前付与してアプリを起動し、PhotoKit取得、Vision猫検出、App GroupへのJSONLログ／snapshot／Widget cache書き込みを検証します。起動画面、SharedLog、統合ログ、検証レポート、App Group成果物は7日間artifactに保存します。この自動テストは許可済みフローだけが対象で、初回権限ダイアログ、拒否／制限付きアクセス、ホーム画面へ配置したWidgetプロセスからの読み出しは実機確認の対象です。
+
+TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使い、archive、IPA export、App Store Connectでの検証とアップロードを行います。
 
 App Store Connect APIキーはアップロード認証用です。コード署名には別途、Apple Distribution証明書の秘密鍵を含むP12と、アプリ／Widgetそれぞれの配布プロファイルが必要です。必要なGitHub Environment、Secrets、作成手順は[GitHub Actions / TestFlight設定](docs/GitHub-Actions-TestFlight設定.md)を参照してください。
 

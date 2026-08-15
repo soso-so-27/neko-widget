@@ -2,3 +2,6 @@
 *.plist text eol=lf
 *.pbxproj text eol=lf
 *.md text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.png binary

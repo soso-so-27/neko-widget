@@ -318,6 +318,12 @@ actor PhotoLibraryScanner {
 
         do {
             let request = VNRecognizeAnimalsRequest()
+#if targetEnvironment(simulator)
+            // GitHub-hosted Intel simulators do not provide an iPhone GPU/ANE.
+            // Keep the smoke test deterministic without changing real-device
+            // scheduling or memory behavior.
+            request.usesCPUOnly = true
+#endif
             let handler = VNImageRequestHandler(
                 cgImage: cgImage,
                 orientation: CGImagePropertyOrientation(image.imageOrientation),

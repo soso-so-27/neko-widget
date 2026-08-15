@@ -36,3 +36,7 @@ Desktop.ini
 .build/
 .swiftpm/
 Packages/
+
+# Python CI helpers
+__pycache__/
+*.py[cod]
