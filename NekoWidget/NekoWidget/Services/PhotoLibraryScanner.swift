@@ -469,12 +469,113 @@ actor PhotoLibraryScanner {
         settings: AppSettings,
         previous: AssetRecord?
     ) async throws -> AssetRecord {
-        let thumbnailResult = try await localThumbnail(for: asset)
+        let sourcePixelCount = Int64(asset.pixelWidth) * Int64(asset.pixelHeight)
+        let tracesLargePhoto = sourcePixelCount >= largePhotoTraceMinimumPixelCount
+        let assetHash = tracesLargePhoto
+            ? SharedLog.shortHash(asset.localIdentifier)
+            : ""
+        let sourcePixels = "\(asset.pixelWidth)x\(asset.pixelHeight)"
+        let processingStartedAt = Date()
+        var processingOutcome = "unknown"
+        var resolvedOutputPixels = "0x0"
+        var resolvedDecodedBytes = 0
+
+        if tracesLargePhoto {
+            SharedLog.app.info(
+                "image-load",
+                "Large photo processing started",
+                metadata: [
+                    "asset": assetHash,
+                    "pixelCount": "\(sourcePixelCount)",
+                    "sourcePixels": sourcePixels,
+                    "targetPixels": "1024x1024"
+                ]
+            )
+        }
+        defer {
+            if tracesLargePhoto {
+                SharedLog.app.info(
+                    "image-load",
+                    "Large photo processing finished",
+                    metadata: [
+                        "asset": assetHash,
+                        "decodedBytesEstimate": "\(resolvedDecodedBytes)",
+                        "durationMs": String(
+                            format: "%.1f",
+                            Date().timeIntervalSince(processingStartedAt) * 1_000
+                        ),
+                        "outcome": processingOutcome,
+                        "outputPixels": resolvedOutputPixels,
+                        "sourcePixels": sourcePixels
+                    ]
+                )
+            }
+        }
+
+        let thumbnailStartedAt = Date()
+        let thumbnailResult: LocalThumbnailLoadResult
+        do {
+            thumbnailResult = try await localThumbnail(for: asset)
+        } catch is CancellationError {
+            processingOutcome = "cancelled"
+            if tracesLargePhoto {
+                logLargePhotoThumbnailResolved(
+                    assetHash: assetHash,
+                    sourcePixels: sourcePixels,
+                    outputPixels: resolvedOutputPixels,
+                    decodedBytesEstimate: resolvedDecodedBytes,
+                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
+                    outcome: "cancelled"
+                )
+            }
+            throw CancellationError()
+        } catch {
+            processingOutcome = "thumbnailError"
+            if tracesLargePhoto {
+                logLargePhotoThumbnailResolved(
+                    assetHash: assetHash,
+                    sourcePixels: sourcePixels,
+                    outputPixels: resolvedOutputPixels,
+                    decodedBytesEstimate: resolvedDecodedBytes,
+                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
+                    outcome: "error"
+                )
+            }
+            throw error
+        }
+
         let image: UIImage
         switch thumbnailResult {
         case .image(let loadedImage):
             image = loadedImage
+            let width = loadedImage.cgImage?.width
+                ?? Int((loadedImage.size.width * loadedImage.scale).rounded())
+            let height = loadedImage.cgImage?.height
+                ?? Int((loadedImage.size.height * loadedImage.scale).rounded())
+            resolvedOutputPixels = "\(width)x\(height)"
+            resolvedDecodedBytes = width * height * 4
+            if tracesLargePhoto {
+                logLargePhotoThumbnailResolved(
+                    assetHash: assetHash,
+                    sourcePixels: sourcePixels,
+                    outputPixels: resolvedOutputPixels,
+                    decodedBytesEstimate: resolvedDecodedBytes,
+                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
+                    outcome: "loaded"
+                )
+            }
         case .unavailableLocally:
+            processingOutcome = AssetAnalysisStatus.unavailableLocally.rawValue
+            if tracesLargePhoto {
+                logLargePhotoThumbnailResolved(
+                    assetHash: assetHash,
+                    sourcePixels: sourcePixels,
+                    outputPixels: resolvedOutputPixels,
+                    decodedBytesEstimate: resolvedDecodedBytes,
+                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
+                    outcome: AssetAnalysisStatus.unavailableLocally.rawValue
+                )
+            }
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -486,6 +587,17 @@ actor PhotoLibraryScanner {
                 analysisFingerprint: settings.analysisFingerprint
             ).preservingUserState(from: previous)
         case .failed:
+            processingOutcome = AssetAnalysisStatus.failed.rawValue
+            if tracesLargePhoto {
+                logLargePhotoThumbnailResolved(
+                    assetHash: assetHash,
+                    sourcePixels: sourcePixels,
+                    outputPixels: resolvedOutputPixels,
+                    decodedBytesEstimate: resolvedDecodedBytes,
+                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
+                    outcome: AssetAnalysisStatus.failed.rawValue
+                )
+            }
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -499,6 +611,7 @@ actor PhotoLibraryScanner {
         }
 
         guard let cgImage = image.cgImage else {
+            processingOutcome = AssetAnalysisStatus.failed.rawValue
             SharedLog.app.warning(
                 "image-load",
                 "Photo thumbnail had no CGImage backing",
@@ -554,6 +667,7 @@ actor PhotoLibraryScanner {
             guard !cats.isEmpty,
                   !union.isNull,
                   catAreaRatio >= settings.minimumCatAreaRatio else {
+                processingOutcome = AssetAnalysisStatus.noCat.rawValue
                 return AssetRecord(
                     localIdentifier: asset.localIdentifier,
                     creationDate: asset.creationDate,
@@ -574,6 +688,7 @@ actor PhotoLibraryScanner {
                 areaRatio: catAreaRatio,
                 catCount: cats.count
             )
+            processingOutcome = AssetAnalysisStatus.detected.rawValue
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -585,8 +700,10 @@ actor PhotoLibraryScanner {
                 analysisFingerprint: settings.analysisFingerprint
             ).preservingUserState(from: previous)
         } catch is CancellationError {
+            processingOutcome = "cancelled"
             throw CancellationError()
         } catch {
+            processingOutcome = AssetAnalysisStatus.failed.rawValue
             let value = error as NSError
             SharedLog.app.error(
                 "vision",
@@ -609,6 +726,31 @@ actor PhotoLibraryScanner {
         }
     }
 
+    private static let largePhotoTraceMinimumPixelCount: Int64 = 40_000_000
+
+    private static func logLargePhotoThumbnailResolved(
+        assetHash: String,
+        sourcePixels: String,
+        outputPixels: String,
+        decodedBytesEstimate: Int,
+        durationMilliseconds: Double,
+        outcome: String
+    ) {
+        SharedLog.app.info(
+            "image-load",
+            "Large photo thumbnail resolved",
+            metadata: [
+                "asset": assetHash,
+                "decodedBytesEstimate": "\(decodedBytesEstimate)",
+                "durationMs": String(format: "%.1f", durationMilliseconds),
+                "outcome": outcome,
+                "outputPixels": outputPixels,
+                "sourcePixels": sourcePixels,
+                "targetPixels": "1024x1024"
+            ]
+        )
+    }
+
     private static func localThumbnail(
         for asset: PHAsset
     ) async throws -> LocalThumbnailLoadResult {
@@ -623,17 +765,43 @@ actor PhotoLibraryScanner {
         options.isNetworkAccessAllowed = false
         options.isSynchronous = false
 
-        let request = LocalThumbnailRequest(
-            asset: asset,
-            options: options,
-            timeoutNanoseconds: 5_000_000_000
-        )
-        let outcome = await withTaskCancellationHandler {
-            await request.value()
-        } onCancel: {
-            request.cancel()
+        #if targetEnvironment(simulator)
+        // simctl can publish PHAsset metadata shortly before the imported
+        // resource becomes readable. The scale job must keep one app PID, so
+        // retry only under its explicit DEBUG launch argument rather than
+        // terminating and relaunching the app between attempts.
+        let maximumAttempts = ProcessInfo.processInfo.arguments.contains(
+            "--neko-simulator-scale"
+        ) ? 4 : 1
+        #else
+        let maximumAttempts = 1
+        #endif
+        var resolvedOutcome: LocalThumbnailRequestOutcome?
+        for attempt in 1...maximumAttempts {
+            let request = LocalThumbnailRequest(
+                asset: asset,
+                options: options,
+                timeoutNanoseconds: 5_000_000_000
+            )
+            let outcome = await withTaskCancellationHandler {
+                await request.value()
+            } onCancel: {
+                request.cancel()
+            }
+            try Task.checkCancellation()
+            resolvedOutcome = outcome
+
+            if outcome.image != nil
+                || outcome.isInCloud
+                || outcome.wasCancelled
+                || attempt == maximumAttempts {
+                break
+            }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        try Task.checkCancellation()
+        guard let outcome = resolvedOutcome else {
+            return .failed
+        }
 
         if let output = outcome.image {
             if thumbnailLogSampler.takeSuccess() {

@@ -5,10 +5,29 @@ set -Eeuo pipefail
 PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE_DIRECTORY="$PROJECT_DIRECTORY/ci/fixtures/cats"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-simulator-smoke.py"
-ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-smoke-artifacts"
-DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSmokeDerivedData"
-RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetSimulator.xcresult"
-PERMISSION_RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetPhotoPermission.xcresult"
+SIMULATOR_TEST_MODE="${SIMULATOR_TEST_MODE:-smoke}"
+case "$SIMULATOR_TEST_MODE" in
+    smoke)
+        ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-smoke-artifacts"
+        DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSmokeDerivedData"
+        RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetSimulator.xcresult"
+        PERMISSION_RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetPhotoPermission.xcresult"
+        HARNESS_LOG_FILENAME="smoke-test.log"
+        HARNESS_EXIT_FILENAME="smoke-exit-code.txt"
+        ;;
+    scale)
+        ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-scale-artifacts"
+        DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetScaleDerivedData"
+        RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetScaleSimulator.xcresult"
+        PERMISSION_RESULT_BUNDLE="$ARTIFACT_DIRECTORY/NekoWidgetScalePhotoPermission.xcresult"
+        HARNESS_LOG_FILENAME="scale-test.log"
+        HARNESS_EXIT_FILENAME="scale-exit-code.txt"
+        ;;
+    *)
+        echo "Unsupported SIMULATOR_TEST_MODE: $SIMULATOR_TEST_MODE" >&2
+        exit 2
+        ;;
+esac
 TARGET_SIMULATOR_RUNTIME="${SMOKE_IOS_RUNTIME:-com.apple.CoreSimulator.SimRuntime.iOS-18-6}"
 
 SIMULATOR_UDID=""
@@ -21,9 +40,11 @@ APP_PID=""
 APP_GROUP_CONTAINER=""
 SCREENSHOT_CAPTURED="false"
 PERMISSION_TEST_STATUS=0
+MEMORY_SAMPLER_PID=""
+MEMORY_SAMPLER_STOP_FILE=""
 
 mkdir -p "$ARTIFACT_DIRECTORY"
-exec > >(tee -a "$ARTIFACT_DIRECTORY/smoke-test.log") 2>&1
+exec > >(tee -a "$ARTIFACT_DIRECTORY/$HARNESS_LOG_FILENAME") 2>&1
 
 resolve_group_container() {
     local direct_path=""
@@ -331,10 +352,65 @@ collect_and_cleanup() {
     local original_status=$?
     local recovered_group=""
     local crash_report=""
+    local sampler_status=0
+    local scale_crash_root=""
+    local scale_log_start=""
+    local -a scale_log_time_args=()
 
     trap - EXIT
     set +e
-    printf '%s\n' "$original_status" > "$ARTIFACT_DIRECTORY/smoke-exit-code.txt"
+
+    # Setup/compiler/import failures can occur before the full scale validator
+    # is reachable. Always leave a machine-readable failed report and summary
+    # so an artifact never consists only of a shell exit code.
+    if [[ "$SIMULATOR_TEST_MODE" == "scale" \
+        && ! -f "$ARTIFACT_DIRECTORY/scale-report.json" ]]; then
+        if (( original_status == 0 )); then
+            original_status=1
+        fi
+        python3 - "$ARTIFACT_DIRECTORY" "$original_status" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+artifact = Path(sys.argv[1])
+status = int(sys.argv[2])
+failure = f"scale phase exited before validation (exit code {status})"
+report = {
+    "schemaVersion": 1,
+    "status": "fail",
+    "failures": [failure],
+    "fatalPhaseExitCode": status,
+    "environment": {
+        "measurementTarget": "iOS Simulator app process on macOS host",
+        "deviceJetsamEnforced": False,
+        "limitation": "Simulator results are not proof of real-device jetsam safety",
+    },
+}
+(artifact / "scale-report.json").write_text(
+    json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+(artifact / "scale-summary.md").write_text(
+    "## iOS Simulator scale test\n\n"
+    "**Result: FAIL**\n\n"
+    f"- {failure}\n\n"
+    "> Simulator does not enforce iPhone memory-warning or jetsam limits.\n",
+    encoding="utf-8",
+)
+PY
+    fi
+    printf '%s\n' "$original_status" > "$ARTIFACT_DIRECTORY/$HARNESS_EXIT_FILENAME"
+
+    if [[ -n "${MEMORY_SAMPLER_PID:-}" ]]; then
+        if [[ -n "${MEMORY_SAMPLER_STOP_FILE:-}" ]]; then
+            touch "$MEMORY_SAMPLER_STOP_FILE"
+        fi
+        wait "$MEMORY_SAMPLER_PID"
+        sampler_status=$?
+        printf '%s\n' "$sampler_status" \
+            > "$ARTIFACT_DIRECTORY/memory-sampler-exit-code.txt"
+        MEMORY_SAMPLER_PID=""
+    fi
 
     capture_screenshot
 
@@ -343,11 +419,32 @@ collect_and_cleanup() {
             > "$ARTIFACT_DIRECTORY/installed-apps.txt" 2>&1
 
         if [[ -n "${APP_BUNDLE_ID:-}" ]]; then
-            xcrun simctl spawn "$SIMULATOR_UDID" log show \
-                --style compact \
-                --last 10m \
-                --predicate "process == 'NekoWidget' OR process == 'NekoWidgetWidgetExtension' OR subsystem == '$APP_BUNDLE_ID' OR subsystem == '$WIDGET_BUNDLE_ID'" \
-                > "$ARTIFACT_DIRECTORY/simulator-unified.log" 2>&1
+            if [[ "$SIMULATOR_TEST_MODE" == "scale" ]]; then
+                if [[ -f "$ARTIFACT_DIRECTORY/scale-log-start.txt" ]]; then
+                    scale_log_start="$(cat "$ARTIFACT_DIRECTORY/scale-log-start.txt")"
+                fi
+                if [[ -n "$scale_log_start" ]]; then
+                    scale_log_time_args=(--start "$scale_log_start")
+                else
+                    scale_log_time_args=(--last 10m)
+                fi
+                xcrun simctl spawn "$SIMULATOR_UDID" log show \
+                    --style compact \
+                    "${scale_log_time_args[@]}" \
+                    --predicate "process == 'NekoWidget' OR process == 'NekoWidgetWidgetExtension' OR subsystem == '$APP_BUNDLE_ID' OR subsystem == '$WIDGET_BUNDLE_ID'" \
+                    > "$ARTIFACT_DIRECTORY/simulator-unified.log" 2>&1
+                xcrun simctl spawn "$SIMULATOR_UDID" log show \
+                    --style compact \
+                    "${scale_log_time_args[@]}" \
+                    --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus" OR eventMessage CONTAINS[c] "memory pressure"' \
+                    > "$ARTIFACT_DIRECTORY/simulator-memory-termination.log" 2>&1
+            else
+                xcrun simctl spawn "$SIMULATOR_UDID" log show \
+                    --style compact \
+                    --last 10m \
+                    --predicate "process == 'NekoWidget' OR process == 'NekoWidgetWidgetExtension' OR subsystem == '$APP_BUNDLE_ID' OR subsystem == '$WIDGET_BUNDLE_ID'" \
+                    > "$ARTIFACT_DIRECTORY/simulator-unified.log" 2>&1
+            fi
         fi
 
         recovered_group="$(resolve_group_container || true)"
@@ -382,6 +479,26 @@ collect_and_cleanup() {
             \( -name 'NekoWidget*.crash' -o -name 'NekoWidget*.ips' \) \
             -mmin -15 2>/dev/null || true
     )
+
+    if [[ "$SIMULATOR_TEST_MODE" == "scale" \
+        && -f "$ARTIFACT_DIRECTORY/scale-start.marker" ]]; then
+        for scale_crash_root in \
+            "$HOME/Library/Logs/DiagnosticReports" \
+            "$HOME/Library/Developer/CoreSimulator/Devices/$SIMULATOR_UDID/data/Library/Logs/CrashReporter" \
+            "$HOME/Library/Developer/CoreSimulator/Devices/$SIMULATOR_UDID/data/Library/Logs/DiagnosticReports"; do
+            [[ -d "$scale_crash_root" ]] || continue
+            while IFS= read -r crash_report; do
+                cp "$crash_report" "$ARTIFACT_DIRECTORY/crash-reports/" 2>/dev/null || true
+            done < <(
+                find "$scale_crash_root" -type f \
+                    \( -name 'NekoWidget*.crash' \
+                    -o -name 'NekoWidget*.ips' \
+                    -o -name 'JetsamEvent*.ips' \) \
+                    -newer "$ARTIFACT_DIRECTORY/scale-start.marker" \
+                    2>/dev/null || true
+            )
+        done
+    fi
 
     if [[ -n "${SIMULATOR_UDID:-}" ]]; then
         if [[ -n "${APP_BUNDLE_ID:-}" ]]; then
@@ -616,6 +733,17 @@ BASELINE_SNAPSHOT="$ARTIFACT_DIRECTORY/permission-bootstrap-app-group/library-sn
 if [[ ! -f "$BASELINE_SNAPSHOT" ]]; then
     echo "The permission bootstrap baseline snapshot was not archived." >&2
     exit 1
+fi
+
+if [[ "$SIMULATOR_TEST_MODE" == "scale" ]]; then
+    # The expensive phase deliberately reuses the exact green build, App Group
+    # and UI-driven Photos permission bootstrap above. Keeping this hook after
+    # the archived baseline lets the normal smoke path below remain unchanged.
+    # shellcheck source=run-simulator-scale-phase.sh
+    source "$PROJECT_DIRECTORY/ci/run-simulator-scale-phase.sh"
+    run_simulator_scale_phase "$BASELINE_SNAPSHOT"
+    printf 'Simulator scale test passed at %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    exit 0
 fi
 
 shopt -s nullglob

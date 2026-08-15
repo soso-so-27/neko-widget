@@ -39,6 +39,14 @@ push / pull requestでは`iOS build check`を実行します。最初のジョ�
 
 TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使い、archive、IPA export、App Store Connectでの検証とアップロードを行います。
 
+### Simulatorスケールテスト
+
+`iOS Simulator scale test`はGitHub Actionsの手動実行専用です。Actionsタブでこのworkflowを選び、`Run workflow`から写真数1,000（既定）、2,000、3,000のいずれかを選びます。CI中に既存のCC0猫画像3枚から、ファイル名と実画素が異なるJPEGを一時生成します。合計枚数には8000×6000px（48MP）の画像3枚を含みます。生成JPEGはrunnerの一時領域だけに置き、Gitやartifactには保存しません。代わりに各画像のSHA-256、寸法、容量、役割、CC0系譜をmanifestへ記録します。
+
+権限付与とbaseline保存後、全画像を`simctl addmedia`で投入し、測定中はアプリを同一PIDで一度だけ起動します。最終snapshotの`completed / final`、投入枚数と解析結果、起動から完了までとスキャン自体の所要時間、プロセスの現在physical footprint／生涯ピーク／RSSを検証します。48MP画像の開始・サムネイル解決・完了ログと100ms間隔のメモリCSVを時刻で突き合わせ、大画像区間の増分も判定します。既定の退行検出閾値は生涯ピーク512MiB、48MP区間の生涯ピーク増分128MiBです。途中終了、PID再利用、閾値超過、クラッシュや`JetsamEvent` / `EXC_RESOURCE`の候補があれば失敗し、詳細を`scale-report.json`とartifactへ残します。
+
+SimulatorではiPhoneのメモリ警告やOOM終了が再現されないため、この合格は実機jetsamに対する安全証明ではありません。ここで防ぐのは、スキャンの未完了、明白なプロセス終了、物理メモリの退行、48MP画像の全解像度デコード相当のスパイクです。Appleも、SimulatorではmacOSがメモリ警告やOOM終了を発行せず、緑表示でも実機の安全範囲とは限らないと説明しています。実機では[Xcodeのメモリ計測](https://developer.apple.com/documentation/xcode/gathering-information-about-memory-use)とjetsamレポートで最終確認します。
+
 App Store Connect APIキーはアップロード認証用です。コード署名には別途、Apple Distribution証明書の秘密鍵を含むP12と、アプリ／Widgetそれぞれの配布プロファイルが必要です。必要なGitHub Environment、Secrets、作成手順は[GitHub Actions / TestFlight設定](docs/GitHub-Actions-TestFlight設定.md)を参照してください。
 
 ## 診断ログ

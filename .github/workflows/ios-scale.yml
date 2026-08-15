@@ -1,0 +1,53 @@
+name: iOS Simulator scale test
+
+on:
+  workflow_dispatch:
+    inputs:
+      photo_count:
+        description: Number of generated photos to import and scan
+        required: true
+        default: "1000"
+        type: choice
+        options:
+          - "1000"
+          - "2000"
+          - "3000"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-scale-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  simulator-scale-test:
+    name: Scan ${{ inputs.photo_count }} photos in Simulator
+    runs-on: macos-15
+    timeout-minutes: 360
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      SMOKE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-18-6
+      SIMULATOR_TEST_MODE: scale
+      SCALE_PHOTO_COUNT: ${{ inputs.photo_count }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run Simulator scale test
+        working-directory: NekoWidget
+        shell: bash
+        timeout-minutes: 350
+        run: bash ci/run-simulator-smoke.sh
+
+      - name: Upload Simulator scale-test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-simulator-scale-${{ inputs.photo_count }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-scale-artifacts
+          if-no-files-found: warn
+          retention-days: 7
