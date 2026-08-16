@@ -12,17 +12,17 @@ TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレー�
 
 1,000枚スケールテストでは全件確定まで123.595秒、約8.1枚／秒でした。実ライブラリでは数十分かかる可能性を認識したうえで、速報値と確定値の分離を維持し、実機実測まで速度最適化を保留します。判断の記録は[ADR-002](docs/ADR-002-全件スキャン速度と最適化保留.md)にあります。
 
-## 仮の識別子
+## 登録済み識別子
 
-`Config.xcconfig`には次の仮値があります。
+`Config.xcconfig`にはApple Developer Portalへ登録済みの次の値があります。
 
-| 用途 | 変数 | 仮値 |
+| 用途 | 変数 | 登録済みの値 |
 | --- | --- | --- |
-| アプリ | `APP_BUNDLE_IDENTIFIER` | `com.example.nekowidget` |
-| Widget Extension | `WIDGET_BUNDLE_IDENTIFIER` | `com.example.nekowidget.widget` |
-| 共有コンテナ | `APP_GROUP_IDENTIFIER` | `group.com.example.nekowidget` |
+| アプリ | `APP_BUNDLE_IDENTIFIER` | `jp.nekowidget.app` |
+| Widget Extension | `WIDGET_BUNDLE_IDENTIFIER` | `jp.nekowidget.app.widget` |
+| 共有コンテナ | `APP_GROUP_IDENTIFIER` | `group.jp.nekowidget.app` |
 
-Portalで登録に成功した後、3つとも同じ変更で実値へ置き換えます。WidgetのBundle IDはアプリのBundle IDに`.widget`などの接尾辞を付けた値にし、App Groupは先頭の`group.`を維持してください。命名と登録の順序は[TestFlight準備手順](docs/Apple-Developer署名準備.md)を参照してください。
+識別子を変更する場合は、Developer Portal、配布プロファイル、`Config.xcconfig`を同時に更新してください。命名と登録の記録は[TestFlight準備手順](docs/Apple-Developer署名準備.md)を参照してください。
 
 ## Mac / Xcodeでの設定
 

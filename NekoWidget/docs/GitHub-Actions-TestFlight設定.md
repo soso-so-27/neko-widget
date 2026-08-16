@@ -37,7 +37,7 @@ WindowsとOpenSSLで秘密鍵、CSR、P12を作る具体的な手順、ID決定�
 5. アプリとWidgetそれぞれに`App Store Connect`配布プロファイルを作る。両方で手順3のApp Groupが有効であり、手順4の証明書が含まれることを確認する。
 6. App Store Connectにアプリレコードを作る。アップロードするBundle IDと一致させる。
 7. App Store Connectの「ユーザとアクセス」>「統合」で、アップロード権限を持つteam API keyを作る。Key ID、Issuer ID、1度だけダウンロードできる`.p8`を安全に保管する。
-8. `Config.xcconfig`の3つの仮IDを登録済みの実値に変える。
+8. `Config.xcconfig`の3つのIDがPortalの登録値と完全一致していることを確認する。
 
 API keyにはbuild upload可能なroleが必要である。本プロジェクトでは最小権限としてTeam Keyの`Developer` roleを使う。Team Keyは特定アプリだけに限定できない。契約が未承認、アプリレコードが未作成、Bundle IDが不一致、または同じbuild numberがすでに存在する場合、署名が成功してもアップロードは失敗する。
 
