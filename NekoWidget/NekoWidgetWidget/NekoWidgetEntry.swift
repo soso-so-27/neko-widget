@@ -8,9 +8,20 @@ struct NekoWidgetEntry: TimelineEntry {
     let date: Date
     let localIdentifier: String?
     let cacheFilename: String?
+    let imageVariant: WidgetImageVariant?
+    let usesFamilySpecificImage: Bool
 
-    static func empty(at date: Date) -> NekoWidgetEntry {
-        NekoWidgetEntry(date: date, localIdentifier: nil, cacheFilename: nil)
+    static func empty(
+        at date: Date,
+        imageVariant: WidgetImageVariant? = nil
+    ) -> NekoWidgetEntry {
+        NekoWidgetEntry(
+            date: date,
+            localIdentifier: nil,
+            cacheFilename: nil,
+            imageVariant: imageVariant,
+            usesFamilySpecificImage: false
+        )
     }
 
     var photoURL: URL? {

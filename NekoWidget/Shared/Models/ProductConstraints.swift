@@ -7,9 +7,10 @@ enum ProductConstraints {
     /// primary continuously-changing display surface in v1.
     static let photoShuffleFollowsAlbumChanges = false
 
-    /// Cat-aware crops are generated only for this app and its widget. Public
-    /// PhotoKit APIs cannot provide those derived crops to system wallpaper.
-    static let catAwareCropDestinations = "app-and-widget-only"
+    /// Cat-aware crops are generated for the app UI only. Build 5 widgets use
+    /// full-photo foregrounds over blurred-photo backgrounds instead. Public
+    /// PhotoKit APIs cannot provide either derived view to system wallpaper.
+    static let catAwareCropDestinations = "app-only"
 
     /// iOS decides whether background work runs. Foreground/activation sync is
     /// the only reliable refresh point in v1.

@@ -120,7 +120,7 @@ Simulatorの1,000枚スケールテストでは、アプリ起動から全件確
 
 1. アプリでスキャンとキャッシュ生成を完了させる。
 2. ホーム画面を長押しし、Small、Medium、Largeのウィジェットを1つずつ追加する。
-3. 3サイズすべてで写真が表示され、猫中心のクロップになり、レイアウトの欠けや文字切れがないことを確認する。
+3. 3サイズすべてで専用画像が表示され、鮮明な元写真全体と同じ写真のぼかし背景が見え、黒帯、二重クロップ、レイアウト欠けがないことを確認する。
 4. 写真なし、manifestなし、壊れたキャッシュまたは参照先削除の各状態で、プレースホルダーまたは空表示へ安全にフォールバックすることを確認する。
 5. アプリで選別結果を更新し、Widgetが更新後のApp Group内manifestと画像を読めることを確認する。
 
@@ -160,7 +160,7 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 ## 10. Widgetのメモリ
 
 1. 高解像度の原写真を含む状態で、本体アプリにWidgetキャッシュを作らせる。
-2. App Groupコンテナを確認し、派生JPEGが400×400px、目安50KB以下であること、manifestが画像ファイル名を参照していることを確認する。
+2. App Groupコンテナを確認し、派生JPEGがSmall 400×400px、Medium 800×374px、Large 400×420pxで各50KiB以下であること、manifestが3サイズの画像ファイル名を参照していることを確認する。
 3. Widgetを表示し、XcodeのDebug > Attach to Process by PID or NameからWidget ExtensionプロセスへAttachする。
 4. Debug NavigatorのMemoryを記録し、Small / Medium / Largeの追加、timeline更新、アプリ側のデータ更新を繰り返す。
 5. メモリがおおむね30MBの制約内に収まり、継続増加、Jetsam、クラッシュがないことを確認する。判断が難しい場合はInstrumentsのAllocationsで再試験する。
@@ -202,7 +202,7 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 - [ ] WidgetのSmall / Medium / Largeが表示された
 - [ ] 15〜20件、既定20分間隔のtimelineを確認した
 - [ ] Widgetから正しい写真へDeep Linkできた
-- [ ] 400×400px、目安50KB以下のキャッシュを確認した
+- [ ] Small 400×400px、Medium 800×374px、Large 400×420pxで各50KiB以下のキャッシュを確認した
 - [ ] Widgetのメモリ急増とクラッシュがなかった
 - [ ] App Group共有と「これ好き」の永続化を確認した
 - [ ] AppとWidgetの診断ログを統合表示、コピー、共有、消去できた

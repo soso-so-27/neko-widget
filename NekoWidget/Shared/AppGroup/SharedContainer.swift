@@ -28,8 +28,27 @@ enum SharedContainer {
         containerURL?.appendingPathComponent("widget-manifest.json", isDirectory: false)
     }
 
-    static var widgetTimelineLeaseURL: URL? {
+    /// Build 4 used one global lease. Keep reading it during migration so a
+    /// timeline created by the older extension cannot lose its cache files.
+    static var legacyWidgetTimelineLeaseURL: URL? {
         containerURL?.appendingPathComponent("widget-timeline-lease.json", isDirectory: false)
+    }
+
+    static func widgetTimelineLeaseURL(for variant: WidgetImageVariant) -> URL? {
+        containerURL?.appendingPathComponent(
+            "widget-timeline-lease-\(variant.rawValue).json",
+            isDirectory: false
+        )
+    }
+
+    static var allWidgetTimelineLeaseURLs: [URL] {
+        let familyURLs = WidgetImageVariant.allCases.compactMap {
+            widgetTimelineLeaseURL(for: $0)
+        }
+        if let legacyWidgetTimelineLeaseURL {
+            return familyURLs + [legacyWidgetTimelineLeaseURL]
+        }
+        return familyURLs
     }
 
     static var widgetCacheDirectoryURL: URL? {

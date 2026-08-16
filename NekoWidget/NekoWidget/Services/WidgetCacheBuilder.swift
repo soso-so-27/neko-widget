@@ -1,4 +1,5 @@
 import CryptoKit
+import CoreImage
 import Foundation
 import UIKit
 
@@ -20,9 +21,33 @@ private struct WidgetCacheHistory: Codable, Sendable {
 
 actor WidgetCacheBuilder {
     private static let historyFilename = "widget-cache-history.json"
-    private static let cropAlgorithmVersion = "cat-square-v2"
+    private static let compositionAlgorithmVersion = "cat-family-blur-v3"
     private static let maximumGenerationCount = 24
     private static let maximumCachedFileCount = 480
+    private static let targetJPEGByteCount = 50 * 1_024
+
+    private struct RenderSpec: Sendable {
+        var variant: WidgetImageVariant
+        var size: CGSize
+
+        static let all: [RenderSpec] = WidgetImageVariant.allCases.map { variant in
+            RenderSpec(
+                variant: variant,
+                size: CGSize(
+                    width: CGFloat(variant.pixelWidth),
+                    height: CGFloat(variant.pixelHeight)
+                )
+            )
+        }
+
+        static func spec(for variant: WidgetImageVariant) -> RenderSpec {
+            all.first(where: { $0.variant == variant })!
+        }
+
+        var pixelDescription: String {
+            variant.pixelDescription
+        }
+    }
 
     private let imageLoader: PhotoImageLoader
     private let selector: WeightedPhotoSelector
@@ -52,11 +77,13 @@ actor WidgetCacheBuilder {
             "widget-cache",
             "Widget cache build started",
             metadata: [
+                "algorithm": Self.compositionAlgorithmVersion,
                 "candidates": "\(candidates.count)",
                 "entryTarget": "\(settings.widgetEntryCount)",
                 "imageRequestPixels": "900x900",
                 "networkAllowed": "false",
-                "outputPixels": "400x400"
+                "outputPixels": Self.outputPixelDescription,
+                "targetBytesEach": "\(Self.targetJPEGByteCount)"
             ]
         )
         guard !candidates.isEmpty else {
@@ -70,7 +97,11 @@ actor WidgetCacheBuilder {
             withIntermediateDirectories: true
         )
 
-        var available: [(record: AssetRecord, filename: String, byteCount: Int)] = []
+        var available: [(
+            record: AssetRecord,
+            filenames: WidgetCacheFilenames,
+            byteCounts: [WidgetImageVariant: Int]
+        )] = []
         var generatedFileCount = 0
         var reusedFileCount = 0
         var unavailableAssetCount = 0
@@ -78,12 +109,19 @@ actor WidgetCacheBuilder {
         var inputPixelHeights: [Int] = []
         for record in candidates {
             try Task.checkCancellation()
-            let filename = Self.cacheFilename(for: record)
-            let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+            let filenames = Self.cacheFilenames(for: record)
+            let missingSpecs = Self.RenderSpec.all.filter { spec in
+                let filename = filenames.filename(for: spec.variant)
+                let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+                return !FileManager.default.fileExists(atPath: fileURL.path)
+            }
 
-            let byteCount: Int
-            if !FileManager.default.fileExists(atPath: fileURL.path) {
-                let output: (data: Data, width: Int, height: Int)? = autoreleasepool {
+            if !missingSpecs.isEmpty {
+                let output: (
+                    files: [(variant: WidgetImageVariant, data: Data)],
+                    width: Int,
+                    height: Int
+                )? = autoreleasepool {
                     guard let image = imageLoader.image(
                         localIdentifier: record.localIdentifier,
                         targetSize: CGSize(width: 900, height: 900),
@@ -92,15 +130,26 @@ actor WidgetCacheBuilder {
                     ) else {
                         return nil
                     }
-                    guard let data = Self.widgetJPEG(
-                        image: image,
-                        catBox: record.cat.boundingBox
-                    ) else {
-                        return nil
+
+                    let normalized = Self.normalizedImage(image)
+                    let ciContext = Self.makeCIContext()
+                    var files: [(variant: WidgetImageVariant, data: Data)] = []
+                    for spec in missingSpecs {
+                        let data: Data? = autoreleasepool {
+                            Self.widgetJPEG(
+                                normalizedImage: normalized,
+                                spec: spec,
+                                ciContext: ciContext
+                            )
+                        }
+                        guard let data else {
+                            return nil
+                        }
+                        files.append((spec.variant, data))
                     }
                     let width = image.cgImage?.width ?? Int(image.size.width * image.scale)
                     let height = image.cgImage?.height ?? Int(image.size.height * image.scale)
-                    return (data, width, height)
+                    return (files, width, height)
                 }
                 guard let output else {
                     // The asset may have moved to iCloud since it was analyzed.
@@ -109,25 +158,45 @@ actor WidgetCacheBuilder {
                     continue
                 }
 
-                try output.data.write(to: fileURL, options: .atomic)
-                try? FileManager.default.setAttributes(
-                    [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                    ofItemAtPath: fileURL.path
-                )
-                byteCount = output.data.count
-                generatedFileCount += 1
+                for file in output.files {
+                    let filename = filenames.filename(for: file.variant)
+                    let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+                    try file.data.write(to: fileURL, options: .atomic)
+                    try? FileManager.default.setAttributes(
+                        [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                        ofItemAtPath: fileURL.path
+                    )
+                }
                 inputPixelWidths.append(output.width)
                 inputPixelHeights.append(output.height)
-            } else {
-                guard let existingByteCount = Self.byteCount(of: fileURL) else {
-                    unavailableAssetCount += 1
-                    continue
-                }
-                byteCount = existingByteCount
-                reusedFileCount += 1
             }
 
-            available.append((record, filename, byteCount))
+            var byteCounts: [WidgetImageVariant: Int] = [:]
+            var filesAreAvailable = true
+            for spec in Self.RenderSpec.all {
+                let filename = filenames.filename(for: spec.variant)
+                let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+                guard let existingByteCount = Self.byteCount(of: fileURL),
+                      existingByteCount > 0,
+                      existingByteCount <= Self.targetJPEGByteCount else {
+                    filesAreAvailable = false
+                    break
+                }
+                byteCounts[spec.variant] = existingByteCount
+            }
+            guard filesAreAvailable, byteCounts.count == Self.RenderSpec.all.count else {
+                for filename in filenames.all {
+                    try? FileManager.default.removeItem(
+                        at: cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+                    )
+                }
+                unavailableAssetCount += 1
+                continue
+            }
+
+            generatedFileCount += missingSpecs.count
+            reusedFileCount += Self.RenderSpec.all.count - missingSpecs.count
+            available.append((record, filenames, byteCounts))
             if available.count == settings.widgetEntryCount { break }
         }
 
@@ -148,7 +217,8 @@ actor WidgetCacheBuilder {
             let item = available[offset % available.count]
             return WidgetManifestItem(
                 localIdentifier: item.record.localIdentifier,
-                cacheFilename: item.filename,
+                cacheFilename: item.filenames.small,
+                cacheFilenames: item.filenames,
                 scheduledDate: now.addingTimeInterval(
                     TimeInterval(offset * settings.widgetEntryIntervalMinutes * 60)
                 )
@@ -164,37 +234,47 @@ actor WidgetCacheBuilder {
         // Finish every JPEG and protect both new and currently published files
         // before atomically replacing the manifest. This actor performs no await
         // while building, so build/clear cannot interleave through reentrancy.
-        let timelineLease: WidgetTimelineLease?
-        if let leaseURL = SharedContainer.widgetTimelineLeaseURL {
-            timelineLease = try? AtomicJSON.read(WidgetTimelineLease.self, from: leaseURL)
-        } else {
-            timelineLease = nil
+        let timelineLeases = SharedContainer.allWidgetTimelineLeaseURLs.compactMap {
+            try? AtomicJSON.read(WidgetTimelineLease.self, from: $0)
         }
         try Task.checkCancellation()
         try updateHistoryAndRemoveStaleFiles(
             newManifest: manifest,
             activeManifest: try? AtomicJSON.read(WidgetManifest.self, from: manifestURL),
-            timelineLease: timelineLease,
+            timelineLeases: timelineLeases,
             historyURL: historyURL,
             cacheDirectory: cacheDirectory
         )
         try AtomicJSON.write(manifest, to: manifestURL)
 
-        let cachedByteCounts = available.map(\.byteCount)
+        let cachedByteCounts = available.flatMap { $0.byteCounts.values }
+        let bytesByVariant = Dictionary(uniqueKeysWithValues: Self.RenderSpec.all.map { spec in
+            let values = available.compactMap { $0.byteCounts[spec.variant] }
+            return (
+                "cacheBytes\(spec.variant.rawValue.capitalized)",
+                "\(values.min() ?? 0)-\(values.max() ?? 0)"
+            )
+        })
+        var completionMetadata: [String: String] = [
+            "algorithm": Self.compositionAlgorithmVersion,
+            "cacheBytesMax": "\(cachedByteCounts.max() ?? 0)",
+            "cacheBytesMin": "\(cachedByteCounts.min() ?? 0)",
+            "cacheBytesTotal": "\(cachedByteCounts.reduce(0, +))",
+            "entries": "\(items.count)",
+            "generatedFiles": "\(generatedFileCount)",
+            "inputPixelsMax": Self.pixelRange(widths: inputPixelWidths, heights: inputPixelHeights),
+            "outputPixels": Self.outputPixelDescription,
+            "reusedFiles": "\(reusedFileCount)",
+            "targetBytesEach": "\(Self.targetJPEGByteCount)",
+            "unavailable": "\(unavailableAssetCount)",
+            "uniqueAssets": "\(available.count)",
+            "uniqueFiles": "\(available.count * Self.RenderSpec.all.count)"
+        ]
+        completionMetadata.merge(bytesByVariant) { current, _ in current }
         SharedLog.app.info(
             "widget-cache",
             "Widget cache build completed",
-            metadata: [
-                "cacheBytesMax": "\(cachedByteCounts.max() ?? 0)",
-                "cacheBytesMin": "\(cachedByteCounts.min() ?? 0)",
-                "cacheBytesTotal": "\(cachedByteCounts.reduce(0, +))",
-                "entries": "\(items.count)",
-                "generatedFiles": "\(generatedFileCount)",
-                "inputPixelsMax": Self.pixelRange(widths: inputPixelWidths, heights: inputPixelHeights),
-                "reusedFiles": "\(reusedFileCount)",
-                "unavailable": "\(unavailableAssetCount)",
-                "uniqueFiles": "\(available.count)"
-            ]
+            metadata: completionMetadata
         )
 
         return WidgetCacheBuildResult(
@@ -217,7 +297,7 @@ actor WidgetCacheBuilder {
             isDirectory: false
         )
         try? FileManager.default.removeItem(at: historyURL)
-        if let leaseURL = SharedContainer.widgetTimelineLeaseURL {
+        for leaseURL in SharedContainer.allWidgetTimelineLeaseURLs {
             try? FileManager.default.removeItem(at: leaseURL)
         }
 
@@ -235,13 +315,13 @@ actor WidgetCacheBuilder {
     private func updateHistoryAndRemoveStaleFiles(
         newManifest: WidgetManifest,
         activeManifest: WidgetManifest?,
-        timelineLease: WidgetTimelineLease?,
+        timelineLeases: [WidgetTimelineLease],
         historyURL: URL,
         cacheDirectory: URL
     ) throws {
         let oldHistory = (try? AtomicJSON.read(WidgetCacheHistory.self, from: historyURL)) ?? .empty
         var proposed = [generation(for: newManifest)]
-        if let timelineLease {
+        for timelineLease in timelineLeases {
             proposed.append(
                 WidgetCacheGeneration(
                     generatedAt: timelineLease.recordedAt,
@@ -304,28 +384,32 @@ actor WidgetCacheBuilder {
     private func generation(for manifest: WidgetManifest) -> WidgetCacheGeneration {
         WidgetCacheGeneration(
             generatedAt: manifest.generatedAt,
-            filenames: manifest.items.map(\.cacheFilename)
+            filenames: manifest.items.flatMap(\.allCacheFilenames)
         )
     }
 
-    private static func cacheFilename(for record: AssetRecord) -> String {
-        let boxBits: String
-        if let box = record.cat.boundingBox {
-            boxBits = [box.x, box.y, box.width, box.height]
-                .map { String($0.bitPattern, radix: 16) }
-                .joined(separator: "-")
-        } else {
-            boxBits = "no-box"
-        }
+    private static func cacheFilenames(for record: AssetRecord) -> WidgetCacheFilenames {
+        WidgetCacheFilenames(
+            small: cacheFilename(for: record, variant: .small),
+            medium: cacheFilename(for: record, variant: .medium),
+            large: cacheFilename(for: record, variant: .large)
+        )
+    }
+
+    private static func cacheFilename(
+        for record: AssetRecord,
+        variant: WidgetImageVariant
+    ) -> String {
         let identity = [
-            cropAlgorithmVersion,
+            compositionAlgorithmVersion,
+            variant.rawValue,
+            RenderSpec.spec(for: variant).pixelDescription,
             record.localIdentifier,
-            record.analysisFingerprint,
-            boxBits
+            record.analysisFingerprint
         ].joined(separator: "|")
         let digest = SHA256.hash(data: Data(identity.utf8))
         let hexadecimal = digest.map { String(format: "%02x", $0) }.joined()
-        return "asset-\(hexadecimal).jpg"
+        return "asset-\(compositionAlgorithmVersion)-\(variant.rawValue)-\(hexadecimal).jpg"
     }
 
     private static func byteCount(of url: URL) -> Int? {
@@ -345,14 +429,26 @@ actor WidgetCacheBuilder {
         return "\(minimumWidth)x\(minimumHeight)-\(maximumWidth)x\(maximumHeight)"
     }
 
-    /// Produces an orientation-normalized, cat-centered 400px square. If all
-    /// cats cannot fit in a square crop, the full image is aspect-fitted so no
-    /// cat is cut off. JPEG quality is then searched down to about 50KB.
-    private static func widgetJPEG(image: UIImage, catBox: NormalizedRect?) -> Data? {
-        let normalized = normalizedImage(image)
-        let focused = catFocusedSquare(image: normalized, catBox: catBox)
-        let resized = resizedSquare(focused, pixels: 400)
-        return jpegData(resized, targetByteCount: 50 * 1_024)
+    private static var outputPixelDescription: String {
+        RenderSpec.all
+            .map { "\($0.variant.rawValue):\($0.pixelDescription)" }
+            .joined(separator: ",")
+    }
+
+    /// Produces a family-sized JPEG with a blurred aspect-fill background and
+    /// the full, sharp original aspect-fitted over it. Build 5 deliberately
+    /// avoids subject lifting and new composition/cropping heuristics.
+    private static func widgetJPEG(
+        normalizedImage image: UIImage,
+        spec: RenderSpec,
+        ciContext: CIContext
+    ) -> Data? {
+        let rendered = renderedWidgetImage(
+            image: image,
+            size: spec.size,
+            ciContext: ciContext
+        )
+        return jpegData(rendered, targetByteCount: targetJPEGByteCount)
     }
 
     private static func normalizedImage(_ image: UIImage) -> UIImage {
@@ -366,97 +462,101 @@ actor WidgetCacheBuilder {
         }
     }
 
-    private static func catFocusedSquare(
+    private static func renderedWidgetImage(
         image: UIImage,
-        catBox: NormalizedRect?
+        size: CGSize,
+        ciContext: CIContext
     ) -> UIImage {
-        guard let cgImage = image.cgImage else { return image }
-        let width = CGFloat(cgImage.width)
-        let height = CGFloat(cgImage.height)
-        let shortSide = min(width, height)
-        guard let catBox else {
-            return crop(cgImage: cgImage, rect: centeredSquare(width: width, height: height))
-        }
+        let background = aspectFillImage(image, size: size)
+        let blurredBackground = gaussianBlurredImage(
+            background,
+            radius: 18,
+            ciContext: ciContext
+        ) ?? background
 
-        // Vision uses a lower-left origin; Core Graphics image pixels use a
-        // top-left visual origin after UIImage orientation is normalized.
-        let catRect = CGRect(
-            x: CGFloat(catBox.x) * width,
-            y: (1 - CGFloat(catBox.y + catBox.height)) * height,
-            width: CGFloat(catBox.width) * width,
-            height: CGFloat(catBox.height) * height
-        )
-        let requiredSide = max(catRect.width, catRect.height) * 1.18
-        guard requiredSide <= shortSide else {
-            return aspectFitInSquare(image: image, pixels: Int(shortSide))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            blurredBackground.draw(in: CGRect(origin: .zero, size: size))
+            image.draw(in: aspectFitRect(imageSize: image.size, canvasSize: size))
         }
-
-        let side = min(shortSide, max(requiredSide, shortSide * 0.55))
-        let proposedX = catRect.midX - side / 2
-        let proposedY = catRect.midY - side / 2
-        let rect = CGRect(
-            x: min(max(0, proposedX), width - side),
-            y: min(max(0, proposedY), height - side),
-            width: side,
-            height: side
-        ).integral
-        return crop(cgImage: cgImage, rect: rect)
     }
 
-    private static func centeredSquare(width: CGFloat, height: CGFloat) -> CGRect {
-        let side = min(width, height)
+    private static func aspectFillImage(_ image: UIImage, size: CGSize) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: aspectFillRect(imageSize: image.size, canvasSize: size))
+        }
+    }
+
+    private static func gaussianBlurredImage(
+        _ image: UIImage,
+        radius: CGFloat,
+        ciContext: CIContext
+    ) -> UIImage? {
+        guard let input = CIImage(image: image) else { return nil }
+        let extent = input.extent
+        let output = input
+            .clampedToExtent()
+            .applyingFilter(
+                "CIGaussianBlur",
+                parameters: [kCIInputRadiusKey: radius]
+            )
+            .cropped(to: extent)
+        guard let cgImage = ciContext.createCGImage(output, from: extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+    }
+
+    private static func makeCIContext() -> CIContext {
+        var options: [CIContextOption: Any] = [.cacheIntermediates: false]
+        #if targetEnvironment(simulator)
+        // Hosted Simulators do not always expose a stable Metal device. The
+        // production device keeps Core Image's normal hardware renderer.
+        options[.useSoftwareRenderer] = true
+        #endif
+        return CIContext(options: options)
+    }
+
+    private static func aspectFitRect(imageSize: CGSize, canvasSize: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: canvasSize)
+        }
+        let scale = min(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
+        let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
         return CGRect(
-            x: (width - side) / 2,
-            y: (height - side) / 2,
-            width: side,
-            height: side
-        ).integral
+            x: (canvasSize.width - drawSize.width) / 2,
+            y: (canvasSize.height - drawSize.height) / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        )
     }
 
-    private static func crop(cgImage: CGImage, rect: CGRect) -> UIImage {
-        guard let cropped = cgImage.cropping(to: rect) else { return UIImage(cgImage: cgImage) }
-        return UIImage(cgImage: cropped, scale: 1, orientation: .up)
-    }
-
-    private static func aspectFitInSquare(image: UIImage, pixels: Int) -> UIImage {
-        let side = CGFloat(max(1, pixels))
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        return UIGraphicsImageRenderer(
-            size: CGSize(width: side, height: side),
-            format: format
-        ).image { context in
-            UIColor.black.setFill()
-            context.cgContext.fill(CGRect(x: 0, y: 0, width: side, height: side))
-            let scale = min(side / image.size.width, side / image.size.height)
-            let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-            image.draw(in: CGRect(
-                x: (side - drawSize.width) / 2,
-                y: (side - drawSize.height) / 2,
-                width: drawSize.width,
-                height: drawSize.height
-            ))
+    private static func aspectFillRect(imageSize: CGSize, canvasSize: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return CGRect(origin: .zero, size: canvasSize)
         }
-    }
-
-    private static func resizedSquare(_ image: UIImage, pixels: CGFloat) -> UIImage {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        return UIGraphicsImageRenderer(
-            size: CGSize(width: pixels, height: pixels),
-            format: format
-        ).image { _ in
-            image.draw(in: CGRect(x: 0, y: 0, width: pixels, height: pixels))
-        }
+        let scale = max(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
+        let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return CGRect(
+            x: (canvasSize.width - drawSize.width) / 2,
+            y: (canvasSize.height - drawSize.height) / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        )
     }
 
     private static func jpegData(_ image: UIImage, targetByteCount: Int) -> Data? {
-        var low: CGFloat = 0.03
-        var high: CGFloat = 0.90
-        var best: Data?
-        for _ in 0..<9 {
+        guard let minimum = image.jpegData(compressionQuality: 0),
+              minimum.count <= targetByteCount else {
+            return nil
+        }
+        var low: CGFloat = 0
+        var high: CGFloat = 0.92
+        var best: Data? = minimum
+        for _ in 0..<10 {
             let quality = (low + high) / 2
             guard let candidate = image.jpegData(compressionQuality: quality) else { return nil }
             if candidate.count <= targetByteCount {
@@ -466,6 +566,6 @@ actor WidgetCacheBuilder {
                 high = quality
             }
         }
-        return best ?? image.jpegData(compressionQuality: 0.03)
+        return best
     }
 }

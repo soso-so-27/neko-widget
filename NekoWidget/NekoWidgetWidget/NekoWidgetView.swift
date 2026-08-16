@@ -10,19 +10,34 @@ struct NekoWidgetView: View {
         Group {
             if
                 let cacheFilename = entry.cacheFilename,
-                let image = WidgetCacheImageLoader.image(cacheFilename: cacheFilename)
+                let variant = entry.imageVariant,
+                let image = WidgetCacheImageLoader.image(
+                    cacheFilename: cacheFilename,
+                    maximumPixelSize: maximumPixelSize(for: variant)
+                )
             {
                 GeometryReader { proxy in
                     ZStack {
                         Color(red: 0.12, green: 0.10, blue: 0.09)
 
-                        // The app has already produced the cat-aware square.
-                        // Aspect-fit prevents medium/large widget rectangles
-                        // from applying a second crop that could hide the cat.
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                        if entry.usesFamilySpecificImage {
+                            // The app has already composed a family-specific
+                            // canvas with blurred fill behind the sharp photo.
+                            Image(uiImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFill()
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .clipped()
+                        } else {
+                            // During an app/extension update, an old manifest can
+                            // still point at the legacy square. Avoid recropping it.
+                            Image(uiImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFit()
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                        }
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityLabel("うちの子の写真")
@@ -35,6 +50,10 @@ struct NekoWidgetView: View {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
         .widgetURL(entry.photoURL)
+    }
+
+    private func maximumPixelSize(for variant: WidgetImageVariant) -> Int {
+        variant.maximumPixelDimension
     }
 
     private var emptyState: some View {

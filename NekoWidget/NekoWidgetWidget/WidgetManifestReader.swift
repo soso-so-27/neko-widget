@@ -4,7 +4,7 @@ enum WidgetManifestReader {
     private static let manifestFilename = "widget-manifest.json"
     private static let cacheDirectoryName = "widget-cache"
 
-    static func availableItems() -> [WidgetManifestItem] {
+    static func availableItems(for variant: WidgetImageVariant) -> [WidgetManifestItem] {
         guard let containerURL = SharedContainer.containerURL else {
             SharedLog.widget.error(
                 "manifest",
@@ -19,12 +19,13 @@ enum WidgetManifestReader {
             .appendingPathComponent(cacheDirectoryName, isDirectory: true)
 
         let available = manifest.items.filter { item in
-            guard cacheURL(for: item.cacheFilename, in: cacheDirectoryURL) != nil else {
+            let filename = item.cacheFilename(for: variant)
+            guard cacheURL(for: filename, in: cacheDirectoryURL) != nil else {
                 return false
             }
 
             let fileURL = cacheDirectoryURL
-                .appendingPathComponent(item.cacheFilename, isDirectory: false)
+                .appendingPathComponent(filename, isDirectory: false)
             return FileManager.default.fileExists(atPath: fileURL.path)
         }
         SharedLog.widget.debug(
@@ -33,7 +34,8 @@ enum WidgetManifestReader {
             metadata: [
                 "available": "\(available.count)",
                 "declared": "\(manifest.items.count)",
-                "missing": "\(manifest.items.count - available.count)"
+                "missing": "\(manifest.items.count - available.count)",
+                "variant": variant.rawValue
             ]
         )
         return available

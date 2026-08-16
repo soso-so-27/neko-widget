@@ -17,6 +17,13 @@ def integer_metadata(entry: dict[str, Any], key: str) -> int:
         return 0
 
 
+def entry_timestamp(entry: dict[str, Any]) -> float | None:
+    try:
+        return float(entry.get("timestamp"))
+    except (TypeError, ValueError):
+        return None
+
+
 def jpeg_dimensions(path: Path) -> tuple[int, int] | None:
     """Read JPEG SOF dimensions without a third-party image dependency."""
     data = path.read_bytes()
@@ -92,6 +99,9 @@ def main() -> int:
         failures.append("No SharedLog JSONL files were found in the App Group.")
 
     for path in log_files:
+        stem = path.name[: -len(".jsonl")]
+        base, separator, rotation = stem.rpartition(".")
+        log_session = base if separator and rotation.isdigit() else stem
         contents = path.read_text(encoding="utf-8-sig")
         lines = contents.splitlines()
         for line_number, raw_line in enumerate(lines, start=1):
@@ -111,6 +121,7 @@ def main() -> int:
                     malformed_lines.append(description)
                 continue
             if isinstance(value, dict):
+                value["_logSession"] = log_session
                 entries.append(value)
             else:
                 malformed_lines.append(
@@ -284,10 +295,62 @@ def main() -> int:
 
     if not matching("Album synchronization finished", "album"):
         failures.append("The generated PhotoKit album was not synchronized.")
-    if not matching("Widget cache build completed", "widget-cache"):
+    final_entries = [
+        entry
+        for entry in matching("Final scan result applied", "scan")
+        if entry.get("process") == "app" and entry_timestamp(entry) is not None
+    ]
+    cache_entries = [
+        entry
+        for entry in matching("Widget cache build completed", "widget-cache")
+        if entry.get("process") == "app" and entry_timestamp(entry) is not None
+    ]
+    reload_entries = [
+        entry
+        for entry in matching("Widget timeline reload requested", "widget-cache")
+        if entry.get("process") == "app" and entry_timestamp(entry) is not None
+    ]
+    if not cache_entries:
         failures.append("The widget image cache was not built.")
-    if not matching("Widget timeline reload requested", "widget-cache"):
+    if not reload_entries:
         failures.append("The widget timeline reload was not requested.")
+
+    final_widget_event_order: dict[str, float | str] = {}
+    if final_entries:
+        latest_final_entry = max(
+            final_entries,
+            key=lambda entry: entry_timestamp(entry) or float("-inf"),
+        )
+        final_time = entry_timestamp(latest_final_entry)
+        final_session = latest_final_entry.get("_logSession")
+        assert final_time is not None
+        cache_times = sorted(
+            value
+            for entry in cache_entries
+            if (value := entry_timestamp(entry)) is not None and value > final_time
+            and entry.get("_logSession") == final_session
+        )
+        reload_times: list[float] = []
+        if cache_times:
+            reload_times = sorted(
+                value
+                for entry in reload_entries
+                if (value := entry_timestamp(entry)) is not None
+                and value > cache_times[0]
+                and entry.get("_logSession") == final_session
+            )
+        if not cache_times or not reload_times:
+            failures.append(
+                "Widget output events are not ordered after the final scan "
+                "(final < cache build < timeline reload)."
+            )
+        else:
+            final_widget_event_order = {
+                "finalScan": final_time,
+                "cacheBuild": cache_times[0],
+                "timelineReload": reload_times[0],
+                "session": str(final_session),
+            }
 
     manifest_path = group_container / "widget-manifest.json"
     manifest: dict[str, Any] = {}
@@ -310,12 +373,48 @@ def main() -> int:
 
     cache_directory = group_container / "widget-cache"
     referenced_cache_files: set[Path] = set()
+    cache_files_by_variant: dict[str, set[Path]] = {
+        "small": set(),
+        "medium": set(),
+        "large": set(),
+    }
+    expected_cache_dimensions = {
+        "small": (400, 400),
+        "medium": (800, 374),
+        "large": (400, 420),
+    }
     for item in manifest_items:
-        filename = item.get("cacheFilename")
-        if not isinstance(filename, str) or Path(filename).name != filename:
-            failures.append("Widget manifest contains an unsafe cache filename.")
+        legacy_filename = item.get("cacheFilename")
+        filenames = item.get("cacheFilenames")
+        if not isinstance(filenames, dict):
+            failures.append("Widget manifest has no family-specific cache filenames.")
             continue
-        referenced_cache_files.add(cache_directory / filename)
+
+        variant_filenames: dict[str, str] = {}
+        for variant in expected_cache_dimensions:
+            filename = filenames.get(variant)
+            if (
+                not isinstance(filename, str)
+                or Path(filename).name != filename
+                or Path(filename).suffix.lower() not in {".jpg", ".jpeg"}
+            ):
+                failures.append(
+                    f"Widget manifest contains an unsafe {variant} cache filename."
+                )
+                continue
+            variant_filenames[variant] = filename
+            file_path = cache_directory / filename
+            cache_files_by_variant[variant].add(file_path)
+            referenced_cache_files.add(file_path)
+
+        if len(set(variant_filenames.values())) != len(expected_cache_dimensions):
+            failures.append(
+                "Widget manifest does not reference three distinct family images."
+            )
+        if variant_filenames.get("small") != legacy_filename:
+            failures.append(
+                "Legacy widget cacheFilename does not match the small image."
+            )
     missing_cache_files = [
         path.name for path in sorted(referenced_cache_files) if not path.is_file()
     ]
@@ -343,16 +442,60 @@ def main() -> int:
         for path in sorted(referenced_cache_files)
         if path.is_file()
     }
-    invalid_cache_dimensions = [
-        filename
-        for filename, dimensions in cache_dimensions.items()
-        if dimensions != (400, 400)
-    ]
+    invalid_cache_dimensions: list[str] = []
+    cache_dimensions_by_variant: dict[str, dict[str, tuple[int, int] | None]] = {}
+    cache_bytes_by_variant: dict[str, dict[str, int]] = {}
+    for variant, paths in cache_files_by_variant.items():
+        dimensions = {
+            path.name: cache_dimensions.get(path.name)
+            for path in sorted(paths)
+            if path.is_file()
+        }
+        byte_counts = {
+            path.name: path.stat().st_size
+            for path in sorted(paths)
+            if path.is_file()
+        }
+        cache_dimensions_by_variant[variant] = dimensions
+        cache_bytes_by_variant[variant] = byte_counts
+        invalid_cache_dimensions.extend(
+            f"{variant}:{filename}"
+            for filename, actual_dimensions in dimensions.items()
+            if actual_dimensions != expected_cache_dimensions[variant]
+        )
     if invalid_cache_dimensions:
         failures.append(
-            "Widget cache files are not valid 400x400 JPEGs: "
+            "Widget cache files do not match their family dimensions: "
             + ", ".join(invalid_cache_dimensions)
         )
+
+    history_path = group_container / "widget-cache-history.json"
+    history_current_generation_files: list[str] = []
+    if not history_path.is_file():
+        failures.append("widget-cache-history.json was not written to the App Group.")
+    else:
+        try:
+            history = json.loads(history_path.read_text(encoding="utf-8-sig"))
+            generations = history.get("generations", [])
+            if isinstance(generations, list) and generations:
+                first_generation = generations[0]
+                if isinstance(first_generation, dict):
+                    raw_filenames = first_generation.get("filenames", [])
+                    if isinstance(raw_filenames, list):
+                        history_current_generation_files = [
+                            value for value in raw_filenames if isinstance(value, str)
+                        ]
+            if not referenced_cache_files:
+                failures.append("Widget manifest does not reference cache files.")
+            elif not {
+                path.name for path in referenced_cache_files
+            }.issubset(set(history_current_generation_files)):
+                failures.append(
+                    "Latest widget cache history generation does not retain every "
+                    "family-specific image."
+                )
+        except (json.JSONDecodeError, OSError) as error:
+            failures.append(f"widget-cache-history.json is invalid: {error}")
     widget_log_files = [path.name for path in log_files if path.name.startswith("widget-")]
     report = {
         "status": "pass" if not failures else "fail",
@@ -375,10 +518,17 @@ def main() -> int:
         "snapshotCatAssets": int(scan_state.get("catAssets", 0) or 0),
         "importedFixtureStatuses": fixture_asset_statuses,
         "manifestEntryCount": len(manifest_items),
+        "finalWidgetEventOrder": final_widget_event_order,
         "uniqueCacheFileCount": len(referenced_cache_files),
+        "uniqueCacheFileCountByVariant": {
+            variant: len(paths) for variant, paths in cache_files_by_variant.items()
+        },
         "cacheBytesMinimum": min(cache_byte_counts, default=0),
         "cacheBytesMaximum": max(cache_byte_counts, default=0),
         "cacheDimensions": cache_dimensions,
+        "cacheDimensionsByVariant": cache_dimensions_by_variant,
+        "cacheBytesByVariant": cache_bytes_by_variant,
+        "historyCurrentGenerationFileCount": len(history_current_generation_files),
         "oversizedCacheFiles": oversized_cache_files,
         "failures": failures,
         "notes": [

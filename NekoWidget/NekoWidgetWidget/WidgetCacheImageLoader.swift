@@ -3,12 +3,16 @@ import ImageIO
 import UIKit
 
 enum WidgetCacheImageLoader {
-    private static let maximumPixelSize = 400
+    private static let absoluteMaximumPixelSize = 800
 
     /// Decodes only the image used by the current entry. ImageIO also caps the
     /// decoded dimensions defensively if a malformed or stale cache file is larger
-    /// than the app's intended 400 x 400 JPEG output.
-    static func image(cacheFilename: String) -> UIImage? {
+    /// than the family-specific JPEG output expected from the app.
+    static func image(cacheFilename: String, maximumPixelSize: Int) -> UIImage? {
+        let requestedMaximumPixelSize = min(
+            absoluteMaximumPixelSize,
+            max(1, maximumPixelSize)
+        )
         let fileHash = SharedLog.shortHash(cacheFilename)
         guard let fileURL = WidgetManifestReader.cacheURL(for: cacheFilename) else {
             SharedLog.widget.error(
@@ -31,7 +35,7 @@ enum WidgetCacheImageLoader {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+            kCGImageSourceThumbnailMaxPixelSize: requestedMaximumPixelSize,
             kCGImageSourceShouldCacheImmediately: true
         ]
 
@@ -42,7 +46,7 @@ enum WidgetCacheImageLoader {
                 metadata: [
                     "bytes": "\(data.count)",
                     "file": fileHash,
-                    "requestedMaxPixels": "\(maximumPixelSize)"
+                    "requestedMaxPixels": "\(requestedMaximumPixelSize)"
                 ]
             )
             return nil
@@ -56,7 +60,7 @@ enum WidgetCacheImageLoader {
                 "decodedBytesEstimate": "\(image.width * image.height * 4)",
                 "file": fileHash,
                 "outputPixels": "\(image.width)x\(image.height)",
-                "requestedMaxPixels": "\(maximumPixelSize)"
+                "requestedMaxPixels": "\(requestedMaximumPixelSize)"
             ]
         )
 

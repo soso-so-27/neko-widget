@@ -3,7 +3,7 @@ import WidgetKit
 
 struct NekoWidgetTimelineProvider: TimelineProvider {
     func placeholder(in context: Context) -> NekoWidgetEntry {
-        .empty(at: Date())
+        .empty(at: Date(), imageVariant: imageVariant(for: context.family))
     }
 
     func getSnapshot(
@@ -11,14 +11,15 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
         completion: @escaping (NekoWidgetEntry) -> Void
     ) {
         let now = Date()
-        let items = sortedItems(WidgetManifestReader.availableItems())
+        let variant = imageVariant(for: context.family)
+        let items = sortedItems(WidgetManifestReader.availableItems(for: variant))
         guard let item = items.last(where: { $0.scheduledDate <= now }) ?? items.first else {
             SharedLog.widget.warning(
                 "timeline",
                 "Snapshot requested without an available cache item",
                 metadata: ["preview": "\(context.isPreview)"]
             )
-            completion(.empty(at: now))
+            completion(.empty(at: now, imageVariant: variant))
             return
         }
 
@@ -36,7 +37,9 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
             NekoWidgetEntry(
                 date: now,
                 localIdentifier: item.localIdentifier,
-                cacheFilename: item.cacheFilename
+                cacheFilename: item.cacheFilename(for: variant),
+                imageVariant: variant,
+                usesFamilySpecificImage: item.cacheFilenames != nil
             )
         )
     }
@@ -46,18 +49,23 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
         completion: @escaping (Timeline<NekoWidgetEntry>) -> Void
     ) {
         let now = Date()
-        let items = sortedItems(WidgetManifestReader.availableItems())
+        let variant = imageVariant(for: context.family)
+        let items = sortedItems(WidgetManifestReader.availableItems(for: variant))
 
         guard !items.isEmpty else {
             // The app explicitly reloads timelines after publishing a manifest.
             // Avoid an already-expired `.atEnd` loop while the shared cache is empty.
-            removeTimelineLease()
             SharedLog.widget.warning(
                 "timeline",
                 "Timeline requested without available cache items",
                 metadata: ["preview": "\(context.isPreview)"]
             )
-            completion(Timeline(entries: [.empty(at: now)], policy: .never))
+            completion(
+                Timeline(
+                    entries: [.empty(at: now, imageVariant: variant)],
+                    policy: .never
+                )
+            )
             return
         }
 
@@ -69,18 +77,25 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
             return NekoWidgetEntry(
                 date: date,
                 localIdentifier: item.localIdentifier,
-                cacheFilename: item.cacheFilename
+                cacheFilename: item.cacheFilename(for: variant),
+                imageVariant: variant,
+                usesFamilySpecificImage: item.cacheFilenames != nil
             )
         }
 
-        recordTimelineLease(for: entries, at: now)
+        recordTimelineLease(
+            filenames: scheduledItems.flatMap { item, _ in item.allCacheFilenames },
+            variant: variant,
+            at: now
+        )
         SharedLog.widget.info(
             "timeline",
             "Future timeline prepared",
             metadata: [
                 "entries": "\(entries.count)",
                 "preview": "\(context.isPreview)",
-                "uniqueFiles": "\(Set(entries.compactMap(\.cacheFilename)).count)"
+                "uniqueFiles": "\(Set(entries.compactMap(\.cacheFilename)).count)",
+                "variant": variant.rawValue
             ]
         )
         completion(Timeline(entries: entries, policy: .atEnd))
@@ -88,6 +103,17 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
 
     private func sortedItems(_ items: [WidgetManifestItem]) -> [WidgetManifestItem] {
         Array(items.sorted { $0.scheduledDate < $1.scheduledDate }.prefix(20))
+    }
+
+    private func imageVariant(for family: WidgetFamily) -> WidgetImageVariant {
+        switch family {
+        case .systemMedium:
+            return .medium
+        case .systemLarge:
+            return .large
+        default:
+            return .small
+        }
     }
 
     private func normalizedSchedule(
@@ -101,26 +127,30 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
         }
     }
 
-    private func recordTimelineLease(for entries: [NekoWidgetEntry], at date: Date) {
-        guard let url = SharedContainer.widgetTimelineLeaseURL else { return }
-        let filenames = Array(Set(entries.compactMap(\.cacheFilename))).sorted()
-        guard !filenames.isEmpty else {
-            removeTimelineLease()
-            return
-        }
+    private func recordTimelineLease(
+        filenames: [String],
+        variant: WidgetImageVariant,
+        at date: Date
+    ) {
+        guard let url = SharedContainer.widgetTimelineLeaseURL(for: variant) else { return }
+        let uniqueFilenames = Array(Set(filenames)).sorted()
+        guard !uniqueFilenames.isEmpty else { return }
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(
-            WidgetTimelineLease(cacheFilenames: filenames, recordedAt: date)
+            WidgetTimelineLease(cacheFilenames: uniqueFilenames, recordedAt: date)
         ) else { return }
         do {
             try data.write(to: url, options: .atomic)
             SharedLog.widget.debug(
                 "timeline",
                 "Timeline cache lease recorded",
-                metadata: ["files": "\(filenames.count)"]
+                metadata: [
+                    "files": "\(uniqueFilenames.count)",
+                    "variant": variant.rawValue
+                ]
             )
         } catch {
             let value = error as NSError
@@ -130,10 +160,5 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
                 metadata: ["code": "\(value.code)", "domain": value.domain]
             )
         }
-    }
-
-    private func removeTimelineLease() {
-        guard let url = SharedContainer.widgetTimelineLeaseURL else { return }
-        try? FileManager.default.removeItem(at: url)
     }
 }

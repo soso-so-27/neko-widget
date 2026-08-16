@@ -222,8 +222,12 @@ archive_and_reset_permission_bootstrap() {
     for item in \
         diagnostic-logs \
         library-snapshot.json \
+        widget-cache-history.json \
         widget-manifest.json \
         widget-timeline-lease.json \
+        widget-timeline-lease-small.json \
+        widget-timeline-lease-medium.json \
+        widget-timeline-lease-large.json \
         widget-cache; do
         if [[ -e "$container/$item" ]]; then
             cp -R "$container/$item" "$archive_directory/"
@@ -238,8 +242,12 @@ archive_and_reset_permission_bootstrap() {
         "$container/diagnostic-logs" \
         "$container/widget-cache"
     rm -f -- \
+        "$container/widget-cache-history.json" \
         "$container/widget-manifest.json" \
-        "$container/widget-timeline-lease.json"
+        "$container/widget-timeline-lease.json" \
+        "$container/widget-timeline-lease-small.json" \
+        "$container/widget-timeline-lease-medium.json" \
+        "$container/widget-timeline-lease-large.json"
 }
 
 wait_for_completed_snapshot() {
@@ -300,6 +308,7 @@ baseline_ids = {
     for asset in baseline.get("assets", [])
     if isinstance(asset, dict) and isinstance(asset.get("localIdentifier"), str)
 }
+
 fixtures = [
     asset
     for asset in current.get("assets", [])
@@ -317,6 +326,74 @@ ready = (
     and any(status == "detected" for status in statuses)
 )
 raise SystemExit(0 if ready else 1)
+PY
+}
+
+final_widget_output_is_ready() {
+    local container="$1"
+
+    python3 - "$container/diagnostic-logs" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+log_directory = Path(sys.argv[1])
+entries = []
+for path in sorted(log_directory.glob("app-*.jsonl")):
+    stem = path.name[: -len(".jsonl")]
+    base, separator, rotation = stem.rpartition(".")
+    session = base if separator and rotation.isdigit() else stem
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        continue
+    for raw_line in lines:
+        if not raw_line.strip():
+            continue
+        try:
+            entry = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict) and entry.get("process") == "app":
+            entries.append((session, entry))
+
+def event_times(message, category, session=None):
+    values = []
+    for entry_session, entry in entries:
+        if session is not None and entry_session != session:
+            continue
+        if entry.get("message") != message or entry.get("category") != category:
+            continue
+        try:
+            values.append((float(entry.get("timestamp")), entry_session))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+final_times = event_times("Final scan result applied", "scan")
+if not final_times:
+    raise SystemExit(1)
+final_time, final_session = max(final_times)
+
+cache_times = [
+    value
+    for value, _ in event_times(
+        "Widget cache build completed", "widget-cache", final_session
+    )
+    if value > final_time
+]
+if not cache_times:
+    raise SystemExit(1)
+cache_time = min(cache_times)
+
+reload_times = [
+    value
+    for value, _ in event_times(
+        "Widget timeline reload requested", "widget-cache", final_session
+    )
+    if value > cache_time
+]
+raise SystemExit(0 if reload_times else 1)
 PY
 }
 
@@ -784,8 +861,7 @@ for launch_attempt in $(seq 1 "$MAX_SCAN_LAUNCH_ATTEMPTS"); do
         APP_GROUP_CONTAINER="$(resolve_group_container || true)"
         if [[ -n "$APP_GROUP_CONTAINER" \
             && -d "$APP_GROUP_CONTAINER/diagnostic-logs" ]] \
-            && grep -R -q 'Widget timeline reload requested' \
-                "$APP_GROUP_CONTAINER/diagnostic-logs" \
+            && final_widget_output_is_ready "$APP_GROUP_CONTAINER" \
             && fixtures_are_ready \
                 "$APP_GROUP_CONTAINER" "$BASELINE_SNAPSHOT" "$FIXTURE_COUNT"; then
             TERMINAL_EVENT_FOUND="true"
