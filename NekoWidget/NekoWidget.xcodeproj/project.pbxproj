@@ -20,6 +20,7 @@
 		10000000000000000000000B /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		10000000000000000000000C /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		10000000000000000000000D /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
+		10000000000000000000000E /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		100000000000000000000101 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000201 /* AppRootView.swift */; };
 		100000000000000000000102 /* NekoWidgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000202 /* NekoWidgetApp.swift */; };
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
@@ -42,10 +43,14 @@
 		100000000000000000000136 /* ScanStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000236 /* ScanStatusView.swift */; };
 		100000000000000000000137 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000237 /* SettingsView.swift */; };
 		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
+		100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
+		10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		200000000000000000000002 /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
 		200000000000000000000003 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		200000000000000000000004 /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
+		200000000000000000000005 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
+		200000000000000000000006 /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		200000000000000000000010 /* NekoWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000310 /* NekoWidget.swift */; };
 		200000000000000000000011 /* NekoWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000311 /* NekoWidgetBundle.swift */; };
 		200000000000000000000012 /* NekoWidgetEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000312 /* NekoWidgetEntry.swift */; };
@@ -53,6 +58,8 @@
 		200000000000000000000014 /* NekoWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000314 /* NekoWidgetView.swift */; };
 		200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000315 /* WidgetCacheImageLoader.swift */; };
 		200000000000000000000016 /* WidgetManifestReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000316 /* WidgetManifestReader.swift */; };
+		200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
+		200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		300000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000205 /* PrivacyInfo.xcprivacy */; };
 		300000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000206 /* Assets.xcassets */; };
 		400000000000000000000001 /* Photos.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000501 /* Photos.framework */; };
@@ -62,10 +69,12 @@
 		400000000000000000000005 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000505 /* SwiftUI.framework */; };
 		400000000000000000000006 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
 		400000000000000000000007 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000507 /* CoreGraphics.framework */; };
+		400000000000000000000008 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000508 /* AppIntents.framework */; };
 		410000000000000000000001 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000503 /* WidgetKit.framework */; };
 		410000000000000000000002 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000504 /* ImageIO.framework */; };
 		410000000000000000000003 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000505 /* SwiftUI.framework */; };
 		410000000000000000000004 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
+		410000000000000000000005 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000508 /* AppIntents.framework */; };
 		500000000000000000000001 /* NekoWidgetWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000601 /* PhotoPermissionUITests.swift */; };
 /* End PBXBuildFile section */
@@ -116,6 +125,7 @@
 		F0000000000000000000010B /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		F0000000000000000000010C /* AtomicJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicJSON.swift; sourceTree = "<group>"; };
 		F0000000000000000000010D /* SharedLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLog.swift; sourceTree = "<group>"; };
+		F0000000000000000000010E /* SharedLikeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLikeStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -151,6 +161,8 @@
 		F00000000000000000000314 /* NekoWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetView.swift; sourceTree = "<group>"; };
 		F00000000000000000000315 /* WidgetCacheImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheImageLoader.swift; sourceTree = "<group>"; };
 		F00000000000000000000316 /* WidgetManifestReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifestReader.swift; sourceTree = "<group>"; };
+		F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleWidgetLikeIntent.swift; sourceTree = "<group>"; };
+		F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetConfigurationIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000401 /* NekoWidget.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NekoWidget.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = NekoWidgetWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000501 /* Photos.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Photos.framework; path = System/Library/Frameworks/Photos.framework; sourceTree = SDKROOT; };
@@ -160,6 +172,7 @@
 		F00000000000000000000505 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		F00000000000000000000506 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
 		F00000000000000000000507 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		F00000000000000000000508 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		F00000000000000000000601 /* PhotoPermissionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000602 /* NekoWidgetUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NekoWidgetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -176,6 +189,7 @@
 				400000000000000000000005 /* SwiftUI.framework in Frameworks */,
 				400000000000000000000006 /* UIKit.framework in Frameworks */,
 				400000000000000000000007 /* CoreGraphics.framework in Frameworks */,
+				400000000000000000000008 /* AppIntents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +201,7 @@
 				410000000000000000000002 /* ImageIO.framework in Frameworks */,
 				410000000000000000000003 /* SwiftUI.framework in Frameworks */,
 				410000000000000000000004 /* UIKit.framework in Frameworks */,
+				410000000000000000000005 /* AppIntents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -233,6 +248,7 @@
 				F00000000000000000000505 /* SwiftUI.framework */,
 				F00000000000000000000506 /* UIKit.framework */,
 				F00000000000000000000507 /* CoreGraphics.framework */,
+				F00000000000000000000508 /* AppIntents.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -285,6 +301,7 @@
 			isa = PBXGroup;
 			children = (
 				F0000000000000000000010C /* AtomicJSON.swift */,
+				F0000000000000000000010E /* SharedLikeStore.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -372,6 +389,8 @@
 				F00000000000000000000314 /* NekoWidgetView.swift */,
 				F00000000000000000000315 /* WidgetCacheImageLoader.swift */,
 				F00000000000000000000316 /* WidgetManifestReader.swift */,
+				F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */,
+				F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */,
 				F00000000000000000000301 /* Info.plist */,
 				F00000000000000000000302 /* NekoWidgetWidget.entitlements */,
 			);
@@ -540,6 +559,7 @@
 				10000000000000000000000B /* DeepLink.swift in Sources */,
 				10000000000000000000000C /* AtomicJSON.swift in Sources */,
 				10000000000000000000000D /* SharedLog.swift in Sources */,
+				10000000000000000000000E /* SharedLikeStore.swift in Sources */,
 				100000000000000000000101 /* AppRootView.swift in Sources */,
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
@@ -562,6 +582,8 @@
 				100000000000000000000136 /* ScanStatusView.swift in Sources */,
 				100000000000000000000137 /* SettingsView.swift in Sources */,
 				100000000000000000000138 /* LogView.swift in Sources */,
+				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
+				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -573,6 +595,8 @@
 				200000000000000000000002 /* WidgetManifest.swift in Sources */,
 				200000000000000000000003 /* DeepLink.swift in Sources */,
 				200000000000000000000004 /* SharedLog.swift in Sources */,
+				200000000000000000000005 /* AtomicJSON.swift in Sources */,
+				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
 				200000000000000000000012 /* NekoWidgetEntry.swift in Sources */,
@@ -580,6 +604,8 @@
 				200000000000000000000014 /* NekoWidgetView.swift in Sources */,
 				200000000000000000000015 /* WidgetCacheImageLoader.swift in Sources */,
 				200000000000000000000016 /* WidgetManifestReader.swift in Sources */,
+				200000000000000000000017 /* ToggleWidgetLikeIntent.swift in Sources */,
+				200000000000000000000018 /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

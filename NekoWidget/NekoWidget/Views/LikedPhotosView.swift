@@ -3,17 +3,13 @@ import SwiftUI
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 104, maximum: 180), spacing: 3)
-    ]
-
     var body: some View {
         ScrollView {
             if photos.isEmpty {
                 ContentUnavailableView {
-                    Label("まだ「これ好き」はありません", systemImage: "heart")
+                    Label("まだ「これ好き」はありません", systemImage: "pawprint")
                 } description: {
-                    Text("写真の「これ好き」を押すと、ここに溜まります。")
+                    Text("写真の肉球ボタンを押すと、ここに溜まります。")
                 }
                 .frame(maxWidth: .infinity, minHeight: 420)
                 .padding()
@@ -29,21 +25,44 @@ struct LikedPhotosView: View {
                     }
                     .padding(.horizontal, 16)
 
-                    LazyVGrid(columns: columns, spacing: 3) {
+                    LazyVStack(spacing: 10) {
                         ForEach(photos) { photo in
                             NavigationLink(value: photo.localIdentifier) {
-                                PhotoAssetImageView(
-                                    localIdentifier: photo.localIdentifier,
-                                    catBoundingBox: photo.catBoundingBox,
-                                    targetPixelSize: CGSize(width: 400, height: 400),
-                                    targetAspectRatio: 1
+                                HStack(spacing: 14) {
+                                    PhotoAssetImageView(
+                                        localIdentifier: photo.localIdentifier,
+                                        catBoundingBox: photo.catBoundingBox,
+                                        targetPixelSize: CGSize(width: 240, height: 240),
+                                        targetAspectRatio: 1
+                                    )
+                                    .frame(width: 88, height: 88)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        Label("これ好き", systemImage: "pawprint.fill")
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                        Text(likedDateText(photo.likedAt))
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(10)
+                                .background(
+                                    Color(.secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: 16)
                                 )
-                                .aspectRatio(1, contentMode: .fit)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
                         }
                     }
+                    .padding(.horizontal, 16)
                 }
                 .padding(.vertical, 12)
             }
@@ -53,8 +72,16 @@ struct LikedPhotosView: View {
     }
 
     private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
-        guard let date = photo.creationDate else { return "好きな猫の写真" }
-        return "\(date.formatted(.dateTime.year().month().day()))の、好きな猫の写真"
+        if let likedAt = photo.likedAt {
+            let date = likedAt.formatted(.dateTime.year().month().day().hour().minute())
+            return "\(date)に好きにした猫の写真"
+        }
+        return "好きな猫の写真、日付不明"
+    }
+
+    private func likedDateText(_ date: Date?) -> String {
+        guard let date else { return "好きにした日時：不明" }
+        return "好きにした日時：\(date.formatted(.dateTime.year().month().day().hour().minute()))"
     }
 }
 
@@ -84,13 +111,13 @@ struct PhotoDetailView: View {
                 } label: {
                     Label(
                         photo.isLiked ? "好きを解除" : "これ好き",
-                        systemImage: photo.isLiked ? "heart.slash" : "heart.fill"
+                        systemImage: photo.isLiked ? "pawprint.fill" : "pawprint"
                     )
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(photo.isLiked ? Color.secondary : Color.pink)
+                .tint(photo.isLiked ? Color.secondary : Color.accentColor)
                 .controlSize(.large)
             }
             .padding(16)

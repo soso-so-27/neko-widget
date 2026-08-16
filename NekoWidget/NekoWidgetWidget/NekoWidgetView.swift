@@ -46,10 +46,66 @@ struct NekoWidgetView: View {
                 emptyState
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            likeButton
+        }
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
         .widgetURL(entry.photoURL)
+    }
+
+    @ViewBuilder
+    private var likeButton: some View {
+        if let localIdentifier = entry.localIdentifier,
+           entry.isLikeInteractionEnabled {
+            Button(
+                intent: ToggleWidgetLikeIntent(
+                    localIdentifier: localIdentifier,
+                    fallbackIsLiked: entry.isLiked
+                )
+            ) {
+                ZStack {
+                    Circle()
+                        .fill(.black.opacity(0.48))
+
+                    Image(systemName: entry.isLiked ? "pawprint.fill" : "pawprint")
+                        .font(.system(size: pawIconSize, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .invalidatableContent()
+                }
+                .frame(width: pawButtonSize, height: pawButtonSize)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(entry.isLiked ? "好きを解除" : "これ好き")
+            .accessibilityHint("アプリを開かずに、この写真の好き状態を切り替えます")
+            .padding(pawButtonInset)
+        }
+    }
+
+    private var pawButtonSize: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 38
+        case .systemMedium:
+            return 40
+        default:
+            return 42
+        }
+    }
+
+    private var pawIconSize: CGFloat {
+        switch family {
+        case .systemSmall:
+            return 18
+        default:
+            return 20
+        }
+    }
+
+    private var pawButtonInset: CGFloat {
+        family == .systemSmall ? 8 : 10
     }
 
     private func maximumPixelSize(for variant: WidgetImageVariant) -> Int {

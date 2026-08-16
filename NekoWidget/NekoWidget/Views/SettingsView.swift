@@ -3,29 +3,40 @@ import UIKit
 
 struct SettingsView: View {
     let settings: SettingsPresentation
+    let detectionAccuracySample: DetectionAccuracySamplePresentation
+    let likeMeasurement: LikeMeasurementPresentation
     let isScanning: Bool
     let saveSettings: (SettingsPresentation) async -> Void
     let rescan: () async -> Void
     let exportJSON: () async -> URL?
+    let startLikeMeasurement: () async -> Void
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
     @State private var isRescanning = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
+    @State private var isStartingMeasurement = false
+    @State private var showsMeasurementConfirmation = false
 
     init(
         settings: SettingsPresentation,
+        detectionAccuracySample: DetectionAccuracySamplePresentation,
+        likeMeasurement: LikeMeasurementPresentation,
         isScanning: Bool,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
         rescan: @escaping () async -> Void,
-        exportJSON: @escaping () async -> URL?
+        exportJSON: @escaping () async -> URL?,
+        startLikeMeasurement: @escaping () async -> Void
     ) {
         self.settings = settings
+        self.detectionAccuracySample = detectionAccuracySample
+        self.likeMeasurement = likeMeasurement
         self.isScanning = isScanning
         self.saveSettings = saveSettings
         self.rescan = rescan
         self.exportJSON = exportJSON
+        self.startLikeMeasurement = startLikeMeasurement
         _draft = State(initialValue: settings)
     }
 
@@ -66,6 +77,72 @@ struct SettingsView: View {
                 Text("検出閾値・開発用")
             } footer: {
                 Text("初期値は信頼度70%、最小面積8%です。変更後は再スキャンが必要です。")
+            }
+
+            Section {
+                NavigationLink {
+                    DetectionAccuracySampleView(sample: detectionAccuracySample)
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("ランダム100枚を確認")
+                            Text(sampleSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "checklist")
+                    }
+                }
+                .disabled(!canReviewDetectionAccuracySample)
+            } header: {
+                Text("検出精度")
+            } footer: {
+                Text(detectionAccuracySampleFooter)
+            }
+
+            Section {
+                if let startedAt = likeMeasurement.startedAt {
+                    LabeledContent(
+                        "開始日時",
+                        value: startedAt.formatted(.dateTime.year().month().day().hour().minute())
+                    )
+                    LabeledContent(
+                        "開始時の好き",
+                        value: "\(likeMeasurement.baselineLikedCount.formatted())枚"
+                    )
+                    LabeledContent(
+                        "開始後の操作",
+                        value: "\(likeMeasurement.eventCount.formatted())件"
+                    )
+                    if likeMeasurement.droppedEventCount > 0 {
+                        LabeledContent(
+                            "保存できなかった古い操作",
+                            value: "\(likeMeasurement.droppedEventCount.formatted())件"
+                        )
+                        .foregroundStyle(.red)
+                    }
+                } else {
+                    Text("①Build 6へ更新してWidgetを再配置・3サイズの肉球を確認、②全件確定後にランダム100枚を外部表へ分類、③その後に開始してください。確認中の試し押しは計測へ入りません。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button(role: likeMeasurement.startedAt == nil ? nil : .destructive) {
+                    showsMeasurementConfirmation = true
+                } label: {
+                    Label(
+                        isStartingMeasurement
+                            ? "開始処理中…"
+                            : (likeMeasurement.startedAt == nil ? "1週間計測を開始" : "計測を最初からやり直す"),
+                        systemImage: "calendar.badge.clock"
+                    )
+                }
+                .disabled(isStartingMeasurement || !likeMeasurement.isInteractionReady)
+            } header: {
+                Text("Build 6 行動計測")
+            } footer: {
+                Text("開始時の総数をbaselineとして保存し、その後の肉球・アプリ操作を\(likeMeasurement.retentionDays.formatted())日、最大\(likeMeasurement.maximumEventCount.formatted())件記録します。削除件数が0でない場合は完全な1週間データとして扱いません。")
             }
 
             Section {
@@ -136,7 +213,168 @@ struct SettingsView: View {
             ActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
         }
+        .confirmationDialog(
+            likeMeasurement.startedAt == nil ? "1週間計測を開始しますか？" : "現在の計測をリセットしますか？",
+            isPresented: $showsMeasurementConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(
+                likeMeasurement.startedAt == nil ? "開始する" : "リセットして開始",
+                role: likeMeasurement.startedAt == nil ? nil : .destructive
+            ) {
+                Task {
+                    isStartingMeasurement = true
+                    await startLikeMeasurement()
+                    isStartingMeasurement = false
+                }
+            }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text(
+                likeMeasurement.startedAt == nil
+                    ? "Widgetの再配置・3サイズの肉球確認・ランダム100枚の外部表への分類が完了していることを確認してください。この時点の好き総数をbaselineにし、それ以前の試し押しを除外します。"
+                    : "この時点の好き総数を新しいbaselineにし、それ以前の計測イベントを除外します。"
+            )
+        }
     }
+
+    private var canReviewDetectionAccuracySample: Bool {
+        detectionAccuracySample.snapshotIsFinal
+            && !detectionAccuracySample.items.isEmpty
+    }
+
+    private var sampleSummary: String {
+        if !detectionAccuracySample.snapshotIsFinal {
+            return "全件スキャンの確定後に利用できます"
+        }
+        return "確定標本 \(detectionAccuracySample.items.count.formatted())枚"
+    }
+
+    private var detectionAccuracySampleFooter: String {
+        if !detectionAccuracySample.snapshotIsFinal {
+            return "速報中や再スキャン待ちの標本は固定されません。全件の確定後に確認してください。"
+        }
+        if detectionAccuracySample.items.isEmpty {
+            return "確定結果に検出写真がないため、確認できる標本はありません。"
+        }
+        return "検証JSONと同じSHA-256順位です。機械判定値は目視を誘導しないよう隠し、人手ラベルは外部表へ記録します。"
+    }
+}
+
+private struct DetectionAccuracySampleView: View {
+    let sample: DetectionAccuracySamplePresentation
+
+    @State private var selectedIndex = 0
+
+    private var selectedItem: DetectionAccuracySampleItemPresentation? {
+        guard sample.items.indices.contains(selectedIndex) else { return nil }
+        return sample.items[selectedIndex]
+    }
+
+    var body: some View {
+        Group {
+            if let item = selectedItem {
+                ScrollView {
+                    VStack(spacing: 18) {
+                        sampleHeader(item)
+
+                        PhotoAssetImageView(
+                            localIdentifier: item.localIdentifier,
+                            targetPixelSize: CGSize(width: 1_600, height: 1_600),
+                            targetAspectRatio: 1,
+                            showsFullImage: true
+                        )
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(1, contentMode: .fit)
+                        .background(Color.black.opacity(0.92))
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                        reviewContext(item)
+
+                        Text("写真を見て、人手ラベルは外部表のreviewNo \(item.reviewNumber)へ記録してください。この画面ではラベルを保存しません。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(16)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    navigationControls
+                }
+            } else {
+                ContentUnavailableView(
+                    "確認できる写真がありません",
+                    systemImage: "photo.on.rectangle.angled",
+                    description: Text("全件スキャンを確定させてから開いてください。")
+                )
+            }
+        }
+        .navigationTitle("検出精度サンプル")
+        .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: sample.items.count) { _, count in
+            selectedIndex = min(selectedIndex, max(0, count - 1))
+        }
+    }
+
+    private func sampleHeader(
+        _ item: DetectionAccuracySampleItemPresentation
+    ) -> some View {
+        VStack(spacing: 5) {
+            Text("\(item.reviewNumber) / \(sample.items.count)")
+                .font(.title2.bold())
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func reviewContext(
+        _ item: DetectionAccuracySampleItemPresentation
+    ) -> some View {
+        VStack(spacing: 12) {
+            LabeledContent("reviewNo", value: item.reviewNumber.formatted())
+            LabeledContent("撮影日時", value: creationDateText(item.creationDate))
+        }
+        .font(.subheadline)
+        .padding(16)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+    }
+
+    private var navigationControls: some View {
+        HStack(spacing: 16) {
+            Button {
+                selectedIndex -= 1
+            } label: {
+                Label("前へ", systemImage: "chevron.left")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(selectedIndex == 0)
+
+            Button {
+                selectedIndex += 1
+            } label: {
+                Label("次へ", systemImage: "chevron.right")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selectedIndex >= sample.items.count - 1)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private func creationDateText(_ date: Date?) -> String {
+        guard let date else { return "不明" }
+        return date.formatted(
+            .dateTime.year().month().day().hour().minute().second()
+        )
+    }
+
 }
 
 private struct ExportedFile: Identifiable {

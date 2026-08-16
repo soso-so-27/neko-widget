@@ -1,26 +1,35 @@
+import AppIntents
 import Foundation
 import WidgetKit
 
-struct NekoWidgetTimelineProvider: TimelineProvider {
+struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> NekoWidgetEntry {
         .empty(at: Date(), imageVariant: imageVariant(for: context.family))
     }
 
-    func getSnapshot(
-        in context: Context,
-        completion: @escaping (NekoWidgetEntry) -> Void
-    ) {
+    func snapshot(
+        for configuration: NekoWidgetConfigurationIntent,
+        in context: Context
+    ) async -> NekoWidgetEntry {
         let now = Date()
         let variant = imageVariant(for: context.family)
-        let items = sortedItems(WidgetManifestReader.availableItems(for: variant))
+        let source = configuration.photoSource
+        let items = sortedItems(availableItems(for: source, variant: variant))
+        let likeState = readLikeState()
         guard let item = items.last(where: { $0.scheduledDate <= now }) ?? items.first else {
             SharedLog.widget.warning(
                 "timeline",
                 "Snapshot requested without an available cache item",
-                metadata: ["preview": "\(context.isPreview)"]
+                metadata: [
+                    "photoSource": source.id,
+                    "preview": "\(context.isPreview)"
+                ]
             )
-            completion(.empty(at: now, imageVariant: variant))
-            return
+            return .empty(
+                at: now,
+                imageVariant: variant,
+                photoSourceIdentifier: source.id
+            )
         }
 
         SharedLog.widget.debug(
@@ -29,28 +38,32 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
             metadata: [
                 "asset": SharedLog.shortHash(item.localIdentifier),
                 "availableItems": "\(items.count)",
+                "photoSource": source.id,
                 "preview": "\(context.isPreview)"
             ]
         )
 
-        completion(
-            NekoWidgetEntry(
-                date: now,
-                localIdentifier: item.localIdentifier,
-                cacheFilename: item.cacheFilename(for: variant),
-                imageVariant: variant,
-                usesFamilySpecificImage: item.cacheFilenames != nil
-            )
+        return NekoWidgetEntry(
+            date: now,
+            localIdentifier: item.localIdentifier,
+            cacheFilename: item.cacheFilename(for: variant),
+            imageVariant: variant,
+            photoSourceIdentifier: source.id,
+            usesFamilySpecificImage: item.cacheFilenames != nil,
+            isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
+            isLikeInteractionEnabled: likeState.isInteractionReady
         )
     }
 
-    func getTimeline(
-        in context: Context,
-        completion: @escaping (Timeline<NekoWidgetEntry>) -> Void
-    ) {
+    func timeline(
+        for configuration: NekoWidgetConfigurationIntent,
+        in context: Context
+    ) async -> Timeline<NekoWidgetEntry> {
         let now = Date()
         let variant = imageVariant(for: context.family)
-        let items = sortedItems(WidgetManifestReader.availableItems(for: variant))
+        let source = configuration.photoSource
+        let items = sortedItems(availableItems(for: source, variant: variant))
+        let likeState = readLikeState()
 
         guard !items.isEmpty else {
             // The app explicitly reloads timelines after publishing a manifest.
@@ -58,28 +71,44 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
             SharedLog.widget.warning(
                 "timeline",
                 "Timeline requested without available cache items",
-                metadata: ["preview": "\(context.isPreview)"]
+                metadata: [
+                    "photoSource": source.id,
+                    "preview": "\(context.isPreview)"
+                ]
             )
-            completion(
-                Timeline(
-                    entries: [.empty(at: now, imageVariant: variant)],
-                    policy: .never
-                )
+            return Timeline(
+                entries: [
+                    .empty(
+                        at: now,
+                        imageVariant: variant,
+                        photoSourceIdentifier: source.id
+                    )
+                ],
+                policy: .never
             )
-            return
         }
 
         // The app-side builder owns both count and cadence. Rebase its relative
         // schedule to this provider invocation so every timeline still returns
         // the full configured 15–20 entries even when WidgetKit delays reload.
-        let scheduledItems = normalizedSchedule(items, now: now)
+        let scheduledItems = normalizedSchedule(
+            items,
+            now: now,
+            preferredLocalIdentifier: recentlyChangedLikeIdentifier(
+                in: likeState.records,
+                relativeTo: now
+            )
+        )
         let entries = scheduledItems.map { item, date in
             return NekoWidgetEntry(
                 date: date,
                 localIdentifier: item.localIdentifier,
                 cacheFilename: item.cacheFilename(for: variant),
                 imageVariant: variant,
-                usesFamilySpecificImage: item.cacheFilenames != nil
+                photoSourceIdentifier: source.id,
+                usesFamilySpecificImage: item.cacheFilenames != nil,
+                isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
+                isLikeInteractionEnabled: likeState.isInteractionReady
             )
         }
 
@@ -93,16 +122,44 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
             "Future timeline prepared",
             metadata: [
                 "entries": "\(entries.count)",
+                "photoSource": source.id,
                 "preview": "\(context.isPreview)",
                 "uniqueFiles": "\(Set(entries.compactMap(\.cacheFilename)).count)",
                 "variant": variant.rawValue
             ]
         )
-        completion(Timeline(entries: entries, policy: .atEnd))
+        return Timeline(entries: entries, policy: .atEnd)
+    }
+
+    private func availableItems(
+        for source: WidgetPhotoSource,
+        variant: WidgetImageVariant
+    ) -> [WidgetManifestItem] {
+        // Fail closed for unknown or retired sources. Never substitute the
+        // personal camera roll for another configured source.
+        guard source.id == WidgetPhotoSource.personalLibraryID else { return [] }
+        return WidgetManifestReader.availableItems(for: variant)
     }
 
     private func sortedItems(_ items: [WidgetManifestItem]) -> [WidgetManifestItem] {
         Array(items.sorted { $0.scheduledDate < $1.scheduledDate }.prefix(20))
+    }
+
+    private func readLikeState() -> SharedLikeStateSnapshot {
+        do {
+            return try SharedLikeStore.stateSnapshot()
+        } catch {
+            let value = error as NSError
+            SharedLog.widget.error(
+                "like",
+                "Widget like state could not be read",
+                metadata: [
+                    "code": "\(value.code)",
+                    "domain": value.domain
+                ]
+            )
+            return SharedLikeStateSnapshot(records: [:], isInteractionReady: false)
+        }
     }
 
     private func imageVariant(for family: WidgetFamily) -> WidgetImageVariant {
@@ -118,13 +175,56 @@ struct NekoWidgetTimelineProvider: TimelineProvider {
 
     private func normalizedSchedule(
         _ items: [WidgetManifestItem],
-        now: Date
+        now: Date,
+        preferredLocalIdentifier: String?
     ) -> [(WidgetManifestItem, Date)] {
-        guard let first = items.first else { return [] }
-        return items.map { item in
-            let offset = max(0, item.scheduledDate.timeIntervalSince(first.scheduledDate))
-            return (item, now.addingTimeInterval(offset))
+        guard !items.isEmpty else { return [] }
+
+        // A like intent writes its changedAt before asking WidgetKit to reload.
+        // Prefer that asset so feedback applies to the photo the user actually
+        // tapped, even after the manifest's original six-hour schedule expires.
+        // Otherwise preserve the active item while still inside that schedule.
+        let startIndex: Int
+        if let preferredLocalIdentifier,
+           let preferredIndex = items.firstIndex(where: {
+               $0.localIdentifier == preferredLocalIdentifier
+           }) {
+            startIndex = preferredIndex
+        } else if let last = items.last,
+                  now <= last.scheduledDate,
+                  let activeIndex = items.lastIndex(where: {
+                      $0.scheduledDate <= now
+                  }) {
+            startIndex = activeIndex
+        } else {
+            startIndex = 0
         }
+
+        let orderedItems = Array(items[startIndex...]) + Array(items[..<startIndex])
+        let cadence = timelineCadence(in: items)
+        return orderedItems.enumerated().map { offset, item in
+            (item, now.addingTimeInterval(TimeInterval(offset) * cadence))
+        }
+    }
+
+    private func timelineCadence(in items: [WidgetManifestItem]) -> TimeInterval {
+        guard items.count > 1 else { return 20 * 60 }
+        let interval = items[1].scheduledDate.timeIntervalSince(items[0].scheduledDate)
+        return max(1, interval)
+    }
+
+    private func recentlyChangedLikeIdentifier(
+        in records: [String: SharedLikeRecord],
+        relativeTo now: Date
+    ) -> String? {
+        let feedbackWindow: TimeInterval = 2 * 60
+        return records.values
+            .filter {
+                let age = now.timeIntervalSince($0.changedAt)
+                return age >= -5 && age <= feedbackWindow
+            }
+            .max(by: { $0.changedAt < $1.changedAt })?
+            .localIdentifier
     }
 
     private func recordTimelineLease(

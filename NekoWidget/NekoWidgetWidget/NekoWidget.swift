@@ -5,7 +5,11 @@ struct NekoWidget: Widget {
     static let kind = "NekoWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: Self.kind, provider: NekoWidgetTimelineProvider()) { entry in
+        AppIntentConfiguration(
+            kind: Self.kind,
+            intent: NekoWidgetConfigurationIntent.self,
+            provider: NekoWidgetTimelineProvider()
+        ) { entry in
             NekoWidgetView(entry: entry)
         }
         .configurationDisplayName("うちの子")

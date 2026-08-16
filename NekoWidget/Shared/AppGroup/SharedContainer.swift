@@ -24,6 +24,19 @@ enum SharedContainer {
         containerURL?.appendingPathComponent("library-snapshot.json", isDirectory: false)
     }
 
+    /// Canonical cross-process state for likes created by either the app or an
+    /// interactive widget. Keeping this separate from the scan snapshot avoids
+    /// a widget read/modify/write racing with a long-running library scan.
+    static var likesURL: URL? {
+        containerURL?.appendingPathComponent("liked-assets.json", isDirectory: false)
+    }
+
+    /// `flock` operates on this stable inode while `liked-assets.json` can be
+    /// atomically replaced. Both the app and extension must use the same lock.
+    static var likesLockURL: URL? {
+        containerURL?.appendingPathComponent("liked-assets.lock", isDirectory: false)
+    }
+
     static var widgetManifestURL: URL? {
         containerURL?.appendingPathComponent("widget-manifest.json", isDirectory: false)
     }

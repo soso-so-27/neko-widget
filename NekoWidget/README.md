@@ -4,13 +4,15 @@
 
 ## 現在の引き継ぎ状態
 
-ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。配布署名、TestFlight Build 4のアップロード、iPhoneへのインストール、Widgetの実配置も確認済みです。実機の全件スキャン、検出精度、Widgetメモリは[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)で継続確認します。
+ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。配布署名と技術検証用TestFlight Build 5のアップロードは成功し、先行buildではiPhoneへのインストールとWidgetの実配置も確認済みです。Build 5の実機表示と、実ライブラリの全件スキャン、検出精度、Widgetメモリは[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)で継続確認します。
 
 TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレースホルダーApp IconとAsset Catalogを含めています。正式公開前には、商標・視認性・各外観での見え方を確認した最終アイコンへ差し替えてください。
 
 写真シャッフルには、指定時点のアルバム内容がスナップショットとして取り込まれます。アルバムへ後から追加した写真は自動反映されないことを実機スパイクで確認済みです。判断の記録は[ADR-001](docs/ADR-001-写真シャッフルのアルバム追従.md)にあります。アルバム生成は維持し、ウィジェットを主要な継続表示先とします。
 
 WidgetはAppleの壁紙と美しさで競わず、写真をタップして「これ好き」へ進む導線を担います。Build 5では3サイズ専用画像と元写真のぼかし背景だけを追加し、Subject Liftingと高度な構図理解は保留します。判断の記録は[ADR-003](docs/ADR-003-Widget表示品質のBuild5範囲.md)にあります。
+
+Build 5は表示と配布の技術検証専用で、1週間の行動計測には使いません。Build 6では3サイズの右下へ輪郭／塗りつぶしの肉球ボタンを追加し、アプリを開かずに好き／解除を記録します。Widget専用App IntentはSiriやショートカットへ公開せず、操作履歴はApp Groupへ30日・最大1,000件保存します。1週間計測はBuild 6の実機ゲート通過後にアプリから明示的に開始します。判断の記録は[ADR-004](docs/ADR-004-Widget肉球ボタンとBuild6計測.md)にあります。
 
 1,000枚スケールテストでは全件確定まで123.595秒、約8.1枚／秒でした。実ライブラリでは数十分かかる可能性を認識したうえで、速報値と確定値の分離を維持し、実機実測まで速度最適化を保留します。判断の記録は[ADR-002](docs/ADR-002-全件スキャン速度と最適化保留.md)にあります。
 
@@ -34,7 +36,7 @@ WidgetはAppleの壁紙と美しさで競わず、写真をタップして「こ
 4. アプリtargetではInfo.plist Fileを`NekoWidget/Info.plist`、Code Signing Entitlementsを`NekoWidget/NekoWidget.entitlements`にします。Widget targetにも同様に、そのtarget用のInfo.plistとentitlementsを割り当てます。手書きのplistを使うtargetではGenerate Info.plist Fileを`No`にします。
 5. Signing & Capabilitiesで、アプリとWidgetの両targetへ同じApple Development Teamを設定します。両方へApp Groups capabilityを追加し、`$(APP_GROUP_IDENTIFIER)`の展開後と同じGroupを有効にします。Apple Developer側に存在しない場合は、この時点で登録します。
 6. ビルド設定を展開表示し、`APP_BUNDLE_IDENTIFIER`、`WIDGET_BUNDLE_IDENTIFIER`、`APP_GROUP_IDENTIFIER`が期待する実値になっていることを両targetで確認します。アプリのInfoとentitlementsが同じApp Groupを参照していない状態では共有データを読めません。
-7. `nekowidget` URL schemeがアプリtargetのInfoに入っていることを確認します。v1でApp Intent / ショートカット連携は追加しません。
+7. `nekowidget` URL schemeがアプリtargetのInfoに入っていることを確認します。Build 6の非公開Widget App IntentはAppとWidgetの両targetへ含めますが、Siri / ショートカット連携は追加しません。
 8. 実機を接続し、Developer Modeと端末上の開発者信頼を必要に応じて有効にして、アプリschemeを選びRunします。
 
 ## GitHub Actions
@@ -88,6 +90,7 @@ App Store Connect APIキーはアップロード認証用です。コード署�
 - ホーム画面へSmall / Medium / Largeを1つずつ追加し、各サイズ専用の画像、ぼかし背景、プレースホルダー、空データ時の表示を確認します。
 - manifestに15〜20件の未来エントリがあり、既定20分間隔の日時になっていることを確認します。数時間置いて表示の切り替わりを確認しますが、WidgetKitの実行時刻はOS裁量であり、正確な20分更新は受け入れ条件にしません。
 - アプリが前面、背面、終了中の各状態でウィジェットをタップし、`nekowidget://photo?id=...`から該当写真の詳細と「これ好き」が開くことを確認します。
+- 3サイズの右下に肉球があり、輪郭→塗りつぶし→輪郭と切り替わること、処理中表示、アプリを開かないこと、肉球以外の領域では従来のDeep Linkが働くことを確認します。
 - データ更新後に新しいtimelineが要求され、共有manifestとキャッシュをWidgetが読めることを確認します。
 
 ### Widgetのメモリ

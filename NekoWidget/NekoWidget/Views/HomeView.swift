@@ -8,6 +8,7 @@ struct HomeView: View {
     let albumState: AlbumPresentationState
     let isLimitedAccess: Bool
     let chooseMorePhotos: () -> Void
+    let showLikedPhotos: () -> Void
     let toggleLike: (String) -> Void
     let updateAlbum: () -> Void
     let rescan: () -> Void
@@ -17,6 +18,8 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
+                likedSummary
+
                 if isLimitedAccess {
                     LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                 }
@@ -34,6 +37,44 @@ struct HomeView: View {
         .sheet(isPresented: $showsPhotoShuffleGuide) {
             PhotoShuffleGuideView()
         }
+    }
+
+    private var likedSummary: some View {
+        Button(action: showLikedPhotos) {
+            HStack(spacing: 14) {
+                Image(systemName: likedCount > 0 ? "pawprint.fill" : "pawprint")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: 44, height: 44)
+                    .background(Color.accentColor.opacity(0.12), in: Circle())
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("これ好き")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(likedCount.formatted())
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                        Text("枚")
+                            .font(.headline)
+                    }
+                    .foregroundStyle(.primary)
+                }
+
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("これ好き、\(likedCount)枚")
+        .accessibilityHint("好きにした写真の一覧を開きます")
     }
 
     @ViewBuilder
@@ -65,7 +106,7 @@ struct HomeView: View {
                     toggleLike(currentPhoto.localIdentifier)
                 } label: {
                     HStack(spacing: 9) {
-                        Image(systemName: currentPhoto.isLiked ? "heart.fill" : "heart")
+                        Image(systemName: currentPhoto.isLiked ? "pawprint.fill" : "pawprint")
                         Text(currentPhoto.isLiked ? "これ好き済み" : "これ好き")
                         Spacer()
                         Text(likedCount.formatted())

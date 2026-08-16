@@ -7,6 +7,8 @@ struct MainTabView: View {
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
     let settings: SettingsPresentation
+    let detectionAccuracySample: DetectionAccuracySamplePresentation
+    let likeMeasurement: LikeMeasurementPresentation
     let isLimitedAccess: Bool
     let isScanning: Bool
     @Binding var deepLinkedPhotoIdentifier: String?
@@ -17,6 +19,7 @@ struct MainTabView: View {
     let rescan: () async -> Void
     let saveSettings: (SettingsPresentation) async -> Void
     let exportJSON: () async -> URL?
+    let startLikeMeasurement: () async -> Void
 
     @State private var selectedTab: AppTab = .home
     @State private var homePath: [String] = []
@@ -33,6 +36,7 @@ struct MainTabView: View {
                     albumState: albumState,
                     isLimitedAccess: isLimitedAccess,
                     chooseMorePhotos: chooseMorePhotos,
+                    showLikedPhotos: { selectedTab = .likes },
                     toggleLike: toggleLike,
                     updateAlbum: updateAlbum,
                     rescan: { Task { await rescan() } }
@@ -49,7 +53,7 @@ struct MainTabView: View {
                     .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
-                Label("これ好き", systemImage: "heart.fill")
+                Label("これ好き", systemImage: "pawprint.fill")
             }
             .badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)
             .tag(AppTab.likes)
@@ -57,10 +61,13 @@ struct MainTabView: View {
             NavigationStack {
                 SettingsView(
                     settings: settings,
+                    detectionAccuracySample: detectionAccuracySample,
+                    likeMeasurement: likeMeasurement,
                     isScanning: isScanning,
                     saveSettings: saveSettings,
                     rescan: rescan,
-                    exportJSON: exportJSON
+                    exportJSON: exportJSON,
+                    startLikeMeasurement: startLikeMeasurement
                 )
             }
             .tabItem {

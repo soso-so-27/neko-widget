@@ -9,18 +9,25 @@ struct NekoWidgetEntry: TimelineEntry {
     let localIdentifier: String?
     let cacheFilename: String?
     let imageVariant: WidgetImageVariant?
+    let photoSourceIdentifier: String
     let usesFamilySpecificImage: Bool
+    let isLiked: Bool
+    let isLikeInteractionEnabled: Bool
 
     static func empty(
         at date: Date,
-        imageVariant: WidgetImageVariant? = nil
+        imageVariant: WidgetImageVariant? = nil,
+        photoSourceIdentifier: String = WidgetPhotoSource.personalLibraryID
     ) -> NekoWidgetEntry {
         NekoWidgetEntry(
             date: date,
             localIdentifier: nil,
             cacheFilename: nil,
             imageVariant: imageVariant,
-            usesFamilySpecificImage: false
+            photoSourceIdentifier: photoSourceIdentifier,
+            usesFamilySpecificImage: false,
+            isLiked: false,
+            isLikeInteractionEnabled: false
         )
     }
 

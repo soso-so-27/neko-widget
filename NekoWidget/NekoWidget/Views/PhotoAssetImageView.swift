@@ -8,6 +8,7 @@ struct PhotoAssetImageView: View {
     var catBoundingBox: CGRect?
     var targetPixelSize: CGSize
     var targetAspectRatio: CGFloat
+    var showsFullImage: Bool
 
     @StateObject private var loader = PhotoAssetImageLoader()
 
@@ -15,12 +16,14 @@ struct PhotoAssetImageView: View {
         localIdentifier: String,
         catBoundingBox: CGRect? = nil,
         targetPixelSize: CGSize = CGSize(width: 800, height: 800),
-        targetAspectRatio: CGFloat = 1
+        targetAspectRatio: CGFloat = 1,
+        showsFullImage: Bool = false
     ) {
         self.localIdentifier = localIdentifier
         self.catBoundingBox = catBoundingBox
         self.targetPixelSize = targetPixelSize
         self.targetAspectRatio = targetAspectRatio
+        self.showsFullImage = showsFullImage
     }
 
     var body: some View {
@@ -55,13 +58,15 @@ struct PhotoAssetImageView: View {
             localIdentifier: localIdentifier,
             boundingBox: catBoundingBox,
             targetSize: targetPixelSize,
-            targetAspectRatio: targetAspectRatio
+            targetAspectRatio: targetAspectRatio,
+            showsFullImage: showsFullImage
         )) {
             loader.load(
                 localIdentifier: localIdentifier,
                 catBoundingBox: catBoundingBox,
                 targetPixelSize: targetPixelSize,
-                targetAspectRatio: targetAspectRatio
+                targetAspectRatio: targetAspectRatio,
+                showsFullImage: showsFullImage
             )
         }
         .onDisappear {
@@ -76,6 +81,7 @@ private struct LoadKey: Hashable {
     let boundingBox: CGRect?
     let targetSize: CGSize
     let targetAspectRatio: CGFloat
+    let showsFullImage: Bool
 }
 
 @MainActor
@@ -85,17 +91,20 @@ private final class PhotoAssetImageLoader: ObservableObject {
     @Published private(set) var prefersAspectFit = false
 
     private var requestID: PHImageRequestID?
+    private var loadGeneration = 0
 
     func load(
         localIdentifier: String,
         catBoundingBox: CGRect?,
         targetPixelSize: CGSize,
-        targetAspectRatio: CGFloat
+        targetAspectRatio: CGFloat,
+        showsFullImage: Bool
     ) {
         cancel()
+        let generation = loadGeneration
         image = nil
         didFail = false
-        prefersAspectFit = false
+        prefersAspectFit = showsFullImage
 
         let result = PHAsset.fetchAssets(
             withLocalIdentifiers: [localIdentifier],
@@ -110,8 +119,10 @@ private final class PhotoAssetImageLoader: ObservableObject {
         options.deliveryMode = .opportunistic
         options.isNetworkAccessAllowed = true
         options.version = .current
-        var requestedContentMode: PHImageContentMode = .aspectFill
-        if let catBoundingBox {
+        var requestedContentMode: PHImageContentMode = showsFullImage ? .aspectFit : .aspectFill
+        if showsFullImage {
+            options.resizeMode = .fast
+        } else if let catBoundingBox {
             if let cropRect = Self.cropRect(
                 aroundVisionRect: catBoundingBox,
                 imagePixelSize: CGSize(width: asset.pixelWidth, height: asset.pixelHeight),
@@ -139,7 +150,9 @@ private final class PhotoAssetImageLoader: ObservableObject {
             let cancelled = (info?[PHImageCancelledKey] as? Bool) == true
             let error = info?[PHImageErrorKey] as? Error
             Task { @MainActor in
-                guard let self, !cancelled else { return }
+                guard let self,
+                      self.loadGeneration == generation,
+                      !cancelled else { return }
                 if let image {
                     withAnimation(.easeOut(duration: 0.16)) {
                         self.image = image
@@ -152,6 +165,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
     }
 
     func cancel() {
+        loadGeneration &+= 1
         if let requestID {
             PHImageManager.default().cancelImageRequest(requestID)
         }

@@ -7,6 +7,7 @@ struct PhotoPresentation: Identifiable, Hashable {
     let creationDate: Date?
     let catBoundingBox: CGRect?
     let isLiked: Bool
+    let likedAt: Date?
 
     var id: String { localIdentifier }
 
@@ -14,12 +15,14 @@ struct PhotoPresentation: Identifiable, Hashable {
         localIdentifier: String,
         creationDate: Date? = nil,
         catBoundingBox: CGRect? = nil,
-        isLiked: Bool = false
+        isLiked: Bool = false,
+        likedAt: Date? = nil
     ) {
         self.localIdentifier = localIdentifier
         self.creationDate = creationDate
         self.catBoundingBox = catBoundingBox
         self.isLiked = isLiked
+        self.likedAt = likedAt
     }
 }
 
@@ -72,6 +75,32 @@ struct SettingsPresentation: Equatable {
     var albumLimit = 300
     var confidenceThreshold = 0.7
     var minimumAreaRatio = 0.08
+}
+
+/// UI-only metadata for one item in the exported detection-accuracy sample.
+/// The order and review number come from the same core sampler used by the
+/// verification JSON, while the photo itself remains in PhotoKit.
+struct DetectionAccuracySampleItemPresentation: Identifiable, Hashable {
+    let reviewNumber: Int
+    let localIdentifier: String
+    let creationDate: Date?
+
+    var id: Int { reviewNumber }
+}
+
+struct DetectionAccuracySamplePresentation: Equatable {
+    var snapshotIsFinal = false
+    var items: [DetectionAccuracySampleItemPresentation] = []
+}
+
+struct LikeMeasurementPresentation: Equatable {
+    var isInteractionReady = false
+    var startedAt: Date?
+    var baselineLikedCount = 0
+    var eventCount = 0
+    var droppedEventCount = 0
+    var retentionDays = 30
+    var maximumEventCount = 1_000
 }
 
 enum AlbumPresentationState: Equatable {

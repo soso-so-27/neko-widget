@@ -21,6 +21,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var albumStatus: AlbumUpdateStatus = .idle
     @Published private(set) var errorMessage: String?
     @Published private(set) var exportedURL: URL?
+    @Published private(set) var likeMeasurement: SharedLikeMeasurementSnapshot = .empty
+    @Published private(set) var isLikeInteractionReady = false
     @Published var selectedAssetIdentifier: String?
 
     var isLimitedAccess: Bool { authorizationStatus == .limited }
@@ -47,6 +49,7 @@ final class AppViewModel: ObservableObject {
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
     private var successfulImageLoadCount = 0
+    private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
 
     private lazy var libraryObserver = PhotoLibraryObserver { [weak self] in
         self?.libraryChangePending = true
@@ -93,7 +96,11 @@ final class AppViewModel: ObservableObject {
             do {
                 let loaded = try await store.load()
                 applySnapshot(loaded)
+                let likesChanged = synchronizeSharedLikes(importLegacyLikes: true)
                 chooseCurrentAssetIfNeeded()
+                if likesChanged {
+                    await saveSnapshot(reportErrors: false)
+                }
                 SharedLog.app.info(
                     "storage",
                     "Snapshot loaded",
@@ -152,6 +159,10 @@ final class AppViewModel: ObservableObject {
     /// correctness or promised to the user.
     func syncOnActive() async {
         authorizationStatus = authorizationService.status
+        let likesChanged = synchronizeSharedLikes(importLegacyLikes: true)
+        if likesChanged {
+            await saveSnapshot(reportErrors: false)
+        }
         SharedLog.app.debug(
             "lifecycle",
             "Foreground synchronization requested",
@@ -229,14 +240,33 @@ final class AppViewModel: ObservableObject {
         }) else { return }
 
         errorMessage = nil
-        snapshot.assets[index].liked.toggle()
-        snapshot.assets[index].likedAt = snapshot.assets[index].liked ? .now : nil
+        let fallbackIsLiked = snapshot.assets[index].liked
+        let mutation: SharedLikeMutation
+        do {
+            mutation = try SharedLikeStore.toggle(
+                localIdentifier: localIdentifier,
+                fallbackIsLiked: fallbackIsLiked,
+                at: .now,
+                source: "app"
+            )
+        } catch {
+            Self.logError(error, category: "like", operation: "toggle_shared_like")
+            setError(error)
+            return
+        }
+
+        sharedLikeRecords[localIdentifier] = mutation.record
+        refreshLikeMeasurementState()
+        applySharedLikeRecord(mutation.record, at: index)
         SharedLog.app.info(
             "like",
             "Like state changed",
             metadata: [
                 "asset": SharedLog.shortHash(localIdentifier),
-                "liked": "\(snapshot.assets[index].liked)"
+                "changedAt": Self.iso8601String(mutation.record.changedAt),
+                "liked": "\(mutation.record.isLiked)",
+                "previousLiked": "\(mutation.previousIsLiked)",
+                "source": "app"
             ]
         )
         snapshot.updatedAt = .now
@@ -246,6 +276,27 @@ final class AppViewModel: ObservableObject {
         // A like changes the 3x display weight, so refresh the principal v1
         // display surface immediately.
         await rebuildWidgetCache(reportErrors: false)
+    }
+
+    func startLikeMeasurement() async {
+        errorMessage = nil
+        do {
+            let measurement = try SharedLikeStore.startMeasurement(at: .now)
+            likeMeasurement = measurement
+            SharedLog.app.info(
+                "like",
+                "One-week like measurement started",
+                metadata: [
+                    "baselineLikedCount": "\(measurement.baselineLikedCount)",
+                    "retentionDays": "\(measurement.retentionDays)",
+                    "maximumEvents": "\(measurement.maximumEventCount)",
+                    "startedAt": measurement.startedAt.map(Self.iso8601String) ?? "unknown"
+                ]
+            )
+        } catch {
+            Self.logError(error, category: "like", operation: "start_like_measurement")
+            setError(error)
+        }
     }
 
     func selectAsset(id localIdentifier: String?) {
@@ -571,7 +622,12 @@ final class AppViewModel: ObservableObject {
         )
         var merged = newSnapshot
         merged.assets = newSnapshot.assets.map {
-            $0.preservingUserState(from: liveByIdentifier[$0.localIdentifier])
+            var record = $0.preservingUserState(from: liveByIdentifier[$0.localIdentifier])
+            if let sharedLike = sharedLikeRecords[record.localIdentifier] {
+                record.liked = sharedLike.isLiked
+                record.likedAt = sharedLike.likedAt
+            }
+            return record
         }
         if let liveAlbumIdentifier = snapshot.albumLocalIdentifier {
             merged.albumLocalIdentifier = liveAlbumIdentifier
@@ -589,11 +645,95 @@ final class AppViewModel: ObservableObject {
             uniqueKeysWithValues: snapshot.assets.map { ($0.localIdentifier, $0) }
         )
         for record in records {
-            existingByIdentifier[record.localIdentifier] = record.preservingUserState(
+            var merged = record.preservingUserState(
                 from: existingByIdentifier[record.localIdentifier]
             )
+            if let sharedLike = sharedLikeRecords[record.localIdentifier] {
+                merged.liked = sharedLike.isLiked
+                merged.likedAt = sharedLike.likedAt
+            }
+            existingByIdentifier[record.localIdentifier] = merged
         }
         snapshot.assets = Array(existingByIdentifier.values)
+    }
+
+    /// The small App Group file is the canonical cross-process source for
+    /// likes. Import the pre-Build-6 snapshot values once, then apply both
+    /// widget and app mutations to the in-memory snapshot. Explicit false
+    /// records are tombstones, so a widget unlike cannot be resurrected by an
+    /// older snapshot.
+    @discardableResult
+    private func synchronizeSharedLikes(importLegacyLikes: Bool) -> Bool {
+        do {
+            let records: [String: SharedLikeRecord]
+            if importLegacyLikes {
+                let legacyRecords = snapshot.assets.compactMap { asset -> SharedLikeRecord? in
+                    guard asset.liked else { return nil }
+                    let likedAt = asset.likedAt ?? snapshot.updatedAt
+                    return SharedLikeRecord(
+                        localIdentifier: asset.localIdentifier,
+                        isLiked: true,
+                        likedAt: likedAt,
+                        changedAt: likedAt
+                    )
+                }
+                records = try SharedLikeStore.mergeLegacyLikes(legacyRecords)
+            } else {
+                records = try SharedLikeStore.readAll()
+            }
+
+            sharedLikeRecords = records
+            let wasInteractionReady = isLikeInteractionReady
+            refreshLikeMeasurementState()
+            if !wasInteractionReady && isLikeInteractionReady {
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+                SharedLog.app.info(
+                    "like",
+                    "Widget like interaction enabled after legacy migration"
+                )
+            }
+            var changedCount = 0
+            for index in snapshot.assets.indices {
+                guard let record = records[snapshot.assets[index].localIdentifier] else { continue }
+                let asset = snapshot.assets[index]
+                guard asset.liked != record.isLiked || asset.likedAt != record.likedAt else { continue }
+                applySharedLikeRecord(record, at: index)
+                changedCount += 1
+            }
+
+            if changedCount > 0 {
+                snapshot.updatedAt = .now
+                refreshCurrentAsset()
+            }
+            SharedLog.app.info(
+                "like",
+                "Shared like state synchronized",
+                metadata: [
+                    "changedAssets": "\(changedCount)",
+                    "records": "\(records.count)",
+                    "source": "app-group"
+                ]
+            )
+            return changedCount > 0
+        } catch {
+            Self.logError(error, category: "like", operation: "synchronize_shared_likes")
+            return false
+        }
+    }
+
+    private func refreshLikeMeasurementState() {
+        do {
+            let state = try SharedLikeStore.stateSnapshot()
+            isLikeInteractionReady = state.isInteractionReady
+            likeMeasurement = try SharedLikeStore.measurementSnapshot()
+        } catch {
+            Self.logError(error, category: "like", operation: "read_like_measurement")
+        }
+    }
+
+    private func applySharedLikeRecord(_ record: SharedLikeRecord, at index: Int) {
+        snapshot.assets[index].liked = record.isLiked
+        snapshot.assets[index].likedAt = record.likedAt
     }
 
     private func chooseCurrentAssetIfNeeded() {
@@ -775,6 +915,10 @@ final class AppViewModel: ObservableObject {
         case .limited: return "limited"
         @unknown default: return "unknown"
         }
+    }
+
+    private static func iso8601String(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 
 }

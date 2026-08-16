@@ -79,6 +79,8 @@ struct AppRootView: View {
                 scan: scanPresentation,
                 albumState: effectiveAlbumState,
                 settings: settingsPresentation,
+                detectionAccuracySample: detectionAccuracySamplePresentation,
+                likeMeasurement: likeMeasurementPresentation,
                 isLimitedAccess: viewModel.isLimitedAccess,
                 isScanning: viewModel.isScanning,
                 deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
@@ -95,6 +97,9 @@ struct AppRootView: View {
                 },
                 exportJSON: {
                     await viewModel.exportJSON()
+                },
+                startLikeMeasurement: {
+                    await viewModel.startLikeMeasurement()
                 }
             )
         }
@@ -133,6 +138,35 @@ struct AppRootView: View {
         )
     }
 
+    private var detectionAccuracySamplePresentation: DetectionAccuracySamplePresentation {
+        guard DetectionAccuracySampler.isFinal(viewModel.snapshot) else {
+            return DetectionAccuracySamplePresentation()
+        }
+        let selection = DetectionAccuracySampler.sample(from: viewModel.snapshot)
+        return DetectionAccuracySamplePresentation(
+            snapshotIsFinal: selection.snapshotIsFinal,
+            items: selection.items.map { item in
+                DetectionAccuracySampleItemPresentation(
+                    reviewNumber: item.reviewNumber,
+                    localIdentifier: item.record.localIdentifier,
+                    creationDate: item.record.creationDate
+                )
+            }
+        )
+    }
+
+    private var likeMeasurementPresentation: LikeMeasurementPresentation {
+        LikeMeasurementPresentation(
+            isInteractionReady: viewModel.isLikeInteractionReady,
+            startedAt: viewModel.likeMeasurement.startedAt,
+            baselineLikedCount: viewModel.likeMeasurement.baselineLikedCount,
+            eventCount: viewModel.likeMeasurement.events.count,
+            droppedEventCount: viewModel.likeMeasurement.droppedEventCount,
+            retentionDays: viewModel.likeMeasurement.retentionDays,
+            maximumEventCount: viewModel.likeMeasurement.maximumEventCount
+        )
+    }
+
     private var effectiveAlbumState: AlbumPresentationState {
         switch viewModel.albumStatus {
         case .idle where viewModel.snapshot.albumLocalIdentifier != nil:
@@ -165,7 +199,8 @@ struct AppRootView: View {
             localIdentifier: asset.localIdentifier,
             creationDate: asset.creationDate,
             catBoundingBox: asset.cat.boundingBox?.cgRect,
-            isLiked: asset.liked
+            isLiked: asset.liked,
+            likedAt: asset.likedAt
         )
     }
 
