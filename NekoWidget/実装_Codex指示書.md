@@ -29,7 +29,7 @@ Apple標準「写真シャッフル」に指定したアルバムへ後から写
 ### 1-3. 合意済みの5点の補正
 
 1. 最低対応OSは **iOS 17.1**。
-2. 猫中心のクロップは **アプリ内表示のみ**。Widgetはサイズ別canvasへ元写真全体をaspect-fitし、同じ写真のぼかし背景で余白を埋める。PhotoKitアルバムには元のPHAsset参照を入れ、壁紙のクロップはOSに任せる。
+2. 猫中心のクロップは **アプリ内表示とWidget派生cache** に適用する。Widgetはfamily別canvasを写真でfull-bleedにし、検出済みの全猫unionと余白を守る。PhotoKitアルバムには元のPHAsset参照を入れ、壁紙のクロップはOSに任せる。
 3. バックグラウンド処理は **best effort**。v1はアプリ起動時・フォアグラウンド時の同期を確実に行えばよい。
 4. 初回表示は **速報値と確定値を分離**。最新500枚の処理中から速報を表示し、全件完了後に総数と最古日を確定する。
 5. 写真シャッフルのアルバム追従はしないことが実機で確認済み。自動追従を受け入れ条件に含めない。
@@ -43,6 +43,8 @@ Apple標準「写真シャッフル」に指定したアルバムへ後から写
 - Subject Lifting、saliency、猫boxによるWidget内の再構図は、この結果を実機で確認してから再検討する。
 - 判断記録は `docs/ADR-003-Widget表示品質のBuild5範囲.md` に残す。
 
+Build 5の実機確認後、常設のぼかし帯が没入感を損なうと判定した。現行の最終方針は1-7および `docs/ADR-005-Widget猫優先full-bleed.md` とし、本節はBuild 5の履歴として残す。
+
 ### 1-5. WidgetKitの制約
 
 サードパーティウィジェットはロック解除ごとの更新を保証できない。1回のタイムライン生成で15〜20件の未来エントリをまとめて返し、10〜30分間隔で切り替える。表示時刻はOS裁量でありbest effort。
@@ -50,17 +52,37 @@ Apple標準「写真シャッフル」に指定したアルバムへ後から写
 ### 1-6. Build 6の「これ好き」計測
 
 - Build 5は表示品質と配布の技術検証専用とし、1週間計測には含めない。
-- 1週間計測はBuild 6を実機へ入れ、3サイズの肉球操作を確認した後、アプリの開始操作で明示的に開始する。
+- 1週間計測はBuild 7を実機へ入れ、Widget再配置、3サイズの表示・肉球操作とランダム100枚を確認した直後、アプリの開始操作で明示的に開始する。
 - Widget右下の肉球から、アプリを開かずに好き／解除を記録する。
-- Build 5以前のlikesは開始時枚数として分離し、Build 6開始後のイベントだけを行動計測へ使う。
+- 計測開始時点でlikedの全写真を開始時枚数として分離し、アプリで明示した計測開始後のイベントだけを行動計測へ使う。
 - 診断ログとは別に、App Groupへ30日・最大1,000件の操作履歴と、上限等で落とした件数を保持する。
 - 判断記録は `docs/ADR-004-Widget肉球ボタンとBuild6計測.md` に残す。
+
+### 1-7. Widget表示の最終方針
+
+- 守るのは「写真を切らない」ことではなく「猫を切らない」こと。写真周辺はfamily比率へ合わせて切ってよい。
+- bounding box unionへ各辺18%、最低でも画像各辺3%の余白を加え、Small / Largeは収容可能ならsharp full-bleedにする。
+- Small / Largeで猫union＋余白を物理的に収容できない場合だけ、元写真全体＋同写真のぼかし背景へfallbackする。
+- Mediumは収容不能でもbbox上側35%付近を焦点にfull-bleedを維持し、猫全体が切れることを許容する。
+- Subject Lifting、saliency、顔・目・姿勢・美的構図理解は実装しない。この修正後、表示改善は打ち止めとして計測へ進む。
+- 判断記録は `docs/ADR-005-Widget猫優先full-bleed.md` に残す。
+
+### 1-8. iCloud Deferredの検証順序
+
+- 実機の`unavailableLocally` 2,586件は「1024px high-quality requestをnetworkなしで満たせない」であり、低解像度ローカル派生もないとは断定しない。
+- Build 7にはiCloud downloadもscanner request変更も入れない。
+- Build 7の計測中はBuild 8 probeを開発・CIまで進めてよいが、測定端末へインストールしない。1週間の結果を回収した後にBuild 8を端末で実行し、採用方針をBuild 9へ反映する。
+- Build 8の技術検証では通常`AppViewModel`を生成せず本番snapshotを変更しない専用rootを使い、Screenshot／burst除外方針を固定した同じ対象へ`512×512 / aspectFit / fastFormat / resizeMode=fast / version=current / network=false`でpaired probeする。fastFormatでは非nilのdegraded画像も最終結果として受理する。
+- 旧解析済み集合の陽性保持率、旧Deferredの回収／新規猫、bbox IoU／中心移動、実出力pixelを分けて報告する。総猫数だけで判定しない。
+- WidgetはMedium 800×374を含むため512pxへ一律変更せず、scanner probe後に非同期fast／local-onlyの900px要求、nil／inCloud時だけ512pxへfallback、degraded非nil受理を別評価する。
+- 同意なしの一括downloadは行わない。ローカル派生でも残る件数に限り、通信量の概算方法と明示同意を設計する。
+- 判断記録は `docs/ADR-006-iCloudローカル派生画像の検証.md` に残す。
 
 ## 2. 技術方針
 
 - Swift / SwiftUI / Xcode
 - Deployment Target: iOS 17.1
-- オンデバイス処理のみ。ネットワーク通信、サーバー、外部ライブラリなし
+- 独自サーバー、外部API、外部ライブラリなし。解析はオンデバイスで行う。本体UIの個別写真表示はPhotoKit経由でiCloudへアクセスし得るが、scannerとWidget cacheの一括処理はユーザー同意なしにnetwork downloadしない
 - PhotoKit / Vision / WidgetKitを使用
 - 本体とウィジェットはApp Groupでデータを共有
 - 写真原本を複製しない。保存するのは `PHAsset.localIdentifier`、解析結果、好き・表示履歴と、App Group内の消去可能な低解像度派生キャッシュのみ
@@ -175,7 +197,9 @@ PhotoKitで「うちの子」アルバムを作成し、選別済みのPHAsset�
 
 - ウィジェット側でPhotoKit / Vision / クロップ処理を実行しない
 - 本体アプリがSmall 400×400px、Medium 800×374px、Large 400×420pxの専用canvasを作り、各JPEGを50KiB以下へ圧縮
-- 背景は元写真をaspect-fillしてぼかし、鮮明な前景は元写真全体をaspect-fitする
+- 通常は検出済み猫union＋余白を基準に、鮮明な写真をfamily比率へfull-bleed cropする
+- Small / Largeで猫union＋余白を収容不能な場合だけ、ぼかしaspect-fill背景＋元写真全体のaspect-fitへfallbackする
+- Mediumは収容不能でもbbox上側を焦点としたsharp full-bleedを維持する
 - App Groupにはmanifestと画像ファイル名を保存
 - TimelineEntryにJPEG DataやUIImageを保持しない
 - View表示時に現在の1枚だけ読み込み・デコード
@@ -219,13 +243,13 @@ Build 6では唯一の写真源「うちの子」に対して、自分の猫の�
 ### 6-3. iCloudと権限
 
 - スキャン時は `PHImageRequestOptions.isNetworkAccessAllowed = false`
-- ローカルに画像がないassetは未解析として記録し、後回し
+- 現行の1024px high-quality local-only requestで取得不能なassetは未解析として記録し、後回しにする。低解像度ローカル派生も存在しないとはprobe前に断定しない
 - limited、denied、権限取消、asset削除でクラッシュしない
 - limited時は `presentLimitedLibraryPicker` への導線を表示
 
 ## 7. アプリ内クロップとWidget合成
 
-猫中心クロップはアプリ内表示だけに適用する。PhotoKitの元写真、写真シャッフル、Widgetの前景には適用しない。
+猫中心クロップはアプリ内表示とWidgetの消去可能な派生cacheだけに適用する。PhotoKitの元写真と写真シャッフルは変更しない。
 
 1. 猫観測のbounding boxを取得
 2. 複数匹の場合は全boxのunionを使う
@@ -234,9 +258,9 @@ Build 6では唯一の写真源「うちの子」に対して、自分の猫の�
 5. 画像端を超えたら内側へ移動
 6. アプリ内表示へ反映する
 
-Widgetは各familyの専用canvasへ、同じ元写真から「ぼかしたaspect-fill背景＋鮮明なaspect-fit前景」を本体アプリで事前合成する。Widget Extensionは完成済みJPEGを現在の1枚だけデコードし、実行時にクロップやぼかしを行わない。
+Widgetは全猫union＋余白を基準にfamily比率のfull-bleedを本体アプリで事前合成する。Small / Largeの収容不能時だけ同じ写真のぼかし背景＋鮮明なaspect-fitへfallbackし、Mediumはbbox上側へ寄せてfull-bleedを維持する。Widget Extensionは完成済みJPEGを現在の1枚だけデコードし、実行時にクロップやぼかしを行わない。
 
-SaliencyはP2。
+Subject Lifting、saliency、顔・目・姿勢・美的構図理解は実装しない。
 
 ## 8. 選別
 
@@ -257,14 +281,14 @@ burst代表           1.5倍
 App Group内のJSONを正本とする。最低限、次を保持する。
 
 - `schemaVersion`
-- assetの `localIdentifier`, `creationDate`, `isFavorite`, `isScreenshot`, `burstIdentifier`
+- assetの `localIdentifier`, `creationDate`, `sourceModificationDate`, `sourceModificationDateWasCaptured`, `isFavorite`, `isScreenshot`, `burstIdentifier`
 - 検出状態（detected / rejected / unavailable / failed）
 - confidence、全猫を含むunion boundingBox、catCount、areaRatio
 - `liked`, `likedAt`, `lastShownAt`, `shownCount`
 - スキャンの総数、処理数、猫数、最古日、速報/確定、最終スキャン時刻
 - 作成したアルバムのlocalIdentifier
 - App設定
-- Widgetとアプリで共有する好きの最新状態、Build 6計測開始日時、開始時枚数、押下／解除イベント履歴
+- Widgetとアプリで共有する好きの最新状態、計測開始日時、開始時枚数、押下／解除イベント履歴
 
 写真本体は保存しない。例外はApp Group内の消去可能なサイズ別ウィジェットキャッシュ（Small 400×400px、Medium 800×374px、Large 400×420px、各50KiB以下）のみ。
 
@@ -296,7 +320,7 @@ JSONエクスポートでは、App Groupの正本と同じ情報に加え、dete
 - JSONエクスポート
 - Small / Medium / Largeウィジェット
 - 15〜20件の未来タイムライン
-- 3サイズ専用canvas、元写真のぼかし背景、各50KiB以下のキャッシュとメモリ対策
+- 3サイズ専用canvas、猫優先full-bleed、例外時だけのぼかしfallback、各50KiB以下のキャッシュとメモリ対策
 - ウィジェットから写真詳細へのDeep Link
 - App Group共有の診断ログとアプリ内ログ画面
 - TestFlight確認用1024×1024プレースホルダーApp Icon / Asset Catalog
@@ -324,7 +348,7 @@ JSONエクスポートでは、App Groupの正本と同じ情報に加え、dete
 6. screenshot、動画、面積比未満の猫、burst重複が候補に入らない
 7. 好きが一覧へ蓄積し、再起動後も残る
 8. JSONを書き出せる
-9. 3サイズの専用画像が表示され、元写真全体と同じ写真のぼかし背景が見え、黒帯や二重クロップがない
+9. 3サイズの専用画像が通常はsharp full-bleedとなり、Small / Largeは猫union＋余白を守り、Mediumの収容不能時はbbox上側を焦点にし、黒帯や空白がない
 10. 大きな原写真があってもウィジェットがクラッシュしない
 11. タイムラインが15〜20件を先読みし、数十分単位でbest effortに切り替わる
 12. ウィジェットタップで該当写真の詳細が開く
@@ -333,7 +357,7 @@ JSONエクスポートでは、App Groupの正本と同じ情報に加え、dete
 15. GitHub Actionsで無署名buildを実行でき、署名Secretsを設定した手動workflowでTestFlightへ送信できる
 16. 3サイズの肉球を押してもアプリが開かず、好き状態が輪郭／塗りつぶしで反映される
 17. 肉球を再タップすると解除され、肉球以外をタップすると従来の写真詳細が開く
-18. アプリを開くと好きの総数と押した日時が分かり、Build 6開始後の操作履歴を1週間分集計できる
+18. アプリを開くと好きの総数と押した日時が分かり、明示した計測開始後の操作履歴を1週間分集計できる
 19. 全件確定後に検出精度サンプル最大100枚を写真全体で確認でき、reviewNumberと撮影日時が検証JSONに一致し、機械判定値はレビュー画面に出ない
 
 写真シャッフルがアルバム更新を自動追従することは、受け入れ条件に含めない。

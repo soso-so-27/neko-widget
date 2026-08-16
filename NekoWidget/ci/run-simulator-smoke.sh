@@ -895,6 +895,95 @@ python3 "$VALIDATOR" \
     "$BASELINE_SNAPSHOT" \
     "$ARTIFACT_DIRECTORY/validation-report.json"
 
+# Preserve all three family canvases for every detected imported fixture so
+# weighted manifest ordering cannot make the visual evidence nondeterministic.
+# The generated fixtures are CC0 and contain no personal photo data.
+python3 - \
+    "$APP_GROUP_CONTAINER/widget-manifest.json" \
+    "$APP_GROUP_CONTAINER/widget-cache" \
+    "$APP_GROUP_CONTAINER/library-snapshot.json" \
+    "$BASELINE_SNAPSHOT" \
+    "$ARTIFACT_DIRECTORY" <<'PY'
+import hashlib
+import json
+import shutil
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+cache_directory = Path(sys.argv[2])
+snapshot_path = Path(sys.argv[3])
+baseline_path = Path(sys.argv[4])
+artifact_directory = Path(sys.argv[5])
+manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+snapshot = json.loads(snapshot_path.read_text(encoding="utf-8-sig"))
+baseline = json.loads(baseline_path.read_text(encoding="utf-8-sig"))
+items = manifest.get("items", [])
+baseline_ids = {
+    asset.get("localIdentifier")
+    for asset in baseline.get("assets", [])
+    if isinstance(asset, dict) and isinstance(asset.get("localIdentifier"), str)
+}
+fixture_ids = {
+    asset.get("localIdentifier")
+    for asset in snapshot.get("assets", [])
+    if isinstance(asset, dict)
+    and isinstance(asset.get("localIdentifier"), str)
+    and asset.get("localIdentifier") not in baseline_ids
+    and asset.get("analysisStatus") == "detected"
+}
+if not fixture_ids:
+    raise SystemExit("The final snapshot has no detected imported fixture to preview.")
+
+manifest_items_by_id = {}
+for item in items:
+    if not isinstance(item, dict):
+        continue
+    identifier = item.get("localIdentifier")
+    if identifier in fixture_ids and identifier not in manifest_items_by_id:
+        manifest_items_by_id[identifier] = item
+missing_ids = fixture_ids - manifest_items_by_id.keys()
+if missing_ids:
+    raise SystemExit(
+        f"The Widget manifest omitted {len(missing_ids)} detected imported fixture(s)."
+    )
+
+preview_index = {"schemaVersion": 1, "previews": []}
+ordered_ids = sorted(
+    fixture_ids,
+    key=lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest(),
+)
+for slot, identifier in enumerate(ordered_ids, start=1):
+    item = manifest_items_by_id[identifier]
+    filenames = item.get("cacheFilenames")
+    if not isinstance(filenames, dict):
+        raise SystemExit(
+            f"Detected imported fixture {slot} has no family-specific cache filenames."
+        )
+    copied = {}
+    for variant in ("small", "medium", "large"):
+        filename = filenames.get(variant)
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            raise SystemExit(f"Unsafe or missing {variant} preview filename.")
+        source = cache_directory / filename
+        if not source.is_file():
+            raise SystemExit(f"Missing {variant} preview cache file: {filename}")
+        output_name = f"widget-preview-fixture-{slot:02d}-{variant}.jpg"
+        shutil.copy2(source, artifact_directory / output_name)
+        copied[variant] = output_name
+    preview_index["previews"].append(
+        {
+            "assetToken": hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:12],
+            "files": copied,
+            "slot": slot,
+        }
+    )
+(artifact_directory / "widget-preview-index.json").write_text(
+    json.dumps(preview_index, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+
 if [[ "$TERMINAL_EVENT_FOUND" != "true" ]]; then
     echo "Timed out waiting for the widget timeline reload event." >&2
     exit 1

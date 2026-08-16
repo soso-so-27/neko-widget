@@ -21,10 +21,41 @@ private struct WidgetCacheHistory: Codable, Sendable {
 
 actor WidgetCacheBuilder {
     private static let historyFilename = "widget-cache-history.json"
-    private static let compositionAlgorithmVersion = "cat-family-blur-v3"
+    private static let compositionAlgorithmVersion = "cat-aware-full-bleed-v4"
     private static let maximumGenerationCount = 24
     private static let maximumCachedFileCount = 480
     private static let targetJPEGByteCount = 50 * 1_024
+    /// Padding on every side of the detected cat union before deciding whether
+    /// a family crop can keep the cat comfortably inside the frame.
+    private static let catMarginFraction: CGFloat = 0.18
+    /// Tiny detections still receive visible breathing room in the source photo.
+    private static let minimumImageMarginFraction: CGFloat = 0.03
+    /// When a Medium crop cannot contain the whole cat union, bias its focal
+    /// point toward the upper third of the box. This preserves the likely head
+    /// area without introducing face detection or semantic composition.
+    private static let mediumUpperFocusFraction: CGFloat = 0.35
+
+    private enum CompositionMode: String, CaseIterable, Sendable {
+        case catFullBleed = "cat-full-bleed"
+        case mediumUpperFocus = "medium-upper-focus"
+        case blurredFitFallback = "blurred-fit-fallback"
+
+        var generatedMetadataKey: String {
+            switch self {
+            case .catFullBleed:
+                return "compositionGeneratedCatFullBleed"
+            case .mediumUpperFocus:
+                return "compositionGeneratedMediumUpperFocus"
+            case .blurredFitFallback:
+                return "compositionGeneratedBlurredFitFallback"
+            }
+        }
+    }
+
+    private struct CropPlan {
+        var normalizedRect: CGRect
+        var compositionMode: CompositionMode
+    }
 
     private struct RenderSpec: Sendable {
         var variant: WidgetImageVariant
@@ -107,6 +138,7 @@ actor WidgetCacheBuilder {
         var unavailableAssetCount = 0
         var inputPixelWidths: [Int] = []
         var inputPixelHeights: [Int] = []
+        var generatedCompositionCounts: [CompositionMode: Int] = [:]
         for record in candidates {
             try Task.checkCancellation()
             let filenames = Self.cacheFilenames(for: record)
@@ -118,7 +150,11 @@ actor WidgetCacheBuilder {
 
             if !missingSpecs.isEmpty {
                 let output: (
-                    files: [(variant: WidgetImageVariant, data: Data)],
+                    files: [(
+                        variant: WidgetImageVariant,
+                        data: Data,
+                        compositionMode: CompositionMode
+                    )],
                     width: Int,
                     height: Int
                 )? = autoreleasepool {
@@ -133,19 +169,24 @@ actor WidgetCacheBuilder {
 
                     let normalized = Self.normalizedImage(image)
                     let ciContext = Self.makeCIContext()
-                    var files: [(variant: WidgetImageVariant, data: Data)] = []
+                    var files: [(
+                        variant: WidgetImageVariant,
+                        data: Data,
+                        compositionMode: CompositionMode
+                    )] = []
                     for spec in missingSpecs {
-                        let data: Data? = autoreleasepool {
+                        let output: (data: Data, compositionMode: CompositionMode)? = autoreleasepool {
                             Self.widgetJPEG(
                                 normalizedImage: normalized,
+                                catBoundingBox: record.cat.boundingBox?.cgRect,
                                 spec: spec,
                                 ciContext: ciContext
                             )
                         }
-                        guard let data else {
+                        guard let output else {
                             return nil
                         }
-                        files.append((spec.variant, data))
+                        files.append((spec.variant, output.data, output.compositionMode))
                     }
                     let width = image.cgImage?.width ?? Int(image.size.width * image.scale)
                     let height = image.cgImage?.height ?? Int(image.size.height * image.scale)
@@ -162,6 +203,7 @@ actor WidgetCacheBuilder {
                     let filename = filenames.filename(for: file.variant)
                     let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
                     try file.data.write(to: fileURL, options: .atomic)
+                    generatedCompositionCounts[file.compositionMode, default: 0] += 1
                     try? FileManager.default.setAttributes(
                         [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                         ofItemAtPath: fileURL.path
@@ -271,6 +313,9 @@ actor WidgetCacheBuilder {
             "uniqueFiles": "\(available.count * Self.RenderSpec.all.count)"
         ]
         completionMetadata.merge(bytesByVariant) { current, _ in current }
+        for mode in CompositionMode.allCases {
+            completionMetadata[mode.generatedMetadataKey] = "\(generatedCompositionCounts[mode, default: 0])"
+        }
         SharedLog.app.info(
             "widget-cache",
             "Widget cache build completed",
@@ -400,12 +445,25 @@ actor WidgetCacheBuilder {
         for record: AssetRecord,
         variant: WidgetImageVariant
     ) -> String {
+        let boundingBoxIdentity: String
+        if let box = record.cat.boundingBox {
+            boundingBoxIdentity = [box.x, box.y, box.width, box.height]
+                .map { String($0.bitPattern, radix: 16) }
+                .joined(separator: ":")
+        } else {
+            boundingBoxIdentity = "no-bounding-box"
+        }
+        let modificationIdentity = record.sourceModificationDate.map {
+            String($0.timeIntervalSinceReferenceDate.bitPattern, radix: 16)
+        } ?? "no-modification-date"
         let identity = [
             compositionAlgorithmVersion,
             variant.rawValue,
             RenderSpec.spec(for: variant).pixelDescription,
             record.localIdentifier,
-            record.analysisFingerprint
+            record.analysisFingerprint,
+            boundingBoxIdentity,
+            modificationIdentity
         ].joined(separator: "|")
         let digest = SHA256.hash(data: Data(identity.utf8))
         let hexadecimal = digest.map { String(format: "%02x", $0) }.joined()
@@ -435,20 +493,29 @@ actor WidgetCacheBuilder {
             .joined(separator: ",")
     }
 
-    /// Produces a family-sized JPEG with a blurred aspect-fill background and
-    /// the full, sharp original aspect-fitted over it. Build 5 deliberately
-    /// avoids subject lifting and new composition/cropping heuristics.
+    /// Produces a family-sized JPEG that fills the canvas with a sharp crop
+    /// guided only by the existing cat union. Small and Large preserve the cat
+    /// plus margin, falling back to Build 5's blurred fit only when geometry
+    /// makes that impossible. Medium remains full-bleed and favors the upper
+    /// part of an oversized cat union. No face detection, subject lifting, or
+    /// semantic composition runs here or in the Widget extension.
     private static func widgetJPEG(
         normalizedImage image: UIImage,
+        catBoundingBox: CGRect?,
         spec: RenderSpec,
         ciContext: CIContext
-    ) -> Data? {
+    ) -> (data: Data, compositionMode: CompositionMode)? {
         let rendered = renderedWidgetImage(
             image: image,
+            catBoundingBox: catBoundingBox,
+            variant: spec.variant,
             size: spec.size,
             ciContext: ciContext
         )
-        return jpegData(rendered, targetByteCount: targetJPEGByteCount)
+        guard let data = jpegData(rendered.image, targetByteCount: targetJPEGByteCount) else {
+            return nil
+        }
+        return (data, rendered.compositionMode)
     }
 
     private static func normalizedImage(_ image: UIImage) -> UIImage {
@@ -464,9 +531,32 @@ actor WidgetCacheBuilder {
 
     private static func renderedWidgetImage(
         image: UIImage,
+        catBoundingBox: CGRect?,
+        variant: WidgetImageVariant,
         size: CGSize,
         ciContext: CIContext
-    ) -> UIImage {
+    ) -> (image: UIImage, compositionMode: CompositionMode) {
+        if let cropPlan = catAwareCropPlan(
+            visionBoundingBox: catBoundingBox,
+            imageSize: image.size,
+            canvasSize: size,
+            variant: variant
+        ) {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                image.draw(
+                    in: drawRect(
+                        imageSize: image.size,
+                        normalizedCropRect: cropPlan.normalizedRect,
+                        canvasSize: size
+                    )
+                )
+            }
+            return (rendered, cropPlan.compositionMode)
+        }
+
         let background = aspectFillImage(image, size: size)
         let blurredBackground = gaussianBlurredImage(
             background,
@@ -477,10 +567,130 @@ actor WidgetCacheBuilder {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
             blurredBackground.draw(in: CGRect(origin: .zero, size: size))
             image.draw(in: aspectFitRect(imageSize: image.size, canvasSize: size))
         }
+        return (rendered, .blurredFitFallback)
+    }
+
+    /// Returns a normalized, top-left-origin crop rectangle. Vision reports
+    /// bottom-left-origin coordinates, so the conversion must happen before
+    /// any family-specific focus calculation.
+    private static func catAwareCropPlan(
+        visionBoundingBox: CGRect?,
+        imageSize: CGSize,
+        canvasSize: CGSize,
+        variant: WidgetImageVariant
+    ) -> CropPlan? {
+        guard let visionBoundingBox,
+              imageSize.width > 0,
+              imageSize.height > 0,
+              canvasSize.width > 0,
+              canvasSize.height > 0,
+              [
+                  visionBoundingBox.minX,
+                  visionBoundingBox.minY,
+                  visionBoundingBox.width,
+                  visionBoundingBox.height,
+                  imageSize.width,
+                  imageSize.height,
+                  canvasSize.width,
+                  canvasSize.height
+              ].allSatisfy(\.isFinite) else {
+            return nil
+        }
+
+        let unitRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let photoBoundingBox = CGRect(
+            x: visionBoundingBox.minX,
+            y: 1 - visionBoundingBox.maxY,
+            width: visionBoundingBox.width,
+            height: visionBoundingBox.height
+        ).standardized.intersection(unitRect)
+        guard !photoBoundingBox.isNull,
+              photoBoundingBox.width > 0,
+              photoBoundingBox.height > 0 else {
+            return nil
+        }
+
+        let horizontalMargin = max(
+            photoBoundingBox.width * catMarginFraction,
+            minimumImageMarginFraction
+        )
+        let verticalMargin = max(
+            photoBoundingBox.height * catMarginFraction,
+            minimumImageMarginFraction
+        )
+        let paddedBoundingBox = photoBoundingBox.insetBy(
+            dx: -horizontalMargin,
+            dy: -verticalMargin
+        ).intersection(unitRect)
+
+        let imageAspectRatio = imageSize.width / imageSize.height
+        let canvasAspectRatio = canvasSize.width / canvasSize.height
+        let cropSize: CGSize
+        if imageAspectRatio > canvasAspectRatio {
+            cropSize = CGSize(width: canvasAspectRatio / imageAspectRatio, height: 1)
+        } else {
+            cropSize = CGSize(width: 1, height: imageAspectRatio / canvasAspectRatio)
+        }
+
+        let keepsPaddedCat = paddedBoundingBox.width <= cropSize.width
+            && paddedBoundingBox.height <= cropSize.height
+        if keepsPaddedCat {
+            return CropPlan(
+                normalizedRect: clampedCropRect(
+                    centeredAt: CGPoint(x: paddedBoundingBox.midX, y: paddedBoundingBox.midY),
+                    cropSize: cropSize
+                ),
+                compositionMode: .catFullBleed
+            )
+        }
+
+        guard variant == .medium else {
+            // Small and Large never trade away part of a detected cat merely
+            // to fill the frame. Their rare impossible cases keep the whole
+            // source over a blurred background.
+            return nil
+        }
+
+        let upperFocus = CGPoint(
+            x: paddedBoundingBox.midX,
+            y: paddedBoundingBox.minY + paddedBoundingBox.height * mediumUpperFocusFraction
+        )
+        return CropPlan(
+            normalizedRect: clampedCropRect(centeredAt: upperFocus, cropSize: cropSize),
+            compositionMode: .mediumUpperFocus
+        )
+    }
+
+    private static func clampedCropRect(centeredAt focus: CGPoint, cropSize: CGSize) -> CGRect {
+        CGRect(
+            x: min(max(focus.x - cropSize.width / 2, 0), 1 - cropSize.width),
+            y: min(max(focus.y - cropSize.height / 2, 0), 1 - cropSize.height),
+            width: cropSize.width,
+            height: cropSize.height
+        )
+    }
+
+    private static func drawRect(
+        imageSize: CGSize,
+        normalizedCropRect: CGRect,
+        canvasSize: CGSize
+    ) -> CGRect {
+        let cropWidth = normalizedCropRect.width * imageSize.width
+        let cropHeight = normalizedCropRect.height * imageSize.height
+        guard cropWidth > 0, cropHeight > 0 else {
+            return CGRect(origin: .zero, size: canvasSize)
+        }
+        let scale = max(canvasSize.width / cropWidth, canvasSize.height / cropHeight)
+        return CGRect(
+            x: -normalizedCropRect.minX * imageSize.width * scale,
+            y: -normalizedCropRect.minY * imageSize.height * scale,
+            width: imageSize.width * scale,
+            height: imageSize.height * scale
+        )
     }
 
     private static func aspectFillImage(_ image: UIImage, size: CGSize) -> UIImage {

@@ -1,5 +1,7 @@
 # ADR-003：Widget表示品質のBuild 5範囲
 
+> **後続判断：** 実機で常設のぼかし帯が没入感を損なうことを確認したため、現行仕様は[ADR-005](ADR-005-Widget猫優先full-bleed.md)の猫優先full-bleedへ置き換えた。本書はBuild 5の履歴として残す。
+
 - 状態：承認済み
 - 日付：2026-08-16
 - 対象：TestFlight Build 5

@@ -351,12 +351,23 @@ actor PhotoLibraryScanner {
                     seenBurstIdentifiers.insert(burstIdentifier)
                 }
 
+                // Legacy snapshots have no capture marker. Trust them once and
+                // record PhotoKit's current value below so later edits invalidate
+                // the Vision box without forcing an upgrade rescan. The marker
+                // also distinguishes a captured nil date from a missing field.
                 if let previous,
                    previous.analysisFingerprint == settings.analysisFingerprint,
+                   (previous.sourceModificationDateWasCaptured != true
+                       || previous.sourceModificationDate
+                           == Self.normalizedModificationDate(asset.modificationDate)),
                    previous.analysisStatus != .unavailableLocally,
                    previous.analysisStatus != .failed {
                     var reused = previous
                     reused.creationDate = asset.creationDate
+                    reused.sourceModificationDate = Self.normalizedModificationDate(
+                        asset.modificationDate
+                    )
+                    reused.sourceModificationDateWasCaptured = true
                     reused.isFavorite = asset.isFavorite
                     reused.isScreenshot = false
                     reused.burstIdentifier = asset.burstIdentifier
@@ -579,6 +590,8 @@ actor PhotoLibraryScanner {
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
                 isFavorite: asset.isFavorite,
                 isScreenshot: false,
                 burstIdentifier: asset.burstIdentifier,
@@ -601,6 +614,8 @@ actor PhotoLibraryScanner {
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
                 isFavorite: asset.isFavorite,
                 isScreenshot: false,
                 burstIdentifier: asset.burstIdentifier,
@@ -620,6 +635,8 @@ actor PhotoLibraryScanner {
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
                 isFavorite: asset.isFavorite,
                 isScreenshot: false,
                 burstIdentifier: asset.burstIdentifier,
@@ -671,6 +688,8 @@ actor PhotoLibraryScanner {
                 return AssetRecord(
                     localIdentifier: asset.localIdentifier,
                     creationDate: asset.creationDate,
+                    sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                    sourceModificationDateWasCaptured: true,
                     isFavorite: asset.isFavorite,
                     isScreenshot: false,
                     burstIdentifier: asset.burstIdentifier,
@@ -692,6 +711,8 @@ actor PhotoLibraryScanner {
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
                 isFavorite: asset.isFavorite,
                 isScreenshot: false,
                 burstIdentifier: asset.burstIdentifier,
@@ -716,6 +737,8 @@ actor PhotoLibraryScanner {
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
                 isFavorite: asset.isFavorite,
                 isScreenshot: false,
                 burstIdentifier: asset.burstIdentifier,
@@ -851,6 +874,15 @@ actor PhotoLibraryScanner {
 
     private static let thumbnailLogSampler = ThumbnailLogSampler(limit: 12)
 
+    private static func normalizedModificationDate(_ date: Date?) -> Date? {
+        date.map {
+            // AtomicJSON's ISO-8601 representation stores whole seconds. Keep
+            // the in-memory value on the same precision so a persisted record
+            // does not look edited merely because fractional seconds vanished.
+            Date(timeIntervalSince1970: floor($0.timeIntervalSince1970))
+        }
+    }
+
     private static func excludedRecord(
         asset: PHAsset,
         status: AssetAnalysisStatus,
@@ -860,6 +892,8 @@ actor PhotoLibraryScanner {
         AssetRecord(
             localIdentifier: asset.localIdentifier,
             creationDate: asset.creationDate,
+            sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+            sourceModificationDateWasCaptured: true,
             isFavorite: asset.isFavorite,
             isScreenshot: status == .excludedScreenshot,
             burstIdentifier: asset.burstIdentifier,

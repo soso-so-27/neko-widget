@@ -88,7 +88,7 @@ struct InitialScanView: View {
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "iCloud上の \(scan.deferredAssets.formatted())枚は未解析です。表示中の数は端末内で確認できた範囲の確定値です。",
+                    "端末内で現行品質を取得できなかった \(scan.deferredAssets.formatted())枚は未解析です。低解像度版を利用できるか検証予定です。",
                     systemImage: "icloud.and.arrow.down"
                 )
                 .font(.caption)
@@ -137,7 +137,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
-                Text("iCloud上の \(scan.deferredAssets.formatted())枚は、ダウンロードを避けるため未解析です。")
+                Text("端末内で現行品質を取得できなかった \(scan.deferredAssets.formatted())枚は未解析です。低解像度版を利用できるか検証予定です。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -182,7 +182,7 @@ private struct ResultBadge: View {
             .accessibilityLabel(
                 isFinal
                     ? (deferredAssets > 0
-                        ? "端末内の写真はスキャン済み。iCloud上に未解析写真があります"
+                        ? "現行品質で取得できる写真はスキャン済み。未解析写真があります"
                         : "全件スキャン済みの確定値")
                     : "スキャン途中の速報値"
             )

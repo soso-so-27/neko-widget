@@ -315,7 +315,7 @@ struct PhotoShuffleGuideView: View {
                     .padding(16)
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
 
-                    Text("アプリでは検出位置を中心に表示します。ウィジェットでは元写真全体を、同じ写真のぼかし背景と一緒に表示します。写真シャッフル内のトリミングはOSによる表示です。")
+                    Text("アプリとウィジェットは、検出した猫のまわりに余白を残して写真を切り取り、画面いっぱいに表示します。Small / Largeで猫全体を収められない場合だけ、同じ写真のぼかし背景で全体を残します。Mediumは猫の上側を優先します。写真シャッフル内のトリミングはOSによる表示です。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

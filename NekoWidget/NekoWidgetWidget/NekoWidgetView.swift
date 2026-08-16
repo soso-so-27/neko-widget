@@ -21,8 +21,9 @@ struct NekoWidgetView: View {
                         Color(red: 0.12, green: 0.10, blue: 0.09)
 
                         if entry.usesFamilySpecificImage {
-                            // The app has already composed a family-specific
-                            // canvas with blurred fill behind the sharp photo.
+                            // The app precomposes the family canvas: normally a
+                            // sharp cat-aware full-bleed crop, with blurred fit
+                            // retained only for geometric fallback.
                             Image(uiImage: image)
                                 .resizable()
                                 .interpolation(.high)

@@ -305,6 +305,36 @@ def main() -> int:
         for entry in matching("Widget cache build completed", "widget-cache")
         if entry.get("process") == "app" and entry_timestamp(entry) is not None
     ]
+    expected_widget_cache_algorithm = "cat-aware-full-bleed-v4"
+    widget_cache_algorithms = sorted(
+        {
+            str(entry.get("metadata", {}).get("algorithm"))
+            for entry in cache_entries
+            if entry.get("metadata", {}).get("algorithm") is not None
+        }
+    )
+    if expected_widget_cache_algorithm not in widget_cache_algorithms:
+        failures.append(
+            "Widget cache did not use the expected cat-aware full-bleed "
+            f"algorithm ({expected_widget_cache_algorithm})."
+        )
+    composition_metadata_keys = {
+        "catFullBleed": "compositionGeneratedCatFullBleed",
+        "mediumUpperFocus": "compositionGeneratedMediumUpperFocus",
+        "blurredFitFallback": "compositionGeneratedBlurredFitFallback",
+    }
+    generated_compositions = {
+        name: sum(integer_metadata(entry, metadata_key) for entry in cache_entries)
+        for name, metadata_key in composition_metadata_keys.items()
+    }
+    if (
+        generated_compositions["catFullBleed"]
+        + generated_compositions["mediumUpperFocus"]
+        < 1
+    ):
+        failures.append(
+            "No sharp full-bleed Widget composition was generated for the fixtures."
+        )
     reload_entries = [
         entry
         for entry in matching("Widget timeline reload requested", "widget-cache")
@@ -518,6 +548,9 @@ def main() -> int:
         "snapshotCatAssets": int(scan_state.get("catAssets", 0) or 0),
         "importedFixtureStatuses": fixture_asset_statuses,
         "manifestEntryCount": len(manifest_items),
+        "widgetCacheAlgorithms": widget_cache_algorithms,
+        "expectedWidgetCacheAlgorithm": expected_widget_cache_algorithm,
+        "generatedWidgetCompositions": generated_compositions,
         "finalWidgetEventOrder": final_widget_event_order,
         "uniqueCacheFileCount": len(referenced_cache_files),
         "uniqueCacheFileCountByVariant": {

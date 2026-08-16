@@ -5,6 +5,12 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
     /// storage. They are not stable identifiers for future cross-device sync.
     var localIdentifier: String
     var creationDate: Date?
+    /// PhotoKit's last edit timestamp used to invalidate stale Vision boxes and
+    /// family-specific Widget crops after a rotate, crop, or other adjustment.
+    var sourceModificationDate: Date?
+    /// Distinguishes a legacy record that never captured PhotoKit's edit date
+    /// from a current record for which PhotoKit legitimately returned nil.
+    var sourceModificationDateWasCaptured: Bool?
     var isFavorite: Bool
     var isScreenshot: Bool
     var burstIdentifier: String?
@@ -26,6 +32,8 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
     init(
         localIdentifier: String,
         creationDate: Date?,
+        sourceModificationDate: Date? = nil,
+        sourceModificationDateWasCaptured: Bool? = nil,
         isFavorite: Bool,
         isScreenshot: Bool,
         burstIdentifier: String?,
@@ -40,6 +48,8 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
     ) {
         self.localIdentifier = localIdentifier
         self.creationDate = creationDate
+        self.sourceModificationDate = sourceModificationDate
+        self.sourceModificationDateWasCaptured = sourceModificationDateWasCaptured
         self.isFavorite = isFavorite
         self.isScreenshot = isScreenshot
         self.burstIdentifier = burstIdentifier
