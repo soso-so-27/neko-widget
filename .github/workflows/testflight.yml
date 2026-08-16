@@ -406,10 +406,28 @@ jobs:
           test -d "$widget_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign --verify --strict --verbose=2 "$widget_path"
-          codesign -d --entitlements - "$app_path" > "$app_entitlements"
-          codesign -d --entitlements - "$widget_path" > "$widget_entitlements"
+          codesign -d --entitlements "$app_entitlements" --xml "$app_path"
+          codesign -d --entitlements "$widget_entitlements" --xml "$widget_path"
           plutil -lint "$app_entitlements"
           plutil -lint "$widget_entitlements"
+
+          app_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app_path/Info.plist")"
+          widget_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$widget_path/Info.plist")"
+          app_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$app_path/Info.plist")"
+          widget_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$widget_path/Info.plist")"
+
+          [[ "$app_display_name" == "猫が主役" ]]
+          [[ "$widget_display_name" == "猫が主役" ]]
+          [[ "$app_device_family" == "1" ]]
+          [[ "$widget_device_family" == "1" ]]
+          if /usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:1' "$app_path/Info.plist" >/dev/null 2>&1; then
+            echo 'App archive contains an unexpected second UIDeviceFamily value.' >&2
+            exit 1
+          fi
+          if /usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:1' "$widget_path/Info.plist" >/dev/null 2>&1; then
+            echo 'Widget archive contains an unexpected second UIDeviceFamily value.' >&2
+            exit 1
+          fi
 
           app_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$app_entitlements")"
           widget_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$widget_entitlements")"
