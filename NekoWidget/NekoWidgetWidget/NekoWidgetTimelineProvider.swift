@@ -13,7 +13,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     ) async -> NekoWidgetEntry {
         let now = Date()
         let variant = imageVariant(for: context.family)
-        let source = configuration.photoSource
+        let source = configuration.photoSource ?? .personalLibrary
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
         guard let item = items.last(where: { $0.scheduledDate <= now }) ?? items.first else {
@@ -61,7 +61,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     ) async -> Timeline<NekoWidgetEntry> {
         let now = Date()
         let variant = imageVariant(for: context.family)
-        let source = configuration.photoSource
+        let source = configuration.photoSource ?? .personalLibrary
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
 

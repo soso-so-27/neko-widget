@@ -60,8 +60,11 @@ struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
     // This intent belongs to WidgetKit's edit UI, not Siri or Shortcuts.
     static var isDiscoverable = false
 
+    // WidgetConfigurationIntent parameters must be optional. WidgetKit uses
+    // the query's default result for a newly placed widget; the provider also
+    // resolves nil to the one source available in Build 6.
     @Parameter(title: "写真源")
-    var photoSource: WidgetPhotoSource
+    var photoSource: WidgetPhotoSource?
 
     init() {}
 
