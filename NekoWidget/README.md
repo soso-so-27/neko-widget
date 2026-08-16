@@ -4,11 +4,13 @@
 
 ## 現在の引き継ぎ状態
 
-ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイルとSimulator上の起動・PhotoKit・Vision・App Groupスモークテストを実行しますが、配布署名、iPhoneへのインストール、Widgetの実配置およびメモリ使用量は未検証です。MacとiOS 17.1以上のiPhoneで、[実機検証手順](docs/Mac実機検証手順.md)を最後まで実施してください。
+ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。配布署名、iPhoneへのインストール、Widgetの実配置および実機メモリは未検証です。Apple Developer Program承認後に[TestFlight準備手順](docs/Apple-Developer署名準備.md)を進め、iOS 17.1以上のiPhoneで[実機検証手順](docs/Mac実機検証手順.md)を最後まで実施してください。
 
 TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレースホルダーApp IconとAsset Catalogを含めています。正式公開前には、商標・視認性・各外観での見え方を確認した最終アイコンへ差し替えてください。
 
 写真シャッフルには、指定時点のアルバム内容がスナップショットとして取り込まれます。アルバムへ後から追加した写真は自動反映されないことを実機スパイクで確認済みです。判断の記録は[ADR-001](docs/ADR-001-写真シャッフルのアルバム追従.md)にあります。アルバム生成は維持し、ウィジェットを主要な継続表示先とします。
+
+1,000枚スケールテストでは全件確定まで123.595秒、約8.1枚／秒でした。実ライブラリでは数十分かかる可能性を認識したうえで、速報値と確定値の分離を維持し、実機実測まで速度最適化を保留します。判断の記録は[ADR-002](docs/ADR-002-全件スキャン速度と最適化保留.md)にあります。
 
 ## 仮の識別子
 
@@ -20,7 +22,7 @@ TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレー�
 | Widget Extension | `WIDGET_BUNDLE_IDENTIFIER` | `com.example.nekowidget.widget` |
 | 共有コンテナ | `APP_GROUP_IDENTIFIER` | `group.com.example.nekowidget` |
 
-Macで署名する前に、3つとも利用するApple Development Teamで一意な値へ変更します。WidgetのBundle IDはアプリのBundle IDに`.widget`などの接尾辞を付けた値にし、App Groupは先頭の`group.`を維持してください。
+Portalで登録に成功した後、3つとも同じ変更で実値へ置き換えます。WidgetのBundle IDはアプリのBundle IDに`.widget`などの接尾辞を付けた値にし、App Groupは先頭の`group.`を維持してください。命名と登録の順序は[TestFlight準備手順](docs/Apple-Developer署名準備.md)を参照してください。
 
 ## Mac / Xcodeでの設定
 
@@ -37,7 +39,7 @@ Macで署名する前に、3つとも利用するApple Development Teamで一意
 
 push / pull requestでは`iOS build check`を実行します。最初のジョブはmacOS runner上でAppとWidgetを無署名コンパイルします。成功後のSimulatorジョブはiOS 18.6 Simulator上でXCUITestを使い、アプリの写真許可ボタンから実際のシステムダイアログを開いてフルアクセスを許可します。その時点の写真IDをbaselineとして保存してから、[専用に生成したCC0の猫画像3枚](ci/fixtures/cats/README.md)を写真ライブラリへ投入し、本試験としてアプリを通常起動します。`simctl addmedia`の画像resource準備が遅れる場合は、時間上限付きでアプリを再起動して再スキャンします。baselineとの差分3件についてPhotoKit取得とVision分類を確認し、App GroupへのJSONLログ／snapshot／Widget cache書き込みも検証します。権限テスト結果、起動画面、SharedLog、統合ログ、検証レポート、App Group成果物は7日間artifactに保存します。GitHub Hosted SimulatorのiOS 18.6／26.2では、`simctl privacy grant photos`が成功しTCCへ許可行を保存してもPhotoKitの`.readWrite`判定が未決定のままになる挙動を確認したため、実際のダイアログを操作する方式を採用しています。最新OSの権限フローは別途実機で確認します。この自動テストはフルアクセス許可フローだけが対象で、拒否／制限付きアクセス、ホーム画面へ配置したWidgetプロセスからの読み出しも実機確認の対象です。
 
-TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使い、archive、IPA export、App Store Connectでの検証とアップロードを行います。
+TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使います。最初は`upload_to_testflight = false`で署名archiveとIPA exportだけを検証し、成功後にtrueへ切り替えてApp Store Connectでの検証とアップロードを行います。実uploadでは`retain_signed_artifacts = true`とし、一致するIPA、xcarchive、dSYMを暗号化artifactで回収します。
 
 ### Simulatorスケールテスト
 
@@ -46,6 +48,8 @@ TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使
 権限付与とbaseline保存後、全画像を`simctl addmedia`で投入し、測定中はアプリを同一PIDで一度だけ起動します。最終snapshotの`completed / final`、投入枚数と解析結果、起動から完了までとスキャン自体の所要時間、プロセスの現在physical footprint／生涯ピーク／RSSを検証します。48MP画像の開始・サムネイル解決・完了ログと100ms間隔のメモリCSVを時刻で突き合わせ、大画像区間の増分も判定します。既定の退行検出閾値は生涯ピーク512MiB、48MP区間の生涯ピーク増分128MiBです。途中終了、PID再利用、閾値超過、クラッシュや`JetsamEvent` / `EXC_RESOURCE`の候補があれば失敗し、詳細を`scale-report.json`とartifactへ残します。
 
 SimulatorではiPhoneのメモリ警告やOOM終了が再現されないため、この合格は実機jetsamに対する安全証明ではありません。ここで防ぐのは、スキャンの未完了、明白なプロセス終了、物理メモリの退行、48MP画像の全解像度デコード相当のスパイクです。Appleも、SimulatorではmacOSがメモリ警告やOOM終了を発行せず、緑表示でも実機の安全範囲とは限らないと説明しています。実機では[Xcodeのメモリ計測](https://developer.apple.com/documentation/xcode/gathering-information-about-memory-use)とjetsamレポートで最終確認します。
+
+2026-08-16に1,000枚を1回実行し、全件完走、lifetime physical footprint 76.147MiB、48MP区間の生涯ピーク増分0.344MiB、途中終了とクラッシュ痕跡なしでPASSしました。2,000枚／3,000枚は実行していません。
 
 App Store Connect APIキーはアップロード認証用です。コード署名には別途、Apple Distribution証明書の秘密鍵を含むP12と、アプリ／Widgetそれぞれの配布プロファイルが必要です。必要なGitHub Environment、Secrets、作成手順は[GitHub Actions / TestFlight設定](docs/GitHub-Actions-TestFlight設定.md)を参照してください。
 

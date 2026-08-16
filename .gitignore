@@ -19,7 +19,10 @@ xcuserdata/
 *.p12
 *.mobileprovision
 *.cer
+*.crt
+*.csr
 *.certSigningRequest
+*.der
 AuthKey_*.p8
 *.p8
 *.pfx

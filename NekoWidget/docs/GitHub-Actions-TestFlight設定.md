@@ -2,12 +2,13 @@
 
 ## 役割分担
 
-2つのworkflowをリポジトリルートの`.github/workflows`に置いている。
+3つのworkflowをリポジトリルートの`.github/workflows`に置いている。
 
 - `ios-build.yml`：push、pull request、手動実行で、AppとWidgetをiOS Simulator向けに無署名ビルドする。これはSwiftのコンパイル検査であり、実機用entitlementや配布署名の正しさまでは保証しない。
-- `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA export、App Store Connectでの検証、TestFlight uploadを順に行う。GitHub Environment `testflight`を使う。
+- `ios-scale.yml`：手動実行で、1,000〜3,000枚のSimulatorスケールテストとプロセスメモリ計測を行う。通常は繰り返し実行しない。
+- `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA exportを行う。`upload_to_testflight`がtrueのときだけApp Store Connectで検証し、TestFlightへuploadする。GitHub Environment `testflight`を使う。
 
-2026年4月28日以降のアップロード要件に合わせ、どちらも`macos-15` runner上のXcode 26.3を明示している。runnerからこのXcodeが削除された場合は、GitHub runner imageの一覧とAppleの提出要件を確認して`DEVELOPER_DIR`を更新する。
+2026年4月28日以降のアップロード要件に合わせ、3つとも`macos-15` runner上のXcode 26.3を明示している。runnerからこのXcodeが削除された場合は、GitHub runner imageの一覧とAppleの提出要件を確認して`DEVELOPER_DIR`を更新する。
 
 ## APIキーとコード署名は別物
 
@@ -25,22 +26,24 @@ Xcode 26向けには、プロファイルを現在の保存先である`~/Librar
 
 Xcode Organizerの対話的配布ではクラウド管理証明書を利用できる場合があるが、このworkflowはそれを前提にしない。Apple Developer Programの権限やクラウド署名設定だけに依存してP12とプロファイルを省略する変更は、実際のTeamで別途検証してから行う。
 
+WindowsとOpenSSLで秘密鍵、CSR、P12を作る具体的な手順、ID決定表、承認後のPortal操作は[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md)を正本とする。
+
 ## Apple側の準備
 
 1. Apple Developer Programへ登録し、契約を有効にする。
 2. アプリとWidgetの明示的App IDを登録する。
 3. App Groupを登録し、両App IDで有効にする。
-4. Apple Distribution証明書を作り、秘密鍵と証明書をKeychainからP12として書き出す。
+4. Apple Distribution証明書を作り、Windowsで保持する対応秘密鍵と証明書をP12へまとめる。
 5. アプリとWidgetそれぞれに`App Store Connect`配布プロファイルを作る。両方で手順3のApp Groupが有効であり、手順4の証明書が含まれることを確認する。
 6. App Store Connectにアプリレコードを作る。アップロードするBundle IDと一致させる。
 7. App Store Connectの「ユーザとアクセス」>「統合」で、アップロード権限を持つteam API keyを作る。Key ID、Issuer ID、1度だけダウンロードできる`.p8`を安全に保管する。
 8. `Config.xcconfig`の3つの仮IDを登録済みの実値に変える。
 
-API keyには対象アプリへアクセスできる適切なロールが必要である。契約が未承認、アプリレコードが未作成、Bundle IDが不一致、または同じbuild numberがすでに存在する場合、署名が成功してもアップロードは失敗する。
+API keyにはbuild upload可能なroleが必要である。本プロジェクトでは最小権限としてTeam Keyの`Developer` roleを使う。Team Keyは特定アプリだけに限定できない。契約が未承認、アプリレコードが未作成、Bundle IDが不一致、または同じbuild numberがすでに存在する場合、署名が成功してもアップロードは失敗する。
 
 ## GitHub EnvironmentとSecrets
 
-GitHubリポジトリのSettings > Environmentsで`testflight`を作る。可能ならRequired reviewersと、配布を許すbranch/tagの制限を設定する。以下はRepository SecretsではなくEnvironment Secretsとして置くと、承認前にはjobから参照できない。
+GitHubリポジトリのSettings > Environmentsで`testflight`を作る。Deployment branch/tagは`main`だけに必ず制限し、別reviewerがいる場合はRequired reviewersも設定する。一人運用で別reviewerがいない間は`Prevent self-review`を有効にしない。以下はRepository SecretsではなくEnvironment Secretsとして置くと、承認前にはjobから参照できない。
 
 | Secret | 内容 |
 | --- | --- |
@@ -53,6 +56,9 @@ GitHubリポジトリのSettings > Environmentsで`testflight`を作る。可能
 | `KEYCHAIN_PASSWORD` | CIの一時Keychain専用に作った十分長いランダム値 |
 | `APP_PROVISIONING_PROFILE_BASE64` | アプリ用`.mobileprovision`のファイル全体をBase64化した値 |
 | `WIDGET_PROVISIONING_PROFILE_BASE64` | Widget用`.mobileprovision`のファイル全体をBase64化した値 |
+| `SIGNED_ARTIFACT_ENCRYPTION_PASSWORD` | 署名済みartifactを保存する場合だけ使う20文字以上の独立パスワード |
+
+`upload_to_testflight = false`の署名・export事前検証では、App Store Connect API関連の3件以外、合計6 Secretsを使う。実uploadではarchive保管を必須とし、9件に`SIGNED_ARTIFACT_ENCRYPTION_PASSWORD`を加えた合計10件を使う。GitHub Variablesは不要である。
 
 macOSで改行なしのBase64文字列をクリップボードへ入れる例：
 
@@ -60,15 +66,10 @@ macOSで改行なしのBase64文字列をクリップボードへ入れる例：
 base64 -i AuthKey_XXXXXXXXXX.p8 | tr -d '\n' | pbcopy
 base64 -i Distribution.p12 | tr -d '\n' | pbcopy
 base64 -i NekoWidget_AppStore.mobileprovision | tr -d '\n' | pbcopy
+base64 -i NekoWidgetWidget_AppStore.mobileprovision | tr -d '\n' | pbcopy
 ```
 
-Windows PowerShellで値を得る例：
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("AuthKey_XXXXXXXXXX.p8"))
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("Distribution.p12"))
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("NekoWidget_AppStore.mobileprovision"))
-```
+Windowsでは秘密値をconsoleやtext fileへ出さず、[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md#74-powershellでbase64を直接clipboardへ送る)のClipboard関数を使う。貼り付け後はClipboardを空にし、WindowsのClipboard履歴とデバイス間同期を無効にする。
 
 秘密情報をリポジトリ、artifact、issue、ログへ貼らない。workflowは一時Keychain、P12、プロファイル、API private keyを`always()` cleanupで削除し、外部ActionはGitHub公式の`actions/*`だけをfull commit SHAで固定している。GitHub-hosted runner自体もjob終了時に破棄される。
 
@@ -76,17 +77,23 @@ Windows PowerShellで値を得る例：
 
 1. まず`iOS build check`を手動実行し、無署名コンパイルを通す。
 2. Actions > `Archive and upload to TestFlight` > Run workflowを選ぶ。
-3. `build_number`は正の整数を指定する。空欄では当該workflowの`github.run_number`を使うが、手動Xcodeなど別経路で同じ番号を使った場合は、既存より大きい番号を明示する。
-4. `testflight` Environmentの承認を行う。
-5. archive、IPA export、validate、uploadの順に成功したことをログで確認する。
-6. App Store Connect側の処理完了を待つ。workflow成功はアップロード受付までであり、Apple側の処理や輸出コンプライアンス回答、TestFlightグループへの配布までは自動化しない。
+   実行対象branchは`main`に限定しており、それ以外でdispatchしたjobはskipする。
+3. 初回は`upload_to_testflight = false`、`retain_signed_artifacts = false`にし、P12 import、2 profile、manual archive、署名検査、IPA exportだけを通す。API Key関連の3 Secretsはまだ不要で、Appleへは送信しない。
+4. `build_number`は正の整数を指定する。空欄では当該workflowの`github.run_number`を使うが、手動Xcodeなど別経路で同じ番号を使った場合は、既存より大きい番号を明示する。
+5. `testflight` Environmentの承認を行う。
+6. signing-onlyが成功したらApp Store ConnectのアプリレコードとAPI Keyを確認し、`upload_to_testflight = true`、`retain_signed_artifacts = true`で実行する。
+7. archive、IPA export、validate、uploadの順に成功したことをログで確認する。
+8. App Store Connect側の処理完了を待つ。workflow成功はアップロード受付までであり、Apple側の処理や輸出コンプライアンス回答、TestFlightグループへの配布までは自動化しない。
 
-IPA、xcarchive、dSYM、Xcode result bundleは14日間artifactへ保存する。無署名ビルドのresult bundleは7日間保存する。これらにも製品情報や埋め込み済みプロファイルが含まれるため、リポジトリとartifactのアクセス権を適切に制限する。
+Xcode result bundleとexport診断は14日間artifactへ保存する。`retain_signed_artifacts = true`の場合、IPAと、dSYMを内包するxcarchiveを1つのAES-256-CBC/PBKDF2暗号化artifactとして14日間保存する。復号パスワードはGitHubから後で表示できないため、必ず別のパスワードマネージャーに保存する。配布buildと一致するxcarchive／dSYMは14日以内に復号し、privateな保管場所へ退避する。無署名ビルドのresult bundleは7日間保存する。
+
+現行の`altool`経路はIPAだけをAppleへ送るため、dSYMの明示uploadによるApple側自動symbolicationは保証しない。暗号化xcarchiveの保管を必須とし、必要時は復号してローカルsymbolicationに使う。
 
 ## 公式資料
 
 - [Apple：Upcoming Requirements](https://developer.apple.com/news/upcoming-requirements/)
 - [Apple：Upload builds](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/)
+- [Apple：View builds and metadata](https://developer.apple.com/help/app-store-connect/manage-builds/view-builds-and-metadata/)
 - [Apple：TN3147（altoolのApp Store Connect API key認証）](https://developer.apple.com/documentation/technotes/tn3147-migrating-to-the-latest-notarization-tool)
 - [Apple：Transporter User Guide](https://help.apple.com/itc/transporteruserguide/en.lproj/static.html)
 - [Apple：Cloud-managed certificates](https://developer.apple.com/help/account/certificates/cloud-managed-certificates/)

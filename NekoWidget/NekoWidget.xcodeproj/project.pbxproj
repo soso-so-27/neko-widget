@@ -455,9 +455,19 @@
 				TargetAttributes = {
 					A00000000000000000000010 = {
 						CreatedOnToolsVersion = 15.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 					A00000000000000000000011 = {
 						CreatedOnToolsVersion = 15.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
 					};
 					A00000000000000000000012 = {
 						CreatedOnToolsVersion = 15.0;

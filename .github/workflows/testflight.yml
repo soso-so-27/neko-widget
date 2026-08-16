@@ -7,6 +7,16 @@ on:
         description: "CFBundleVersion。空欄ならこのworkflowのrun numberを使います"
         required: false
         type: string
+      upload_to_testflight:
+        description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
+        required: true
+        default: false
+        type: boolean
+      retain_signed_artifacts:
+        description: "IPA・xcarchive・dSYMを暗号化artifactとして14日保存する"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,6 +28,7 @@ concurrency:
 jobs:
   archive-export-upload:
     name: Archive, export IPA, and upload
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-15
     timeout-minutes: 60
     environment: testflight
@@ -42,6 +53,7 @@ jobs:
       - name: Validate required secrets
         shell: bash
         env:
+          UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -51,20 +63,19 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.APP_PROVISIONING_PROFILE_BASE64 }}
           WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+          RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
-          required=(
+          signing_required=(
             APPLE_TEAM_ID
-            APP_STORE_CONNECT_KEY_ID
-            APP_STORE_CONNECT_ISSUER_ID
-            APP_STORE_CONNECT_PRIVATE_KEY_BASE64
             APPLE_DISTRIBUTION_CERTIFICATE_BASE64
             APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD
             KEYCHAIN_PASSWORD
             APP_PROVISIONING_PROFILE_BASE64
             WIDGET_PROVISIONING_PROFILE_BASE64
           )
-          for variable_name in "${required[@]}"; do
+          for variable_name in "${signing_required[@]}"; do
             if [[ -z "${!variable_name:-}" ]]; then
               echo "Missing GitHub environment secret: ${variable_name}" >&2
               exit 1
@@ -74,13 +85,48 @@ jobs:
             echo "APPLE_TEAM_ID must be a 10-character Team ID." >&2
             exit 1
           fi
-          if [[ ! "$APP_STORE_CONNECT_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
-            echo "APP_STORE_CONNECT_KEY_ID must be a 10-character API Key ID." >&2
-            exit 1
+
+          if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
+            if [[ "$RETAIN_SIGNED_ARTIFACTS" != "true" ]]; then
+              echo "TestFlight upload requires retain_signed_artifacts=true so the matching archive is preserved." >&2
+              exit 1
+            fi
+            upload_required=(
+              APP_STORE_CONNECT_KEY_ID
+              APP_STORE_CONNECT_ISSUER_ID
+              APP_STORE_CONNECT_PRIVATE_KEY_BASE64
+            )
+            for variable_name in "${upload_required[@]}"; do
+              if [[ -z "${!variable_name:-}" ]]; then
+                echo "Missing GitHub environment secret required for upload: ${variable_name}" >&2
+                exit 1
+              fi
+            done
+            if [[ ! "$APP_STORE_CONNECT_KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+              echo "APP_STORE_CONNECT_KEY_ID must be a 10-character API Key ID." >&2
+              exit 1
+            fi
+            if [[ ! "$APP_STORE_CONNECT_ISSUER_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+              echo "APP_STORE_CONNECT_ISSUER_ID must be an Issuer UUID." >&2
+              exit 1
+            fi
+            if ! printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" \
+              | base64 -D \
+              | openssl pkey -noout >/dev/null 2>&1; then
+              echo "APP_STORE_CONNECT_PRIVATE_KEY_BASE64 is not a readable private key." >&2
+              exit 1
+            fi
           fi
-          if [[ ! "$APP_STORE_CONNECT_ISSUER_ID" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
-            echo "APP_STORE_CONNECT_ISSUER_ID must be an Issuer UUID." >&2
-            exit 1
+
+          if [[ "$RETAIN_SIGNED_ARTIFACTS" == "true" ]]; then
+            if [[ -z "$SIGNED_ARTIFACT_ENCRYPTION_PASSWORD" ]]; then
+              echo "Missing GitHub environment secret: SIGNED_ARTIFACT_ENCRYPTION_PASSWORD" >&2
+              exit 1
+            fi
+            if (( ${#SIGNED_ARTIFACT_ENCRYPTION_PASSWORD} < 20 )); then
+              echo "SIGNED_ARTIFACT_ENCRYPTION_PASSWORD must contain at least 20 characters." >&2
+              exit 1
+            fi
           fi
 
       - name: Read and validate release identifiers
@@ -113,6 +159,24 @@ jobs:
           fi
           if [[ "$app_group_id" != group.* ]]; then
             echo "APP_GROUP_IDENTIFIER must start with group." >&2
+            exit 1
+          fi
+          bundle_id_pattern='^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$'
+          app_group_pattern='^group\.[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$'
+          if [[ ! "$app_bundle_id" =~ $bundle_id_pattern ]]; then
+            echo "APP_BUNDLE_IDENTIFIER contains unsupported characters or empty components." >&2
+            exit 1
+          fi
+          if [[ ! "$widget_bundle_id" =~ $bundle_id_pattern ]]; then
+            echo "WIDGET_BUNDLE_IDENTIFIER contains unsupported characters or empty components." >&2
+            exit 1
+          fi
+          if [[ ! "$app_group_id" =~ $app_group_pattern ]]; then
+            echo "APP_GROUP_IDENTIFIER contains unsupported characters or empty components." >&2
+            exit 1
+          fi
+          if [[ "$widget_bundle_id" != "$app_bundle_id".* ]]; then
+            echo "WIDGET_BUNDLE_IDENTIFIER must be a child of APP_BUNDLE_IDENTIFIER." >&2
             exit 1
           fi
 
@@ -149,14 +213,16 @@ jobs:
           widget_profile_path="$RUNNER_TEMP/widget.mobileprovision"
           app_profile_plist="$RUNNER_TEMP/app-profile.plist"
           widget_profile_plist="$RUNNER_TEMP/widget-profile.plist"
+          distribution_certificate_pem="$RUNNER_TEMP/apple-distribution.pem"
+          distribution_certificate_der="$RUNNER_TEMP/apple-distribution.der"
           keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
           profile_directory="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
 
           echo "CI_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
-          printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
-          printf '%s' "$APP_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$app_profile_path"
-          printf '%s' "$WIDGET_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$widget_profile_path"
+          printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          printf '%s' "$APP_PROVISIONING_PROFILE_BASE64" | base64 -D > "$app_profile_path"
+          printf '%s' "$WIDGET_PROVISIONING_PROFILE_BASE64" | base64 -D > "$widget_profile_path"
           chmod 600 "$certificate_path" "$app_profile_path" "$widget_profile_path"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
@@ -178,9 +244,76 @@ jobs:
             echo "The P12 does not contain a usable Apple Distribution identity." >&2
             exit 1
           fi
+          security find-certificate \
+            -c 'Apple Distribution' \
+            -p \
+            "$keychain_path" \
+            > "$distribution_certificate_pem"
+          openssl x509 \
+            -in "$distribution_certificate_pem" \
+            -outform DER \
+            -out "$distribution_certificate_der"
 
           security cms -D -i "$app_profile_path" > "$app_profile_plist"
           security cms -D -i "$widget_profile_path" > "$widget_profile_plist"
+
+          python3 - \
+            "$app_profile_plist" \
+            "$widget_profile_plist" \
+            "$distribution_certificate_der" \
+            "$APPLE_TEAM_ID" \
+            "$APP_BUNDLE_ID" \
+            "$WIDGET_BUNDLE_ID" \
+            "$APP_GROUP_ID" <<'PY'
+          import datetime
+          import hashlib
+          import plistlib
+          import sys
+
+          app_path, widget_path, certificate_path, team_id, app_id, widget_id, group_id = sys.argv[1:]
+          now = datetime.datetime.now(datetime.timezone.utc)
+
+          with open(certificate_path, "rb") as handle:
+              signing_certificate = handle.read()
+
+          def validate_profile(path: str, expected_bundle_id: str, label: str) -> None:
+              with open(path, "rb") as handle:
+                  profile = plistlib.load(handle)
+              entitlements = profile.get("Entitlements", {})
+              teams = profile.get("TeamIdentifier", [])
+              expiration = profile.get("ExpirationDate")
+              application_identifier = entitlements.get("application-identifier", "")
+              groups = entitlements.get("com.apple.security.application-groups", [])
+              certificates = profile.get("DeveloperCertificates", [])
+
+              if team_id not in teams:
+                  raise SystemExit(f"{label} profile belongs to another Team.")
+              if application_identifier != f"{team_id}.{expected_bundle_id}":
+                  raise SystemExit(f"{label} profile has the wrong application-identifier.")
+              if group_id not in groups:
+                  raise SystemExit(f"{label} profile does not contain the App Group.")
+              if entitlements.get("get-task-allow") is not False:
+                  raise SystemExit(f"{label} profile is not a distribution profile (get-task-allow).")
+              if profile.get("ProvisionsAllDevices") is True or profile.get("ProvisionedDevices"):
+                  raise SystemExit(f"{label} profile is not an App Store Connect distribution profile.")
+              if not isinstance(expiration, datetime.datetime):
+                  raise SystemExit(f"{label} profile has no readable ExpirationDate.")
+              if expiration.tzinfo is None:
+                  expiration = expiration.replace(tzinfo=datetime.timezone.utc)
+              if expiration <= now:
+                  raise SystemExit(f"{label} profile is expired.")
+              if not any(bytes(value) == signing_certificate for value in certificates):
+                  profile_hashes = ",".join(
+                      hashlib.sha256(bytes(value)).hexdigest()[:12] for value in certificates
+                  )
+                  raise SystemExit(
+                      f"{label} profile does not contain the P12 certificate "
+                      f"(profile certificate hashes: {profile_hashes or 'none'})."
+                  )
+
+          validate_profile(app_path, app_id, "App")
+          validate_profile(widget_path, widget_id, "Widget")
+          PY
 
           app_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$app_profile_plist")"
           widget_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$widget_profile_plist")"
@@ -202,11 +335,11 @@ jobs:
             echo "A provisioning profile belongs to a different Apple Developer Team." >&2
             exit 1
           fi
-          if [[ "$app_profile_identifier" != *".$APP_BUNDLE_ID" ]]; then
+          if [[ "$app_profile_identifier" != "$APPLE_TEAM_ID.$APP_BUNDLE_ID" ]]; then
             echo "The app provisioning profile does not match APP_BUNDLE_IDENTIFIER." >&2
             exit 1
           fi
-          if [[ "$widget_profile_identifier" != *".$WIDGET_BUNDLE_ID" ]]; then
+          if [[ "$widget_profile_identifier" != "$APPLE_TEAM_ID.$WIDGET_BUNDLE_ID" ]]; then
             echo "The widget provisioning profile does not match WIDGET_BUNDLE_IDENTIFIER." >&2
             exit 1
           fi
@@ -290,8 +423,8 @@ jobs:
             awk -v expected="$expected" '{ $1 = $1; if ($0 == expected) found = 1 } END { exit(found ? 0 : 1) }'
           }
 
-          [[ "$app_signed_identifier" == *".$APP_BUNDLE_ID" ]]
-          [[ "$widget_signed_identifier" == *".$WIDGET_BUNDLE_ID" ]]
+          [[ "$app_signed_identifier" == "$APPLE_TEAM_ID.$APP_BUNDLE_ID" ]]
+          [[ "$widget_signed_identifier" == "$APPLE_TEAM_ID.$WIDGET_BUNDLE_ID" ]]
           [[ "$app_signed_team" == "$APPLE_TEAM_ID" ]]
           [[ "$widget_signed_team" == "$APPLE_TEAM_ID" ]]
           contains_exact_line "$APP_GROUP_ID" <<< "$app_signed_groups"
@@ -313,19 +446,6 @@ jobs:
             > "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
 
-      - name: Package archive and symbols
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -d "$RUNNER_TEMP/NekoWidget.xcarchive/dSYMs" ]]; then
-            ditto -c -k --sequesterRsrc --keepParent \
-              "$RUNNER_TEMP/NekoWidget.xcarchive/dSYMs" \
-              "$RUNNER_TEMP/NekoWidget-dSYMs.zip"
-          fi
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$RUNNER_TEMP/NekoWidget.xcarchive" \
-            "$RUNNER_TEMP/NekoWidget.xcarchive.zip"
-
       - name: Export IPA
         shell: bash
         run: |
@@ -344,7 +464,56 @@ jobs:
           fi
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
 
+      - name: Package archive and symbols
+        if: ${{ inputs.retain_signed_artifacts }}
+        shell: bash
+        env:
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -d "$RUNNER_TEMP/NekoWidget.xcarchive"
+          test -f "$IPA_PATH"
+          ipa_directory="$(dirname "$IPA_PATH")"
+          ipa_filename="$(basename "$IPA_PATH")"
+          tar \
+            -C "$RUNNER_TEMP" \
+            -czf - \
+            NekoWidget.xcarchive \
+            -C "$ipa_directory" \
+            "$ipa_filename" \
+            | openssl enc \
+                -aes-256-cbc \
+                -salt \
+                -pbkdf2 \
+                -iter 200000 \
+                -pass env:SIGNED_ARTIFACT_ENCRYPTION_PASSWORD \
+                -out "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc"
+          test -s "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc"
+          openssl enc \
+            -d \
+            -aes-256-cbc \
+            -pbkdf2 \
+            -iter 200000 \
+            -pass env:SIGNED_ARTIFACT_ENCRYPTION_PASSWORD \
+            -in "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+            | tar -tzf - \
+            | tee "$RUNNER_TEMP/signed-artifact-contents.txt"
+          grep -q '^NekoWidget.xcarchive/' "$RUNNER_TEMP/signed-artifact-contents.txt"
+          grep -Fxq "$ipa_filename" "$RUNNER_TEMP/signed-artifact-contents.txt"
+
+      - name: Upload encrypted signed app and symbols
+        if: ${{ inputs.retain_signed_artifacts }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nekowidget-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/NekoWidget-signed-artifacts.tar.gz.enc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
       - name: Install App Store Connect API private key
+        if: ${{ inputs.upload_to_testflight }}
         shell: bash
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -355,10 +524,11 @@ jobs:
           private_key_path="$private_key_directory/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
           echo "API_PRIVATE_KEY_PATH=$private_key_path" >> "$GITHUB_ENV"
           mkdir -p "$private_key_directory"
-          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 --decode > "$private_key_path"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY_BASE64" | base64 -D > "$private_key_path"
           chmod 600 "$private_key_path"
 
       - name: Validate and upload IPA to TestFlight
+        if: ${{ inputs.upload_to_testflight }}
         working-directory: ${{ runner.temp }}
         shell: bash
         env:
@@ -378,6 +548,26 @@ jobs:
             -t ios \
             --apiKey "$APP_STORE_CONNECT_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Write release summary
+        if: always()
+        shell: bash
+        env:
+          UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
+          RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+        run: |
+          {
+            echo "## NekoWidget release workflow"
+            echo
+            echo "- Upload requested: \`$UPLOAD_TO_TESTFLIGHT\`"
+            echo "- Retain encrypted signed artifacts: \`$RETAIN_SIGNED_ARTIFACTS\`"
+            echo "- Build number: \`${RELEASE_BUILD_NUMBER:-not resolved}\`"
+            if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
+              echo "- Intended result: signed archive, IPA export, validation, and TestFlight upload"
+            else
+              echo "- Intended result: signed archive and IPA export only; nothing is sent to App Store Connect"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove signing material
         if: always()
@@ -402,21 +592,21 @@ jobs:
             "$RUNNER_TEMP/widget.mobileprovision" \
             "$RUNNER_TEMP/app-profile.plist" \
             "$RUNNER_TEMP/widget-profile.plist" \
+            "$RUNNER_TEMP/apple-distribution.pem" \
+            "$RUNNER_TEMP/apple-distribution.der" \
             "$RUNNER_TEMP/archive-app-entitlements.plist" \
             "$RUNNER_TEMP/archive-widget-entitlements.plist" \
+            "$RUNNER_TEMP/signed-artifact-contents.txt" \
             "$RUNNER_TEMP/ExportOptions.plist"
 
-      - name: Upload IPA, symbols, and diagnostics
+      - name: Upload release diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: nekowidget-testflight-${{ github.run_id }}
+          name: nekowidget-release-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/Export/*.ipa
             ${{ runner.temp }}/Export/DistributionSummary.plist
             ${{ runner.temp }}/Export/ExportOptions.plist
-            ${{ runner.temp }}/NekoWidget-dSYMs.zip
-            ${{ runner.temp }}/NekoWidget.xcarchive.zip
             ${{ runner.temp }}/NekoWidgetArchive.xcresult
           if-no-files-found: warn
           retention-days: 14

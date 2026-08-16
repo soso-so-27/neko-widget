@@ -1,8 +1,10 @@
-// Local signing placeholders. Replace these three identifiers with values
-// registered for the Apple Development Team used on the Mac.
-APP_BUNDLE_IDENTIFIER = com.example.nekowidget
-WIDGET_BUNDLE_IDENTIFIER = com.example.nekowidget.widget
-APP_GROUP_IDENTIFIER = group.com.example.nekowidget
+// Registered release identifiers. Keep literal values here: the TestFlight
+// workflow reads these three lines directly before xcodebuild. Change them
+// only after making the corresponding Developer Portal changes, and always
+// update all affected identifiers together. Do not derive values with $(...).
+APP_BUNDLE_IDENTIFIER = jp.nekowidget.app
+WIDGET_BUNDLE_IDENTIFIER = jp.nekowidget.app.widget
+APP_GROUP_IDENTIFIER = group.jp.nekowidget.app
 
 // v1 supports iOS 17.1 and later.
 IPHONEOS_DEPLOYMENT_TARGET = 17.1
