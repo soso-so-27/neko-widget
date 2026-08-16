@@ -50,7 +50,8 @@ Portal登録時に次を埋める。
 | Widget Bundle ID | `jp.nekowidget.app.widget` |
 | App Group ID | `group.jp.nekowidget.app` |
 | Apple Team ID | `FF96XYPPH2` |
-| App Store Connect SKU | `未確定` |
+| App Store Connect App Name | `猫が主役` |
+| App Store Connect SKU | `jp.nekowidget.app.2026` |
 
 2026-08-16にPortal登録とApp Groups割当を完了し、`Config.xcconfig`を次のリテラル値へ更新した。CIがファイルを直接読むため、`$(APP_BUNDLE_IDENTIFIER)`のような派生式にはしない。
 
@@ -306,6 +307,8 @@ API access承認後、`Users and Access > Integrations > Team Keys`から作る�
 
 Team Keyは特定アプリだけに限定できない。Keyのnameとroleは後から変更できず、変更時はrevokeして再作成する。`.p8`は1回だけdownloadできるため、直ちに安全な保管場所と暗号化バックアップへ保存する。Key ID、Issuer IDも同時に記録する。
 
+2026-08-16に`GitHub Actions TestFlight`というTeam Keyを`Developer` roleで作成した。`.p8`はリポジトリ／OneDrive外の署名フォルダへ移動し、GitHub Environment Secretへ登録した。Key ID、Issuer IDおよび秘密鍵の値は公開ドキュメントへ記載しない。
+
 ## 7. GitHub EnvironmentとSecrets
 
 ### 7.1 Environment
@@ -432,20 +435,20 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 ## 10. 承認後チェックリスト
 
 - [ ] Membership active、最新契約承諾、Team ID記録
-- [ ] App Store Connect API access申請
-- [ ] App Group登録
-- [ ] App本体Explicit App ID登録、App Group割当
-- [ ] Widget Explicit App ID登録、同じApp Group割当
-- [ ] `Config.xcconfig`の3 IDを同時更新
-- [ ] Apple Distribution証明書発行
-- [ ] 証明書と秘密鍵の公開鍵hash一致
-- [ ] P12作成・検査・バックアップ
-- [ ] App／WidgetのApp Store Connect profile作成
-- [ ] 両profileのTeam、Bundle ID、App Group、期限を確認
-- [ ] App Store Connectアプリレコード作成
-- [ ] Team API Key作成、P8／Key ID／Issuer ID保管
-- [ ] GitHub `testflight` EnvironmentとSecrets登録
-- [ ] `upload_to_testflight = false`で署名・export成功
+- [x] App Store Connect API access申請
+- [x] App Group登録
+- [x] App本体Explicit App ID登録、App Group割当
+- [x] Widget Explicit App ID登録、同じApp Group割当
+- [x] `Config.xcconfig`の3 IDを同時更新
+- [x] Apple Distribution証明書発行
+- [x] 証明書と秘密鍵の公開鍵hash一致
+- [x] P12作成・検査
+- [x] App／WidgetのApp Store Connect profile作成
+- [x] 両profileのTeam、Bundle ID、App Group、期限を確認
+- [x] App Store Connectアプリレコード作成
+- [x] Team API Key作成、P8／Key ID／Issuer ID保管
+- [x] GitHub `testflight` EnvironmentとSecrets登録
+- [x] `upload_to_testflight = false`で署名・export成功
 - [ ] build numberを確認
 - [ ] artifact暗号化passwordを別保管し、`retain_signed_artifacts = true`にする
 - [ ] `upload_to_testflight = true`で初回upload

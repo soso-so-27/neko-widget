@@ -406,8 +406,8 @@ jobs:
           test -d "$widget_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign --verify --strict --verbose=2 "$widget_path"
-          codesign -d --entitlements :- "$app_path" > "$app_entitlements"
-          codesign -d --entitlements :- "$widget_path" > "$widget_entitlements"
+          codesign -d --entitlements - "$app_path" > "$app_entitlements"
+          codesign -d --entitlements - "$widget_path" > "$widget_entitlements"
           plutil -lint "$app_entitlements"
           plutil -lint "$widget_entitlements"
 

@@ -609,10 +609,10 @@ printf 'App bundle: %s\nWidget bundle: %s\nApp Group: %s\n' \
 
 codesign --verify --deep --strict "$APP_PATH"
 codesign --verify --strict "$EXTENSION_PATH"
-codesign --display --entitlements :- "$APP_PATH" \
+codesign --display --entitlements - "$APP_PATH" \
     > "$ARTIFACT_DIRECTORY/app-codesign-entitlements.plist" \
     2> "$ARTIFACT_DIRECTORY/app-codesign.txt"
-codesign --display --entitlements :- "$EXTENSION_PATH" \
+codesign --display --entitlements - "$EXTENSION_PATH" \
     > "$ARTIFACT_DIRECTORY/widget-codesign-entitlements.plist" \
     2> "$ARTIFACT_DIRECTORY/widget-codesign.txt"
 plutil -lint "$ARTIFACT_DIRECTORY/app-codesign-entitlements.plist"
