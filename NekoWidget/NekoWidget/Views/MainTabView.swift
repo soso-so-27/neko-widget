@@ -9,7 +9,6 @@ struct MainTabView: View {
     let albumState: AlbumPresentationState
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
-    let likeMeasurement: LikeMeasurementPresentation
     let isLimitedAccess: Bool
     let isScanning: Bool
     let widgetIntervalMinutes: Int
@@ -22,7 +21,6 @@ struct MainTabView: View {
     let rescan: () async -> Void
     let saveSettings: (SettingsPresentation) async -> Void
     let exportJSON: () async -> URL?
-    let startLikeMeasurement: () async -> Void
 
     @State private var selectedTab: AppTab = .home
     @State private var homePath: [String] = []
@@ -83,12 +81,10 @@ struct MainTabView: View {
                 SettingsView(
                     settings: settings,
                     detectionAccuracySample: detectionAccuracySample,
-                    likeMeasurement: likeMeasurement,
                     isScanning: isScanning,
                     saveSettings: saveSettings,
                     rescan: rescan,
-                    exportJSON: exportJSON,
-                    startLikeMeasurement: startLikeMeasurement
+                    exportJSON: exportJSON
                 )
             }
             .tabItem {

@@ -35,8 +35,8 @@ Build 8はWidget派生画像をSmall 500×500、Medium 1050×500、Large 1050×1
 
 Simulator smokeはHome Screenへ実Widgetを配置しないため、静的な合計予算とprovider sourceの制限を検査する。実際のWidgetKit描画、snapshot / archive、実peakはTestFlight実機ゲートを正本とする。
 
-## 計測と後続build
+## 実機確認と後続build
 
-Build 8の1週間計測は、この表示不具合のため開始または再開しない。Build 9で3 family、Deep Link、肉球の即時同期、20分切り替えを修復し、Build 10で写真ブラウザの標準ページングを修復する。Build 10上で両方のゲートを確認した後、新しいbaselineから計測を始める。
+Build 7で始めた1週間計測はLike表示不具合で中断し、結果が製品判断を変えないため2026-08-17に再計測自体を撤回した。Build 9で3 family、Deep Link、肉球の即時同期、20分切り替えを修復し、Build 10で写真ブラウザの標準ページングを修復する。両方のゲートは通常の機能確認として実施し、新しいbaselineから計測を始めない。
 
-[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のdeferred paired probeは、1週間計測の完了後に番号を割り当てるInternal buildへ送る。採用する場合のproduction反映はさらに後続buildとする。Build 10の計測中は別buildを測定端末へ入れない。
+[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のdeferred paired probeは、週待ちなしで番号を割り当てたInternal buildへ送れる。採用する場合のproduction反映は後続buildとする。測定端末への別build install制約はなく、Build 10の写真ブラウザが固まる場合は遅延pagingを含む開発branchを同じ端末で直ちに確認する。

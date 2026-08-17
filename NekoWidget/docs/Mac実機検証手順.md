@@ -34,7 +34,7 @@ Windowsで生成した「ねこのまど」v1をMacでビルド・署名し、iO
 - `Config.xcconfig`の3識別子を、そのTeamで一意な実値へ置き換えている。Widget Bundle IDはアプリBundle IDに`.widget`などの接尾辞を付け、App Groupは`group.`で始める。
 - WindowsでのCSR／P12作成、Portal登録、2つの配布profile、GitHub Secretsは[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md)に従って完了している。
 - テスト対象の写真はバックアップ済みである。アプリが写真原本を変更・複製しないことも確認対象とする。
-- Build 7の1週間計測は2026-08-17にLike表示不具合で中断済みである。Build 8はMedium / Largeの高解像度20件Timelineがplaceholder相当になり、Build 9でTimelineを最大2件へ修復した。Build 10のWidget／Like／写真ブラウザ手動ゲートが通るまで計測を再開しない。
+- Build 7の1週間計測は2026-08-17にLike表示不具合で中断し、再計測案も結果が製品判断を変えないため同日に撤回済みである。新しいbaselineから再開せず、端末への別build install制約もない。Build 8はMedium / Largeの高解像度20件Timelineがplaceholder相当になり、Build 9でTimelineを最大2件へ修復した。Build 10のWidget／Like／写真ブラウザは通常の機能ゲートとして確認する。
 - Build 7のdetected無作為100枚は`reviewNo 74`だけを除外し99 / 100を採用済みである。scanner／analysis fingerprintが同じBuild 10では再利用する。
 
 ## 2. Xcode設定とビルド
@@ -161,9 +161,9 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 
 メモ：
 
-### 9.1 Build 10の計測再開ゲート
+### 9.1 Build 10のLike・写真ブラウザ機能ゲート
 
-この節が通るまで1週間計測は**NO-GO**とする。手動の再スキャン操作を挟まない。
+手動の再スキャン操作を挟まず、Likeの即時反映と写真ブラウザの操作感を確認する。この節は撤回済み計測の開始条件ではない。
 
 1. Build 10をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
 2. アプリを開き、好き総数と一覧を記録してアプリを終了する。
@@ -171,11 +171,11 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 4. 直後にアプリを開く。総数が+1、一覧に同じ写真と`likedAt`が出ることを確認する。
 5. アプリを終了し、Widgetへ戻って同じ写真の肉球をOFFにする。
 6. 直後にアプリを開く。総数が-1、一覧から同じ写真が消えることを確認する。
-7. 診断ログで共有Like同期が`Scan generation started`より前にあること、検証JSONの押下／解除eventと写真・時刻・操作元が一致することを確認する。
+7. 診断ログで共有Like同期が`Scan generation started`より前にあること、押下／解除の写真token・時刻・操作元が一致することを確認する。撤回前の検証JSON eventは保存互換のため読めるが、新しい操作では増えない。
 8. ホーム、Widget、利用可能なら「これ好き」という既存の入口から写真ブラウザをcold状態で開き、表示分母が約898件でも初期表示で固まらず、指追従、慣性、snap、端の跳ね返り、前後先読みが自然であることを確認する。Build 10には任意位置を直接選ぶgridがないため、先頭／中間／末尾選択は要求しない。
-9. すべて通った後だけ「1週間計測を開始」を押し、新しい開始日時とbaselineを記録する。
+9. Build 10で写真ブラウザが固まる場合は待機せず、`LazyHStack`と標準pagingを含む開発branchのbuildを同じ端末へ入れ、先頭付近・中間付近・末尾付近からのcold openを確認する。
 
-結果：`未実施（NO-GO）`
+結果：`未実施`
 
 ## 10. Widgetのメモリ
 

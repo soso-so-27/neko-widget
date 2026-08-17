@@ -4,39 +4,31 @@ import UIKit
 struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
-    let likeMeasurement: LikeMeasurementPresentation
     let isScanning: Bool
     let saveSettings: (SettingsPresentation) async -> Void
     let rescan: () async -> Void
     let exportJSON: () async -> URL?
-    let startLikeMeasurement: () async -> Void
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
     @State private var isRescanning = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
-    @State private var isStartingMeasurement = false
-    @State private var showsMeasurementConfirmation = false
 
     init(
         settings: SettingsPresentation,
         detectionAccuracySample: DetectionAccuracySamplePresentation,
-        likeMeasurement: LikeMeasurementPresentation,
         isScanning: Bool,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
         rescan: @escaping () async -> Void,
-        exportJSON: @escaping () async -> URL?,
-        startLikeMeasurement: @escaping () async -> Void
+        exportJSON: @escaping () async -> URL?
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
-        self.likeMeasurement = likeMeasurement
         self.isScanning = isScanning
         self.saveSettings = saveSettings
         self.rescan = rescan
         self.exportJSON = exportJSON
-        self.startLikeMeasurement = startLikeMeasurement
         _draft = State(initialValue: settings)
     }
 
@@ -99,50 +91,6 @@ struct SettingsView: View {
                 Text("検出精度")
             } footer: {
                 Text(detectionAccuracySampleFooter)
-            }
-
-            Section {
-                if let startedAt = likeMeasurement.startedAt {
-                    LabeledContent(
-                        "開始日時",
-                        value: startedAt.formatted(.dateTime.year().month().day().hour().minute())
-                    )
-                    LabeledContent(
-                        "開始時の好き",
-                        value: "\(likeMeasurement.baselineLikedCount.formatted())枚"
-                    )
-                    LabeledContent(
-                        "開始後の操作",
-                        value: "\(likeMeasurement.eventCount.formatted())件"
-                    )
-                    if likeMeasurement.droppedEventCount > 0 {
-                        LabeledContent(
-                            "保存できなかった古い操作",
-                            value: "\(likeMeasurement.droppedEventCount.formatted())件"
-                        )
-                        .foregroundStyle(.red)
-                    }
-                } else {
-                    Text("①Build 8へ更新してWidgetを再配置し、3サイズの表示を確認、②Widgetの肉球で好き／解除を試し、スキャンせずアプリの総数・一覧・日付が即時に合うことを確認、③その後に開始してください。ランダム100枚は99／100で確認済みです。確認中の試し押しは計測へ入りません。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Button(role: likeMeasurement.startedAt == nil ? nil : .destructive) {
-                    showsMeasurementConfirmation = true
-                } label: {
-                    Label(
-                        isStartingMeasurement
-                            ? "開始処理中…"
-                            : (likeMeasurement.startedAt == nil ? "1週間計測を開始" : "計測を最初からやり直す"),
-                        systemImage: "calendar.badge.clock"
-                    )
-                }
-                .disabled(isStartingMeasurement || !likeMeasurement.isInteractionReady)
-            } header: {
-                Text("Build 8 行動計測")
-            } footer: {
-                Text("開始時の総数をbaselineとして保存し、その後の肉球・アプリ操作を\(likeMeasurement.retentionDays.formatted())日、最大\(likeMeasurement.maximumEventCount.formatted())件記録します。削除件数が0でない場合は完全な1週間データとして扱いません。")
             }
 
             Section {
@@ -212,29 +160,6 @@ struct SettingsView: View {
         .sheet(item: $exportedFile) { file in
             ActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
-        }
-        .confirmationDialog(
-            likeMeasurement.startedAt == nil ? "1週間計測を開始しますか？" : "現在の計測をリセットしますか？",
-            isPresented: $showsMeasurementConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(
-                likeMeasurement.startedAt == nil ? "開始する" : "リセットして開始",
-                role: likeMeasurement.startedAt == nil ? nil : .destructive
-            ) {
-                Task {
-                    isStartingMeasurement = true
-                    await startLikeMeasurement()
-                    isStartingMeasurement = false
-                }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text(
-                likeMeasurement.startedAt == nil
-                    ? "Build 8のWidgetを再配置し、肉球の好き／解除がスキャンなしでアプリの総数・一覧・日付へ反映されることを確認してください。ランダム100枚は99／100で確認済みです。この時点の好き総数をbaselineにし、それ以前の試し押しを除外します。"
-                    : "Build 7で開始した計測は、アプリの枚数表示が最新でない不具合のため中断しました。Build 8の即時反映を確認後、この時点の好き総数を新しいbaselineにし、それ以前の計測イベントを除外します。"
-            )
         }
     }
 

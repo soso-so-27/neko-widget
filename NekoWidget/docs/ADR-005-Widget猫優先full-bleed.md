@@ -4,7 +4,7 @@
 - 日付：2026-08-16
 - 対象：Build 7の猫優先full-bleedと、Build 8の最終解像度・余白修正
 
-> **2026-08-17追記：** Build 7の表示判断は維持するが、1週間計測はLike表示不具合で中断した。Build 8で実ピクセル相当へ高解像度化したところ、20件Timelineの累積描画負荷でMedium / Largeがplaceholder相当になった。画像仕様は維持し、Build 9でTimelineを最大2件へ制限する。[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)をresource設計の正本とする。
+> **2026-08-17追記：** Build 7の表示判断は維持するが、1週間計測はLike表示不具合で中断し、再計測案も結果が製品判断を変えないため同日に撤回した。Build 8で実ピクセル相当へ高解像度化したところ、20件Timelineの累積描画負荷でMedium / Largeがplaceholder相当になった。画像仕様は維持し、Build 9でTimelineを最大2件へ制限する。[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)をresource設計の正本とする。
 
 ## 背景
 
@@ -75,7 +75,7 @@ PhotoKitの`modificationDate`と、その値を取得済みかを示すmarkerを
 - 日付、場所、個体などの新しい選別軸
 - 共有機能
 
-Build 8で画像構図と写真詳細体験の改善を打ち止めとする。Build 9は高解像度Timelineのresource負荷だけを修復し、Build 10で写真ブラウザの標準ページングを修復する。両方の実機ゲート後に、Build 10で1週間の行動計測を新しいbaselineから始める。ローカル派生画像probeは1週間後、未使用番号を割り当てるInternal技術検証buildへ送り、採用時のproduction反映はさらに後続buildとする。主観的にApple Photosより美しくないことだけを理由に再実装しない。
+Build 8で画像構図と写真詳細体験の改善を打ち止めとする。Build 9は高解像度Timelineのresource負荷だけを修復し、Build 10で写真ブラウザの標準ページングを修復する。両方の実機確認は通常の機能ゲートとして行い、1週間計測は再開しない。ローカル派生画像probeは週待ちなしで専用Internal技術検証buildへ送り、採用時のproduction反映はさらに後続buildとする。主観的にApple Photosより美しくないことだけを理由に再実装しない。
 
 ## 受け入れ条件
 

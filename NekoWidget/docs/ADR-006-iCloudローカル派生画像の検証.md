@@ -2,9 +2,9 @@
 
 - 状態：実験待ち
 - 日付：2026-08-16
-- 対象：Build 10の1週間計測後、番号未割当のInternal TestFlight buildで行うdeferred対策の事前検証
+- 対象：番号未割当のInternal TestFlight buildで行うdeferred対策の事前検証
 
-> **2026-08-17日程変更：** Build 8はLike表示と最終UXを修復したが、20件Timelineの高解像度描画負荷により計測を再開できなかった。Build 9でTimelineを修復し、Build 10で写真ブラウザの標準ページングを修復した。1週間計測はBuild 10で取り直し、paired probeは計測後のInternal build、採用時のproduction反映はさらに後続buildとする。将来番号は計測終了時に未使用番号を割り当て、実験内容と事前に固定した判定線は変更しない。
+> **2026-08-17日程変更：** Build 7で中断した1週間計測の再実施は、結果が製品判断を変えないため撤回した。paired probeに週待ちや測定端末へのinstall制約はなく、専用Internal buildの準備後に実行できる。採用時のproduction反映は後続buildとし、実験内容と事前に固定した判定線は変更しない。
 
 ## 背景
 
@@ -14,7 +14,7 @@
 
 ## 判断
 
-ユーザー同意を伴うiCloud downloadはまだ実装しない。Build 10では現状の検出済み898枚で1週間計測を新しいbaselineから取り直す。計測中はpaired probe、ローカルアルバム、招待制共有の開発とCIまで進めてよいが、測定端末へ別のTestFlight buildをインストールせず、Widget再配置や写真露出集合の変更で計測を濁らせない。1週間の結果を回収した後、番号を割り当てたInternal TestFlight専用の技術検証buildを端末へ入れ、本番snapshotを変更しないpaired probeを1回実行する。probe結果を採用する場合も、通常scanner／Widgetへ反映するのはさらに後続のproduction buildとし、実験コードをそのままproduction経路へ混ぜない。
+ユーザー同意を伴うiCloud downloadはまだ実装しない。番号を割り当てたInternal TestFlight専用の技術検証buildを端末へ入れ、本番snapshotを変更しないpaired probeを1回実行する。1週間計測の終了を待つ必要はなく、Build 10を確認した端末へ同じInternal buildを入れてよい。probe結果を採用する場合も、通常scanner／Widgetへ反映するのは後続のproduction buildとし、実験コードをそのままproduction経路へ混ぜない。
 
 probeのrequestは次とする。
 

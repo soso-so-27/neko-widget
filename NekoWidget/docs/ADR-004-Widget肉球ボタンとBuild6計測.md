@@ -2,9 +2,9 @@
 
 - 状態：承認済み
 - 日付：2026-08-16
-- 対象：TestFlight Build 6以降（Build 7の計測は中断、Build 8の表示ゲートは失敗、再開候補はBuild 10）
+- 対象：TestFlight Build 6以降（Build 7の計測は中断後に撤回、Like保存境界は継続）
 
-> **2026-08-17追記：** Build 7で計測を開始したが、Widgetで保存したLikeがアプリの総数・一覧へ再スキャンまで反映されない表示通知不具合のため中断した。Build 8でLike同期は直したが高解像度20件TimelineによりMedium / Largeの表示ゲートが失敗した。Build 9でTimelineを最大2件へ修復し、Build 10で写真ブラウザの標準ページングを修復した。再開条件は[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)と本書のBuild 10ゲートを正本とする。本書のBuild 7／8開始記述は当時の判断履歴として読む。
+> **2026-08-17追記：** Build 7で計測を開始したが、Widgetで保存したLikeがアプリの総数・一覧へ再スキャンまで反映されない表示通知不具合のため中断した。その後、結果が製品判断を変えないため、再計測自体を同日に撤回した。新しいbaselineから再開せず、計測を理由に端末へのbuild導入を制限しない。本書の開始・集計記述は当時の判断と保存schemaの履歴として読む。Like同期、Widget操作、写真ブラウザの確認は通常の機能ゲートとして継続する。
 
 ## 背景
 
@@ -18,9 +18,9 @@ Build 6で肉球操作と保存境界を導入し、Build 7で[ADR-005](ADR-005-
 
 ただしBuild 7のLike同期ではApp Groupの保存後にsnapshot配列の要素だけを変更し、snapshot全体を再代入していなかった。そのため共有ストアは正しくてもSwiftUI表示が更新されず、後続スキャンのsnapshot代入まで総数・一覧が古いまま残り得た。主指標を信用できないため、2026-08-17にBuild 7計測を中断し、それまでの値を製品判断へ使わない。
 
-Build 8では、WidgetのLikeストアへの原子的保存は維持し、アプリの起動・フォアグラウンド復帰・Deep Link時に共有Likeを読み、更新後のsnapshot全体を明示的に再代入する。手動再スキャンなしの押下／解除即時反映ゲートを通過した後、ゲート中のイベントを除外して新しいbaselineから1週間計測を再開する。
+Build 8では、WidgetのLikeストアへの原子的保存は維持し、アプリの起動・フォアグラウンド復帰・Deep Link時に共有Likeを読み、更新後のsnapshot全体を明示的に再代入する。手動再スキャンなしの押下／解除即時反映は、再計測の開始条件ではなく製品機能として維持する。
 
-Deferred 2,586件はcoverage gapとして開始時に固定記録するが、898枚の検出済み写真があるため計測開始を阻害しない。この状態で得るengagementは、古い写真が追加された将来状態に対して控えめな値になり得る。[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のpaired probeはBuild 10へ含めず、1週間後のInternal技術検証buildで実行する。番号は計測終了時に割り当て、採用時だけ後続production buildへ反映する。
+Deferred 2,586件はcoverage gapとして記録する。[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のpaired probeは1週間の待機条件なしで専用Internal技術検証buildから実行でき、採用時だけ後続production buildへ反映する。
 
 - Small / Medium / Largeの右下へ、iOS 17の `Button(intent:)` による肉球ボタンを置く。
 - 未押下は輪郭、押下済みは塗りつぶしとし、再タップで解除する。Build 8ではSF Symbolsの`pawprint`ではなく、猫の指球と掌球の比率を持つ共有`CatPawMark`を使う。
@@ -37,23 +37,23 @@ Build 6からWidgetの構成を `AppIntentConfiguration` / `AppIntentTimelinePro
 
 Build 5の `StaticConfiguration` から同じkindの `AppIntentConfiguration` へ変える際、既設Widgetがその場で安全に設定Intentへ移ることは保証しない。Build 6は一般公開前なので、TestFlight更新時に既設Widgetを残したまま表示・編集できるか確認し、不調なら一度削除して再追加する。この移行を一般公開後には繰り返さず、将来構成方式そのものを変える場合は旧kindとの併存を検討する。
 
-将来「他人の猫」を写真源として追加しても、その写真の肉球を自分の本（自分の猫の「これ好き」）へ入れてはならない。新しい写真源を有効にする前に、写真源別action policyをtimeline entryへ追加し、表示側は写真源名から挙動を推測せず、そのpolicyに従って肉球の表示、保存先、Deep Linkを決める。`他人の猫`は既定で肉球を表示しない。別の保存先や意味を持つ操作を提供する場合は、保存namespace、表示文言、計測指標を別途決定してから有効にする。manifest、cache filename、timeline leaseも写真源ごとのnamespaceへ分離し、別配置・別写真源の保持ファイルをcleanupで消さない。Build 6ではこの将来policyを実装せず、1週間計測には自分の写真ライブラリに対する好き／解除だけを含める。
+将来「他人の猫」を写真源として追加しても、その写真の肉球を自分の本（自分の猫の「これ好き」）へ入れてはならない。新しい写真源を有効にする前に、写真源別action policyをtimeline entryへ追加し、表示側は写真源名から挙動を推測せず、そのpolicyに従って肉球の表示、保存先、Deep Linkを決める。`他人の猫`は既定で肉球を表示しない。別の保存先や意味を持つ操作を提供する場合は、保存namespace、表示文言、指標を別途決定してから有効にする。manifest、cache filename、timeline leaseも写真源ごとのnamespaceへ分離し、別配置・別写真源の保持ファイルをcleanupで消さない。個人用Likeと相手へのreactionは別storeにする。
 
-## 保存と計測境界
+## 保存と撤回済み計測の互換境界
 
 `LibrarySnapshot`とは別に、App Groupの小さなLikeストアを正本とする。アプリとWidget Extensionは、プロセス内ロックとプロセス間ロックを重ねた同じread-modify-write経路を使う。
 
-Build 6の初回同期では、Build 5以前のlikesを移行してWidget操作を解禁する。実機ゲート完了後に「1週間計測を開始」を押した時点で、次を保存する。
+Build 6の初回同期では、Build 5以前のlikesを移行してWidget操作を解禁した。当時の「1週間計測を開始」操作は、次を保存した。
 
 - `measurementStartedAt`
 - 計測開始時点で好きになっている全写真の開始時枚数
 - 開始後の押下／解除イベント（時刻、写真identifier、結果、操作元）
 
-開始操作ではゲート中のイベントを消去し、その時点のlikesをbaselineにする。操作イベントは30日かつ最大1,000件を保持し、削除した件数も記録する。SharedLogにも同じ操作を短い写真token付きで記録するが、診断ログはrotationするため、1週間集計の正本には永続イベント履歴を使う。開始時点の既存likesを新規獲得へ数えず、削除件数が0でない集計は完全な1週間データとして扱わない。
+当時の開始操作はゲート中のイベントを消去し、その時点のlikesをbaselineにした。これらのfieldと既存eventは移行と過去の検証JSONを読めるように維持するが、新しい開始・リセットUIを出さず、新しい肉球操作を1週間計測eventへ追加しない。検証JSONは`experimentStatus=withdrawn`、`eligibleForProductDecision=false`、`historyIsComplete=false`を明示し、保存済みledgerが欠損していないことと、有効な1週間実験が完了したことを混同しない。個人用Likeの正本と押した日時は引き続きApp Groupへ保存する。
 
-## Build 10で計測を再開する実機ゲート
+## Build 10の機能ゲート
 
-1週間計測を取り直す前に、TestFlight Build 10上で次をすべて確認する。Build 7で完了済みのランダム100枚は、scanner／analysis fingerprintを変えない限り再実施しない。
+TestFlight Build 10上で次を確認する。これは再計測の開始条件ではない。Build 7で完了済みのランダム100枚は、scanner／analysis fingerprintを変えない限り再実施しない。
 
 - 3サイズすべてで肉球が右下に表示される。
 - 輪郭から塗りつぶしへ変わり、再タップで輪郭へ戻る。
@@ -62,14 +62,14 @@ Build 6の初回同期では、Build 5以前のlikesを移行してWidget操作�
 - 肉球以外をタップすると従来どおり写真詳細が開く。
 - アプリを開く前の好き総数を記録し、Widgetで押した直後にアプリを開く。手動再スキャンなしで総数が1増え、同じ写真と押した日時が一覧へ現れる。
 - 同じ写真をWidgetで解除し、再びアプリを開く。手動再スキャンなしで総数が1減り、一覧から消える。
-- 診断ログと検証JSONのイベント履歴が一致する。
-- 診断ログで共有Like同期が`Scan generation started`より前に実行されたことを確認する。この順序を含む即時反映ゲートが通るまで計測はNO-GOとする。
+- 診断ログで肉球操作の時刻、写真token、操作元を確認できる。撤回前の検証JSON event履歴は互換性のため読み取れるが、新しい操作では増えない。
+- 診断ログで共有Like同期が`Scan generation started`より前に実行されたことを確認する。
 - Build 10インストール後、既設Widgetを削除し、Small / Medium / Largeを再配置して最大2件Timelineと新しいcacheを使う。
 - ホーム、Widget、利用可能なら「これ好き」という既存の入口から写真ブラウザをcold状態で開き、表示分母が約898件であっても初期表示で固まらず、標準ページングが指へ追従し、端でループせず跳ね返り、前後写真が白く残らないことを確認する。Build 10には任意位置を直接選ぶgridがないため、存在しない先頭／中間／末尾選択を要求しない。
+- Build 10で写真ブラウザが固まる場合は待機せず、`LazyHStack`と標準pagingを含む開発branchのbuildを同じ端末へ入れて[ADR-010](ADR-010-大規模写真ブラウザの遅延ページング.md)の実機ゲートを行う。
 - 長押しして「ウィジェットを編集」を開くと、写真源が「うちの子（自分のカメラロール）」として解決される。
 - 同じサイズまたは異なるサイズを複数配置しても、各配置が独立した設定Intentでtimelineを取得する。
 - Build 7の確定snapshotと同じscanner／analysis fingerprintであることを確認し、完了済み99 / 100のPrecision標本を再利用する。scannerが変わっていれば検証JSONを書き出し、ランダム100枚をやり直す。
-- 最後にアプリ内の「1週間計測を開始」を押し、新しい開始日時とbaseline枚数を記録する。
 
 Apple写真の「猫」検索との5分比較はアプリ状態を書き換えないため、このゲートより先に実施してよい。
 

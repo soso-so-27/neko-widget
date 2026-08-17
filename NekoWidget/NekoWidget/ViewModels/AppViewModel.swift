@@ -21,7 +21,6 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var albumStatus: AlbumUpdateStatus = .idle
     @Published private(set) var errorMessage: String?
     @Published private(set) var exportedURL: URL?
-    @Published private(set) var likeMeasurement: SharedLikeMeasurementSnapshot = .empty
     @Published private(set) var isLikeInteractionReady = false
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
@@ -265,7 +264,7 @@ final class AppViewModel: ObservableObject {
         }
 
         sharedLikeRecords[localIdentifier] = mutation.record
-        refreshLikeMeasurementState()
+        refreshLikeInteractionState()
         // Publish one new value instead of mutating a field inside the
         // @Published snapshot. The explicit assignment is what makes every
         // count/list backed by `likedAssets` refresh in the same run-loop turn.
@@ -290,27 +289,6 @@ final class AppViewModel: ObservableObject {
         // A like changes the 3x display weight, so refresh the principal v1
         // display surface immediately.
         await rebuildWidgetCache(reportErrors: false)
-    }
-
-    func startLikeMeasurement() async {
-        errorMessage = nil
-        do {
-            let measurement = try SharedLikeStore.startMeasurement(at: .now)
-            likeMeasurement = measurement
-            SharedLog.app.info(
-                "like",
-                "One-week like measurement started",
-                metadata: [
-                    "baselineLikedCount": "\(measurement.baselineLikedCount)",
-                    "retentionDays": "\(measurement.retentionDays)",
-                    "maximumEvents": "\(measurement.maximumEventCount)",
-                    "startedAt": measurement.startedAt.map(Self.iso8601String) ?? "unknown"
-                ]
-            )
-        } catch {
-            Self.logError(error, category: "like", operation: "start_like_measurement")
-            setError(error)
-        }
     }
 
     func selectAsset(id localIdentifier: String?) {
@@ -717,7 +695,7 @@ final class AppViewModel: ObservableObject {
 
             sharedLikeRecords = records
             let wasInteractionReady = isLikeInteractionReady
-            refreshLikeMeasurementState()
+            refreshLikeInteractionState()
             if !wasInteractionReady && isLikeInteractionReady {
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
                 SharedLog.app.info(
@@ -770,13 +748,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func refreshLikeMeasurementState() {
+    private func refreshLikeInteractionState() {
         do {
             let state = try SharedLikeStore.stateSnapshot()
             isLikeInteractionReady = state.isInteractionReady
-            likeMeasurement = try SharedLikeStore.measurementSnapshot()
         } catch {
-            Self.logError(error, category: "like", operation: "read_like_measurement")
+            Self.logError(error, category: "like", operation: "read_like_state")
         }
     }
 

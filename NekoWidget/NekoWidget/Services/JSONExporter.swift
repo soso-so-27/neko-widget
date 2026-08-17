@@ -74,8 +74,11 @@ private struct VerificationExportPayload: Encodable {
 /// Rotation-proof product-measurement evidence. The private local identifiers
 /// already exist in the root asset array; photo bytes are never embedded.
 private struct LikeMeasurementExport: Encodable {
-    var schemaVersion = 1
+    var schemaVersion = 2
     var containsPhotoData = false
+    var experimentStatus = "withdrawn"
+    var withdrawnOn = "2026-08-17"
+    var eligibleForProductDecision = false
     var startedAt: Date?
     var baselineLikedCount: Int
     var eventCount: Int
@@ -92,8 +95,9 @@ private struct LikeMeasurementExport: Encodable {
         retentionDays = snapshot.retentionDays
         maximumEventCount = snapshot.maximumEventCount
         droppedEventCount = snapshot.droppedEventCount
-        historyIsComplete = snapshot.startedAt != nil
-            && snapshot.droppedEventCount == 0
+        // A complete on-disk ledger is not a completed experiment. The
+        // one-week run was withdrawn before a valid product measurement ended.
+        historyIsComplete = false
         events = snapshot.events.map { LikeMeasurementEventExport(event: $0) }
     }
 }

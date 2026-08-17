@@ -95,7 +95,6 @@ struct AppRootView: View {
                 albumState: effectiveAlbumState,
                 settings: settingsPresentation,
                 detectionAccuracySample: detectionAccuracySamplePresentation,
-                likeMeasurement: likeMeasurementPresentation,
                 isLimitedAccess: viewModel.isLimitedAccess,
                 isScanning: viewModel.isScanning,
                 widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
@@ -114,9 +113,6 @@ struct AppRootView: View {
                 },
                 exportJSON: {
                     await viewModel.exportJSON()
-                },
-                startLikeMeasurement: {
-                    await viewModel.startLikeMeasurement()
                 }
             )
         }
@@ -169,18 +165,6 @@ struct AppRootView: View {
                     creationDate: item.record.creationDate
                 )
             }
-        )
-    }
-
-    private var likeMeasurementPresentation: LikeMeasurementPresentation {
-        LikeMeasurementPresentation(
-            isInteractionReady: viewModel.isLikeInteractionReady,
-            startedAt: viewModel.likeMeasurement.startedAt,
-            baselineLikedCount: viewModel.likeMeasurement.baselineLikedCount,
-            eventCount: viewModel.likeMeasurement.events.count,
-            droppedEventCount: viewModel.likeMeasurement.droppedEventCount,
-            retentionDays: viewModel.likeMeasurement.retentionDays,
-            maximumEventCount: viewModel.likeMeasurement.maximumEventCount
         )
     }
 

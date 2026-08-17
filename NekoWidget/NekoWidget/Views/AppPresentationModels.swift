@@ -93,16 +93,6 @@ struct DetectionAccuracySamplePresentation: Equatable {
     var items: [DetectionAccuracySampleItemPresentation] = []
 }
 
-struct LikeMeasurementPresentation: Equatable {
-    var isInteractionReady = false
-    var startedAt: Date?
-    var baselineLikedCount = 0
-    var eventCount = 0
-    var droppedEventCount = 0
-    var retentionDays = 30
-    var maximumEventCount = 1_000
-}
-
 enum AlbumPresentationState: Equatable {
     case idle
     case updating

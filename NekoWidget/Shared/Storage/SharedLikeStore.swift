@@ -192,6 +192,12 @@ enum SharedLikeStoreError: LocalizedError {
 /// this store are serialized across processes with a stable lock file, while
 /// the JSON payload itself is atomically replaced.
 enum SharedLikeStore {
+    /// The one-week Like experiment was withdrawn on 2026-08-17 because its
+    /// result would not change a product decision. This shared store is built
+    /// into both the app and Widget extension, so keep the stop switch here.
+    /// Persisted measurement fields remain readable for export and migration.
+    private static let recordsMeasurementEvents = false
+
     private static let measurementRetentionDays = 30
     private static let maximumMeasurementEventCount = 1_000
     /// `flock` coordinates the app and extension as separate processes, but it
@@ -250,34 +256,6 @@ enum SharedLikeStore {
                 retentionDays: measurementRetentionDays,
                 maximumEventCount: maximumMeasurementEventCount,
                 droppedEventCount: file.measurementDroppedEventCount
-            )
-        }
-    }
-
-    /// Starts (or deliberately restarts) the one-week product measurement
-    /// after the user has finished the current build's manual widget gate. Gate
-    /// taps are excluded by clearing prior events and capturing a fresh baseline.
-    @discardableResult
-    static func startMeasurement(at date: Date = .now) throws -> SharedLikeMeasurementSnapshot {
-        try withExclusiveLock {
-            var file = try readUnlocked()
-            guard file.migrationCompletedAt != nil else {
-                throw SharedLikeStoreError.measurementNotInitialized
-            }
-            file.measurementStartedAt = date
-            file.measurementBaselineLikedCount = file.records.values.filter { $0.isLiked }.count
-            file.events = []
-            file.measurementDroppedEventCount = 0
-            file.schemaVersion = 2
-            file.updatedAt = date
-            try writeUnlocked(file)
-            return SharedLikeMeasurementSnapshot(
-                startedAt: date,
-                baselineLikedCount: file.measurementBaselineLikedCount,
-                events: [],
-                retentionDays: measurementRetentionDays,
-                maximumEventCount: maximumMeasurementEventCount,
-                droppedEventCount: 0
             )
         }
     }
@@ -367,7 +345,8 @@ enum SharedLikeStore {
                 changedAt: date
             )
             file.records[localIdentifier] = record
-            if file.measurementStartedAt != nil {
+            if recordsMeasurementEvents,
+               file.measurementStartedAt != nil {
                 let nextSequence = (file.events.last?.sequence
                     ?? file.measurementDroppedEventCount) + 1
                 file.events.append(
