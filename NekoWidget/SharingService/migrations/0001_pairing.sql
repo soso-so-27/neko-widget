@@ -65,6 +65,10 @@ CREATE UNIQUE INDEX unique_live_invite_proof_key
 CREATE INDEX invitations_state_expiry
     ON invitations(status, expires_at);
 
+CREATE INDEX open_invitations_expiry
+    ON invitations(expires_at, space_id)
+    WHERE status = 'open';
+
 CREATE TABLE invitation_challenges (
     id TEXT PRIMARY KEY,
     invitation_id TEXT NOT NULL REFERENCES invitations(id) ON DELETE CASCADE,
@@ -76,8 +80,9 @@ CREATE TABLE invitation_challenges (
     UNIQUE (invitation_id, value)
 ) STRICT;
 
-CREATE INDEX invitation_challenges_expiry
-    ON invitation_challenges(expires_at);
+CREATE INDEX live_invitation_challenges_expiry
+    ON invitation_challenges(expires_at, invitation_id)
+    WHERE consumed_at IS NULL;
 
 CREATE TRIGGER challenges_require_live_invitation_and_capacity
 BEFORE INSERT ON invitation_challenges
@@ -124,6 +129,10 @@ CREATE TABLE enrollments (
 
 CREATE INDEX enrollments_state_expiry
     ON enrollments(state, expires_at);
+
+CREATE INDEX live_enrollments_expiry
+    ON enrollments(expires_at, space_id)
+    WHERE state IN ('pending', 'approved');
 
 CREATE TRIGGER enrollments_require_live_invitation
 BEFORE INSERT ON enrollments

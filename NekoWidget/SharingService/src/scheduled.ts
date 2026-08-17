@@ -9,6 +9,43 @@ interface SpaceIDRow {
   id: string;
 }
 
+export const PAIRING_EXPIRY_CANDIDATES_SQL = `
+  WITH
+  expired_invitations AS MATERIALIZED (
+    SELECT space_id, expires_at
+      FROM invitations INDEXED BY open_invitations_expiry
+     WHERE status = 'open' AND expires_at <= ?
+     ORDER BY expires_at ASC, space_id ASC
+     LIMIT ?
+  ),
+  expired_enrollments AS MATERIALIZED (
+    SELECT space_id, expires_at
+      FROM enrollments INDEXED BY live_enrollments_expiry
+     WHERE state IN ('pending', 'approved') AND expires_at <= ?
+     ORDER BY expires_at ASC, space_id ASC
+     LIMIT ?
+  ),
+  expired_challenges AS MATERIALIZED (
+    SELECT i.space_id, c.expires_at
+      FROM invitation_challenges AS c INDEXED BY live_invitation_challenges_expiry
+      JOIN invitations AS i ON i.id = c.invitation_id
+     WHERE c.consumed_at IS NULL AND c.expires_at <= ?
+     ORDER BY c.expires_at ASC, c.invitation_id ASC
+     LIMIT ?
+  ),
+  bounded_candidates AS (
+    SELECT space_id, expires_at FROM expired_invitations
+    UNION ALL
+    SELECT space_id, expires_at FROM expired_enrollments
+    UNION ALL
+    SELECT space_id, expires_at FROM expired_challenges
+  )
+  SELECT space_id AS id, MIN(expires_at) AS oldest_expiry
+    FROM bounded_candidates
+   GROUP BY space_id
+   ORDER BY oldest_expiry ASC, space_id ASC
+   LIMIT ?`;
+
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ");
 }
@@ -17,27 +54,15 @@ async function pairingExpiryCandidates(
   env: Env,
   now: number,
 ): Promise<string[]> {
-  const result = await env.DB.prepare(
-    `SELECT space_id AS id, MIN(expires_at) AS oldest_expiry
-       FROM (
-         SELECT space_id, expires_at
-           FROM invitations
-          WHERE status = 'open' AND expires_at <= ?
-         UNION ALL
-         SELECT space_id, expires_at
-           FROM enrollments
-          WHERE state IN ('pending', 'approved') AND expires_at <= ?
-         UNION ALL
-         SELECT i.space_id, c.expires_at
-           FROM invitation_challenges AS c
-           JOIN invitations AS i ON i.id = c.invitation_id
-          WHERE c.consumed_at IS NULL
-            AND (c.expires_at <= ? OR i.status <> 'open')
-       )
-      GROUP BY space_id
-      ORDER BY oldest_expiry ASC, space_id ASC
-      LIMIT ?`,
-  ).bind(now, now, now, CLEANUP_SPACE_LIMIT).all<SpaceIDRow>();
+  const result = await env.DB.prepare(PAIRING_EXPIRY_CANDIDATES_SQL).bind(
+    now,
+    CLEANUP_SPACE_LIMIT,
+    now,
+    CLEANUP_SPACE_LIMIT,
+    now,
+    CLEANUP_SPACE_LIMIT,
+    CLEANUP_SPACE_LIMIT,
+  ).all<SpaceIDRow>();
   return result.results.map((row) => row.id);
 }
 

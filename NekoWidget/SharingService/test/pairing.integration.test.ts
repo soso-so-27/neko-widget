@@ -15,6 +15,7 @@ import {
 import {
   CLEANUP_EPHEMERAL_ROW_LIMIT,
   CLEANUP_SPACE_LIMIT,
+  PAIRING_EXPIRY_CANDIDATES_SQL,
   runScheduledCleanup,
 } from "../src/scheduled";
 
@@ -678,6 +679,148 @@ describe("Phase 1 pairing Worker", () => {
     expect(await testEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM spaces WHERE metadata_expires_at <= ?",
     ).bind(now).first<{ count: number }>()).toEqual({ count: 0 });
+  });
+
+  it("bounds each pairing-expiry source before deduplication and uses partial indexes", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const plan = await testEnv.DB.prepare(
+      `EXPLAIN QUERY PLAN ${PAIRING_EXPIRY_CANDIDATES_SQL}`,
+    ).bind(
+      now,
+      CLEANUP_SPACE_LIMIT,
+      now,
+      CLEANUP_SPACE_LIMIT,
+      now,
+      CLEANUP_SPACE_LIMIT,
+      CLEANUP_SPACE_LIMIT,
+    ).all<{ detail: string }>();
+    const planText = plan.results.map((row) => row.detail).join("\n");
+    expect(planText).toContain("open_invitations_expiry");
+    expect(planText).toContain("live_enrollments_expiry");
+    expect(planText).toContain("live_invitation_challenges_expiry");
+
+    const total = CLEANUP_SPACE_LIMIT + 5;
+    const inserts: D1PreparedStatement[] = [];
+    for (let index = 0; index < total; index += 1) {
+      const spaceId = randomValue(16);
+      const memberId = randomValue(16);
+      const createdAt = now - 200 - index;
+      inserts.push(
+        testEnv.DB.prepare(
+          `INSERT INTO spaces(
+             id, creation_request_id, protocol_version, daily_boundary_minute_utc,
+             state, created_at, last_activity_at, metadata_expires_at
+           ) VALUES (?, ?, 1, 540, 'active', ?, ?, ?)`,
+        ).bind(
+          spaceId,
+          crypto.randomUUID().toLowerCase(),
+          createdAt,
+          createdAt,
+          now + 10_000,
+        ),
+        testEnv.DB.prepare(
+          `INSERT INTO members(
+             id, space_id, role, participant_id, agreement_public_key,
+             signing_public_key, state, created_at, activated_at
+           ) VALUES (?, ?, 'owner', ?, ?, ?, 'active', ?, ?)`,
+        ).bind(
+          memberId,
+          spaceId,
+          randomValue(16),
+          randomValue(32),
+          randomValue(32),
+          createdAt,
+          createdAt,
+        ),
+        testEnv.DB.prepare(
+          `INSERT INTO invitations(
+             id, space_id, inviter_member_id, invite_proof_public_key,
+             status, created_at, expires_at
+           ) VALUES (?, ?, ?, ?, 'open', ?, ?)`,
+        ).bind(
+          randomValue(16),
+          spaceId,
+          memberId,
+          randomValue(32),
+          createdAt,
+          now - 1 - index,
+        ),
+      );
+    }
+    for (let offset = 0; offset < inserts.length; offset += 39) {
+      await testEnv.DB.batch(inserts.slice(offset, offset + 39));
+    }
+
+    await runScheduledCleanup(testEnv, now);
+    expect(await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM invitations WHERE status = 'open' AND expires_at <= ?",
+    ).bind(now).first<{ count: number }>()).toEqual({ count: 5 });
+
+    await runScheduledCleanup(testEnv, now);
+    expect(await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM invitations WHERE status = 'open' AND expires_at <= ?",
+    ).bind(now).first<{ count: number }>()).toEqual({ count: 0 });
+  });
+
+  it("does not read an entire abusive pairing-expiry source", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const total = 1_000;
+    await testEnv.DB.prepare(
+      `WITH RECURSIVE sequence(value) AS (
+         VALUES(1)
+         UNION ALL
+         SELECT value + 1 FROM sequence WHERE value < ?
+       )
+       INSERT INTO spaces(
+         id, creation_request_id, protocol_version, daily_boundary_minute_utc,
+         state, created_at, last_activity_at, metadata_expires_at
+       )
+       SELECT printf('space-%04d', value), printf('request-%04d', value),
+              1, 540, 'active', ?, ?, ?
+         FROM sequence`,
+    ).bind(total, now - 2_000, now - 2_000, now + 10_000).run();
+    await testEnv.DB.prepare(
+      `WITH RECURSIVE sequence(value) AS (
+         VALUES(1)
+         UNION ALL
+         SELECT value + 1 FROM sequence WHERE value < ?
+       )
+       INSERT INTO members(
+         id, space_id, role, participant_id, agreement_public_key,
+         signing_public_key, state, created_at, activated_at
+       )
+       SELECT printf('member-%04d', value), printf('space-%04d', value), 'owner',
+              printf('participant-%04d', value), printf('agreement-%04d', value),
+              printf('signing-%04d', value), 'active', ?, ?
+         FROM sequence`,
+    ).bind(total, now - 2_000, now - 2_000).run();
+    await testEnv.DB.prepare(
+      `WITH RECURSIVE sequence(value) AS (
+         VALUES(1)
+         UNION ALL
+         SELECT value + 1 FROM sequence WHERE value < ?
+       )
+       INSERT INTO invitations(
+         id, space_id, inviter_member_id, invite_proof_public_key,
+         status, created_at, expires_at
+       )
+       SELECT printf('invite-%04d', value), printf('space-%04d', value),
+              printf('member-%04d', value), printf('proof-%04d', value),
+              'open', ?, ? - value
+         FROM sequence`,
+    ).bind(total, now - 2_000, now).run();
+
+    const candidates = await testEnv.DB.prepare(PAIRING_EXPIRY_CANDIDATES_SQL).bind(
+      now,
+      CLEANUP_SPACE_LIMIT,
+      now,
+      CLEANUP_SPACE_LIMIT,
+      now,
+      CLEANUP_SPACE_LIMIT,
+      CLEANUP_SPACE_LIMIT,
+    ).all<{ id: string }>();
+    expect(candidates.results).toHaveLength(CLEANUP_SPACE_LIMIT);
+    expect(candidates.meta.rows_read).toBeLessThan(total);
   });
 
   it("bounds nonce and idempotency cleanup and drains the oldest backlog first", async () => {
