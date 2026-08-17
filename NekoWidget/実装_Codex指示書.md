@@ -337,7 +337,7 @@ JSONエクスポートでは、App Groupの正本と同じ情報に加え、dete
 - 3サイズ専用canvas、猫優先full-bleed、例外時だけの既存ぼかしfallback、100／200／220KiB以下のキャッシュとメモリ対策
 - ウィジェットから写真詳細へのDeep Link
 - App Group共有の診断ログとアプリ内ログ画面
-- TestFlight確認用1024×1024プレースホルダーApp Icon / Asset Catalog
+- 「ねこのまど」C5 Softの1024×1024正式App Icon / Asset Catalog（紙色`#F2E8D5`、墨色`#2A2521`、不透明RGB。形状正本は`docs/design/AppIcon-P1-master.svg`）
 - GitHub Actionsによる無署名コンパイル確認と、手動実行のarchive・export・TestFlight upload
 
 ### P1

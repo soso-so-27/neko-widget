@@ -6,7 +6,7 @@
 
 ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。TestFlight Build 7までをiPhoneで確認し、8,861枚の確定スキャンとdetected無作為100枚のレビューを完了しました。レビューは`reviewNo 74`だけを製品候補から除外し、99 / 100を採用しました。scannerはBuild 8で変更しないため、このPrecision標本は再利用します。Build 7の1週間計測はLike表示不具合で中断し、Build 8では高解像度20件TimelineによりMedium / Largeがplaceholder相当になる不具合を確認したため、計測を再開していません。Build 9で1回のTimelineを最大2件へ制限し、3サイズとlike／unlike即時反映の実機ゲート後に新しいbaselineから計測を始めます。実施順は[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)、Like修復は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、Timeline修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)で管理します。
 
-TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレースホルダーApp IconとAsset Catalogを含めています。正式公開前には、商標・視認性・各外観での見え方を確認した最終アイコンへ差し替えてください。
+アプリ名「ねこのまど」に合わせ、窓の開口が二度見ると猫耳に見えるC5 Softを正式App Iconとして採用しています。紙色`#F2E8D5`と墨色`#2A2521`の2色フラットで、1024×1024px・不透明RGBのAsset Catalogを含みます。編集用の形状正本は[`docs/design/AppIcon-P1-master.svg`](docs/design/AppIcon-P1-master.svg)です。一般公開前には商標と実機上の視認性を最終確認してください。
 
 写真シャッフルには、指定時点のアルバム内容がスナップショットとして取り込まれます。アルバムへ後から追加した写真は自動反映されないことを実機スパイクで確認済みです。判断の記録は[ADR-001](docs/ADR-001-写真シャッフルのアルバム追従.md)にあります。アルバム生成は維持し、ウィジェットを主要な継続表示先とします。
 

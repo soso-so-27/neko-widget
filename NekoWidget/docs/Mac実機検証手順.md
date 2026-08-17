@@ -48,7 +48,7 @@ Windowsで生成した「ねこのまど」v1をMacでビルド・署名し、iO
 7. アプリInfoの写真読み書き説明、写真追加説明、`nekowidget` URL scheme、App Group識別子がBuild Settingsの変数を展開できることを確認する。
 8. 実機を接続してアプリschemeを選び、Product > Clean Build Folder、続けてProduct > Buildを実行する。
 9. Signing、entitlements、plistの警告がないことを確認し、Product > Runで実機へインストールする。
-10. Build Logで`Assets.xcassets`と`AppIcon`が処理され、ホーム画面でプレースホルダーアイコンが表示されることを確認する。
+10. Build Logで`Assets.xcassets`と`AppIcon`が処理され、ホーム画面で「ねこのまど」のC5 Softアイコン（紙色の背景、墨色の窓枠）が表示されることを確認する。
 
 期待結果：アプリが実機で起動し、Widget Extensionを含んだ状態で署名される。App Group entitlementの不一致や未登録によるインストール失敗がない。
 
@@ -229,7 +229,7 @@ CIが保証するのは1枚5MiB以下、family別最大2件10MiB以下という�
 - [ ] App Group共有と「これ好き」の永続化を確認した
 - [ ] Build 9のWidget ON→アプリ+1／一覧／likedAt、Widget OFF→アプリ-1／一覧削除が手動再スキャンなしで通り、Like同期ログがscan startより前だった
 - [ ] AppとWidgetの診断ログを統合表示、コピー、共有、消去できた
-- [ ] プレースホルダーApp Iconがarchiveへ含まれた
+- [ ] 「ねこのまど」のC5 Soft App Iconがarchiveへ含まれた
 
 総合結果：`未実施`
 
