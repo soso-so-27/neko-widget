@@ -2,7 +2,7 @@
 
 ## 目的
 
-Windowsで生成した猫ウィジェットv1をMacでビルド・署名し、iOS 17.1以上のiPhoneでPhotoKit、段階スキャン、アルバム、WidgetKit、Deep Link、App Group共有、診断ログおよびメモリ制約を検証する。
+Windowsで生成した「ねこのまど」v1をMacでビルド・署名し、iOS 17.1以上のiPhoneでPhotoKit、段階スキャン、アルバム、WidgetKit、Deep Link、App Group共有、診断ログおよびメモリ制約を検証する。
 
 写真シャッフルがアルバムへの後日追加を自動追従しないことは確認済みであり、不具合ではない。詳細は[ADR-001](ADR-001-写真シャッフルのアルバム追従.md)を参照する。
 
@@ -34,6 +34,8 @@ Windowsで生成した猫ウィジェットv1をMacでビルド・署名し、iO
 - `Config.xcconfig`の3識別子を、そのTeamで一意な実値へ置き換えている。Widget Bundle IDはアプリBundle IDに`.widget`などの接尾辞を付け、App Groupは`group.`で始める。
 - WindowsでのCSR／P12作成、Portal登録、2つの配布profile、GitHub Secretsは[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md)に従って完了している。
 - テスト対象の写真はバックアップ済みである。アプリが写真原本を変更・複製しないことも確認対象とする。
+- Build 7の1週間計測は2026-08-17にLike表示不具合で中断済みである。Build 8の手動Like即時反映ゲートが通るまで計測を再開しない。
+- Build 7のdetected無作為100枚は`reviewNo 74`だけを除外し99 / 100を採用済みである。scanner／analysis fingerprintが同じBuild 8では再利用する。
 
 ## 2. Xcode設定とビルド
 
@@ -64,7 +66,7 @@ Windowsで生成した猫ウィジェットv1をMacでビルド・署名し、iO
 
 ## 4. Limited Access
 
-1. アプリを削除して再インストールするか、設定アプリの「プライバシーとセキュリティ」>「写真」>「猫が主役」でLimited Accessへ変更する。
+1. アプリを削除して再インストールするか、設定アプリの「プライバシーとセキュリティ」>「写真」>「ねこのまど」でLimited Accessへ変更する。
 2. 猫あり、猫なしを含む少数の写真だけを許可する。
 3. 許可済みの範囲だけでスキャンと表示が動き、未許可assetの参照、空結果、削除済みassetでクラッシュしないことを確認する。
 4. 「もっと写真を選ぶ」からlimited library pickerを開き、写真を追加する。
@@ -120,9 +122,10 @@ Simulatorの1,000枚スケールテストでは、アプリ起動から全件確
 
 1. アプリでスキャンとキャッシュ生成を完了させる。
 2. ホーム画面を長押しし、Small、Medium、Largeのウィジェットを1つずつ追加する。
-3. 3サイズすべてで専用画像が表示されることを確認する。通常は端まで鮮明なfull-bleed、Small / Largeは猫union＋余白を保持し、収容不能時だけ猫全体＋同写真ぼかし、Mediumは収容不能時もbbox上寄りfull-bleedとする。黒帯、空白、回転、反転、伸長がないことも確認する。
-4. 写真なし、manifestなし、壊れたキャッシュまたは参照先削除の各状態で、プレースホルダーまたは空表示へ安全にフォールバックすることを確認する。
+3. 3サイズすべてで専用画像が表示されることを確認する。通常は端まで鮮明なfull-bleed、Small / Largeは猫union＋各辺8%の余白を保持し、収容不能時だけ猫全体＋既存の同写真ぼかし、Mediumは収容不能時もbbox上寄りfull-bleedとする。黒帯、空白、回転、反転、伸長がないことも確認する。
+4. 写真なし、manifestなし、壊れたキャッシュまたは参照先削除の各状態で、空白や故障表示ではなく安全な案内へフォールバックすることを確認する。猫0件では、猫写真を追加する／写真アクセスを確認する／再スキャンする、の次の行動が分かることも確認する。
 5. アプリで選別結果を更新し、Widgetが更新後のApp Group内manifestと画像を読めることを確認する。
+6. Widgetの肉球が共有`CatPawMark`で、約20pxでも犬ではなく猫の肉球に見え、未押下／押下済みの輪郭／塗りつぶしを区別できることを確認する。
 
 結果：`未実施`
 
@@ -152,20 +155,39 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 3. アプリを終了して同じ確認を行う。
 4. IDにURLエンコードが必要な文字が含まれても、`nekowidget://photo?id=<encoded localIdentifier>`が正しく復元されることを確認する。
 5. IDなし、不明ID、アクセス権を失ったIDでクラッシュせず、安全な画面へ戻ることを確認する。
+6. 詳細で写真を大きく表示し、左右スワイプ、肉球、撮影日、「この日の写真をすべて見る」、約20分ごとの切り替えと最後に変わったおおよその時刻が表示されることを確認する。任意に進める「次へ」ボタンは置かない。
 
 結果：`未実施`
 
 メモ：
 
+### 9.1 Build 8の計測再開ゲート
+
+この節が通るまで1週間計測は**NO-GO**とする。手動の再スキャン操作を挟まない。
+
+1. Build 8をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
+2. アプリを開き、好き総数と一覧を記録してアプリを終了する。
+3. Widgetで未押下写真の肉球をONにする。アプリが開かず、輪郭が塗りつぶしへ変わることを確認する。
+4. 直後にアプリを開く。総数が+1、一覧に同じ写真と`likedAt`が出ることを確認する。
+5. アプリを終了し、Widgetへ戻って同じ写真の肉球をOFFにする。
+6. 直後にアプリを開く。総数が-1、一覧から同じ写真が消えることを確認する。
+7. 診断ログで共有Like同期が`Scan generation started`より前にあること、検証JSONの押下／解除eventと写真・時刻・操作元が一致することを確認する。
+8. すべて通った後だけ「1週間計測を開始」を押し、新しい開始日時とbaselineを記録する。
+
+結果：`未実施（NO-GO）`
+
 ## 10. Widgetのメモリ
 
 1. 高解像度の原写真を含む状態で、本体アプリにWidgetキャッシュを作らせる。
-2. App Groupコンテナを確認し、派生JPEGがSmall 400×400px、Medium 800×374px、Large 400×420pxで各50KiB以下であること、manifestが3サイズの画像ファイル名を参照していることを確認する。
-3. Widgetを表示し、XcodeのDebug > Attach to Process by PID or NameからWidget ExtensionプロセスへAttachする。
-4. Debug NavigatorのMemoryを記録し、Small / Medium / Largeの追加、timeline更新、アプリ側のデータ更新を繰り返す。
+2. App Groupコンテナを確認し、2048×2048のlocal-only high-quality入力から作った派生JPEGがSmall 500×500px／100KiB以下、Medium 1050×500px／200KiB以下、Large 1050×1100px／220KiB以下であること、manifestが3サイズの画像ファイル名を参照していることを確認する。
+3. Smallだけを置き、初回描画、timeline切り替え、肉球ON/OFFで消失、再読込ループ、クラッシュがないことを確認する。次にMedium、最後にLargeを追加し、同じ操作を段階的に繰り返す。
+4. Widgetを表示し、XcodeのDebug > Attach to Process by PID or NameからWidget ExtensionプロセスへAttachする。Debug NavigatorのMemoryを各段階で記録する。
 5. メモリがおおむね30MBの制約内に収まり、継続増加、Jetsam、クラッシュがないことを確認する。判断が難しい場合はInstrumentsのAllocationsで再試験する。
-6. Widget側でPhotoKit、Vision、クロップ処理が実行されず、TimelineEntryがJPEG Dataや画像オブジェクトを保持せず、現在の1枚だけを読み込むことをログまたはコードと合わせて確認する。
-7. 「これ好き」の連続操作や再スキャンを繰り返し、旧timelineの表示が途中で空にならないこと、`widget-cache`が最大480ファイルを超えて増え続けないことを確認する。
+6. Widget側でPhotoKit、Vision、クロップ処理が実行されず、TimelineEntryがJPEG Dataや画像オブジェクトを保持せず、現在の1枚だけを読み込むことをログまたはコードと合わせて確認する。診断ログの推定デコード量が各表示で5MiB以下であることも確認する。
+7. 「これ好き」の連続操作や再スキャンを繰り返し、旧timelineの表示が途中で空にならないこと、`widget-cache`が最大8 generation／400ファイル、保守的に約85.9MiBを超えて増え続けないことを確認する。
+8. TestFlightのクラッシュ情報とiPhoneの解析データに、確認時刻と一致するWidget crash／Jetsamがないことを確認する。
+
+CIが保証するのはLargeのraw decode約4.41MiB／1枚が5MiB guard内にあるという静的予算までで、Widget Extension全体の実peak 30MiB未満ではない。本節でXcode／Instrumentsの実数値を取り、TestFlightだけの場合は段階配置、診断ログ、クラッシュ／Jetsamなしを確認するが、実peak保証とは表現しない。
 
 結果：`未実施`
 
@@ -202,9 +224,10 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 - [ ] WidgetのSmall / Medium / Largeが表示された
 - [ ] 15〜20件、既定20分間隔のtimelineを確認した
 - [ ] Widgetから正しい写真へDeep Linkできた
-- [ ] Small 400×400px、Medium 800×374px、Large 400×420pxで各50KiB以下のキャッシュを確認した
+- [ ] Small 500×500px／100KiB以下、Medium 1050×500px／200KiB以下、Large 1050×1100px／220KiB以下のキャッシュを確認した
 - [ ] Widgetのメモリ急増とクラッシュがなかった
 - [ ] App Group共有と「これ好き」の永続化を確認した
+- [ ] Build 8のWidget ON→アプリ+1／一覧／likedAt、Widget OFF→アプリ-1／一覧削除が手動再スキャンなしで通り、Like同期ログがscan startより前だった
 - [ ] AppとWidgetの診断ログを統合表示、コピー、共有、消去できた
 - [ ] プレースホルダーApp Iconがarchiveへ含まれた
 

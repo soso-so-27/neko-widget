@@ -2,6 +2,9 @@ import SwiftUI
 
 struct InitialScanView: View {
     let scan: ScanPresentation
+    let isLimitedAccess: Bool
+    let chooseMorePhotos: () -> Void
+    let rescan: () -> Void
     let continueToApp: () -> Void
 
     var body: some View {
@@ -27,7 +30,7 @@ struct InitialScanView: View {
 
             if scan.hasPreliminaryResult {
                 Button(action: continueToApp) {
-                    Text(scan.hasFinalResult ? "はじめる" : "続きはホームで")
+                    Text(continueButtonTitle)
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 5)
@@ -48,16 +51,27 @@ struct InitialScanView: View {
             )
 
             VStack(spacing: 8) {
-                Text("あなたのカメラロールに\nうちの子の写真は")
-                    .font(.title3)
-                    .multilineTextAlignment(.center)
+                if isFinalZero {
+                    Text("猫の写真は見つかりませんでした")
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
 
-                Text(scan.displayedCatCount.formatted())
-                    .font(.system(size: 62, weight: .bold, design: .rounded))
-                    .contentTransition(.numericText())
+                    Text("スキャンは正常に完了しました。猫が主役に写った写真を写真アプリに追加するか、写真へのアクセス範囲を確認して、もう一度スキャンしてください。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("あなたのカメラロールに\nうちの子の写真は")
+                        .font(.title3)
+                        .multilineTextAlignment(.center)
 
-                Text("枚ありました")
-                    .font(.title3)
+                    Text(scan.displayedCatCount.formatted())
+                        .font(.system(size: 62, weight: .bold, design: .rounded))
+                        .contentTransition(.numericText())
+
+                    Text(scan.hasFinalResult ? "枚ありました" : "枚見つかっています")
+                        .font(.title3)
+                }
             }
 
             if let date = scan.displayedOldestDate {
@@ -94,7 +108,27 @@ struct InitialScanView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+
+            if isFinalZero {
+                VStack(spacing: 10) {
+                    if isLimitedAccess {
+                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                        .buttonStyle(.bordered)
+                }
+            }
         }
+    }
+
+    private var isFinalZero: Bool {
+        scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning
+    }
+
+    private var continueButtonTitle: String {
+        if isFinalZero { return "ホームを見る" }
+        return scan.hasFinalResult ? "はじめる" : "続きはホームで"
     }
 }
 

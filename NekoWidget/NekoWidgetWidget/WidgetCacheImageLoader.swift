@@ -3,7 +3,10 @@ import ImageIO
 import UIKit
 
 enum WidgetCacheImageLoader {
-    private static let absoluteMaximumPixelSize = 800
+    private static let absoluteMaximumPixelSize = 1_100
+    /// 1100x1100 BGRA is about 4.62 MiB. Keeping one decoded thumbnail below
+    /// 5 MiB leaves the Widget extension substantial headroom under 30 MiB.
+    private static let maximumDecodedByteEstimate = 5 * 1_024 * 1_024
 
     /// Decodes only the image used by the current entry. ImageIO also caps the
     /// decoded dimensions defensively if a malformed or stale cache file is larger
@@ -52,12 +55,26 @@ enum WidgetCacheImageLoader {
             return nil
         }
 
+        let decodedByteEstimate = image.bytesPerRow * image.height
+        guard decodedByteEstimate <= maximumDecodedByteEstimate else {
+            SharedLog.widget.error(
+                "image",
+                "Widget cache image exceeded the decode memory budget",
+                metadata: [
+                    "decodedBytesEstimate": "\(decodedByteEstimate)",
+                    "file": fileHash,
+                    "limit": "\(maximumDecodedByteEstimate)"
+                ]
+            )
+            return nil
+        }
+
         SharedLog.widget.debug(
             "image",
             "Widget cache image decoded",
             metadata: [
                 "bytes": "\(data.count)",
-                "decodedBytesEstimate": "\(image.width * image.height * 4)",
+                "decodedBytesEstimate": "\(decodedByteEstimate)",
                 "file": fileHash,
                 "outputPixels": "\(image.width)x\(image.height)",
                 "requestedMaxPixels": "\(requestedMaximumPixelSize)"

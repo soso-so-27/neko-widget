@@ -36,7 +36,13 @@ struct AppRootView: View {
             await viewModel.start()
         }
         .onOpenURL { url in
-            viewModel.handleURL(url)
+            Task { @MainActor in
+                // App Intent state lives in the App Group. Apply it before
+                // routing so the opened photo and the global total cannot show
+                // the pre-tap value while waiting for a library scan.
+                await viewModel.syncLikesForPresentation(trigger: "deeplink")
+                viewModel.handleURL(url)
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
@@ -68,14 +74,23 @@ struct AppRootView: View {
     @ViewBuilder
     private var authorizedContent: some View {
         if !hasSeenInitialScanResult {
-            InitialScanView(scan: scanPresentation) {
-                hasSeenInitialScanResult = true
-            }
+            InitialScanView(
+                scan: scanPresentation,
+                isLimitedAccess: viewModel.isLimitedAccess,
+                chooseMorePhotos: presentLimitedLibraryPicker,
+                rescan: {
+                    Task { await viewModel.rescan() }
+                },
+                continueToApp: {
+                    hasSeenInitialScanResult = true
+                }
+            )
         } else {
             MainTabView(
                 currentPhoto: viewModel.currentAsset.map(photoPresentation),
                 likedPhotos: viewModel.likedAssets.map(photoPresentation),
-                allPhotos: viewModel.catAssets.map(photoPresentation),
+                catPhotos: viewModel.catAssets.map(photoPresentation),
+                libraryPhotos: viewModel.snapshot.assets.map(photoPresentation),
                 scan: scanPresentation,
                 albumState: effectiveAlbumState,
                 settings: settingsPresentation,
@@ -83,7 +98,9 @@ struct AppRootView: View {
                 likeMeasurement: likeMeasurementPresentation,
                 isLimitedAccess: viewModel.isLimitedAccess,
                 isScanning: viewModel.isScanning,
+                widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
                 deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
+                deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
                 chooseMorePhotos: presentLimitedLibraryPicker,
                 toggleLike: { identifier in
                     Task { await viewModel.toggleLike(id: identifier) }

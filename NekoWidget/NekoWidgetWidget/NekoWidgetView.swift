@@ -70,8 +70,8 @@ struct NekoWidgetView: View {
                     Circle()
                         .fill(.black.opacity(0.48))
 
-                    Image(systemName: entry.isLiked ? "pawprint.fill" : "pawprint")
-                        .font(.system(size: pawIconSize, weight: .semibold))
+                    CatPawMark(isFilled: entry.isLiked)
+                        .frame(width: pawIconSize, height: pawIconSize)
                         .foregroundStyle(.white)
                         .invalidatableContent()
                 }
@@ -115,17 +115,24 @@ struct NekoWidgetView: View {
 
     private var emptyState: some View {
         VStack(spacing: family == .systemSmall ? 8 : 12) {
-            Image(systemName: "pawprint.fill")
-                .font(.system(size: family == .systemLarge ? 42 : 30, weight: .semibold))
+            CatPawMark(isFilled: true)
+                .frame(
+                    width: family == .systemLarge ? 42 : 30,
+                    height: family == .systemLarge ? 42 : 30
+                )
                 .foregroundStyle(.orange)
 
-            Text("うちの子を見つけよう")
+            Text("猫の写真を追加")
                 .font(family == .systemSmall ? .headline : .title3.weight(.semibold))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white)
 
-            if family != .systemSmall {
-                Text("アプリを開いて写真をスキャンしてください")
+            if family == .systemSmall {
+                Text("アプリでスキャン")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.72))
+            } else {
+                Text("アプリで写真へのアクセスを確認し、スキャンしてください")
                     .font(.caption)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.72))

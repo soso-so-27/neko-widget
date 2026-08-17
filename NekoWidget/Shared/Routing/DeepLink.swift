@@ -7,9 +7,13 @@ struct DeepLink: Equatable, Sendable {
 
     private static let scheme = "nekowidget"
     let destination: Destination
+    /// The start of the WidgetKit entry that opened the app. Older widget
+    /// URLs do not carry this value, so it remains optional for compatibility.
+    let shownAt: Date?
 
-    private init(destination: Destination) {
+    private init(destination: Destination, shownAt: Date? = nil) {
         self.destination = destination
+        self.shownAt = shownAt
     }
 
     var url: URL? {
@@ -18,13 +22,22 @@ struct DeepLink: Equatable, Sendable {
             var components = URLComponents()
             components.scheme = Self.scheme
             components.host = "photo"
-            components.queryItems = [URLQueryItem(name: "id", value: localIdentifier)]
+            var queryItems = [URLQueryItem(name: "id", value: localIdentifier)]
+            if let shownAt {
+                queryItems.append(
+                    URLQueryItem(name: "shownAt", value: Self.iso8601String(shownAt))
+                )
+            }
+            components.queryItems = queryItems
             return components.url
         }
     }
 
-    static func photo(localIdentifier: String) -> URL? {
-        DeepLink(destination: .photo(localIdentifier: localIdentifier)).url
+    static func photo(localIdentifier: String, shownAt: Date? = nil) -> URL? {
+        DeepLink(
+            destination: .photo(localIdentifier: localIdentifier),
+            shownAt: shownAt
+        ).url
     }
 
     init?(url: URL) {
@@ -35,6 +48,28 @@ struct DeepLink: Equatable, Sendable {
               !identifier.isEmpty else {
             return nil
         }
-        self.init(destination: .photo(localIdentifier: identifier))
+        let shownAtValue = components.queryItems?
+            .first(where: { $0.name == "shownAt" })?
+            .value
+        self.init(
+            destination: .photo(localIdentifier: identifier),
+            shownAt: shownAtValue.flatMap(Self.date(fromISO8601:))
+        )
+    }
+
+    private static func iso8601String(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    private static func date(fromISO8601 value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
     }
 }

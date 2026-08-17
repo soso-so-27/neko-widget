@@ -179,7 +179,7 @@ enum SharedLikeStoreError: LocalizedError {
         case let .lockFailed(code):
             return "The shared like lock could not be acquired (errno \(code))."
         case .measurementNotInitialized:
-            return "Open the app once to migrate existing likes before using the Build 6 widget button."
+            return "Open the app once to migrate existing likes before using the widget button."
         }
     }
 }
@@ -255,8 +255,8 @@ enum SharedLikeStore {
     }
 
     /// Starts (or deliberately restarts) the one-week product measurement
-    /// after the user has finished Build 6's manual widget gate. Gate taps are
-    /// excluded by clearing the prior event list and capturing a fresh baseline.
+    /// after the user has finished the current build's manual widget gate. Gate
+    /// taps are excluded by clearing prior events and capturing a fresh baseline.
     @discardableResult
     static func startMeasurement(at date: Date = .now) throws -> SharedLikeMeasurementSnapshot {
         try withExclusiveLock {

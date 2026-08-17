@@ -3,7 +3,8 @@ import SwiftUI
 struct MainTabView: View {
     let currentPhoto: PhotoPresentation?
     let likedPhotos: [PhotoPresentation]
-    let allPhotos: [PhotoPresentation]
+    let catPhotos: [PhotoPresentation]
+    let libraryPhotos: [PhotoPresentation]
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
     let settings: SettingsPresentation
@@ -11,7 +12,9 @@ struct MainTabView: View {
     let likeMeasurement: LikeMeasurementPresentation
     let isLimitedAccess: Bool
     let isScanning: Bool
+    let widgetIntervalMinutes: Int
     @Binding var deepLinkedPhotoIdentifier: String?
+    @Binding var deepLinkedPhotoShownAt: Date?
 
     let chooseMorePhotos: () -> Void
     let toggleLike: (String) -> Void
@@ -24,6 +27,8 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .home
     @State private var homePath: [String] = []
     @State private var likesPath: [String] = []
+    @State private var widgetOpenedPhotoIdentifier: String?
+    @State private var widgetShownAt: Date?
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -31,7 +36,7 @@ struct MainTabView: View {
                 HomeView(
                     currentPhoto: currentPhoto,
                     likedCount: likedPhotos.count,
-                    newestPhotoDate: allPhotos.compactMap(\.creationDate).max(),
+                    newestPhotoDate: catPhotos.compactMap(\.creationDate).max(),
                     scan: scan,
                     albumState: albumState,
                     isLimitedAccess: isLimitedAccess,
@@ -53,7 +58,12 @@ struct MainTabView: View {
                     .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
-                Label("これ好き", systemImage: "pawprint.fill")
+                Label {
+                    Text("これ好き")
+                } icon: {
+                    CatPawMark(isFilled: true)
+                        .frame(width: 22, height: 22)
+                }
             }
             .badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)
             .tag(AppTab.likes)
@@ -75,18 +85,32 @@ struct MainTabView: View {
             }
             .tag(AppTab.settings)
         }
-        .onChange(of: deepLinkedPhotoIdentifier, initial: true) { _, identifier in
-            guard let identifier else { return }
+        .onChange(of: deepLinkSelection, initial: true) { _, selection in
+            guard let identifier = selection.identifier else { return }
+            widgetOpenedPhotoIdentifier = identifier
+            widgetShownAt = selection.shownAt
             selectedTab = .home
             homePath = [identifier]
             deepLinkedPhotoIdentifier = nil
+            deepLinkedPhotoShownAt = nil
+        }
+        .onChange(of: homePath) { _, path in
+            guard path.isEmpty else { return }
+            widgetOpenedPhotoIdentifier = nil
+            widgetShownAt = nil
         }
     }
 
     @ViewBuilder
     private func detailView(for localIdentifier: String) -> some View {
-        let photo = photo(for: localIdentifier)
-        PhotoDetailView(photo: photo, toggleLike: toggleLike)
+        PhotoBrowserView(
+            photos: catPhotos,
+            libraryPhotos: libraryPhotos,
+            initialPhoto: photo(for: localIdentifier),
+            widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
+            widgetIntervalMinutes: widgetIntervalMinutes,
+            toggleLike: toggleLike
+        )
     }
 
     private func photo(for localIdentifier: String) -> PhotoPresentation {
@@ -96,11 +120,23 @@ struct MainTabView: View {
         if let photo = likedPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
             return photo
         }
-        if let photo = allPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
+        if let photo = catPhotos.first(where: { $0.localIdentifier == localIdentifier }) {
             return photo
         }
         // A widget can open while the in-memory snapshot is still loading. PhotoKit can still
         // resolve the identifier, and the model will enrich this screen on the next publication.
         return PhotoPresentation(localIdentifier: localIdentifier)
     }
+
+    private var deepLinkSelection: DeepLinkSelection {
+        DeepLinkSelection(
+            identifier: deepLinkedPhotoIdentifier,
+            shownAt: deepLinkedPhotoShownAt
+        )
+    }
+}
+
+private struct DeepLinkSelection: Equatable {
+    let identifier: String?
+    let shownAt: Date?
 }

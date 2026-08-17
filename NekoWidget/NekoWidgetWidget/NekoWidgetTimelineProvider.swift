@@ -113,7 +113,12 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         }
 
         recordTimelineLease(
-            filenames: scheduledItems.flatMap { item, _ in item.allCacheFilenames },
+            // A family timeline references only its own precomposed canvas.
+            // Leasing all three variants tripled retained high-resolution disk
+            // usage without protecting any additional live Widget entry.
+            filenames: scheduledItems.map { item, _ in
+                item.cacheFilename(for: variant)
+            },
             variant: variant,
             at: now
         )

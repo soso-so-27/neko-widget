@@ -123,7 +123,7 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                     }
                 } else {
-                    Text("①Build 6へ更新してWidgetを再配置・3サイズの肉球を確認、②全件確定後にランダム100枚を外部表へ分類、③その後に開始してください。確認中の試し押しは計測へ入りません。")
+                    Text("①Build 8へ更新してWidgetを再配置し、3サイズの表示を確認、②Widgetの肉球で好き／解除を試し、スキャンせずアプリの総数・一覧・日付が即時に合うことを確認、③その後に開始してください。ランダム100枚は99／100で確認済みです。確認中の試し押しは計測へ入りません。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -140,7 +140,7 @@ struct SettingsView: View {
                 }
                 .disabled(isStartingMeasurement || !likeMeasurement.isInteractionReady)
             } header: {
-                Text("Build 6 行動計測")
+                Text("Build 8 行動計測")
             } footer: {
                 Text("開始時の総数をbaselineとして保存し、その後の肉球・アプリ操作を\(likeMeasurement.retentionDays.formatted())日、最大\(likeMeasurement.maximumEventCount.formatted())件記録します。削除件数が0でない場合は完全な1週間データとして扱いません。")
             }
@@ -232,8 +232,8 @@ struct SettingsView: View {
         } message: {
             Text(
                 likeMeasurement.startedAt == nil
-                    ? "Widgetの再配置・3サイズの肉球確認・ランダム100枚の外部表への分類が完了していることを確認してください。この時点の好き総数をbaselineにし、それ以前の試し押しを除外します。"
-                    : "この時点の好き総数を新しいbaselineにし、それ以前の計測イベントを除外します。"
+                    ? "Build 8のWidgetを再配置し、肉球の好き／解除がスキャンなしでアプリの総数・一覧・日付へ反映されることを確認してください。ランダム100枚は99／100で確認済みです。この時点の好き総数をbaselineにし、それ以前の試し押しを除外します。"
+                    : "Build 7で開始した計測は、アプリの枚数表示が最新でない不具合のため中断しました。Build 8の即時反映を確認後、この時点の好き総数を新しいbaselineにし、それ以前の計測イベントを除外します。"
             )
         }
     }

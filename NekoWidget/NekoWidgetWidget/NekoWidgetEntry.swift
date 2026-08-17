@@ -33,6 +33,6 @@ struct NekoWidgetEntry: TimelineEntry {
 
     var photoURL: URL? {
         guard let localIdentifier else { return nil }
-        return DeepLink.photo(localIdentifier: localIdentifier)
+        return DeepLink.photo(localIdentifier: localIdentifier, shownAt: date)
     }
 }

@@ -32,7 +32,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("うちの子")
+        .navigationTitle("ねこのまど")
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showsPhotoShuffleGuide) {
             PhotoShuffleGuideView()
@@ -42,8 +42,8 @@ struct HomeView: View {
     private var likedSummary: some View {
         Button(action: showLikedPhotos) {
             HStack(spacing: 14) {
-                Image(systemName: likedCount > 0 ? "pawprint.fill" : "pawprint")
-                    .font(.title2)
+                CatPawMark(isFilled: likedCount > 0)
+                    .frame(width: 24, height: 24)
                     .foregroundStyle(.tint)
                     .frame(width: 44, height: 44)
                     .background(Color.accentColor.opacity(0.12), in: Circle())
@@ -106,7 +106,8 @@ struct HomeView: View {
                     toggleLike(currentPhoto.localIdentifier)
                 } label: {
                     HStack(spacing: 9) {
-                        Image(systemName: currentPhoto.isLiked ? "pawprint.fill" : "pawprint")
+                        CatPawMark(isFilled: currentPhoto.isLiked)
+                            .frame(width: 22, height: 22)
                         Text(currentPhoto.isLiked ? "これ好き済み" : "これ好き")
                         Spacer()
                         Text(likedCount.formatted())
@@ -130,10 +131,44 @@ struct HomeView: View {
                 in: RoundedRectangle(cornerRadius: 24)
             )
         } else {
+            emptyPhotoState
+        }
+    }
+
+    @ViewBuilder
+    private var emptyPhotoState: some View {
+        if scan.hasFinalResult && scan.displayedCatCount == 0 && !scan.isScanning {
             ContentUnavailableView {
-                Label("まだ猫の写真がありません", systemImage: "photo.on.rectangle")
+                Label("猫の写真は見つかりませんでした", systemImage: "photo.on.rectangle")
             } description: {
-                Text("スキャン中です。見つかるとここに表示します。")
+                Text("スキャンは正常に完了しました。猫が主役に写った写真を写真アプリに追加するか、写真へのアクセス範囲を確認して、もう一度スキャンしてください。")
+            } actions: {
+                VStack(spacing: 10) {
+                    if isLimitedAccess {
+                        Button("もっと写真を選ぶ", systemImage: "photo.badge.plus", action: chooseMorePhotos)
+                            .buttonStyle(.borderedProminent)
+                    }
+                    Button("もう一度スキャン", systemImage: "arrow.clockwise", action: rescan)
+                        .buttonStyle(.bordered)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 320)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
+        } else if scan.hasPreliminaryResult && scan.displayedCatCount == 0 {
+            ContentUnavailableView {
+                Label("速報ではまだ見つかっていません", systemImage: "photo.on.rectangle")
+            } description: {
+                Text("全件スキャンを続けています。見つかるとここに表示します。")
+            }
+            .frame(maxWidth: .infinity, minHeight: 280)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
+        } else {
+            ContentUnavailableView {
+                Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
+            } description: {
+                Text(scan.isPaused
+                    ? "アプリへ戻るとスキャンを再開します。"
+                    : "見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
@@ -159,7 +194,7 @@ struct HomeView: View {
                     } else {
                         Image(systemName: "arrow.triangle.2.circlepath")
                     }
-                    Text(albumButtonTitle)
+                    Text(albumActionTitle)
                     Spacer()
                 }
                 .font(.headline)
@@ -167,7 +202,11 @@ struct HomeView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(albumState == .updating || !scan.hasPreliminaryResult)
+            .disabled(
+                albumState == .updating
+                    || !scan.hasPreliminaryResult
+                    || scan.displayedCatCount == 0
+            )
 
             Button("写真シャッフルの設定手順", systemImage: "lock.rotation", action: {
                 showsPhotoShuffleGuide = true
@@ -211,6 +250,13 @@ struct HomeView: View {
         case .ready: "アルバムを更新する"
         case .failed: "もう一度試す"
         }
+    }
+
+    private var albumActionTitle: String {
+        if scan.hasPreliminaryResult && scan.displayedCatCount == 0 {
+            return "猫の写真が見つかると作れます"
+        }
+        return albumButtonTitle
     }
 
     private var statisticsCard: some View {

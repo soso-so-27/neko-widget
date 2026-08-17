@@ -1,22 +1,22 @@
-# 猫ウィジェット v1
+# ねこのまど v1
 
 端末の写真ライブラリをオンデバイスで調べ、猫が主役の写真を選別するiOS 17.1以上向けSwiftUIアプリです。選別結果は「うちの子」アルバムと、Small / Medium / LargeのWidgetKitウィジェットへ渡します。「これ好き」の記録はApp Group内へ永続化します。
 
 ## 現在の引き継ぎ状態
 
-ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。TestFlight Build 6までアップロードし、iPhoneへのインストール、Widgetの実配置、8,861枚の確定スキャンを確認済みです。Build 6の実機表示を踏まえた猫優先full-bleedをBuild 7候補として実装しました。Build 7をインストールしてWidget再配置とランダム100枚のPrecision確認を終えたら、現状の898枚を母集団として1週間の行動計測を開始します。実施順は[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)で管理します。
+ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。TestFlight Build 7までをiPhoneで確認し、8,861枚の確定スキャンとdetected無作為100枚のレビューを完了しました。レビューは`reviewNo 74`だけを製品候補から除外し、99 / 100を採用しました。scannerはBuild 8で変更しないため、このPrecision標本は再利用します。Build 7の1週間計測は、WidgetのLike保存後もアプリの総数・一覧が再スキャンまで古いまま残り得る不具合のため2026-08-17に中断しました。Build 8で即時同期、最終表示、写真詳細体験、名称を修復し、実機のlike／unlike即時反映ゲート後に新しいbaselineから計測を再開します。実施順は[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)、判断は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)で管理します。
 
 TestFlightで最初の配布確認を行えるよう、1024×1024pxのプレースホルダーApp IconとAsset Catalogを含めています。正式公開前には、商標・視認性・各外観での見え方を確認した最終アイコンへ差し替えてください。
 
 写真シャッフルには、指定時点のアルバム内容がスナップショットとして取り込まれます。アルバムへ後から追加した写真は自動反映されないことを実機スパイクで確認済みです。判断の記録は[ADR-001](docs/ADR-001-写真シャッフルのアルバム追従.md)にあります。アルバム生成は維持し、ウィジェットを主要な継続表示先とします。
 
-WidgetはAppleの壁紙と美しさで競わず、写真をタップして「これ好き」へ進む導線を担います。Build 5の常設ぼかしは実機で没入感不足と判定し、現行は検出済み猫union＋余白を守るfamily別full-bleedです。Small / Largeの収容不能時だけぼかしへfallbackし、Mediumはbbox上側を焦点にします。Subject Lifting、saliency、顔・構図理解は実装せず、この修正で表示改善を打ち止めます。履歴は[ADR-003](docs/ADR-003-Widget表示品質のBuild5範囲.md)、現行判断は[ADR-005](docs/ADR-005-Widget猫優先full-bleed.md)にあります。
+WidgetはAppleの壁紙と美しさで競わず、写真をタップして「これ好き」へ進む導線を担います。Build 5の常設ぼかしは実機で没入感不足と判定し、現行は検出済み猫union＋8%余白を守るfamily別full-bleedです。Small / Largeの収容不能時だけ既存ぼかしへfallbackし、Mediumはbbox上側を焦点にします。Build 8では実ピクセル相当の`500×500 / 1050×500 / 1050×1100`へ上げ、約20pxでも猫と分かる独自`CatPawMark`へ置き換えます。Subject Lifting、新しい背景ぼかし、Mediumの2枚化、saliency、顔・構図理解、新しい選別軸、共有は実装せず、Build 8後は表示・体験変更を凍結します。履歴は[ADR-003](docs/ADR-003-Widget表示品質のBuild5範囲.md)、現行判断は[ADR-005](docs/ADR-005-Widget猫優先full-bleed.md)と[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)にあります。
 
-Build 5とBuild 6は技術検証専用で、1週間の行動計測には使いません。Build 6では3サイズの右下へ輪郭／塗りつぶしの肉球ボタンを追加し、アプリを開かずに好き／解除を記録します。Widget専用App IntentはSiriやショートカットへ公開せず、操作履歴はApp Groupへ30日・最大1,000件保存します。Build 7でfull-bleed表示、Widget再配置、肉球、ランダム100枚を確認した直後に、アプリから明示的に1週間計測を開始します。計測中はBuild 8 probeを開発・CIまで進めても測定端末へインストールせず、1週間後にprobeを実行してBuild 9へ方針を反映します。肉球と計測境界は[ADR-004](docs/ADR-004-Widget肉球ボタンとBuild6計測.md)、表示の最終判断は[ADR-005](docs/ADR-005-Widget猫優先full-bleed.md)にあります。
+Build 5とBuild 6は技術検証専用です。Build 6では3サイズの右下へ輪郭／塗りつぶしの肉球ボタンを追加し、アプリを開かずに好き／解除をApp Groupへ記録します。Widget専用App IntentはSiriやショートカットへ公開せず、操作履歴は30日・最大1,000件保存します。Build 7でfull-bleedとランダム100枚を確認しましたが、アプリ側の表示通知不具合により1週間計測を中断しました。Build 8では共有Likeストアを起動・復帰・Deep Link時に読み、snapshot全体を再発行して、手動再スキャンなしで総数・一覧・押した日時へ反映します。実機でWidgetの押下／解除がアプリへ即時反映されることを確認した後だけ、計測を新しいbaselineから再開します。肉球と計測境界は[ADR-004](docs/ADR-004-Widget肉球ボタンとBuild6計測.md)、Build 8判断は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)にあります。
 
 1,000枚スケールテストでは全件確定まで123.595秒、約8.1枚／秒でした。実ライブラリでは数十分かかる可能性を認識したうえで、速報値と確定値の分離を維持し、実機実測まで速度最適化を保留します。判断の記録は[ADR-002](docs/ADR-002-全件スキャン速度と最適化保留.md)にあります。
 
-実機8,861枚のうちScreenshot 736枚と`unavailableLocally` 2,586枚を除く解析済みは5,539枚で、猫898枚は解析済み集合の16.2%です。Deferredにも同率で猫がいる単純仮定では未発見約419枚、潜在約1,317枚、観測率約68.2%になります。現行の`unavailableLocally`は1024px high-quality requestをローカルだけで満たせなかった意味であり、低解像度派生も存在しないとはまだ断定しません。Build 7にはdownload処理を入れず、現状の898枚で1週間計測を開始します。512px fast-formatの非破壊probeは計測中に開発・CIを済ませ、1週間後に実行する方針を[ADR-006](docs/ADR-006-iCloudローカル派生画像の検証.md)へ記録しています。
+実機8,861枚のうちScreenshot 736枚と`unavailableLocally` 2,586枚を除く解析済みは5,539枚で、猫898枚は解析済み集合の16.2%です。Deferredにも同率で猫がいる単純仮定では未発見約419枚、潜在約1,317枚、観測率約68.2%になります。現行の`unavailableLocally`は1024px high-quality requestをローカルだけで満たせなかった意味であり、低解像度派生も存在しないとはまだ断定しません。Build 8にはdownload処理もscanner request変更も入れず、現状の898枚で1週間計測を取り直します。512px fast-formatの非破壊probeは1週間後のInternal Build 9で実行し、採用時はproduction Build 10以降へ反映する方針を[ADR-006](docs/ADR-006-iCloudローカル派生画像の検証.md)へ記録しています。
 
 ## 登録済み識別子
 
@@ -91,14 +91,14 @@ App Store Connect APIキーはアップロード認証用です。コード署�
 
 - ホーム画面へSmall / Medium / Largeを1つずつ追加し、各サイズ専用のfull-bleed、Small / Largeの例外的ぼかしfallback、Mediumのbbox上寄り、プレースホルダー、空データ時の表示を確認します。
 - manifestに15〜20件の未来エントリがあり、既定20分間隔の日時になっていることを確認します。数時間置いて表示の切り替わりを確認しますが、WidgetKitの実行時刻はOS裁量であり、正確な20分更新は受け入れ条件にしません。
-- アプリが前面、背面、終了中の各状態でウィジェットをタップし、`nekowidget://photo?id=...`から該当写真の詳細と「これ好き」が開くことを確認します。
+- アプリが前面、背面、終了中の各状態でウィジェットをタップし、`nekowidget://photo?id=...&shownAt=...`から該当写真の詳細が開くことを確認します。大きな写真、左右スワイプ、肉球、撮影日、「この日の写真をすべて見る」、約20分ごとの切り替えと最後に変わった時刻が表示され、「次へ」ボタンがないことも確認します。
 - 3サイズの右下に肉球があり、輪郭→塗りつぶし→輪郭と切り替わること、処理中表示、アプリを開かないこと、肉球以外の領域では従来のDeep Linkが働くことを確認します。
 - データ更新後に新しいtimelineが要求され、共有manifestとキャッシュをWidgetが読めることを確認します。
 
 ### Widgetのメモリ
 
-- 大きな原写真を含むライブラリで確認します。ウィジェットへ渡すJPEGがSmall 400×400px、Medium 800×374px、Large 400×420pxで各50KiB以下となり、Widget側でPhotoKit / Vision / クロップ／ぼかしを実行していないことを確認します。
+- 大きな原写真を含むライブラリで確認します。本体は2048×2048のlocal-only high-quality入力から、Small 500×500px／100KiB以下、Medium 1050×500px／200KiB以下、Large 1050×1100px／220KiB以下を作ります。Widget側でPhotoKit / Vision / クロップ／ぼかしを実行していないことを確認します。
 - XcodeのDebug NavigatorでWidget ExtensionプロセスへAttachし、複数回の更新中もメモリがおおむね30MBの制約内に収まり、急増やクラッシュがないことを観察します。必要ならInstrumentsのAllocationsも併用します。
-- TimelineEntryへJPEG Dataや画像オブジェクトを保持せず、表示中の1枚だけを読み込むこと、キャッシュとmanifestの更新途中の状態が見えないことを確認します。
+- TimelineEntryへJPEG Dataや画像オブジェクトを保持せず、表示中の1枚だけを読み込み、推定デコード量が5MiB以下であることを確認します。cacheは最大8 generation／400ファイルで、全件を220KiBと置いた保守上限は約85.9MiBです。キャッシュとmanifestの更新途中の状態が見えないことも確認します。
 
 検証日時、端末、iOS / Xcodeバージョン、権限モード、結果とログは[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)へ記録してください。Macで直接デバッグする場合の手順は[Mac実機検証手順](docs/Mac実機検証手順.md)を参照してください。

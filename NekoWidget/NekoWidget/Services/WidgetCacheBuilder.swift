@@ -21,13 +21,23 @@ private struct WidgetCacheHistory: Codable, Sendable {
 
 actor WidgetCacheBuilder {
     private static let historyFilename = "widget-cache-history.json"
-    private static let compositionAlgorithmVersion = "cat-aware-full-bleed-v4"
-    private static let maximumGenerationCount = 24
-    private static let maximumCachedFileCount = 480
-    private static let targetJPEGByteCount = 50 * 1_024
+    private static let compositionAlgorithmVersion = "cat-aware-full-bleed-v5"
+    /// The migration-safe maximum is 380 distinct files: new manifest 60,
+    /// previous active manifest 60, grace generation 60, three pre-Build-8
+    /// family leases of up to 60 each, and the Build-4 legacy lease of 20.
+    /// Round to 400; the new provider writes only 20 files per family lease.
+    private static let maximumGenerationCount = 8
+    private static let maximumCachedFileCount = 400
+    /// PhotoKit returns an aspect-fit local derivative. 2048px keeps a normal
+    /// 16:9 source above the 1100px Large short side while bounding app-side
+    /// source decode memory to roughly 16 MiB. Network behavior stays unchanged.
+    private static let sourceImageRequestPixelDimension = 2_048
     /// Padding on every side of the detected cat union before deciding whether
     /// a family crop can keep the cat comfortably inside the frame.
-    private static let catMarginFraction: CGFloat = 0.18
+    private static let catMarginFraction: CGFloat = 0.08
+    /// Shadow-only baseline used to quantify the one-number 18% -> 8% change
+    /// against the exact same generated Small/Large candidates in CI.
+    private static let legacyCatMarginFraction: CGFloat = 0.18
     /// Tiny detections still receive visible breathing room in the source photo.
     private static let minimumImageMarginFraction: CGFloat = 0.03
     /// When a Medium crop cannot contain the whole cat union, bias its focal
@@ -78,6 +88,10 @@ actor WidgetCacheBuilder {
         var pixelDescription: String {
             variant.pixelDescription
         }
+
+        var maximumJPEGByteCount: Int {
+            variant.maximumJPEGByteCount
+        }
     }
 
     private let imageLoader: PhotoImageLoader
@@ -111,10 +125,10 @@ actor WidgetCacheBuilder {
                 "algorithm": Self.compositionAlgorithmVersion,
                 "candidates": "\(candidates.count)",
                 "entryTarget": "\(settings.widgetEntryCount)",
-                "imageRequestPixels": "900x900",
+                "imageRequestPixels": "\(Self.sourceImageRequestPixelDimension)x\(Self.sourceImageRequestPixelDimension)",
                 "networkAllowed": "false",
                 "outputPixels": Self.outputPixelDescription,
-                "targetBytesEach": "\(Self.targetJPEGByteCount)"
+                "targetBytesEach": Self.targetByteDescription
             ]
         )
         guard !candidates.isEmpty else {
@@ -138,7 +152,13 @@ actor WidgetCacheBuilder {
         var unavailableAssetCount = 0
         var inputPixelWidths: [Int] = []
         var inputPixelHeights: [Int] = []
+        var inputDecodedByteEstimates: [Int] = []
         var generatedCompositionCounts: [CompositionMode: Int] = [:]
+        var renderUpscaledCounts: [WidgetImageVariant: Int] = [:]
+        var maximumRenderScale: CGFloat = 0
+        var marginFallbackDenominator = 0
+        var current8Fallback = 0
+        var legacy18Fallback = 0
         for record in candidates {
             try Task.checkCancellation()
             let filenames = Self.cacheFilenames(for: record)
@@ -153,14 +173,20 @@ actor WidgetCacheBuilder {
                     files: [(
                         variant: WidgetImageVariant,
                         data: Data,
-                        compositionMode: CompositionMode
+                        compositionMode: CompositionMode,
+                        renderScale: CGFloat,
+                        legacy18WouldFallback: Bool?
                     )],
                     width: Int,
-                    height: Int
+                    height: Int,
+                    decodedByteEstimate: Int
                 )? = autoreleasepool {
                     guard let image = imageLoader.image(
                         localIdentifier: record.localIdentifier,
-                        targetSize: CGSize(width: 900, height: 900),
+                        targetSize: CGSize(
+                            width: Self.sourceImageRequestPixelDimension,
+                            height: Self.sourceImageRequestPixelDimension
+                        ),
                         networkAccessAllowed: false,
                         contentMode: .aspectFit
                     ) else {
@@ -172,10 +198,17 @@ actor WidgetCacheBuilder {
                     var files: [(
                         variant: WidgetImageVariant,
                         data: Data,
-                        compositionMode: CompositionMode
+                        compositionMode: CompositionMode,
+                        renderScale: CGFloat,
+                        legacy18WouldFallback: Bool?
                     )] = []
                     for spec in missingSpecs {
-                        let output: (data: Data, compositionMode: CompositionMode)? = autoreleasepool {
+                        let output: (
+                            data: Data,
+                            compositionMode: CompositionMode,
+                            renderScale: CGFloat,
+                            legacy18WouldFallback: Bool?
+                        )? = autoreleasepool {
                             Self.widgetJPEG(
                                 normalizedImage: normalized,
                                 catBoundingBox: record.cat.boundingBox?.cgRect,
@@ -186,11 +219,22 @@ actor WidgetCacheBuilder {
                         guard let output else {
                             return nil
                         }
-                        files.append((spec.variant, output.data, output.compositionMode))
+                        files.append(
+                            (
+                                spec.variant,
+                                output.data,
+                                output.compositionMode,
+                                output.renderScale,
+                                output.legacy18WouldFallback
+                            )
+                        )
                     }
                     let width = image.cgImage?.width ?? Int(image.size.width * image.scale)
                     let height = image.cgImage?.height ?? Int(image.size.height * image.scale)
-                    return (files, width, height)
+                    let decodedByteEstimate = image.cgImage.map {
+                        $0.bytesPerRow * $0.height
+                    } ?? (width * height * 4)
+                    return (files, width, height, decodedByteEstimate)
                 }
                 guard let output else {
                     // The asset may have moved to iCloud since it was analyzed.
@@ -204,6 +248,19 @@ actor WidgetCacheBuilder {
                     let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
                     try file.data.write(to: fileURL, options: .atomic)
                     generatedCompositionCounts[file.compositionMode, default: 0] += 1
+                    maximumRenderScale = max(maximumRenderScale, file.renderScale)
+                    if file.renderScale > 1.001 {
+                        renderUpscaledCounts[file.variant, default: 0] += 1
+                    }
+                    if let legacy18WouldFallback = file.legacy18WouldFallback {
+                        marginFallbackDenominator += 1
+                        if file.compositionMode == .blurredFitFallback {
+                            current8Fallback += 1
+                        }
+                        if legacy18WouldFallback {
+                            legacy18Fallback += 1
+                        }
+                    }
                     try? FileManager.default.setAttributes(
                         [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                         ofItemAtPath: fileURL.path
@@ -211,6 +268,7 @@ actor WidgetCacheBuilder {
                 }
                 inputPixelWidths.append(output.width)
                 inputPixelHeights.append(output.height)
+                inputDecodedByteEstimates.append(output.decodedByteEstimate)
             }
 
             var byteCounts: [WidgetImageVariant: Int] = [:]
@@ -220,7 +278,7 @@ actor WidgetCacheBuilder {
                 let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
                 guard let existingByteCount = Self.byteCount(of: fileURL),
                       existingByteCount > 0,
-                      existingByteCount <= Self.targetJPEGByteCount else {
+                      existingByteCount <= spec.maximumJPEGByteCount else {
                     filesAreAvailable = false
                     break
                 }
@@ -299,20 +357,33 @@ actor WidgetCacheBuilder {
         })
         var completionMetadata: [String: String] = [
             "algorithm": Self.compositionAlgorithmVersion,
+            "cacheFileCap": "\(Self.maximumCachedFileCount)",
+            "cacheGenerationCap": "\(Self.maximumGenerationCount)",
             "cacheBytesMax": "\(cachedByteCounts.max() ?? 0)",
             "cacheBytesMin": "\(cachedByteCounts.min() ?? 0)",
             "cacheBytesTotal": "\(cachedByteCounts.reduce(0, +))",
             "entries": "\(items.count)",
             "generatedFiles": "\(generatedFileCount)",
             "inputPixelsMax": Self.pixelRange(widths: inputPixelWidths, heights: inputPixelHeights),
+            "inputDecodedBytesMax": "\(inputDecodedByteEstimates.max() ?? 0)",
+            "current8Fallback": "\(current8Fallback)",
+            "legacy18Fallback": "\(legacy18Fallback)",
+            "marginFallbackDenominator": "\(marginFallbackDenominator)",
+            "marginComparisonScope": "generated-small-large",
+            "renderScaleMax": String(format: "%.4f", maximumRenderScale),
             "outputPixels": Self.outputPixelDescription,
             "reusedFiles": "\(reusedFileCount)",
-            "targetBytesEach": "\(Self.targetJPEGByteCount)",
+            "targetBytesEach": Self.targetByteDescription,
+            "retainedCacheWorstCaseBytes": "\(Self.maximumRetainedCacheByteUpperBound)",
             "unavailable": "\(unavailableAssetCount)",
             "uniqueAssets": "\(available.count)",
             "uniqueFiles": "\(available.count * Self.RenderSpec.all.count)"
         ]
         completionMetadata.merge(bytesByVariant) { current, _ in current }
+        for spec in Self.RenderSpec.all {
+            completionMetadata["renderUpscaled\(spec.variant.rawValue.capitalized)"] =
+                "\(renderUpscaledCounts[spec.variant, default: 0])"
+        }
         for mode in CompositionMode.allCases {
             completionMetadata[mode.generatedMetadataKey] = "\(generatedCompositionCounts[mode, default: 0])"
         }
@@ -493,6 +564,17 @@ actor WidgetCacheBuilder {
             .joined(separator: ",")
     }
 
+    private static var targetByteDescription: String {
+        RenderSpec.all
+            .map { "\($0.variant.rawValue):\($0.maximumJPEGByteCount)" }
+            .joined(separator: ",")
+    }
+
+    private static var maximumRetainedCacheByteUpperBound: Int {
+        let largestFileBudget = RenderSpec.all.map(\.maximumJPEGByteCount).max() ?? 0
+        return maximumCachedFileCount * largestFileBudget
+    }
+
     /// Produces a family-sized JPEG that fills the canvas with a sharp crop
     /// guided only by the existing cat union. Small and Large preserve the cat
     /// plus margin, falling back to Build 5's blurred fit only when geometry
@@ -504,7 +586,12 @@ actor WidgetCacheBuilder {
         catBoundingBox: CGRect?,
         spec: RenderSpec,
         ciContext: CIContext
-    ) -> (data: Data, compositionMode: CompositionMode)? {
+    ) -> (
+        data: Data,
+        compositionMode: CompositionMode,
+        renderScale: CGFloat,
+        legacy18WouldFallback: Bool?
+    )? {
         let rendered = renderedWidgetImage(
             image: image,
             catBoundingBox: catBoundingBox,
@@ -512,10 +599,30 @@ actor WidgetCacheBuilder {
             size: spec.size,
             ciContext: ciContext
         )
-        guard let data = jpegData(rendered.image, targetByteCount: targetJPEGByteCount) else {
+        guard let data = jpegData(
+            rendered.image,
+            targetByteCount: spec.maximumJPEGByteCount
+        ) else {
             return nil
         }
-        return (data, rendered.compositionMode)
+        let legacy18WouldFallback: Bool?
+        if spec.variant == .small || spec.variant == .large {
+            legacy18WouldFallback = catAwareCropPlan(
+                visionBoundingBox: catBoundingBox,
+                imageSize: image.size,
+                canvasSize: spec.size,
+                variant: spec.variant,
+                marginFraction: legacyCatMarginFraction
+            ) == nil
+        } else {
+            legacy18WouldFallback = nil
+        }
+        return (
+            data,
+            rendered.compositionMode,
+            rendered.renderScale,
+            legacy18WouldFallback
+        )
     }
 
     private static func normalizedImage(_ image: UIImage) -> UIImage {
@@ -535,12 +642,13 @@ actor WidgetCacheBuilder {
         variant: WidgetImageVariant,
         size: CGSize,
         ciContext: CIContext
-    ) -> (image: UIImage, compositionMode: CompositionMode) {
+    ) -> (image: UIImage, compositionMode: CompositionMode, renderScale: CGFloat) {
         if let cropPlan = catAwareCropPlan(
             visionBoundingBox: catBoundingBox,
             imageSize: image.size,
             canvasSize: size,
-            variant: variant
+            variant: variant,
+            marginFraction: catMarginFraction
         ) {
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
@@ -554,7 +662,15 @@ actor WidgetCacheBuilder {
                     )
                 )
             }
-            return (rendered, cropPlan.compositionMode)
+            return (
+                rendered,
+                cropPlan.compositionMode,
+                renderScale(
+                    imageSize: image.size,
+                    normalizedCropRect: cropPlan.normalizedRect,
+                    canvasSize: size
+                )
+            )
         }
 
         let background = aspectFillImage(image, size: size)
@@ -571,7 +687,11 @@ actor WidgetCacheBuilder {
             blurredBackground.draw(in: CGRect(origin: .zero, size: size))
             image.draw(in: aspectFitRect(imageSize: image.size, canvasSize: size))
         }
-        return (rendered, .blurredFitFallback)
+        return (
+            rendered,
+            .blurredFitFallback,
+            aspectFitScale(imageSize: image.size, canvasSize: size)
+        )
     }
 
     /// Returns a normalized, top-left-origin crop rectangle. Vision reports
@@ -581,7 +701,8 @@ actor WidgetCacheBuilder {
         visionBoundingBox: CGRect?,
         imageSize: CGSize,
         canvasSize: CGSize,
-        variant: WidgetImageVariant
+        variant: WidgetImageVariant,
+        marginFraction: CGFloat
     ) -> CropPlan? {
         guard let visionBoundingBox,
               imageSize.width > 0,
@@ -615,11 +736,11 @@ actor WidgetCacheBuilder {
         }
 
         let horizontalMargin = max(
-            photoBoundingBox.width * catMarginFraction,
+            photoBoundingBox.width * marginFraction,
             minimumImageMarginFraction
         )
         let verticalMargin = max(
-            photoBoundingBox.height * catMarginFraction,
+            photoBoundingBox.height * marginFraction,
             minimumImageMarginFraction
         )
         let paddedBoundingBox = photoBoundingBox.insetBy(
@@ -693,6 +814,17 @@ actor WidgetCacheBuilder {
         )
     }
 
+    private static func renderScale(
+        imageSize: CGSize,
+        normalizedCropRect: CGRect,
+        canvasSize: CGSize
+    ) -> CGFloat {
+        let cropWidth = normalizedCropRect.width * imageSize.width
+        let cropHeight = normalizedCropRect.height * imageSize.height
+        guard cropWidth > 0, cropHeight > 0 else { return .infinity }
+        return max(canvasSize.width / cropWidth, canvasSize.height / cropHeight)
+    }
+
     private static func aspectFillImage(_ image: UIImage, size: CGSize) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -734,7 +866,7 @@ actor WidgetCacheBuilder {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGRect(origin: .zero, size: canvasSize)
         }
-        let scale = min(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
+        let scale = aspectFitScale(imageSize: imageSize, canvasSize: canvasSize)
         let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
         return CGRect(
             x: (canvasSize.width - drawSize.width) / 2,
@@ -742,6 +874,11 @@ actor WidgetCacheBuilder {
             width: drawSize.width,
             height: drawSize.height
         )
+    }
+
+    private static func aspectFitScale(imageSize: CGSize, canvasSize: CGSize) -> CGFloat {
+        guard imageSize.width > 0, imageSize.height > 0 else { return .infinity }
+        return min(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
     }
 
     private static func aspectFillRect(imageSize: CGSize, canvasSize: CGSize) -> CGRect {

@@ -50,7 +50,7 @@ Portal登録時に次を埋める。
 | Widget Bundle ID | `jp.nekowidget.app.widget` |
 | App Group ID | `group.jp.nekowidget.app` |
 | Apple Team ID | `FF96XYPPH2` |
-| App Store Connect App Name | `猫が主役` |
+| App Store Connect App Name | `ねこのまど - 猫の写真ウィジェット` |
 | App Store Connect SKU | `jp.nekowidget.app.2026` |
 
 2026-08-16にPortal登録とApp Groups割当を完了し、`Config.xcconfig`を次のリテラル値へ更新した。CIがファイルを直接読むため、`$(APP_BUNDLE_IDENTIFIER)`のような派生式にはしない。
@@ -291,7 +291,7 @@ TestFlightだけならApple Development証明書、development profile、iPhone 
 App Store ConnectのAppsでNew Appを選び、App本体のBundle IDを使う。Widget用の別アプリレコードは作らない。
 
 - Platform：iOS
-- Name：最終表示名を確認して入力
+- Name：`ねこのまど - 猫の写真ウィジェット`（Build 8で確定。既存アプリレコードもこの名前へ変更する）
 - Primary Language：Japanese
 - Bundle ID：`APP_BUNDLE_IDENTIFIER`
 - SKU：外部非表示の一意値。決定表へ記録する

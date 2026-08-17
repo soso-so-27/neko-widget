@@ -7,21 +7,37 @@ enum WidgetImageVariant: String, Codable, CaseIterable, Hashable, Sendable {
 
     var pixelWidth: Int {
         switch self {
-        case .small, .large:
-            return 400
+        case .small:
+            return 500
         case .medium:
-            return 800
+            return 1_050
+        case .large:
+            return 1_050
         }
     }
 
     var pixelHeight: Int {
         switch self {
         case .small:
-            return 400
+            return 500
         case .medium:
-            return 374
+            return 500
         case .large:
-            return 420
+            return 1_100
+        }
+    }
+
+    /// Per-family compressed budgets keep the higher-resolution canvases from
+    /// regressing into visible JPEG blocks without allowing retained timeline
+    /// generations to grow without bound.
+    var maximumJPEGByteCount: Int {
+        switch self {
+        case .small:
+            return 100 * 1_024
+        case .medium:
+            return 200 * 1_024
+        case .large:
+            return 220 * 1_024
         }
     }
 
@@ -88,9 +104,9 @@ struct WidgetManifest: Codable, Equatable, Sendable {
     static let empty = WidgetManifest(items: [], generatedAt: .distantPast)
 }
 
-/// Each widget family records every filename in the generation it handed to
-/// WidgetKit. The app retains those leased generations even when rebuilds are
-/// coalesced and the manifest on disk has already advanced.
+/// Each widget family records the filenames referenced by the timeline it
+/// handed to WidgetKit. The app retains those leased files even when rebuilds
+/// are coalesced and the manifest on disk has already advanced.
 struct WidgetTimelineLease: Codable, Equatable, Sendable {
     var cacheFilenames: [String]
     var recordedAt: Date
