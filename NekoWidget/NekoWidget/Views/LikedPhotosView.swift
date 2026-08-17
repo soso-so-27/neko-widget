@@ -99,6 +99,9 @@ struct LikedPhotosView: View {
 /// Paging is gesture-only: there is deliberately no "next" button competing
 /// with the single measurement action, "これ好き".
 struct PhotoBrowserView: View {
+    private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
+    private static let preheatRadius = 2
+
     let photos: [PhotoPresentation]
     let libraryPhotos: [PhotoPresentation]
     let initialPhoto: PhotoPresentation
@@ -109,6 +112,7 @@ struct PhotoBrowserView: View {
     let toggleLike: (String) -> Void
 
     @State private var selectedPhotoIdentifier: String
+    @State private var preheatedPhotoIdentifiers: Set<String> = []
 
     init(
         photos: [PhotoPresentation],
@@ -130,13 +134,14 @@ struct PhotoBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             TabView(selection: $selectedPhotoIdentifier) {
-                // Keep only the current page and its two neighbours alive.
-                // A library can contain hundreds of cats; creating every
-                // PhotoKit loader here would risk starting needless requests.
-                ForEach(visiblePagePhotos) { photo in
+                // Keep the complete, ordered set of page identities stable.
+                // PageTabViewStyle supplies the native 1:1 drag, inertia,
+                // snapping and bounded edge bounce; rebuilding a three-page
+                // window after every selection breaks those behaviours.
+                ForEach(browserPhotos) { photo in
                     PhotoAssetImageView(
                         localIdentifier: photo.localIdentifier,
-                        targetPixelSize: CGSize(width: 1600, height: 1600),
+                        targetPixelSize: Self.imageTargetPixelSize,
                         targetAspectRatio: 1,
                         showsFullImage: true
                     )
@@ -209,10 +214,25 @@ struct PhotoBrowserView: View {
         .background(Color.black)
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            updatePhotoPreheating()
+        }
+        .onChange(of: selectedPhotoIdentifier) { _, _ in
+            updatePhotoPreheating()
+        }
         .onChange(of: browserPhotos.map(\.localIdentifier)) { _, identifiers in
-            guard !identifiers.contains(selectedPhotoIdentifier),
-                  let first = identifiers.first else { return }
-            selectedPhotoIdentifier = first
+            if !identifiers.contains(selectedPhotoIdentifier),
+               let first = identifiers.first {
+                selectedPhotoIdentifier = first
+            }
+            updatePhotoPreheating()
+        }
+        .onDisappear {
+            PhotoAssetImagePipeline.stopCachingFullImages(
+                localIdentifiers: Array(preheatedPhotoIdentifiers),
+                targetPixelSize: Self.imageTargetPixelSize
+            )
+            preheatedPhotoIdentifiers.removeAll()
         }
     }
 
@@ -243,21 +263,38 @@ struct PhotoBrowserView: View {
         browserPhotos.first { $0.localIdentifier == selectedPhotoIdentifier }
     }
 
-    /// At most three `PhotoAssetImageView`s exist at once, so off-screen
-    /// library items cannot retain decoded images or active PhotoKit requests.
-    private var visiblePagePhotos: [PhotoPresentation] {
+    /// Preheat the current photo and two neighbours on either side. TabView
+    /// remains responsible for page lifetime; PhotoKit only keeps this small
+    /// display-sized cache window ready for the next native swipe.
+    private var nearbyPhotoIdentifiers: Set<String> {
         let orderedPhotos = browserPhotos
         guard let selectedIndex = orderedPhotos.firstIndex(where: {
             $0.localIdentifier == selectedPhotoIdentifier
         }) else {
-            return Array(orderedPhotos.prefix(1))
+            return Set(orderedPhotos.prefix(1).map(\.localIdentifier))
         }
-        let lowerBound = max(selectedIndex - 1, orderedPhotos.startIndex)
+        let lowerBound = max(selectedIndex - Self.preheatRadius, orderedPhotos.startIndex)
         let upperBound = min(
-            selectedIndex + 1,
+            selectedIndex + Self.preheatRadius,
             orderedPhotos.index(before: orderedPhotos.endIndex)
         )
-        return Array(orderedPhotos[lowerBound...upperBound])
+        return Set(orderedPhotos[lowerBound...upperBound].map(\.localIdentifier))
+    }
+
+    private func updatePhotoPreheating() {
+        let nextIdentifiers = nearbyPhotoIdentifiers
+        let identifiersToStop = preheatedPhotoIdentifiers.subtracting(nextIdentifiers)
+        let identifiersToStart = nextIdentifiers.subtracting(preheatedPhotoIdentifiers)
+
+        PhotoAssetImagePipeline.stopCachingFullImages(
+            localIdentifiers: Array(identifiersToStop),
+            targetPixelSize: Self.imageTargetPixelSize
+        )
+        PhotoAssetImagePipeline.startCachingFullImages(
+            localIdentifiers: Array(identifiersToStart),
+            targetPixelSize: Self.imageTargetPixelSize
+        )
+        preheatedPhotoIdentifiers = nextIdentifiers
     }
 
     private var pagePositionText: String {

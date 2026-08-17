@@ -1,6 +1,64 @@
 import Photos
 import SwiftUI
 
+/// A shared PhotoKit pipeline lets the photo browser warm the same cache used
+/// by its visible pages. The browser keeps this cache window deliberately
+/// small, so opening a large library does not decode every photo at once.
+enum PhotoAssetImagePipeline {
+    static let manager = PHCachingImageManager()
+
+    static func startCachingFullImages(
+        localIdentifiers: [String],
+        targetPixelSize: CGSize
+    ) {
+        let assets = assets(withLocalIdentifiers: localIdentifiers)
+        guard !assets.isEmpty else { return }
+        manager.startCachingImages(
+            for: assets,
+            targetSize: targetPixelSize,
+            contentMode: .aspectFit,
+            options: fullImageRequestOptions()
+        )
+    }
+
+    static func stopCachingFullImages(
+        localIdentifiers: [String],
+        targetPixelSize: CGSize
+    ) {
+        let assets = assets(withLocalIdentifiers: localIdentifiers)
+        guard !assets.isEmpty else { return }
+        manager.stopCachingImages(
+            for: assets,
+            targetSize: targetPixelSize,
+            contentMode: .aspectFit,
+            options: fullImageRequestOptions()
+        )
+    }
+
+    private static func assets(withLocalIdentifiers identifiers: [String]) -> [PHAsset] {
+        guard !identifiers.isEmpty else { return [] }
+        let fetchResult = PHAsset.fetchAssets(
+            withLocalIdentifiers: identifiers,
+            options: nil
+        )
+        var assets: [PHAsset] = []
+        assets.reserveCapacity(fetchResult.count)
+        fetchResult.enumerateObjects { asset, _, _ in
+            assets.append(asset)
+        }
+        return assets
+    }
+
+    private static func fullImageRequestOptions() -> PHImageRequestOptions {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.isNetworkAccessAllowed = true
+        options.version = .current
+        options.resizeMode = .fast
+        return options
+    }
+}
+
 /// Loads a display-sized image directly from PhotoKit. The original photo is never retained.
 /// When Vision's normalized bounding box is available, PhotoKit crops around its center.
 struct PhotoAssetImageView: View {
@@ -141,7 +199,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
             options.resizeMode = .fast
         }
 
-        requestID = PHImageManager.default().requestImage(
+        requestID = PhotoAssetImagePipeline.manager.requestImage(
             for: asset,
             targetSize: targetPixelSize,
             contentMode: requestedContentMode,
@@ -167,9 +225,11 @@ private final class PhotoAssetImageLoader: ObservableObject {
     func cancel() {
         loadGeneration &+= 1
         if let requestID {
-            PHImageManager.default().cancelImageRequest(requestID)
+            PhotoAssetImagePipeline.manager.cancelImageRequest(requestID)
         }
         requestID = nil
+        image = nil
+        didFail = false
     }
 
     private static func cropRect(
