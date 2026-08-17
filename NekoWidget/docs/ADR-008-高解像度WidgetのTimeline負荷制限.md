@@ -37,6 +37,6 @@ Simulator smokeはHome Screenへ実Widgetを配置しないため、静的な合
 
 ## 計測と後続build
 
-Build 8の1週間計測は、この表示不具合のため開始または再開しない。Build 9で3 family、Deep Link、肉球の即時同期、20分切り替えを確認した後、新しいbaselineから計測を始める。
+Build 8の1週間計測は、この表示不具合のため開始または再開しない。Build 9で3 family、Deep Link、肉球の即時同期、20分切り替えを修復し、Build 10で写真ブラウザの標準ページングを修復する。Build 10上で両方のゲートを確認した後、新しいbaselineから計測を始める。
 
-[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のdeferred paired probeは、1週間計測の完了後のInternal Build 10へ送る。採用する場合のproduction反映はBuild 11以降とする。
+[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のdeferred paired probeは、1週間計測の完了後に番号を割り当てるInternal buildへ送る。採用する場合のproduction反映はさらに後続buildとする。Build 10の計測中は別buildを測定端末へ入れない。

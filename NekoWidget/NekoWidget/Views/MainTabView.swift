@@ -26,7 +26,9 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .home
     @State private var homePath: [String] = []
+    @State private var albumPath: [String] = []
     @State private var likesPath: [String] = []
+    @State private var albumFilter: AlbumPhotoFilter = .all
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
 
@@ -41,7 +43,7 @@ struct MainTabView: View {
                     albumState: albumState,
                     isLimitedAccess: isLimitedAccess,
                     chooseMorePhotos: chooseMorePhotos,
-                    showLikedPhotos: { selectedTab = .likes },
+                    showLikedPhotos: showLikedPhotos,
                     toggleLike: toggleLike,
                     updateAlbum: updateAlbum,
                     rescan: { Task { await rescan() } }
@@ -52,6 +54,15 @@ struct MainTabView: View {
                 Label("ホーム", systemImage: "house.fill")
             }
             .tag(AppTab.home)
+
+            NavigationStack(path: $albumPath) {
+                AlbumView(photos: catPhotos, filter: $albumFilter)
+                    .navigationDestination(for: String.self, destination: detailView)
+            }
+            .tabItem {
+                Label("アルバム", systemImage: "square.grid.3x3.fill")
+            }
+            .tag(AppTab.album)
 
             NavigationStack(path: $likesPath) {
                 LikedPhotosView(photos: likedPhotos)
@@ -133,6 +144,10 @@ struct MainTabView: View {
             identifier: deepLinkedPhotoIdentifier,
             shownAt: deepLinkedPhotoShownAt
         )
+    }
+
+    private func showLikedPhotos() {
+        selectedTab = .likes
     }
 }
 

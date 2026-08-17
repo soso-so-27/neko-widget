@@ -34,8 +34,8 @@ Windowsで生成した「ねこのまど」v1をMacでビルド・署名し、iO
 - `Config.xcconfig`の3識別子を、そのTeamで一意な実値へ置き換えている。Widget Bundle IDはアプリBundle IDに`.widget`などの接尾辞を付け、App Groupは`group.`で始める。
 - WindowsでのCSR／P12作成、Portal登録、2つの配布profile、GitHub Secretsは[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md)に従って完了している。
 - テスト対象の写真はバックアップ済みである。アプリが写真原本を変更・複製しないことも確認対象とする。
-- Build 7の1週間計測は2026-08-17にLike表示不具合で中断済みである。Build 8はMedium / Largeの高解像度20件Timelineがplaceholder相当になったため、Build 9の手動ゲートが通るまで計測を再開しない。
-- Build 7のdetected無作為100枚は`reviewNo 74`だけを除外し99 / 100を採用済みである。scanner／analysis fingerprintが同じBuild 9では再利用する。
+- Build 7の1週間計測は2026-08-17にLike表示不具合で中断済みである。Build 8はMedium / Largeの高解像度20件Timelineがplaceholder相当になり、Build 9でTimelineを最大2件へ修復した。Build 10のWidget／Like／写真ブラウザ手動ゲートが通るまで計測を再開しない。
+- Build 7のdetected無作為100枚は`reviewNo 74`だけを除外し99 / 100を採用済みである。scanner／analysis fingerprintが同じBuild 10では再利用する。
 
 ## 2. Xcode設定とビルド
 
@@ -161,18 +161,19 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 
 メモ：
 
-### 9.1 Build 9の計測再開ゲート
+### 9.1 Build 10の計測再開ゲート
 
 この節が通るまで1週間計測は**NO-GO**とする。手動の再スキャン操作を挟まない。
 
-1. Build 9をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
+1. Build 10をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
 2. アプリを開き、好き総数と一覧を記録してアプリを終了する。
 3. Widgetで未押下写真の肉球をONにする。アプリが開かず、輪郭が塗りつぶしへ変わることを確認する。
 4. 直後にアプリを開く。総数が+1、一覧に同じ写真と`likedAt`が出ることを確認する。
 5. アプリを終了し、Widgetへ戻って同じ写真の肉球をOFFにする。
 6. 直後にアプリを開く。総数が-1、一覧から同じ写真が消えることを確認する。
 7. 診断ログで共有Like同期が`Scan generation started`より前にあること、検証JSONの押下／解除eventと写真・時刻・操作元が一致することを確認する。
-8. すべて通った後だけ「1週間計測を開始」を押し、新しい開始日時とbaselineを記録する。
+8. ホーム、Widget、利用可能なら「これ好き」という既存の入口から写真ブラウザをcold状態で開き、表示分母が約898件でも初期表示で固まらず、指追従、慣性、snap、端の跳ね返り、前後先読みが自然であることを確認する。Build 10には任意位置を直接選ぶgridがないため、先頭／中間／末尾選択は要求しない。
+9. すべて通った後だけ「1週間計測を開始」を押し、新しい開始日時とbaselineを記録する。
 
 結果：`未実施（NO-GO）`
 
@@ -227,7 +228,8 @@ CIが保証するのは1枚5MiB以下、family別最大2件10MiB以下という�
 - [ ] Small 500×500px／100KiB以下、Medium 1050×500px／200KiB以下、Large 1050×1100px／220KiB以下のキャッシュを確認した
 - [ ] Widgetのメモリ急増とクラッシュがなかった
 - [ ] App Group共有と「これ好き」の永続化を確認した
-- [ ] Build 9のWidget ON→アプリ+1／一覧／likedAt、Widget OFF→アプリ-1／一覧削除が手動再スキャンなしで通り、Like同期ログがscan startより前だった
+- [ ] Build 10のWidget ON→アプリ+1／一覧／likedAt、Widget OFF→アプリ-1／一覧削除が手動再スキャンなしで通り、Like同期ログがscan startより前だった
+- [ ] 写真ブラウザをホーム／Widget／利用可能なら「これ好き」からcold openして固まらず、指追従、慣性、snap、端の跳ね返り、前後先読みが自然だった
 - [ ] AppとWidgetの診断ログを統合表示、コピー、共有、消去できた
 - [ ] 「ねこのまど」のC5 Soft App Iconがarchiveへ含まれた
 

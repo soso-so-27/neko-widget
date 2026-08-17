@@ -112,6 +112,7 @@ enum AlbumPresentationState: Equatable {
 
 enum AppTab: Hashable {
     case home
+    case album
     case likes
     case settings
 }

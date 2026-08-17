@@ -4,7 +4,7 @@
 - 日付：2026-08-17
 - 対象：TestFlight Build 8と、その後に再開する1週間計測
 
-> **2026-08-17追記：** Build 8のLike同期修復は維持するが、高解像度20件TimelineによりMedium / Largeがplaceholder相当となったため、実機ゲートは未達で計測を再開しない。Build 9のTimeline修復と新しい計測順序は[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)を正本とする。
+> **2026-08-17追記：** Build 8のLike同期修復は維持するが、高解像度20件TimelineによりMedium / Largeがplaceholder相当となったため、実機ゲートは未達だった。Build 9でTimelineを修復し、Build 10で写真ブラウザの標準ページングを修復した。計測再開はBuild 10上で両方を確認してからとし、resource条件は[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)を正本とする。
 
 ## 背景
 
@@ -37,9 +37,9 @@ Build 7の画像仕様は`400×400 / 800×374 / 400×420`、各50KiB、余白18%
 
 ## 1週間計測を再開する実機ゲート
 
-Build 8では本ゲートを完了できなかった。Build 9を入れただけでも計測を始めず、次を同じ実機で順に完了する。
+Build 8では本ゲートを完了できなかった。Build 10を入れただけでも計測を始めず、次を同じ実機で順に完了する。
 
-1. Build 9をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
+1. Build 10をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
 2. アプリを開き、開始前の好き総数と一覧を記録して終了する。
 3. Widgetの肉球で未押下の写真を押す。アプリを勝手に開かず、輪郭から塗りつぶしへ変わることを確認する。
 4. アプリを開き、手動の再スキャン操作をせず、好き総数が1増え、同じ写真と押した日時が一覧へ現れることを確認する。診断ログでは共有Like同期が`Scan generation started`より前に記録されることを確認する。
@@ -55,7 +55,7 @@ Build 7で完了済みのランダム100枚レビューは再実施しない。B
 
 ## 変更の凍結
 
-Build 9のresource修復と実機ゲート後、1週間計測中は測定端末へ別buildを入れず、Widgetを再配置せず、写真露出集合と操作導線を変えない。画像構図と写真詳細の改善はBuild 8で打ち止めとし、Build 9はTimeline負荷だけを修復して次は計測へ進む。
+Build 9のresource修復とBuild 10のページング修復を実機確認した後、1週間計測中は測定端末へ別buildを入れず、Widgetを再配置せず、写真露出集合と操作導線を変えない。画像構図と写真詳細の改善はBuild 8で打ち止めとし、Build 10以降のアルバム／共有開発は別branchとCIだけで進める。
 
 この範囲では、次を実装しない。
 
@@ -68,4 +68,4 @@ Build 9のresource修復と実機ゲート後、1週間計測中は測定端末�
 
 ## Deferred probeの後ろ倒し
 
-[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)の512px fast-format paired probeはBuild 9へ入れない。Build 9の1週間計測を先に完了し、その後にInternal TestFlight Build 10で非破壊probeを1回実行する。採用する場合の通常scanner／Widget cacheへの反映はproduction Build 11以降とする。
+[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)の512px fast-format paired probeはBuild 10へ入れない。Build 10の1週間計測を先に完了し、その後に番号を割り当てるInternal TestFlight buildで非破壊probeを1回実行する。採用する場合の通常scanner／Widget cacheへの反映はさらに後続のproduction buildとする。

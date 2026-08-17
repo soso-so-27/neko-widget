@@ -1,5 +1,134 @@
 import SwiftUI
 
+enum AlbumPhotoFilter: String, CaseIterable, Identifiable, Hashable {
+    case all = "すべて"
+    case liked = "これ好き"
+
+    var id: Self { self }
+}
+
+struct AlbumView: View {
+    let photos: [PhotoPresentation]
+    @Binding var filter: AlbumPhotoFilter
+
+    private let columns = Array(
+        repeating: GridItem(.flexible(), spacing: 2),
+        count: 3
+    )
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("表示する写真", selection: $filter) {
+                ForEach(AlbumPhotoFilter.allCases) { value in
+                    Text(filterTitle(value)).tag(value)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            albumContents
+        }
+        .navigationTitle("アルバム")
+        .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private var albumContents: some View {
+        if photos.isEmpty {
+            ContentUnavailableView(
+                "猫の写真がまだありません",
+                systemImage: "photo.on.rectangle",
+                description: Text("スキャンで猫の写真が見つかると、撮影日時順に並びます。")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding()
+        } else if displayedPhotos.isEmpty {
+            ContentUnavailableView {
+                Label {
+                    Text("まだ「これ好き」はありません")
+                } icon: {
+                    CatPawMark(isFilled: false)
+                        .frame(width: 28, height: 28)
+                }
+            } description: {
+                Text("写真の肉球ボタンを押すと、ここで絞り込めます。")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding()
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 2) {
+                    ForEach(displayedPhotos) { photo in
+                        NavigationLink(value: photo.localIdentifier) {
+                            PhotoAssetImageView(
+                                localIdentifier: photo.localIdentifier,
+                                catBoundingBox: photo.catBoundingBox,
+                                targetPixelSize: CGSize(width: 360, height: 360),
+                                targetAspectRatio: 1
+                            )
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay(alignment: .bottomTrailing) {
+                                if photo.isLiked {
+                                    CatPawMark(isFilled: true)
+                                        .frame(width: 15, height: 15)
+                                        .foregroundStyle(.white)
+                                        .padding(7)
+                                        .background(.black.opacity(0.55), in: Circle())
+                                        .padding(6)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(photoAccessibilityLabel(photo))
+                    }
+                }
+                .padding(.bottom, 12)
+            }
+        }
+    }
+
+    private var likedPhotoCount: Int {
+        photos.lazy.filter(\.isLiked).count
+    }
+
+    private var displayedPhotos: [PhotoPresentation] {
+        orderedPhotos.filter { filter == .all || $0.isLiked }
+    }
+
+    /// The album opens with the newest memories first. Missing dates stay at
+    /// the end, and identifiers make equal timestamps deterministic.
+    private var orderedPhotos: [PhotoPresentation] {
+        photos.sorted { lhs, rhs in
+            switch (lhs.creationDate, rhs.creationDate) {
+            case let (left?, right?):
+                if left == right { return lhs.localIdentifier < rhs.localIdentifier }
+                return left > right
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return lhs.localIdentifier < rhs.localIdentifier
+            }
+        }
+    }
+
+    private func filterTitle(_ value: AlbumPhotoFilter) -> String {
+        let count = value == .all ? photos.count : likedPhotoCount
+        return "\(value.rawValue) \(count.formatted())"
+    }
+
+    private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
+        let date = photo.creationDate?.formatted(.dateTime.year().month().day().hour().minute())
+            ?? "撮影日時不明"
+        return photo.isLiked ? "\(date)の猫の写真、これ好き" : "\(date)の猫の写真"
+    }
+}
+
+/// The dated list remains separate from the album grid because it is the
+/// measurement-facing history of when the user pressed the paw.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
 
@@ -50,8 +179,8 @@ struct LikedPhotosView: View {
                                             CatPawMark(isFilled: true)
                                                 .frame(width: 18, height: 18)
                                         }
-                                            .font(.headline)
-                                            .foregroundStyle(.primary)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
                                         Text(likedDateText(photo.likedAt))
                                             .font(.subheadline)
                                             .foregroundStyle(.secondary)
@@ -110,7 +239,10 @@ struct PhotoBrowserView: View {
     /// cadence change keeps the explanation aligned with generated timelines.
     let widgetIntervalMinutes: Int
     let toggleLike: (String) -> Void
+    private let browserPhotos: [PhotoPresentation]
+    private let browserPhotoIdentifiers: [String]
 
+    @StateObject private var performanceProbe: PhotoBrowserPerformanceProbe
     @State private var selectedPhotoIdentifier: String
     @State private var preheatedPhotoIdentifiers: Set<String> = []
 
@@ -122,33 +254,55 @@ struct PhotoBrowserView: View {
         widgetIntervalMinutes: Int,
         toggleLike: @escaping (String) -> Void
     ) {
+        let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
+        let browserPhotos = Self.makeBrowserPhotos(
+            photos: photos,
+            initialPhoto: initialPhoto
+        )
+        let pagePreparationMilliseconds = Int(
+            ((ProcessInfo.processInfo.systemUptime - constructionStartedAtUptime) * 1_000)
+                .rounded()
+        )
+
         self.photos = photos
         self.libraryPhotos = libraryPhotos
         self.initialPhoto = initialPhoto
         self.widgetShownAt = widgetShownAt
         self.widgetIntervalMinutes = widgetIntervalMinutes
         self.toggleLike = toggleLike
+        self.browserPhotos = browserPhotos
+        browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
+        _performanceProbe = StateObject(
+            wrappedValue: PhotoBrowserPerformanceProbe(
+                constructionStartedAtUptime: constructionStartedAtUptime,
+                pagePreparationMilliseconds: pagePreparationMilliseconds
+            )
+        )
         _selectedPhotoIdentifier = State(initialValue: initialPhoto.localIdentifier)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            TabView(selection: $selectedPhotoIdentifier) {
-                // Keep the complete, ordered set of page identities stable.
-                // PageTabViewStyle supplies the native 1:1 drag, inertia,
-                // snapping and bounded edge bounce; rebuilding a three-page
-                // window after every selection breaks those behaviours.
-                ForEach(browserPhotos) { photo in
-                    PhotoAssetImageView(
-                        localIdentifier: photo.localIdentifier,
-                        targetPixelSize: Self.imageTargetPixelSize,
-                        targetAspectRatio: 1,
-                        showsFullImage: true
-                    )
-                    .tag(photo.localIdentifier)
+            ScrollView(.horizontal) {
+                // LazyHStack keeps the complete ordered identity space without
+                // constructing hundreds of page bodies up front. The system
+                // ScrollView still owns finger tracking, inertia and snapping.
+                LazyHStack(spacing: 0) {
+                    ForEach(browserPhotos) { photo in
+                        PhotoBrowserPage(
+                            photo: photo,
+                            imageTargetPixelSize: Self.imageTargetPixelSize,
+                            performanceProbe: performanceProbe
+                        )
+                        .containerRelativeFrame([.horizontal, .vertical])
+                        .id(photo.localIdentifier)
+                    }
                 }
+                .scrollTargetLayout()
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: selectedPhotoScrollPosition)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topTrailing) {
                 if browserPhotos.count > 1 {
@@ -215,12 +369,13 @@ struct PhotoBrowserView: View {
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
+            performanceProbe.recordContainerAppearance()
             updatePhotoPreheating()
         }
         .onChange(of: selectedPhotoIdentifier) { _, _ in
             updatePhotoPreheating()
         }
-        .onChange(of: browserPhotos.map(\.localIdentifier)) { _, identifiers in
+        .onChange(of: browserPhotoIdentifiers) { _, identifiers in
             if !identifiers.contains(selectedPhotoIdentifier),
                let first = identifiers.first {
                 selectedPhotoIdentifier = first
@@ -234,9 +389,29 @@ struct PhotoBrowserView: View {
             )
             preheatedPhotoIdentifiers.removeAll()
         }
+        .task {
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                return
+            }
+            performanceProbe.writeInitialWindowLog(
+                pageCount: browserPhotos.count,
+                requestedPagePosition: browserPhotos.firstIndex(where: {
+                    $0.localIdentifier == initialPhoto.localIdentifier
+                }).map { $0 + 1 } ?? -1,
+                settledPagePosition: browserPhotos.firstIndex(where: {
+                    $0.localIdentifier == selectedPhotoIdentifier
+                }).map { $0 + 1 } ?? -1,
+                explicitlyPreheatedPageCount: preheatedPhotoIdentifiers.count
+            )
+        }
     }
 
-    private var browserPhotos: [PhotoPresentation] {
+    private static func makeBrowserPhotos(
+        photos: [PhotoPresentation],
+        initialPhoto: PhotoPresentation
+    ) -> [PhotoPresentation] {
         var unique: [String: PhotoPresentation] = [:]
         for photo in photos {
             unique[photo.localIdentifier] = photo
@@ -259,13 +434,26 @@ struct PhotoBrowserView: View {
         }
     }
 
+    /// Scroll position is optional in SwiftUI so it can represent the brief
+    /// moment before layout resolves. Keep the app's selection non-optional and
+    /// ignore that transient nil rather than losing the deep-linked first page.
+    private var selectedPhotoScrollPosition: Binding<String?> {
+        Binding(
+            get: { selectedPhotoIdentifier },
+            set: { identifier in
+                guard let identifier else { return }
+                selectedPhotoIdentifier = identifier
+            }
+        )
+    }
+
     private var selectedPhoto: PhotoPresentation? {
         browserPhotos.first { $0.localIdentifier == selectedPhotoIdentifier }
     }
 
-    /// Preheat the current photo and two neighbours on either side. TabView
-    /// remains responsible for page lifetime; PhotoKit only keeps this small
-    /// display-sized cache window ready for the next native swipe.
+    /// Preheat the current photo and two neighbours on either side. The lazy
+    /// paging stack remains responsible for page lifetime; PhotoKit only keeps
+    /// this small display-sized cache window ready for the next native swipe.
     private var nearbyPhotoIdentifiers: Set<String> {
         let orderedPhotos = browserPhotos
         guard let selectedIndex = orderedPhotos.firstIndex(where: {
@@ -346,6 +534,92 @@ struct PhotoBrowserView: View {
             return "最後に変わったのは約1分前"
         }
         return "最後に変わったのは約\(elapsedMinutes.formatted())分前"
+    }
+}
+
+@MainActor
+private struct PhotoBrowserPage: View {
+    let photo: PhotoPresentation
+    let imageTargetPixelSize: CGSize
+    let performanceProbe: PhotoBrowserPerformanceProbe
+
+    init(
+        photo: PhotoPresentation,
+        imageTargetPixelSize: CGSize,
+        performanceProbe: PhotoBrowserPerformanceProbe
+    ) {
+        self.photo = photo
+        self.imageTargetPixelSize = imageTargetPixelSize
+        self.performanceProbe = performanceProbe
+        performanceProbe.recordConstructedPage(localIdentifier: photo.localIdentifier)
+    }
+
+    var body: some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            targetPixelSize: imageTargetPixelSize,
+            targetAspectRatio: 1,
+            showsFullImage: true
+        )
+    }
+}
+
+/// One summary entry per browser presentation is enough to verify on a real
+/// device that a large library remains lazy. Avoiding per-page file writes keeps
+/// the probe from changing the behavior it is measuring.
+@MainActor
+private final class PhotoBrowserPerformanceProbe: ObservableObject {
+    private let constructionStartedAtUptime: TimeInterval
+    private let pagePreparationMilliseconds: Int
+    private var containerAppearanceMilliseconds: Int?
+    private var constructedPhotoIdentifiers: Set<String> = []
+    private var didWriteInitialWindowLog = false
+
+    init(
+        constructionStartedAtUptime: TimeInterval,
+        pagePreparationMilliseconds: Int
+    ) {
+        self.constructionStartedAtUptime = constructionStartedAtUptime
+        self.pagePreparationMilliseconds = pagePreparationMilliseconds
+    }
+
+    func recordContainerAppearance() {
+        guard containerAppearanceMilliseconds == nil else { return }
+        containerAppearanceMilliseconds = Int(
+            ((ProcessInfo.processInfo.systemUptime - constructionStartedAtUptime) * 1_000)
+                .rounded()
+        )
+    }
+
+    func recordConstructedPage(localIdentifier: String) {
+        guard !didWriteInitialWindowLog else { return }
+        constructedPhotoIdentifiers.insert(localIdentifier)
+    }
+
+    func writeInitialWindowLog(
+        pageCount: Int,
+        requestedPagePosition: Int,
+        settledPagePosition: Int,
+        explicitlyPreheatedPageCount: Int
+    ) {
+        guard !didWriteInitialWindowLog else { return }
+        didWriteInitialWindowLog = true
+        let constructedPageCount = constructedPhotoIdentifiers.count
+        constructedPhotoIdentifiers.removeAll(keepingCapacity: false)
+        SharedLog.app.info(
+            "photo-browser",
+            "Initial lazy paging window measured",
+            metadata: [
+                "pager": "lazy-scroll-paging",
+                "page_count": String(pageCount),
+                "requested_page_position": String(requestedPagePosition),
+                "settled_page_position": String(settledPagePosition),
+                "page_model_prepare_ms": String(pagePreparationMilliseconds),
+                "construction_to_appear_ms": String(containerAppearanceMilliseconds ?? -1),
+                "constructed_pages_500ms": String(constructedPageCount),
+                "explicit_preheat_pages": String(explicitlyPreheatedPageCount)
+            ]
+        )
     }
 }
 

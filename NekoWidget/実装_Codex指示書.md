@@ -1,7 +1,7 @@
 # ねこのまど v1 実装指示書（Codex向け・改訂版）
 
 発行：2026-08-15
-改訂：2026-08-17（Build 9の高解像度Timeline負荷修復を反映）
+改訂：2026-08-17（Build 10の標準ページングと計測分離開発を反映）
 
 ## 0. これは何か
 
@@ -54,7 +54,7 @@ Build 5の実機確認後、常設のぼかし帯が没入感を損なうと判�
 - Build 5は表示品質と配布の技術検証専用とし、1週間計測には含めない。
 - Build 7ではWidget再配置、3サイズの表示・肉球操作とランダム100枚を確認した。`reviewNo 74`だけを製品候補から除外し、99 / 100を採用した。
 - Build 7で始めた1週間計測は、WidgetのLikeがアプリ総数・一覧へ再スキャンまで反映されない不具合のため2026-08-17に中断した。中断値を製品判断へ使わない。
-- 1週間計測はBuild 9の2件Timelineとlike／unlike即時反映ゲート後に、新しいbaselineから明示的に再開する。
+- 1週間計測はBuild 10の2件Timeline、like／unlike即時反映、写真ブラウザの標準ページングゲート後に、新しいbaselineから明示的に再開する。
 - Widget右下の肉球から、アプリを開かずに好き／解除を記録する。
 - 計測開始時点でlikedの全写真を開始時枚数として分離し、アプリで明示した計測開始後のイベントだけを行動計測へ使う。
 - 診断ログとは別に、App Groupへ30日・最大1,000件の操作履歴と、上限等で落とした件数を保持する。
@@ -67,26 +67,26 @@ Build 5の実機確認後、常設のぼかし帯が没入感を損なうと判�
 - Small / Largeで猫union＋余白を物理的に収容できない場合だけ、元写真全体＋同写真のぼかし背景へfallbackする。
 - Mediumは収容不能でもbbox上側35%付近を焦点にfull-bleedを維持し、猫全体が切れることを許容する。
 - Build 8ではsource 2048×2048からSmall 500×500／100KiB、Medium 1050×500／200KiB、Large 1050×1100／220KiBを作り、SF Symbolsではなく共有`CatPawMark`を使う。
-- Subject Lifting、新しい背景ぼかし、Medium 2枚化、saliency、顔・目・姿勢・美的構図理解、新しい選別軸、共有は実装しない。Build 9では画像構図を変えずTimeline負荷だけを直し、その後は表示・体験変更を凍結して計測へ進む。
+- Subject Lifting、新しい背景ぼかし、Medium 2枚化、saliency、顔・目・姿勢・美的構図理解、新しい選別軸は実装しない。Build 9では画像構図を変えずTimeline負荷だけを直し、Build 10では写真ブラウザの標準ページングだけを直して計測へ進む。ローカルアルバムと招待制共有は[ADR-009](docs/ADR-009-ローカルアルバムと招待制共有.md)に従い、計測buildと分離する。
 - 判断記録は `docs/ADR-005-Widget猫優先full-bleed.md` に残す。
 
 ### 1-8. iCloud Deferredの検証順序
 
 - 実機の`unavailableLocally` 2,586件は「1024px high-quality requestをnetworkなしで満たせない」であり、低解像度ローカル派生もないとは断定しない。
-- Build 9にはiCloud downloadもscanner request変更も入れない。
-- Build 9の計測中はBuild 10 probeを開発・CIまで進めてよいが、測定端末へインストールしない。1週間の結果を回収した後にBuild 10を端末で実行し、採用時はproduction Build 11以降へ反映する。
-- Build 10の技術検証では通常`AppViewModel`を生成せず本番snapshotを変更しない専用rootを使い、Screenshot／burst除外方針を固定した同じ対象へ`512×512 / aspectFit / fastFormat / resizeMode=fast / version=current / network=false`でpaired probeする。fastFormatでは非nilのdegraded画像も最終結果として受理する。
+- Build 10にはiCloud downloadもscanner request変更も入れない。
+- Build 10の計測中はpaired probe、ローカルアルバム、招待制共有を別branchで開発・CIまで進めてよいが、測定端末へ別buildをインストールしない。1週間の結果を回収した後にprobe用Internal buildへ未使用番号を割り当て、採用時だけさらに後続のproduction buildへ反映する。
+- Probe用の技術検証buildでは通常`AppViewModel`を生成せず本番snapshotを変更しない専用rootを使い、Screenshot／burst除外方針を固定した同じ対象へ`512×512 / aspectFit / fastFormat / resizeMode=fast / version=current / network=false`でpaired probeする。fastFormatでは非nilのdegraded画像も最終結果として受理する。
 - 旧解析済み集合の陽性保持率、旧Deferredの回収／新規猫、bbox IoU／中心移動、実出力pixelを分けて報告する。総猫数だけで判定しない。
 - Widgetは最大1050×1100を含むため512pxへ一律変更しない。scanner probe後に現行2048px high-qualityをbaselineとして、非同期fast／local-onlyの2048px要求、nil／inCloud時の1100px要求、degraded非nil受理を別評価する。
 - 同意なしの一括downloadは行わない。ローカル派生でも残る件数に限り、通信量の概算方法と明示同意を設計する。
 - 判断記録は `docs/ADR-006-iCloudローカル派生画像の検証.md` に残す。
 
-### 1-9. Build 8の計測修復・名称とBuild 9のTimeline修復
+### 1-9. Build 8の計測修復、Build 9のTimeline修復、Build 10の標準ページング
 
 - 製品表示名は`ねこのまど`、App Store Connectのアプリ名は`ねこのまど - 猫の写真ウィジェット`とする。App Store Connectの既存レコード名はコード変更とは別に手動更新する。
 - Widget App IntentはApp GroupのLikeストアへ原子的に保存する。アプリは起動、フォアグラウンド復帰、Deep Link時にLikeストアを読み、更新済みsnapshot全体を再代入してSwiftUIへ通知する。再スキャンを表示同期の条件にしない。
 - 実機ゲートは、Widget肉球ON→アプリを開く（手動スキャン操作なし）→総数+1／一覧／likedAt、Widgetへ戻りOFF→アプリで総数-1／一覧から消える、の順で行う。診断ログのLike同期がscan startより前であることも確認する。これが通るまで計測開始はNO-GOとする。
-- Build 9はmanifest最大20件を維持し、providerが時刻anchor基準の最大2件だけを返す。CIの1枚5MiB／family別2件10MiBは静的予算であり、Widget Extension全体の実peak 30MiB未満を保証しない。実機ではSmall→Medium→Largeを段階配置し、20分切り替え、次pair取得、肉球操作でplaceholder化・再読込ループ・クラッシュがないこと、TestFlight crash／iOS AnalyticsにJetsamがないことを確認する。
+- Build 9はmanifest最大20件を維持し、providerが時刻anchor基準の最大2件だけを返す。Build 10は写真ブラウザをOS標準ページングへ直し、ページ集合の入れ替えによる操作感悪化を解消する。CIの1枚5MiB／family別2件10MiBは静的予算であり、Widget Extension全体の実peak 30MiB未満を保証しない。実機ではSmall→Medium→Largeを段階配置し、20分切り替え、次pair取得、肉球操作でplaceholder化・再読込ループ・クラッシュがないこと、写真ブラウザが898件でも初期表示で固まらないこと、TestFlight crash／iOS AnalyticsにJetsamがないことを確認する。
 - 判断記録は `docs/ADR-007-Build8計測修復と最終UX.md` と `docs/ADR-008-高解像度WidgetのTimeline負荷制限.md` に残す。
 
 ## 2. 技術方針

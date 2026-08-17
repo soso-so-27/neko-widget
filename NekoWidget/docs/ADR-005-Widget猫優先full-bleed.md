@@ -75,7 +75,7 @@ PhotoKitの`modificationDate`と、その値を取得済みかを示すmarkerを
 - 日付、場所、個体などの新しい選別軸
 - 共有機能
 
-Build 8で画像構図と写真詳細体験の改善を打ち止めとする。Build 9は高解像度Timelineのresource負荷だけを修復し、実機ゲート後に1週間の行動計測を新しいbaselineから始める。ローカル派生画像probeは1週間後のInternal Build 10へ送り、採用時のproduction反映はBuild 11以降とする。主観的にApple Photosより美しくないことだけを理由に再実装しない。
+Build 8で画像構図と写真詳細体験の改善を打ち止めとする。Build 9は高解像度Timelineのresource負荷だけを修復し、Build 10で写真ブラウザの標準ページングを修復する。両方の実機ゲート後に、Build 10で1週間の行動計測を新しいbaselineから始める。ローカル派生画像probeは1週間後、未使用番号を割り当てるInternal技術検証buildへ送り、採用時のproduction反映はさらに後続buildとする。主観的にApple Photosより美しくないことだけを理由に再実装しない。
 
 ## 受け入れ条件
 
