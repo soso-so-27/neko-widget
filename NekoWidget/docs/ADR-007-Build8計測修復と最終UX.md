@@ -4,6 +4,8 @@
 - 日付：2026-08-17
 - 対象：TestFlight Build 8と、その後に再開する1週間計測
 
+> **2026-08-17追記：** Build 8のLike同期修復は維持するが、高解像度20件TimelineによりMedium / Largeがplaceholder相当となったため、実機ゲートは未達で計測を再開しない。Build 9のTimeline修復と新しい計測順序は[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)を正本とする。
+
 ## 背景
 
 Build 7ではWidgetの肉球操作そのものはApp GroupのLikeストアへ保存されていたが、アプリを開いた直後の「好き」総数と一覧へ即時反映されず、再スキャン後に初めて見える場合があった。主指標の表示を信用できないため、2026-08-17にBuild 7で始めた1週間計測を中断した。中断までの値は製品判断へ使わず、Build 8の実機ゲート後に新しいbaselineから取り直す。
@@ -27,7 +29,7 @@ Build 8には、計測前に必要な最後の表示・体験修正もまとめ�
 - 猫unionの余白：各辺`8%`。Build 7の`18%`を同じ候補へ影計算し、CI artifactへ8%と18%のfallback件数を併記する
 - 肉球：SF Symbolsの犬にも見える`pawprint`ではなく、指球を小さく丸く寄せ、掌球を横長にした共有`CatPawMark`を使う。Widgetでは約20pxでも輪郭／塗りつぶしを判別できることを確認する
 - Widget cache：最大8 generation、最大400ファイル。全ファイルが最大上限の220KiBだった場合でも約85.9MiBを超えない保守的なdisk上限とする
-- Widget ExtensionはTimelineEntryへ画像を保持せず、表示中のJPEG 1枚だけを読み込む。Large raw decodeは約4.41MiB／1枚で、5MiB guard内であることを事前検査する
+- Widget ExtensionはTimelineEntryへ画像を保持しない。ただしWidgetKitが20件の未来Viewを受理時に評価することを実機で確認したため、Build 9ではTimelineを最大2件に制限する。Largeは実機row alignment込みで約4.41MiB／枚、約8.83MiB／2件とする
 - Widgetタップ先：写真を大きく表示し、左右スワイプ、肉球、撮影日、「この日の写真をすべて見る」、約20分ごとの切り替えと最後に変わった時刻を示す。任意に写真を進める「次へ」ボタンは置かない
 - 猫0件：故障に見える空白ではなく、スキャン結果であること、猫写真を追加すること、写真アクセスを確認すること、再スキャンすることを案内する
 
@@ -35,9 +37,9 @@ Build 7の画像仕様は`400×400 / 800×374 / 400×420`、各50KiB、余白18%
 
 ## 1週間計測を再開する実機ゲート
 
-Build 8を入れただけでは計測を始めない。次を同じ実機で順に完了する。
+Build 8では本ゲートを完了できなかった。Build 9を入れただけでも計測を始めず、次を同じ実機で順に完了する。
 
-1. Build 8をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
+1. Build 9をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
 2. アプリを開き、開始前の好き総数と一覧を記録して終了する。
 3. Widgetの肉球で未押下の写真を押す。アプリを勝手に開かず、輪郭から塗りつぶしへ変わることを確認する。
 4. アプリを開き、手動の再スキャン操作をせず、好き総数が1増え、同じ写真と押した日時が一覧へ現れることを確認する。診断ログでは共有Like同期が`Scan generation started`より前に記録されることを確認する。
@@ -47,13 +49,13 @@ Build 8を入れただけでは計測を始めない。次を同じ実機で順�
 8. App Groupのイベント履歴と診断ログが押下／解除の時刻・写真・操作元で一致することを確認する。
 9. ここまでがすべて通った後だけ「1週間計測を開始」を押し、新しい開始日時とbaseline枚数を記録する。
 
-CIが保証するのはLarge 1枚のraw decode約4.41MiBが5MiB guard内にある静的予算までであり、Widget Extension全体の実peakが30MiB未満であることではない。TestFlightの段階配置、ログ、crash／Jetsamなしも実peak数値の保証ではない。数値が必要ならMacとXcode／Instrumentsで測る。
+CIが保証するのはLarge 1枚が5MiB以下、最大2件がfamily別10MiB以下という静的予算までであり、Widget Extension全体の実peakが30MiB未満であることではない。TestFlightの段階配置、ログ、crash／Jetsamなしも実peak数値の保証ではない。数値が必要ならMacとXcode／Instrumentsで測る。
 
 Build 7で完了済みのランダム100枚レビューは再実施しない。Build 8でscannerやanalysis fingerprintを変更した場合だけ、結果を再利用せずレビューをやり直す。
 
 ## 変更の凍結
 
-Build 8の実機ゲート後、1週間計測中は測定端末へ別buildを入れず、Widgetを再配置せず、写真露出集合と操作導線を変えない。表示・体験の改善はBuild 8で打ち止めとし、次は計測へ進む。
+Build 9のresource修復と実機ゲート後、1週間計測中は測定端末へ別buildを入れず、Widgetを再配置せず、写真露出集合と操作導線を変えない。画像構図と写真詳細の改善はBuild 8で打ち止めとし、Build 9はTimeline負荷だけを修復して次は計測へ進む。
 
 この範囲では、次を実装しない。
 
@@ -66,4 +68,4 @@ Build 8の実機ゲート後、1週間計測中は測定端末へ別buildを入�
 
 ## Deferred probeの後ろ倒し
 
-[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)の512px fast-format paired probeはBuild 8へ入れない。Build 8の1週間計測を先に完了し、その後にInternal TestFlight Build 9で非破壊probeを1回実行する。採用する場合の通常scanner／Widget cacheへの反映はproduction Build 10以降とする。
+[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)の512px fast-format paired probeはBuild 9へ入れない。Build 9の1週間計測を先に完了し、その後にInternal TestFlight Build 10で非破壊probeを1回実行する。採用する場合の通常scanner／Widget cacheへの反映はproduction Build 11以降とする。

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,10 @@ def entry_timestamp(entry: dict[str, Any]) -> float | None:
         return float(entry.get("timestamp"))
     except (TypeError, ValueError):
         return None
+
+
+def aligned_byte_count(value: int, alignment: int) -> int:
+    return ((value + alignment - 1) // alignment) * alignment
 
 
 def jpeg_dimensions(path: Path) -> tuple[int, int] | None:
@@ -82,6 +87,86 @@ def jpeg_dimensions(path: Path) -> tuple[int, int] | None:
     return None
 
 
+def timeline_entry_limit(
+    provider_source_path: Path, failures: list[str]
+) -> tuple[int, dict[str, bool]]:
+    """Read the provider's hard cap and prove that it bounds the returned schedule."""
+    try:
+        source = provider_source_path.read_text(encoding="utf-8")
+    except OSError as error:
+        failures.append(f"Timeline provider source could not be read: {error}")
+        return 0, {
+            "twoEntryPrefix": False,
+            "manifestAnchorSchedule": False,
+            "afterReloadPolicy": False,
+        }
+
+    declarations = re.findall(
+        r"\bmaximumTimelineEntryCount\s*=\s*([0-9][0-9_]*)\b",
+        source,
+    )
+    if len(declarations) != 1:
+        failures.append(
+            "Timeline provider must declare maximumTimelineEntryCount exactly once."
+        )
+        return 0, {
+            "twoEntryPrefix": False,
+            "manifestAnchorSchedule": False,
+            "afterReloadPolicy": False,
+        }
+
+    limit = int(declarations[0].replace("_", ""))
+    if limit != 2:
+        failures.append(
+            "Timeline provider returns an unsafe number of entries "
+            f"({limit}); expected the two-entry hard cap."
+        )
+
+    bounded_prefix = re.search(
+        r"\.prefix\(\s*Self\.maximumTimelineEntryCount\s*\)",
+        source,
+    )
+    anchor_declaration = re.search(
+        r"let\s+anchor\s*=\s*items\s*\[\s*0\s*\]\.scheduledDate",
+        source,
+    )
+    anchor_elapsed = re.search(
+        r"now\.timeIntervalSince\(\s*anchor\s*\)",
+        source,
+    )
+    anchor_reload = re.search(
+        r"let\s+reloadDate\s*=\s*anchor\.addingTimeInterval\(",
+        source,
+    )
+    after_policy = re.search(
+        r"Timeline\(\s*entries:\s*entries\s*,\s*policy:\s*\.after\(\s*reloadDate\s*\)\s*\)",
+        source,
+    )
+    checks = {
+        "twoEntryPrefix": bounded_prefix is not None,
+        "manifestAnchorSchedule": all(
+            value is not None
+            for value in (anchor_declaration, anchor_elapsed, anchor_reload)
+        ),
+        "afterReloadPolicy": after_policy is not None,
+    }
+    if not checks["twoEntryPrefix"]:
+        failures.append(
+            "Timeline provider does not apply its two-entry cap with prefix()."
+        )
+    if not checks["manifestAnchorSchedule"]:
+        failures.append(
+            "Timeline provider transition/reload dates are not anchored to the "
+            "manifest schedule."
+        )
+    if not checks["afterReloadPolicy"]:
+        failures.append(
+            "Timeline provider does not request its bounded refill with an "
+            "after(reloadDate) policy."
+        )
+    return limit, checks
+
+
 def main() -> int:
     if len(sys.argv) != 5:
         print(
@@ -96,6 +181,11 @@ def main() -> int:
     fixture_count = int(sys.argv[2])
     baseline_snapshot_path = Path(sys.argv[3])
     report_path = Path(sys.argv[4])
+    provider_source_path = (
+        Path(__file__).resolve().parent.parent
+        / "NekoWidgetWidget"
+        / "NekoWidgetTimelineProvider.swift"
+    )
     log_directory = group_container / "diagnostic-logs"
     failures: list[str] = []
     malformed_lines: list[str] = []
@@ -576,8 +666,13 @@ def main() -> int:
             + ", ".join(sorted(oversized_cache_files))
         )
 
+    decoded_row_alignment_bytes = 16
+    decoded_row_bytes_by_variant = {
+        variant: aligned_byte_count(width * 4, decoded_row_alignment_bytes)
+        for variant, (width, _) in expected_cache_dimensions.items()
+    }
     decoded_bytes_by_variant = {
-        variant: width * height * 4
+        variant: decoded_row_bytes_by_variant[variant] * height
         for variant, (width, height) in expected_cache_dimensions.items()
     }
     maximum_widget_decode_bytes = max(decoded_bytes_by_variant.values())
@@ -586,6 +681,54 @@ def main() -> int:
         failures.append(
             "A family canvas exceeds the one-image Widget decode budget "
             f"({maximum_widget_decode_bytes} > {widget_decode_budget_bytes})."
+        )
+
+    maximum_timeline_entry_count, timeline_provider_static_checks = timeline_entry_limit(
+        provider_source_path,
+        failures,
+    )
+    # Keep each family's decoded timeline payload below 10 MiB. The arithmetic
+    # is deliberately conservative about row padding but remains only a static
+    # estimate: headless CI does not place Widgets or measure extension RSS.
+    observed_widget_process_guardrail_bytes = 30 * 1_024 * 1_024
+    family_timeline_decode_budget_bytes = 10 * 1_024 * 1_024
+    simultaneous_three_family_decode_budget_bytes = 20 * 1_024 * 1_024
+    family_timeline_decoded_bytes = {
+        variant: decoded_bytes * maximum_timeline_entry_count
+        for variant, decoded_bytes in decoded_bytes_by_variant.items()
+    }
+    simultaneous_three_family_decoded_bytes = sum(
+        family_timeline_decoded_bytes.values()
+    )
+    simultaneous_three_family_arithmetic_headroom_bytes = (
+        observed_widget_process_guardrail_bytes
+        - simultaneous_three_family_decoded_bytes
+    )
+    unsafe_family_timeline_decodes = {
+        variant: decoded_bytes
+        for variant, decoded_bytes in family_timeline_decoded_bytes.items()
+        if decoded_bytes > family_timeline_decode_budget_bytes
+    }
+    if unsafe_family_timeline_decodes:
+        description = ", ".join(
+            f"{variant}={decoded_bytes}"
+            for variant, decoded_bytes in sorted(
+                unsafe_family_timeline_decodes.items()
+            )
+        )
+        failures.append(
+            "Family Timeline decoded-image estimates exceed the 10 MiB safety "
+            f"budget: {description}."
+        )
+    if (
+        simultaneous_three_family_decoded_bytes
+        > simultaneous_three_family_decode_budget_bytes
+    ):
+        failures.append(
+            "The simultaneous three-family decoded-image estimate exceeds the "
+            "20 MiB static safety budget "
+            f"({simultaneous_three_family_decoded_bytes} > "
+            f"{simultaneous_three_family_decode_budget_bytes})."
         )
 
     history_path = group_container / "widget-cache-history.json"
@@ -689,9 +832,34 @@ def main() -> int:
         "cacheDimensionsByVariant": cache_dimensions_by_variant,
         "cacheBytesByVariant": cache_bytes_by_variant,
         "maximumCacheBytesByVariant": maximum_cache_bytes,
+        "decodedRowAlignmentBytes": decoded_row_alignment_bytes,
+        "decodedRowBytesByVariant": decoded_row_bytes_by_variant,
         "decodedBytesEstimateByVariant": decoded_bytes_by_variant,
         "maximumWidgetDecodeBytesEstimate": maximum_widget_decode_bytes,
         "widgetDecodeBudgetBytes": widget_decode_budget_bytes,
+        "timelineStaticBudget": {
+            "providerSource": "NekoWidgetWidget/NekoWidgetTimelineProvider.swift",
+            "maximumEntryCount": maximum_timeline_entry_count,
+            "providerStaticChecks": timeline_provider_static_checks,
+            "familyDecodedBytesEstimate": family_timeline_decoded_bytes,
+            "familyDecodedBytesBudget": family_timeline_decode_budget_bytes,
+            "simultaneousThreeFamilyDecodedBytesBudget": (
+                simultaneous_three_family_decode_budget_bytes
+            ),
+            "observedWidgetProcessGuardrail": observed_widget_process_guardrail_bytes,
+            "simultaneousThreeFamilyDecodedBytesEstimate": (
+                simultaneous_three_family_decoded_bytes
+            ),
+            "simultaneousThreeFamilyArithmeticHeadroom": (
+                simultaneous_three_family_arithmetic_headroom_bytes
+            ),
+            "unsafeFamilies": sorted(unsafe_family_timeline_decodes),
+            "scope": (
+                "static estimate from provider entry cap, generated family canvas "
+                "dimensions, and 16-byte decoded row alignment; the three-family "
+                "aggregate/headroom is not a WidgetKit runtime safety proof"
+            ),
+        },
         "historyCurrentGenerationFileCount": len(history_current_generation_files),
         "historyGenerationCount": history_generation_count,
         "historyRetainedFileCount": len(history_retained_files),
@@ -705,10 +873,27 @@ def main() -> int:
             "because the hosted Simulator ships old sample records without "
             "local image resources.",
             "Widget JSONL is optional because adding a widget to the simulated "
-            "Home Screen is outside this headless smoke test."
+            "Home Screen is outside this headless smoke test.",
+            "Timeline decoded-byte checks are static fail-fast estimates. The "
+            "Simulator smoke test does not render an installed Widget timeline "
+            "or enforce the iPhone Widget extension memory limit.",
+            "The simultaneous three-family aggregate and arithmetic headroom "
+            "exclude WidgetKit, SwiftUI, ImageIO transient copies, and other "
+            "process memory; they are diagnostics, not a safety proof."
         ],
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    timeline_budget_path = report_path.with_name("widget-timeline-budget.json")
+    timeline_budget_path.write_text(
+        json.dumps(
+            report["timelineStaticBudget"],
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -737,15 +922,35 @@ def main() -> int:
                 f"Maximum app-side source decode observed: "
                 f"{maximum_input_decoded_bytes / (1024 * 1024):.2f} MiB",
                 "",
-                "| Family | Canvas | Max JPEG | Decode estimate | Render-upscaled CI files |",
-                "| --- | ---: | ---: | ---: | ---: |",
+                f"Provider Timeline entry cap: {maximum_timeline_entry_count}",
+                f"Family Timeline decoded-image safety budget: "
+                f"{family_timeline_decode_budget_bytes / (1024 * 1024):.2f} MiB",
+                f"Three-family simultaneous decode estimate: "
+                f"{simultaneous_three_family_decoded_bytes / (1024 * 1024):.2f} MiB",
+                f"Three-family static decode safety budget: "
+                f"{simultaneous_three_family_decode_budget_bytes / (1024 * 1024):.2f} MiB",
+                f"Arithmetic headroom to 30 MiB: "
+                f"{simultaneous_three_family_arithmetic_headroom_bytes / (1024 * 1024):.2f} MiB",
+                "",
+                "| Family | Canvas | 16-byte row | Max JPEG | One-image decode | "
+                "Max-Timeline decode | Render-upscaled CI files |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
                 *[
                     f"| {variant} | {width}x{height} | "
+                    f"{decoded_row_bytes_by_variant[variant]} B | "
                     f"{maximum_cache_bytes[variant] / 1024:.0f} KiB | "
                     f"{decoded_bytes_by_variant[variant] / (1024 * 1024):.2f} MiB | "
+                    f"{family_timeline_decoded_bytes[variant] / (1024 * 1024):.2f} MiB | "
                     f"{render_upscaled_by_variant[variant]} |"
                     for variant, (width, height) in expected_cache_dimensions.items()
                 ],
+                "",
+                "> CI validates the provider cap and generated artifacts statically. It does "
+                "not place the Widget on the simulated Home Screen, render a real photo "
+                "timeline, or measure Widget extension RSS/jetsam behavior.",
+                "> The three-family aggregate/headroom excludes WidgetKit, SwiftUI, "
+                "ImageIO transient copies, and other process memory. It is not a runtime "
+                "safety proof.",
                 "",
             ]
         ),

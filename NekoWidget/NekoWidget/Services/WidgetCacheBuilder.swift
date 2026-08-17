@@ -25,7 +25,7 @@ actor WidgetCacheBuilder {
     /// The migration-safe maximum is 380 distinct files: new manifest 60,
     /// previous active manifest 60, grace generation 60, three pre-Build-8
     /// family leases of up to 60 each, and the Build-4 legacy lease of 20.
-    /// Round to 400; the new provider writes only 20 files per family lease.
+    /// Round to 400; the bounded provider writes at most 2 files per family lease.
     private static let maximumGenerationCount = 8
     private static let maximumCachedFileCount = 400
     /// PhotoKit returns an aspect-fit local derivative. 2048px keeps a normal

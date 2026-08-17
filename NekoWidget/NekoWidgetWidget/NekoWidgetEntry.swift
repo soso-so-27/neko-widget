@@ -1,9 +1,9 @@
 import Foundation
 import WidgetKit
 
-/// Timeline entries intentionally carry references only. Keeping `Data`, `UIImage`,
-/// or a decoded bitmap here would retain every timeline image at the same time and
-/// quickly exhaust the widget extension's memory budget.
+/// Timeline entries intentionally carry references only. WidgetKit may render
+/// every future entry while accepting a timeline, so the provider also bounds
+/// each timeline to two entries instead of relying on lazy view evaluation.
 struct NekoWidgetEntry: TimelineEntry {
     let date: Date
     let localIdentifier: String?

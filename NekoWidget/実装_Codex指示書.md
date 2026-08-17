@@ -1,7 +1,7 @@
 # ねこのまど v1 実装指示書（Codex向け・改訂版）
 
 発行：2026-08-15
-改訂：2026-08-17（Build 8の計測修復・最終表示／体験・名称を反映）
+改訂：2026-08-17（Build 9の高解像度Timeline負荷修復を反映）
 
 ## 0. これは何か
 
@@ -47,14 +47,14 @@ Build 5の実機確認後、常設のぼかし帯が没入感を損なうと判�
 
 ### 1-5. WidgetKitの制約
 
-サードパーティウィジェットはロック解除ごとの更新を保証できない。1回のタイムライン生成で15〜20件の未来エントリをまとめて返し、10〜30分間隔で切り替える。表示時刻はOS裁量でありbest effort。
+サードパーティウィジェットはロック解除ごとの更新を保証できない。manifestは最大20件を保持するが、高解像度化後は1回のタイムラインを現在＋次の最大2件に制限する。既定20分間隔で切り替え、次々境界を`.after(...)`で要求する。表示時刻はOS裁量でありbest effort。
 
 ### 1-6. Build 6の「これ好き」計測
 
 - Build 5は表示品質と配布の技術検証専用とし、1週間計測には含めない。
 - Build 7ではWidget再配置、3サイズの表示・肉球操作とランダム100枚を確認した。`reviewNo 74`だけを製品候補から除外し、99 / 100を採用した。
 - Build 7で始めた1週間計測は、WidgetのLikeがアプリ総数・一覧へ再スキャンまで反映されない不具合のため2026-08-17に中断した。中断値を製品判断へ使わない。
-- 1週間計測はBuild 8のlike／unlike即時反映ゲート後に、新しいbaselineから明示的に再開する。
+- 1週間計測はBuild 9の2件Timelineとlike／unlike即時反映ゲート後に、新しいbaselineから明示的に再開する。
 - Widget右下の肉球から、アプリを開かずに好き／解除を記録する。
 - 計測開始時点でlikedの全写真を開始時枚数として分離し、アプリで明示した計測開始後のイベントだけを行動計測へ使う。
 - 診断ログとは別に、App Groupへ30日・最大1,000件の操作履歴と、上限等で落とした件数を保持する。
@@ -67,27 +67,27 @@ Build 5の実機確認後、常設のぼかし帯が没入感を損なうと判�
 - Small / Largeで猫union＋余白を物理的に収容できない場合だけ、元写真全体＋同写真のぼかし背景へfallbackする。
 - Mediumは収容不能でもbbox上側35%付近を焦点にfull-bleedを維持し、猫全体が切れることを許容する。
 - Build 8ではsource 2048×2048からSmall 500×500／100KiB、Medium 1050×500／200KiB、Large 1050×1100／220KiBを作り、SF Symbolsではなく共有`CatPawMark`を使う。
-- Subject Lifting、新しい背景ぼかし、Medium 2枚化、saliency、顔・目・姿勢・美的構図理解、新しい選別軸、共有は実装しない。Build 8後は表示・体験変更を凍結して計測へ進む。
+- Subject Lifting、新しい背景ぼかし、Medium 2枚化、saliency、顔・目・姿勢・美的構図理解、新しい選別軸、共有は実装しない。Build 9では画像構図を変えずTimeline負荷だけを直し、その後は表示・体験変更を凍結して計測へ進む。
 - 判断記録は `docs/ADR-005-Widget猫優先full-bleed.md` に残す。
 
 ### 1-8. iCloud Deferredの検証順序
 
 - 実機の`unavailableLocally` 2,586件は「1024px high-quality requestをnetworkなしで満たせない」であり、低解像度ローカル派生もないとは断定しない。
-- Build 8にはiCloud downloadもscanner request変更も入れない。
-- Build 8の計測中はBuild 9 probeを開発・CIまで進めてよいが、測定端末へインストールしない。1週間の結果を回収した後にBuild 9を端末で実行し、採用時はproduction Build 10以降へ反映する。
-- Build 9の技術検証では通常`AppViewModel`を生成せず本番snapshotを変更しない専用rootを使い、Screenshot／burst除外方針を固定した同じ対象へ`512×512 / aspectFit / fastFormat / resizeMode=fast / version=current / network=false`でpaired probeする。fastFormatでは非nilのdegraded画像も最終結果として受理する。
+- Build 9にはiCloud downloadもscanner request変更も入れない。
+- Build 9の計測中はBuild 10 probeを開発・CIまで進めてよいが、測定端末へインストールしない。1週間の結果を回収した後にBuild 10を端末で実行し、採用時はproduction Build 11以降へ反映する。
+- Build 10の技術検証では通常`AppViewModel`を生成せず本番snapshotを変更しない専用rootを使い、Screenshot／burst除外方針を固定した同じ対象へ`512×512 / aspectFit / fastFormat / resizeMode=fast / version=current / network=false`でpaired probeする。fastFormatでは非nilのdegraded画像も最終結果として受理する。
 - 旧解析済み集合の陽性保持率、旧Deferredの回収／新規猫、bbox IoU／中心移動、実出力pixelを分けて報告する。総猫数だけで判定しない。
 - Widgetは最大1050×1100を含むため512pxへ一律変更しない。scanner probe後に現行2048px high-qualityをbaselineとして、非同期fast／local-onlyの2048px要求、nil／inCloud時の1100px要求、degraded非nil受理を別評価する。
 - 同意なしの一括downloadは行わない。ローカル派生でも残る件数に限り、通信量の概算方法と明示同意を設計する。
 - 判断記録は `docs/ADR-006-iCloudローカル派生画像の検証.md` に残す。
 
-### 1-9. Build 8の計測修復と名称
+### 1-9. Build 8の計測修復・名称とBuild 9のTimeline修復
 
 - 製品表示名は`ねこのまど`、App Store Connectのアプリ名は`ねこのまど - 猫の写真ウィジェット`とする。App Store Connectの既存レコード名はコード変更とは別に手動更新する。
 - Widget App IntentはApp GroupのLikeストアへ原子的に保存する。アプリは起動、フォアグラウンド復帰、Deep Link時にLikeストアを読み、更新済みsnapshot全体を再代入してSwiftUIへ通知する。再スキャンを表示同期の条件にしない。
 - 実機ゲートは、Widget肉球ON→アプリを開く（手動スキャン操作なし）→総数+1／一覧／likedAt、Widgetへ戻りOFF→アプリで総数-1／一覧から消える、の順で行う。診断ログのLike同期がscan startより前であることも確認する。これが通るまで計測開始はNO-GOとする。
-- CIが確認するLarge raw decode約4.41MiB／1枚／5MiB guardは静的予算であり、Widget Extension全体の実peak 30MiB未満を保証しない。実機ではSmall→Medium→Largeを段階配置し、描画、切り替え、肉球操作で消失・再読込ループ・クラッシュがないこと、各decodeログが5MiB以下であること、TestFlight crash／iOS AnalyticsにJetsamがないことを確認する。peak数値が必要ならXcode／Instrumentsで測る。
-- 判断記録は `docs/ADR-007-Build8計測修復と最終UX.md` に残す。
+- Build 9はmanifest最大20件を維持し、providerが時刻anchor基準の最大2件だけを返す。CIの1枚5MiB／family別2件10MiBは静的予算であり、Widget Extension全体の実peak 30MiB未満を保証しない。実機ではSmall→Medium→Largeを段階配置し、20分切り替え、次pair取得、肉球操作でplaceholder化・再読込ループ・クラッシュがないこと、TestFlight crash／iOS AnalyticsにJetsamがないことを確認する。
+- 判断記録は `docs/ADR-007-Build8計測修復と最終UX.md` と `docs/ADR-008-高解像度WidgetのTimeline負荷制限.md` に残す。
 
 ## 2. 技術方針
 
@@ -200,9 +200,9 @@ PhotoKitで「うちの子」アルバムを作成し、選別済みのPHAsset�
 - Build 5の`StaticConfiguration`からの更新はTestFlightで既設Widgetを残して確認し、不調時は削除・再追加する。一般公開後に同じ構成方式変更を繰り返さない
 - 将来別写真源を追加するときは、manifest/cache/leaseを写真源namespaceへ分け、action policyをentryへ追加してから有効化する
 - Build 6の肉球ボタンは `Button(intent:)` と、設定Intentとは別の非公開App Intentを使う。Siri / ショートカット連携へは使わない
-- 1回に15〜20枚分の未来エントリを返す
+- manifestは最大20枚の候補を保持するが、1回のtimelineで返す未来エントリは最大2件に制限する
 - 間隔は10〜30分、既定20分
-- 最後のエントリ後に `.atEnd` で次のタイムラインを要求
+- manifest先頭日時をanchorにした時刻moduloで現在と次の候補を選び、2件目の表示区間が終わる次の境界を`.after(...)`で要求する。reload遅延や肉球操作でcadenceを後ろへずらさない
 - exactな更新時刻は保証せずbest effort
 
 ### 5-3. メモリ対策
@@ -214,8 +214,8 @@ PhotoKitで「うちの子」アルバムを作成し、選別済みのPHAsset�
 - Mediumは収容不能でもbbox上側を焦点としたsharp full-bleedを維持する
 - App Groupにはmanifestと画像ファイル名を保存
 - TimelineEntryにJPEG DataやUIImageを保持しない
-- View表示時に現在の1枚だけ読み込み・デコード
-- 1枚の推定デコード量を5MiB以下にguardする。Large raw decode予算は約4.41MiB
+- WidgetKitはtimeline受理時に未来entryをすべて評価し得るため、Viewのlazy評価を前提にしない
+- 1枚の推定デコード量を5MiB以下にguardし、最大2件のfamily別合計を10MiB以下にする。Largeは実機row alignment込みで約4.41MiB／枚、約8.83MiB／2件
 - cacheは最大8 generation／400ファイルとし、全件220KiBと置いた保守的なdisk上限を約85.9MiBに抑える
 - manifestとキャッシュは原子的に更新する
 - データ更新後に `WidgetCenter.shared.reloadAllTimelines()`
@@ -272,7 +272,7 @@ Build 6では唯一の写真源「うちの子」に対して、自分の猫の�
 5. 画像端を超えたら内側へ移動
 6. アプリ内表示へ反映する
 
-Widgetは全猫union＋余白を基準にfamily比率のfull-bleedを本体アプリで事前合成する。Small / Largeの収容不能時だけ同じ写真のぼかし背景＋鮮明なaspect-fitへfallbackし、Mediumはbbox上側へ寄せてfull-bleedを維持する。Widget Extensionは完成済みJPEGを現在の1枚だけデコードし、実行時にクロップやぼかしを行わない。
+Widgetは全猫union＋余白を基準にfamily比率のfull-bleedを本体アプリで事前合成する。Small / Largeの収容不能時だけ同じ写真のぼかし背景＋鮮明なaspect-fitへfallbackし、Mediumはbbox上側へ寄せてfull-bleedを維持する。Widget Extensionは完成済みJPEGだけをデコードし、実行時にクロップやぼかしを行わない。WidgetKitが未来entryを評価する前提で、1回のTimelineは最大2件に制限する。
 
 Subject Lifting、saliency、顔・目・姿勢・美的構図理解は実装しない。
 
@@ -333,7 +333,7 @@ JSONエクスポートでは、App Groupの正本と同じ情報に加え、dete
 - アプリ内表示用の猫中心クロップ
 - JSONエクスポート
 - Small / Medium / Largeウィジェット
-- 15〜20件の未来タイムライン
+- 最大20件のmanifestと、時刻基準で最大2件だけを公開する未来タイムライン
 - 3サイズ専用canvas、猫優先full-bleed、例外時だけの既存ぼかしfallback、100／200／220KiB以下のキャッシュとメモリ対策
 - ウィジェットから写真詳細へのDeep Link
 - App Group共有の診断ログとアプリ内ログ画面
@@ -364,7 +364,7 @@ JSONエクスポートでは、App Groupの正本と同じ情報に加え、dete
 8. JSONを書き出せる
 9. 3サイズの専用画像が通常はsharp full-bleedとなり、Small / Largeは猫union＋余白を守り、Mediumの収容不能時はbbox上側を焦点にし、黒帯や空白がない
 10. 大きな原写真があってもウィジェットがクラッシュしない
-11. タイムラインが15〜20件を先読みし、数十分単位でbest effortに切り替わる
+11. manifest最大20件からタイムラインが現在＋次の最大2件を返し、20分単位でbest effortに切り替わり、次のpairへ進む
 12. ウィジェットタップで該当写真の詳細が開く
 13. アプリとWidgetの主要イベントが同じログ画面で時刻順に読め、コピー・共有・消去できる
 14. App Iconを含むarchiveを作成できる

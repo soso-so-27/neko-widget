@@ -34,8 +34,8 @@ Windowsで生成した「ねこのまど」v1をMacでビルド・署名し、iO
 - `Config.xcconfig`の3識別子を、そのTeamで一意な実値へ置き換えている。Widget Bundle IDはアプリBundle IDに`.widget`などの接尾辞を付け、App Groupは`group.`で始める。
 - WindowsでのCSR／P12作成、Portal登録、2つの配布profile、GitHub Secretsは[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md)に従って完了している。
 - テスト対象の写真はバックアップ済みである。アプリが写真原本を変更・複製しないことも確認対象とする。
-- Build 7の1週間計測は2026-08-17にLike表示不具合で中断済みである。Build 8の手動Like即時反映ゲートが通るまで計測を再開しない。
-- Build 7のdetected無作為100枚は`reviewNo 74`だけを除外し99 / 100を採用済みである。scanner／analysis fingerprintが同じBuild 8では再利用する。
+- Build 7の1週間計測は2026-08-17にLike表示不具合で中断済みである。Build 8はMedium / Largeの高解像度20件Timelineがplaceholder相当になったため、Build 9の手動ゲートが通るまで計測を再開しない。
+- Build 7のdetected無作為100枚は`reviewNo 74`だけを除外し99 / 100を採用済みである。scanner／analysis fingerprintが同じBuild 9では再利用する。
 
 ## 2. Xcode設定とビルド
 
@@ -135,9 +135,9 @@ Large：
 
 ## 8. 20分タイムライン
 
-1. Xcodeのconsoleまたはデバッガで、1回のtimeline生成が未来の15〜20件を返すことを確認する。
-2. entryの日付が既定20分間隔で並び、最後のentry後に`.atEnd`で次回timelineを要求することを確認する。
-3. iPhoneを通常利用しながら数時間観察し、同一timeline内で表示写真がbest effortに切り替わることを確認する。
+1. Xcodeのconsoleまたはデバッガで、manifestは最大20件を保持し、1回のtimeline生成は現在＋次の最大2件だけを返すことを確認する。
+2. 2件目がmanifest anchor基準の次の既定20分境界にあり、その次の境界を`.after(...)`で要求することを確認する。
+3. iPhoneを通常利用しながら数時間観察し、20分後の2件目と、その後の再要求で20件全体の続きへbest effortで切り替わることを確認する。
 4. アプリのデータ更新後にtimeline reloadが要求されることを確認する。
 
 WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わらないこと自体はNGにしない。entry数不足、全entryが同一日時、次回要求なし、または長時間一度も候補が変わらない場合はログを採取する。
@@ -161,11 +161,11 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 
 メモ：
 
-### 9.1 Build 8の計測再開ゲート
+### 9.1 Build 9の計測再開ゲート
 
 この節が通るまで1週間計測は**NO-GO**とする。手動の再スキャン操作を挟まない。
 
-1. Build 8をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
+1. Build 9をインストールし、既設Widgetを削除してSmall / Medium / Largeを再配置する。
 2. アプリを開き、好き総数と一覧を記録してアプリを終了する。
 3. Widgetで未押下写真の肉球をONにする。アプリが開かず、輪郭が塗りつぶしへ変わることを確認する。
 4. 直後にアプリを開く。総数が+1、一覧に同じ写真と`likedAt`が出ることを確認する。
@@ -183,11 +183,11 @@ WidgetKitの更新時刻はOS裁量である。20分ちょうどに切り替わ�
 3. Smallだけを置き、初回描画、timeline切り替え、肉球ON/OFFで消失、再読込ループ、クラッシュがないことを確認する。次にMedium、最後にLargeを追加し、同じ操作を段階的に繰り返す。
 4. Widgetを表示し、XcodeのDebug > Attach to Process by PID or NameからWidget ExtensionプロセスへAttachする。Debug NavigatorのMemoryを各段階で記録する。
 5. メモリがおおむね30MBの制約内に収まり、継続増加、Jetsam、クラッシュがないことを確認する。判断が難しい場合はInstrumentsのAllocationsで再試験する。
-6. Widget側でPhotoKit、Vision、クロップ処理が実行されず、TimelineEntryがJPEG Dataや画像オブジェクトを保持せず、現在の1枚だけを読み込むことをログまたはコードと合わせて確認する。診断ログの推定デコード量が各表示で5MiB以下であることも確認する。
+6. Widget側でPhotoKit、Vision、クロップ処理が実行されず、TimelineEntryがJPEG Dataや画像オブジェクトを保持せず、1回のTimelineが最大2件であることをログまたはコードと合わせて確認する。診断ログの推定デコード量が1枚5MiB以下、family別2件合計10MiB以下であることも確認する。
 7. 「これ好き」の連続操作や再スキャンを繰り返し、旧timelineの表示が途中で空にならないこと、`widget-cache`が最大8 generation／400ファイル、保守的に約85.9MiBを超えて増え続けないことを確認する。
 8. TestFlightのクラッシュ情報とiPhoneの解析データに、確認時刻と一致するWidget crash／Jetsamがないことを確認する。
 
-CIが保証するのはLargeのraw decode約4.41MiB／1枚が5MiB guard内にあるという静的予算までで、Widget Extension全体の実peak 30MiB未満ではない。本節でXcode／Instrumentsの実数値を取り、TestFlightだけの場合は段階配置、診断ログ、クラッシュ／Jetsamなしを確認するが、実peak保証とは表現しない。
+CIが保証するのは1枚5MiB以下、family別最大2件10MiB以下という静的予算までで、Widget Extension全体の実peak 30MiB未満ではない。本節でXcode／Instrumentsの実数値を取り、TestFlightだけの場合は段階配置、診断ログ、クラッシュ／Jetsamなしを確認するが、実peak保証とは表現しない。
 
 結果：`未実施`
 
@@ -222,12 +222,12 @@ CIが保証するのはLargeのraw decode約4.41MiB／1枚が5MiB guard内にあ
 - [ ] 「うちの子」アルバムを作成・更新できた
 - [ ] 写真シャッフルの再設定案内が正しかった
 - [ ] WidgetのSmall / Medium / Largeが表示された
-- [ ] 15〜20件、既定20分間隔のtimelineを確認した
+- [ ] manifest最大20件、公開timeline最大2件、既定20分間隔、次々境界のreloadを確認した
 - [ ] Widgetから正しい写真へDeep Linkできた
 - [ ] Small 500×500px／100KiB以下、Medium 1050×500px／200KiB以下、Large 1050×1100px／220KiB以下のキャッシュを確認した
 - [ ] Widgetのメモリ急増とクラッシュがなかった
 - [ ] App Group共有と「これ好き」の永続化を確認した
-- [ ] Build 8のWidget ON→アプリ+1／一覧／likedAt、Widget OFF→アプリ-1／一覧削除が手動再スキャンなしで通り、Like同期ログがscan startより前だった
+- [ ] Build 9のWidget ON→アプリ+1／一覧／likedAt、Widget OFF→アプリ-1／一覧削除が手動再スキャンなしで通り、Like同期ログがscan startより前だった
 - [ ] AppとWidgetの診断ログを統合表示、コピー、共有、消去できた
 - [ ] プレースホルダーApp Iconがarchiveへ含まれた
 

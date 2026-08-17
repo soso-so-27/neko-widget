@@ -4,7 +4,7 @@
 - 日付：2026-08-16
 - 対象：Build 7の猫優先full-bleedと、Build 8の最終解像度・余白修正
 
-> **2026-08-17追記：** Build 7の表示判断は維持するが、1週間計測はLike表示不具合で中断した。Build 8で実ピクセル相当へ高解像度化し、余白を18%から8%へ縮め、独自の猫の肉球へ置き換えた後、表示・体験変更を凍結する。計測再開条件は[ADR-007](ADR-007-Build8計測修復と最終UX.md)を正本とする。
+> **2026-08-17追記：** Build 7の表示判断は維持するが、1週間計測はLike表示不具合で中断した。Build 8で実ピクセル相当へ高解像度化したところ、20件Timelineの累積描画負荷でMedium / Largeがplaceholder相当になった。画像仕様は維持し、Build 9でTimelineを最大2件へ制限する。[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)をresource設計の正本とする。
 
 ## 背景
 
@@ -42,7 +42,7 @@ Build 7で採用した共通仕様は次のとおりだった。
 - cache algorithm：`cat-aware-full-bleed-v5`
 - 肉球：SF Symbolsの`pawprint`ではなく、指球を小さく丸く寄せ、掌球を横長にした共有`CatPawMark`
 - cache保持：最大8 generation、最大400ファイル。全ファイルを最大220KiBと置く保守的なdisk上限は約85.9MiB
-- Widget側：現在表示するJPEG 1枚だけを読み込み、推定デコード量が5MiBを超える画像は受理しない
+- Widget側：1枚の推定デコード量が5MiBを超える画像は受理せず、providerは1回のTimelineを最大2件へ制限する
 
 Build 8のCIでは、同じ生成候補に対して余白8%で実際に選んだ経路と、旧18%なら選ばれた経路を影計算する。artifactへ両方のfallback件数を残し、1つの数字の変更で例外ぼかしがどれだけ減ったかを比較する。これは新しいぼかし処理の追加ではない。
 
@@ -75,7 +75,7 @@ PhotoKitの`modificationDate`と、その値を取得済みかを示すmarkerを
 - 日付、場所、個体などの新しい選別軸
 - 共有機能
 
-Build 8の修正と実機ゲート後、Widget表示と写真詳細体験の改善は打ち止めとし、1週間の行動計測を新しいbaselineから始める。ローカル派生画像probeは1週間後のInternal Build 9へ送り、採用時のproduction反映はBuild 10以降とする。主観的にApple Photosより美しくないことだけを理由に再実装しない。
+Build 8で画像構図と写真詳細体験の改善を打ち止めとする。Build 9は高解像度Timelineのresource負荷だけを修復し、実機ゲート後に1週間の行動計測を新しいbaselineから始める。ローカル派生画像probeは1週間後のInternal Build 10へ送り、採用時のproduction反映はBuild 11以降とする。主観的にApple Photosより美しくないことだけを理由に再実装しない。
 
 ## 受け入れ条件
 
@@ -84,8 +84,8 @@ Build 8の修正と実機ゲート後、Widget表示と写真詳細体験の改�
 - Small / Largeで収容不能な場合だけ、猫全体を残すぼかしfallbackになる
 - Mediumは収容不能でもfull-bleedを維持し、bboxの上側を焦点にする
 - Vision座標の上下反転、写真の回転・伸長・縦横比破壊がない
-- 3 familyが500×500／1050×500／1050×1100で、JPEGが100／200／220KiB以下となり、15〜20件のtimeline、App Group leaseと原子的publishを維持する
-- source requestが2048×2048で、Widgetは表示中の1枚だけを5MiB以下でデコードする
+- 3 familyが500×500／1050×500／1050×1100で、JPEGが100／200／220KiB以下となり、最大20件のmanifest、App Group leaseと原子的publishを維持する
+- source requestが2048×2048で、Widgetは1枚を5MiB以下、最大2件のTimeline合計をfamilyごとに10MiB以下でデコードする
 - cacheが8 generation／400ファイル、保守的に約85.9MiB以下で上限管理される
 - cache生成ログにalgorithmとfull-bleed／上寄り／fallbackの生成件数、8%と旧18%のfallback比較を残す
 - `CatPawMark`が約20pxで猫の肉球として見え、未押下／押下済みを輪郭／塗りつぶしで区別できる

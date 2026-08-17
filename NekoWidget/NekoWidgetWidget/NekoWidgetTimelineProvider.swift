@@ -3,6 +3,12 @@ import Foundation
 import WidgetKit
 
 struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
+    /// WidgetKit renders every future entry when accepting a timeline. Keeping
+    /// this bounded prevents Medium and Large's high-resolution canvases from
+    /// exceeding the timeline render budget while preserving the 20-photo
+    /// manifest as the rotation source.
+    private static let maximumTimelineEntryCount = 2
+
     func placeholder(in context: Context) -> NekoWidgetEntry {
         .empty(at: Date(), imageVariant: imageVariant(for: context.family))
     }
@@ -16,7 +22,15 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let source = configuration.photoSource ?? .personalLibrary
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
-        guard let item = items.last(where: { $0.scheduledDate <= now }) ?? items.first else {
+        let item = normalizedSchedule(
+            items,
+            now: now,
+            preferredLocalIdentifier: recentlyChangedLikeIdentifier(
+                in: likeState.records,
+                relativeTo: now
+            )
+        ).entries.first?.item
+        guard let item else {
             SharedLog.widget.warning(
                 "timeline",
                 "Snapshot requested without an available cache item",
@@ -67,7 +81,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
 
         guard !items.isEmpty else {
             // The app explicitly reloads timelines after publishing a manifest.
-            // Avoid an already-expired `.atEnd` loop while the shared cache is empty.
+            // Avoid an immediate reload loop while the shared cache is empty.
             SharedLog.widget.warning(
                 "timeline",
                 "Timeline requested without available cache items",
@@ -88,10 +102,11 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             )
         }
 
-        // The app-side builder owns both count and cadence. Rebase its relative
-        // schedule to this provider invocation so every timeline still returns
-        // the full configured 15–20 entries even when WidgetKit delays reload.
-        let scheduledItems = normalizedSchedule(
+        // WidgetKit renders every future entry before accepting the timeline.
+        // Keep only two high-resolution canvases resident per request. Anchor
+        // their transition and reload dates to the manifest schedule so delayed
+        // WidgetKit reloads cannot gradually shift the rotation cadence.
+        let schedule = normalizedSchedule(
             items,
             now: now,
             preferredLocalIdentifier: recentlyChangedLikeIdentifier(
@@ -99,6 +114,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 relativeTo: now
             )
         )
+        let scheduledItems = schedule.entries
+        let reloadDate = schedule.reloadDate
         let entries = scheduledItems.map { item, date in
             return NekoWidgetEntry(
                 date: date,
@@ -127,13 +144,15 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             "Future timeline prepared",
             metadata: [
                 "entries": "\(entries.count)",
+                "maximumEntries": "\(Self.maximumTimelineEntryCount)",
+                "nextReload": ISO8601DateFormatter().string(from: reloadDate),
                 "photoSource": source.id,
                 "preview": "\(context.isPreview)",
                 "uniqueFiles": "\(Set(entries.compactMap(\.cacheFilename)).count)",
                 "variant": variant.rawValue
             ]
         )
-        return Timeline(entries: entries, policy: .atEnd)
+        return Timeline(entries: entries, policy: .after(reloadDate))
     }
 
     private func availableItems(
@@ -182,34 +201,57 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         _ items: [WidgetManifestItem],
         now: Date,
         preferredLocalIdentifier: String?
-    ) -> [(WidgetManifestItem, Date)] {
-        guard !items.isEmpty else { return [] }
+    ) -> (
+        entries: [(item: WidgetManifestItem, date: Date)],
+        reloadDate: Date
+    ) {
+        let defaultCadence: TimeInterval = 20 * 60
+        guard !items.isEmpty else {
+            return (
+                entries: [],
+                reloadDate: now.addingTimeInterval(
+                    TimeInterval(Self.maximumTimelineEntryCount) * defaultCadence
+                )
+            )
+        }
 
         // A like intent writes its changedAt before asking WidgetKit to reload.
-        // Prefer that asset so feedback applies to the photo the user actually
-        // tapped, even after the manifest's original six-hour schedule expires.
-        // Otherwise preserve the active item while still inside that schedule.
-        let startIndex: Int
-        if let preferredLocalIdentifier,
-           let preferredIndex = items.firstIndex(where: {
-               $0.localIdentifier == preferredLocalIdentifier
-           }) {
-            startIndex = preferredIndex
-        } else if let last = items.last,
-                  now <= last.scheduledDate,
-                  let activeIndex = items.lastIndex(where: {
-                      $0.scheduledDate <= now
-                  }) {
-            startIndex = activeIndex
-        } else {
-            startIndex = 0
-        }
-
-        let orderedItems = Array(items[startIndex...]) + Array(items[..<startIndex])
+        // Override only the current entry so feedback applies to the photo the
+        // user tapped. The next item and all boundaries remain time-based;
+        // repeated taps therefore cannot move the long-running cadence.
         let cadence = timelineCadence(in: items)
-        return orderedItems.enumerated().map { offset, item in
-            (item, now.addingTimeInterval(TimeInterval(offset) * cadence))
+        let anchor = items[0].scheduledDate
+        let elapsed = max(0, now.timeIntervalSince(anchor))
+        let elapsedSlots = Int(floor(elapsed / cadence))
+        let timeBasedStartIndex = elapsedSlots % items.count
+        let preferredItem = preferredLocalIdentifier.flatMap { identifier in
+            items.first(where: { $0.localIdentifier == identifier })
         }
+        let candidates = (0..<items.count).map { offset in
+            let item: WidgetManifestItem
+            if offset == 0, let preferredItem {
+                item = preferredItem
+            } else {
+                item = items[(timeBasedStartIndex + offset) % items.count]
+            }
+            let date: Date
+            if offset == 0 {
+                date = now
+            } else {
+                date = anchor.addingTimeInterval(
+                    TimeInterval(elapsedSlots + offset) * cadence
+                )
+            }
+            return (item: item, date: date)
+        }
+        let entries = candidates
+            .prefix(Self.maximumTimelineEntryCount)
+            .map { $0 }
+        let reloadSlot = elapsedSlots + Self.maximumTimelineEntryCount
+        let reloadDate = anchor.addingTimeInterval(
+            TimeInterval(reloadSlot) * cadence
+        )
+        return (entries: entries, reloadDate: reloadDate)
     }
 
     private func timelineCadence(in items: [WidgetManifestItem]) -> TimeInterval {

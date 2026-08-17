@@ -2,9 +2,9 @@
 
 - 状態：実験待ち
 - 日付：2026-08-16
-- 対象：Build 8の1週間計測後、Internal TestFlight Build 9で行うdeferred対策の事前検証
+- 対象：Build 9の1週間計測後、Internal TestFlight Build 10で行うdeferred対策の事前検証
 
-> **2026-08-17日程変更：** Build 8はLike表示の計測修復と最終UXへ使う。paired probeはInternal Build 9へ後ろ倒しし、採用時のproduction反映はBuild 10以降とする。実験内容と事前に固定した判定線は変更しない。
+> **2026-08-17日程変更：** Build 8はLike表示と最終UXを修復したが、20件Timelineの高解像度描画負荷により計測を再開できなかった。Build 9でTimelineを修復して1週間計測を完了し、paired probeはInternal Build 10、採用時のproduction反映はBuild 11以降とする。実験内容と事前に固定した判定線は変更しない。
 
 ## 背景
 
@@ -14,7 +14,7 @@
 
 ## 判断
 
-ユーザー同意を伴うiCloud downloadはまだ実装しない。Build 8ではLike表示の修復と最終UXだけを入れ、現状の検出済み898枚で1週間計測を新しいbaselineから取り直す。計測中はBuild 9 probeの実装とCIまで進めてよいが、測定端末へTestFlight buildをインストールせず、Widget再配置や写真露出集合の変更で計測を濁らせない。1週間の結果を回収した後、Build 9をInternal TestFlight専用の技術検証buildとして端末へ入れ、本番snapshotを変更しないpaired probeを1回実行する。probe結果を採用する場合も、通常scanner／Widgetへ反映するのは後続production Build 10以降とし、実験コードをそのままproduction経路へ混ぜない。
+ユーザー同意を伴うiCloud downloadはまだ実装しない。Build 9ではTimeline resource修復だけを行い、現状の検出済み898枚で1週間計測を新しいbaselineから取り直す。計測中はBuild 10 probeの実装とCIまで進めてよいが、測定端末へTestFlight buildをインストールせず、Widget再配置や写真露出集合の変更で計測を濁らせない。1週間の結果を回収した後、Build 10をInternal TestFlight専用の技術検証buildとして端末へ入れ、本番snapshotを変更しないpaired probeを1回実行する。probe結果を採用する場合も、通常scanner／Widgetへ反映するのは後続production Build 11以降とし、実験コードをそのままproduction経路へ混ぜない。
 
 probeのrequestは次とする。
 
@@ -31,7 +31,7 @@ probeのrequestは次とする。
 
 ## 非破壊の比較方法
 
-Build 9はprobe専用のroot UIを使い、通常の`AppViewModel`と本番scannerを生成しない。開始時の`LibrarySnapshot`をbaselineとして固定し、probe結果を本番snapshot、アルバム、Widget cache、Likeストアへ書かない。対象は現snapshotの8,125件（8,861 − Screenshot 736。現在のburst重複は0）とし、静止画、Screenshot、burstの選別policyをbaselineと固定する。結果は`experiments/<runID>/checkpoint.json`と最終JSONだけへ保存する。本番snapshotファイルは実行前にbackupし、byte列のSHA-256を実行前後で照合し、不一致なら失敗としてbackupから復旧できる状態にする。
+Build 10はprobe専用のroot UIを使い、通常の`AppViewModel`と本番scannerを生成しない。開始時の`LibrarySnapshot`をbaselineとして固定し、probe結果を本番snapshot、アルバム、Widget cache、Likeストアへ書かない。対象は現snapshotの8,125件（8,861 − Screenshot 736。現在のburst重複は0）とし、静止画、Screenshot、burstの選別policyをbaselineと固定する。結果は`experiments/<runID>/checkpoint.json`と最終JSONだけへ保存する。本番snapshotファイルは実行前にbackupし、byte列のSHA-256を実行前後で照合し、不一致なら失敗としてbackupから復旧できる状態にする。
 
 status比較のAは2026-08-16の固定snapshot、Bは同じassetに対する512 fast probeとする。一方、bbox差は時間差による編集やPhotoKit派生差を混ぜないため、旧detected 898件に限り現行`1024×1024 / highQualityFormat / resizeMode=fast / version=current / network=false`を同じprobe実行中に再要求する。JSON上の正本名は前者を`statusBaselineSnapshot`、後者を`bboxBaseline1024Current`として混同を防ぐ。A/Bで`localIdentifier`、`pixelWidth×pixelHeight`、`modificationDate`が一致するassetだけをbbox比較へ含め、probe中に削除・編集されて比較対象外になった件数も報告する。
 

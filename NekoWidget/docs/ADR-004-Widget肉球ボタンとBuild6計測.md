@@ -2,9 +2,9 @@
 
 - 状態：承認済み
 - 日付：2026-08-16
-- 対象：TestFlight Build 6以降（Build 7の計測は中断、再開buildはBuild 8）
+- 対象：TestFlight Build 6以降（Build 7の計測は中断、Build 8の表示ゲートは失敗、再開候補はBuild 9）
 
-> **2026-08-17追記：** Build 7で計測を開始したが、Widgetで保存したLikeがアプリの総数・一覧へ再スキャンまで反映されない表示通知不具合のため中断した。Build 8の修復、再開条件、最終表示・体験範囲は[ADR-007](ADR-007-Build8計測修復と最終UX.md)を正本とする。本書のBuild 7開始記述は当時の判断履歴として読む。
+> **2026-08-17追記：** Build 7で計測を開始したが、Widgetで保存したLikeがアプリの総数・一覧へ再スキャンまで反映されない表示通知不具合のため中断した。Build 8でLike同期は直したが高解像度20件TimelineによりMedium / Largeの表示ゲートが失敗した。Build 9の再開条件は[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)を正本とする。本書のBuild 7／8開始記述は当時の判断履歴として読む。
 
 ## 背景
 
@@ -20,7 +20,7 @@ Build 6で肉球操作と保存境界を導入し、Build 7で[ADR-005](ADR-005-
 
 Build 8では、WidgetのLikeストアへの原子的保存は維持し、アプリの起動・フォアグラウンド復帰・Deep Link時に共有Likeを読み、更新後のsnapshot全体を明示的に再代入する。手動再スキャンなしの押下／解除即時反映ゲートを通過した後、ゲート中のイベントを除外して新しいbaselineから1週間計測を再開する。
 
-Deferred 2,586件はcoverage gapとして開始時に固定記録するが、898枚の検出済み写真があるため計測開始を阻害しない。この状態で得るengagementは、古い写真が追加された将来状態に対して控えめな値になり得る。[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のpaired probeはBuild 8へ含めず、1週間後のInternal Build 9で実行し、採用時はproduction Build 10以降へ反映する。
+Deferred 2,586件はcoverage gapとして開始時に固定記録するが、898枚の検出済み写真があるため計測開始を阻害しない。この状態で得るengagementは、古い写真が追加された将来状態に対して控えめな値になり得る。[ADR-006](ADR-006-iCloudローカル派生画像の検証.md)のpaired probeはBuild 9へ含めず、1週間後のInternal Build 10で実行し、採用時はproduction Build 11以降へ反映する。
 
 - Small / Medium / Largeの右下へ、iOS 17の `Button(intent:)` による肉球ボタンを置く。
 - 未押下は輪郭、押下済みは塗りつぶしとし、再タップで解除する。Build 8ではSF Symbolsの`pawprint`ではなく、猫の指球と掌球の比率を持つ共有`CatPawMark`を使う。
@@ -51,9 +51,9 @@ Build 6の初回同期では、Build 5以前のlikesを移行してWidget操作�
 
 開始操作ではゲート中のイベントを消去し、その時点のlikesをbaselineにする。操作イベントは30日かつ最大1,000件を保持し、削除した件数も記録する。SharedLogにも同じ操作を短い写真token付きで記録するが、診断ログはrotationするため、1週間集計の正本には永続イベント履歴を使う。開始時点の既存likesを新規獲得へ数えず、削除件数が0でない集計は完全な1週間データとして扱わない。
 
-## Build 8で計測を再開する実機ゲート
+## Build 9で計測を再開する実機ゲート
 
-1週間計測を取り直す前に、TestFlight Build 8上で次をすべて確認する。Build 7で完了済みのランダム100枚は、scanner／analysis fingerprintを変えない限り再実施しない。
+1週間計測を取り直す前に、TestFlight Build 9上で次をすべて確認する。Build 7で完了済みのランダム100枚は、scanner／analysis fingerprintを変えない限り再実施しない。
 
 - 3サイズすべてで肉球が右下に表示される。
 - 輪郭から塗りつぶしへ変わり、再タップで輪郭へ戻る。
@@ -64,7 +64,7 @@ Build 6の初回同期では、Build 5以前のlikesを移行してWidget操作�
 - 同じ写真をWidgetで解除し、再びアプリを開く。手動再スキャンなしで総数が1減り、一覧から消える。
 - 診断ログと検証JSONのイベント履歴が一致する。
 - 診断ログで共有Like同期が`Scan generation started`より前に実行されたことを確認する。この順序を含む即時反映ゲートが通るまで計測はNO-GOとする。
-- Build 8インストール後、既設Widgetを削除し、Small / Medium / Largeを再配置して新しいcacheと設定Intentを使う。
+- Build 9インストール後、既設Widgetを削除し、Small / Medium / Largeを再配置して最大2件Timelineと新しいcacheを使う。
 - 長押しして「ウィジェットを編集」を開くと、写真源が「うちの子（自分のカメラロール）」として解決される。
 - 同じサイズまたは異なるサイズを複数配置しても、各配置が独立した設定Intentでtimelineを取得する。
 - Build 7の確定snapshotと同じscanner／analysis fingerprintであることを確認し、完了済み99 / 100のPrecision標本を再利用する。scannerが変わっていれば検証JSONを書き出し、ランダム100枚をやり直す。

@@ -4,11 +4,12 @@ import UIKit
 
 enum WidgetCacheImageLoader {
     private static let absoluteMaximumPixelSize = 1_100
-    /// 1100x1100 BGRA is about 4.62 MiB. Keeping one decoded thumbnail below
-    /// 5 MiB leaves the Widget extension substantial headroom under 30 MiB.
+    /// 1100x1100 BGRA is about 4.62 MiB. This per-image guard complements the
+    /// provider's two-entry timeline cap; it is not an aggregate process limit.
     private static let maximumDecodedByteEstimate = 5 * 1_024 * 1_024
 
-    /// Decodes only the image used by the current entry. ImageIO also caps the
+    /// Decodes the image referenced by one entry. WidgetKit may evaluate both
+    /// bounded future entries while accepting a timeline. ImageIO also caps the
     /// decoded dimensions defensively if a malformed or stale cache file is larger
     /// than the family-specific JPEG output expected from the app.
     static func image(cacheFilename: String, maximumPixelSize: Int) -> UIImage? {
