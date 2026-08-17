@@ -416,8 +416,8 @@ jobs:
           app_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$app_path/Info.plist")"
           widget_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$widget_path/Info.plist")"
 
-          [[ "$app_display_name" == "猫が主役" ]]
-          [[ "$widget_display_name" == "猫が主役" ]]
+          [[ "$app_display_name" == "ねこのまど" ]]
+          [[ "$widget_display_name" == "ねこのまど" ]]
           [[ "$app_device_family" == "1" ]]
           [[ "$widget_device_family" == "1" ]]
           if /usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:1' "$app_path/Info.plist" >/dev/null 2>&1; then
