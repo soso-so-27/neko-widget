@@ -391,6 +391,18 @@ jobs:
             "OTHER_CODE_SIGN_FLAGS=--keychain $CI_KEYCHAIN_PATH" \
             archive
 
+      - name: Validate sharing privacy and export gates
+        shell: bash
+        env:
+          SHARING_EXPORT_REVIEWED: ${{ vars.SHARING_EXPORT_REVIEWED }}
+        run: |
+          set -euo pipefail
+          app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
+          python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
+            --info-plist "$app_path/Info.plist" \
+            --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
+            --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}"
+
       - name: Verify archive signatures and App Group entitlements
         shell: bash
         env:

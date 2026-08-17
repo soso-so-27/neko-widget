@@ -39,6 +39,33 @@ jobs:
           test -d "$DEVELOPER_DIR"
           xcodebuild -version
 
+      - name: Verify Swift pairing protocol vectors
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            ci/verify-pairing-protocol-vectors.swift \
+            -o "$RUNNER_TEMP/verify-pairing-protocol-vectors"
+          "$RUNNER_TEMP/verify-pairing-protocol-vectors" \
+            ci/fixtures/pairing-protocol-v1.json
+
+      - name: Verify Swift pairing API response contract
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            NekoWidget/Services/PairingAPIClient.swift \
+            ci/verify-pairing-api-responses.swift \
+            -o "$RUNNER_TEMP/verify-pairing-api-responses"
+          "$RUNNER_TEMP/verify-pairing-api-responses" \
+            ci/fixtures/pairing-api-v1-responses.json
+
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget
         shell: bash

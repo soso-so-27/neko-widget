@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "create": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "dailyBoundaryMinuteUTC": 540,
+    "member": {
+      "id": "MTIzNDU2Nzg5Ojs8PT4_QA",
+      "role": "owner",
+      "state": "active",
+      "participantId": "QUJDREVGR0hJSktMTU5PUA",
+      "agreementPublicKey": "rUOL-uMfbAk9YdQzklXqeYCSyfrdB7l4J_Swrp3ufBw",
+      "signingPublicKey": "dSnEVtk40rj-kPpsz5FtNGdwpkvLt7UyO2h6zeIM0Aw"
+    },
+    "invitation": {
+      "id": "ERITFBUWFxgZGhscHR4fIA",
+      "state": "open",
+      "expiresAt": 1787058000
+    }
+  },
+  "challenge": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "dailyBoundaryMinuteUTC": 540,
+    "invitationId": "ERITFBUWFxgZGhscHR4fIA",
+    "challenge": {
+      "id": "cXJzdHV2d3h5ent8fX5_gA",
+      "value": "gYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6A",
+      "expiresAt": 1786971900
+    },
+    "inviter": {
+      "id": "MTIzNDU2Nzg5Ojs8PT4_QA",
+      "participantId": "QUJDREVGR0hJSktMTU5PUA",
+      "agreementPublicKey": "rUOL-uMfbAk9YdQzklXqeYCSyfrdB7l4J_Swrp3ufBw",
+      "signingPublicKey": "dSnEVtk40rj-kPpsz5FtNGdwpkvLt7UyO2h6zeIM0Aw"
+    }
+  },
+  "enrollment": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "dailyBoundaryMinuteUTC": 540,
+    "member": {
+      "id": "UVJTVFVWV1hZWltcXV5fYA",
+      "role": "invitee",
+      "state": "pending",
+      "participantId": "YWJjZGVmZ2hpamtsbW5vcA",
+      "agreementPublicKey": "SJzrunoWbGGYNf4S7txYHb_Bs23hDIMOTwvBxIc0hks",
+      "signingPublicKey": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA"
+    },
+    "enrollment": {
+      "id": "ISIjJCUmJygpKissLS4vMA",
+      "state": "pendingApproval",
+      "createdAt": 1786971600,
+      "expiresAt": 1787058000,
+      "transcript": "AAtOVzEuUEFJUklORwABMQAWQVFJREJBVUdCd2dKQ2dzTURRNFBFQQAWRVJJVEZCVVdGeGdaR2hzY0hSNGZJQQAWSVNJakpDVW1KeWdwS2lzc0xTNHZNQQADNTQwABZNVEl6TkRVMk56ZzVPanM4UFQ0X1FBABZRVUpEUkVWR1IwaEpTa3RNVFU1UFVBACtyVU9MLXVNZmJBazlZZFF6a2xYcWVZQ1N5ZnJkQjdsNEpfU3dycDN1ZkJ3ACtkU25FVnRrNDByai1rUHBzejVGdE5HZHdwa3ZMdDdVeU8yaDZ6ZUlNMEF3ABZVVkpUVkZWV1YxaFpXbHRjWFY1ZllBABZZV0pqWkdWbVoyaHBhbXRzYlc1dmNBACtTSnpydW5vV2JHR1lOZjRTN3R4WUhiX0JzMjNoRElNT1R3dkJ4SWMwaGtzACs1X0Zpb1F2c1Zaci1vWlhrM09oTGFWYU5YU3l3bGo2MFJzQm9YaXNYOHZB",
+      "transcriptHash": "BPtsGpny5rvgsyKoEokdPoEmLfnlG2TlWM5ZJhGkdvI"
+    }
+  },
+  "pending": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "pending": [
+      {
+        "id": "ISIjJCUmJygpKissLS4vMA",
+        "state": "pendingApproval",
+        "createdAt": 1786971600,
+        "expiresAt": 1787058000,
+        "transcript": "AAtOVzEuUEFJUklORwABMQAWQVFJREJBVUdCd2dKQ2dzTURRNFBFQQAWRVJJVEZCVVdGeGdaR2hzY0hSNGZJQQAWSVNJakpDVW1KeWdwS2lzc0xTNHZNQQADNTQwABZNVEl6TkRVMk56ZzVPanM4UFQ0X1FBABZRVUpEUkVWR1IwaEpTa3RNVFU1UFVBACtyVU9MLXVNZmJBazlZZFF6a2xYcWVZQ1N5ZnJkQjdsNEpfU3dycDN1ZkJ3ACtkU25FVnRrNDByai1rUHBzejVGdE5HZHdwa3ZMdDdVeU8yaDZ6ZUlNMEF3ABZVVkpUVkZWV1YxaFpXbHRjWFY1ZllBABZZV0pqWkdWbVoyaHBhbXRzYlc1dmNBACtTSnpydW5vV2JHR1lOZjRTN3R4WUhiX0JzMjNoRElNT1R3dkJ4SWMwaGtzACs1X0Zpb1F2c1Zaci1vWlhrM09oTGFWYU5YU3l3bGo2MFJzQm9YaXNYOHZB",
+        "transcriptHash": "BPtsGpny5rvgsyKoEokdPoEmLfnlG2TlWM5ZJhGkdvI",
+        "member": {
+          "id": "UVJTVFVWV1hZWltcXV5fYA",
+          "role": "invitee",
+          "state": "pending",
+          "participantId": "YWJjZGVmZ2hpamtsbW5vcA",
+          "agreementPublicKey": "SJzrunoWbGGYNf4S7txYHb_Bs23hDIMOTwvBxIc0hks",
+          "signingPublicKey": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA"
+        }
+      }
+    ]
+  },
+  "statusApprovedInvitee": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "dailyBoundaryMinuteUTC": 540,
+    "member": {
+      "id": "UVJTVFVWV1hZWltcXV5fYA",
+      "role": "invitee",
+      "state": "pending",
+      "participantId": "YWJjZGVmZ2hpamtsbW5vcA",
+      "agreementPublicKey": "SJzrunoWbGGYNf4S7txYHb_Bs23hDIMOTwvBxIc0hks",
+      "signingPublicKey": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA"
+    },
+    "pairing": {
+      "state": "approvedAwaitingCompletion",
+      "enrollment": {
+        "id": "ISIjJCUmJygpKissLS4vMA",
+        "createdAt": 1786971600,
+        "expiresAt": 1787058000,
+        "transcript": "AAtOVzEuUEFJUklORwABMQAWQVFJREJBVUdCd2dKQ2dzTURRNFBFQQAWRVJJVEZCVVdGeGdaR2hzY0hSNGZJQQAWSVNJakpDVW1KeWdwS2lzc0xTNHZNQQADNTQwABZNVEl6TkRVMk56ZzVPanM4UFQ0X1FBABZRVUpEUkVWR1IwaEpTa3RNVFU1UFVBACtyVU9MLXVNZmJBazlZZFF6a2xYcWVZQ1N5ZnJkQjdsNEpfU3dycDN1ZkJ3ACtkU25FVnRrNDByai1rUHBzejVGdE5HZHdwa3ZMdDdVeU8yaDZ6ZUlNMEF3ABZVVkpUVkZWV1YxaFpXbHRjWFY1ZllBABZZV0pqWkdWbVoyaHBhbXRzYlc1dmNBACtTSnpydW5vV2JHR1lOZjRTN3R4WUhiX0JzMjNoRElNT1R3dkJ4SWMwaGtzACs1X0Zpb1F2c1Zaci1vWlhrM09oTGFWYU5YU3l3bGo2MFJzQm9YaXNYOHZB",
+        "transcriptHash": "BPtsGpny5rvgsyKoEokdPoEmLfnlG2TlWM5ZJhGkdvI"
+      },
+      "peer": {
+        "id": "MTIzNDU2Nzg5Ojs8PT4_QA",
+        "role": "owner",
+        "state": "active",
+        "participantId": "QUJDREVGR0hJSktMTU5PUA",
+        "agreementPublicKey": "rUOL-uMfbAk9YdQzklXqeYCSyfrdB7l4J_Swrp3ufBw",
+        "signingPublicKey": "dSnEVtk40rj-kPpsz5FtNGdwpkvLt7UyO2h6zeIM0Aw"
+      },
+      "keyEnvelope": {
+        "algorithm": "X25519-HKDF-SHA256-CHACHA20POLY1305",
+        "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "approvalSignature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "approvedAt": 1786971660
+      }
+    }
+  },
+  "approve": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "enrollmentId": "ISIjJCUmJygpKissLS4vMA",
+    "state": "approvedAwaitingCompletion",
+    "approvedAt": 1786971660
+  },
+  "complete": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "enrollmentId": "ISIjJCUmJygpKissLS4vMA",
+    "memberId": "UVJTVFVWV1hZWltcXV5fYA",
+    "state": "active",
+    "activatedAt": 1786971700
+  },
+  "cancel": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "enrollmentId": "ISIjJCUmJygpKissLS4vMA",
+    "memberId": "UVJTVFVWV1hZWltcXV5fYA",
+    "state": "cancelled"
+  },
+  "revoke": {
+    "protocolVersion": 1,
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "state": "revoked",
+    "deletionState": "pending"
+  }
+}

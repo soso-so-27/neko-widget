@@ -22,6 +22,8 @@
 		10000000000000000000000D /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
 		10000000000000000000000E /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		10000000000000000000000F /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
+		100000000000000000000140 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
+		100000000000000000000141 /* PairingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A1 /* PairingKeychainStore.swift */; };
 		100000000000000000000101 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000201 /* AppRootView.swift */; };
 		100000000000000000000102 /* NekoWidgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000202 /* NekoWidgetApp.swift */; };
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
@@ -35,6 +37,9 @@
 		100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000218 /* WidgetCacheBuilder.swift */; };
 		100000000000000000000119 /* AppLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000219 /* AppLogStore.swift */; };
 		100000000000000000000120 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000220 /* AppViewModel.swift */; };
+		100000000000000000000142 /* PairingInstallationGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021A /* PairingInstallationGuard.swift */; };
+		100000000000000000000143 /* PairingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021B /* PairingAPIClient.swift */; };
+		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
 		100000000000000000000132 /* LikedPhotosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000232 /* LikedPhotosView.swift */; };
@@ -44,6 +49,7 @@
 		100000000000000000000136 /* ScanStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000236 /* ScanStatusView.swift */; };
 		100000000000000000000137 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000237 /* SettingsView.swift */; };
 		100000000000000000000138 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000238 /* LogView.swift */; };
+		100000000000000000000145 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000239 /* PairingView.swift */; };
 		100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */; };
 		10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
@@ -53,6 +59,8 @@
 		200000000000000000000005 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		200000000000000000000006 /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		200000000000000000000007 /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
+		200000000000000000000019 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
+		20000000000000000000001A /* PairingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A1 /* PairingKeychainStore.swift */; };
 		200000000000000000000010 /* NekoWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000310 /* NekoWidget.swift */; };
 		200000000000000000000011 /* NekoWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000311 /* NekoWidgetBundle.swift */; };
 		200000000000000000000012 /* NekoWidgetEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000312 /* NekoWidgetEntry.swift */; };
@@ -129,6 +137,8 @@
 		F0000000000000000000010D /* SharedLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLog.swift; sourceTree = "<group>"; };
 		F0000000000000000000010E /* SharedLikeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLikeStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000010F /* CatPawMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPawMark.swift; sourceTree = "<group>"; };
+		F000000000000000000001A0 /* PairingCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingCore.swift; sourceTree = "<group>"; };
+		F000000000000000000001A1 /* PairingKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingKeychainStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -146,6 +156,9 @@
 		F00000000000000000000218 /* WidgetCacheBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetCacheBuilder.swift; sourceTree = "<group>"; };
 		F00000000000000000000219 /* AppLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000220 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		F0000000000000000000021A /* PairingInstallationGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingInstallationGuard.swift; sourceTree = "<group>"; };
+		F0000000000000000000021B /* PairingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingAPIClient.swift; sourceTree = "<group>"; };
+		F00000000000000000000221 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
 		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F00000000000000000000232 /* LikedPhotosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LikedPhotosView.swift; sourceTree = "<group>"; };
@@ -155,6 +168,7 @@
 		F00000000000000000000236 /* ScanStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanStatusView.swift; sourceTree = "<group>"; };
 		F00000000000000000000237 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F00000000000000000000238 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		F00000000000000000000239 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
@@ -265,6 +279,7 @@
 				B00000000000000000000005 /* Storage */,
 				B00000000000000000000006 /* Logging */,
 				B00000000000000000000007 /* UI */,
+				B00000000000000000000008 /* Sharing */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -326,6 +341,15 @@
 			path = UI;
 			sourceTree = "<group>";
 		};
+		B00000000000000000000008 /* Sharing */ = {
+			isa = PBXGroup;
+			children = (
+				F000000000000000000001A0 /* PairingCore.swift */,
+				F000000000000000000001A1 /* PairingKeychainStore.swift */,
+			);
+			path = Sharing;
+			sourceTree = "<group>";
+		};
 		C00000000000000000000001 /* NekoWidget */ = {
 			isa = PBXGroup;
 			children = (
@@ -363,6 +387,8 @@
 				F00000000000000000000217 /* PhotoSelectors.swift */,
 				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
 				F00000000000000000000219 /* AppLogStore.swift */,
+				F0000000000000000000021A /* PairingInstallationGuard.swift */,
+				F0000000000000000000021B /* PairingAPIClient.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -371,6 +397,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000220 /* AppViewModel.swift */,
+				F00000000000000000000221 /* PairingViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -387,6 +414,7 @@
 				F00000000000000000000236 /* ScanStatusView.swift */,
 				F00000000000000000000237 /* SettingsView.swift */,
 				F00000000000000000000238 /* LogView.swift */,
+				F00000000000000000000239 /* PairingView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -573,6 +601,8 @@
 				10000000000000000000000D /* SharedLog.swift in Sources */,
 				10000000000000000000000E /* SharedLikeStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
+				100000000000000000000140 /* PairingCore.swift in Sources */,
+				100000000000000000000141 /* PairingKeychainStore.swift in Sources */,
 				100000000000000000000101 /* AppRootView.swift in Sources */,
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
@@ -586,6 +616,9 @@
 				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,
 				100000000000000000000119 /* AppLogStore.swift in Sources */,
 				100000000000000000000120 /* AppViewModel.swift in Sources */,
+				100000000000000000000142 /* PairingInstallationGuard.swift in Sources */,
+				100000000000000000000143 /* PairingAPIClient.swift in Sources */,
+				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
@@ -595,6 +628,7 @@
 				100000000000000000000136 /* ScanStatusView.swift in Sources */,
 				100000000000000000000137 /* SettingsView.swift in Sources */,
 				100000000000000000000138 /* LogView.swift in Sources */,
+				100000000000000000000145 /* PairingView.swift in Sources */,
 				100000000000000000000139 /* ToggleWidgetLikeIntent.swift in Sources */,
 				10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */,
 			);
@@ -611,6 +645,8 @@
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
 				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
+				200000000000000000000019 /* PairingCore.swift in Sources */,
+				20000000000000000000001A /* PairingKeychainStore.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
 				200000000000000000000012 /* NekoWidgetEntry.swift in Sources */,

@@ -142,6 +142,20 @@ struct SettingsView: View {
                 Text("アプリとウィジェットのログをApp Group経由で統合表示します。写真自体やPhotoKitの識別子全文は記録しません。")
             }
 
+            if SharingAPIConfiguration.current.isAvailable {
+                Section {
+                    NavigationLink {
+                        PairingView()
+                    } label: {
+                        Label("家族と共有", systemImage: "person.2.fill")
+                    }
+                } header: {
+                    Text("共有・開発中")
+                } footer: {
+                    Text("まず招待と端末間の鍵確認だけを試せます。写真同期はまだ行いません。")
+                }
+            }
+
             Section {
                 LabeledContent("対応OS", value: "iOS 17.1以上")
                 Text("すべての検出は端末内で行います。サーバーへの写真送信や、写真本体の複製はしません。")

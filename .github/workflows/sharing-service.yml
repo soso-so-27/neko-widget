@@ -1,0 +1,68 @@
+name: Sharing service check
+
+on:
+  push:
+    paths:
+      - "NekoWidget/SharingService/**"
+      - "NekoWidget/ci/fixtures/pairing-protocol-v1.json"
+      - "NekoWidget/ci/fixtures/pairing-api-v1-responses.json"
+      - ".github/workflows/sharing-service.yml"
+  pull_request:
+    paths:
+      - "NekoWidget/SharingService/**"
+      - "NekoWidget/ci/fixtures/pairing-protocol-v1.json"
+      - "NekoWidget/ci/fixtures/pairing-api-v1-responses.json"
+      - ".github/workflows/sharing-service.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sharing-service-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, test, and bundle Worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: NekoWidget/SharingService/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck Worker
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: npm run typecheck
+
+      - name: Run Worker and D1 integration tests
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: npm test
+
+      - name: Build deployment bundle without publishing
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install wrangler deploy \
+            --dry-run \
+            --config wrangler.jsonc \
+            --outdir "$RUNNER_TEMP/neko-sharing-worker"
+          test -n "$(find "$RUNNER_TEMP/neko-sharing-worker" -type f -print -quit)"

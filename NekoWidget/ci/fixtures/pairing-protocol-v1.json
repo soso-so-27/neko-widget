@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "pairing": {
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "invitationId": "ERITFBUWFxgZGhscHR4fIA",
+    "enrollmentId": "ISIjJCUmJygpKissLS4vMA",
+    "inviterMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+    "inviterParticipantId": "QUJDREVGR0hJSktMTU5PUA",
+    "inviteeMemberId": "UVJTVFVWV1hZWltcXV5fYA",
+    "inviteeParticipantId": "YWJjZGVmZ2hpamtsbW5vcA",
+    "inviterAgreementPublicKey": "rUOL-uMfbAk9YdQzklXqeYCSyfrdB7l4J_Swrp3ufBw",
+    "inviterSigningPublicKey": "dSnEVtk40rj-kPpsz5FtNGdwpkvLt7UyO2h6zeIM0Aw",
+    "inviteeAgreementPublicKey": "SJzrunoWbGGYNf4S7txYHb_Bs23hDIMOTwvBxIc0hks",
+    "inviteeSigningPublicKey": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA",
+    "dailyBoundaryMinuteUTC": 540,
+    "expected": {
+      "canonicalBase64URL": "AAtOVzEuUEFJUklORwABMQAWQVFJREJBVUdCd2dKQ2dzTURRNFBFQQAWRVJJVEZCVVdGeGdaR2hzY0hSNGZJQQAWSVNJakpDVW1KeWdwS2lzc0xTNHZNQQADNTQwABZNVEl6TkRVMk56ZzVPanM4UFQ0X1FBABZRVUpEUkVWR1IwaEpTa3RNVFU1UFVBACtyVU9MLXVNZmJBazlZZFF6a2xYcWVZQ1N5ZnJkQjdsNEpfU3dycDN1ZkJ3ACtkU25FVnRrNDByai1rUHBzejVGdE5HZHdwa3ZMdDdVeU8yaDZ6ZUlNMEF3ABZVVkpUVkZWV1YxaFpXbHRjWFY1ZllBABZZV0pqWkdWbVoyaHBhbXRzYlc1dmNBACtTSnpydW5vV2JHR1lOZjRTN3R4WUhiX0JzMjNoRElNT1R3dkJ4SWMwaGtzACs1X0Zpb1F2c1Zaci1vWlhrM09oTGFWYU5YU3l3bGo2MFJzQm9YaXNYOHZB",
+      "sha256": "BPtsGpny5rvgsyKoEokdPoEmLfnlG2TlWM5ZJhGkdvI",
+      "verificationPhrase": "あさ・なみ・もり・のはら・ひかり・かぎ・にじ・ふね・ゆき・さくら・なみ・さくら"
+    }
+  },
+  "enrollment": {
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "invitationId": "ERITFBUWFxgZGhscHR4fIA",
+    "challengeId": "cXJzdHV2d3h5ent8fX5_gA",
+    "challengeValue": "gYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6A",
+    "challengeExpiresAt": 1786971900,
+    "clientRequestId": "123e4567-e89b-42d3-a456-426614174000",
+    "participantId": "YWJjZGVmZ2hpamtsbW5vcA",
+    "agreementPublicKey": "SJzrunoWbGGYNf4S7txYHb_Bs23hDIMOTwvBxIc0hks",
+    "signingPublicKey": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA",
+    "expected": {
+      "canonicalBase64URL": "AApOVzEuRU5ST0xMAAExABZBUUlEQkFVR0J3Z0pDZ3NNRFE0UEVBABZFUklURkJVV0Z4Z1pHaHNjSFI0ZklBABZjWEp6ZEhWMmQzaDVlbnQ4Zlg1X2dBACtnWUtEaElXR2g0aUppb3VNalk2UGtKR1NrNVNWbHBlWW1acWJuSjJlbjZBAAoxNzg2OTcxOTAwACQxMjNlNDU2Ny1lODliLTQyZDMtYTQ1Ni00MjY2MTQxNzQwMDAAFllXSmpaR1ZtWjJocGFtdHNiVzV2Y0EAK1NKenJ1bm9XYkdHWU5mNFM3dHhZSGJfQnMyM2hESU1PVHd2QnhJYzBoa3MAKzVfRmlvUXZzVlpyLW9aWGszT2hMYVZhTlhTeXdsajYwUnNCb1hpc1g4dkE",
+      "sha256": "aOshpaY7O_vkCaX_FoTF44ZB5DXTrnKniVNKVp4b_JY"
+    }
+  },
+  "request": {
+    "memberId": "UVJTVFVWV1hZWltcXV5fYA",
+    "timestamp": 1786971700,
+    "nonce": "BwgJCgsMDQ4PEBESExQVFg",
+    "method": "POST",
+    "pathname": "/v1/pairing/enrollments/ISIjJCUmJygpKissLS4vMA/complete",
+    "bodyUTF8": "{\"clientRequestId\":\"123e4567-e89b-42d3-a456-426614174001\",\"protocolVersion\":1,\"transcriptHash\":\"BPtsGpny5rvgsyKoEokdPoEmLfnlG2TlWM5ZJhGkdvI\"}",
+    "bodySHA256": "bEh9MUzFaetgw7UCw0QlotcCn6DBrgFkDCygGS2DXgc",
+    "expected": {
+      "canonicalBase64URL": "AAtOVzEuUkVRVUVTVAABMQAWVVZKVFZGVldWMWhaV2x0Y1hWNWZZQQAKMTc4Njk3MTcwMAAWQndnSkNnc01EUTRQRUJFU0V4UVZGZwAEUE9TVAA3L3YxL3BhaXJpbmcvZW5yb2xsbWVudHMvSVNJakpDVW1KeWdwS2lzc0xTNHZNQS9jb21wbGV0ZQArYkVoOU1VekZhZXRndzdVQ3cwUWxvdGNDbjZEQnJnRmtEQ3lnR1MyRFhnYw",
+      "sha256": "FF_NpwIVs1ko6L34mq9G1tWwlcJYSfOzg5U1R5RnizY"
+    }
+  }
+}

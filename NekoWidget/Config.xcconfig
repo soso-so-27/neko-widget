@@ -13,6 +13,11 @@ IPHONEOS_DEPLOYMENT_TARGET = 17.1
 MARKETING_VERSION = 1.0
 CURRENT_PROJECT_VERSION = 1
 
+// Sharing is opt-in per build. Release/TestFlight stays off until the
+// privacy, moderation, and export-compliance gates are completed.
+SHARING_FEATURE_ENABLED = NO
+SHARING_API_BASE_URL =
+
 // GitHub Actions injects the names extracted from the two distribution
 // provisioning profiles. Keep these empty for Xcode automatic signing.
 APP_PROVISIONING_PROFILE_SPECIFIER =

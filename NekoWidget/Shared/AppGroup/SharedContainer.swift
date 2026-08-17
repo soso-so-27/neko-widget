@@ -71,4 +71,16 @@ enum SharedContainer {
     static var logsDirectoryURL: URL? {
         containerURL?.appendingPathComponent("diagnostic-logs", isDirectory: true)
     }
+
+    /// Non-secret sharing state. Private keys and the room key live in the
+    /// App Group-backed Keychain access group, never in this directory.
+    static var pairingStateURL: URL? {
+        containerURL?
+            .appendingPathComponent("sharing", isDirectory: true)
+            .appendingPathComponent("pairing-state.json", isDirectory: false)
+    }
+
+    static var sharingCacheDirectoryURL: URL? {
+        containerURL?.appendingPathComponent("sharing", isDirectory: true)
+    }
 }

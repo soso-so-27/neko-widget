@@ -1,0 +1,170 @@
+import { ApiError } from "./errors";
+
+export const PROTOCOL_VERSION = 1 as const;
+export const ENVELOPE_ALGORITHM =
+  "X25519-HKDF-SHA256-CHACHA20POLY1305" as const;
+
+const encoder = new TextEncoder();
+
+export function encodeCanonicalFields(fields: readonly string[]): Uint8Array {
+  const encoded = fields.map((field) => encoder.encode(field));
+  const byteLength = encoded.reduce((total, field) => total + 2 + field.length, 0);
+  const output = new Uint8Array(byteLength);
+  const view = new DataView(output.buffer);
+  let offset = 0;
+
+  for (const field of encoded) {
+    if (field.length > 0xffff) {
+      throw new ApiError(400, "field_too_long", "A canonical field is too long.");
+    }
+    view.setUint16(offset, field.length, false);
+    offset += 2;
+    output.set(field, offset);
+    offset += field.length;
+  }
+  return output;
+}
+
+export interface CreationFields {
+  clientRequestId: string;
+  participantId: string;
+  agreementPublicKey: string;
+  signingPublicKey: string;
+  invitationProofPublicKey: string;
+  dailyBoundaryMinuteUTC: number;
+}
+
+export function creationTranscript(fields: CreationFields): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.CREATE",
+    "1",
+    fields.clientRequestId,
+    fields.participantId,
+    fields.agreementPublicKey,
+    fields.signingPublicKey,
+    fields.invitationProofPublicKey,
+    String(fields.dailyBoundaryMinuteUTC),
+  ]);
+}
+
+export interface EnrollmentFields {
+  spaceId: string;
+  invitationId: string;
+  challengeId: string;
+  challengeValue: string;
+  challengeExpiresAt: number;
+  clientRequestId: string;
+  participantId: string;
+  agreementPublicKey: string;
+  signingPublicKey: string;
+}
+
+export function enrollmentTranscript(fields: EnrollmentFields): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.ENROLL",
+    "1",
+    fields.spaceId,
+    fields.invitationId,
+    fields.challengeId,
+    fields.challengeValue,
+    String(fields.challengeExpiresAt),
+    fields.clientRequestId,
+    fields.participantId,
+    fields.agreementPublicKey,
+    fields.signingPublicKey,
+  ]);
+}
+
+export interface PairingFields {
+  spaceId: string;
+  invitationId: string;
+  enrollmentId: string;
+  dailyBoundaryMinuteUTC: number;
+  inviterMemberId: string;
+  inviterParticipantId: string;
+  inviterAgreementPublicKey: string;
+  inviterSigningPublicKey: string;
+  inviteeMemberId: string;
+  inviteeParticipantId: string;
+  inviteeAgreementPublicKey: string;
+  inviteeSigningPublicKey: string;
+}
+
+export function pairingTranscript(fields: PairingFields): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.PAIRING",
+    "1",
+    fields.spaceId,
+    fields.invitationId,
+    fields.enrollmentId,
+    String(fields.dailyBoundaryMinuteUTC),
+    fields.inviterMemberId,
+    fields.inviterParticipantId,
+    fields.inviterAgreementPublicKey,
+    fields.inviterSigningPublicKey,
+    fields.inviteeMemberId,
+    fields.inviteeParticipantId,
+    fields.inviteeAgreementPublicKey,
+    fields.inviteeSigningPublicKey,
+  ]);
+}
+
+export function approvalTranscript(
+  transcriptHash: string,
+  envelopeAlgorithm: string,
+  keyEnvelope: string,
+): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.APPROVE",
+    "1",
+    transcriptHash,
+    envelopeAlgorithm,
+    keyEnvelope,
+  ]);
+}
+
+export interface SignedRequestFields {
+  memberId: string;
+  timestamp: number;
+  nonce: string;
+  method: string;
+  pathname: string;
+  bodySHA256: string;
+}
+
+export function signedRequestTranscript(fields: SignedRequestFields): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.REQUEST",
+    "1",
+    fields.memberId,
+    String(fields.timestamp),
+    fields.nonce,
+    fields.method.toUpperCase(),
+    fields.pathname,
+    fields.bodySHA256,
+  ]);
+}
+
+const verificationWords = [
+  "あさ", "あめ", "いと", "うみ", "えき", "おと", "かぎ", "かぜ",
+  "きり", "くも", "こえ", "さくら", "しずく", "すず", "そら", "たね",
+  "つき", "てらす", "とり", "なみ", "にじ", "ねこ", "のはら", "はな",
+  "ひかり", "ふね", "ほし", "まど", "みち", "もり", "ゆき", "よる",
+] as const;
+
+export function verificationPhrase(transcriptHash: Uint8Array): string {
+  const indices: number[] = [];
+  let accumulator = 0n;
+  let bitCount = 0;
+  for (const byte of transcriptHash) {
+    accumulator = (accumulator << 8n) | BigInt(byte);
+    bitCount += 8;
+    while (bitCount >= 5 && indices.length < 12) {
+      bitCount -= 5;
+      indices.push(Number((accumulator >> BigInt(bitCount)) & 0x1fn));
+    }
+    if (indices.length === 12) break;
+    accumulator = bitCount === 0 ? 0n : accumulator & ((1n << BigInt(bitCount)) - 1n);
+  }
+  return indices.map((index) => verificationWords[index]).join("・");
+}

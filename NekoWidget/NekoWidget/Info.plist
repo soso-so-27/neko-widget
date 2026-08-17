@@ -45,6 +45,10 @@
 	<string>あなたの写真から猫が主役の写真を端末内で見つけ、「うちの子」アルバムを作成・更新するため、写真ライブラリの読み書きを許可してください。</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
+	<key>SharingAPIBaseURL</key>
+	<string>$(SHARING_API_BASE_URL)</string>
+	<key>SharingFeatureEnabled</key>
+	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>
