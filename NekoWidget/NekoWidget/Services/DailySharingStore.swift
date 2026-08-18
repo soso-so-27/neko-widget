@@ -974,15 +974,27 @@ enum DailySharingStateStore {
               let directory = SharedContainer.sharingOutboundDirectoryURL
         else { throw DailySharingError.stateUnavailable }
         return try lease.withValidatedMutation {
-            let url = directory.appendingPathComponent(filename, isDirectory: false)
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            guard let size = attributes[.size] as? NSNumber,
-                  size.intValue > 0,
-                  size.intValue <= maximumBytes
-            else { throw DailySharingError.stateUnavailable }
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            guard data.count == size.intValue else { throw DailySharingError.stateUnavailable }
-            return data
+            do {
+                let url = directory.appendingPathComponent(filename, isDirectory: false)
+                let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                guard let size = attributes[.size] as? NSNumber,
+                      size.intValue > 0,
+                      size.intValue <= maximumBytes
+                else { throw DailySharingError.stateUnavailable }
+                let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                guard data.count == size.intValue else {
+                    throw DailySharingError.stateUnavailable
+                }
+                return data
+            } catch let error as DailySharingError {
+                throw error
+            } catch {
+                // The lease is still valid; a missing or unreadable local
+                // retry object is recoverable from the authenticated current.
+                // Normalize it before the lease wrapper can mistake the file
+                // error for lifecycle/lease loss and suppress server fallback.
+                throw DailySharingError.stateUnavailable
+            }
         }
     }
 
