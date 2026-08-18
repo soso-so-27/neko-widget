@@ -19,6 +19,112 @@ struct CanonicalPreview: Sendable {
     let plaintextSHA256: Data
 }
 
+/// Fixed protocol color profile used by both the canonical encoder and its
+/// receiver validator. This avoids binding the wire format to the particular
+/// sRGB profile bytes shipped by an OS release.
+///
+/// Source: https://github.com/saucecontrol/Compact-ICC-Profiles/blob/bdd84663061bc4ae95ca70decff54f581e27f702/profiles/sRGB-v2-micro.icc
+/// License: CC0-1.0 public-domain dedication
+/// SHA-256: 0a8a33aea66a6f154a5642ebe168ef287e73265d9f7b51c42a45e6eedbacda7a
+private enum SharingCanonicalColorProfile {
+    private static let jpegICCSignature = Array("ICC_PROFILE\u{0}".utf8)
+    private static let encodedProfile =
+        "AAAByGxjbXMCEAAAbW50clJHQiBYWVogB+IAAwAUAAkADgAdYWNzcE1TRlQAAAAA" +
+        "c2F3c2N0cmwAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1oYW5knZEAPUCAsD1AdCyB" +
+        "nqUijgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJZGVzYwAAAPAAAABf" +
+        "Y3BydAAAAQwAAAAMd3RwdAAAARgAAAAUclhZWgAAASwAAAAUZ1hZWgAAAUAAAAAU" +
+        "YlhZWgAAAVQAAAAUclRSQwAAAWgAAABgZ1RSQwAAAWgAAABgYlRSQwAAAWgAAABg" +
+        "ZGVzYwAAAAAAAAAFdVJHQgAAAAAAAAAAAAAAAHRleHQAAAAAQ0MwAFhZWiAAAAAA" +
+        "AADzVAABAAAAARbJWFlaIAAAAAAAAG+gAAA48gAAA49YWVogAAAAAAAAYpYAALeJ" +
+        "AAAY2lhZWiAAAAAAAAAkoAAAD4UAALbEY3VydgAAAAAAAAAqAAAAfAD4AZwCdQOD" +
+        "BMkGTggSChgMYg70Ec8U9hhqHC4gQySsKWoufjPrObM/1kZXTTZUdlwXZB1shnV" +
+        "Wfo2ILJI2nKunjLLbvpnKx9dl5Hfx+f//"
+    private static let expectedSHA256 =
+        "CoozrqZqbxVKVkLr4WjvKH5zJl2fe1HEKkXm7tus2no="
+
+    static let data: Data? = {
+        guard let data = Data(base64Encoded: encodedProfile),
+              data.count == 456,
+              Data(SHA256.hash(data: data)).base64EncodedString() == expectedSHA256
+        else { return nil }
+        return data
+    }()
+
+    static func makeColorSpace() -> CGColorSpace? {
+        guard let data else { return nil }
+        return CGColorSpace(iccData: data as CFData)
+    }
+
+    static func hasExactEmbeddedProfile(in jpeg: Data) -> Bool {
+        exactEmbeddedProfileRange(in: jpeg) != nil
+    }
+
+#if DEBUG
+    static func tamperingEmbeddedProfile(in jpeg: Data) -> Data? {
+        guard let range = exactEmbeddedProfileRange(in: jpeg) else { return nil }
+        var result = jpeg
+        result[range.lowerBound] = result[range.lowerBound] ^ 0x01
+        return result
+    }
+#endif
+
+    /// Parses only the bounded JPEG header. The fixed 456-byte profile fits in
+    /// one APP2 segment, so split, duplicate, reordered, or malformed ICC
+    /// payloads are outside the protocol and fail closed.
+    private static func exactEmbeddedProfileRange(in jpeg: Data) -> Range<Int>? {
+        guard let expected = data,
+              jpeg.count >= 4,
+              jpeg[0] == 0xFF,
+              jpeg[1] == 0xD8
+        else { return nil }
+
+        var cursor = 2
+        var profileRange: Range<Int>?
+        while cursor < jpeg.count {
+            guard jpeg[cursor] == 0xFF else { return nil }
+            while cursor < jpeg.count, jpeg[cursor] == 0xFF {
+                cursor += 1
+            }
+            guard cursor < jpeg.count else { return nil }
+            let marker = jpeg[cursor]
+            cursor += 1
+
+            if marker == 0xDA || marker == 0xD9 {
+                return profileRange
+            }
+            guard marker != 0x00,
+                  marker != 0x01,
+                  !(0xD0...0xD8).contains(marker),
+                  cursor <= jpeg.count - 2
+            else { return nil }
+
+            let segmentLength = (Int(jpeg[cursor]) << 8) | Int(jpeg[cursor + 1])
+            guard segmentLength >= 2,
+                  segmentLength <= jpeg.count - cursor
+            else { return nil }
+            let payloadStart = cursor + 2
+            let payloadEnd = cursor + segmentLength
+
+            if marker == 0xE2 {
+                let signatureEnd = payloadStart + jpegICCSignature.count
+                let profileStart = signatureEnd + 2
+                guard profileRange == nil,
+                      signatureEnd <= payloadEnd,
+                      jpeg[payloadStart..<signatureEnd].elementsEqual(jpegICCSignature),
+                      profileStart <= payloadEnd,
+                      jpeg[signatureEnd] == 1,
+                      jpeg[signatureEnd + 1] == 1,
+                      payloadEnd - profileStart == expected.count,
+                      jpeg[profileStart..<payloadEnd].elementsEqual(expected)
+                else { return nil }
+                profileRange = profileStart..<payloadEnd
+            }
+            cursor = payloadEnd
+        }
+        return nil
+    }
+}
+
 /// The personal cache and shared-canonical paths must agree on UIImage scale
 /// and orientation before planning crops. `normalizedUIImage` intentionally
 /// preserves the shipping UIGraphics scale-1 implementation byte-for-visual
@@ -44,7 +150,7 @@ enum WidgetSourceImageNormalizer {
         let targetHeight = source.height
         guard targetWidth <= DailySharingProtocol.maximumCanonicalPixelDimension,
               targetHeight <= DailySharingProtocol.maximumCanonicalPixelDimension,
-              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+              let colorSpace = SharingCanonicalColorProfile.makeColorSpace()
         else { throw DailySharingError.canonicalEncodingFailed }
         let input = CIImage(cgImage: source)
         let context = CIContext(options: [
@@ -161,6 +267,15 @@ actor CanonicalPreviewBuilder {
                 canonicalCrop: crop.normalizedRect
             )
         )
+    }
+
+    nonisolated static func runtimeSelfTestJPEGWithTamperedColorProfile(
+        _ jpeg: Data
+    ) throws -> Data {
+        guard let result = SharingCanonicalColorProfile.tamperingEmbeddedProfile(in: jpeg) else {
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        return result
     }
 #endif
 
@@ -436,7 +551,7 @@ actor CanonicalPreviewBuilder {
         width: Int,
         height: Int
     ) -> CGImage? {
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+        guard let colorSpace = SharingCanonicalColorProfile.makeColorSpace(),
               let context = CGContext(
                 data: nil,
                 width: width,
@@ -476,7 +591,8 @@ actor CanonicalPreviewBuilder {
         _ data: Data,
         expectedSize: WidgetSourcePixelSize
     ) throws {
-        guard let source = CGImageSourceCreateWithData(
+        guard SharingCanonicalColorProfile.hasExactEmbeddedProfile(in: data),
+              let source = CGImageSourceCreateWithData(
             data as CFData,
             [kCGImageSourceShouldCache: false] as CFDictionary
         ),
@@ -497,7 +613,8 @@ actor CanonicalPreviewBuilder {
                 0,
                 [kCGImageSourceShouldCache: false] as CFDictionary
               ),
-              decoded.colorSpace?.name == CGColorSpace.sRGB
+              let decodedColorSpace = decoded.colorSpace,
+              decodedColorSpace.model == .rgb
         else { throw DailySharingError.canonicalEncodingFailed }
     }
 }

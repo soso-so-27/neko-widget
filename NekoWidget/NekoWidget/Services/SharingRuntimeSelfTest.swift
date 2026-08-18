@@ -442,6 +442,22 @@ actor SharingRuntimeSelfTestRunner {
             binding: preview.binding,
             expectedPlaintextSHA256: plainHash
         )
+        let tamperedProfileJPEG = try CanonicalPreviewBuilder
+            .runtimeSelfTestJPEGWithTamperedColorProfile(preview.jpeg)
+        var rejectedTamperedProfile = false
+        do {
+            try CanonicalPreviewBuilder.validateReceivedJPEG(
+                tamperedProfileJPEG,
+                binding: preview.binding,
+                expectedPlaintextSHA256: PairingCrypto.sha256(tamperedProfileJPEG)
+                    .base64URLEncodedString()
+            )
+        } catch DailySharingError.invalidSharedManifest {
+            rejectedTamperedProfile = true
+        }
+        guard rejectedTamperedProfile else {
+            throw DailySharingError.invalidSharedManifest
+        }
         let aad = try DailySharingCrypto.mediaAAD(
             spaceID: opaque(1),
             sourceID: opaque(2),
