@@ -169,13 +169,24 @@ PY
         local -a role_files=("$@")
         local role_offset=0
         local role_batch_number=0
+        local role_batch_status=0
+        local role_batch_label=""
         local -a role_batch=()
         while (( role_offset < ${#role_files[@]} )); do
             role_batch=("${role_files[@]:role_offset:100}")
             role_batch_number=$((role_batch_number + 1))
             printf 'Importing %s batch %d (%d file(s)).\n' \
                 "$role" "$role_batch_number" "${#role_batch[@]}"
-            xcrun simctl addmedia "$SIMULATOR_UDID" "${role_batch[@]}"
+            printf -v role_batch_label 'scale-%s-%03d' \
+                "$role" "$role_batch_number"
+            role_batch_status=0
+            bounded_simctl_addmedia "$role_batch_label" "${role_batch[@]}" \
+                || role_batch_status=$?
+            if (( role_batch_status != 0 )); then
+                echo "Scale batch $role_batch_label will not be retried. " \
+                    "The final baseline-relative asset count will fail closed if " \
+                    "the import was incomplete." >&2
+            fi
             role_offset=$((role_offset + ${#role_batch[@]}))
         done
     }

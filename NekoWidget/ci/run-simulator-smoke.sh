@@ -32,6 +32,19 @@ case "$SIMULATOR_TEST_MODE" in
         ;;
 esac
 TARGET_SIMULATOR_RUNTIME="${SMOKE_IOS_RUNTIME:-com.apple.CoreSimulator.SimRuntime.iOS-18-6}"
+SIMCTL_ADDMEDIA_TIMEOUT_SECONDS="${SIMCTL_ADDMEDIA_TIMEOUT_SECONDS:-120}"
+case "$SIMCTL_ADDMEDIA_TIMEOUT_SECONDS" in
+    ''|*[!0-9]*)
+        echo "SIMCTL_ADDMEDIA_TIMEOUT_SECONDS must be an integer." >&2
+        exit 2
+        ;;
+esac
+SIMCTL_ADDMEDIA_TIMEOUT_SECONDS=$((10#$SIMCTL_ADDMEDIA_TIMEOUT_SECONDS))
+if (( SIMCTL_ADDMEDIA_TIMEOUT_SECONDS < 15 \
+    || SIMCTL_ADDMEDIA_TIMEOUT_SECONDS > 300 )); then
+    echo "SIMCTL_ADDMEDIA_TIMEOUT_SECONDS must be between 15 and 300." >&2
+    exit 2
+fi
 
 SIMULATOR_UDID=""
 SIMULATOR_NAME=""
@@ -48,6 +61,121 @@ MEMORY_SAMPLER_STOP_FILE=""
 
 mkdir -p "$ARTIFACT_DIRECTORY"
 exec > >(tee -a "$ARTIFACT_DIRECTORY/$HARNESS_LOG_FILENAME") 2>&1
+
+# `simctl addmedia` has occasionally submitted work to Photos and then waited
+# indefinitely for the command response. A timeout therefore has an uncertain
+# outcome: retrying the same files can create duplicate PHAssets. Kill the
+# complete command process group, record a bounded diagnostic, and let the
+# existing post-import baseline comparison decide whether every fixture became
+# available. Callers must never retry the same label/files in this Simulator.
+bounded_simctl_addmedia() {
+    local label="$1"
+    local output_log=""
+    local result_json=""
+    local wrapper_status=0
+    shift
+
+    if [[ ! "$label" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || (( $# == 0 )); then
+        echo "Invalid bounded addmedia label or empty media list: $label" >&2
+        return 2
+    fi
+    output_log="$ARTIFACT_DIRECTORY/simctl-addmedia-$label.log"
+    result_json="$ARTIFACT_DIRECTORY/simctl-addmedia-$label.json"
+
+    python3 - \
+        "$SIMCTL_ADDMEDIA_TIMEOUT_SECONDS" \
+        "$output_log" \
+        "$result_json" \
+        "$SIMULATOR_UDID" \
+        "$@" <<'PY' || wrapper_status=$?
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+timeout_seconds = int(sys.argv[1])
+output_path = Path(sys.argv[2])
+result_path = Path(sys.argv[3])
+simulator_udid = sys.argv[4]
+media_paths = sys.argv[5:]
+command = ["xcrun", "simctl", "addmedia", simulator_udid, *media_paths]
+started = time.monotonic()
+outcome = "spawn-failed"
+command_exit_code = None
+termination = "none"
+wrapper_exit_code = 125
+
+try:
+    with output_path.open("wb") as output:
+        process = subprocess.Popen(
+            command,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            command_exit_code = process.wait(timeout=timeout_seconds)
+            if command_exit_code == 0:
+                outcome = "completed"
+                wrapper_exit_code = 0
+            else:
+                # A nonzero result can still follow a partial Photos import.
+                outcome = "command-failed"
+                wrapper_exit_code = 1
+        except subprocess.TimeoutExpired:
+            outcome = "timed-out"
+            termination = "sigterm"
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                command_exit_code = process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                termination = "sigkill"
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    command_exit_code = process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    termination = "unreaped"
+            wrapper_exit_code = 124
+except OSError as error:
+    output_path.write_text(
+        f"addmedia wrapper could not start the command: {type(error).__name__}\n",
+        encoding="utf-8",
+    )
+
+result = {
+    "schemaVersion": 1,
+    "commandExitCode": command_exit_code,
+    "completionConfirmed": outcome == "completed",
+    "durationSeconds": round(time.monotonic() - started, 3),
+    "inputCount": len(media_paths),
+    "outcome": outcome,
+    "sameBatchRetryAllowed": False,
+    "termination": termination,
+    "timeoutSeconds": timeout_seconds,
+}
+result_path.write_text(
+    json.dumps(result, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+raise SystemExit(wrapper_exit_code)
+PY
+
+    if (( wrapper_status != 0 )); then
+        echo "simctl addmedia completion was not confirmed for $label " \
+            "(wrapper status $wrapper_status). The same media batch will not be retried; " \
+            "the baseline-relative PhotoKit scan will determine whether import completed." >&2
+    fi
+    return "$wrapper_status"
+}
 
 resolve_group_container() {
     local direct_path=""
@@ -886,7 +1014,13 @@ if (( FIXTURE_COUNT < 3 )); then
     exit 1
 fi
 printf '%s\n' "${FIXTURES[@]}" > "$ARTIFACT_DIRECTORY/fixture-paths.txt"
-xcrun simctl addmedia "$SIMULATOR_UDID" "${FIXTURES[@]}"
+ADDMEDIA_STATUS=0
+bounded_simctl_addmedia "smoke-fixtures" "${FIXTURES[@]}" \
+    || ADDMEDIA_STATUS=$?
+if (( ADDMEDIA_STATUS != 0 )); then
+    echo "Continuing without a duplicate import attempt; fixture readiness remains " \
+        "defined by the archived baseline and the final PhotoKit snapshot." >&2
+fi
 sleep 8
 
 TERMINAL_EVENT_FOUND="false"
