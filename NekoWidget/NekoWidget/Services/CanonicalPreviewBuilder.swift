@@ -201,6 +201,11 @@ private enum SharingCanonicalColorProfile {
                 // Drop every encoder-produced ICC chunk. The fixed single
                 // chunk inserted above is the only APP2 form this protocol
                 // permits, and the receiver independently verifies it.
+            } else if marker == 0xE1 || marker == 0xED || marker == 0xFE {
+                // ImageIO may synthesize EXIF/XMP (APP1), IPTC (APP13), or a
+                // comment even when the source is a metadata-free CGImage.
+                // None is part of the canonical protocol, so remove it before
+                // hashing rather than weakening the receiver's privacy gate.
             } else {
                 result.append(contentsOf: jpeg[markerStart..<payloadEnd])
             }
