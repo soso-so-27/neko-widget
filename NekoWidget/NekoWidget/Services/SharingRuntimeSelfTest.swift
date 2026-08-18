@@ -434,7 +434,8 @@ actor SharingRuntimeSelfTestRunner {
         )
         let preview = try CanonicalPreviewBuilder.runtimeSelfTestPreview(
             image: image,
-            renderPlans: plans
+            renderPlans: plans,
+            diagnosticCase: .canonicalLocalOnlyPrivacyBudget
         )
         let plainHash = preview.plaintextSHA256.base64URLEncodedString()
         try CanonicalPreviewBuilder.validateReceivedJPEG(
@@ -805,7 +806,8 @@ actor SharingRuntimeSelfTestRunner {
         )
         let preview = try CanonicalPreviewBuilder.runtimeSelfTestPreview(
             image: image,
-            renderPlans: plans
+            renderPlans: plans,
+            diagnosticCase: .ownSourceLocalPromotion
         )
         let roomKey = Data(repeating: 0xB6, count: 32)
         let mediaAAD = try DailySharingCrypto.mediaAAD(

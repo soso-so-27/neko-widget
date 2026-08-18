@@ -6,6 +6,49 @@ import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
+private enum CanonicalEncodingFailureStage: String {
+    case normalizeSRGB = "normalize-srgb"
+    case cropPlan = "crop-plan"
+    case cropImage = "crop-image"
+    case transformPlans = "transform-plans"
+    case minimumScale = "minimum-scale"
+    case resizeSRGB = "resize-srgb"
+    case binding = "binding"
+    case resolution = "resolution"
+    case jpegDestinationCreate = "jpeg-destination-create"
+    case jpegDestinationFinalize = "jpeg-destination-finalize"
+    case jpegProfilePayload = "jpeg-profile-payload"
+    case jpegSOI = "jpeg-soi"
+    case jpegMarker = "jpeg-marker"
+    case jpegSegment = "jpeg-segment"
+    case jpegAPP2NonICC = "jpeg-app2-non-icc"
+    case jpegNoSOS = "jpeg-no-sos"
+    case jpegByteBudget = "jpeg-byte-budget"
+    case validateProfileExact = "validate-profile-exact"
+    case validateSourceCreate = "validate-source-create"
+    case validateImageCount = "validate-image-count"
+    case validateType = "validate-type"
+    case validateProperties = "validate-properties"
+    case validateDimensions = "validate-dimensions"
+    case validateColorModel = "validate-color-model"
+    case validateOrientation = "validate-orientation"
+    case validateExif = "validate-exif"
+    case validateTIFF = "validate-tiff"
+    case validateGPS = "validate-gps"
+    case validateIPTC = "validate-iptc"
+    case validateDecode = "validate-decode"
+    case validateDecodedColorSpace = "validate-decoded-color-space"
+    case validateDecodedRGB = "validate-decoded-rgb"
+    case noCandidate = "no-candidate"
+}
+
+#if DEBUG
+enum CanonicalPreviewRuntimeSelfTestCase: String {
+    case canonicalLocalOnlyPrivacyBudget = "canonical-local-only-privacy-budget"
+    case ownSourceLocalPromotion = "own-source-local-promotion"
+}
+#endif
+
 struct CanonicalPreviewRequest: Sendable {
     let localIdentifier: String
     let sourceModificationDate: Date?
@@ -63,16 +106,28 @@ private enum SharingCanonicalColorProfile {
     /// `CGColorSpace`. Canonicalize that encoder output explicitly so the wire
     /// contract remains the pinned profile bytes rather than an OS-specific
     /// serialization of the same color space.
-    static func canonicalizingEmbeddedProfile(in jpeg: Data) -> Data? {
-        guard let profile = data,
-              jpeg.count >= 4,
+    static func canonicalizingEmbeddedProfile(
+        in jpeg: Data,
+        failureRecorder: ((CanonicalEncodingFailureStage) -> Void)? = nil
+    ) -> Data? {
+        guard let profile = data else {
+            failureRecorder?(.jpegProfilePayload)
+            return nil
+        }
+        guard jpeg.count >= 4,
               jpeg[0] == 0xFF,
               jpeg[1] == 0xD8
-        else { return nil }
+        else {
+            failureRecorder?(.jpegSOI)
+            return nil
+        }
 
         let payloadLength = jpegICCSignature.count + 2 + profile.count
         let segmentLength = payloadLength + 2
-        guard segmentLength <= Int(UInt16.max) else { return nil }
+        guard segmentLength <= Int(UInt16.max) else {
+            failureRecorder?(.jpegProfilePayload)
+            return nil
+        }
 
         var profileSegment = Data([0xFF, 0xE2])
         profileSegment.append(UInt8((segmentLength >> 8) & 0xFF))
@@ -94,11 +149,17 @@ private enum SharingCanonicalColorProfile {
         var cursor = 2
         while cursor < jpeg.count {
             let markerStart = cursor
-            guard jpeg[cursor] == 0xFF else { return nil }
+            guard jpeg[cursor] == 0xFF else {
+                failureRecorder?(.jpegMarker)
+                return nil
+            }
             while cursor < jpeg.count, jpeg[cursor] == 0xFF {
                 cursor += 1
             }
-            guard cursor < jpeg.count else { return nil }
+            guard cursor < jpeg.count else {
+                failureRecorder?(.jpegMarker)
+                return nil
+            }
             let marker = jpeg[cursor]
             cursor += 1
 
@@ -111,12 +172,18 @@ private enum SharingCanonicalColorProfile {
                   marker != 0x01,
                   !(0xD0...0xD9).contains(marker),
                   cursor <= jpeg.count - 2
-            else { return nil }
+            else {
+                failureRecorder?(.jpegMarker)
+                return nil
+            }
 
             let sourceSegmentLength = (Int(jpeg[cursor]) << 8) | Int(jpeg[cursor + 1])
             guard sourceSegmentLength >= 2,
                   sourceSegmentLength <= jpeg.count - cursor
-            else { return nil }
+            else {
+                failureRecorder?(.jpegSegment)
+                return nil
+            }
             let payloadStart = cursor + 2
             let payloadEnd = cursor + sourceSegmentLength
 
@@ -127,7 +194,10 @@ private enum SharingCanonicalColorProfile {
                 let signatureEnd = payloadStart + jpegICCSignature.count
                 guard signatureEnd + 2 <= payloadEnd,
                       jpeg[payloadStart..<signatureEnd].elementsEqual(jpegICCSignature)
-                else { return nil }
+                else {
+                    failureRecorder?(.jpegAPP2NonICC)
+                    return nil
+                }
                 // Drop every encoder-produced ICC chunk. The fixed single
                 // chunk inserted above is the only APP2 form this protocol
                 // permits, and the receiver independently verifies it.
@@ -136,6 +206,7 @@ private enum SharingCanonicalColorProfile {
             }
             cursor = payloadEnd
         }
+        failureRecorder?(.jpegNoSOS)
         return nil
     }
 
@@ -329,24 +400,62 @@ actor CanonicalPreviewBuilder {
     /// non-user pixels.
     nonisolated static func runtimeSelfTestPreview(
         image: UIImage,
-        renderPlans: WidgetRenderPlans
+        renderPlans: WidgetRenderPlans,
+        diagnosticCase: CanonicalPreviewRuntimeSelfTestCase
     ) throws -> CanonicalPreview {
-        let upright = try orientationNormalizedSRGBImage(image)
-        let crop = try pixelAlignedUnionCrop(
-            plans: renderPlans,
-            width: upright.width,
-            height: upright.height
-        )
-        guard let cropped = upright.cropping(to: crop.pixelRect) else {
-            throw DailySharingError.canonicalEncodingFailed
+        var lastFailureStage: CanonicalEncodingFailureStage?
+        let failureRecorder: (CanonicalEncodingFailureStage) -> Void = { stage in
+            lastFailureStage = stage
         }
-        return try compressWithinBudget(
-            cropped,
-            renderPlans: transformedPlans(
-                renderPlans,
-                canonicalCrop: crop.normalizedRect
+        do {
+            let upright: CGImage
+            do {
+                upright = try orientationNormalizedSRGBImage(image)
+            } catch {
+                failureRecorder(.normalizeSRGB)
+                throw error
+            }
+            let crop: (pixelRect: CGRect, normalizedRect: CGRect)
+            do {
+                crop = try pixelAlignedUnionCrop(
+                    plans: renderPlans,
+                    width: upright.width,
+                    height: upright.height
+                )
+            } catch {
+                failureRecorder(.cropPlan)
+                throw error
+            }
+            guard let cropped = upright.cropping(to: crop.pixelRect) else {
+                failureRecorder(.cropImage)
+                throw DailySharingError.canonicalEncodingFailed
+            }
+            let transformed: WidgetRenderPlans
+            do {
+                transformed = try transformedPlans(
+                    renderPlans,
+                    canonicalCrop: crop.normalizedRect
+                )
+            } catch {
+                failureRecorder(.transformPlans)
+                throw error
+            }
+            return try compressWithinBudget(
+                cropped,
+                renderPlans: transformed,
+                failureRecorder: failureRecorder
             )
-        )
+        } catch {
+            SharedLog.app.error(
+                "sharing-runtime-self-test",
+                "Canonical preview stage failed",
+                metadata: [
+                    "case": diagnosticCase.rawValue,
+                    "stage": (lastFailureStage ?? .noCandidate).rawValue
+                ]
+            )
+            throw error
+        }
     }
 
     nonisolated static func runtimeSelfTestJPEGWithTamperedColorProfile(
@@ -525,13 +634,21 @@ actor CanonicalPreviewBuilder {
 
     private nonisolated static func compressWithinBudget(
         _ source: CGImage,
-        renderPlans: WidgetRenderPlans
+        renderPlans: WidgetRenderPlans,
+        failureRecorder: ((CanonicalEncodingFailureStage) -> Void)? = nil
     ) throws -> CanonicalPreview {
-        let minimumScale = try minimumQualityScale(
-            sourcePixelSize: WidgetSourcePixelSize(width: source.width, height: source.height),
-            plans: renderPlans
-        )
+        let minimumScale: CGFloat
+        do {
+            minimumScale = try minimumQualityScale(
+                sourcePixelSize: WidgetSourcePixelSize(width: source.width, height: source.height),
+                plans: renderPlans
+            )
+        } catch {
+            failureRecorder?(.minimumScale)
+            throw error
+        }
         guard minimumScale <= 1.001 else {
+            failureRecorder?(.resolution)
             throw DailySharingError.insufficientPhotoResolution
         }
 
@@ -547,21 +664,44 @@ actor CanonicalPreviewBuilder {
         for scale in scales {
             let width = max(1, Int((CGFloat(source.width) * scale).rounded(.down)))
             let height = max(1, Int((CGFloat(source.height) * scale).rounded(.down)))
-            guard let image = resizedSRGBImage(source, width: width, height: height) else { continue }
+            guard let image = resizedSRGBImage(source, width: width, height: height) else {
+                failureRecorder?(.resizeSRGB)
+                continue
+            }
             let pixelSize = WidgetSourcePixelSize(width: width, height: height)
-            guard renderPlans.isValidForSharing(sourcePixelSize: pixelSize) else { continue }
+            guard renderPlans.isValidForSharing(sourcePixelSize: pixelSize) else {
+                failureRecorder?(.binding)
+                continue
+            }
             let binding = SharingMediaBinding(
                 canonicalPixelSize: pixelSize,
                 renderPlans: renderPlans
             )
-            _ = try binding.validated()
+            do {
+                _ = try binding.validated()
+            } catch {
+                failureRecorder?(.binding)
+                throw error
+            }
             guard hasSufficientResolution(pixelSize: pixelSize, plans: renderPlans) else {
+                failureRecorder?(.resolution)
                 continue
             }
             for quality in qualities {
-                guard let data = jpegData(image, quality: quality) else { continue }
-                guard data.count <= DailySharingProtocol.maximumJPEGBytes else { continue }
-                try validateEncodedJPEG(data, expectedSize: pixelSize)
+                guard let data = jpegData(
+                    image,
+                    quality: quality,
+                    failureRecorder: failureRecorder
+                ) else { continue }
+                guard data.count <= DailySharingProtocol.maximumJPEGBytes else {
+                    failureRecorder?(.jpegByteBudget)
+                    continue
+                }
+                try validateEncodedJPEG(
+                    data,
+                    expectedSize: pixelSize,
+                    failureRecorder: failureRecorder
+                )
                 return CanonicalPreview(
                     jpeg: data,
                     binding: binding,
@@ -650,53 +790,116 @@ actor CanonicalPreviewBuilder {
         return context.makeImage()
     }
 
-    private nonisolated static func jpegData(_ image: CGImage, quality: CGFloat) -> Data? {
+    private nonisolated static func jpegData(
+        _ image: CGImage,
+        quality: CGFloat,
+        failureRecorder: ((CanonicalEncodingFailureStage) -> Void)? = nil
+    ) -> Data? {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data,
             UTType.jpeg.identifier as CFString,
             1,
             nil
-        ) else { return nil }
+        ) else {
+            failureRecorder?(.jpegDestinationCreate)
+            return nil
+        }
         CGImageDestinationAddImage(
             destination,
             image,
             [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
         )
-        guard CGImageDestinationFinalize(destination) else { return nil }
+        guard CGImageDestinationFinalize(destination) else {
+            failureRecorder?(.jpegDestinationFinalize)
+            return nil
+        }
         return SharingCanonicalColorProfile.canonicalizingEmbeddedProfile(
-            in: data as Data
+            in: data as Data,
+            failureRecorder: failureRecorder
         )
     }
 
     private nonisolated static func validateEncodedJPEG(
         _ data: Data,
-        expectedSize: WidgetSourcePixelSize
+        expectedSize: WidgetSourcePixelSize,
+        failureRecorder: ((CanonicalEncodingFailureStage) -> Void)? = nil
     ) throws {
-        guard SharingCanonicalColorProfile.hasExactEmbeddedProfile(in: data),
-              let source = CGImageSourceCreateWithData(
+        guard SharingCanonicalColorProfile.hasExactEmbeddedProfile(in: data) else {
+            failureRecorder?(.validateProfileExact)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard let source = CGImageSourceCreateWithData(
             data as CFData,
             [kCGImageSourceShouldCache: false] as CFDictionary
-        ),
-              CGImageSourceGetCount(source) == 1,
-              CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              properties[kCGImagePropertyPixelWidth] as? Int == expectedSize.width,
-              properties[kCGImagePropertyPixelHeight] as? Int == expectedSize.height,
-              properties[kCGImagePropertyColorModel] as? String == kCGImagePropertyColorModelRGB as String,
-              (properties[kCGImagePropertyOrientation] == nil
-                || properties[kCGImagePropertyOrientation] as? Int == 1),
-              properties[kCGImagePropertyExifDictionary] == nil,
-              properties[kCGImagePropertyTIFFDictionary] == nil,
-              properties[kCGImagePropertyGPSDictionary] == nil,
-              properties[kCGImagePropertyIPTCDictionary] == nil,
-              let decoded = CGImageSourceCreateImageAtIndex(
+        ) else {
+            failureRecorder?(.validateSourceCreate)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard CGImageSourceGetCount(source) == 1 else {
+            failureRecorder?(.validateImageCount)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard CGImageSourceGetType(source) as String? == UTType.jpeg.identifier else {
+            failureRecorder?(.validateType)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+            as? [CFString: Any]
+        else {
+            failureRecorder?(.validateProperties)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyPixelWidth] as? Int == expectedSize.width,
+              properties[kCGImagePropertyPixelHeight] as? Int == expectedSize.height
+        else {
+            failureRecorder?(.validateDimensions)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyColorModel] as? String
+            == kCGImagePropertyColorModelRGB as String
+        else {
+            failureRecorder?(.validateColorModel)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyOrientation] == nil
+                || properties[kCGImagePropertyOrientation] as? Int == 1
+        else {
+            failureRecorder?(.validateOrientation)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyExifDictionary] == nil else {
+            failureRecorder?(.validateExif)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyTIFFDictionary] == nil else {
+            failureRecorder?(.validateTIFF)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyGPSDictionary] == nil else {
+            failureRecorder?(.validateGPS)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard properties[kCGImagePropertyIPTCDictionary] == nil else {
+            failureRecorder?(.validateIPTC)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard let decoded = CGImageSourceCreateImageAtIndex(
                 source,
                 0,
                 [kCGImageSourceShouldCache: false] as CFDictionary
-              ),
-              let decodedColorSpace = decoded.colorSpace,
-              decodedColorSpace.model == .rgb
-        else { throw DailySharingError.canonicalEncodingFailed }
+              )
+        else {
+            failureRecorder?(.validateDecode)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard let decodedColorSpace = decoded.colorSpace else {
+            failureRecorder?(.validateDecodedColorSpace)
+            throw DailySharingError.canonicalEncodingFailed
+        }
+        guard decodedColorSpace.model == .rgb else {
+            failureRecorder?(.validateDecodedRGB)
+            throw DailySharingError.canonicalEncodingFailed
+        }
     }
 }
