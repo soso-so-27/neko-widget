@@ -33,6 +33,20 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         analysisStatus == .detected && cat.detected
     }
 
+    /// A secondary-only repair may preserve the primary cat box only when it
+    /// was produced under the current detector settings and the exact PhotoKit
+    /// source revision is unchanged. Legacy records without a capture marker
+    /// must take the normal primary path once before they become reusable.
+    func canPreservePrimaryDetection(
+        sourceModificationDate currentModificationDate: Date?,
+        analysisFingerprint currentFingerprint: String
+    ) -> Bool {
+        isCatCandidate
+            && analysisFingerprint == currentFingerprint
+            && sourceModificationDateWasCaptured == true
+            && sourceModificationDate == currentModificationDate
+    }
+
     init(
         localIdentifier: String,
         creationDate: Date?,

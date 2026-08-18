@@ -4,30 +4,66 @@ import UIKit
 struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
+    let postureSecondaryPendingAssets: Int
     let isScanning: Bool
     let saveSettings: (SettingsPresentation) async -> Void
+    let saveLifeReference: (CatLifeReference?) async -> Void
     let rescan: () async -> Void
+    let retryPendingPostureClassification: () async -> Void
+    let excludedCatPhotos: [ExcludedCatPhotoPresentation]
+    let photoSourceAlbums: [PhotoSourceAlbumOption]
+    let photoSourceStatus: PhotoSourceAlbumStatus
+    let isLimitedAccess: Bool
+    let chooseMorePhotos: () -> Void
+    let restoreCatCandidates: ([String]) async -> Void
+    let selectPhotoSourceAlbum: (String?) async -> Void
+    let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
+    @State private var isSavingLifeReference = false
+    @State private var lifeReferenceSaveTask: Task<Void, Never>?
     @State private var isRescanning = false
+    @State private var isRetryingPostureClassification = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
 
     init(
         settings: SettingsPresentation,
         detectionAccuracySample: DetectionAccuracySamplePresentation,
+        postureSecondaryPendingAssets: Int,
         isScanning: Bool,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
+        saveLifeReference: @escaping (CatLifeReference?) async -> Void,
         rescan: @escaping () async -> Void,
+        retryPendingPostureClassification: @escaping () async -> Void,
+        excludedCatPhotos: [ExcludedCatPhotoPresentation],
+        photoSourceAlbums: [PhotoSourceAlbumOption],
+        photoSourceStatus: PhotoSourceAlbumStatus,
+        isLimitedAccess: Bool,
+        chooseMorePhotos: @escaping () -> Void,
+        restoreCatCandidates: @escaping ([String]) async -> Void,
+        selectPhotoSourceAlbum: @escaping (String?) async -> Void,
+        refreshPhotoSourceAlbums: @escaping () async -> Void,
         exportJSON: @escaping () async -> URL?
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
+        self.postureSecondaryPendingAssets = postureSecondaryPendingAssets
         self.isScanning = isScanning
         self.saveSettings = saveSettings
+        self.saveLifeReference = saveLifeReference
         self.rescan = rescan
+        self.retryPendingPostureClassification = retryPendingPostureClassification
+        self.excludedCatPhotos = excludedCatPhotos
+        self.photoSourceAlbums = photoSourceAlbums
+        self.photoSourceStatus = photoSourceStatus
+        self.isLimitedAccess = isLimitedAccess
+        self.chooseMorePhotos = chooseMorePhotos
+        self.restoreCatCandidates = restoreCatCandidates
+        self.selectPhotoSourceAlbum = selectPhotoSourceAlbum
+        self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.exportJSON = exportJSON
         _draft = State(initialValue: settings)
     }
@@ -70,13 +106,41 @@ struct SettingsView: View {
             } header: {
                 Text("うちの子の時間")
             } footer: {
-                Text("入力すると「1歳のころ」のように分かれます。未入力なら撮影年ごとに表示します。日付は端末内だけで使います。")
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("入力すると「1歳のころ」のように分かれます。誕生日が不明なら、推定の日付や迎えた日でかまいません。未入力なら撮影年ごとに表示します。")
+                    Text(isSavingLifeReference ? "自動保存中…" : "変更は自動で保存され、日付は端末内だけで使います。")
+                }
             }
 
             Section("「うちの子」アルバム") {
                 Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
                     LabeledContent("枚数上限", value: "\(draft.albumLimit.formatted())枚")
                 }
+            }
+
+            Section {
+                NavigationLink {
+                    CatCandidateCurationView(
+                        excludedPhotos: excludedCatPhotos,
+                        sourceAlbums: photoSourceAlbums,
+                        sourceStatus: photoSourceStatus,
+                        isLimitedAccess: isLimitedAccess,
+                        isScanning: isScanning,
+                        chooseMorePhotos: chooseMorePhotos,
+                        restoreCatCandidates: restoreCatCandidates,
+                        selectSourceAlbum: selectPhotoSourceAlbum,
+                        refreshSourceAlbums: refreshPhotoSourceAlbums
+                    )
+                } label: {
+                    LabeledContent(
+                        "写真の整理",
+                        value: excludedCatPhotos.isEmpty
+                            ? sourceSummary
+                            : "除外 \(excludedCatPhotos.count.formatted())枚"
+                    )
+                }
+            } footer: {
+                Text("「この子じゃない」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
             }
 
             Section {
@@ -142,6 +206,24 @@ struct SettingsView: View {
                 }
                 .disabled(isRescanning || isScanning)
 
+                if postureSecondaryPendingAssets > 0 {
+                    Button {
+                        Task {
+                            isRetryingPostureClassification = true
+                            await retryPendingPostureClassification()
+                            isRetryingPostureClassification = false
+                        }
+                    } label: {
+                        Label(
+                            isRetryingPostureClassification || isScanning
+                                ? "姿勢を分類中…"
+                                : "未完了の姿勢分類を再試行（\(postureSecondaryPendingAssets.formatted())枚）",
+                            systemImage: "arrow.clockwise.circle"
+                        )
+                    }
+                    .disabled(isRetryingPostureClassification || isScanning)
+                }
+
                 Button {
                     Task {
                         isExporting = true
@@ -154,6 +236,10 @@ struct SettingsView: View {
                     Label(isExporting ? "JSONを作成中…" : "検証データをJSONで書き出す", systemImage: "square.and.arrow.up")
                 }
                 .disabled(isExporting)
+            } header: {
+                Text("保存と再スキャン")
+            } footer: {
+                Text("寝顔・へそ天・香箱は写真のスキャン時に分類します。「未完了の姿勢分類を再試行」が表示された場合は、猫候補の写真だけを再確認します。姿勢のために「最初から再スキャン」を行う必要はありません。")
             }
 
             Section {
@@ -197,9 +283,14 @@ struct SettingsView: View {
         }
         .navigationTitle("設定")
         .onChange(of: settings) { _, newSettings in
-            if !isSaving {
+            if isSavingLifeReference {
+                draft.catLifeReference = newSettings.catLifeReference
+            } else if !isSaving {
                 draft = newSettings
             }
+        }
+        .onChange(of: draft.catLifeReference) { _, newValue in
+            scheduleLifeReferenceSave(newValue)
         }
         .sheet(item: $exportedFile) { file in
             ActivityView(activityItems: [file.url])
@@ -250,11 +341,44 @@ struct SettingsView: View {
         }
     }
 
+    private func scheduleLifeReferenceSave(_ value: CatLifeReference?) {
+        lifeReferenceSaveTask?.cancel()
+        guard value != settings.catLifeReference else {
+            isSavingLifeReference = false
+            return
+        }
+        lifeReferenceSaveTask = Task { @MainActor in
+            // Coalesce the DatePicker's rapid intermediate values before any
+            // disk write. 150 ms is imperceptible after a calendar selection
+            // but makes cancellation guarantee that only the latest day saves.
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+            isSavingLifeReference = true
+            await saveLifeReference(value)
+            guard !Task.isCancelled else { return }
+            isSavingLifeReference = false
+        }
+    }
+
     private var sampleSummary: String {
         if !detectionAccuracySample.snapshotIsFinal {
             return "全件スキャンの確定後に利用できます"
         }
         return "確定標本 \(detectionAccuracySample.items.count.formatted())枚"
+    }
+
+    private var sourceSummary: String {
+        switch photoSourceStatus {
+        case .allLibrary:
+            "すべての写真"
+        case .selected:
+            "アルバム指定"
+        case .unavailable:
+            "対象を確認"
+        }
     }
 
     private var detectionAccuracySampleFooter: String {

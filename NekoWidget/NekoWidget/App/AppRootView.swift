@@ -98,11 +98,14 @@ struct AppRootView: View {
                 currentPhoto: viewModel.currentAsset.map(photoPresentation),
                 likedPhotos: viewModel.likedAssets.map(photoPresentation),
                 catPhotos: viewModel.catAssets.map(photoPresentation),
-                libraryPhotos: viewModel.snapshot.assets.map(photoPresentation),
+                libraryPhotos: viewModel.visibleLibraryAssets.map(photoPresentation),
                 scan: scanPresentation,
                 albumState: effectiveAlbumState,
                 settings: settingsPresentation,
                 detectionAccuracySample: detectionAccuracySamplePresentation,
+                excludedCatPhotos: excludedCatPhotoPresentations,
+                photoSourceAlbums: viewModel.photoSourceAlbums,
+                photoSourceStatus: viewModel.photoSourceStatus,
                 isLimitedAccess: viewModel.isLimitedAccess,
                 isScanning: viewModel.isScanning,
                 widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
@@ -121,8 +124,26 @@ struct AppRootView: View {
                 rescan: {
                     await viewModel.rescan()
                 },
+                retryPendingPostureClassification: {
+                    await viewModel.retryPendingPostureClassification()
+                },
                 saveSettings: { settings in
                     await viewModel.updateSettings(coreSettings(from: settings))
+                },
+                saveLifeReference: { reference in
+                    await viewModel.updateCatLifeReference(reference)
+                },
+                excludeFromCatCandidates: { identifiers in
+                    await viewModel.excludeFromCatCandidates(localIdentifiers: identifiers)
+                },
+                restoreCatCandidates: { identifiers in
+                    await viewModel.restoreCatCandidates(localIdentifiers: identifiers)
+                },
+                selectPhotoSourceAlbum: { identifier in
+                    await viewModel.selectPhotoSourceAlbum(localIdentifier: identifier)
+                },
+                refreshPhotoSourceAlbums: {
+                    await viewModel.refreshPhotoSourceAlbums()
                 },
                 exportJSON: {
                     await viewModel.exportJSON()
@@ -137,21 +158,25 @@ struct AppRootView: View {
             scannedAssets: state.scannedAssets,
             totalAssets: state.totalAssets,
             deferredAssets: state.deferredAssets,
+            postureSecondaryPendingAssets: state.requiresFullRescan
+                ? 0
+                : viewModel.postureSecondaryPendingAssets,
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,
             isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade
+                || state.purpose == .postureRepair
         )
 
         switch state.resultKind {
         case .none:
             break
         case .provisional:
-            presentation.preliminaryCatAssets = state.catAssets
-            presentation.preliminaryOldestDate = state.oldestCatPhotoDate
+            presentation.preliminaryCatAssets = viewModel.catAssets.count
+            presentation.preliminaryOldestDate = viewModel.oldestCatPhotoDate
         case .final:
-            presentation.finalCatAssets = state.catAssets
-            presentation.finalOldestDate = state.oldestCatPhotoDate
+            presentation.finalCatAssets = viewModel.catAssets.count
+            presentation.finalOldestDate = viewModel.oldestCatPhotoDate
         }
         return presentation
     }
@@ -181,6 +206,21 @@ struct AppRootView: View {
                 )
             }
         )
+    }
+
+    private var excludedCatPhotoPresentations: [ExcludedCatPhotoPresentation] {
+        let assetsByIdentifier = Dictionary(
+            uniqueKeysWithValues: viewModel.snapshot.assets.map {
+                ($0.localIdentifier, $0)
+            }
+        )
+        return viewModel.excludedCatAssets.map { exclusion in
+            ExcludedCatPhotoPresentation(
+                localIdentifier: exclusion.localIdentifier,
+                creationDate: assetsByIdentifier[exclusion.localIdentifier]?.creationDate,
+                excludedAt: exclusion.excludedAt
+            )
+        }
     }
 
     private var effectiveAlbumState: AlbumPresentationState {
@@ -222,7 +262,10 @@ struct AppRootView: View {
             albumPostures: Set(traits?.postures ?? []),
             albumContainsPerson: traits?.containsPerson,
             albumIsOuting: traits?.isOuting,
-            largestCatAreaRatio: traits?.largestCatAreaRatio,
+            // Growth can be built immediately from the primary cat detector.
+            // The secondary pass replaces the union-area fallback with the
+            // more precise largest-single-cat area when it is available.
+            largestCatAreaRatio: traits?.largestCatAreaRatio ?? asset.cat.areaRatio,
             hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
                 == CatAlbumTraits.currentAnalysisVersion
                 && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion

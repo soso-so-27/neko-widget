@@ -67,16 +67,28 @@ enum AnimalPostureClassifier {
         for skeleton: AnimalPostureSkeleton,
         catBoundingBox: CGRect
     ) -> Set<CatPostureTag> {
-        guard let frame = bodyFrame(for: skeleton, catBoundingBox: catBoundingBox) else {
+        guard let box = sanitizedUnitRect(catBoundingBox) else {
             return []
         }
+        let boxScale = hypot(box.width, box.height)
+        guard boxScale > 0.000_001 else { return [] }
 
         var result = Set<CatPostureTag>()
-        if isSleeping(skeleton, frame: frame) { result.insert(.sleeping) }
-        if isBellyUp(skeleton, frame: frame) { result.insert(.bellyUp) }
-        if isLoaf(skeleton, frame: frame) { result.insert(.loaf) }
-        if isStretching(skeleton, frame: frame) { result.insert(.stretching) }
-        if isCurled(skeleton, frame: frame) { result.insert(.curled) }
+        // Sleeping only depends on the head, neck, and folded forelegs. The
+        // original adapter returned before evaluating it whenever tailBottom
+        // was missing, even though this rule never consumes a tail/rear point.
+        // Keep the same confidence and geometry thresholds while removing that
+        // unrelated global prerequisite.
+        if isSleeping(skeleton, boxScale: boxScale) { result.insert(.sleeping) }
+
+        // The remaining rules use a longitudinal trunk frame and therefore
+        // still require the existing high-confidence neck/tail anchors.
+        if let frame = bodyFrame(for: skeleton, catBoundingBox: box) {
+            if isBellyUp(skeleton, frame: frame) { result.insert(.bellyUp) }
+            if isLoaf(skeleton, frame: frame) { result.insert(.loaf) }
+            if isStretching(skeleton, frame: frame) { result.insert(.stretching) }
+            if isCurled(skeleton, frame: frame) { result.insert(.curled) }
+        }
         return resolvingContradictions(in: result)
     }
 
@@ -262,9 +274,10 @@ private extension AnimalPostureClassifier {
 
     static func isSleeping(
         _ skeleton: AnimalPostureSkeleton,
-        frame: BodyFrame
+        boxScale: CGFloat
     ) -> Bool {
         guard let nose = decisiveLocation(.nose, in: skeleton),
+              let neck = decisiveLocation(.neck, in: skeleton),
               let left = leg(.leftFront, in: skeleton),
               let right = leg(.rightFront, in: skeleton),
               hasDecisiveQuality(
@@ -275,11 +288,11 @@ private extension AnimalPostureClassifier {
         }
         let pawCenter = midpoint(left.paw, right.paw)
         let faceToPawSegment = pointToSegmentDistance(nose, left.paw, right.paw)
-            / frame.boxScale
-        let faceToPawCenter = distance(nose, pawCenter) / frame.boxScale
+            / boxScale
+        let faceToPawCenter = distance(nose, pawCenter) / boxScale
         let alignment = cosineSimilarity(
-            vector(from: frame.neck, to: nose),
-            vector(from: frame.neck, to: pawCenter)
+            vector(from: neck, to: nose),
+            vector(from: neck, to: pawCenter)
         )
         return faceToPawSegment <= 0.18
             && faceToPawCenter <= 0.22

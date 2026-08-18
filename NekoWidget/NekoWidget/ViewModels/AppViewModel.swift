@@ -28,12 +28,22 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var exportedURL: URL?
     @Published private(set) var isLikeInteractionReady = false
+    @Published private(set) var catCandidateCuration: CatCandidateCurationState = .empty
+    @Published private(set) var photoSourceAlbums: [PhotoSourceAlbumOption] = []
+    @Published private(set) var photoSourceStatus: PhotoSourceAlbumStatus = .allLibrary
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
 
     var isLimitedAccess: Bool { authorizationStatus == .limited }
-    var catAssets: [AssetRecord] { snapshot.catAssets }
-    var likedAssets: [AssetRecord] { snapshot.likedAssets }
+    var catAssets: [AssetRecord] { candidateSnapshot(snapshot).catAssets }
+    var likedAssets: [AssetRecord] { candidateSnapshot(snapshot).likedAssets }
+    var visibleLibraryAssets: [AssetRecord] { candidateSnapshot(snapshot).assets }
+    var excludedCatAssets: [ExcludedCatAsset] { catCandidateCuration.excludedAssets }
+    var oldestCatPhotoDate: Date? { catAssets.compactMap(\.creationDate).min() }
+    var postureSecondaryPendingAssets: Int {
+        PostureScanSummary(records: candidateSnapshot(snapshot).assets)
+            .secondaryPendingAssets
+    }
     var progress: Double { scanState.progress }
     var isQuickResultReady: Bool { scanState.isQuickResultReady }
     var isComplete: Bool { scanState.isComplete }
@@ -49,16 +59,28 @@ final class AppViewModel: ObservableObject {
     private let dailySharingSyncCoordinator: DailySharingSyncCoordinator
     private let store: LibraryStore?
     private let storeInitializationError: String?
+    private let curationStore: CatCandidateCurationStore?
+    private let curationStoreInitializationError: String?
 
     private var hasStarted = false
     private var hasFinishedSnapshotLoad = false
+    private var candidatePhotoRouteGate = CandidatePhotoRouteGate()
     private var libraryChangePending = false
     private var lastActivationSyncAt: Date?
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
+    /// PhotoAlbumService awaits PhotoKit and is therefore actor-reentrant. This
+    /// explicit tail keeps membership reads/writes non-overlapping and ensures
+    /// the newest curation generation is always applied last.
+    private var managedOutputMutationTail: Task<Void, Never>?
+    private var managedOutputMutationSequence = 0
     private var successfulImageLoadCount = 0
     private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
     private var sharingSyncObserver: NSObjectProtocol?
+    /// nil means no additional in-memory source filter. When an album is
+    /// selected this is refreshed from PhotoKit before a scan, so old snapshot
+    /// records outside that album disappear from candidate surfaces at once.
+    private var selectedSourceAssetIdentifiers: Set<String>?
 
     private lazy var libraryObserver = PhotoLibraryObserver { [weak self] in
         self?.libraryChangePending = true
@@ -84,6 +106,16 @@ final class AppViewModel: ObservableObject {
             store = nil
             storeInitializationError = error.localizedDescription
             Self.logError(error, category: "storage", operation: "initialize_store")
+        }
+
+        do {
+            curationStore = try CatCandidateCurationStore()
+            curationStoreInitializationError = nil
+            SharedLog.app.info("curation", "Cat candidate curation store initialized")
+        } catch {
+            curationStore = nil
+            curationStoreInitializationError = error.localizedDescription
+            Self.logError(error, category: "curation", operation: "initialize_store")
         }
 
         SharedLog.app.info(
@@ -116,16 +148,24 @@ final class AppViewModel: ObservableObject {
         hasStarted = true
         SharedLog.app.info("lifecycle", "Application startup began")
 
+        guard await loadCatCandidateCuration() else {
+            hasFinishedSnapshotLoad = true
+            discardPendingDeepLink(reason: "candidate-state-unavailable")
+            return
+        }
+
         if let store {
             do {
                 let loaded = try await store.load()
                 applySnapshot(loaded, preservingLiveSettings: false)
+                let candidateScanStateWasReconciled = snapshot.scanState
+                    != loaded.scanState
                 let likesChanged = synchronizeSharedLikes(
                     importLegacyLikes: true,
                     trigger: "startup"
                 )
                 chooseCurrentAssetIfNeeded()
-                if likesChanged {
+                if likesChanged || candidateScanStateWasReconciled {
                     await saveSnapshot(reportErrors: false)
                 }
                 SharedLog.app.info(
@@ -144,6 +184,7 @@ final class AppViewModel: ObservableObject {
             errorMessage = storeInitializationError
         }
         hasFinishedSnapshotLoad = true
+        openPendingDeepLinkIfNeeded()
         Task { [dailySharingSyncCoordinator] in
             await dailySharingSyncCoordinator.synchronize(trigger: "launch")
         }
@@ -158,6 +199,14 @@ final class AppViewModel: ObservableObject {
             SharedLog.app.warning("permission", "Photo library is not readable")
             await clearWidgetOutput(reportErrors: false)
             return
+        }
+        await refreshPhotoSourceAlbums()
+        if catCandidateCuration.usesSelectedAlbum
+            || !catCandidateCuration.excludedAssets.isEmpty {
+            // Reconcile a durable decision that may have been saved just before
+            // the previous process was terminated, while its external outputs
+            // still contain the pre-curation generation.
+            await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
         }
         libraryObserver.start()
         await syncOnActive()
@@ -176,6 +225,8 @@ final class AppViewModel: ObservableObject {
             await clearWidgetOutput(reportErrors: false)
             return
         }
+        await refreshPhotoSourceAlbums()
+        guard photoSourceStatus != .unavailable else { return }
         libraryObserver.start()
         libraryChangePending = true
         await launchScan(forceFullAnalysis: scanState.requiresFullRescan)
@@ -212,7 +263,16 @@ final class AppViewModel: ObservableObject {
             await clearWidgetOutput(reportErrors: false)
             return
         }
+        await refreshPhotoSourceAlbums()
         libraryObserver.start()
+
+        guard photoSourceStatus != .unavailable else {
+            SharedLog.app.warning(
+                "curation",
+                "Selected photo source is unavailable; previous candidates retained"
+            )
+            return
+        }
 
         if let lastActivationSyncAt,
            Date().timeIntervalSince(lastActivationSyncAt) < 2,
@@ -243,6 +303,47 @@ final class AppViewModel: ObservableObject {
         snapshot.scanState = scanState
         await saveSnapshot(reportErrors: false)
         await launchScan(forceFullAnalysis: true)
+    }
+
+    /// Retries only missing/stale grouped-album traits for already-known cat
+    /// photos. It does not increment the detector revision or invalidate the
+    /// current Widget/primary cat results.
+    func retryPendingPostureClassification() async {
+        guard canReadPhotos else {
+            setError(NekoWidgetError.photoAccessDenied)
+            return
+        }
+        guard !isScanning else { return }
+        guard !scanState.requiresFullRescan else {
+            SharedLog.app.info(
+                "vision",
+                "Posture retry skipped because a primary rescan is required"
+            )
+            return
+        }
+
+        let summary = PostureScanSummary(records: candidateSnapshot(snapshot).assets)
+        guard summary.secondaryPendingAssets > 0 else {
+            SharedLog.app.info(
+                "vision",
+                "Posture retry skipped because no secondary analysis is pending",
+                metadata: summary.logMetadata
+            )
+            return
+        }
+
+        errorMessage = nil
+        scanState.postureSummary = summary
+        scanState.requiresFullRescan = false
+        scanState.purpose = .postureRepair
+        snapshot.scanState = scanState
+        SharedLog.app.info(
+            "vision",
+            "Pending posture classification retry requested",
+            metadata: summary.logMetadata
+        )
+        await saveSnapshot(reportErrors: false)
+        await launchScan(forceFullAnalysis: false)
     }
 
     func suspendScan() {
@@ -325,6 +426,199 @@ final class AppViewModel: ObservableObject {
         selectedAssetIdentifier = localIdentifier
     }
 
+    func refreshPhotoSourceAlbums() async {
+        selectedSourceAssetIdentifiers = catCandidateCuration
+            .lastKnownSourceAssetIdentifierSet
+        guard canReadPhotos else {
+            photoSourceAlbums = []
+            photoSourceStatus = catCandidateCuration.usesSelectedAlbum
+                ? .unavailable
+                : .allLibrary
+            return
+        }
+        let albums = PhotoSourceAlbumCatalog.availableAlbums(
+            excluding: snapshot.albumLocalIdentifier
+        )
+        photoSourceAlbums = albums
+        photoSourceStatus = PhotoSourceAlbumCatalog.status(
+            sourceAlbumIdentifier: catCandidateCuration.sourceAlbumIdentifier,
+            in: albums
+        )
+        if let sourceAlbumIdentifier = catCandidateCuration.sourceAlbumIdentifier,
+           photoSourceStatus != .unavailable {
+            do {
+                let accessibleIdentifiers = try PhotoSourceAlbumCatalog
+                    .accessibleImageAssetIdentifiers(
+                        sourceAlbumIdentifier: sourceAlbumIdentifier
+                    )
+                // With limited Photos access, an existing album can look empty
+                // because none of its members are currently authorized. PhotoKit
+                // cannot distinguish that from a genuinely empty album. Preserve
+                // the last scoped result instead of destructively publishing an
+                // empty scan; the user can expand access or select another source.
+                if authorizationStatus == .limited,
+                   accessibleIdentifiers.isEmpty {
+                    photoSourceStatus = .unavailable
+                } else {
+                    if let curationStore {
+                        do {
+                            let refreshed = try await curationStore
+                                .refreshingSourceMembership(
+                                    localIdentifier: sourceAlbumIdentifier,
+                                    assetIdentifiers: Array(accessibleIdentifiers)
+                                )
+                            _ = applyNewestCurationState(refreshed)
+                        } catch {
+                            // Keep this session narrowed to the successfully
+                            // resolved set, but surface that crash-safe storage
+                            // could not be refreshed.
+                            selectedSourceAssetIdentifiers = accessibleIdentifiers
+                            Self.logError(
+                                error,
+                                category: "curation",
+                                operation: "refresh_source_membership"
+                            )
+                            setError(error)
+                        }
+                    } else {
+                        selectedSourceAssetIdentifiers = accessibleIdentifiers
+                    }
+                }
+            } catch {
+                photoSourceStatus = .unavailable
+                // Preserve a previous, narrower membership set if the album
+                // disappears between catalog and asset fetch.
+            }
+        } else if !catCandidateCuration.usesSelectedAlbum {
+            selectedSourceAssetIdentifiers = nil
+        }
+        reconcileCandidatePostureState()
+        chooseCurrentAssetIfNeeded()
+    }
+
+    /// Removes candidates from app-managed surfaces only. PhotoKit is never
+    /// mutated, and likes remain in their independent user-state ledger.
+    func excludeFromCatCandidates(localIdentifiers: [String]) async {
+        let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
+        guard !identifiers.isEmpty, let curationStore else { return }
+        do {
+            let updated = try await curationStore.excluding(
+                localIdentifiers: identifiers
+            )
+            _ = applyNewestCurationState(updated)
+            reconcileCandidatePostureState()
+            SharedLog.app.info(
+                "curation",
+                "Photos excluded from cat candidate surfaces",
+                metadata: [
+                    "changedRequestCount": "\(identifiers.count)",
+                    "excludedTotal": "\(catCandidateCuration.excludedAssets.count)"
+                ]
+            )
+            chooseCurrentAssetIfNeeded()
+            await refreshCandidateOutputsAfterCurationChange()
+        } catch {
+            Self.logError(error, category: "curation", operation: "exclude_candidates")
+            setError(error)
+        }
+    }
+
+    func restoreCatCandidates(localIdentifiers: [String]) async {
+        let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
+        guard !identifiers.isEmpty, let curationStore else { return }
+        do {
+            let updated = try await curationStore.restoring(
+                localIdentifiers: identifiers
+            )
+            _ = applyNewestCurationState(updated)
+            reconcileCandidatePostureState()
+            SharedLog.app.info(
+                "curation",
+                "Photos restored to cat candidate surfaces",
+                metadata: [
+                    "changedRequestCount": "\(identifiers.count)",
+                    "excludedTotal": "\(catCandidateCuration.excludedAssets.count)"
+                ]
+            )
+            chooseCurrentAssetIfNeeded()
+            await refreshCandidateOutputsAfterCurationChange()
+        } catch {
+            Self.logError(error, category: "curation", operation: "restore_candidates")
+            setError(error)
+        }
+    }
+
+    func selectPhotoSourceAlbum(localIdentifier: String?) async {
+        guard canReadPhotos, let curationStore else {
+            setError(NekoWidgetError.photoAccessDenied)
+            return
+        }
+        await refreshPhotoSourceAlbums()
+        if let localIdentifier,
+           !photoSourceAlbums.contains(where: { $0.localIdentifier == localIdentifier }) {
+            setError(CatCandidateCurationError.selectedSourceUnavailable)
+            return
+        }
+        do {
+            let resolvedIdentifiers: [String]?
+            if let localIdentifier {
+                let accessibleIdentifiers = try PhotoSourceAlbumCatalog
+                    .accessibleImageAssetIdentifiers(
+                        sourceAlbumIdentifier: localIdentifier
+                    )
+                guard authorizationStatus != .limited
+                        || !accessibleIdentifiers.isEmpty else {
+                    setError(CatCandidateCurationError.selectedSourceUnavailable)
+                    return
+                }
+                resolvedIdentifiers = Array(accessibleIdentifiers)
+            } else {
+                resolvedIdentifiers = nil
+            }
+            let updated = try await curationStore.selectingSourceAlbum(
+                localIdentifier: localIdentifier,
+                assetIdentifiers: resolvedIdentifiers
+            )
+            let changed = updated != catCandidateCuration
+            _ = applyNewestCurationState(updated)
+            guard changed else { return }
+            await refreshPhotoSourceAlbums()
+            // A newer source mutation may have completed while PhotoKit or the
+            // store actor was awaited. Never continue old-source side effects.
+            guard catCandidateCuration.sourceAlbumIdentifier == localIdentifier else { return }
+            guard photoSourceStatus != .unavailable else {
+                chooseCurrentAssetIfNeeded()
+                await refreshCandidateOutputsAfterCurationChange(reportErrors: true)
+                setError(CatCandidateCurationError.selectedSourceUnavailable)
+                return
+            }
+            SharedLog.app.info(
+                "curation",
+                "Photo scan source changed",
+                metadata: [
+                    "source": localIdentifier == nil ? "all-library" : "selected-album"
+                ]
+            )
+            libraryChangePending = false
+            chooseCurrentAssetIfNeeded()
+            Task { [weak self] in
+                guard let self else { return }
+                await self.refreshCandidateOutputsAfterCurationChange()
+                guard self.catCandidateCuration.sourceAlbumIdentifier
+                        == localIdentifier else { return }
+                // A threshold change can arm a required primary pass while this
+                // task is waiting behind an external-output generation. Read the
+                // live flag so a stale source task cannot downgrade that pass.
+                await self.launchScan(
+                    forceFullAnalysis: self.scanState.requiresFullRescan
+                )
+            }
+        } catch {
+            Self.logError(error, category: "curation", operation: "select_photo_source")
+            setError(error)
+        }
+    }
+
     /// Records only a bounded aggregate keyed by an ASCII product identifier.
     /// Album titles, photo identifiers, dates and location data are excluded so
     /// the local diagnostic can be shared without exposing library metadata.
@@ -378,6 +672,29 @@ final class AppViewModel: ObservableObject {
         await createOrUpdateAlbum()
     }
 
+    /// Persists the birthday/adoption day without invalidating Vision results
+    /// or rebuilding PhotoKit/Widget outputs. Curated time albums are derived
+    /// directly from this published setting and regroup immediately.
+    func updateCatLifeReference(_ reference: CatLifeReference?) async {
+        var normalized = settings
+        normalized.catLifeReference = reference
+        normalized = normalized.normalized()
+        guard normalized.catLifeReference != settings.catLifeReference else { return }
+
+        settings = normalized
+        snapshot.settings = normalized
+        snapshot.updatedAt = .now
+        SharedLog.app.info(
+            "settings",
+            "Cat life reference updated",
+            metadata: [
+                "configured": "\(normalized.catLifeReference != nil)",
+                "kind": normalized.catLifeReference?.kind.rawValue ?? "none"
+            ]
+        )
+        await saveSnapshot(reportErrors: true)
+    }
+
     func updateSettings(_ newSettings: AppSettings) async {
         var normalized = newSettings.normalized()
         let detectionChanged = normalized.confidenceThreshold != settings.confidenceThreshold
@@ -401,8 +718,9 @@ final class AppViewModel: ObservableObject {
         snapshot.settings = normalized
         snapshot.updatedAt = .now
         if displayRangeChanged {
+            let eligible = candidateSnapshot(snapshot)
             currentAsset = photoSelector.selectOne(
-                from: snapshot.assets,
+                from: eligible.assets,
                 settings: normalized
             )
         }
@@ -415,8 +733,7 @@ final class AppViewModel: ObservableObject {
             await saveSnapshot(reportErrors: false)
             await launchScan(forceFullAnalysis: true)
         } else if hasEligibleDisplayCandidates(in: snapshot) {
-            await createOrUpdateAlbum(reportErrors: false)
-            await rebuildWidgetCache(reportErrors: false)
+            await refreshManagedOutputs(reportErrors: false)
         } else {
             await clearAlbumAndWidgetOutputs(reportErrors: false)
         }
@@ -425,7 +742,10 @@ final class AppViewModel: ObservableObject {
     func exportJSON() async -> URL? {
         errorMessage = nil
         do {
-            let url = try exporter.export(snapshot)
+            let url = try exporter.export(
+                snapshot,
+                curation: catCandidateCuration
+            )
             exportedURL = url
             SharedLog.app.info(
                 "export",
@@ -452,19 +772,76 @@ final class AppViewModel: ObservableObject {
             )
             return
         }
+        let route: CandidatePhotoRoute
         switch link.destination {
         case let .photo(localIdentifier):
-            selectedAssetShownAt = link.shownAt
-            selectedAssetIdentifier = localIdentifier
-            SharedLog.app.info(
-                "deeplink",
-                "Opened photo from widget deep link",
-                metadata: [
-                    "asset": SharedLog.shortHash(localIdentifier),
-                    "shownAt": link.shownAt.map(Self.iso8601String) ?? "unknown"
-                ]
+            route = CandidatePhotoRoute(
+                localIdentifier: localIdentifier,
+                shownAt: link.shownAt
             )
         }
+        guard let readyRoute = candidatePhotoRouteGate.receive(
+            route,
+            candidateStateIsReady: hasFinishedSnapshotLoad
+        ) else {
+            // A cold-start Widget tap can arrive before the curation and
+            // snapshot stores finish loading. Keep only the latest tap and
+            // validate it against the loaded candidate set before routing.
+            SharedLog.app.info(
+                "deeplink",
+                "Deferred Widget photo until candidate state loaded"
+            )
+            return
+        }
+        openPhotoRoute(readyRoute)
+    }
+
+    private func openPendingDeepLinkIfNeeded() {
+        guard let route = candidatePhotoRouteGate.finishLoading(
+            succeeded: true
+        ) else { return }
+        openPhotoRoute(route)
+    }
+
+    private func discardPendingDeepLink(reason: String) {
+        guard candidatePhotoRouteGate.hasPendingRoute else { return }
+        _ = candidatePhotoRouteGate.finishLoading(succeeded: false)
+        selectedAssetIdentifier = nil
+        selectedAssetShownAt = nil
+        SharedLog.app.info(
+            "deeplink",
+            "Discarded deferred Widget photo",
+            metadata: ["reason": reason]
+        )
+    }
+
+    private func openPhotoRoute(_ route: CandidatePhotoRoute) {
+        guard catCandidateCuration.includesCandidate(
+            localIdentifier: route.localIdentifier,
+            selectedSourceAssetIdentifiers: selectedSourceAssetIdentifiers
+        ),
+        catAssets.contains(where: {
+            $0.localIdentifier == route.localIdentifier
+        }) else {
+            selectedAssetIdentifier = nil
+            selectedAssetShownAt = nil
+            SharedLog.app.info(
+                "deeplink",
+                "Ignored stale Widget photo outside current candidates",
+                metadata: ["asset": SharedLog.shortHash(route.localIdentifier)]
+            )
+            return
+        }
+        selectedAssetShownAt = route.shownAt
+        selectedAssetIdentifier = route.localIdentifier
+        SharedLog.app.info(
+            "deeplink",
+            "Opened photo from widget deep link",
+            metadata: [
+                "asset": SharedLog.shortHash(route.localIdentifier),
+                "shownAt": route.shownAt.map(Self.iso8601String) ?? "unknown"
+            ]
+        )
     }
 
     func handleScenePhase(_ phase: ScenePhase) {
@@ -525,6 +902,103 @@ final class AppViewModel: ObservableObject {
         authorizationStatus == .authorized || authorizationStatus == .limited
     }
 
+    private func loadCatCandidateCuration() async -> Bool {
+        guard let curationStore else {
+            if let curationStoreInitializationError {
+                errorMessage = curationStoreInitializationError
+            }
+            return false
+        }
+        do {
+            catCandidateCuration = try await curationStore.load()
+            selectedSourceAssetIdentifiers = catCandidateCuration
+                .lastKnownSourceAssetIdentifierSet
+            SharedLog.app.info(
+                "curation",
+                "Cat candidate curation state loaded",
+                metadata: [
+                    "excluded": "\(catCandidateCuration.excludedAssets.count)",
+                    "source": catCandidateCuration.usesSelectedAlbum
+                        ? "selected-album"
+                        : "all-library"
+                ]
+            )
+            return true
+        } catch {
+            // Do not fall back to an empty state: that would silently
+            // resurrect every previously excluded photo.
+            Self.logError(error, category: "curation", operation: "load_state")
+            setError(error)
+            return false
+        }
+    }
+
+    @discardableResult
+    private func applyNewestCurationState(
+        _ incoming: CatCandidateCurationState
+    ) -> Bool {
+        guard incoming.mutationRevision >= catCandidateCuration.mutationRevision else {
+            SharedLog.app.debug(
+                "curation",
+                "Discarded stale curation actor result",
+                metadata: [
+                    "currentRevision": "\(catCandidateCuration.mutationRevision)",
+                    "returnedRevision": "\(incoming.mutationRevision)"
+                ]
+            )
+            return false
+        }
+        catCandidateCuration = incoming
+        selectedSourceAssetIdentifiers = incoming.lastKnownSourceAssetIdentifierSet
+        return true
+    }
+
+    private func candidateSnapshot(_ input: LibrarySnapshot) -> LibrarySnapshot {
+        let excludedIdentifiers = catCandidateCuration.excludedAssetIdentifiers
+        let sourceIdentifiers = selectedSourceAssetIdentifiers
+            ?? catCandidateCuration.lastKnownSourceAssetIdentifierSet
+        let usesSelectedSource = catCandidateCuration.usesSelectedAlbum
+        var value = input
+        value.assets.removeAll { asset in
+            if excludedIdentifiers.contains(asset.localIdentifier) { return true }
+            guard usesSelectedSource else { return false }
+            // No known membership is fail-closed, never an implicit full library.
+            return sourceIdentifiers?.contains(asset.localIdentifier) != true
+        }
+        return value
+    }
+
+    private func reconcileCandidatePostureState() {
+        let summary = PostureScanSummary(records: candidateSnapshot(snapshot).assets)
+        scanState.postureSummary = summary
+        if !scanState.requiresFullRescan, !isScanning {
+            if summary.secondaryPendingAssets > 0 {
+                if scanState.purpose == nil || scanState.purpose == .postureRepair {
+                    scanState.purpose = .postureRepair
+                }
+            } else if scanState.purpose == .postureRepair {
+                scanState.purpose = nil
+            }
+        }
+        snapshot.scanState = scanState
+    }
+
+    private func refreshCandidateOutputsAfterCurationChange(
+        reportErrors: Bool = true
+    ) async {
+        // PhotoAlbumService is an actor. Always enqueue this generation behind
+        // any in-flight stale membership update; a time-bounded status poll can
+        // otherwise return without ever removing an excluded photo.
+        if hasEligibleDisplayCandidates(in: snapshot) {
+            // This follows an explicit user correction. Surface a failure
+            // instead of silently leaving a managed album or Widget on the
+            // pre-correction generation.
+            await refreshManagedOutputs(reportErrors: reportErrors)
+        } else {
+            await clearAlbumAndWidgetOutputs(reportErrors: reportErrors)
+        }
+    }
+
     private func launchScan(forceFullAnalysis: Bool) async {
         scanGeneration += 1
         let generation = scanGeneration
@@ -575,7 +1049,8 @@ final class AppViewModel: ObservableObject {
             let final = try await scanner.scan(
                 existing: snapshot,
                 settings: settings,
-                forceFullAnalysis: forceFullAnalysis
+                forceFullAnalysis: forceFullAnalysis,
+                sourceAlbumIdentifier: catCandidateCuration.sourceAlbumIdentifier
             ) { [weak self] event in
                 await self?.applyScanEvent(event, generation: generation)
             }
@@ -587,16 +1062,18 @@ final class AppViewModel: ObservableObject {
             SharedLog.app.info(
                 "scan",
                 "Final scan result applied",
-                metadata: [
-                    "cats": "\(final.scanState.catAssets)",
+                metadata: Self.scanLogMetadata(
+                    [
+                    "cats": "\(catAssets.count)",
                     "deferred": "\(final.scanState.deferredAssets)",
                     "total": "\(final.scanState.totalAssets)"
-                ]
+                    ],
+                    state: scanState
+                )
             )
 
             if hasEligibleDisplayCandidates(in: final) {
-                await createOrUpdateAlbum(reportErrors: false)
-                await rebuildWidgetCache(reportErrors: false)
+                await refreshManagedOutputs(reportErrors: false)
             } else {
                 await clearAlbumAndWidgetOutputs(reportErrors: false)
             }
@@ -611,6 +1088,22 @@ final class AppViewModel: ObservableObject {
                 "Scan task cancelled",
                 metadata: ["generation": "\(generation)"]
             )
+            await saveSnapshot(reportErrors: false)
+        } catch CatCandidateCurationError.selectedSourceUnavailable {
+            guard generation == scanGeneration else { return }
+            photoSourceStatus = .unavailable
+            var failed = scanState
+            failed.phase = .failed
+            failed.lastError = CatCandidateCurationError
+                .selectedSourceUnavailable
+                .localizedDescription
+            scanState = failed
+            snapshot.scanState = failed
+            SharedLog.app.warning(
+                "curation",
+                "Selected photo source became unavailable; previous candidates retained"
+            )
+            setError(CatCandidateCurationError.selectedSourceUnavailable)
             await saveSnapshot(reportErrors: false)
         } catch {
             guard generation == scanGeneration else { return }
@@ -640,17 +1133,21 @@ final class AppViewModel: ObservableObject {
             mergeAnalyzedRecords(analyzedRecords)
             snapshot.scanState = published
             snapshot.updatedAt = .now
+            reconcileCandidatePostureState()
             chooseCurrentAssetIfNeeded()
             SharedLog.app.info(
                 "scan",
                 "Scan progress published",
-                metadata: [
-                    "cats": "\(published.catAssets)",
+                metadata: Self.scanLogMetadata(
+                    [
+                    "cats": "\(catAssets.count)",
                     "deferred": "\(published.deferredAssets)",
                     "phase": published.phase.rawValue,
                     "scanned": "\(published.scannedAssets)",
                     "total": "\(published.totalAssets)"
-                ]
+                    ],
+                    state: scanState
+                )
             )
             // Persist resumable full-scan checkpoints without rewriting a
             // potentially large JSON file for every progress publication.
@@ -664,20 +1161,22 @@ final class AppViewModel: ObservableObject {
             SharedLog.app.info(
                 "scan",
                 "Provisional scan result applied",
-                metadata: [
-                    "cats": "\(provisional.scanState.catAssets)",
+                metadata: Self.scanLogMetadata(
+                    [
+                    "cats": "\(catAssets.count)",
                     "deferred": "\(provisional.scanState.deferredAssets)",
                     "scanned": "\(provisional.scanState.scannedAssets)",
                     "total": "\(provisional.scanState.totalAssets)"
-                ]
+                    ],
+                    state: scanState
+                )
             )
             await saveSnapshot(reportErrors: false)
             // Publish a usable v1 experience after the newest 500 assets rather
             // than waiting for a potentially long full-library scan.
             if provisional.scanState.resultKind == .provisional {
                 if hasEligibleDisplayCandidates(in: provisional) {
-                    await createOrUpdateAlbum(reportErrors: false)
-                    await rebuildWidgetCache(reportErrors: false)
+                    await refreshManagedOutputs(reportErrors: false)
                 } else {
                     // Limited access can shrink, or assets can be deleted,
                     // before a long full scan completes. Do not leave the old
@@ -726,6 +1225,7 @@ final class AppViewModel: ObservableObject {
         snapshot = merged
         scanState = merged.scanState
         settings = merged.settings.normalized()
+        reconcileCandidatePostureState()
         refreshCurrentAsset()
     }
 
@@ -860,6 +1360,10 @@ final class AppViewModel: ObservableObject {
 
     private func chooseCurrentAssetIfNeeded() {
         if let currentAsset,
+           catCandidateCuration.includesCandidate(
+               localIdentifier: currentAsset.localIdentifier,
+               selectedSourceAssetIdentifiers: selectedSourceAssetIdentifiers
+           ),
            let updated = snapshot.assets.first(where: {
                $0.localIdentifier == currentAsset.localIdentifier
                    && $0.isCatCandidate
@@ -868,22 +1372,49 @@ final class AppViewModel: ObservableObject {
             self.currentAsset = updated
             return
         }
+        let eligible = candidateSnapshot(snapshot)
         currentAsset = photoSelector.selectOne(
-            from: snapshot.assets,
+            from: eligible.assets,
             settings: settings
         )
     }
 
     private func refreshCurrentAsset() {
         guard let identifier = currentAsset?.localIdentifier else { return }
+        guard catCandidateCuration.includesCandidate(
+            localIdentifier: identifier,
+            selectedSourceAssetIdentifiers: selectedSourceAssetIdentifiers
+        ) else {
+            currentAsset = nil
+            chooseCurrentAssetIfNeeded()
+            return
+        }
         currentAsset = snapshot.assets.first { $0.localIdentifier == identifier }
     }
 
     private func createOrUpdateAlbum(reportErrors: Bool) async {
-        if case .updating = albumStatus { return }
-        let selected = albumSelector.select(from: snapshot)
+        await enqueueManagedOutputMutation { model in
+            await model.performCreateOrUpdateAlbum(reportErrors: reportErrors)
+        }
+    }
+
+    private func refreshManagedOutputs(reportErrors: Bool) async {
+        await enqueueManagedOutputMutation { model in
+            if model.hasEligibleDisplayCandidates(in: model.snapshot) {
+                await model.performCreateOrUpdateAlbum(reportErrors: reportErrors)
+                await model.performRebuildWidgetCache(reportErrors: reportErrors)
+            } else {
+                await model.performClearManagedAlbum(reportErrors: reportErrors)
+                await model.performClearWidgetOutput(reportErrors: reportErrors)
+            }
+        }
+    }
+
+    private func performCreateOrUpdateAlbum(reportErrors: Bool) async {
+        let selected = albumSelector.select(from: candidateSnapshot(snapshot))
         guard !selected.isEmpty else {
-            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            await performClearManagedAlbum(reportErrors: false)
+            await performClearWidgetOutput(reportErrors: false)
             albumStatus = .failed(message: NekoWidgetError.noCatPhotos.localizedDescription)
             if reportErrors { setError(NekoWidgetError.noCatPhotos) }
             return
@@ -921,14 +1452,40 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func enqueueManagedOutputMutation(
+        _ operation: @escaping @MainActor (AppViewModel) async -> Void
+    ) async {
+        managedOutputMutationSequence += 1
+        let sequence = managedOutputMutationSequence
+        let previous = managedOutputMutationTail
+        let task = Task { @MainActor [weak self] in
+            if let previous { await previous.value }
+            guard let self else { return }
+            await operation(self)
+        }
+        managedOutputMutationTail = task
+        await task.value
+        if managedOutputMutationSequence == sequence {
+            managedOutputMutationTail = nil
+        }
+    }
+
     private func rebuildWidgetCache(reportErrors: Bool) async {
+        await enqueueManagedOutputMutation { model in
+            await model.performRebuildWidgetCache(reportErrors: reportErrors)
+        }
+    }
+
+    private func performRebuildWidgetCache(reportErrors: Bool) async {
         SharedLog.app.info(
             "widget-cache",
             "Widget cache rebuild requested",
             metadata: ["assets": "\(snapshot.assets.count)"]
         )
         do {
-            let result = try await widgetCacheBuilder.build(from: snapshot)
+            let result = try await widgetCacheBuilder.build(
+                from: candidateSnapshot(snapshot)
+            )
             let occurrenceCounts = Dictionary(
                 grouping: result.selectedIdentifiers,
                 by: { $0 }
@@ -959,6 +1516,13 @@ final class AppViewModel: ObservableObject {
     }
 
     private func clearAlbumAndWidgetOutputs(reportErrors: Bool) async {
+        await enqueueManagedOutputMutation { model in
+            await model.performClearManagedAlbum(reportErrors: reportErrors)
+            await model.performClearWidgetOutput(reportErrors: reportErrors)
+        }
+    }
+
+    private func performClearManagedAlbum(reportErrors: Bool) async {
         do {
             try await albumService.removeAllAssets(
                 existingAlbumIdentifier: snapshot.albumLocalIdentifier
@@ -969,10 +1533,15 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "album", operation: "clear_album")
             if reportErrors { setError(error) }
         }
-        await clearWidgetOutput(reportErrors: reportErrors)
     }
 
     private func clearWidgetOutput(reportErrors: Bool) async {
+        await enqueueManagedOutputMutation { model in
+            await model.performClearWidgetOutput(reportErrors: reportErrors)
+        }
+    }
+
+    private func performClearWidgetOutput(reportErrors: Bool) async {
         do {
             try await widgetCacheBuilder.clear()
             WidgetCenter.shared.reloadAllTimelines()
@@ -983,9 +1552,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func hasEligibleDisplayCandidates(in value: LibrarySnapshot) -> Bool {
-        photoSelector.selectOne(
-            from: value.assets,
-            settings: value.settings
+        let eligible = candidateSnapshot(value)
+        return photoSelector.selectOne(
+            from: eligible.assets,
+            settings: eligible.settings
         ) != nil
     }
 
@@ -1026,6 +1596,18 @@ final class AppViewModel: ObservableObject {
                 "reason": error.localizedDescription
             ]
         )
+    }
+
+    private static func scanLogMetadata(
+        _ base: [String: String],
+        state: ScanState
+    ) -> [String: String] {
+        var metadata = base
+        metadata.merge(
+            state.postureSummary?.logMetadata ?? [:],
+            uniquingKeysWith: { current, _ in current }
+        )
+        return metadata
     }
 
     private static func authorizationName(_ status: PHAuthorizationStatus) -> String {

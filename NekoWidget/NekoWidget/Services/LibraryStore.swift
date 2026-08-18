@@ -74,6 +74,27 @@ actor LibraryStore {
             }
         }
 
+        let postureSummary = PostureScanSummary(records: value.assets)
+        if value.scanState.postureSummary != postureSummary {
+            value.scanState.postureSummary = postureSummary
+            didChange = true
+        }
+
+        // Build 12 already has valid primary cat decisions and Widget state.
+        // Analysis version 2 only repairs secondary posture traits, so never
+        // turn this migration into another full-library primary Vision pass.
+        if postureSummary.secondaryPendingAssets > 0,
+           !value.scanState.requiresFullRescan {
+            if value.scanState.purpose != .postureRepair {
+                value.scanState.purpose = .postureRepair
+                didChange = true
+            }
+        } else if postureSummary.secondaryPendingAssets == 0,
+                  value.scanState.purpose == .postureRepair {
+            value.scanState.purpose = nil
+            didChange = true
+        }
+
         if didChange {
             value.updatedAt = .now
         }

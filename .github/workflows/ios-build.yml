@@ -150,10 +150,42 @@ jobs:
             Shared/Models/AssetRecord.swift \
             Shared/Models/ScanState.swift \
             Shared/Models/LibrarySnapshot.swift \
+            NekoWidget/Views/GrowthAlbumSelector.swift \
             NekoWidget/Views/AppPresentationModels.swift \
             ci/verify-album-grouping.swift \
             -o "$RUNNER_TEMP/verify-album-grouping"
           "$RUNNER_TEMP/verify-album-grouping"
+
+      - name: Verify growth album selection
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/AppSettings.swift \
+            Shared/Models/NormalizedRect.swift \
+            Shared/Models/CatDetection.swift \
+            Shared/Models/AssetRecord.swift \
+            Shared/Models/ScanState.swift \
+            Shared/Models/LibrarySnapshot.swift \
+            NekoWidget/Views/GrowthAlbumSelector.swift \
+            NekoWidget/Views/AppPresentationModels.swift \
+            ci/verify-growth-album.swift \
+            -o "$RUNNER_TEMP/verify-growth-album"
+          "$RUNNER_TEMP/verify-growth-album"
+
+      - name: Verify cat candidate curation state and export privacy
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -parse-as-library \
+            Shared/Models/CatCandidateCuration.swift \
+            ci/verify-cat-curation.swift \
+            -o "$RUNNER_TEMP/verify-cat-curation"
+          "$RUNNER_TEMP/verify-cat-curation"
 
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget

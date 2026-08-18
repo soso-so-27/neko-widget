@@ -12,9 +12,17 @@ actor PhotoLibraryScanner {
     private enum AnalysisMode: Sendable {
         case full
         case groupedAlbumOnly
+        case postureRepairOnly
 
         var preservesPreviousCatOnFailure: Bool {
-            if case .groupedAlbumOnly = self { return true }
+            switch self {
+            case .groupedAlbumOnly, .postureRepairOnly: return true
+            case .full: return false
+            }
+        }
+
+        var preservesPrimaryDetectionOnSuccess: Bool {
+            if case .postureRepairOnly = self { return true }
             return false
         }
     }
@@ -192,6 +200,7 @@ actor PhotoLibraryScanner {
         existing: LibrarySnapshot,
         settings inputSettings: AppSettings,
         forceFullAnalysis: Bool,
+        sourceAlbumIdentifier: String? = nil,
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws -> LibrarySnapshot {
         let settings = inputSettings.normalized()
@@ -201,10 +210,13 @@ actor PhotoLibraryScanner {
         fetchOptions.sortDescriptors = [
             NSSortDescriptor(key: "creationDate", ascending: false)
         ]
-        let fetchResult = PHAsset.fetchAssets(with: .image, options: fetchOptions)
-        var assets: [PHAsset] = []
-        assets.reserveCapacity(fetchResult.count)
-        fetchResult.enumerateObjects { asset, _, _ in assets.append(asset) }
+        // A stale or inaccessible selected album fails before any provisional
+        // publication. This preserves the previous snapshot and outputs rather
+        // than silently widening the user's source back to the full library.
+        let assets = try PhotoSourceAlbumCatalog.fetchImageAssets(
+            sourceAlbumIdentifier: sourceAlbumIdentifier,
+            options: fetchOptions
+        )
         let outingByIdentifier = HomeLocationClassifier.classify(assets.map { asset in
             AlbumLocationSample(
                 localIdentifier: asset.localIdentifier,
@@ -219,13 +231,27 @@ actor PhotoLibraryScanner {
                 "assets": "\(assets.count)",
                 "forceFullAnalysis": "\(forceFullAnalysis)",
                 "networkAllowed": "false",
-                "quickLimit": "\(settings.quickScanLimit)"
+                "quickLimit": "\(settings.quickScanLimit)",
+                "source": sourceAlbumIdentifier == nil ? "all-library" : "selected-album"
             ]
         )
 
         let previousByIdentifier = Dictionary(
             uniqueKeysWithValues: existing.assets.map { ($0.localIdentifier, $0) }
         )
+        let activeIdentifiers = Set(assets.map(\.localIdentifier))
+        // A selected album is only a candidate scope, not permission to destroy
+        // the full-library Vision cache. Dormant records remain hidden by the
+        // durable source membership and become reusable if the user later picks
+        // another album or returns to the whole library.
+        let dormantIdentifiers = PhotoSourceCachePolicy.dormantIdentifiers(
+            existingIdentifiers: existing.assets.map(\.localIdentifier),
+            activeIdentifiers: activeIdentifiers,
+            usesSelectedSource: sourceAlbumIdentifier != nil
+        )
+        let dormantRecords = existing.assets.filter {
+            dormantIdentifiers.contains($0.localIdentifier)
+        }
         var records = Array<AssetRecord?>(repeating: nil, count: assets.count)
         var seenBurstIdentifiers = Set<String>()
         let quickEnd = min(settings.quickScanLimit, assets.count)
@@ -268,6 +294,7 @@ actor PhotoLibraryScanner {
                 previousByIdentifier[$0.localIdentifier]
             })
         }
+        quickRecords.append(contentsOf: dormantRecords)
         quickSnapshot.assets = quickRecords
         quickSnapshot.scanState = quickState
         quickSnapshot.settings = settings
@@ -293,7 +320,7 @@ actor PhotoLibraryScanner {
 
         try Task.checkCancellation()
         var final = existing
-        final.assets = records.compactMap { $0 }
+        final.assets = records.compactMap { $0 } + dormantRecords
         final.scanState = makeState(
             records: records,
             scannedAssets: assets.count,
@@ -306,14 +333,20 @@ actor PhotoLibraryScanner {
         final.scanState.lastScannedAt = .now
         final.settings = settings
         final.updatedAt = .now
+        var completionMetadata = [
+            "cats": "\(final.scanState.catAssets)",
+            "deferred": "\(final.scanState.deferredAssets)",
+            "postureScope": "active-source-before-user-curation",
+            "total": "\(final.scanState.totalAssets)"
+        ]
+        completionMetadata.merge(
+            final.scanState.postureSummary?.logMetadata ?? [:],
+            uniquingKeysWith: { current, _ in current }
+        )
         SharedLog.app.info(
             "scan",
             "Photo library scan completed",
-            metadata: [
-                "cats": "\(final.scanState.catAssets)",
-                "deferred": "\(final.scanState.deferredAssets)",
-                "total": "\(final.scanState.totalAssets)"
-            ]
+            metadata: completionMetadata
         )
         return final
     }
@@ -354,6 +387,47 @@ actor PhotoLibraryScanner {
                 let asset = assets[index]
                 let previous = previousByIdentifier[asset.localIdentifier]
                 let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
+
+                // Build 12's primary cat/no-cat decisions remain valid. A
+                // posture repair touches only known cats whose secondary traits
+                // are nil or stale. Existing non-target records (including
+                // iCloud/failed primary records) are retained without Vision;
+                // genuinely new assets still use the normal path below.
+                if purpose == .postureRepair, let previous {
+                    if previous.isCatCandidate,
+                       !Self.hasCompletedGroupedAlbumAnalysis(previous) {
+                        let currentModificationDate = Self.normalizedModificationDate(
+                            asset.modificationDate
+                        )
+                        let mode: AnalysisMode = previous.canPreservePrimaryDetection(
+                            sourceModificationDate: currentModificationDate,
+                            analysisFingerprint: settings.analysisFingerprint
+                        ) ? .postureRepairOnly : .full
+                        pending.append((index, asset, previous, mode))
+                    } else {
+                        var reused = previous
+                        reused.creationDate = asset.creationDate
+                        reused.sourceModificationDate = Self.normalizedModificationDate(
+                            asset.modificationDate
+                        )
+                        reused.sourceModificationDateWasCaptured = true
+                        reused.isFavorite = asset.isFavorite
+                        reused.isScreenshot = isScreenshot
+                        reused.burstIdentifier = asset.burstIdentifier
+                        if reused.isCatCandidate,
+                           var traits = reused.albumTraits,
+                           traits.analysisVersion == CatAlbumTraits.currentAnalysisVersion {
+                            traits.isOuting = Self.outingValue(
+                                for: asset.localIdentifier,
+                                in: outingByIdentifier
+                            )
+                            reused.albumTraits = traits
+                        }
+                        records[index] = reused
+                        reusedCount += 1
+                    }
+                    continue
+                }
 
                 if isScreenshot {
                     records[index] = Self.excludedRecord(
@@ -544,11 +618,15 @@ actor PhotoLibraryScanner {
                             || record.albumTraits?.analysisVersion
                                 != CatAlbumTraits.currentAnalysisVersion))
             }.count,
+            postureSummary: PostureScanSummary(records: finished),
             // Completing one full pass clears the migration banner even when
             // an iCloud-only known cat could not receive secondary traits.
             // Its nil album version is still retried by the normal reuse path.
             requiresFullRescan: requiresFullRescan,
-            purpose: requiresFullRescan ? purpose : nil,
+            // Keep a lightweight repair purpose through provisional/cancelled
+            // checkpoints so foreground activation can resume it. A final
+            // result clears every scan purpose.
+            purpose: resultKind == .final ? nil : purpose,
             lastError: nil
         )
     }
@@ -802,6 +880,12 @@ actor PhotoLibraryScanner {
             guard !cats.isEmpty,
                   !union.isNull,
                   catAreaRatio >= settings.minimumCatAreaRatio else {
+                if analysisMode.preservesPreviousCatOnFailure,
+                   let previous,
+                   previous.isCatCandidate {
+                    processingOutcome = "detected-album-pending"
+                    return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+                }
                 processingOutcome = AssetAnalysisStatus.noCat.rawValue
                 return AssetRecord(
                     localIdentifier: asset.localIdentifier,
@@ -827,8 +911,15 @@ actor PhotoLibraryScanner {
                 areaRatio: catAreaRatio,
                 catCount: cats.count
             )
-            let primaryDetection = refreshedDetection
-            let primaryAnalyzedAt = Date.now
+            let primaryDetection: CatDetection
+            let primaryAnalyzedAt: Date
+            if analysisMode.preservesPrimaryDetectionOnSuccess, let previous {
+                primaryDetection = previous.cat
+                primaryAnalyzedAt = previous.analyzedAt
+            } else {
+                primaryDetection = refreshedDetection
+                primaryAnalyzedAt = .now
+            }
 
             do {
                 try Task.checkCancellation()
@@ -952,8 +1043,9 @@ actor PhotoLibraryScanner {
         )
         try handler.perform([poseRequest, faceRequest])
 
+        let poseObservations = poseRequest.results ?? []
         let postureTags = AnimalPostureClassifier.tags(
-            from: poseRequest.results ?? [],
+            from: poseObservations,
             matching: catBoundingBoxes
         )
         let containsPerson = containsProminentHumanFace(
@@ -965,6 +1057,7 @@ actor PhotoLibraryScanner {
         }.max() ?? 0
         return CatAlbumTraits(
             postures: Array(postureTags),
+            poseObservationCount: poseObservations.count,
             containsPerson: containsPerson,
             isOuting: isOuting,
             largestCatAreaRatio: largestCatAreaRatio

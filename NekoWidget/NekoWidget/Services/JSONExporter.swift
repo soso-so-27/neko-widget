@@ -2,7 +2,10 @@ import CryptoKit
 import Foundation
 
 struct JSONExporter {
-    func export(_ snapshot: LibrarySnapshot) throws -> URL {
+    func export(
+        _ snapshot: LibrarySnapshot,
+        curation: CatCandidateCurationState = .empty
+    ) throws -> URL {
         let exportedAt = Date.now
         let likeMeasurement = try SharedLikeStore.measurementSnapshot()
         let formatter = DateFormatter()
@@ -15,7 +18,8 @@ struct JSONExporter {
             VerificationExportPayload(
                 snapshot: snapshot,
                 exportedAt: exportedAt,
-                likeMeasurement: likeMeasurement
+                likeMeasurement: likeMeasurement,
+                curation: curation
             ),
             to: url
         )
@@ -30,11 +34,13 @@ private struct VerificationExportPayload: Encodable {
     var snapshot: LibrarySnapshot
     var detectionAccuracySample: DetectionAccuracySample
     var likeMeasurement: LikeMeasurementExport
+    var catCandidateCuration: CatCandidateCurationExportSummary
 
     init(
         snapshot: LibrarySnapshot,
         exportedAt: Date,
-        likeMeasurement: SharedLikeMeasurementSnapshot
+        likeMeasurement: SharedLikeMeasurementSnapshot,
+        curation: CatCandidateCurationState
     ) {
         self.snapshot = snapshot
         detectionAccuracySample = DetectionAccuracySample(
@@ -42,6 +48,7 @@ private struct VerificationExportPayload: Encodable {
             generatedAt: exportedAt
         )
         self.likeMeasurement = LikeMeasurementExport(snapshot: likeMeasurement)
+        catCandidateCuration = CatCandidateCurationExportSummary(state: curation)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -55,6 +62,7 @@ private struct VerificationExportPayload: Encodable {
         case updatedAt
         case detectionAccuracySample
         case likeMeasurement
+        case catCandidateCuration
     }
 
     func encode(to encoder: Encoder) throws {
@@ -81,6 +89,7 @@ private struct VerificationExportPayload: Encodable {
         try container.encode(snapshot.updatedAt, forKey: .updatedAt)
         try container.encode(detectionAccuracySample, forKey: .detectionAccuracySample)
         try container.encode(likeMeasurement, forKey: .likeMeasurement)
+        try container.encode(catCandidateCuration, forKey: .catCandidateCuration)
     }
 }
 

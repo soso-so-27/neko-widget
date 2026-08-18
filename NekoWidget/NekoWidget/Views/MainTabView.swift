@@ -9,6 +9,9 @@ struct MainTabView: View {
     let albumState: AlbumPresentationState
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
+    let excludedCatPhotos: [ExcludedCatPhotoPresentation]
+    let photoSourceAlbums: [PhotoSourceAlbumOption]
+    let photoSourceStatus: PhotoSourceAlbumStatus
     let isLimitedAccess: Bool
     let isScanning: Bool
     let widgetIntervalMinutes: Int
@@ -20,7 +23,13 @@ struct MainTabView: View {
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void
+    let retryPendingPostureClassification: () async -> Void
     let saveSettings: (SettingsPresentation) async -> Void
+    let saveLifeReference: (CatLifeReference?) async -> Void
+    let excludeFromCatCandidates: ([String]) async -> Void
+    let restoreCatCandidates: ([String]) async -> Void
+    let selectPhotoSourceAlbum: (String?) async -> Void
+    let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
 
     @State private var selectedTab: AppTab = .home
@@ -81,9 +90,20 @@ struct MainTabView: View {
                 SettingsView(
                     settings: settings,
                     detectionAccuracySample: detectionAccuracySample,
+                    postureSecondaryPendingAssets: scan.postureSecondaryPendingAssets,
                     isScanning: isScanning,
                     saveSettings: saveSettings,
+                    saveLifeReference: saveLifeReference,
                     rescan: rescan,
+                    retryPendingPostureClassification: retryPendingPostureClassification,
+                    excludedCatPhotos: excludedCatPhotos,
+                    photoSourceAlbums: photoSourceAlbums,
+                    photoSourceStatus: photoSourceStatus,
+                    isLimitedAccess: isLimitedAccess,
+                    chooseMorePhotos: chooseMorePhotos,
+                    restoreCatCandidates: restoreCatCandidates,
+                    selectPhotoSourceAlbum: selectPhotoSourceAlbum,
+                    refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
                     exportJSON: exportJSON
                 )
             }
@@ -94,6 +114,16 @@ struct MainTabView: View {
         }
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
+            let isOutsideScopedSource = photoSourceStatus != .allLibrary
+                && !catPhotos.contains(where: {
+                    $0.localIdentifier == identifier
+                })
+            guard !excludedCatCandidateIdentifiers.contains(identifier),
+                  !isOutsideScopedSource else {
+                deepLinkedPhotoIdentifier = nil
+                deepLinkedPhotoShownAt = nil
+                return
+            }
             widgetOpenedPhotoIdentifier = identifier
             widgetShownAt = selection.shownAt
             selectedTab = .home
@@ -122,7 +152,14 @@ struct MainTabView: View {
             initialPhoto: photo(for: localIdentifier),
             widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
             widgetIntervalMinutes: widgetIntervalMinutes,
-            toggleLike: toggleLike
+            toggleLike: toggleLike,
+            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+            excludeFromCatCandidates: { identifiers in
+                Task { await excludeFromCatCandidates(identifiers) }
+            },
+            restoreCatCandidates: { identifiers in
+                Task { await restoreCatCandidates(identifiers) }
+            }
         )
     }
 
@@ -131,10 +168,24 @@ struct MainTabView: View {
         switch route {
         case let .album(albumID):
             if let album = curatedAlbum(for: albumID) {
-                CuratedAlbumDetailView(
-                    album: album,
-                    albumOpened: albumOpened
-                )
+                if albumID == .growth {
+                    GrowthAlbumDetailView(
+                        album: album,
+                        lifeReference: settings.catLifeReference,
+                        albumOpened: albumOpened,
+                        excludeFromCatCandidates: { identifiers in
+                            Task { await excludeFromCatCandidates(identifiers) }
+                        }
+                    )
+                } else {
+                    CuratedAlbumDetailView(
+                        album: album,
+                        albumOpened: albumOpened,
+                        excludeFromCatCandidates: { identifiers in
+                            Task { await excludeFromCatCandidates(identifiers) }
+                        }
+                    )
+                }
             } else {
                 missingAlbumView
             }
@@ -150,7 +201,14 @@ struct MainTabView: View {
                     initialPhoto: initialPhoto,
                     widgetShownAt: nil,
                     widgetIntervalMinutes: widgetIntervalMinutes,
-                    toggleLike: toggleLike
+                    toggleLike: toggleLike,
+                    excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                    excludeFromCatCandidates: { identifiers in
+                        Task { await excludeFromCatCandidates(identifiers) }
+                    },
+                    restoreCatCandidates: { identifiers in
+                        Task { await restoreCatCandidates(identifiers) }
+                    }
                 )
             } else {
                 missingAlbumView
@@ -163,6 +221,10 @@ struct MainTabView: View {
             from: catPhotos,
             lifeReference: settings.catLifeReference
         )
+    }
+
+    private var excludedCatCandidateIdentifiers: Set<String> {
+        Set(excludedCatPhotos.map(\.localIdentifier))
     }
 
     private func curatedAlbum(

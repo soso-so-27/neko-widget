@@ -63,6 +63,7 @@ enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum CuratedAlbumID: Hashable, Identifiable {
+    case growth
     case kitten
     case age(Int)
     case calendarYear(Int)
@@ -77,6 +78,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var title: String {
         switch self {
+        case .growth: "成長"
         case .kitten: "子猫のころ"
         case let .age(years): "\(years)歳のころ"
         case let .calendarYear(year): "\(year)年"
@@ -91,6 +93,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var logKey: String {
         switch self {
+        case .growth: "growth"
         case .kitten: "kitten"
         case let .age(years): "age_\(years)"
         case let .calendarYear(year): "calendar_year_\(year)"
@@ -184,30 +187,33 @@ struct CuratedAlbumBuilder {
         lifeReference: CatLifeReference?
     ) -> [CuratedAlbumPresentation] {
         let datedPhotos = photos.filter { $0.creationDate != nil }
-        guard let earliestDate = datedPhotos
-            .compactMap(\.creationDate)
-            .compactMap(calendarDay)
-            .min() else {
-            return []
-        }
-
         var albums: [CuratedAlbumPresentation?] = []
-        let kittenEnd = calendar.date(
-            byAdding: .month,
-            value: Self.kittenMonthCount,
-            to: earliestDate
-        ) ?? earliestDate
-        albums.append(album(
-            .kitten,
+        let growthPhotos = GrowthAlbumSelector(timeZone: calendar.timeZone)
+            .select(from: datedPhotos, lifeReference: lifeReference)
+            .map(\.photo)
+        albums.append(albumPreservingOrder(
+            .growth,
             group: .time,
-            photos: datedPhotos.filter {
-                guard let capturedAt = $0.creationDate,
-                      let date = calendarDay(capturedAt) else { return false }
-                return date >= earliestDate && date < kittenEnd
-            }
+            photos: growthPhotos
         ))
 
-        if let referenceDate = lifeReference?.date.date(in: calendar) {
+        if let rawReferenceDate = lifeReference?.date.date(in: calendar),
+           let referenceDate = calendarDay(rawReferenceDate) {
+            let kittenEnd = calendar.date(
+                byAdding: .month,
+                value: Self.kittenMonthCount,
+                to: referenceDate
+            ) ?? referenceDate
+            albums.append(album(
+                .kitten,
+                group: .time,
+                photos: datedPhotos.filter {
+                    guard let capturedAt = $0.creationDate,
+                          let date = calendarDay(capturedAt) else { return false }
+                    return date >= referenceDate && date < kittenEnd
+                }
+            ))
+
             var grouped: [Int: [PhotoPresentation]] = [:]
             for photo in datedPhotos {
                 guard let capturedAt = photo.creationDate,
@@ -229,8 +235,11 @@ struct CuratedAlbumBuilder {
                 ))
             }
         } else {
-            let grouped = Dictionary(grouping: datedPhotos) { photo in
-                calendar.component(.year, from: photo.creationDate ?? earliestDate)
+            var grouped: [Int: [PhotoPresentation]] = [:]
+            for photo in datedPhotos {
+                guard let capturedAt = photo.creationDate else { continue }
+                grouped[calendar.component(.year, from: capturedAt), default: []]
+                    .append(photo)
             }
             for year in grouped.keys.sorted() {
                 albums.append(album(
@@ -289,6 +298,15 @@ struct CuratedAlbumBuilder {
         return CuratedAlbumPresentation(id: id, group: group, photos: ordered)
     }
 
+    private func albumPreservingOrder(
+        _ id: CuratedAlbumID,
+        group: CuratedAlbumGroup,
+        photos: [PhotoPresentation]
+    ) -> CuratedAlbumPresentation? {
+        guard !photos.isEmpty else { return nil }
+        return CuratedAlbumPresentation(id: id, group: group, photos: photos)
+    }
+
     private func compactAlbums(
         _ albums: [CuratedAlbumPresentation?]
     ) -> [CuratedAlbumPresentation] {
@@ -315,6 +333,7 @@ struct ScanPresentation: Equatable {
     var finalCatAssets: Int?
     var finalOldestDate: Date?
     var deferredAssets = 0
+    var postureSecondaryPendingAssets = 0
     var isScanning = false
     var isPaused = false
     var lastScannedAt: Date?

@@ -244,8 +244,19 @@ private func verifyConfidenceAndMissingData() throws {
     var missingTrunk = sleepingSkeleton()
     missingTrunk.points.removeValue(forKey: .tailBottom)
     try require(
-        AnimalPostureClassifier.tags(for: missingTrunk, catBoundingBox: catBox).isEmpty,
-        "A missing trunk anchor must not force a posture"
+        AnimalPostureClassifier.tags(for: missingTrunk, catBoundingBox: catBox)
+            == [.sleeping],
+        "Sleeping must not depend on an unused tail-bottom joint"
+    )
+
+    var missingTrunkForBellyUp = bellyUpSkeleton()
+    missingTrunkForBellyUp.points.removeValue(forKey: .tailBottom)
+    try require(
+        !AnimalPostureClassifier.tags(
+            for: missingTrunkForBellyUp,
+            catBoundingBox: catBox
+        ).contains(.bellyUp),
+        "Trunk-dependent postures must still require their rear anchor"
     )
 }
 

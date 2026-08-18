@@ -15,10 +15,17 @@ enum CatPostureTag: String, Codable, CaseIterable, Hashable, Sendable {
 /// Human-face rectangles, pose joints and locations never leave the in-memory
 /// analysis pass; only these derived values are saved.
 struct CatAlbumTraits: Codable, Equatable, Sendable {
-    static let currentAnalysisVersion = 1
+    /// Version 2 removes the accidental tail-base dependency from sleeping
+    /// classification and records whether Vision produced a pose observation.
+    /// Existing Build 12 traits therefore receive one secondary-only retry.
+    static let currentAnalysisVersion = 2
 
     var analysisVersion: Int
     var postures: [CatPostureTag]
+    /// Number of animal-body-pose observations returned for this photo. This
+    /// derived count is safe to persist; raw joints and coordinates are not.
+    /// Optional so Build 12 snapshots continue to decode before migration.
+    var poseObservationCount: Int?
     var containsPerson: Bool
     /// `nil` means that the asset had no usable location or that a stable home
     /// cluster could not be established. Coordinates are never persisted.
@@ -31,6 +38,7 @@ struct CatAlbumTraits: Codable, Equatable, Sendable {
     init(
         analysisVersion: Int = Self.currentAnalysisVersion,
         postures: [CatPostureTag],
+        poseObservationCount: Int? = nil,
         containsPerson: Bool,
         isOuting: Bool?,
         largestCatAreaRatio: Double,
@@ -38,6 +46,7 @@ struct CatAlbumTraits: Codable, Equatable, Sendable {
     ) {
         self.analysisVersion = analysisVersion
         self.postures = Array(Set(postures)).sorted { $0.rawValue < $1.rawValue }
+        self.poseObservationCount = poseObservationCount.map { max(0, $0) }
         self.containsPerson = containsPerson
         self.isOuting = isOuting
         self.largestCatAreaRatio = min(1, max(0, largestCatAreaRatio))

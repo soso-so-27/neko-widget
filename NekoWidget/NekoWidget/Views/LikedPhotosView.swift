@@ -146,8 +146,13 @@ private struct CuratedAlbumCard: View {
 struct CuratedAlbumDetailView: View {
     let album: CuratedAlbumPresentation
     let albumOpened: (String, String) -> Void
+    let excludeFromCatCandidates: ([String]) -> Void
 
     @State private var didRecordOpen = false
+    @State private var isSelecting = false
+    @State private var selectedIdentifiers = Set<String>()
+    @State private var pendingExclusionIdentifiers: [String] = []
+    @State private var showsExclusionConfirmation = false
 
     private let columns = Array(
         repeating: GridItem(.flexible(), spacing: 2),
@@ -158,33 +163,7 @@ struct CuratedAlbumDetailView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(album.photos) { photo in
-                    NavigationLink(
-                        value: AlbumRoute.photo(
-                            album: album.id,
-                            localIdentifier: photo.localIdentifier
-                        )
-                    ) {
-                        PhotoAssetImageView(
-                            localIdentifier: photo.localIdentifier,
-                            catBoundingBox: photo.catBoundingBox,
-                            targetPixelSize: CGSize(width: 360, height: 360),
-                            targetAspectRatio: 1
-                        )
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay(alignment: .bottomTrailing) {
-                            if photo.isLiked {
-                                CatPawMark(isFilled: true)
-                                    .frame(width: 15, height: 15)
-                                    .foregroundStyle(.white)
-                                    .padding(7)
-                                    .background(.black.opacity(0.55), in: Circle())
-                                    .padding(6)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(photoAccessibilityLabel(photo))
+                    albumGridItem(photo)
                 }
             }
             .padding(.bottom, 12)
@@ -203,11 +182,138 @@ struct CuratedAlbumDetailView: View {
             .padding(.vertical, 8)
             .background(.bar)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isSelecting {
+                Button {
+                    requestExclusion(Array(selectedIdentifiers))
+                } label: {
+                    Label(
+                        selectedIdentifiers.isEmpty
+                            ? "写真を選んでください"
+                            : "\(selectedIdentifiers.count.formatted())枚を「この子じゃない」にする",
+                        systemImage: "cat.circle"
+                    )
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedIdentifiers.isEmpty)
+                .padding(12)
+                .background(.bar)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(isSelecting ? "完了" : "選択") {
+                    isSelecting.toggle()
+                    if !isSelecting { selectedIdentifiers.removeAll() }
+                }
+            }
+        }
+        .confirmationDialog(
+            "「この子じゃない」にしますか？",
+            isPresented: $showsExclusionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("候補から除外", role: .destructive) {
+                let identifiers = pendingExclusionIdentifiers
+                pendingExclusionIdentifiers.removeAll()
+                selectedIdentifiers.subtract(identifiers)
+                isSelecting = false
+                excludeFromCatCandidates(identifiers)
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingExclusionIdentifiers.removeAll()
+            }
+        } message: {
+            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+        }
         .onAppear {
             guard !didRecordOpen else { return }
             didRecordOpen = true
             albumOpened(album.id.logKey, album.group.logKey)
         }
+    }
+
+    @ViewBuilder
+    private func albumGridItem(_ photo: PhotoPresentation) -> some View {
+        if isSelecting {
+            Button {
+                toggleSelection(photo.localIdentifier)
+            } label: {
+                albumGridThumbnail(photo, isSelected: selectedIdentifiers.contains(photo.localIdentifier))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(photoAccessibilityLabel(photo))
+            .accessibilityValue(
+                selectedIdentifiers.contains(photo.localIdentifier) ? "選択中" : "未選択"
+            )
+        } else {
+            NavigationLink(
+                value: AlbumRoute.photo(
+                    album: album.id,
+                    localIdentifier: photo.localIdentifier
+                )
+            ) {
+                albumGridThumbnail(photo, isSelected: false)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(photoAccessibilityLabel(photo))
+            .contextMenu {
+                Button {
+                    requestExclusion([photo.localIdentifier])
+                } label: {
+                    Label("この子じゃない", systemImage: "cat.circle")
+                }
+            }
+        }
+    }
+
+    private func albumGridThumbnail(
+        _ photo: PhotoPresentation,
+        isSelected: Bool
+    ) -> some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            catBoundingBox: photo.catBoundingBox,
+            targetPixelSize: CGSize(width: 360, height: 360),
+            targetAspectRatio: 1
+        )
+        .aspectRatio(1, contentMode: .fit)
+        .overlay(alignment: .bottomTrailing) {
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.accentColor)
+                    .padding(7)
+            } else if photo.isLiked {
+                CatPawMark(isFilled: true)
+                    .frame(width: 15, height: 15)
+                    .foregroundStyle(.white)
+                    .padding(7)
+                    .background(.black.opacity(0.55), in: Circle())
+                    .padding(6)
+            }
+        }
+        .overlay {
+            if isSelected { Color.accentColor.opacity(0.16) }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func toggleSelection(_ identifier: String) {
+        if selectedIdentifiers.contains(identifier) {
+            selectedIdentifiers.remove(identifier)
+        } else {
+            selectedIdentifiers.insert(identifier)
+        }
+    }
+
+    private func requestExclusion(_ identifiers: [String]) {
+        guard !identifiers.isEmpty else { return }
+        pendingExclusionIdentifiers = identifiers
+        showsExclusionConfirmation = true
     }
 
     private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
@@ -329,12 +435,17 @@ struct PhotoBrowserView: View {
     /// cadence change keeps the explanation aligned with generated timelines.
     let widgetIntervalMinutes: Int
     let toggleLike: (String) -> Void
+    let excludedCatCandidateIdentifiers: Set<String>
+    let excludeFromCatCandidates: ([String]) -> Void
+    let restoreCatCandidates: ([String]) -> Void
     private let browserPhotos: [PhotoPresentation]
     private let browserPhotoIdentifiers: [String]
 
     @StateObject private var performanceProbe: PhotoBrowserPerformanceProbe
     @State private var selectedPhotoIdentifier: String
     @State private var preheatedPhotoIdentifiers: Set<String> = []
+    @State private var pendingExclusionIdentifier: String?
+    @State private var showsExclusionConfirmation = false
 
     init(
         photos: [PhotoPresentation],
@@ -342,7 +453,10 @@ struct PhotoBrowserView: View {
         initialPhoto: PhotoPresentation,
         widgetShownAt: Date?,
         widgetIntervalMinutes: Int,
-        toggleLike: @escaping (String) -> Void
+        toggleLike: @escaping (String) -> Void,
+        excludedCatCandidateIdentifiers: Set<String>,
+        excludeFromCatCandidates: @escaping ([String]) -> Void,
+        restoreCatCandidates: @escaping ([String]) -> Void
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -360,6 +474,9 @@ struct PhotoBrowserView: View {
         self.widgetShownAt = widgetShownAt
         self.widgetIntervalMinutes = widgetIntervalMinutes
         self.toggleLike = toggleLike
+        self.excludedCatCandidateIdentifiers = excludedCatCandidateIdentifiers
+        self.excludeFromCatCandidates = excludeFromCatCandidates
+        self.restoreCatCandidates = restoreCatCandidates
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
         _performanceProbe = StateObject(
@@ -458,6 +575,44 @@ struct PhotoBrowserView: View {
         .background(Color.black)
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
+                        Button {
+                            restoreCatCandidates([selectedPhotoIdentifier])
+                        } label: {
+                            Label("この子の候補に戻す", systemImage: "arrow.uturn.backward.circle")
+                        }
+                    } else {
+                        Button {
+                            pendingExclusionIdentifier = selectedPhotoIdentifier
+                            showsExclusionConfirmation = true
+                        } label: {
+                            Label("この子じゃない", systemImage: "cat.circle")
+                        }
+                    }
+                } label: {
+                    Label("写真メニュー", systemImage: "ellipsis.circle")
+                }
+            }
+        }
+        .confirmationDialog(
+            "「この子じゃない」にしますか？",
+            isPresented: $showsExclusionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("候補から除外", role: .destructive) {
+                guard let identifier = pendingExclusionIdentifier else { return }
+                pendingExclusionIdentifier = nil
+                excludeFromCatCandidates([identifier])
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingExclusionIdentifier = nil
+            }
+        } message: {
+            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+        }
         .onAppear {
             performanceProbe.recordContainerAppearance()
             updatePhotoPreheating()

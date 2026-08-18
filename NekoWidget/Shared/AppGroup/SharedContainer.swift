@@ -37,6 +37,16 @@ enum SharedContainer {
         containerURL?.appendingPathComponent("liked-assets.lock", isDirectory: false)
     }
 
+    /// User curation is independent from scanner checkpoints. A source change
+    /// can replace every AssetRecord, so exclusions must not live only inside
+    /// the library snapshot.
+    static var catCandidateCurationURL: URL? {
+        containerURL?.appendingPathComponent(
+            "cat-candidate-curation.json",
+            isDirectory: false
+        )
+    }
+
     static var widgetManifestURL: URL? {
         containerURL?.appendingPathComponent("widget-manifest.json", isDirectory: false)
     }
