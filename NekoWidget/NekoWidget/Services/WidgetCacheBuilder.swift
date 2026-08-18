@@ -138,16 +138,17 @@ actor WidgetCacheBuilder {
                 $0.localIdentifier == record.localIdentifier
                     && $0.cacheFilenames == filenames
             })
-            let reusableMetadata = currentRendererActiveItem.flatMap { item in
-                guard item.rendererVersion == WidgetRenderPlanner.rendererVersion,
-                      item.sourcePixelSize?.isValid == true,
-                      item.renderPlans?.allAreValid == true,
-                      item.sourceModificationDate == record.sourceModificationDate,
-                      let size = item.sourcePixelSize,
-                      let plans = item.renderPlans
-                else { return nil }
-                return (size, plans)
-            }
+            let reusableMetadata: (WidgetSourcePixelSize, WidgetRenderPlans)? =
+                currentRendererActiveItem.flatMap { item in
+                    guard item.rendererVersion == WidgetRenderPlanner.rendererVersion,
+                          item.sourcePixelSize?.isValid == true,
+                          item.renderPlans?.allAreValid == true,
+                          item.sourceModificationDate == record.sourceModificationDate,
+                          let size = item.sourcePixelSize,
+                          let plans = item.renderPlans
+                    else { return nil }
+                    return (size, plans)
+                }
             var renderMetadata = reusableMetadata
 
             if !missingSpecs.isEmpty || renderMetadata == nil {

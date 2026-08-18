@@ -40,7 +40,6 @@ final class PairingViewModel: ObservableObject {
         do {
             let operation = try beginOperation()
             var current = operation.expectedState
-            let lifecycleToken = operation.lifecycleToken
             current.mediaSharingConsentVersion = PairingMediaSharingConsent.currentVersion
             current.mediaSharingConsentAcceptedAt = .now
             current.lastUpdatedAt = .now
