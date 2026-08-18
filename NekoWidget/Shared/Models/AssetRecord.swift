@@ -18,6 +18,10 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
     var analysisStatus: AssetAnalysisStatus
     var analysisFingerprint: String
     var analyzedAt: Date
+    /// Optional for backward-compatible decoding of Build 11 snapshots. A nil
+    /// value marks an asset that still needs the grouped-album migration pass.
+    var albumAnalysisVersion: Int?
+    var albumTraits: CatAlbumTraits?
     var liked: Bool
     var likedAt: Date?
     var lastShownAt: Date?
@@ -41,6 +45,8 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         analysisStatus: AssetAnalysisStatus,
         analysisFingerprint: String,
         analyzedAt: Date = .now,
+        albumAnalysisVersion: Int? = nil,
+        albumTraits: CatAlbumTraits? = nil,
         liked: Bool = false,
         likedAt: Date? = nil,
         lastShownAt: Date? = nil,
@@ -57,6 +63,8 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         self.analysisStatus = analysisStatus
         self.analysisFingerprint = analysisFingerprint
         self.analyzedAt = analyzedAt
+        self.albumAnalysisVersion = albumAnalysisVersion
+        self.albumTraits = albumTraits
         self.liked = liked
         self.likedAt = likedAt
         self.lastShownAt = lastShownAt

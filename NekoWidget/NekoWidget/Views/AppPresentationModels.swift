@@ -8,6 +8,14 @@ struct PhotoPresentation: Identifiable, Hashable {
     let catBoundingBox: CGRect?
     let isLiked: Bool
     let likedAt: Date?
+    /// Album traits are intentionally reduced to the derived, privacy-minimal
+    /// values needed by the UI. Raw pose joints, face rectangles and locations
+    /// never cross this presentation boundary.
+    let albumPostures: Set<CatPostureTag>
+    let albumContainsPerson: Bool?
+    let albumIsOuting: Bool?
+    let largestCatAreaRatio: Double?
+    let hasCurrentAlbumAnalysis: Bool
 
     var id: String { localIdentifier }
 
@@ -16,13 +24,283 @@ struct PhotoPresentation: Identifiable, Hashable {
         creationDate: Date? = nil,
         catBoundingBox: CGRect? = nil,
         isLiked: Bool = false,
-        likedAt: Date? = nil
+        likedAt: Date? = nil,
+        albumPostures: Set<CatPostureTag> = [],
+        albumContainsPerson: Bool? = nil,
+        albumIsOuting: Bool? = nil,
+        largestCatAreaRatio: Double? = nil,
+        hasCurrentAlbumAnalysis: Bool = false
     ) {
         self.localIdentifier = localIdentifier
         self.creationDate = creationDate
         self.catBoundingBox = catBoundingBox
         self.isLiked = isLiked
         self.likedAt = likedAt
+        self.albumPostures = albumPostures
+        self.albumContainsPerson = albumContainsPerson
+        self.albumIsOuting = albumIsOuting
+        self.largestCatAreaRatio = largestCatAreaRatio
+        self.hasCurrentAlbumAnalysis = hasCurrentAlbumAnalysis
+    }
+}
+
+enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
+    case time
+    case cuteness
+    case special
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .time: "時間"
+        case .cuteness: "かわいさ"
+        case .special: "特別"
+        }
+    }
+
+    var logKey: String { rawValue }
+}
+
+enum CuratedAlbumID: Hashable, Identifiable {
+    case kitten
+    case age(Int)
+    case calendarYear(Int)
+    case sleeping
+    case bellyUp
+    case loaf
+    case closeUp
+    case together
+    case outing
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .kitten: "子猫のころ"
+        case let .age(years): "\(years)歳のころ"
+        case let .calendarYear(year): "\(year)年"
+        case .sleeping: "寝顔"
+        case .bellyUp: "へそ天"
+        case .loaf: "香箱"
+        case .closeUp: "どアップ"
+        case .together: "いっしょ"
+        case .outing: "おでかけ"
+        }
+    }
+
+    var logKey: String {
+        switch self {
+        case .kitten: "kitten"
+        case let .age(years): "age_\(years)"
+        case let .calendarYear(year): "calendar_year_\(year)"
+        case .sleeping: "sleeping"
+        case .bellyUp: "belly_up"
+        case .loaf: "loaf"
+        case .closeUp: "close_up"
+        case .together: "together"
+        case .outing: "outing"
+        }
+    }
+}
+
+struct CuratedAlbumPresentation: Identifiable, Hashable {
+    let id: CuratedAlbumID
+    let group: CuratedAlbumGroup
+    let photos: [PhotoPresentation]
+
+    var title: String { id.title }
+    var coverPhoto: PhotoPresentation { photos[0] }
+}
+
+struct CuratedAlbumSectionPresentation: Identifiable, Hashable {
+    let id: CuratedAlbumGroup
+    let albums: [CuratedAlbumPresentation]
+
+    var title: String { id.title }
+}
+
+enum AlbumRoute: Hashable {
+    case album(CuratedAlbumID)
+    case photo(album: CuratedAlbumID, localIdentifier: String)
+}
+
+/// Builds the product's fixed, spoken-language albums. Membership can overlap:
+/// a belly-up photo with a person can appear in both「へそ天」and「いっしょ」.
+struct CuratedAlbumBuilder {
+    static let kittenMonthCount = 6
+    static let closeUpAreaRatio = 0.40
+
+    private let calendar: Calendar
+
+    init(timeZone: TimeZone = .current) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = timeZone
+        self.calendar = calendar
+    }
+
+    func sections(
+        from inputPhotos: [PhotoPresentation],
+        lifeReference: CatLifeReference?
+    ) -> [CuratedAlbumSectionPresentation] {
+        let photos = orderedUniquePhotos(inputPhotos)
+        let timeAlbums = makeTimeAlbums(from: photos, lifeReference: lifeReference)
+        let analyzed = photos.filter(\.hasCurrentAlbumAnalysis)
+
+        let cutenessAlbums = compactAlbums([
+            album(.sleeping, group: .cuteness, photos: analyzed.filter {
+                $0.albumPostures.contains(.sleeping)
+            }),
+            album(.bellyUp, group: .cuteness, photos: analyzed.filter {
+                $0.albumPostures.contains(.bellyUp)
+            }),
+            album(.loaf, group: .cuteness, photos: analyzed.filter {
+                $0.albumPostures.contains(.loaf)
+            }),
+            album(.closeUp, group: .cuteness, photos: analyzed.filter {
+                ($0.largestCatAreaRatio ?? 0) >= Self.closeUpAreaRatio
+            })
+        ])
+
+        let specialAlbums = compactAlbums([
+            album(.together, group: .special, photos: analyzed.filter {
+                $0.albumContainsPerson == true
+            }),
+            album(.outing, group: .special, photos: analyzed.filter {
+                $0.albumIsOuting == true
+            })
+        ])
+
+        return [
+            section(.time, albums: timeAlbums),
+            section(.cuteness, albums: cutenessAlbums),
+            section(.special, albums: specialAlbums)
+        ].compactMap { $0 }
+    }
+
+    private func makeTimeAlbums(
+        from photos: [PhotoPresentation],
+        lifeReference: CatLifeReference?
+    ) -> [CuratedAlbumPresentation] {
+        let datedPhotos = photos.filter { $0.creationDate != nil }
+        guard let earliestDate = datedPhotos
+            .compactMap(\.creationDate)
+            .compactMap(calendarDay)
+            .min() else {
+            return []
+        }
+
+        var albums: [CuratedAlbumPresentation?] = []
+        let kittenEnd = calendar.date(
+            byAdding: .month,
+            value: Self.kittenMonthCount,
+            to: earliestDate
+        ) ?? earliestDate
+        albums.append(album(
+            .kitten,
+            group: .time,
+            photos: datedPhotos.filter {
+                guard let capturedAt = $0.creationDate,
+                      let date = calendarDay(capturedAt) else { return false }
+                return date >= earliestDate && date < kittenEnd
+            }
+        ))
+
+        if let referenceDate = lifeReference?.date.date(in: calendar) {
+            var grouped: [Int: [PhotoPresentation]] = [:]
+            for photo in datedPhotos {
+                guard let capturedAt = photo.creationDate,
+                      let date = calendarDay(capturedAt),
+                      date >= referenceDate,
+                      let age = calendar.dateComponents(
+                          [.year],
+                          from: referenceDate,
+                          to: date
+                      ).year,
+                      age >= 1 else { continue }
+                grouped[age, default: []].append(photo)
+            }
+            for age in grouped.keys.sorted() {
+                albums.append(album(
+                    .age(age),
+                    group: .time,
+                    photos: grouped[age] ?? []
+                ))
+            }
+        } else {
+            let grouped = Dictionary(grouping: datedPhotos) { photo in
+                calendar.component(.year, from: photo.creationDate ?? earliestDate)
+            }
+            for year in grouped.keys.sorted() {
+                albums.append(album(
+                    .calendarYear(year),
+                    group: .time,
+                    photos: grouped[year] ?? []
+                ))
+            }
+        }
+
+        return compactAlbums(albums)
+    }
+
+    private func orderedUniquePhotos(_ photos: [PhotoPresentation]) -> [PhotoPresentation] {
+        var unique: [String: PhotoPresentation] = [:]
+        for photo in photos { unique[photo.localIdentifier] = photo }
+        return unique.values.sorted(by: newestFirst)
+    }
+
+    private func calendarDay(_ date: Date) -> Date? {
+        let values = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = values.year,
+              let month = values.month,
+              let day = values.day else { return nil }
+        return calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: year,
+            month: month,
+            day: day,
+            hour: 12
+        ))
+    }
+
+    private func newestFirst(_ lhs: PhotoPresentation, _ rhs: PhotoPresentation) -> Bool {
+        switch (lhs.creationDate, rhs.creationDate) {
+        case let (left?, right?):
+            if left == right { return lhs.localIdentifier < rhs.localIdentifier }
+            return left > right
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            return lhs.localIdentifier < rhs.localIdentifier
+        }
+    }
+
+    private func album(
+        _ id: CuratedAlbumID,
+        group: CuratedAlbumGroup,
+        photos: [PhotoPresentation]
+    ) -> CuratedAlbumPresentation? {
+        let ordered = photos.sorted(by: newestFirst)
+        guard !ordered.isEmpty else { return nil }
+        return CuratedAlbumPresentation(id: id, group: group, photos: ordered)
+    }
+
+    private func compactAlbums(
+        _ albums: [CuratedAlbumPresentation?]
+    ) -> [CuratedAlbumPresentation] {
+        albums.compactMap { $0 }
+    }
+
+    private func section(
+        _ group: CuratedAlbumGroup,
+        albums: [CuratedAlbumPresentation]
+    ) -> CuratedAlbumSectionPresentation? {
+        guard !albums.isEmpty else { return nil }
+        return CuratedAlbumSectionPresentation(id: group, albums: albums)
     }
 }
 
@@ -40,6 +318,7 @@ struct ScanPresentation: Equatable {
     var isScanning = false
     var isPaused = false
     var lastScannedAt: Date?
+    var isGroupedAlbumUpgrade = false
 
     /// A final result also satisfies the first-result gate when the app is relaunched
     /// after the full scan completed.
@@ -61,6 +340,10 @@ struct ScanPresentation: Equatable {
     var displayedOldestDate: Date? {
         finalOldestDate ?? preliminaryOldestDate
     }
+
+    var isPreparingGroupedAlbums: Bool {
+        isGroupedAlbumUpgrade && (isScanning || isPaused || !hasFinalResult)
+    }
 }
 
 enum PhotoRangePresentation: String, CaseIterable, Identifiable {
@@ -75,6 +358,7 @@ struct SettingsPresentation: Equatable {
     var albumLimit = 300
     var confidenceThreshold = 0.7
     var minimumAreaRatio = 0.08
+    var catLifeReference: CatLifeReference?
 }
 
 /// UI-only metadata for one item in the exported detection-accuracy sample.

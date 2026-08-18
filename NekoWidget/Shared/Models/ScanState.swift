@@ -17,6 +17,12 @@ enum ScanResultKind: String, Codable, Equatable, Sendable {
     case final
 }
 
+enum ScanPurpose: String, Codable, Equatable, Sendable {
+    case regular
+    case manualRescan
+    case groupedAlbumUpgrade
+}
+
 struct ScanState: Codable, Equatable, Sendable {
     var phase: ScanPhase
     var resultKind: ScanResultKind
@@ -29,6 +35,7 @@ struct ScanState: Codable, Equatable, Sendable {
     /// True while a threshold-changing rescan must continue without reusing
     /// records produced under the previous detector settings.
     var requiresFullRescan: Bool
+    var purpose: ScanPurpose? = nil
     var lastError: String?
 
     static let idle = ScanState(

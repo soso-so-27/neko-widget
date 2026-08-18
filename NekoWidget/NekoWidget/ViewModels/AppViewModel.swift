@@ -119,7 +119,7 @@ final class AppViewModel: ObservableObject {
         if let store {
             do {
                 let loaded = try await store.load()
-                applySnapshot(loaded)
+                applySnapshot(loaded, preservingLiveSettings: false)
                 let likesChanged = synchronizeSharedLikes(
                     importLegacyLikes: true,
                     trigger: "startup"
@@ -239,6 +239,7 @@ final class AppViewModel: ObservableObject {
         )
         snapshot.settings = settings
         scanState.requiresFullRescan = true
+        scanState.purpose = .manualRescan
         snapshot.scanState = scanState
         await saveSnapshot(reportErrors: false)
         await launchScan(forceFullAnalysis: true)
@@ -324,6 +325,39 @@ final class AppViewModel: ObservableObject {
         selectedAssetIdentifier = localIdentifier
     }
 
+    /// Records only a bounded aggregate keyed by an ASCII product identifier.
+    /// Album titles, photo identifiers, dates and location data are excluded so
+    /// the local diagnostic can be shared without exposing library metadata.
+    func recordAlbumOpened(key: String, group: String) async {
+        guard let safeKey = Self.albumUsageToken(key),
+              let safeGroup = Self.albumUsageToken(group) else {
+            SharedLog.app.warning(
+                "album-usage",
+                "Rejected invalid grouped album usage key"
+            )
+            return
+        }
+
+        var updated = snapshot
+        var usage = updated.albumUsage ?? .empty
+        usage.recordOpen(key: safeKey, group: safeGroup)
+        updated.albumUsage = usage
+        updated.updatedAt = .now
+        snapshot = updated
+
+        let openCount = usage.records.first(where: { $0.key == safeKey })?.openCount ?? 1
+        SharedLog.app.info(
+            "album-usage",
+            "Grouped album opened",
+            metadata: [
+                "album": safeKey,
+                "group": safeGroup,
+                "openCount": "\(openCount)"
+            ]
+        )
+        await saveSnapshot(reportErrors: false)
+    }
+
     /// Pulls the canonical App Group value into the app without starting a
     /// photo-library scan. Widget deep links call this before routing so the
     /// destination and the global count observe the same like state.
@@ -376,6 +410,7 @@ final class AppViewModel: ObservableObject {
 
         if detectionChanged {
             scanState.requiresFullRescan = true
+            scanState.purpose = .manualRescan
             snapshot.scanState = scanState
             await saveSnapshot(reportErrors: false)
             await launchScan(forceFullAnalysis: true)
@@ -505,7 +540,11 @@ final class AppViewModel: ObservableObject {
         startingState.phase = .quickScan
         startingState.lastError = nil
         startingState.requiresFullRescan = forceFullAnalysis
+        if startingState.purpose == nil {
+            startingState.purpose = forceFullAnalysis ? .manualRescan : .regular
+        }
         scanState = startingState
+        snapshot.scanState = startingState
         SharedLog.app.info(
             "scan",
             "Scan generation started",
@@ -650,7 +689,10 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func applySnapshot(_ newSnapshot: LibrarySnapshot) {
+    private func applySnapshot(
+        _ newSnapshot: LibrarySnapshot,
+        preservingLiveSettings: Bool = true
+    ) {
         // A full scan can run while the user presses “これ好き” or while the
         // quick-stage album/cache publication updates display history. Merge
         // those live mutations instead of replacing them with scan-start state.
@@ -668,6 +710,17 @@ final class AppViewModel: ObservableObject {
         }
         if let liveAlbumIdentifier = snapshot.albumLocalIdentifier {
             merged.albumLocalIdentifier = liveAlbumIdentifier
+        }
+        // An album can be opened while a long scan is using its start-of-run
+        // snapshot. Preserve that newer bounded aggregate at publication time.
+        if let liveAlbumUsage = snapshot.albumUsage {
+            merged.albumUsage = liveAlbumUsage
+        }
+        // A scan owns a start-of-run settings snapshot. Calendar grouping can
+        // be edited while that long scan is in flight, so progress/final
+        // publications must not roll the newly saved local date back.
+        if preservingLiveSettings {
+            merged.settings = snapshot.settings
         }
 
         snapshot = merged
@@ -793,6 +846,16 @@ final class AppViewModel: ObservableObject {
     ) {
         snapshot.assets[index].liked = record.isLiked
         snapshot.assets[index].likedAt = record.likedAt
+    }
+
+    private static func albumUsageToken(_ input: String) -> String? {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf8.count <= 64 else { return nil }
+        let allowed = CharacterSet(
+            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        )
+        guard value.unicodeScalars.allSatisfy(allowed.contains) else { return nil }
+        return value
     }
 
     private func chooseCurrentAssetIfNeeded() {

@@ -47,6 +47,32 @@ struct SettingsView: View {
                 Text("ホーム、ウィジェット、「うちの子」アルバムの候補に使います。")
             }
 
+            Section {
+                Picker("年齢の基準", selection: lifeReferenceKind) {
+                    Text("設定しない").tag(nil as CatLifeReferenceKind?)
+                    ForEach(CatLifeReferenceKind.allCases) { kind in
+                        Text(lifeReferenceKindTitle(kind)).tag(Optional(kind))
+                    }
+                }
+
+                if let kind = draft.catLifeReference?.kind {
+                    DatePicker(
+                        lifeReferenceKindTitle(kind),
+                        selection: lifeReferenceDate,
+                        in: ...Date.now,
+                        displayedComponents: .date
+                    )
+
+                    Button("日付を削除", role: .destructive) {
+                        draft.catLifeReference = nil
+                    }
+                }
+            } header: {
+                Text("うちの子の時間")
+            } footer: {
+                Text("入力すると「1歳のころ」のように分かれます。未入力なら撮影年ごとに表示します。日付は端末内だけで使います。")
+            }
+
             Section("「うちの子」アルバム") {
                 Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
                     LabeledContent("枚数上限", value: "\(draft.albumLimit.formatted())枚")
@@ -184,6 +210,44 @@ struct SettingsView: View {
     private var canReviewDetectionAccuracySample: Bool {
         detectionAccuracySample.snapshotIsFinal
             && !detectionAccuracySample.items.isEmpty
+    }
+
+    private var lifeReferenceKind: Binding<CatLifeReferenceKind?> {
+        Binding(
+            get: { draft.catLifeReference?.kind },
+            set: { kind in
+                guard let kind else {
+                    draft.catLifeReference = nil
+                    return
+                }
+                if let existing = draft.catLifeReference {
+                    draft.catLifeReference = CatLifeReference(
+                        kind: kind,
+                        date: existing.date
+                    )
+                } else if let today = CatLifeDate(date: .now) {
+                    draft.catLifeReference = CatLifeReference(kind: kind, date: today)
+                }
+            }
+        )
+    }
+
+    private var lifeReferenceDate: Binding<Date> {
+        Binding(
+            get: { draft.catLifeReference?.date.date() ?? .now },
+            set: { date in
+                guard let kind = draft.catLifeReference?.kind,
+                      let value = CatLifeDate(date: date) else { return }
+                draft.catLifeReference = CatLifeReference(kind: kind, date: value)
+            }
+        )
+    }
+
+    private func lifeReferenceKindTitle(_ kind: CatLifeReferenceKind) -> String {
+        switch kind {
+        case .birthday: "誕生日"
+        case .adoptionDay: "迎えた日"
+        }
     }
 
     private var sampleSummary: String {

@@ -35,6 +35,9 @@ struct AppRootView: View {
         .task {
             await viewModel.start()
         }
+        .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
+            UIApplication.shared.isIdleTimerDisabled = isScanning && scenePhase == .active
+        }
         .onOpenURL { url in
             Task { @MainActor in
                 // App Intent state lives in the App Group. Apply it before
@@ -47,14 +50,19 @@ struct AppRootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
+                UIApplication.shared.isIdleTimerDisabled = viewModel.isScanning
                 Task { await viewModel.syncOnActive() }
             case .inactive, .background:
+                UIApplication.shared.isIdleTimerDisabled = false
                 // Vision batches are intentionally cancellable. Do not keep decoding photos
                 // after the user leaves the app; the next active transition resumes/syncs.
                 viewModel.suspendScan()
             @unknown default:
                 viewModel.suspendScan()
             }
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
         }
         .onChange(of: viewModel.errorMessage) { _, message in
             guard let message, !message.isEmpty else { return }
@@ -104,6 +112,11 @@ struct AppRootView: View {
                 toggleLike: { identifier in
                     Task { await viewModel.toggleLike(id: identifier) }
                 },
+                albumOpened: { key, group in
+                    Task {
+                        await viewModel.recordAlbumOpened(key: key, group: group)
+                    }
+                },
                 updateAlbum: updateAlbum,
                 rescan: {
                     await viewModel.rescan()
@@ -126,7 +139,8 @@ struct AppRootView: View {
             deferredAssets: state.deferredAssets,
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
-            lastScannedAt: state.lastScannedAt
+            lastScannedAt: state.lastScannedAt,
+            isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade
         )
 
         switch state.resultKind {
@@ -147,7 +161,8 @@ struct AppRootView: View {
             range: viewModel.settings.dateRange == .all ? .all : .recentYear,
             albumLimit: viewModel.settings.albumMaximum,
             confidenceThreshold: Double(viewModel.settings.confidenceThreshold),
-            minimumAreaRatio: viewModel.settings.minimumCatAreaRatio
+            minimumAreaRatio: viewModel.settings.minimumCatAreaRatio,
+            catLifeReference: viewModel.settings.catLifeReference
         )
     }
 
@@ -192,16 +207,25 @@ struct AppRootView: View {
         settings.albumMaximum = presentation.albumLimit
         settings.confidenceThreshold = Float(presentation.confidenceThreshold)
         settings.minimumCatAreaRatio = presentation.minimumAreaRatio
+        settings.catLifeReference = presentation.catLifeReference
         return settings
     }
 
     private func photoPresentation(_ asset: AssetRecord) -> PhotoPresentation {
-        PhotoPresentation(
+        let traits = asset.albumTraits
+        return PhotoPresentation(
             localIdentifier: asset.localIdentifier,
             creationDate: asset.creationDate,
             catBoundingBox: asset.cat.boundingBox?.cgRect,
             isLiked: asset.liked,
-            likedAt: asset.likedAt
+            likedAt: asset.likedAt,
+            albumPostures: Set(traits?.postures ?? []),
+            albumContainsPerson: traits?.containsPerson,
+            albumIsOuting: traits?.isOuting,
+            largestCatAreaRatio: traits?.largestCatAreaRatio,
+            hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
+                == CatAlbumTraits.currentAnalysisVersion
+                && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion
         )
     }
 

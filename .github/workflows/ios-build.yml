@@ -111,6 +111,50 @@ jobs:
           "$RUNNER_TEMP/verify-sharing-api-responses" \
             ci/fixtures/sharing-api-v1-responses.json
 
+      - name: Verify grouped album posture classification
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/NormalizedRect.swift \
+            Shared/Models/CatDetection.swift \
+            NekoWidget/Services/AnimalPostureClassifier.swift \
+            ci/verify-album-classification.swift \
+            -o "$RUNNER_TEMP/verify-album-classification"
+          "$RUNNER_TEMP/verify-album-classification"
+
+      - name: Verify grouped album location classification
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Services/HomeLocationClassifier.swift \
+            ci/verify-album-location.swift \
+            -o "$RUNNER_TEMP/verify-album-location"
+          "$RUNNER_TEMP/verify-album-location"
+
+      - name: Verify grouped album ordering and migration defaults
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/AppSettings.swift \
+            Shared/Models/NormalizedRect.swift \
+            Shared/Models/CatDetection.swift \
+            Shared/Models/AssetRecord.swift \
+            Shared/Models/ScanState.swift \
+            Shared/Models/LibrarySnapshot.swift \
+            NekoWidget/Views/AppPresentationModels.swift \
+            ci/verify-album-grouping.swift \
+            -o "$RUNNER_TEMP/verify-album-grouping"
+          "$RUNNER_TEMP/verify-album-grouping"
+
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget
         shell: bash

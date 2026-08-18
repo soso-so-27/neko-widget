@@ -9,6 +9,16 @@ enum ScanEvent: Sendable {
 }
 
 actor PhotoLibraryScanner {
+    private enum AnalysisMode: Sendable {
+        case full
+        case groupedAlbumOnly
+
+        var preservesPreviousCatOnFailure: Bool {
+            if case .groupedAlbumOnly = self { return true }
+            return false
+        }
+    }
+
     private struct IndexedRecord: Sendable {
         var index: Int
         var record: AssetRecord
@@ -185,6 +195,8 @@ actor PhotoLibraryScanner {
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws -> LibrarySnapshot {
         let settings = inputSettings.normalized()
+        let scanPurpose = existing.scanState.purpose
+            ?? (forceFullAnalysis ? .manualRescan : .regular)
         let fetchOptions = PHFetchOptions()
         fetchOptions.sortDescriptors = [
             NSSortDescriptor(key: "creationDate", ascending: false)
@@ -193,6 +205,13 @@ actor PhotoLibraryScanner {
         var assets: [PHAsset] = []
         assets.reserveCapacity(fetchResult.count)
         fetchResult.enumerateObjects { asset, _, _ in assets.append(asset) }
+        let outingByIdentifier = HomeLocationClassifier.classify(assets.map { asset in
+            AlbumLocationSample(
+                localIdentifier: asset.localIdentifier,
+                latitude: asset.location?.coordinate.latitude,
+                longitude: asset.location?.coordinate.longitude
+            )
+        })
         SharedLog.app.info(
             "scan",
             "Photo library fetch completed",
@@ -218,10 +237,12 @@ actor PhotoLibraryScanner {
                 records: &records,
                 seenBurstIdentifiers: &seenBurstIdentifiers,
                 previousByIdentifier: previousByIdentifier,
+                outingByIdentifier: outingByIdentifier,
                 settings: settings,
                 forceFullAnalysis: forceFullAnalysis,
                 totalAssets: assets.count,
                 phase: .quickScan,
+                purpose: scanPurpose,
                 onEvent: onEvent
             )
         }
@@ -232,7 +253,8 @@ actor PhotoLibraryScanner {
             totalAssets: assets.count,
             phase: assets.count > quickEnd ? .fullScan : .completed,
             resultKind: assets.count > quickEnd ? .provisional : .final,
-            requiresFullRescan: forceFullAnalysis && assets.count > quickEnd
+            requiresFullRescan: forceFullAnalysis && assets.count > quickEnd,
+            purpose: scanPurpose
         )
         quickState.lastScannedAt = .now
         var quickSnapshot = existing
@@ -259,10 +281,12 @@ actor PhotoLibraryScanner {
                 records: &records,
                 seenBurstIdentifiers: &seenBurstIdentifiers,
                 previousByIdentifier: previousByIdentifier,
+                outingByIdentifier: outingByIdentifier,
                 settings: settings,
                 forceFullAnalysis: forceFullAnalysis,
                 totalAssets: assets.count,
                 phase: .fullScan,
+                purpose: scanPurpose,
                 onEvent: onEvent
             )
         }
@@ -276,7 +300,8 @@ actor PhotoLibraryScanner {
             totalAssets: assets.count,
             phase: .completed,
             resultKind: .final,
-            requiresFullRescan: false
+            requiresFullRescan: false,
+            purpose: scanPurpose
         )
         final.scanState.lastScannedAt = .now
         final.settings = settings
@@ -299,10 +324,12 @@ actor PhotoLibraryScanner {
         records: inout [AssetRecord?],
         seenBurstIdentifiers: inout Set<String>,
         previousByIdentifier: [String: AssetRecord],
+        outingByIdentifier: [String: Bool?],
         settings: AppSettings,
         forceFullAnalysis: Bool,
         totalAssets: Int,
         phase: ScanPhase,
+        purpose: ScanPurpose,
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws {
 #if targetEnvironment(simulator)
@@ -321,7 +348,7 @@ actor PhotoLibraryScanner {
         while batchStart < range.upperBound {
             try Task.checkCancellation()
             let batchEnd = min(batchStart + concurrency, range.upperBound)
-            var pending: [(Int, PHAsset, AssetRecord?)] = []
+            var pending: [(Int, PHAsset, AssetRecord?, AnalysisMode)] = []
 
             for index in batchStart..<batchEnd {
                 let asset = assets[index]
@@ -356,6 +383,9 @@ actor PhotoLibraryScanner {
                 // the Vision box without forcing an upgrade rescan. The marker
                 // also distinguishes a captured nil date from a missing field.
                 if let previous,
+                   (!forceFullAnalysis
+                       || (purpose == .groupedAlbumUpgrade
+                           && Self.hasCompletedGroupedAlbumAnalysis(previous))),
                    previous.analysisFingerprint == settings.analysisFingerprint,
                    (previous.sourceModificationDateWasCaptured != true
                        || previous.sourceModificationDate
@@ -371,10 +401,39 @@ actor PhotoLibraryScanner {
                     reused.isFavorite = asset.isFavorite
                     reused.isScreenshot = false
                     reused.burstIdentifier = asset.burstIdentifier
-                    records[index] = reused
-                    reusedCount += 1
+                    if reused.analysisStatus == .detected, reused.isCatCandidate {
+                        if reused.albumAnalysisVersion
+                                == CatAlbumTraits.currentAnalysisVersion,
+                           var traits = reused.albumTraits,
+                           traits.analysisVersion
+                                == CatAlbumTraits.currentAnalysisVersion {
+                            traits.isOuting = Self.outingValue(
+                                for: asset.localIdentifier,
+                                in: outingByIdentifier
+                            )
+                            reused.albumTraits = traits
+                            reused.albumAnalysisVersion =
+                                CatAlbumTraits.currentAnalysisVersion
+                            records[index] = reused
+                            reusedCount += 1
+                        } else {
+                            pending.append((index, asset, previous, .groupedAlbumOnly))
+                        }
+                    } else if reused.analysisStatus == .noCat {
+                        reused.albumAnalysisVersion =
+                            CatAlbumTraits.currentAnalysisVersion
+                        reused.albumTraits = nil
+                        records[index] = reused
+                        reusedCount += 1
+                    } else {
+                        pending.append((index, asset, previous, .full))
+                    }
                 } else {
-                    pending.append((index, asset, previous))
+                    let mode: AnalysisMode = purpose == .groupedAlbumUpgrade
+                        && previous?.isCatCandidate == true
+                        ? .groupedAlbumOnly
+                        : .full
+                    pending.append((index, asset, previous, mode))
                 }
             }
             newlyAnalyzedCount += pending.count
@@ -383,13 +442,18 @@ actor PhotoLibraryScanner {
                 of: IndexedRecord.self,
                 returning: [IndexedRecord].self
             ) { group in
-                for (index, asset, previous) in pending {
+                for (index, asset, previous, analysisMode) in pending {
                     group.addTask {
                         try Task.checkCancellation()
                         let record = try await Self.analyze(
                             asset: asset,
                             settings: settings,
-                            previous: previous
+                            previous: previous,
+                            analysisMode: analysisMode,
+                            isOuting: Self.outingValue(
+                                for: asset.localIdentifier,
+                                in: outingByIdentifier
+                            )
                         )
                         return IndexedRecord(index: index, record: record)
                     }
@@ -414,7 +478,8 @@ actor PhotoLibraryScanner {
                     // first four thumbnails publish quickly so the initial UI
                     // doesn't wait for all 500 Vision requests.
                     resultKind: .provisional,
-                    requiresFullRescan: forceFullAnalysis
+                    requiresFullRescan: forceFullAnalysis,
+                    purpose: purpose
                 )
                 await onEvent(
                     .progress(
@@ -457,7 +522,8 @@ actor PhotoLibraryScanner {
         totalAssets: Int,
         phase: ScanPhase,
         resultKind: ScanResultKind,
-        requiresFullRescan: Bool
+        requiresFullRescan: Bool,
+        purpose: ScanPurpose?
     ) -> ScanState {
         let finished = records.compactMap { $0 }
         let cats = finished.filter(\.isCatCandidate)
@@ -469,16 +535,52 @@ actor PhotoLibraryScanner {
             scannedAssets: scannedAssets,
             catAssets: cats.count,
             oldestCatPhotoDate: cats.compactMap(\.creationDate).min(),
-            deferredAssets: finished.filter { $0.analysisStatus == .unavailableLocally }.count,
+            deferredAssets: finished.filter { record in
+                record.analysisStatus == .unavailableLocally
+                    || record.analysisStatus == .failed
+                    || (record.isCatCandidate
+                        && (record.albumAnalysisVersion
+                                != CatAlbumTraits.currentAnalysisVersion
+                            || record.albumTraits?.analysisVersion
+                                != CatAlbumTraits.currentAnalysisVersion))
+            }.count,
+            // Completing one full pass clears the migration banner even when
+            // an iCloud-only known cat could not receive secondary traits.
+            // Its nil album version is still retried by the normal reuse path.
             requiresFullRescan: requiresFullRescan,
+            purpose: requiresFullRescan ? purpose : nil,
             lastError: nil
         )
+    }
+
+    private static func outingValue(
+        for localIdentifier: String,
+        in values: [String: Bool?]
+    ) -> Bool? {
+        guard let stored = values[localIdentifier] else { return nil }
+        return stored
+    }
+
+    private static func hasCompletedGroupedAlbumAnalysis(
+        _ record: AssetRecord
+    ) -> Bool {
+        guard record.albumAnalysisVersion == CatAlbumTraits.currentAnalysisVersion else {
+            return false
+        }
+        if record.analysisStatus == .detected {
+            guard record.isCatCandidate else { return false }
+            return record.albumTraits?.analysisVersion
+                == CatAlbumTraits.currentAnalysisVersion
+        }
+        return true
     }
 
     private static func analyze(
         asset: PHAsset,
         settings: AppSettings,
-        previous: AssetRecord?
+        previous: AssetRecord?,
+        analysisMode: AnalysisMode,
+        isOuting: Bool?
     ) async throws -> AssetRecord {
         let sourcePixelCount = Int64(asset.pixelWidth) * Int64(asset.pixelHeight)
         let tracesLargePhoto = sourcePixelCount >= largePhotoTraceMinimumPixelCount
@@ -587,6 +689,11 @@ actor PhotoLibraryScanner {
                     outcome: AssetAnalysisStatus.unavailableLocally.rawValue
                 )
             }
+            if analysisMode.preservesPreviousCatOnFailure,
+               let previous,
+               previous.isCatCandidate {
+                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+            }
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -611,6 +718,11 @@ actor PhotoLibraryScanner {
                     outcome: AssetAnalysisStatus.failed.rawValue
                 )
             }
+            if analysisMode.preservesPreviousCatOnFailure,
+               let previous,
+               previous.isCatCandidate {
+                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+            }
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -632,6 +744,11 @@ actor PhotoLibraryScanner {
                 "Photo thumbnail had no CGImage backing",
                 metadata: ["asset": SharedLog.shortHash(asset.localIdentifier)]
             )
+            if analysisMode.preservesPreviousCatOnFailure,
+               let previous,
+               previous.isCatCandidate {
+                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+            }
             return AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
@@ -654,15 +771,17 @@ actor PhotoLibraryScanner {
             // the normal GPU/Neural Engine scheduling path.
             request.usesCPUOnly = true
 #endif
+            let orientation = CGImagePropertyOrientation(image.imageOrientation)
             let handler = VNImageRequestHandler(
                 cgImage: cgImage,
-                orientation: CGImagePropertyOrientation(image.imageOrientation),
+                orientation: orientation,
                 options: [:]
             )
             try handler.perform([request])
 
             let observations = request.results ?? []
-            let cats: [(VNRecognizedObjectObservation, Float)] = observations.compactMap { observation in
+            let cats: [(VNRecognizedObjectObservation, Float)] = observations.compactMap {
+                observation in
                 guard let label = observation.labels
                     .filter({ $0.identifier.caseInsensitiveCompare("cat") == .orderedSame })
                     .max(by: { $0.confidence < $1.confidence }),
@@ -672,13 +791,12 @@ actor PhotoLibraryScanner {
                 return (observation, label.confidence)
             }
 
-            let union = cats
-                .map { $0.0.boundingBox }
-                .reduce(CGRect.null) { $0.union($1) }
+            let catBoundingBoxes = cats.map { $0.0.boundingBox }
+            let union = catBoundingBoxes.reduce(CGRect.null) { $0.union($1) }
             let catAreaRatio = min(
                 1,
-                cats.reduce(0) {
-                    $0 + Double($1.0.boundingBox.width * $1.0.boundingBox.height)
+                catBoundingBoxes.reduce(0) {
+                    $0 + Double($1.width * $1.height)
                 }
             )
             guard !cats.isEmpty,
@@ -695,37 +813,103 @@ actor PhotoLibraryScanner {
                     burstIdentifier: asset.burstIdentifier,
                     cat: .none,
                     analysisStatus: .noCat,
-                    analysisFingerprint: settings.analysisFingerprint
+                    analysisFingerprint: settings.analysisFingerprint,
+                    albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
+                    albumTraits: nil
                 ).preservingUserState(from: previous)
             }
 
             let confidence = cats.map { $0.1 }.max() ?? 0
-            let detection = CatDetection(
+            let refreshedDetection = CatDetection(
                 detected: true,
                 confidence: confidence,
                 boundingBox: NormalizedRect(union),
                 areaRatio: catAreaRatio,
                 catCount: cats.count
             )
-            processingOutcome = AssetAnalysisStatus.detected.rawValue
-            return AssetRecord(
-                localIdentifier: asset.localIdentifier,
-                creationDate: asset.creationDate,
-                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                sourceModificationDateWasCaptured: true,
-                isFavorite: asset.isFavorite,
-                isScreenshot: false,
-                burstIdentifier: asset.burstIdentifier,
-                cat: detection,
-                analysisStatus: .detected,
-                analysisFingerprint: settings.analysisFingerprint
-            ).preservingUserState(from: previous)
+            let primaryDetection = refreshedDetection
+            let primaryAnalyzedAt = Date.now
+
+            do {
+                try Task.checkCancellation()
+                let traits = try groupedAlbumTraits(
+                    cgImage: cgImage,
+                    orientation: orientation,
+                    catBoundingBoxes: catBoundingBoxes,
+                    isOuting: isOuting
+                )
+                processingOutcome = AssetAnalysisStatus.detected.rawValue
+                return AssetRecord(
+                    localIdentifier: asset.localIdentifier,
+                    creationDate: asset.creationDate,
+                    sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                    sourceModificationDateWasCaptured: true,
+                    isFavorite: asset.isFavorite,
+                    isScreenshot: false,
+                    burstIdentifier: asset.burstIdentifier,
+                    cat: primaryDetection,
+                    analysisStatus: .detected,
+                    analysisFingerprint: settings.analysisFingerprint,
+                    analyzedAt: primaryAnalyzedAt,
+                    albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
+                    albumTraits: traits
+                ).preservingUserState(from: previous)
+            } catch is CancellationError {
+                processingOutcome = "cancelled"
+                throw CancellationError()
+            } catch {
+                // A secondary album classifier must never erase a valid cat or
+                // make it disappear from the existing Widget. Nil versioning
+                // schedules a later retry while the primary result survives.
+                processingOutcome = "detected-album-pending"
+                let value = error as NSError
+                SharedLog.app.warning(
+                    "vision",
+                    "Grouped album analysis deferred",
+                    metadata: [
+                        "asset": SharedLog.shortHash(asset.localIdentifier),
+                        "code": "\(value.code)",
+                        "domain": value.domain
+                    ]
+                )
+                return AssetRecord(
+                    localIdentifier: asset.localIdentifier,
+                    creationDate: asset.creationDate,
+                    sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                    sourceModificationDateWasCaptured: true,
+                    isFavorite: asset.isFavorite,
+                    isScreenshot: false,
+                    burstIdentifier: asset.burstIdentifier,
+                    cat: primaryDetection,
+                    analysisStatus: .detected,
+                    analysisFingerprint: settings.analysisFingerprint,
+                    analyzedAt: primaryAnalyzedAt,
+                    albumAnalysisVersion: nil,
+                    albumTraits: nil
+                ).preservingUserState(from: previous)
+            }
         } catch is CancellationError {
             processingOutcome = "cancelled"
             throw CancellationError()
         } catch {
-            processingOutcome = AssetAnalysisStatus.failed.rawValue
             let value = error as NSError
+            if analysisMode.preservesPreviousCatOnFailure,
+               let previous,
+               previous.isCatCandidate {
+                processingOutcome = "detected-album-pending"
+                SharedLog.app.warning(
+                    "vision",
+                    "Cat bounds refresh deferred for grouped albums",
+                    metadata: [
+                        "asset": SharedLog.shortHash(asset.localIdentifier),
+                        "code": "\(value.code)",
+                        "domain": value.domain
+                    ]
+                )
+                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+            }
+
+            processingOutcome = AssetAnalysisStatus.failed.rawValue
             SharedLog.app.error(
                 "vision",
                 "Vision animal recognition request failed",
@@ -747,6 +931,80 @@ actor PhotoLibraryScanner {
                 analysisFingerprint: settings.analysisFingerprint
             ).preservingUserState(from: previous)
         }
+    }
+
+    private static func groupedAlbumTraits(
+        cgImage: CGImage,
+        orientation: CGImagePropertyOrientation,
+        catBoundingBoxes: [CGRect],
+        isOuting: Bool?
+    ) throws -> CatAlbumTraits {
+        let poseRequest = VNDetectAnimalBodyPoseRequest()
+        let faceRequest = VNDetectFaceRectanglesRequest()
+#if targetEnvironment(simulator)
+        poseRequest.usesCPUOnly = true
+        faceRequest.usesCPUOnly = true
+#endif
+        let handler = VNImageRequestHandler(
+            cgImage: cgImage,
+            orientation: orientation,
+            options: [:]
+        )
+        try handler.perform([poseRequest, faceRequest])
+
+        let postureTags = AnimalPostureClassifier.tags(
+            from: poseRequest.results ?? [],
+            matching: catBoundingBoxes
+        )
+        let containsPerson = containsProminentHumanFace(
+            faceRequest.results ?? [],
+            excluding: catBoundingBoxes
+        )
+        let largestCatAreaRatio = catBoundingBoxes.lazy.map {
+            Double($0.width * $0.height)
+        }.max() ?? 0
+        return CatAlbumTraits(
+            postures: Array(postureTags),
+            containsPerson: containsPerson,
+            isOuting: isOuting,
+            largestCatAreaRatio: largestCatAreaRatio
+        )
+    }
+
+    private static func containsProminentHumanFace(
+        _ observations: [VNFaceObservation],
+        excluding catBoundingBoxes: [CGRect]
+    ) -> Bool {
+        observations.contains { observation in
+            let face = observation.boundingBox.standardized
+            let faceArea = face.width * face.height
+            guard observation.confidence >= 0.6,
+                  faceArea >= 0.02,
+                  min(face.width, face.height) >= 0.10 else { return false }
+
+            let mostlyOverlapsCat = catBoundingBoxes.contains { cat in
+                let overlap = face.intersection(cat.standardized)
+                guard !overlap.isNull, !overlap.isEmpty else { return false }
+                return (overlap.width * overlap.height) / faceArea >= 0.5
+            }
+            return !mostlyOverlapsCat
+        }
+    }
+
+    private static func pendingGroupedAlbumRecord(
+        asset: PHAsset,
+        previous: AssetRecord
+    ) -> AssetRecord {
+        var value = previous
+        value.creationDate = asset.creationDate
+        value.sourceModificationDate = normalizedModificationDate(asset.modificationDate)
+        value.sourceModificationDateWasCaptured = true
+        value.isFavorite = asset.isFavorite
+        value.isScreenshot = false
+        value.burstIdentifier = asset.burstIdentifier
+        value.albumAnalysisVersion = nil
+        value.albumTraits = nil
+        return value
     }
 
     private static let largePhotoTraceMinimumPixelCount: Int64 = 40_000_000
@@ -899,7 +1157,9 @@ actor PhotoLibraryScanner {
             burstIdentifier: asset.burstIdentifier,
             cat: .none,
             analysisStatus: status,
-            analysisFingerprint: analysisFingerprint
+            analysisFingerprint: analysisFingerprint,
+            albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
+            albumTraits: nil
         ).preservingUserState(from: previous)
     }
 }

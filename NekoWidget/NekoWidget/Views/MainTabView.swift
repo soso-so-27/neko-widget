@@ -17,6 +17,7 @@ struct MainTabView: View {
 
     let chooseMorePhotos: () -> Void
     let toggleLike: (String) -> Void
+    let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void
     let saveSettings: (SettingsPresentation) async -> Void
@@ -24,9 +25,8 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .home
     @State private var homePath: [String] = []
-    @State private var albumPath: [String] = []
+    @State private var albumPath: [AlbumRoute] = []
     @State private var likesPath: [String] = []
-    @State private var albumFilter: AlbumPhotoFilter = .all
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
 
@@ -54,8 +54,8 @@ struct MainTabView: View {
             .tag(AppTab.home)
 
             NavigationStack(path: $albumPath) {
-                AlbumView(photos: catPhotos, filter: $albumFilter)
-                    .navigationDestination(for: String.self, destination: detailView)
+                AlbumView(sections: curatedAlbumSections, scan: scan)
+                    .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
             }
             .tabItem {
                 Label("アルバム", systemImage: "square.grid.3x3.fill")
@@ -106,6 +106,12 @@ struct MainTabView: View {
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
         }
+        .onChange(of: settings.catLifeReference) { _, _ in
+            // A saved reference replaces calendar-year albums with age albums
+            // (or vice versa). Pop stale typed routes instead of leaving a
+            // destination whose spoken title no longer exists.
+            albumPath.removeAll()
+        }
     }
 
     @ViewBuilder
@@ -117,6 +123,62 @@ struct MainTabView: View {
             widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
             widgetIntervalMinutes: widgetIntervalMinutes,
             toggleLike: toggleLike
+        )
+    }
+
+    @ViewBuilder
+    private func albumDestination(for route: AlbumRoute) -> some View {
+        switch route {
+        case let .album(albumID):
+            if let album = curatedAlbum(for: albumID) {
+                CuratedAlbumDetailView(
+                    album: album,
+                    albumOpened: albumOpened
+                )
+            } else {
+                missingAlbumView
+            }
+
+        case let .photo(albumID, localIdentifier):
+            if let album = curatedAlbum(for: albumID),
+               let initialPhoto = album.photos.first(where: {
+                   $0.localIdentifier == localIdentifier
+               }) {
+                PhotoBrowserView(
+                    photos: album.photos,
+                    libraryPhotos: libraryPhotos,
+                    initialPhoto: initialPhoto,
+                    widgetShownAt: nil,
+                    widgetIntervalMinutes: widgetIntervalMinutes,
+                    toggleLike: toggleLike
+                )
+            } else {
+                missingAlbumView
+            }
+        }
+    }
+
+    private var curatedAlbumSections: [CuratedAlbumSectionPresentation] {
+        CuratedAlbumBuilder().sections(
+            from: catPhotos,
+            lifeReference: settings.catLifeReference
+        )
+    }
+
+    private func curatedAlbum(
+        for id: CuratedAlbumID
+    ) -> CuratedAlbumPresentation? {
+        curatedAlbumSections
+            .lazy
+            .flatMap(\.albums)
+            .first { $0.id == id }
+    }
+
+    private var missingAlbumView: some View {
+        ContentUnavailableView(
+            "アルバムを更新しています",
+            systemImage: "rectangle.stack",
+            description: Text("スキャン結果が更新されました。アルバム一覧へ戻って、もう一度開いてください。")
         )
     }
 

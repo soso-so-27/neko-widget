@@ -50,6 +50,8 @@ private struct VerificationExportPayload: Encodable {
         case scanState
         case settings
         case albumLocalIdentifier
+        case albumUsage
+        case catLifeReferenceConfigured
         case updatedAt
         case detectionAccuracySample
         case likeMeasurement
@@ -60,10 +62,21 @@ private struct VerificationExportPayload: Encodable {
         try container.encode(snapshot.schemaVersion, forKey: .schemaVersion)
         try container.encode(snapshot.assets, forKey: .assets)
         try container.encode(snapshot.scanState, forKey: .scanState)
-        try container.encode(snapshot.settings, forKey: .settings)
+        // The optional birthday/adoption day is needed only on this device to
+        // group memories. Keep the exact date out of a shareable verification
+        // export while still recording whether age-based grouping was active.
+        var exportSettings = snapshot.settings
+        let catLifeReferenceConfigured = exportSettings.catLifeReference != nil
+        exportSettings.catLifeReference = nil
+        try container.encode(exportSettings, forKey: .settings)
         try container.encodeIfPresent(
             snapshot.albumLocalIdentifier,
             forKey: .albumLocalIdentifier
+        )
+        try container.encodeIfPresent(snapshot.albumUsage, forKey: .albumUsage)
+        try container.encode(
+            catLifeReferenceConfigured,
+            forKey: .catLifeReferenceConfigured
         )
         try container.encode(snapshot.updatedAt, forKey: .updatedAt)
         try container.encode(detectionAccuracySample, forKey: .detectionAccuracySample)

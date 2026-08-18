@@ -18,11 +18,16 @@ struct InitialScanView: View {
                 VStack(spacing: 18) {
                     ProgressView()
                         .controlSize(.large)
-                    Text("うちの子を探しています")
+                    Text(scan.isPreparingGroupedAlbums
+                        ? "新しいアルバムを準備しています"
+                        : "うちの子を探しています")
                         .font(.title3.weight(.semibold))
-                    Text("まず新しい写真500枚を調べます。")
+                    Text(scan.isPreparingGroupedAlbums
+                        ? "寝顔やへそ天などを見つけるため、もう一度写真を見ています。"
+                        : "まず新しい写真500枚を調べます。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
             }
 
@@ -46,7 +51,7 @@ struct InitialScanView: View {
     private var result: some View {
         VStack(spacing: 20) {
             ResultBadge(
-                isFinal: scan.hasFinalResult,
+                isFinal: scan.hasFinalResult && !scan.isPreparingGroupedAlbums,
                 deferredAssets: scan.deferredAssets
             )
 
@@ -102,8 +107,8 @@ struct InitialScanView: View {
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "端末内で現行品質を取得できなかった \(scan.deferredAssets.formatted())枚は未解析です。低解像度版を利用できるか検証予定です。",
-                    systemImage: "icloud.and.arrow.down"
+                    "端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。次のスキャンで再試行します。",
+                    systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -139,16 +144,24 @@ struct ScanProgressCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("スキャン")
+                Text(scan.isPreparingGroupedAlbums
+                    ? "新しいアルバムを準備中"
+                    : "スキャン")
                     .font(.headline)
                 Spacer()
                 ResultBadge(
-                    isFinal: scan.hasFinalResult,
+                    isFinal: scan.hasFinalResult && !scan.isPreparingGroupedAlbums,
                     deferredAssets: scan.deferredAssets
                 )
             }
 
-            if scan.isScanning || !scan.hasFinalResult {
+            if scan.isPreparingGroupedAlbums {
+                Text("寝顔やへそ天などのアルバムを作るために、もう一度写真を見ています。端末内で確認できた写真から順にアルバムへ追加します。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if scan.isScanning || scan.isPaused || !scan.hasFinalResult {
                 ProgressView(value: scan.progress)
                     .tint(.accentColor)
 
@@ -161,6 +174,12 @@ struct ScanProgressCard: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
+
+                if scan.isPreparingGroupedAlbums {
+                    Text("スキャンはアプリを開いている間に進みます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else if let lastScannedAt = scan.lastScannedAt {
                 Label(
                     lastScannedAt.formatted(.relative(presentation: .named)),
@@ -171,7 +190,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
-                Text("端末内で現行品質を取得できなかった \(scan.deferredAssets.formatted())枚は未解析です。低解像度版を利用できるか検証予定です。")
+                Text("端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。次のスキャンで再試行します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

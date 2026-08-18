@@ -1,15 +1,153 @@
 import SwiftUI
 
-enum AlbumPhotoFilter: String, CaseIterable, Identifiable, Hashable {
-    case all = "すべて"
-    case liked = "これ好き"
+struct AlbumView: View {
+    let sections: [CuratedAlbumSectionPresentation]
+    let scan: ScanPresentation
 
-    var id: Self { self }
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 26) {
+                if scan.isPreparingGroupedAlbums {
+                    groupedAlbumPreparationBanner
+                } else if scan.hasFinalResult, scan.hasDeferredAssets {
+                    Label(
+                        "取得または分類できなかった \(scan.deferredAssets.formatted())枚は、次のスキャンで再試行します。",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                ForEach(sections) { section in
+                    albumSection(section)
+                }
+
+                if sections.isEmpty {
+                    emptyState
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
+        .navigationTitle("アルバム")
+        .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private func albumSection(
+        _ section: CuratedAlbumSectionPresentation
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(section.title)
+                .font(.title3.bold())
+                .accessibilityAddTraits(.isHeader)
+
+            LazyVGrid(columns: cardColumns, spacing: 12) {
+                ForEach(section.albums) { album in
+                    NavigationLink(value: AlbumRoute.album(album.id)) {
+                        CuratedAlbumCard(album: album)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(album.title)、\(album.photos.count.formatted())枚")
+                    .accessibilityHint("写真の一覧を開きます")
+                }
+            }
+        }
+    }
+
+    private var cardColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
+    }
+
+    private var groupedAlbumPreparationBanner: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Label("新しいアルバムを準備しています", systemImage: "sparkles.rectangle.stack")
+                .font(.headline)
+
+            Text("寝顔やへそ天などのアルバムを作るために、もう一度写真を見ています。端末内で確認できた写真から順にアルバムへ追加します。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            ProgressView(value: scan.progress)
+                .tint(.accentColor)
+
+            HStack {
+                Text(scan.isPaused
+                    ? "一時停止中。アプリに戻ると続きから再開します。"
+                    : "\(scan.scannedAssets.formatted()) / \(scan.totalAssets.formatted())枚")
+                Spacer()
+                Text(scan.progress, format: .percent.precision(.fractionLength(0)))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Text("スキャンはアプリを開いている間に進みます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if scan.isPreparingGroupedAlbums || scan.isScanning {
+            ContentUnavailableView(
+                "アルバムを準備しています",
+                systemImage: "rectangle.stack.badge.plus",
+                description: Text("分類が終わった写真から、ここにアルバムが現れます。")
+            )
+            .frame(maxWidth: .infinity, minHeight: 320)
+        } else {
+            ContentUnavailableView(
+                "アルバムにできる写真がまだありません",
+                systemImage: "photo.on.rectangle",
+                description: Text("猫の写真が見つかると、思い出に合わせて自動でまとまります。")
+            )
+            .frame(maxWidth: .infinity, minHeight: 420)
+        }
+    }
 }
 
-struct AlbumView: View {
-    let photos: [PhotoPresentation]
-    @Binding var filter: AlbumPhotoFilter
+private struct CuratedAlbumCard: View {
+    let album: CuratedAlbumPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PhotoAssetImageView(
+                localIdentifier: album.coverPhoto.localIdentifier,
+                catBoundingBox: album.coverPhoto.catBoundingBox,
+                targetPixelSize: CGSize(width: 560, height: 560),
+                targetAspectRatio: 1
+            )
+            .aspectRatio(1, contentMode: .fit)
+            .clipped()
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(album.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+                Text("\(album.photos.count.formatted())枚")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+        }
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct CuratedAlbumDetailView: View {
+    let album: CuratedAlbumPresentation
+    let albumOpened: (String, String) -> Void
+
+    @State private var didRecordOpen = false
 
     private let columns = Array(
         repeating: GridItem(.flexible(), spacing: 2),
@@ -17,107 +155,59 @@ struct AlbumView: View {
     )
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("表示する写真", selection: $filter) {
-                ForEach(AlbumPhotoFilter.allCases) { value in
-                    Text(filterTitle(value)).tag(value)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
-            albumContents
-        }
-        .navigationTitle("アルバム")
-        .background(Color(.systemGroupedBackground))
-    }
-
-    @ViewBuilder
-    private var albumContents: some View {
-        if photos.isEmpty {
-            ContentUnavailableView(
-                "猫の写真がまだありません",
-                systemImage: "photo.on.rectangle",
-                description: Text("スキャンで猫の写真が見つかると、撮影日時順に並びます。")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding()
-        } else if displayedPhotos.isEmpty {
-            ContentUnavailableView {
-                Label {
-                    Text("まだ「これ好き」はありません")
-                } icon: {
-                    CatPawMark(isFilled: false)
-                        .frame(width: 28, height: 28)
-                }
-            } description: {
-                Text("写真の肉球ボタンを押すと、ここで絞り込めます。")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding()
-        } else {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 2) {
-                    ForEach(displayedPhotos) { photo in
-                        NavigationLink(value: photo.localIdentifier) {
-                            PhotoAssetImageView(
-                                localIdentifier: photo.localIdentifier,
-                                catBoundingBox: photo.catBoundingBox,
-                                targetPixelSize: CGSize(width: 360, height: 360),
-                                targetAspectRatio: 1
-                            )
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay(alignment: .bottomTrailing) {
-                                if photo.isLiked {
-                                    CatPawMark(isFilled: true)
-                                        .frame(width: 15, height: 15)
-                                        .foregroundStyle(.white)
-                                        .padding(7)
-                                        .background(.black.opacity(0.55), in: Circle())
-                                        .padding(6)
-                                }
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 2) {
+                ForEach(album.photos) { photo in
+                    NavigationLink(
+                        value: AlbumRoute.photo(
+                            album: album.id,
+                            localIdentifier: photo.localIdentifier
+                        )
+                    ) {
+                        PhotoAssetImageView(
+                            localIdentifier: photo.localIdentifier,
+                            catBoundingBox: photo.catBoundingBox,
+                            targetPixelSize: CGSize(width: 360, height: 360),
+                            targetAspectRatio: 1
+                        )
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay(alignment: .bottomTrailing) {
+                            if photo.isLiked {
+                                CatPawMark(isFilled: true)
+                                    .frame(width: 15, height: 15)
+                                    .foregroundStyle(.white)
+                                    .padding(7)
+                                    .background(.black.opacity(0.55), in: Circle())
+                                    .padding(6)
                             }
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(photoAccessibilityLabel(photo))
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(photoAccessibilityLabel(photo))
                 }
-                .padding(.bottom, 12)
             }
+            .padding(.bottom, 12)
         }
-    }
-
-    private var likedPhotoCount: Int {
-        photos.lazy.filter(\.isLiked).count
-    }
-
-    private var displayedPhotos: [PhotoPresentation] {
-        orderedPhotos.filter { filter == .all || $0.isLiked }
-    }
-
-    /// The album opens with the newest memories first. Missing dates stay at
-    /// the end, and identifiers make equal timestamps deterministic.
-    private var orderedPhotos: [PhotoPresentation] {
-        photos.sorted { lhs, rhs in
-            switch (lhs.creationDate, rhs.creationDate) {
-            case let (left?, right?):
-                if left == right { return lhs.localIdentifier < rhs.localIdentifier }
-                return left > right
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            case (nil, nil):
-                return lhs.localIdentifier < rhs.localIdentifier
+        .navigationTitle(album.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                Text("\(album.photos.count.formatted())枚")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.bar)
         }
-    }
-
-    private func filterTitle(_ value: AlbumPhotoFilter) -> String {
-        let count = value == .all ? photos.count : likedPhotoCount
-        return "\(value.rawValue) \(count.formatted())"
+        .onAppear {
+            guard !didRecordOpen else { return }
+            didRecordOpen = true
+            albumOpened(album.id.logKey, album.group.logKey)
+        }
     }
 
     private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
