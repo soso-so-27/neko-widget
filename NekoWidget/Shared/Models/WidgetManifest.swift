@@ -73,17 +73,31 @@ struct WidgetManifestItem: Codable, Identifiable, Equatable, Sendable {
     var cacheFilename: String
     var cacheFilenames: WidgetCacheFilenames?
     var scheduledDate: Date
+    /// Optional during the rolling upgrade from Build 10. Sharing refuses to
+    /// infer a plan when these fields are absent and asks the app to rebuild.
+    var rendererVersion: String?
+    var sourcePixelSize: WidgetSourcePixelSize?
+    var renderPlans: WidgetRenderPlans?
+    var sourceModificationDate: Date?
 
     init(
         localIdentifier: String,
         cacheFilename: String,
         cacheFilenames: WidgetCacheFilenames? = nil,
-        scheduledDate: Date
+        scheduledDate: Date,
+        rendererVersion: String? = nil,
+        sourcePixelSize: WidgetSourcePixelSize? = nil,
+        renderPlans: WidgetRenderPlans? = nil,
+        sourceModificationDate: Date? = nil
     ) {
         self.localIdentifier = localIdentifier
         self.cacheFilename = cacheFilename
         self.cacheFilenames = cacheFilenames
         self.scheduledDate = scheduledDate
+        self.rendererVersion = rendererVersion
+        self.sourcePixelSize = sourcePixelSize
+        self.renderPlans = renderPlans
+        self.sourceModificationDate = sourceModificationDate
     }
 
     func cacheFilename(for variant: WidgetImageVariant) -> String {

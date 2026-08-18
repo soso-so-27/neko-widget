@@ -403,7 +403,7 @@ def main() -> int:
         for entry in matching("Widget cache build completed", "widget-cache")
         if entry.get("process") == "app" and entry_timestamp(entry) is not None
     ]
-    expected_widget_cache_algorithm = "cat-aware-full-bleed-v5"
+    expected_widget_cache_algorithm = "cat-aware-full-bleed-v6"
     widget_cache_algorithms = sorted(
         {
             str(entry.get("metadata", {}).get("algorithm"))

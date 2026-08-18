@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import fixture from "../../ci/fixtures/pairing-protocol-v1.json";
+import sharingFixture from "../../ci/fixtures/sharing-protocol-v1.json";
 import { base64urlDecode, base64urlEncode, sha256, sha256Base64url } from "../src/encoding";
 import {
   enrollmentTranscript,
   pairingTranscript,
+  sharedManifestAAD,
+  sharedMediaAAD,
   signedRequestTranscript,
   verificationPhrase,
 } from "../src/protocol";
@@ -60,5 +63,19 @@ describe("pairing protocol v1 golden vectors", () => {
     expect(await sha256Base64url(signedBytes)).toBe(signed.expected.sha256);
 
     expect(base64urlDecode(pairing.expected.sha256, 32)).toHaveLength(32);
+  });
+});
+
+describe("sharing protocol v1 golden vectors", () => {
+  it("binds media and manifest ciphertext to the same typed fields as CryptoKit", async () => {
+    const media = sharingFixture.media;
+    const mediaBytes = sharedMediaAAD(media.fields);
+    expect(base64urlEncode(mediaBytes)).toBe(media.canonicalBase64url);
+    expect(await sha256Base64url(mediaBytes)).toBe(media.sha256);
+
+    const manifest = sharingFixture.manifest;
+    const manifestBytes = sharedManifestAAD(manifest.fields);
+    expect(base64urlEncode(manifestBytes)).toBe(manifest.canonicalBase64url);
+    expect(await sha256Base64url(manifestBytes)).toBe(manifest.sha256);
   });
 });

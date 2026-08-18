@@ -21,7 +21,6 @@ private struct WidgetCacheHistory: Codable, Sendable {
 
 actor WidgetCacheBuilder {
     private static let historyFilename = "widget-cache-history.json"
-    private static let compositionAlgorithmVersion = "cat-aware-full-bleed-v5"
     /// The migration-safe maximum is 380 distinct files: new manifest 60,
     /// previous active manifest 60, grace generation 60, three pre-Build-8
     /// family leases of up to 60 each, and the Build-4 legacy lease of 20.
@@ -32,41 +31,6 @@ actor WidgetCacheBuilder {
     /// 16:9 source above the 1100px Large short side while bounding app-side
     /// source decode memory to roughly 16 MiB. Network behavior stays unchanged.
     private static let sourceImageRequestPixelDimension = 2_048
-    /// Padding on every side of the detected cat union before deciding whether
-    /// a family crop can keep the cat comfortably inside the frame.
-    private static let catMarginFraction: CGFloat = 0.08
-    /// Shadow-only baseline used to quantify the one-number 18% -> 8% change
-    /// against the exact same generated Small/Large candidates in CI.
-    private static let legacyCatMarginFraction: CGFloat = 0.18
-    /// Tiny detections still receive visible breathing room in the source photo.
-    private static let minimumImageMarginFraction: CGFloat = 0.03
-    /// When a Medium crop cannot contain the whole cat union, bias its focal
-    /// point toward the upper third of the box. This preserves the likely head
-    /// area without introducing face detection or semantic composition.
-    private static let mediumUpperFocusFraction: CGFloat = 0.35
-
-    private enum CompositionMode: String, CaseIterable, Sendable {
-        case catFullBleed = "cat-full-bleed"
-        case mediumUpperFocus = "medium-upper-focus"
-        case blurredFitFallback = "blurred-fit-fallback"
-
-        var generatedMetadataKey: String {
-            switch self {
-            case .catFullBleed:
-                return "compositionGeneratedCatFullBleed"
-            case .mediumUpperFocus:
-                return "compositionGeneratedMediumUpperFocus"
-            case .blurredFitFallback:
-                return "compositionGeneratedBlurredFitFallback"
-            }
-        }
-    }
-
-    private struct CropPlan {
-        var normalizedRect: CGRect
-        var compositionMode: CompositionMode
-    }
-
     private struct RenderSpec: Sendable {
         var variant: WidgetImageVariant
         var size: CGSize
@@ -122,7 +86,7 @@ actor WidgetCacheBuilder {
             "widget-cache",
             "Widget cache build started",
             metadata: [
-                "algorithm": Self.compositionAlgorithmVersion,
+                "algorithm": WidgetRenderPlanner.rendererVersion,
                 "candidates": "\(candidates.count)",
                 "entryTarget": "\(settings.widgetEntryCount)",
                 "imageRequestPixels": "\(Self.sourceImageRequestPixelDimension)x\(Self.sourceImageRequestPixelDimension)",
@@ -145,15 +109,18 @@ actor WidgetCacheBuilder {
         var available: [(
             record: AssetRecord,
             filenames: WidgetCacheFilenames,
-            byteCounts: [WidgetImageVariant: Int]
+            byteCounts: [WidgetImageVariant: Int],
+            sourcePixelSize: WidgetSourcePixelSize?,
+            renderPlans: WidgetRenderPlans?
         )] = []
+        let activeManifest = try? AtomicJSON.read(WidgetManifest.self, from: manifestURL)
         var generatedFileCount = 0
         var reusedFileCount = 0
         var unavailableAssetCount = 0
         var inputPixelWidths: [Int] = []
         var inputPixelHeights: [Int] = []
         var inputDecodedByteEstimates: [Int] = []
-        var generatedCompositionCounts: [CompositionMode: Int] = [:]
+        var generatedCompositionCounts: [WidgetCompositionMode: Int] = [:]
         var renderUpscaledCounts: [WidgetImageVariant: Int] = [:]
         var maximumRenderScale: CGFloat = 0
         var marginFallbackDenominator = 0
@@ -167,16 +134,33 @@ actor WidgetCacheBuilder {
                 let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
                 return !FileManager.default.fileExists(atPath: fileURL.path)
             }
+            let currentRendererActiveItem = activeManifest?.items.first(where: {
+                $0.localIdentifier == record.localIdentifier
+                    && $0.cacheFilenames == filenames
+            })
+            let reusableMetadata = currentRendererActiveItem.flatMap { item in
+                guard item.rendererVersion == WidgetRenderPlanner.rendererVersion,
+                      item.sourcePixelSize?.isValid == true,
+                      item.renderPlans?.allAreValid == true,
+                      item.sourceModificationDate == record.sourceModificationDate,
+                      let size = item.sourcePixelSize,
+                      let plans = item.renderPlans
+                else { return nil }
+                return (size, plans)
+            }
+            var renderMetadata = reusableMetadata
 
-            if !missingSpecs.isEmpty {
+            if !missingSpecs.isEmpty || renderMetadata == nil {
                 let output: (
                     files: [(
                         variant: WidgetImageVariant,
                         data: Data,
-                        compositionMode: CompositionMode,
+                        compositionMode: WidgetCompositionMode,
                         renderScale: CGFloat,
                         legacy18WouldFallback: Bool?
                     )],
+                    sourcePixelSize: WidgetSourcePixelSize,
+                    renderPlans: WidgetRenderPlans,
                     width: Int,
                     height: Int,
                     decodedByteEstimate: Int
@@ -193,24 +177,35 @@ actor WidgetCacheBuilder {
                         return nil
                     }
 
-                    let normalized = Self.normalizedImage(image)
+                    let normalized = WidgetSourceImageNormalizer.normalizedUIImage(image)
+                    let sourcePixelSize = WidgetSourcePixelSize(
+                        width: normalized.cgImage?.width
+                            ?? max(1, Int(normalized.size.width.rounded())),
+                        height: normalized.cgImage?.height
+                            ?? max(1, Int(normalized.size.height.rounded()))
+                    )
+                    let renderPlans = WidgetRenderPlanner.plans(
+                        visionBoundingBox: record.cat.boundingBox?.cgRect,
+                        sourcePixelSize: sourcePixelSize
+                    )
                     let ciContext = Self.makeCIContext()
                     var files: [(
                         variant: WidgetImageVariant,
                         data: Data,
-                        compositionMode: CompositionMode,
+                        compositionMode: WidgetCompositionMode,
                         renderScale: CGFloat,
                         legacy18WouldFallback: Bool?
                     )] = []
                     for spec in missingSpecs {
                         let output: (
                             data: Data,
-                            compositionMode: CompositionMode,
+                            compositionMode: WidgetCompositionMode,
                             renderScale: CGFloat,
                             legacy18WouldFallback: Bool?
                         )? = autoreleasepool {
                             Self.widgetJPEG(
                                 normalizedImage: normalized,
+                                renderPlan: renderPlans.plan(for: spec.variant),
                                 catBoundingBox: record.cat.boundingBox?.cgRect,
                                 spec: spec,
                                 ciContext: ciContext
@@ -234,16 +229,46 @@ actor WidgetCacheBuilder {
                     let decodedByteEstimate = image.cgImage.map {
                         $0.bytesPerRow * $0.height
                     } ?? (width * height * 4)
-                    return (files, width, height, decodedByteEstimate)
+                    return (
+                        files,
+                        sourcePixelSize,
+                        renderPlans,
+                        width,
+                        height,
+                        decodedByteEstimate
+                    )
                 }
-                guard let output else {
+                if output == nil {
                     // The asset may have moved to iCloud since it was analyzed.
-                    // Keep walking candidates without downloading it.
-                    unavailableAssetCount += 1
-                    continue
+                    // Renderer-version changes deliberately produce different
+                    // filenames, so `missingSpecs` says nothing about whether
+                    // the currently published v5 family is complete. Match the
+                    // active source identity independently and verify its exact
+                    // three old files before retaining the published manifest.
+                    if let activeManifest,
+                       let retained = Self.retainedActiveManifestIfPhotoUnavailable(
+                            activeManifest,
+                            record: record,
+                            cacheDirectory: cacheDirectory
+                       ) {
+                        SharedLog.app.warning(
+                            "widget-cache",
+                            "Retained complete legacy cache without sharing render metadata",
+                            metadata: ["asset": SharedLog.shortHash(record.localIdentifier)]
+                        )
+                        // Do not rewrite its schedule or enter stale-file
+                        // cleanup. Sharing alone waits for a later local v6
+                        // render while the personal Widget keeps exact bytes.
+                        return retained
+                    } else {
+                        // Keep walking candidates without downloading it. A
+                        // partial family set is not safe to publish.
+                        unavailableAssetCount += 1
+                        continue
+                    }
                 }
 
-                for file in output.files {
+                for file in output?.files ?? [] {
                     let filename = filenames.filename(for: file.variant)
                     let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
                     try file.data.write(to: fileURL, options: .atomic)
@@ -266,9 +291,12 @@ actor WidgetCacheBuilder {
                         ofItemAtPath: fileURL.path
                     )
                 }
-                inputPixelWidths.append(output.width)
-                inputPixelHeights.append(output.height)
-                inputDecodedByteEstimates.append(output.decodedByteEstimate)
+                if let output {
+                    inputPixelWidths.append(output.width)
+                    inputPixelHeights.append(output.height)
+                    inputDecodedByteEstimates.append(output.decodedByteEstimate)
+                    renderMetadata = (output.sourcePixelSize, output.renderPlans)
+                }
             }
 
             var byteCounts: [WidgetImageVariant: Int] = [:]
@@ -284,7 +312,8 @@ actor WidgetCacheBuilder {
                 }
                 byteCounts[spec.variant] = existingByteCount
             }
-            guard filesAreAvailable, byteCounts.count == Self.RenderSpec.all.count else {
+            guard filesAreAvailable,
+                  byteCounts.count == Self.RenderSpec.all.count else {
                 for filename in filenames.all {
                     try? FileManager.default.removeItem(
                         at: cacheDirectory.appendingPathComponent(filename, isDirectory: false)
@@ -296,7 +325,9 @@ actor WidgetCacheBuilder {
 
             generatedFileCount += missingSpecs.count
             reusedFileCount += Self.RenderSpec.all.count - missingSpecs.count
-            available.append((record, filenames, byteCounts))
+            available.append(
+                (record, filenames, byteCounts, renderMetadata?.0, renderMetadata?.1)
+            )
             if available.count == settings.widgetEntryCount { break }
         }
 
@@ -321,7 +352,11 @@ actor WidgetCacheBuilder {
                 cacheFilenames: item.filenames,
                 scheduledDate: now.addingTimeInterval(
                     TimeInterval(offset * settings.widgetEntryIntervalMinutes * 60)
-                )
+                ),
+                rendererVersion: item.renderPlans == nil ? nil : WidgetRenderPlanner.rendererVersion,
+                sourcePixelSize: item.sourcePixelSize,
+                renderPlans: item.renderPlans,
+                sourceModificationDate: item.renderPlans == nil ? nil : item.record.sourceModificationDate
             )
         }
 
@@ -356,7 +391,7 @@ actor WidgetCacheBuilder {
             )
         })
         var completionMetadata: [String: String] = [
-            "algorithm": Self.compositionAlgorithmVersion,
+            "algorithm": WidgetRenderPlanner.rendererVersion,
             "cacheFileCap": "\(Self.maximumCachedFileCount)",
             "cacheGenerationCap": "\(Self.maximumGenerationCount)",
             "cacheBytesMax": "\(cachedByteCounts.max() ?? 0)",
@@ -384,7 +419,7 @@ actor WidgetCacheBuilder {
             completionMetadata["renderUpscaled\(spec.variant.rawValue.capitalized)"] =
                 "\(renderUpscaledCounts[spec.variant, default: 0])"
         }
-        for mode in CompositionMode.allCases {
+        for mode in WidgetCompositionMode.allCases {
             completionMetadata[mode.generatedMetadataKey] = "\(generatedCompositionCounts[mode, default: 0])"
         }
         SharedLog.app.info(
@@ -504,6 +539,75 @@ actor WidgetCacheBuilder {
         )
     }
 
+    /// Returns the exact already-published manifest only after proving that
+    /// the unavailable PhotoKit source is one of its active items and that
+    /// every active item still has three bounded family JPEGs. This check is
+    /// intentionally independent of the current renderer's cache filenames.
+    private static func retainedActiveManifestIfPhotoUnavailable(
+        _ activeManifest: WidgetManifest,
+        record: AssetRecord,
+        cacheDirectory: URL
+    ) -> WidgetCacheBuildResult? {
+        guard !activeManifest.items.isEmpty,
+              activeManifest.items.contains(where: {
+                  guard $0.localIdentifier == record.localIdentifier else { return false }
+                  // Pre-modification-date manifests can only bind by PhotoKit
+                  // identifier. Once a date was persisted, require it exactly.
+                  guard let activeDate = $0.sourceModificationDate else { return true }
+                  return activeDate == record.sourceModificationDate
+              }),
+              activeManifest.items.allSatisfy({
+                  hasCompleteFamilyFiles(for: $0, cacheDirectory: cacheDirectory)
+              })
+        else { return nil }
+        return WidgetCacheBuildResult(
+            manifest: activeManifest,
+            selectedIdentifiers: activeManifest.items.map(\.localIdentifier)
+        )
+    }
+
+    private static func hasCompleteFamilyFiles(
+        for item: WidgetManifestItem,
+        cacheDirectory: URL
+    ) -> Bool {
+        guard let filenames = item.cacheFilenames,
+              Set(filenames.all).count == RenderSpec.all.count
+        else { return false }
+        return RenderSpec.all.allSatisfy { spec in
+            let filename = filenames.filename(for: spec.variant)
+            guard filename == URL(fileURLWithPath: filename).lastPathComponent,
+                  !filename.contains("/"),
+                  !filename.contains("\\")
+            else { return false }
+            let fileURL = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+            guard let count = byteCount(of: fileURL) else { return false }
+            return count > 0 && count <= spec.maximumJPEGByteCount
+        }
+    }
+
+#if DEBUG
+    /// DEBUG smoke seam for the exact production migration decision. A nil
+    /// PhotoKit result reaches this helper in `build`; the test supplies a v5
+    /// manifest and old family files without introducing a second algorithm.
+    static func runtimeSelfTestRetainedActiveManifestIfPhotoUnavailable(
+        _ activeManifest: WidgetManifest,
+        record: AssetRecord,
+        cacheDirectory: URL
+    ) -> WidgetCacheBuildResult? {
+        retainedActiveManifestIfPhotoUnavailable(
+            activeManifest,
+            record: record,
+            cacheDirectory: cacheDirectory
+        )
+    }
+
+    static func runtimeSelfTestCurrentCacheFilenames(
+        for record: AssetRecord
+    ) -> WidgetCacheFilenames {
+        cacheFilenames(for: record)
+    }
+#endif
+
     private static func cacheFilenames(for record: AssetRecord) -> WidgetCacheFilenames {
         WidgetCacheFilenames(
             small: cacheFilename(for: record, variant: .small),
@@ -528,7 +632,7 @@ actor WidgetCacheBuilder {
             String($0.timeIntervalSinceReferenceDate.bitPattern, radix: 16)
         } ?? "no-modification-date"
         let identity = [
-            compositionAlgorithmVersion,
+            WidgetRenderPlanner.rendererVersion,
             variant.rawValue,
             RenderSpec.spec(for: variant).pixelDescription,
             record.localIdentifier,
@@ -538,7 +642,7 @@ actor WidgetCacheBuilder {
         ].joined(separator: "|")
         let digest = SHA256.hash(data: Data(identity.utf8))
         let hexadecimal = digest.map { String(format: "%02x", $0) }.joined()
-        return "asset-\(compositionAlgorithmVersion)-\(variant.rawValue)-\(hexadecimal).jpg"
+        return "asset-\(WidgetRenderPlanner.rendererVersion)-\(variant.rawValue)-\(hexadecimal).jpg"
     }
 
     private static func byteCount(of url: URL) -> Int? {
@@ -583,19 +687,19 @@ actor WidgetCacheBuilder {
     /// semantic composition runs here or in the Widget extension.
     private static func widgetJPEG(
         normalizedImage image: UIImage,
+        renderPlan: WidgetFamilyRenderPlan,
         catBoundingBox: CGRect?,
         spec: RenderSpec,
         ciContext: CIContext
     ) -> (
         data: Data,
-        compositionMode: CompositionMode,
+        compositionMode: WidgetCompositionMode,
         renderScale: CGFloat,
         legacy18WouldFallback: Bool?
     )? {
         let rendered = renderedWidgetImage(
             image: image,
-            catBoundingBox: catBoundingBox,
-            variant: spec.variant,
+            renderPlan: renderPlan,
             size: spec.size,
             ciContext: ciContext
         )
@@ -607,13 +711,15 @@ actor WidgetCacheBuilder {
         }
         let legacy18WouldFallback: Bool?
         if spec.variant == .small || spec.variant == .large {
-            legacy18WouldFallback = catAwareCropPlan(
+            legacy18WouldFallback = WidgetRenderPlanner.plan(
                 visionBoundingBox: catBoundingBox,
-                imageSize: image.size,
-                canvasSize: spec.size,
+                sourcePixelSize: WidgetSourcePixelSize(
+                    width: max(1, Int(image.size.width.rounded())),
+                    height: max(1, Int(image.size.height.rounded()))
+                ),
                 variant: spec.variant,
-                marginFraction: legacyCatMarginFraction
-            ) == nil
+                marginFraction: WidgetRenderPlanner.legacyCatMarginFraction
+            ).compositionMode == .blurredFitFallback
         } else {
             legacy18WouldFallback = nil
         }
@@ -625,31 +731,14 @@ actor WidgetCacheBuilder {
         )
     }
 
-    private static func normalizedImage(_ image: UIImage) -> UIImage {
-        guard image.imageOrientation != .up || image.scale != 1 else { return image }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: image.size))
-        }
-    }
-
     private static func renderedWidgetImage(
         image: UIImage,
-        catBoundingBox: CGRect?,
-        variant: WidgetImageVariant,
+        renderPlan: WidgetFamilyRenderPlan,
         size: CGSize,
         ciContext: CIContext
-    ) -> (image: UIImage, compositionMode: CompositionMode, renderScale: CGFloat) {
-        if let cropPlan = catAwareCropPlan(
-            visionBoundingBox: catBoundingBox,
-            imageSize: image.size,
-            canvasSize: size,
-            variant: variant,
-            marginFraction: catMarginFraction
-        ) {
+    ) -> (image: UIImage, compositionMode: WidgetCompositionMode, renderScale: CGFloat) {
+        if renderPlan.compositionMode != .blurredFitFallback {
+            let normalizedRect = renderPlan.sourceRect.cgRect
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             format.opaque = true
@@ -657,17 +746,17 @@ actor WidgetCacheBuilder {
                 image.draw(
                     in: drawRect(
                         imageSize: image.size,
-                        normalizedCropRect: cropPlan.normalizedRect,
+                        normalizedCropRect: normalizedRect,
                         canvasSize: size
                     )
                 )
             }
             return (
                 rendered,
-                cropPlan.compositionMode,
+                renderPlan.compositionMode,
                 renderScale(
                     imageSize: image.size,
-                    normalizedCropRect: cropPlan.normalizedRect,
+                    normalizedCropRect: normalizedRect,
                     canvasSize: size
                 )
             )
@@ -691,107 +780,6 @@ actor WidgetCacheBuilder {
             rendered,
             .blurredFitFallback,
             aspectFitScale(imageSize: image.size, canvasSize: size)
-        )
-    }
-
-    /// Returns a normalized, top-left-origin crop rectangle. Vision reports
-    /// bottom-left-origin coordinates, so the conversion must happen before
-    /// any family-specific focus calculation.
-    private static func catAwareCropPlan(
-        visionBoundingBox: CGRect?,
-        imageSize: CGSize,
-        canvasSize: CGSize,
-        variant: WidgetImageVariant,
-        marginFraction: CGFloat
-    ) -> CropPlan? {
-        guard let visionBoundingBox,
-              imageSize.width > 0,
-              imageSize.height > 0,
-              canvasSize.width > 0,
-              canvasSize.height > 0,
-              [
-                  visionBoundingBox.minX,
-                  visionBoundingBox.minY,
-                  visionBoundingBox.width,
-                  visionBoundingBox.height,
-                  imageSize.width,
-                  imageSize.height,
-                  canvasSize.width,
-                  canvasSize.height
-              ].allSatisfy(\.isFinite) else {
-            return nil
-        }
-
-        let unitRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-        let photoBoundingBox = CGRect(
-            x: visionBoundingBox.minX,
-            y: 1 - visionBoundingBox.maxY,
-            width: visionBoundingBox.width,
-            height: visionBoundingBox.height
-        ).standardized.intersection(unitRect)
-        guard !photoBoundingBox.isNull,
-              photoBoundingBox.width > 0,
-              photoBoundingBox.height > 0 else {
-            return nil
-        }
-
-        let horizontalMargin = max(
-            photoBoundingBox.width * marginFraction,
-            minimumImageMarginFraction
-        )
-        let verticalMargin = max(
-            photoBoundingBox.height * marginFraction,
-            minimumImageMarginFraction
-        )
-        let paddedBoundingBox = photoBoundingBox.insetBy(
-            dx: -horizontalMargin,
-            dy: -verticalMargin
-        ).intersection(unitRect)
-
-        let imageAspectRatio = imageSize.width / imageSize.height
-        let canvasAspectRatio = canvasSize.width / canvasSize.height
-        let cropSize: CGSize
-        if imageAspectRatio > canvasAspectRatio {
-            cropSize = CGSize(width: canvasAspectRatio / imageAspectRatio, height: 1)
-        } else {
-            cropSize = CGSize(width: 1, height: imageAspectRatio / canvasAspectRatio)
-        }
-
-        let keepsPaddedCat = paddedBoundingBox.width <= cropSize.width
-            && paddedBoundingBox.height <= cropSize.height
-        if keepsPaddedCat {
-            return CropPlan(
-                normalizedRect: clampedCropRect(
-                    centeredAt: CGPoint(x: paddedBoundingBox.midX, y: paddedBoundingBox.midY),
-                    cropSize: cropSize
-                ),
-                compositionMode: .catFullBleed
-            )
-        }
-
-        guard variant == .medium else {
-            // Small and Large never trade away part of a detected cat merely
-            // to fill the frame. Their rare impossible cases keep the whole
-            // source over a blurred background.
-            return nil
-        }
-
-        let upperFocus = CGPoint(
-            x: paddedBoundingBox.midX,
-            y: paddedBoundingBox.minY + paddedBoundingBox.height * mediumUpperFocusFraction
-        )
-        return CropPlan(
-            normalizedRect: clampedCropRect(centeredAt: upperFocus, cropSize: cropSize),
-            compositionMode: .mediumUpperFocus
-        )
-    }
-
-    private static func clampedCropRect(centeredAt focus: CGPoint, cropSize: CGSize) -> CGRect {
-        CGRect(
-            x: min(max(focus.x - cropSize.width / 2, 0), 1 - cropSize.width),
-            y: min(max(focus.y - cropSize.height / 2, 0), 1 - cropSize.height),
-            width: cropSize.width,
-            height: cropSize.height
         )
     }
 

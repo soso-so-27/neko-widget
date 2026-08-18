@@ -6,12 +6,16 @@ on:
       - "NekoWidget/SharingService/**"
       - "NekoWidget/ci/fixtures/pairing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/pairing-api-v1-responses.json"
+      - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
+      - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
   pull_request:
     paths:
       - "NekoWidget/SharingService/**"
       - "NekoWidget/ci/fixtures/pairing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/pairing-api-v1-responses.json"
+      - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
+      - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
   workflow_dispatch:
 

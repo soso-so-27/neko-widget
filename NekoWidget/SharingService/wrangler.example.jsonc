@@ -8,6 +8,7 @@
     "enabled": false,
     "logs": { "enabled": false }
   },
+  "limits": { "cpu_ms": 30000, "subrequests": 1200 },
   "vars": {
     "ENVIRONMENT": "production",
     "INVITATION_TTL_SECONDS": "86400",
@@ -16,7 +17,7 @@
     "IDEMPOTENCY_TTL_SECONDS": "172800",
     "SPACE_INACTIVITY_TTL_SECONDS": "2592000"
   },
-  "triggers": { "crons": ["17 * * * *"] },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

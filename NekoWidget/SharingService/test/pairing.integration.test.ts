@@ -13,7 +13,8 @@ import {
   signedRequestTranscript,
 } from "../src/protocol";
 import {
-  CLEANUP_EPHEMERAL_ROW_LIMIT,
+  CLEANUP_IDEMPOTENCY_LIMIT,
+  CLEANUP_NONCE_LIMIT,
   CLEANUP_SPACE_LIMIT,
   PAIRING_EXPIRY_CANDIDATES_SQL,
   runScheduledCleanup,
@@ -826,38 +827,45 @@ describe("Phase 1 pairing Worker", () => {
   it("bounds nonce and idempotency cleanup and drains the oldest backlog first", async () => {
     const fixture = await createPairingFixture();
     const now = Math.floor(Date.now() / 1000);
-    const total = CLEANUP_EPHEMERAL_ROW_LIMIT + 5;
-    const nonceInserts: D1PreparedStatement[] = [];
-    const idempotencyInserts: D1PreparedStatement[] = [];
-    for (let index = 0; index < total; index += 1) {
-      nonceInserts.push(testEnv.DB.prepare(
-        `INSERT INTO request_nonces(member_id, nonce, created_at, expires_at)
-         VALUES (?, ?, ?, ?)`,
-      ).bind(
-        fixture.create.member.id,
-        randomValue(16),
-        now - 3 - index,
-        now - 2 - index,
-      ));
-      idempotencyInserts.push(testEnv.DB.prepare(
-        `INSERT INTO idempotency_records(
-           operation, actor_id, client_request_id, space_id, request_hash,
-           response_status, response_json, created_at, expires_at
-         ) VALUES ('cleanup-fixture', ?, ?, ?, ?, 200, '{}', ?, ?)`,
-      ).bind(
-        fixture.create.member.id,
-        crypto.randomUUID().toLowerCase(),
-        fixture.create.spaceId,
-        randomValue(32),
-        now - 3 - index,
-        now - 2 - index,
-      ));
-    }
-    for (const statements of [nonceInserts, idempotencyInserts]) {
-      for (let offset = 0; offset < statements.length; offset += 40) {
-        await testEnv.DB.batch(statements.slice(offset, offset + 40));
-      }
-    }
+    const nonceTotal = CLEANUP_NONCE_LIMIT + 5;
+    const idempotencyTotal = CLEANUP_IDEMPOTENCY_LIMIT + 5;
+    const numberRows = `
+      WITH digits(value) AS (
+        VALUES (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)
+      ), numbers(value) AS (
+        SELECT ones.value + 10 * tens.value + 100 * hundreds.value
+             + 1000 * thousands.value + 10000 * ten_thousands.value
+          FROM digits AS ones
+          CROSS JOIN digits AS tens
+          CROSS JOIN digits AS hundreds
+          CROSS JOIN digits AS thousands
+          CROSS JOIN digits AS ten_thousands
+         ORDER BY 1 ASC
+         LIMIT ?
+      )`;
+    await testEnv.DB.prepare(
+      `${numberRows}
+       INSERT INTO request_nonces(member_id, nonce, created_at, expires_at)
+       SELECT ?, printf('cleanup-nonce-%05d', value), ? - 3 - value, ? - 2 - value
+         FROM numbers`,
+    ).bind(nonceTotal, fixture.create.member.id, now, now).run();
+    await testEnv.DB.prepare(
+      `${numberRows}
+       INSERT INTO idempotency_records(
+         operation, actor_id, client_request_id, space_id, request_hash,
+         response_status, response_json, created_at, expires_at
+       )
+       SELECT 'cleanup-fixture', ?, printf('cleanup-request-%05d', value), ?,
+              printf('cleanup-hash-%05d', value), 200, '{}',
+              ? - 3 - value, ? - 2 - value
+         FROM numbers`,
+    ).bind(
+      idempotencyTotal,
+      fixture.create.member.id,
+      fixture.create.spaceId,
+      now,
+      now,
+    ).run();
 
     await runScheduledCleanup(testEnv, now);
     expect(await testEnv.DB.prepare(
@@ -866,6 +874,14 @@ describe("Phase 1 pairing Worker", () => {
     expect(await testEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM idempotency_records WHERE expires_at <= ?",
     ).bind(now).first<{ count: number }>()).toEqual({ count: 5 });
+    expect(await testEnv.DB.prepare(
+      `SELECT MIN(nonce) AS first, MAX(nonce) AS last
+         FROM request_nonces
+        WHERE nonce LIKE 'cleanup-nonce-%'`,
+    ).first()).toEqual({
+      first: "cleanup-nonce-00000",
+      last: "cleanup-nonce-00004",
+    });
 
     await runScheduledCleanup(testEnv, now);
     expect(await testEnv.DB.prepare(

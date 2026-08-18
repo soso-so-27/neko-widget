@@ -1,0 +1,32 @@
+{
+  "protocolVersion": 1,
+  "media": {
+    "fields": {
+      "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "sourceId": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "publisherMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+      "generationId": "AgICAgICAgICAgICAgICAg",
+      "shareDayKey": 20682,
+      "mediaId": "AwMDAwMDAwMDAwMDAwMDAw",
+      "mediaBindingHash": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+    },
+    "canonicalBase64url": "ABBOVzEuU0hBUkVELU1FRElBAAExABZBUUlEQkFVR0J3Z0pDZ3NNRFE0UEVBABZBUUVCQVFFQkFRRUJBUUVCQVFFQkFRABZNVEl6TkRVMk56ZzVPanM4UFQ0X1FBABZBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnAAUyMDY4MgAWQXdNREF3TURBd01EQXdNREF3TURBdwArQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Y0hCd2NIQndjSEJ3Yw",
+    "sha256": "DrmEj9hNiX9JSH7vVGDi4_N9dELlePqRhteWhTMwrZ8"
+  },
+  "manifest": {
+    "fields": {
+      "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+      "sourceId": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "publisherMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+      "generationId": "AgICAgICAgICAgICAgICAg",
+      "shareDayKey": 20682,
+      "prepareAttemptId": "BQUFBQUFBQUFBQUFBQUFBQ",
+      "prepareAttemptRevision": 1,
+      "reservedRevision": 7,
+      "rotationAnchorUTC": 1786975200,
+      "itemCount": 2
+    },
+    "canonicalBase64url": "ABNOVzEuU0hBUkVELU1BTklGRVNUAAExABZBUUlEQkFVR0J3Z0pDZ3NNRFE0UEVBABZBUUVCQVFFQkFRRUJBUUVCQVFFQkFRABZNVEl6TkRVMk56ZzVPanM4UFQ0X1FBABZBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnAAUyMDY4MgAWQlFVRkJRVUZCUVVGQlFVRkJRVUZCUQABMQABNwAKMTc4Njk3NTIwMAABMg",
+    "sha256": "ApVW6fsq3kD0skRiF8i8lyAkY9W6R2EhgSZRoJKYiwQ"
+  }
+}

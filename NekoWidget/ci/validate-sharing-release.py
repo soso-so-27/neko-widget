@@ -9,19 +9,18 @@ build settings that may have been overridden by xcodebuild.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import plistlib
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
 
-REQUIRED_COLLECTIONS = {
-    "NSPrivacyCollectedDataTypeUserID",
-    "NSPrivacyCollectedDataTypePhotosorVideos",
-    "NSPrivacyCollectedDataTypeProductInteraction",
-}
+PAIRING_COLLECTIONS = {"NSPrivacyCollectedDataTypeUserID"}
+MEDIA_COLLECTIONS = {"NSPrivacyCollectedDataTypePhotosorVideos"}
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 PHOTO_DESCRIPTION_TERMS = ("招待", "最大20枚", "縮小", "暗号化", "原本")
+RESERVED_HOST_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
 
 
 def load_plist(path: Path) -> dict:
@@ -45,7 +44,32 @@ def truthy(value: object) -> bool:
     return False
 
 
-def validate_privacy_manifest(privacy: dict, failures: list[str]) -> None:
+def parsed_flag(info: dict, key: str, failures: list[str]) -> bool:
+    """Read an explicit processed Info.plist flag without treating typos as off."""
+
+    if key not in info:
+        failures.append(f"{key} is missing from the processed Info.plist.")
+        return False
+    value = info[key]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes"}:
+            return True
+        if normalized in {"0", "false", "no"}:
+            return False
+    failures.append(f"{key} is not an explicit YES/NO value.")
+    return False
+
+
+def validate_privacy_manifest(
+    privacy: dict,
+    expected_collections: set[str],
+    failures: list[str],
+) -> None:
     if privacy.get("NSPrivacyTracking") is not False:
         failures.append("PrivacyInfo must declare NSPrivacyTracking=false.")
 
@@ -61,7 +85,10 @@ def validate_privacy_manifest(privacy: dict, failures: list[str]) -> None:
         ):
             by_type[item["NSPrivacyCollectedDataType"]] = item
 
-    for data_type in sorted(REQUIRED_COLLECTIONS):
+    if len(by_type) != len(values):
+        failures.append("PrivacyInfo contains duplicate or malformed collected-data entries.")
+
+    for data_type in sorted(expected_collections):
         item = by_type.get(data_type)
         if item is None:
             failures.append(f"PrivacyInfo is missing {data_type}.")
@@ -71,12 +98,21 @@ def validate_privacy_manifest(privacy: dict, failures: list[str]) -> None:
         if item.get("NSPrivacyCollectedDataTypeTracking") is not False:
             failures.append(f"{data_type} must declare tracking=false.")
         purposes = item.get("NSPrivacyCollectedDataTypePurposes")
-        if not isinstance(purposes, list) or APP_FUNCTIONALITY not in purposes:
-            failures.append(f"{data_type} must include the App Functionality purpose.")
+        if purposes != [APP_FUNCTIONALITY]:
+            failures.append(f"{data_type} must use only the App Functionality purpose.")
+
+    unexpected = set(by_type) - expected_collections
+    for data_type in sorted(unexpected):
+        failures.append(
+            f"PrivacyInfo declares {data_type}, which is not enabled in this sharing build."
+        )
 
 
 def validate_enabled_release(
-    info: dict, privacy: dict, export_reviewed: str
+    info: dict,
+    privacy: dict,
+    export_reviewed: str,
+    media_enabled: bool,
 ) -> list[str]:
     failures: list[str] = []
 
@@ -84,6 +120,21 @@ def validate_enabled_release(
     parsed_endpoint = urlparse(endpoint)
     if parsed_endpoint.scheme != "https" or not parsed_endpoint.hostname:
         failures.append("SharingAPIBaseURL must be a non-placeholder HTTPS URL.")
+    hostname = (parsed_endpoint.hostname or "").lower().rstrip(".")
+    try:
+        parsed_endpoint.port
+    except ValueError:
+        failures.append("SharingAPIBaseURL contains an invalid port.")
+    if hostname == "localhost" or hostname.endswith(RESERVED_HOST_SUFFIXES):
+        failures.append("SharingAPIBaseURL uses a reserved placeholder hostname.")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        failures.append("SharingAPIBaseURL must not use a private or local IP address.")
+    if address is None and "." not in hostname:
+        failures.append("SharingAPIBaseURL must use a public fully-qualified hostname.")
     if (
         parsed_endpoint.username is not None
         or parsed_endpoint.password is not None
@@ -99,18 +150,22 @@ def validate_enabled_release(
     if "$" in endpoint or "REPLACE" in endpoint.upper():
         failures.append("SharingAPIBaseURL still contains a build placeholder.")
 
-    description = info.get("NSPhotoLibraryUsageDescription")
-    if not isinstance(description, str):
-        failures.append("NSPhotoLibraryUsageDescription is missing.")
-    else:
-        missing_terms = [term for term in PHOTO_DESCRIPTION_TERMS if term not in description]
-        if missing_terms:
-            failures.append(
-                "NSPhotoLibraryUsageDescription does not explain invite-only preview "
-                f"sharing (missing: {', '.join(missing_terms)})."
-            )
+    if media_enabled:
+        description = info.get("NSPhotoLibraryUsageDescription")
+        if not isinstance(description, str):
+            failures.append("NSPhotoLibraryUsageDescription is missing.")
+        else:
+            missing_terms = [term for term in PHOTO_DESCRIPTION_TERMS if term not in description]
+            if missing_terms:
+                failures.append(
+                    "NSPhotoLibraryUsageDescription does not explain invite-only preview "
+                    f"sharing (missing: {', '.join(missing_terms)})."
+                )
 
-    validate_privacy_manifest(privacy, failures)
+    required_collections = set(PAIRING_COLLECTIONS)
+    if media_enabled:
+        required_collections.update(MEDIA_COLLECTIONS)
+    validate_privacy_manifest(privacy, required_collections, failures)
 
     if not truthy(export_reviewed):
         failures.append(
@@ -145,15 +200,43 @@ def main() -> int:
         print(f"sharing release preflight: FAIL: {error}", file=sys.stderr)
         return 1
 
-    enabled = truthy(info.get("SharingFeatureEnabled"))
+    flag_failures: list[str] = []
+    pairing_enabled = parsed_flag(info, "SharingFeatureEnabled", flag_failures)
+    media_enabled = parsed_flag(info, "SharingMediaEnabled", flag_failures)
     endpoint = str(info.get("SharingAPIBaseURL", "")).strip()
-    # The runtime exposes pairing only when both switches are usable. Keeping
-    # either value unset is the intentional non-release/default configuration.
-    if not enabled or not endpoint:
+    if flag_failures:
+        print("sharing release preflight: FAIL", file=sys.stderr)
+        for failure in flag_failures:
+            print(f"- {failure}", file=sys.stderr)
+        return 1
+
+    # Only the explicit all-off configuration is a no-collection build. A
+    # missing endpoint must never turn an enabled pairing/media build into a
+    # silent pass, and media cannot operate without the pairing identity/key.
+    if not pairing_enabled and not media_enabled:
+        failures: list[str] = []
+        validate_privacy_manifest(privacy, set(), failures)
+        if failures:
+            print("sharing release preflight: FAIL", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 1
         print("sharing release preflight: PASS (sharing is disabled)")
         return 0
+    if media_enabled and not pairing_enabled:
+        print("sharing release preflight: FAIL", file=sys.stderr)
+        print(
+            "- SharingMediaEnabled requires SharingFeatureEnabled.",
+            file=sys.stderr,
+        )
+        return 1
 
-    failures = validate_enabled_release(info, privacy, args.export_reviewed)
+    failures = validate_enabled_release(
+        info,
+        privacy,
+        args.export_reviewed,
+        media_enabled,
+    )
     if failures:
         print("sharing release preflight: FAIL", file=sys.stderr)
         for failure in failures:

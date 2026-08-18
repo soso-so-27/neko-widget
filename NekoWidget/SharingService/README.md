@@ -1,6 +1,6 @@
 # ねこのまど SharingService
 
-Cloudflare Workers + D1 + R2を前提にした、招待制共有のserver componentです。現在の実装範囲はPhase 1（pairing）だけです。Productionへのdeploy、D1/R2の作成、secret設定は行っていません。
+Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）とPhase 2（日次の暗号化canonical set同期）を実装しています。Productionへのdeploy、D1/R2の作成、secret設定は行っていません。
 
 ## Phase 1で成立すること
 
@@ -12,9 +12,21 @@ Cloudflare Workers + D1 + R2を前提にした、招待制共有のserver compon
 - Invitation、challenge、pending enrollmentにはTTLがあり、一回限りのstate transitionをD1 triggerとtransactionで守る。
 - 同じ`clientRequestId`と同じrequest bytesのretryは同じ結果を返し、異なるpayloadでの再利用は`409`にする。
 - 共有解除では最初にspaceと全memberを失効し、Phase 2以降がR2/D1物理削除を続けるための`space_deletion_jobs`を同じtransactionで作る。
-- Idempotency responseは48時間、active space metadataは最後に受理した操作から30日を上限にし、hourly cleanupで物理削除する。
+- Idempotency responseは48時間、active space metadataは最後に受理した操作から30日を上限にし、5分間隔のcleanupで物理削除する。
 
-Phase 1は写真、render plan、reactionを一切受け取りません。`MEDIA` R2 bindingはPhase 2の拡張点としてexample configにだけ置いています。
+Phase 1は写真、render plan、reactionを一切受け取りません。
+
+## Phase 2で成立すること
+
+- Pairing済みのactive memberは各自1つだけ、server-bound sourceを持てる。二人ともpublishでき、Widgetは同じsourceを明示選択して同じ日次20枚を巡回する。
+- ServerがspaceのUTC境界から`shareDayKey`を決め、`UNIQUE(source, day)`で1日1回のfreezeを守る。欠けた日のcatch-upはしない。
+- 1 generationは1〜20個のunique `mediaId`だけを持つ。重複slotと順番、render plan、pixel寸法、構図hashは暗号化manifestの中にだけ置く。
+- Canonical previewは写真ごとに1つだけ。ChaChaPoly combined ciphertext全体を300KiB以下、manifest ciphertextを64KiB以下に制限する。原本、PhotoKit ID、撮影日、EXIF/GPS、plaintext/JPEG hashは受け取らない。
+- `reserve → immutable descriptor → media upload → prepare attempt → encrypted manifest → atomic commit`の順に進む。不完全な新generationは旧currentを置き換えない。
+- Prepareはserver時刻から5分以上先にある最初の20分境界を返す。期限切れattemptは同じmediaを再利用して再prepareできるが、attempt ID/revision/anchorを変えてmanifestを再暗号化する。
+- Upload/downloadはsigned member requestを通すWorker proxyだけ。R2 object key、public bucket URL、presigned URLをclientへ返さない。
+- APNs、device token、global installation IDを使わない。同期はapp/widget側の明示的なpollだけで行う。
+- Revoke/inactivityは最初にcredentialを無効化する。開始済みPUTの最大猶予後にexplicit object deletionとopaque space-prefixの複数回sweepを行い、R2が空になるまでD1 metadataを消さない。
 
 ## API contract
 
@@ -24,7 +36,7 @@ Phase 1は写真、render plan、reactionを一切受け取りません。`MEDIA
 {"error":{"code":"stable_machine_code","message":"Human-readable message"}}
 ```
 
-成功responseの正本は[`pairing-api-v1-responses.json`](../ci/fixtures/pairing-api-v1-responses.json)、Swift/Worker共通canonical vectorの正本は[`pairing-protocol-v1.json`](../ci/fixtures/pairing-protocol-v1.json)です。
+Pairing成功responseの正本は[`pairing-api-v1-responses.json`](../ci/fixtures/pairing-api-v1-responses.json)、日次共有responseの正本は[`sharing-api-v1-responses.json`](../ci/fixtures/sharing-api-v1-responses.json)です。Swift/Worker共通canonical vectorは[`pairing-protocol-v1.json`](../ci/fixtures/pairing-protocol-v1.json)と[`sharing-protocol-v1.json`](../ci/fixtures/sharing-protocol-v1.json)です。
 
 | Method | Path | 認証 | 用途 |
 |---|---|---|---|
@@ -37,6 +49,17 @@ Phase 1は写真、render plan、reactionを一切受け取りません。`MEDIA
 | `POST` | `/v1/pairing/enrollments/{id}/complete` | pending invitee signed request | 復号・保存後にmemberをactive化し、server上のenvelopeを消す |
 | `POST` | `/v1/pairing/enrollments/{id}/cancel` | pending invitee signed request | 自分の未完了enrollmentだけを取り消し、envelopeとchallengeを消す |
 | `POST` | `/v1/pairing/revoke` | active member signed request | Space全体を即時失効し削除jobを作る |
+| `POST` | `/v1/sharing/generations/reserve` | active member signed request | Server dayへunique media ID集合をfreezeする |
+| `POST` | `/v1/sharing/generations/{id}/descriptors` | publisher signed request | Ciphertext size/SHA-256を一度だけ登録する |
+| `PUT` | `/v1/sharing/generations/{id}/media/{mediaId}` | publisher signed request | 300KiB以下のcanonical ciphertextをprivate R2へproxyする |
+| `POST` | `/v1/sharing/generations/{id}/prepare` | publisher signed request | Latest prepare attempt、reserved revision、20分anchorを確定する |
+| `PUT` | `/v1/sharing/generations/{id}/prepares/{attemptId}/manifest` | publisher signed request | 64KiB以下のencrypted manifestをproxyする |
+| `POST` | `/v1/sharing/generations/{id}/commit` | publisher signed request | Latest verified attemptだけをatomicにcurrentへ切り替える |
+| `GET` | `/v1/sharing/generations/{id}` | publisher signed request | Draft/prepare/upload状態を再開する |
+| `GET` | `/v1/sharing/sources` | active member signed request | Space内sourceとcurrent summaryを読む |
+| `GET` | `/v1/sharing/sources/{id}/current` | active member signed request | Current descriptorを読む。`If-None-Match`で`304`対応 |
+| `GET` | `/v1/sharing/generations/{id}/manifest` | active member signed request | Current encrypted manifestだけをproxyする |
+| `GET` | `/v1/sharing/generations/{id}/media/{mediaId}` | active member signed request | Current canonical ciphertextだけをproxyする |
 
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 
@@ -109,11 +132,17 @@ Consumed challenge rowはpending pairing中だけ残ります。Completion、pen
 
 ## Retention cleanup
 
-`17 * * * *`のscheduled handlerは、期限切れnonce、48時間を過ぎたidempotency response、30日間受理されたactivityがないPhase 1 space metadataをoldest-firstで削除します。1 runはnonce/idempotency各1,000 row、pairing expiry/inactive space/deletion job各90 spaceまでに制限し、公開creationへのabuseで巨大な全表transactionが毎回rollbackすることを防ぎます。上限を超えたbacklogは次のhourly runへ持ち越すため、Productionでは残件数/最古期限の監視をdeploy gateにします。
+`*/5 * * * *`のscheduled handlerは、期限切れnonce、48時間を過ぎたidempotency response、30日間受理されたactivityがないPhase 1 space metadataをoldest-firstで削除します。1 runの上限はnonce 10,000 row、idempotency 2,500 row、daily freeze 1,000 rowです。IDを`IN`へbindするpairing expiry／inactive space／deletion jobは90 spaceに限定し、D1の100 bound parameter上限へ10枠を残します。各stageは小さいchunkをcommitしてから次へ進むため、途中で停止しても次のrunがDB上のoldest rowから再開します。
+
+ProductionはWorkers Paidを前提とし、設定でCPU 30秒、subrequest 1,200を上限にします。最悪構成でもD1 queryは900/invocation未満、R2 multi-delete/listは公式上限の1,000 key/call以下です。5分runは一日288回なので、nonceは最大288万row/day（想定約48万/day）、明示object deletionは最大691.2万key/day（10,000 publishing sourceが旧20 canonical + manifestを全交換する21万key/day）を処理できます。Production deploy gateではCron CPU 30秒未満、D1 query 1,000未満、残件数、最古`not_before`／expiry、実`rows_written`をload testと運用monitorで確認します。Workers Freeはrequest、D1 write、CPUのいずれもこの規模のProduction対象ではありません。
+
+実行上限の正本は[Workers limits](https://developers.cloudflare.com/workers/platform/limits/)、[D1 limits](https://developers.cloudflare.com/d1/platform/limits/)、[R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)とし、Production deploy前に再確認します。
 
 Activityを延長するのは、認可され成功したstatus/pending/approve/completeと、同じ成功responseを返すlive memberのidempotent retryです。署名だけが正しいsemantic error、expired/revoked/cancelled member、cancel/revokeのterminal操作はowner spaceのTTLを延長しません。D1のactivity update自身もmemberとspaceがliveか再確認するため、handlerが読んだ直後の失効raceでも延長できません。
 
 Scheduled cleanupは最初にspace/member credentialと未完了pairing materialを失効させ、`space_deletion_jobs`を通してからD1 metadataを物理削除します。Phase 1はR2 objectを持たないためjobも同じrunで消えます。Phase 2以降は`requires_object_deletion=1`のjobを残し、R2削除完了までspace metadataの物理削除をgateできます。
+
+Phase 2 draftのaccess TTLは最大60分か当日境界の早い方、current contentはcommitから最大30日です。Generation close後は新しいPUTを拒否し、10分のin-flight猶予を置いてからobjectを削除します。5分Cronが正常稼働しbacklogがない場合、staging objectは作成から最大約75分で物理削除されます。10,000 sourceが同時に最大21 objectをqueueする負荷でも、generation close 10,000/run、object 24,000/runにより9 run（45分）で排出し、60分access TTLと10分猶予を含め作成から約2時間以内を維持します。Terminal generationと`cleanup_blocked` sourceは各1,000/run、revoke prefixは50 space/runです。障害時もaccessは60分でfail closedし、exact `(object_key, attempts)` CASによる物理削除をbounded retryします。通常rotation/expiryの削除中はsourceを`cleanup_blocked`にして、current 20 + staging 20を超える次のreserveを止めます。
 
 ## Rate limitとlogging
 
@@ -136,7 +165,7 @@ npm ci
 npm run check
 ```
 
-`npm run check`はTypeScript strict check、Cloudflare Workers runtime、D1 migration、Ed25519 happy path、invalid invite proof、nonce replay、idempotent retry、pending invitee revoke rejection、cancel/complete race、completion/cancel時のenvelope削除、atomic challenge cap、revoke、48時間/30日retention cleanup、revoked memberがTTLを延長できないこと、Swiftと共通のgolden vectorを検証します。
+`npm run check`はTypeScript strict check、Cloudflare Workers runtime、D1 migration、Pairingのsecurity/race/retention、日次reserveからprivate R2 upload・atomic commit・conditional/current downloadまでのhappy path、partial/tamper/size cap、双方向publisherの共通opaque prefix、revoke deletion gate、bounded cleanup、Swiftと共通のgolden vectorを検証します。
 
 Local Workerを起動する前にmigrationを適用します。
 
@@ -149,4 +178,4 @@ npm run dev
 
 [`wrangler.example.jsonc`](wrangler.example.jsonc)をcopyし、D1/R2 identifierとaccount固有rate-limit namespaceを設定します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
 
-Phase 2では同じspace/member/auth/idempotency基盤へdaily generation draft、canonical R2 object、commit、30日TTLを追加します。R2 upload/downloadは短時間credentialまたはsigned URL相当の方式とし、canonical本文を通常Worker logやD1へ入れません。
+R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Canonical ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、R2 public access無効、Cron、削除backlogの最古時刻をreviewします。

@@ -3,6 +3,12 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
+extension Notification.Name {
+    static let sharingMediaSyncRequested = Notification.Name(
+        "jp.nekowidget.sharing.media-sync-requested"
+    )
+}
+
 enum AlbumUpdateStatus: Equatable {
     case idle
     case updating
@@ -40,6 +46,7 @@ final class AppViewModel: ObservableObject {
     private let photoSelector: WeightedPhotoSelector
     private let albumSelector: AlbumCandidateSelector
     private let exporter: JSONExporter
+    private let dailySharingSyncCoordinator: DailySharingSyncCoordinator
     private let store: LibraryStore?
     private let storeInitializationError: String?
 
@@ -51,6 +58,7 @@ final class AppViewModel: ObservableObject {
     private var scanGeneration = 0
     private var successfulImageLoadCount = 0
     private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
+    private var sharingSyncObserver: NSObjectProtocol?
 
     private lazy var libraryObserver = PhotoLibraryObserver { [weak self] in
         self?.libraryChangePending = true
@@ -66,6 +74,7 @@ final class AppViewModel: ObservableObject {
         photoSelector = WeightedPhotoSelector()
         albumSelector = AlbumCandidateSelector()
         exporter = JSONExporter()
+        dailySharingSyncCoordinator = DailySharingSyncCoordinator()
 
         do {
             store = try LibraryStore()
@@ -86,6 +95,20 @@ final class AppViewModel: ObservableObject {
                 "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
             ]
         )
+        let coordinator = dailySharingSyncCoordinator
+        sharingSyncObserver = NotificationCenter.default.addObserver(
+            forName: .sharingMediaSyncRequested,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { await coordinator.synchronize(trigger: "pairing-or-consent") }
+        }
+    }
+
+    deinit {
+        if let sharingSyncObserver {
+            NotificationCenter.default.removeObserver(sharingSyncObserver)
+        }
     }
 
     func start() async {
@@ -121,6 +144,9 @@ final class AppViewModel: ObservableObject {
             errorMessage = storeInitializationError
         }
         hasFinishedSnapshotLoad = true
+        Task { [dailySharingSyncCoordinator] in
+            await dailySharingSyncCoordinator.synchronize(trigger: "launch")
+        }
 
         authorizationStatus = authorizationService.status
         SharedLog.app.info(
@@ -163,6 +189,9 @@ final class AppViewModel: ObservableObject {
     /// Any background execution is best effort and is never required for data
     /// correctness or promised to the user.
     func syncOnActive() async {
+        Task { [dailySharingSyncCoordinator] in
+            await dailySharingSyncCoordinator.synchronize(trigger: "foreground")
+        }
         authorizationStatus = authorizationService.status
         let likesChanged = synchronizeSharedLikes(
             importLegacyLikes: true,

@@ -3,9 +3,11 @@ import Foundation
 
 struct SharingAPIConfiguration: Equatable {
     let isEnabled: Bool
+    let isMediaEnabled: Bool
     let baseURL: URL?
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
+    var isMediaAvailable: Bool { isAvailable && isMediaEnabled }
 
     static var current: Self {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -16,6 +18,14 @@ struct SharingAPIConfiguration: Equatable {
             enabled = ["1", "true", "yes"].contains(string.lowercased())
         } else {
             enabled = false
+        }
+        let mediaEnabled: Bool
+        if let number = info["SharingMediaEnabled"] as? NSNumber {
+            mediaEnabled = number.boolValue
+        } else if let string = info["SharingMediaEnabled"] as? String {
+            mediaEnabled = ["1", "true", "yes"].contains(string.lowercased())
+        } else {
+            mediaEnabled = false
         }
         let rawURL = (info["SharingAPIBaseURL"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -32,7 +42,7 @@ struct SharingAPIConfiguration: Equatable {
             }
             return url
         }
-        return Self(isEnabled: enabled, baseURL: baseURL)
+        return Self(isEnabled: enabled, isMediaEnabled: mediaEnabled, baseURL: baseURL)
     }
 }
 
@@ -127,6 +137,7 @@ protocol PairingAPIClientProtocol {
 actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
     private let baseURL: URL
     private let session: URLSession
+    private let sessionDelegate: PairingNoRedirectSessionDelegate?
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -137,13 +148,20 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         self.baseURL = baseURL
         if let session {
             self.session = session
+            sessionDelegate = nil
         } else {
             let sessionConfiguration = URLSessionConfiguration.ephemeral
             sessionConfiguration.urlCache = nil
             sessionConfiguration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
             sessionConfiguration.httpCookieStorage = nil
             sessionConfiguration.httpShouldSetCookies = false
-            self.session = URLSession(configuration: sessionConfiguration)
+            let delegate = PairingNoRedirectSessionDelegate()
+            sessionDelegate = delegate
+            self.session = URLSession(
+                configuration: sessionConfiguration,
+                delegate: delegate,
+                delegateQueue: nil
+            )
         }
         encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -581,7 +599,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             let identities = localState.role == .inviter
                 ? (inviter: local, invitee: peer.identity)
                 : (inviter: peer.identity, invitee: local)
-            transcript = PairingVerificationTranscript(
+            let builtTranscript = PairingVerificationTranscript(
                 spaceID: response.spaceId,
                 invitationID: invitationID,
                 enrollmentID: enrollment.id,
@@ -589,8 +607,9 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
                 inviter: identities.inviter,
                 invitee: identities.invitee
             )
+            transcript = builtTranscript
             try validateTranscriptEcho(
-                transcript!,
+                builtTranscript,
                 echoedTranscript: enrollment.transcript,
                 echoedHash: enrollment.transcriptHash
             )
@@ -683,11 +702,23 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             )
         }
 
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw PairingError.invalidServerResponse
         }
-        guard data.count <= 65_536 else { throw PairingError.invalidServerResponse }
+        let maximumResponseBytes = 65_536
+        if let contentLength = http.value(forHTTPHeaderField: "Content-Length")
+            .flatMap(Int.init), contentLength > maximumResponseBytes {
+            throw PairingError.invalidServerResponse
+        }
+        var data = Data()
+        data.reserveCapacity(min(maximumResponseBytes, max(0, Int(http.expectedContentLength))))
+        for try await byte in bytes {
+            guard data.count < maximumResponseBytes else {
+                throw PairingError.invalidServerResponse
+            }
+            data.append(byte)
+        }
         guard (200...299).contains(http.statusCode) else {
             let apiError = try? decoder.decode(APIErrorResponse.self, from: data)
             let serverMessage = apiError.map {
@@ -736,6 +767,21 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         request.setValue(String(timestamp), forHTTPHeaderField: "Neko-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "Neko-Nonce")
         request.setValue(signature, forHTTPHeaderField: "Neko-Signature")
+    }
+}
+
+private final class PairingNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate,
+    @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        // Signed identity headers and invite-proof payloads must never follow
+        // an origin redirect. The caller can retry only against configured URL.
+        completionHandler(nil)
     }
 }
 

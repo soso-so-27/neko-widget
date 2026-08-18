@@ -39,6 +39,14 @@ jobs:
           test -d "$DEVELOPER_DIR"
           xcodebuild -version
 
+      - name: Verify sharing release privacy gates
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/test-validate-sharing-release.py
+          python3 ci/test-validate-sharing-runtime-self-test.py
+
       - name: Verify Swift pairing protocol vectors
         working-directory: NekoWidget
         shell: bash
@@ -65,6 +73,43 @@ jobs:
             -o "$RUNNER_TEMP/verify-pairing-api-responses"
           "$RUNNER_TEMP/verify-pairing-api-responses" \
             ci/fixtures/pairing-api-v1-responses.json
+
+      - name: Verify Swift sharing protocol vectors
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            Shared/Models/WidgetManifest.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            Shared/Sharing/DailySharingCore.swift \
+            ci/verify-sharing-protocol-vectors.swift \
+            -o "$RUNNER_TEMP/verify-sharing-protocol-vectors"
+          "$RUNNER_TEMP/verify-sharing-protocol-vectors" \
+            ci/fixtures/sharing-protocol-v1.json
+
+      - name: Verify Swift sharing API response contract
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            Shared/Models/WidgetManifest.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            Shared/Sharing/DailySharingCore.swift \
+            Shared/AppGroup/SharedContainer.swift \
+            Shared/Storage/AtomicJSON.swift \
+            NekoWidget/Services/PairingAPIClient.swift \
+            NekoWidget/Services/DailySharingStore.swift \
+            NekoWidget/Services/DailySharingAPIClient.swift \
+            ci/verify-sharing-api-responses.swift \
+            -o "$RUNNER_TEMP/verify-sharing-api-responses"
+          "$RUNNER_TEMP/verify-sharing-api-responses" \
+            ci/fixtures/sharing-api-v1-responses.json
 
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget

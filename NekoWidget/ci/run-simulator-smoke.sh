@@ -5,6 +5,9 @@ set -Eeuo pipefail
 PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE_DIRECTORY="$PROJECT_DIRECTORY/ci/fixtures/cats"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-simulator-smoke.py"
+SHARING_RUNTIME_VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
+SHARING_RUNTIME_REPORT_FILENAME="sharing-runtime-self-test.json"
+SHARING_RUNTIME_RENDERER_VERSION="cat-aware-full-bleed-v6"
 SIMULATOR_TEST_MODE="${SIMULATOR_TEST_MODE:-smoke}"
 case "$SIMULATOR_TEST_MODE" in
     smoke)
@@ -414,6 +417,55 @@ launch_app() {
         echo "simctl did not return a numeric app PID: $launch_output" >&2
         return 1
     fi
+}
+
+run_sharing_runtime_self_test() {
+    local container=""
+    local source_report=""
+    local artifact_report="$ARTIFACT_DIRECTORY/$SHARING_RUNTIME_REPORT_FILENAME"
+    local poll_attempt=0
+
+    container="$(resolve_group_container || true)"
+    if [[ -z "$container" || ! -d "$container" ]]; then
+        echo "The App Group container was unavailable before the sharing runtime self-test." >&2
+        return 1
+    fi
+    source_report="$container/$SHARING_RUNTIME_REPORT_FILENAME"
+
+    # A previous process or retried CI step must not satisfy this launch. The
+    # app publishes the new report atomically only after every generated-data
+    # case has reached a terminal result.
+    rm -f -- "$source_report"
+    rm -f -- "$artifact_report"
+    launch_app "sharing-runtime-self-test" --sharing-runtime-self-test
+
+    for poll_attempt in $(seq 1 90); do
+        if [[ -f "$source_report" ]]; then
+            break
+        fi
+        if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "The app exited before publishing the sharing runtime self-test report." >&2
+            return 1
+        fi
+        sleep 1
+    done
+    if [[ ! -f "$source_report" ]]; then
+        echo "Timed out waiting for the sharing runtime self-test report." >&2
+        return 1
+    fi
+
+    # Validate before copying so a malformed report can never become an
+    # uploaded artifact. `--safe-copy` emits only the normalized fixed schema,
+    # including on a genuine case failure so the artifact remains diagnosable.
+    # Paths, PhotoKit identifiers, keys, invite codes, and diagnostic text are
+    # rejected before any copy is written.
+    python3 "$SHARING_RUNTIME_VALIDATOR" \
+        "$source_report" \
+        --renderer-version "$SHARING_RUNTIME_RENDERER_VERSION" \
+        --safe-copy "$artifact_report"
+    python3 "$SHARING_RUNTIME_VALIDATOR" \
+        "$artifact_report" \
+        --renderer-version "$SHARING_RUNTIME_RENDERER_VERSION"
 }
 
 capture_screenshot() {
@@ -992,5 +1044,10 @@ if ! kill -0 "$APP_PID" 2>/dev/null; then
     echo "The app process exited after producing its final scan artifacts." >&2
     exit 1
 fi
+
+# Run the generated-data sharing checks only after the normal PhotoKit/widget
+# smoke artifacts are complete. The dedicated launch may reset DEBUG sharing
+# state, but it cannot change the evidence already validated and copied above.
+run_sharing_runtime_self_test
 
 printf 'Simulator smoke test passed at %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"

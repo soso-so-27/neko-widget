@@ -152,13 +152,17 @@ struct SettingsView: View {
                 } header: {
                     Text("共有・開発中")
                 } footer: {
-                    Text("まず招待と端末間の鍵確認だけを試せます。写真同期はまだ行いません。")
+                    Text(SharingAPIConfiguration.current.isMediaAvailable
+                        ? "ペアリングと写真共有への同意後、その日の候補から最大20枚の縮小画像を1日1回同期します。"
+                        : "まず招待と端末間の鍵確認だけを試せます。写真同期はまだ行いません。")
                 }
             }
 
             Section {
                 LabeledContent("対応OS", value: "iOS 17.1以上")
-                Text("すべての検出は端末内で行います。サーバーへの写真送信や、写真本体の複製はしません。")
+                Text(SharingAPIConfiguration.current.isMediaAvailable
+                    ? "写真の検出は端末内で行います。写真共有へ同意した場合だけ、位置情報などを除いた縮小画像を暗号化して共有します。原本は送りません。"
+                    : "すべての検出は端末内で行います。サーバーへの写真送信や、写真本体の複製はしません。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } header: {

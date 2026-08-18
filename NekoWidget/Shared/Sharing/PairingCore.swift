@@ -14,6 +14,12 @@ enum PairingRole: String, Codable, Sendable {
     case invitee
 }
 
+enum PairingMediaSharingConsent {
+    /// Increment whenever the automatic upload set, retention/deletion
+    /// behavior, or unrecoverable-copy warning materially changes.
+    static let currentVersion = 1
+}
+
 enum PairingPhase: String, Codable, Sendable {
     case unpaired
     case creatingInvitation
@@ -32,6 +38,9 @@ struct PairingState: Codable, Equatable, Sendable {
     static let schemaVersion = 1
 
     var schemaVersion: Int = Self.schemaVersion
+    /// Optional only for decoding Phase-1 files written before CAS existed.
+    /// PairingStateStore normalizes a missing value to zero before returning.
+    var storageRevision: Int? = 0
     var installationMarker: String
     var phase: PairingPhase
     var role: PairingRole?
@@ -63,6 +72,11 @@ struct PairingState: Codable, Equatable, Sendable {
     var pendingKeyEnvelope: String?
     var pendingApprovalSignature: String?
     var pendingCancelRevokesWholeSpace: Bool?
+    /// Local-only consent evidence. It is never included in a server request.
+    /// Existing paired installs without the current version fail closed when
+    /// media synchronization is enabled and must explicitly consent again.
+    var mediaSharingConsentVersion: Int?
+    var mediaSharingConsentAcceptedAt: Date?
     var lastUpdatedAt: Date
     var lastError: String?
 
@@ -76,6 +90,7 @@ struct PairingState: Codable, Equatable, Sendable {
 
     func validated() throws -> Self {
         guard schemaVersion == Self.schemaVersion,
+              storageRevision == nil || storageRevision.map({ $0 >= 0 }) == true,
               UUID(uuidString: installationMarker) != nil
         else { throw PairingError.stateUnavailable }
         let allowedOperations: Set<String> = ["create", "enroll", "approve", "complete", "cancel"]
@@ -84,6 +99,10 @@ struct PairingState: Codable, Equatable, Sendable {
               pendingClientRequestID == nil
                 || pendingClientRequestID.flatMap(UUID.init(uuidString:)) != nil,
               pendingOperation == "cancel" || pendingCancelRevokesWholeSpace == nil
+        else { throw PairingError.stateUnavailable }
+        guard (mediaSharingConsentVersion == nil) == (mediaSharingConsentAcceptedAt == nil),
+              mediaSharingConsentVersion == nil
+                || mediaSharingConsentVersion.map({ (1...10_000).contains($0) }) == true
         else { throw PairingError.stateUnavailable }
 
         switch phase {

@@ -28,21 +28,53 @@ final class PairingViewModel: ObservableObject {
     }
 
     var isConfigured: Bool { api != nil }
+    var isMediaSyncEnabled: Bool { configuration.isMediaAvailable }
+    var hasCurrentMediaSharingConsent: Bool {
+        state?.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion
+            && state?.mediaSharingConsentAcceptedAt != nil
+    }
+
+    @discardableResult
+    func recordMediaSharingConsent() -> Bool {
+        guard configuration.isMediaAvailable else { return false }
+        do {
+            let operation = try beginOperation()
+            var current = operation.expectedState
+            let lifecycleToken = operation.lifecycleToken
+            current.mediaSharingConsentVersion = PairingMediaSharingConsent.currentVersion
+            current.mediaSharingConsentAcceptedAt = .now
+            current.lastUpdatedAt = .now
+            current.lastError = nil
+            current = try persist(current, operation: operation)
+            return true
+        } catch {
+            record(error)
+            return false
+        }
+    }
 
     func bootstrap() async {
         guard !didBootstrap else { return }
         didBootstrap = true
         do {
-            let result = try PairingInstallationGuard.bootstrap()
-            state = result.state
+            let result = try await PairingInstallationGuard.bootstrapAsync()
             if result.invalidatedPreviousInstallation {
                 configurationMessage = PairingError.installationChanged.localizedDescription
             }
-            bestEffortScrubConsumedInvitationSecret(for: result.state)
-            try restoreInvitationCodeIfAvailable()
+            let operation = try beginOperation()
+            let current = operation.expectedState
+            let lifecycleToken = operation.lifecycleToken
+            bestEffortScrubConsumedInvitationSecret(
+                for: current,
+                lifecycleToken: lifecycleToken
+            )
+            try restoreInvitationCodeIfAvailable(
+                from: current,
+                lifecycleToken: lifecycleToken
+            )
             if isConfigured,
                [.awaitingInvitee, .pendingApproval, .awaitingCompletion]
-                .contains(result.state.phase) {
+                .contains(current.phase) {
                 await refresh()
             }
         } catch {
@@ -55,7 +87,11 @@ final class PairingViewModel: ObservableObject {
             configurationMessage = PairingError.apiNotConfigured.localizedDescription
             return
         }
-        guard var current = state else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
         isWorking = true
         defer { isWorking = false }
         do {
@@ -77,7 +113,6 @@ final class PairingViewModel: ObservableObject {
                     includesRoomKey: true
                 )
                 requestID = UUID()
-                try PairingKeychainStore.save(credential)
                 current.phase = .creatingInvitation
                 current.role = .inviter
                 current.credentialAccount = credential.account
@@ -87,17 +122,23 @@ final class PairingViewModel: ObservableObject {
                 current.pendingOperation = "create"
                 current.pendingCancelRevokesWholeSpace = nil
                 current.lastError = nil
-                try persist(current)
+                current = try persistInitialCredential(
+                    credential,
+                    state: current,
+                    operation: operation
+                )
             }
 
             guard let effectiveBoundary = current.dailyBoundaryMinuteUTC else {
                 throw PairingError.stateUnavailable
             }
+            try SharingLifecycleGate.validate(lifecycleToken)
             let result = try await api.createSpace(
                 credential: credential,
                 dailyBoundaryMinuteUTC: effectiveBoundary,
                 clientRequestID: requestID
             )
+            try SharingLifecycleGate.validate(lifecycleToken)
             guard let secret = credential.enrollmentSecret else {
                 throw PairingError.malformedCredential
             }
@@ -114,7 +155,8 @@ final class PairingViewModel: ObservableObject {
             current.pendingOperation = nil
             current.lastUpdatedAt = .now
             current.lastError = nil
-            try persist(current)
+            current = try persist(current, operation: operation)
+            try SharingLifecycleGate.validate(lifecycleToken)
             invitationCode = invitation.code
             SharedLog.app.info("pairing", "Invitation created")
         } catch {
@@ -128,15 +170,16 @@ final class PairingViewModel: ObservableObject {
                     // client never learned IDs it could use for signed revoke.
                     // Reset only local sharing data; the server expires the
                     // unreachable, unused space under its inactivity TTL.
-                    try resetLocalPairing(
+                    try await resetLocalPairing(
+                        operation: operation,
                         message: "招待作成の応答を復元できませんでした。もう一度招待を作成してください。"
                     )
                 } catch {
-                    record(error)
+                    record(error, operation: operation)
                 }
                 return
             }
-            record(error)
+            record(error, operation: operation)
         }
     }
 
@@ -145,7 +188,11 @@ final class PairingViewModel: ObservableObject {
             configurationMessage = PairingError.apiNotConfigured.localizedDescription
             return
         }
-        guard var current = state else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
         isWorking = true
         defer { isWorking = false }
         do {
@@ -180,7 +227,6 @@ final class PairingViewModel: ObservableObject {
                 generated.enrollmentSecret = invitation.enrollmentSecret
                 credential = generated
                 requestID = UUID()
-                try PairingKeychainStore.save(credential)
                 current.phase = .joining
                 current.role = .invitee
                 current.credentialAccount = credential.account
@@ -190,7 +236,11 @@ final class PairingViewModel: ObservableObject {
                 current.pendingOperation = "enroll"
                 current.pendingCancelRevokesWholeSpace = nil
                 current.lastError = nil
-                try persist(current)
+                current = try persistInitialCredential(
+                    credential,
+                    state: current,
+                    operation: operation
+                )
             }
 
             let challenge: PairingChallengeResult
@@ -217,7 +267,9 @@ final class PairingViewModel: ObservableObject {
                     dailyBoundaryMinuteUTC: boundary
                 )
             } else {
+                try SharingLifecycleGate.validate(lifecycleToken)
                 challenge = try await api.requestChallenge(invitation: invitation)
+                try SharingLifecycleGate.validate(lifecycleToken)
                 current.spaceID = challenge.spaceID
                 current.dailyBoundaryMinuteUTC = challenge.dailyBoundaryMinuteUTC
                 current.peerMemberID = challenge.inviter.memberID
@@ -228,15 +280,17 @@ final class PairingViewModel: ObservableObject {
                 current.challengeValue = challenge.challengeValue
                 current.challengeExpiresAtUnix = challenge.expiresAtUnix
                 current.lastUpdatedAt = .now
-                try persist(current)
+                current = try persist(current, operation: operation)
             }
 
+            try SharingLifecycleGate.validate(lifecycleToken)
             let result = try await api.enroll(
                 invitation: invitation,
                 challenge: challenge,
                 clientRequestID: requestID,
                 credential: credential
             )
+            try SharingLifecycleGate.validate(lifecycleToken)
             current.phase = .pendingApproval
             current.memberID = result.memberID
             current.enrollmentID = result.enrollmentID
@@ -256,8 +310,11 @@ final class PairingViewModel: ObservableObject {
             // before deleting the one-time secret. A crash here can leave an
             // unnecessary secret, which bootstrap scrubs; the inverse order
             // would leave `.joining` without the secret needed for retry.
-            try persist(current)
-            bestEffortScrubConsumedInvitationSecret(for: current)
+            current = try persist(current, operation: operation)
+            bestEffortScrubConsumedInvitationSecret(
+                for: current,
+                lifecycleToken: lifecycleToken
+            )
             enteredInvitationCode = ""
             SharedLog.app.info("pairing", "Enrollment submitted")
         } catch {
@@ -266,24 +323,34 @@ final class PairingViewModel: ObservableObject {
                [404, 409, 410].contains(status)
                 || (status == 401 && code == "invalid_enrollment_proof") {
                 do {
-                    try resetLocalPairing(message: pairingError.localizedDescription)
+                    try await resetLocalPairing(
+                        operation: operation,
+                        message: pairingError.localizedDescription
+                    )
                 } catch {
-                    record(error)
+                    record(error, operation: operation)
                 }
                 return
             }
-            record(error)
+            record(error, operation: operation)
         }
     }
 
     func refresh() async {
-        guard let api, var current = state,
-              let account = current.credentialAccount
-        else { return }
+        guard let api else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        guard let account = current.credentialAccount else { return }
         isWorking = true
         defer { isWorking = false }
         do {
-            bestEffortScrubConsumedInvitationSecret(for: current)
+            bestEffortScrubConsumedInvitationSecret(
+                for: current,
+                lifecycleToken: lifecycleToken
+            )
             var credential = try PairingKeychainStore.load(
                 account: account,
                 installationMarker: current.installationMarker
@@ -293,21 +360,28 @@ final class PairingViewModel: ObservableObject {
                let expiresAt = current.invitationExpiresAt,
                expiresAt <= .now {
                 credential.enrollmentSecret = nil
-                try PairingKeychainStore.save(credential)
+                try PairingKeychainStore.save(
+                    credential,
+                    lifecycleToken: lifecycleToken
+                )
                 invitationCode = nil
                 current.phase = .failed
                 current.lastError = "招待コードの有効期限が切れました。新しい招待が必要です。"
                 current.lastUpdatedAt = .now
-                try persist(current)
+                current = try persist(current, operation: operation)
                 return
             }
             switch current.role {
             case .inviter:
                 if current.phase == .awaitingCompletion || current.phase == .paired {
+                    try SharingLifecycleGate.validate(lifecycleToken)
                     let result = try await api.status(state: current, credential: credential)
+                    try SharingLifecycleGate.validate(lifecycleToken)
                     try applyOwnerStatus(result, to: &current)
                 } else {
+                    try SharingLifecycleGate.validate(lifecycleToken)
                     let result = try await api.pending(state: current, credential: credential)
+                    try SharingLifecycleGate.validate(lifecycleToken)
                     if let transcript = result.transcript,
                        let hash = result.transcriptHash {
                         try applyTranscript(transcript, hash: hash, to: &current)
@@ -315,13 +389,16 @@ final class PairingViewModel: ObservableObject {
                     }
                 }
             case .invitee:
+                try SharingLifecycleGate.validate(lifecycleToken)
                 let result = try await api.status(state: current, credential: credential)
+                try SharingLifecycleGate.validate(lifecycleToken)
                 if result.state == "approvedAwaitingCompletion" {
                     try await finishInviteePairing(
                         result,
                         state: &current,
                         credential: credential,
-                        api: api
+                        api: api,
+                        operation: operation
                     )
                 } else if result.state == "active" {
                     current.phase = .paired
@@ -345,8 +422,11 @@ final class PairingViewModel: ObservableObject {
             }
             current.lastUpdatedAt = .now
             current.lastError = nil
-            try persist(current)
-            bestEffortScrubConsumedInvitationSecret(for: current)
+            current = try persist(current, operation: operation)
+            bestEffortScrubConsumedInvitationSecret(
+                for: current,
+                lifecycleToken: lifecycleToken
+            )
         } catch {
             if let pairingError = error as? PairingError,
                Self.serverConfirmsPairingIsGone(pairingError)
@@ -356,13 +436,13 @@ final class PairingViewModel: ObservableObject {
                     let message = Self.isInvalidAuthentication(pairingError)
                         ? "共有の有効期限が切れました。もう一度招待してください。"
                         : pairingError.localizedDescription
-                    try resetLocalPairing(message: message)
+                    try await resetLocalPairing(operation: operation, message: message)
                 } catch {
-                    record(error)
+                    record(error, operation: operation)
                 }
                 return
             }
-            record(error)
+            record(error, operation: operation)
         }
     }
 
@@ -371,7 +451,13 @@ final class PairingViewModel: ObservableObject {
             record(PairingError.approvalNotConfirmed)
             return
         }
-        guard let api, var current = state,
+        guard let api else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        guard
               current.phase == .approvalRequired,
               let account = current.credentialAccount,
               let memberID = current.memberID,
@@ -430,8 +516,9 @@ final class PairingViewModel: ObservableObject {
                 current.pendingKeyEnvelope = envelopeValue
                 current.pendingApprovalSignature = signatureValue
                 current.lastUpdatedAt = .now
-                try persist(current)
+                current = try persist(current, operation: operation)
             }
+            try SharingLifecycleGate.validate(lifecycleToken)
             try await api.approve(
                 enrollmentID: enrollmentID,
                 transcriptHash: transcriptHashValue,
@@ -441,9 +528,13 @@ final class PairingViewModel: ObservableObject {
                 memberID: memberID,
                 credential: credential
             )
+            try SharingLifecycleGate.validate(lifecycleToken)
             var scrubbedCredential = credential
             scrubbedCredential.enrollmentSecret = nil
-            try PairingKeychainStore.save(scrubbedCredential)
+            try PairingKeychainStore.save(
+                scrubbedCredential,
+                lifecycleToken: lifecycleToken
+            )
             invitationCode = nil
             current.phase = .awaitingCompletion
             current.pendingClientRequestID = nil
@@ -453,15 +544,21 @@ final class PairingViewModel: ObservableObject {
             current.pendingApprovalSignature = nil
             current.lastUpdatedAt = .now
             current.lastError = nil
-            try persist(current)
+            current = try persist(current, operation: operation)
             SharedLog.app.info("pairing", "Peer explicitly approved")
         } catch {
-            record(error)
+            record(error, operation: operation)
         }
     }
 
     func cancelAndReset() async {
-        guard let api, var current = state,
+        guard let api else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        guard
               current.role != nil,
               let account = current.credentialAccount,
               current.memberID != nil,
@@ -480,7 +577,9 @@ final class PairingViewModel: ObservableObject {
             if current.pendingOperation != "cancel",
                current.role == .invitee,
                current.pendingOperation == "complete" {
+                try SharingLifecycleGate.validate(lifecycleToken)
                 let latest = try await api.status(state: current, credential: credential)
+                try SharingLifecycleGate.validate(lifecycleToken)
                 revokeWholeSpace = latest.state == "active"
                 guard revokeWholeSpace || latest.state == "approvedAwaitingCompletion" else {
                     throw PairingError.invalidServerResponse
@@ -498,21 +597,22 @@ final class PairingViewModel: ObservableObject {
                 current.pendingKeyEnvelope = nil
                 current.pendingApprovalSignature = nil
                 current.lastUpdatedAt = .now
-                try persist(current)
+                current = try persist(current, operation: operation)
             }
             try await cancelServerPairing(
                 api: api,
                 state: &current,
                 credential: credential,
                 requestID: requestID,
-                revokeWholeSpace: revokeWholeSpace
+                revokeWholeSpace: revokeWholeSpace,
+                operation: operation
             )
-            try resetLocalPairing()
+            try await resetLocalPairing(operation: operation)
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation
             // request and credentials so the user can retry safely.
-            record(error)
+            record(error, operation: operation)
         }
     }
 
@@ -525,15 +625,19 @@ final class PairingViewModel: ObservableObject {
         state current: inout PairingState,
         credential: PairingCredential,
         requestID: UUID,
-        revokeWholeSpace: Bool
+        revokeWholeSpace: Bool,
+        operation: PairingOperation
     ) async throws {
+        let lifecycleToken = operation.lifecycleToken
         do {
+            try SharingLifecycleGate.validate(lifecycleToken)
             try await api.cancelPairing(
                 state: current,
                 revokeWholeSpace: revokeWholeSpace,
                 clientRequestID: requestID,
                 credential: credential
             )
+            try SharingLifecycleGate.validate(lifecycleToken)
             return
         } catch let error as PairingError {
             if Self.serverConfirmsPairingIsGone(error) {
@@ -546,7 +650,9 @@ final class PairingViewModel: ObservableObject {
 
             let latest: PairingStatusResult
             do {
+                try SharingLifecycleGate.validate(lifecycleToken)
                 latest = try await api.status(state: current, credential: credential)
+                try SharingLifecycleGate.validate(lifecycleToken)
             } catch let statusError as PairingError {
                 if Self.serverConfirmsPairingIsGone(statusError) {
                     return
@@ -565,14 +671,16 @@ final class PairingViewModel: ObservableObject {
                 current.pendingOperation = "cancel"
                 current.pendingCancelRevokesWholeSpace = true
                 current.lastUpdatedAt = .now
-                try persist(current)
+                current = try persist(current, operation: operation)
                 do {
+                    try SharingLifecycleGate.validate(lifecycleToken)
                     try await api.cancelPairing(
                         state: current,
                         revokeWholeSpace: true,
                         clientRequestID: revokeRequestID,
                         credential: credential
                     )
+                    try SharingLifecycleGate.validate(lifecycleToken)
                 } catch let revokeError as PairingError {
                     if Self.serverConfirmsPairingIsGone(revokeError) {
                         return
@@ -607,8 +715,10 @@ final class PairingViewModel: ObservableObject {
         _ result: PairingStatusResult,
         state current: inout PairingState,
         credential: PairingCredential,
-        api: any PairingAPIClientProtocol
+        api: any PairingAPIClientProtocol,
+        operation: PairingOperation
     ) async throws {
+        let lifecycleToken = operation.lifecycleToken
         guard let transcriptModel = result.transcript,
               let transcriptHashValue = result.transcriptHash,
               let transcriptHash = Data(base64URLString: transcriptHashValue),
@@ -646,7 +756,10 @@ final class PairingViewModel: ObservableObject {
         var updatedCredential = credential
         updatedCredential.roomKey = roomKey
         updatedCredential.enrollmentSecret = nil
-        try PairingKeychainStore.save(updatedCredential)
+        try PairingKeychainStore.save(
+            updatedCredential,
+            lifecycleToken: lifecycleToken
+        )
 
         let completionID: UUID
         if current.pendingOperation == "complete",
@@ -658,8 +771,9 @@ final class PairingViewModel: ObservableObject {
             current.pendingOperation = "complete"
             current.pendingCancelRevokesWholeSpace = nil
             current.lastUpdatedAt = .now
-            try persist(current)
+            current = try persist(current, operation: operation)
         }
+        try SharingLifecycleGate.validate(lifecycleToken)
         try await api.complete(
             enrollmentID: enrollmentID,
             transcriptHash: transcriptHashValue,
@@ -667,6 +781,7 @@ final class PairingViewModel: ObservableObject {
             memberID: memberID,
             credential: updatedCredential
         )
+        try SharingLifecycleGate.validate(lifecycleToken)
         current.phase = .paired
         current.pendingClientRequestID = nil
         current.pendingOperation = nil
@@ -723,31 +838,113 @@ final class PairingViewModel: ObservableObject {
         current.dailyBoundaryMinuteUTC = transcript.dailyBoundaryMinuteUTC
     }
 
-    private func persist(_ value: PairingState) throws {
-        let validated = try value.validated()
-        try PairingStateStore.save(validated)
-        state = validated
+    private final class PairingOperation {
+        let lifecycleToken: SharingLifecycleGate.Token
+        var expectedState: PairingState
+
+        init(
+            lifecycleToken: SharingLifecycleGate.Token,
+            expectedState: PairingState
+        ) {
+            self.lifecycleToken = lifecycleToken
+            self.expectedState = expectedState
+        }
     }
 
-    private func restoreInvitationCodeIfAvailable() throws {
-        guard let state,
+    /// Token and metadata are captured under the same short lifecycle flock.
+    /// `state` is refreshed from disk here so a cleanup/re-pair cannot combine
+    /// a new epoch token with stale MainActor state.
+    private func beginOperation() throws -> PairingOperation {
+        let snapshot = try PairingStateStore.beginOperation()
+        guard let current = snapshot.state else {
+            throw PairingError.stateUnavailable
+        }
+        state = current
+        return PairingOperation(
+            lifecycleToken: snapshot.lifecycleToken,
+            expectedState: current
+        )
+    }
+
+    /// Saves with an exact-state CAS, then returns the decoded committed value.
+    /// Callers must replace their local operation state with this return value
+    /// before another mutation so storageRevision and ISO-8601 dates stay exact.
+    @discardableResult
+    private func persist(
+        _ value: PairingState,
+        operation: PairingOperation
+    ) throws -> PairingState {
+        let previous = operation.expectedState
+        guard value.storageRevision == previous.storageRevision
+        else { throw PairingError.stateUnavailable }
+        let validated = try value.validated()
+        let committed = try PairingStateStore.save(
+            validated,
+            expected: previous,
+            lifecycleToken: operation.lifecycleToken
+        )
+        operation.expectedState = committed
+        state = committed
+        let becamePaired = previous.phase != .paired && committed.phase == .paired
+        let acceptedMediaNow = previous.mediaSharingConsentVersion
+            != PairingMediaSharingConsent.currentVersion
+            && committed.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion
+        if (becamePaired || acceptedMediaNow),
+           committed.pendingOperation == nil,
+           committed.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
+           committed.mediaSharingConsentAcceptedAt != nil {
+            NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+        }
+        return committed
+    }
+
+    /// Publishes the initial credential account and recoverable operation state
+    /// under one short lifecycle flock. Crash-before-state remains recoverable
+    /// by bootstrap's orphan cleanup; bootstrap cannot interleave between the
+    /// two writes while this process is alive.
+    private func persistInitialCredential(
+        _ credential: PairingCredential,
+        state value: PairingState,
+        operation: PairingOperation
+    ) throws -> PairingState {
+        let committed = try PairingStateStore.saveInitialCredentialAndState(
+            credential: credential,
+            state: try value.validated(),
+            expected: operation.expectedState,
+            lifecycleToken: operation.lifecycleToken
+        )
+        operation.expectedState = committed
+        state = committed
+        return committed
+    }
+
+    private func restoreInvitationCodeIfAvailable(
+        from state: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        guard
               state.role == .inviter,
               state.phase == .awaitingInvitee,
               let account = state.credentialAccount,
               let invitationID = state.invitationID
         else { return }
+        try SharingLifecycleGate.validate(lifecycleToken)
         let credential = try PairingKeychainStore.load(
             account: account,
             installationMarker: state.installationMarker
         )
         guard let secret = credential.enrollmentSecret else { return }
+        try SharingLifecycleGate.validate(lifecycleToken)
         invitationCode = try PairingInvitationCode(
             invitationID: invitationID,
             enrollmentSecret: secret
         ).code
     }
 
-    private func bestEffortScrubConsumedInvitationSecret(for state: PairingState) {
+    private func bestEffortScrubConsumedInvitationSecret(
+        for state: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) {
         let isConsumedPhase: Bool
         switch state.phase {
         case .pendingApproval, .approvalRequired, .awaitingCompletion, .paired:
@@ -765,7 +962,10 @@ final class PairingViewModel: ObservableObject {
             )
             guard credential.enrollmentSecret != nil else { return }
             credential.enrollmentSecret = nil
-            try PairingKeychainStore.save(credential)
+            try PairingKeychainStore.save(
+                credential,
+                lifecycleToken: lifecycleToken
+            )
             invitationCode = nil
         } catch {
             // The state is already recoverable. Keep pairing usable and retry
@@ -778,30 +978,43 @@ final class PairingViewModel: ObservableObject {
         }
     }
 
-    private func resetLocalPairing(message: String? = nil) throws {
-        guard let state else { throw PairingError.stateUnavailable }
-        if let account = state.credentialAccount {
-            try PairingKeychainStore.delete(account: account)
-        }
-        try PairingStateStore.purgeAllSharingFiles()
-        var reset = PairingState.unpaired(
-            installationMarker: state.installationMarker
+    private func resetLocalPairing(
+        operation: PairingOperation,
+        message: String? = nil
+    ) async throws {
+        _ = try await PairingInstallationGuard.resetLocalSharingAsync(
+            expectedState: operation.expectedState,
+            lifecycleToken: operation.lifecycleToken,
+            message: message
         )
-        reset.lastError = message
-        try PairingStateStore.save(reset)
-        self.state = reset
+        // Reload the exact durable value before any later CAS; this also
+        // prevents a stale operation from retaining the pre-cleanup state.
+        let snapshot = try PairingStateStore.beginOperation()
+        guard let reset = snapshot.state else { throw PairingError.stateUnavailable }
+        state = reset
         invitationCode = nil
         enteredInvitationCode = ""
         hasConfirmedPhrase = false
     }
 
-    private func record(_ error: Error) {
-        var updated = state
-        updated?.lastError = error.localizedDescription
-        updated?.lastUpdatedAt = .now
-        if let updated {
-            try? PairingStateStore.save(updated)
-            state = updated
+    private func record(
+        _ error: Error,
+        operation: PairingOperation? = nil
+    ) {
+        if let operation {
+            var updated = operation.expectedState
+            updated.lastError = error.localizedDescription
+            updated.lastUpdatedAt = .now
+            do {
+                _ = try persist(updated, operation: operation)
+            } catch {
+                // The operation may have been invalidated by unlink/reinstall
+                // or lost an exact-state CAS. Reload only; never issue a fresh
+                // token and write an old operation's error into the new state.
+                if let snapshot = try? PairingStateStore.beginOperation() {
+                    state = snapshot.state
+                }
+            }
         }
         SharedLog.app.error(
             "pairing",

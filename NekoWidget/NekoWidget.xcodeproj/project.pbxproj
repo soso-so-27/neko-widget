@@ -17,6 +17,7 @@
 		100000000000000000000008 /* ProductConstraints.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000108 /* ProductConstraints.swift */; };
 		100000000000000000000009 /* ScanState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000109 /* ScanState.swift */; };
 		10000000000000000000000A /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
+		100000000000000000000146 /* WidgetRenderPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000110 /* WidgetRenderPlan.swift */; };
 		10000000000000000000000B /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		10000000000000000000000C /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		10000000000000000000000D /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
@@ -24,6 +25,7 @@
 		10000000000000000000000F /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
 		100000000000000000000140 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
 		100000000000000000000141 /* PairingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A1 /* PairingKeychainStore.swift */; };
+		100000000000000000000147 /* DailySharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A2 /* DailySharingCore.swift */; };
 		100000000000000000000101 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000201 /* AppRootView.swift */; };
 		100000000000000000000102 /* NekoWidgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000202 /* NekoWidgetApp.swift */; };
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
@@ -39,6 +41,11 @@
 		100000000000000000000120 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000220 /* AppViewModel.swift */; };
 		100000000000000000000142 /* PairingInstallationGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021A /* PairingInstallationGuard.swift */; };
 		100000000000000000000143 /* PairingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021B /* PairingAPIClient.swift */; };
+		100000000000000000000148 /* CanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021C /* CanonicalPreviewBuilder.swift */; };
+		100000000000000000000149 /* DailySharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021D /* DailySharingStore.swift */; };
+		10000000000000000000014A /* DailySharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021E /* DailySharingAPIClient.swift */; };
+		10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021F /* DailySharingSyncCoordinator.swift */; };
+		10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022A /* SharingRuntimeSelfTest.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
@@ -54,6 +61,7 @@
 		10000000000000000000013A /* NekoWidgetConfigurationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */; };
 		200000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		200000000000000000000002 /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
+		20000000000000000000001B /* WidgetRenderPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000110 /* WidgetRenderPlan.swift */; };
 		200000000000000000000003 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		200000000000000000000004 /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
 		200000000000000000000005 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
@@ -61,6 +69,7 @@
 		200000000000000000000007 /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
 		200000000000000000000019 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
 		20000000000000000000001A /* PairingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A1 /* PairingKeychainStore.swift */; };
+		20000000000000000000001C /* DailySharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A2 /* DailySharingCore.swift */; };
 		200000000000000000000010 /* NekoWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000310 /* NekoWidget.swift */; };
 		200000000000000000000011 /* NekoWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000311 /* NekoWidgetBundle.swift */; };
 		200000000000000000000012 /* NekoWidgetEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000312 /* NekoWidgetEntry.swift */; };
@@ -132,6 +141,7 @@
 		F00000000000000000000108 /* ProductConstraints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductConstraints.swift; sourceTree = "<group>"; };
 		F00000000000000000000109 /* ScanState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanState.swift; sourceTree = "<group>"; };
 		F0000000000000000000010A /* WidgetManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifest.swift; sourceTree = "<group>"; };
+		F00000000000000000000110 /* WidgetRenderPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetRenderPlan.swift; sourceTree = "<group>"; };
 		F0000000000000000000010B /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		F0000000000000000000010C /* AtomicJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicJSON.swift; sourceTree = "<group>"; };
 		F0000000000000000000010D /* SharedLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLog.swift; sourceTree = "<group>"; };
@@ -139,6 +149,7 @@
 		F0000000000000000000010F /* CatPawMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPawMark.swift; sourceTree = "<group>"; };
 		F000000000000000000001A0 /* PairingCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingCore.swift; sourceTree = "<group>"; };
 		F000000000000000000001A1 /* PairingKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingKeychainStore.swift; sourceTree = "<group>"; };
+		F000000000000000000001A2 /* DailySharingCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingCore.swift; sourceTree = "<group>"; };
 		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -158,6 +169,11 @@
 		F00000000000000000000220 /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		F0000000000000000000021A /* PairingInstallationGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingInstallationGuard.swift; sourceTree = "<group>"; };
 		F0000000000000000000021B /* PairingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingAPIClient.swift; sourceTree = "<group>"; };
+		F0000000000000000000021C /* CanonicalPreviewBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalPreviewBuilder.swift; sourceTree = "<group>"; };
+		F0000000000000000000021D /* DailySharingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingStore.swift; sourceTree = "<group>"; };
+		F0000000000000000000021E /* DailySharingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingAPIClient.swift; sourceTree = "<group>"; };
+		F0000000000000000000021F /* DailySharingSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingSyncCoordinator.swift; sourceTree = "<group>"; };
+		F0000000000000000000022A /* SharingRuntimeSelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRuntimeSelfTest.swift; sourceTree = "<group>"; };
 		F00000000000000000000221 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
 		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -304,6 +320,7 @@
 				F00000000000000000000108 /* ProductConstraints.swift */,
 				F00000000000000000000109 /* ScanState.swift */,
 				F0000000000000000000010A /* WidgetManifest.swift */,
+				F00000000000000000000110 /* WidgetRenderPlan.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -346,6 +363,7 @@
 			children = (
 				F000000000000000000001A0 /* PairingCore.swift */,
 				F000000000000000000001A1 /* PairingKeychainStore.swift */,
+				F000000000000000000001A2 /* DailySharingCore.swift */,
 			);
 			path = Sharing;
 			sourceTree = "<group>";
@@ -389,6 +407,11 @@
 				F00000000000000000000219 /* AppLogStore.swift */,
 				F0000000000000000000021A /* PairingInstallationGuard.swift */,
 				F0000000000000000000021B /* PairingAPIClient.swift */,
+				F0000000000000000000021C /* CanonicalPreviewBuilder.swift */,
+				F0000000000000000000021D /* DailySharingStore.swift */,
+				F0000000000000000000021E /* DailySharingAPIClient.swift */,
+				F0000000000000000000021F /* DailySharingSyncCoordinator.swift */,
+				F0000000000000000000022A /* SharingRuntimeSelfTest.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -596,6 +619,7 @@
 				100000000000000000000008 /* ProductConstraints.swift in Sources */,
 				100000000000000000000009 /* ScanState.swift in Sources */,
 				10000000000000000000000A /* WidgetManifest.swift in Sources */,
+				100000000000000000000146 /* WidgetRenderPlan.swift in Sources */,
 				10000000000000000000000B /* DeepLink.swift in Sources */,
 				10000000000000000000000C /* AtomicJSON.swift in Sources */,
 				10000000000000000000000D /* SharedLog.swift in Sources */,
@@ -603,6 +627,7 @@
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,
 				100000000000000000000141 /* PairingKeychainStore.swift in Sources */,
+				100000000000000000000147 /* DailySharingCore.swift in Sources */,
 				100000000000000000000101 /* AppRootView.swift in Sources */,
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
@@ -618,6 +643,11 @@
 				100000000000000000000120 /* AppViewModel.swift in Sources */,
 				100000000000000000000142 /* PairingInstallationGuard.swift in Sources */,
 				100000000000000000000143 /* PairingAPIClient.swift in Sources */,
+				100000000000000000000148 /* CanonicalPreviewBuilder.swift in Sources */,
+				100000000000000000000149 /* DailySharingStore.swift in Sources */,
+				10000000000000000000014A /* DailySharingAPIClient.swift in Sources */,
+				10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */,
+				10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
@@ -640,6 +670,7 @@
 			files = (
 				200000000000000000000001 /* SharedContainer.swift in Sources */,
 				200000000000000000000002 /* WidgetManifest.swift in Sources */,
+				20000000000000000000001B /* WidgetRenderPlan.swift in Sources */,
 				200000000000000000000003 /* DeepLink.swift in Sources */,
 				200000000000000000000004 /* SharedLog.swift in Sources */,
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
@@ -647,6 +678,7 @@
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
 				200000000000000000000019 /* PairingCore.swift in Sources */,
 				20000000000000000000001A /* PairingKeychainStore.swift in Sources */,
+				20000000000000000000001C /* DailySharingCore.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
 				200000000000000000000012 /* NekoWidgetEntry.swift in Sources */,

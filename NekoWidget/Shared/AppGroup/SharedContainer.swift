@@ -83,4 +83,75 @@ enum SharedContainer {
     static var sharingCacheDirectoryURL: URL? {
         containerURL?.appendingPathComponent("sharing", isDirectory: true)
     }
+
+    /// Stable synchronization metadata deliberately lives outside `sharing/`.
+    /// A privacy purge may unlink the entire ciphertext subtree without ever
+    /// replacing the lifecycle-lock inode held by another process.
+    static var sharingControlDirectoryURL: URL? {
+        containerURL?.appendingPathComponent("sharing-control", isDirectory: true)
+    }
+
+    static var sharingLifecycleLockURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "lifecycle.lock",
+            isDirectory: false
+        )
+    }
+
+    static var sharingCleanupRequiredURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "cleanup-required.v1",
+            isDirectory: false
+        )
+    }
+
+    /// Monotonic authorization epoch for all sharing media mutations. A purge
+    /// increments this value before deleting credentials/cache so an operation
+    /// that started with an older room key can never publish its result later.
+    static var sharingLifecycleStateURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "lifecycle-state.v1.json",
+            isDirectory: false
+        )
+    }
+
+    static var dailySharingStateURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "daily-media-state.json",
+            isDirectory: false
+        )
+    }
+
+    static var dailySharingLockURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "daily-media-state.lock",
+            isDirectory: false
+        )
+    }
+
+    /// A short, renewable cross-process lease serializes the network sync
+    /// performed by the host app and (from Phase 3) the Widget extension.
+    /// This is deliberately separate from `dailySharingLockURL`: the state
+    /// lock is held only for atomic file mutations and never across awaits.
+    static var dailySharingSyncLeaseURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "daily-media-sync-lease.json",
+            isDirectory: false
+        )
+    }
+
+    static var dailySharingSyncLeaseLockURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "daily-media-sync-lease.lock",
+            isDirectory: false
+        )
+    }
+
+    static var sharingOutboundDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent("outbound", isDirectory: true)
+    }
+
+    static var sharingInboundDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent("inbound", isDirectory: true)
+    }
 }

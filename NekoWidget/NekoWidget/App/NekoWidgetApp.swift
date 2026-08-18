@@ -8,6 +8,11 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
             AppRootView(viewModel: viewModel)
+#if DEBUG
+                .task {
+                    await SharingRuntimeSelfTestRunner.shared.runIfRequested()
+                }
+#endif
         }
     }
 }

@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "reserve": {
+    "protocolVersion": 1,
+    "source": {
+      "id": "AQEBAQEBAQEBAQEBAQEBAQ",
+      "publisherMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA"
+    },
+    "generation": {
+      "id": "AgICAgICAgICAgICAgICAg",
+      "state": "reserved",
+      "shareDayKey": 20682,
+      "itemCount": 2,
+      "createdAt": 1786972800,
+      "expiresAt": 1786976400
+    },
+    "items": [
+      { "mediaId": "AwMDAwMDAwMDAwMDAwMDAw", "state": "reserved" },
+      { "mediaId": "BAQEBAQEBAQEBAQEBAQEBA", "state": "reserved" }
+    ]
+  },
+  "descriptors": {
+    "protocolVersion": 1,
+    "generationId": "AgICAgICAgICAgICAgICAg",
+    "state": "uploading",
+    "items": [
+      {
+        "mediaId": "AwMDAwMDAwMDAwMDAwMDAw",
+        "ciphertextSize": 180000,
+        "ciphertextSHA256": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+        "state": "expected"
+      },
+      {
+        "mediaId": "BAQEBAQEBAQEBAQEBAQEBA",
+        "ciphertextSize": 210000,
+        "ciphertextSHA256": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo",
+        "state": "expected"
+      }
+    ]
+  },
+  "mediaVerified": {
+    "protocolVersion": 1,
+    "generationId": "AgICAgICAgICAgICAgICAg",
+    "mediaId": "AwMDAwMDAwMDAwMDAwMDAw",
+    "ciphertextSize": 180000,
+    "ciphertextSHA256": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+    "state": "verified"
+  },
+  "generationResume": {
+    "protocolVersion": 1,
+    "sourceId": "AQEBAQEBAQEBAQEBAQEBAQ",
+    "publisherMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+    "generation": {
+      "id": "AgICAgICAgICAgICAgICAg",
+      "state": "prepared",
+      "shareDayKey": 20682,
+      "itemCount": 2,
+      "createdAt": 1786972800,
+      "expiresAt": 1786976400,
+      "prepareAttemptRevision": 1,
+      "prepareAttemptId": "BQUFBQUFBQUFBQUFBQUFBQ",
+      "reservedRevision": 7,
+      "rotationAnchorUTC": 1786975200,
+      "prepareExpiresAt": 1786975200,
+      "manifest": null
+    },
+    "items": [
+      {
+        "mediaId": "AwMDAwMDAwMDAwMDAwMDAw",
+        "ciphertextSize": 180000,
+        "ciphertextSHA256": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
+        "state": "verified"
+      },
+      {
+        "mediaId": "BAQEBAQEBAQEBAQEBAQEBA",
+        "ciphertextSize": 210000,
+        "ciphertextSHA256": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo",
+        "state": "verified"
+      }
+    ]
+  },
+  "prepare": {
+    "protocolVersion": 1,
+    "generationId": "AgICAgICAgICAgICAgICAg",
+    "state": "prepared",
+    "prepareAttemptRevision": 1,
+    "prepareAttemptId": "BQUFBQUFBQUFBQUFBQUFBQ",
+    "reservedRevision": 7,
+    "rotationAnchorUTC": 1786975200,
+    "prepareExpiresAt": 1786975200
+  },
+  "manifestVerified": {
+    "protocolVersion": 1,
+    "generationId": "AgICAgICAgICAgICAgICAg",
+    "prepareAttemptRevision": 1,
+    "prepareAttemptId": "BQUFBQUFBQUFBQUFBQUFBQ",
+    "ciphertextSize": 4096,
+    "ciphertextSHA256": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws",
+    "state": "verified"
+  },
+  "commit": {
+    "protocolVersion": 1,
+    "sourceId": "AQEBAQEBAQEBAQEBAQEBAQ",
+    "generationId": "AgICAgICAgICAgICAgICAg",
+    "shareDayKey": 20682,
+    "revision": 7,
+    "prepareAttemptId": "BQUFBQUFBQUFBQUFBQUFBQ",
+    "prepareAttemptRevision": 1,
+    "reservedRevision": 7,
+    "rotationAnchorUTC": 1786975200,
+    "committedAt": 1786971900,
+    "contentExpiresAt": 1789563900,
+    "state": "current"
+  },
+  "sources": {
+    "protocolVersion": 1,
+    "sources": [
+      {
+        "id": "AQEBAQEBAQEBAQEBAQEBAQ",
+        "publisherMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+        "current": {
+          "generationId": "AgICAgICAgICAgICAgICAg",
+          "shareDayKey": 20682,
+          "revision": 7,
+          "rotationAnchorUTC": 1786975200,
+          "itemCount": 2,
+          "committedAt": 1786971900,
+          "contentExpiresAt": 1789563900
+        }
+      }
+    ]
+  },
+  "current": {
+    "protocolVersion": 1,
+    "sourceId": "AQEBAQEBAQEBAQEBAQEBAQ",
+    "publisherMemberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+    "current": {
+      "generationId": "AgICAgICAgICAgICAgICAg",
+      "shareDayKey": 20682,
+      "revision": 7,
+      "prepareAttemptId": "BQUFBQUFBQUFBQUFBQUFBQ",
+      "prepareAttemptRevision": 1,
+      "reservedRevision": 7,
+      "rotationAnchorUTC": 1786975200,
+      "itemCount": 2,
+      "committedAt": 1786971900,
+      "contentExpiresAt": 1789563900,
+      "manifest": {
+        "ciphertextSize": 4096,
+        "ciphertextSHA256": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws"
+      },
+      "items": [
+        {
+          "mediaId": "AwMDAwMDAwMDAwMDAwMDAw",
+          "ciphertextSize": 180000,
+          "ciphertextSHA256": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"
+        },
+        {
+          "mediaId": "BAQEBAQEBAQEBAQEBAQEBA",
+          "ciphertextSize": 210000,
+          "ciphertextSHA256": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo"
+        }
+      ]
+    }
+  }
+}

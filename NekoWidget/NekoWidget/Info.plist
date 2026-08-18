@@ -49,6 +49,8 @@
 	<string>$(SHARING_API_BASE_URL)</string>
 	<key>SharingFeatureEnabled</key>
 	<string>$(SHARING_FEATURE_ENABLED)</string>
+	<key>SharingMediaEnabled</key>
+	<string>$(SHARING_MEDIA_ENABLED)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

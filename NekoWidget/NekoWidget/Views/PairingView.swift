@@ -59,13 +59,20 @@ struct PairingView: View {
 
     private var privacySection: some View {
         Section {
-            Label("その日のウィジェット候補から最大20枚を、1日1回共有します", systemImage: "rectangle.stack")
-            Label("送るのは縮小・metadata除去・暗号化した画像だけです", systemImage: "lock.shield")
-            Label("原本、位置情報、撮影日時は送りません", systemImage: "photo.badge.checkmark")
+            if model.isMediaSyncEnabled {
+                Label("その日のウィジェット候補から最大20枚を、1日1回共有します", systemImage: "rectangle.stack")
+                Label("送るのは縮小・metadata除去・暗号化した画像だけです", systemImage: "lock.shield")
+                Label("原本、位置情報、撮影日時は送りません", systemImage: "photo.badge.checkmark")
+            } else {
+                Label("このビルドでは共有鍵のペアリングだけを行います", systemImage: "key.horizontal")
+                Label("写真や縮小画像は送信しません", systemImage: "photo.badge.checkmark")
+            }
         } header: {
             Text("共有されるもの")
         } footer: {
-            Text("肉球は共有の指示ではありません。招待リンクはLINEなど選んだ送信経路を通るため、信頼できる相手にだけ送ってください。機種変更や再インストールでは共有が切れ、再招待が必要です。")
+            Text(model.isMediaSyncEnabled
+                ? "肉球は共有の指示ではありません。招待リンクはLINEなど選んだ送信経路を通るため、信頼できる相手にだけ送ってください。機種変更や再インストールでは共有が切れ、再招待が必要です。"
+                : "写真同期を有効にするビルドでは、送信前に改めて同意を求めます。招待リンクは信頼できる相手にだけ送り、機種変更や再インストール後は再招待してください。")
         }
     }
 
@@ -116,7 +123,12 @@ struct PairingView: View {
                         .font(.caption)
                 }
             } footer: {
-                Text("この段階ではペアリングだけが有効です。写真同期は次の実装段階で追加します。")
+                Text(model.isMediaSyncEnabled
+                    ? "写真同期は、下の共有条件に同意した端末でだけ動作します。"
+                    : "このビルドではペアリングだけが有効で、写真同期は無効です。")
+            }
+            if model.isMediaSyncEnabled && !model.hasCurrentMediaSharingConsent {
+                mediaConsentRenewalSection
             }
             refreshSection
             pairedCancelSection
@@ -139,6 +151,9 @@ struct PairingView: View {
             )
             Button {
                 Task {
+                    if model.isMediaSyncEnabled {
+                        guard model.recordMediaSharingConsent() else { return }
+                    }
                     await model.createInvitation(
                         dailyBoundaryMinuteUTC: utcBoundaryMinute
                     )
@@ -167,7 +182,12 @@ struct PairingView: View {
             .lineLimit(2...4)
 
             Button {
-                Task { await model.joinInvitation() }
+                Task {
+                    if model.isMediaSyncEnabled {
+                        guard model.recordMediaSharingConsent() else { return }
+                    }
+                    await model.joinInvitation()
+                }
             } label: {
                 Label("招待コードで参加", systemImage: "person.2")
             }
@@ -189,7 +209,26 @@ struct PairingView: View {
         } header: {
             Text("ペアリング前の確認")
         } footer: {
-            Text("この段階では鍵のペアリングだけを行い、写真はまだ送りません。写真同期を有効にするbuildでは、肉球とは無関係に最大20枚が1日1回自動共有され、原本は送りません。共有解除でサーバー上のデータは削除できますが、相手が保存・スクリーンショットしたコピーは回収できません。再インストールや機種変更後は再招待が必要です。")
+            Text(model.isMediaSyncEnabled
+                ? "ペアリング後、肉球とは無関係に最大20枚の縮小画像が1日1回自動共有されます。原本は送りません。共有解除でサーバー上のデータは削除できますが、相手が保存・スクリーンショットしたコピーは回収できません。再インストールや機種変更後は再招待が必要です。"
+                : "この段階では鍵のペアリングだけを行い、写真はまだ送りません。写真同期を有効にするbuildでは改めて明示的な同意を求めます。共有解除後も、相手が保存・スクリーンショットしたコピーは回収できません。再インストールや機種変更後は再招待が必要です。")
+        }
+    }
+
+    private var mediaConsentRenewalSection: some View {
+        Section {
+            Toggle(isOn: $hasAcceptedPairingTerms) {
+                Text("写真共有の内容と限界を確認しました")
+            }
+            Button("写真共有に同意する") {
+                guard model.recordMediaSharingConsent() else { return }
+                hasAcceptedPairingTerms = false
+            }
+            .disabled(!hasAcceptedPairingTerms || model.isWorking)
+        } header: {
+            Text("写真同期を始める前の確認")
+        } footer: {
+            Text("肉球とは無関係に、その日の候補から最大20枚の縮小画像を1日1回、自動共有します。原本・位置情報・撮影日時は送りません。共有解除でサーバー上のデータは削除しますが、相手が保存・スクリーンショットしたコピーは回収できません。")
         }
     }
 
@@ -278,7 +317,9 @@ struct PairingView: View {
             }
             .disabled(model.isWorking)
         } footer: {
-            Text("現在は写真同期前のため、共有鍵とペアリング情報だけを解除します。写真同期を追加する段階では、サーバー上の縮小画像を削除する進捗表示もここへ追加します。")
+            Text(model.isMediaSyncEnabled
+                ? "解除すると相手からのアクセスを直ちに停止し、サーバー上の共有データ削除を開始します。この開発段階では削除完了の進捗表示はまだありません。相手が端末外へ保存・スクリーンショットしたコピーは回収できません。"
+                : "現在は写真同期前のため、共有鍵とペアリング情報だけを解除します。写真同期を追加する段階では、サーバー上の縮小画像を削除する進捗表示もここへ追加します。")
         }
     }
 

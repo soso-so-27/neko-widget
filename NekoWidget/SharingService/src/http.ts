@@ -2,9 +2,12 @@ import { ApiError } from "./errors";
 import type { Env } from "./env";
 import { asObject, type JsonRecord } from "./validation";
 
-const maximumBodyBytes = 16 * 1024;
+const defaultMaximumBodyBytes = 16 * 1024;
 
-export async function readBody(request: Request): Promise<Uint8Array> {
+export async function readBody(
+  request: Request,
+  maximumBodyBytes = defaultMaximumBodyBytes,
+): Promise<Uint8Array> {
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
     if (!/^\d+$/u.test(contentLength)) {

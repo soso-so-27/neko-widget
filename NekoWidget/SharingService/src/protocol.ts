@@ -145,6 +145,85 @@ export function signedRequestTranscript(fields: SignedRequestFields): Uint8Array
   ]);
 }
 
+export interface SharedMediaAADFields {
+  spaceId: string;
+  sourceId: string;
+  publisherMemberId: string;
+  generationId: string;
+  shareDayKey: number;
+  mediaId: string;
+  mediaBindingHash: string;
+}
+
+/**
+ * AEAD associated data for one canonical encrypted preview. The binding hash is
+ * intentionally never sent to or stored by the service; it is learned by the
+ * receiver only after opening the encrypted manifest.
+ */
+export function sharedMediaAAD(fields: SharedMediaAADFields): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.SHARED-MEDIA",
+    "1",
+    fields.spaceId,
+    fields.sourceId,
+    fields.publisherMemberId,
+    fields.generationId,
+    String(fields.shareDayKey),
+    fields.mediaId,
+    fields.mediaBindingHash,
+  ]);
+}
+
+export interface SharedManifestAADFields {
+  spaceId: string;
+  sourceId: string;
+  publisherMemberId: string;
+  generationId: string;
+  shareDayKey: number;
+  prepareAttemptId: string;
+  prepareAttemptRevision: number;
+  reservedRevision: number;
+  rotationAnchorUTC: number;
+  itemCount: number;
+}
+
+/**
+ * AEAD associated data for the encrypted schedule/render manifest. Every field
+ * needed to reconstruct this value is returned by the authenticated current API.
+ */
+export function sharedManifestAAD(fields: SharedManifestAADFields): Uint8Array {
+  return encodeCanonicalFields([
+    "NW1.SHARED-MANIFEST",
+    "1",
+    fields.spaceId,
+    fields.sourceId,
+    fields.publisherMemberId,
+    fields.generationId,
+    String(fields.shareDayKey),
+    fields.prepareAttemptId,
+    String(fields.prepareAttemptRevision),
+    String(fields.reservedRevision),
+    String(fields.rotationAnchorUTC),
+    String(fields.itemCount),
+  ]);
+}
+
+export function shareDayKey(now: number, dailyBoundaryMinuteUTC: number): number {
+  return Math.floor((now - dailyBoundaryMinuteUTC * 60) / 86_400);
+}
+
+export function nextShareDayBoundary(
+  dayKey: number,
+  dailyBoundaryMinuteUTC: number,
+): number {
+  return (dayKey + 1) * 86_400 + dailyBoundaryMinuteUTC * 60;
+}
+
+/** Returns the first 20-minute boundary at least five minutes in the future. */
+export function nextRotationAnchor(now: number): number {
+  return Math.ceil((now + 300) / 1_200) * 1_200;
+}
+
 const verificationWords = [
   "あさ", "あめ", "いと", "うみ", "えき", "おと", "かぎ", "かぜ",
   "きり", "くも", "こえ", "さくら", "しずく", "すず", "そら", "たね",
