@@ -23,28 +23,28 @@ struct CanonicalPreview: Sendable {
 /// receiver validator. This avoids binding the wire format to the particular
 /// sRGB profile bytes shipped by an OS release.
 ///
-/// Source: https://github.com/saucecontrol/Compact-ICC-Profiles/blob/bdd84663061bc4ae95ca70decff54f581e27f702/profiles/sRGB-v2-micro.icc
+/// Source: https://github.com/saucecontrol/Compact-ICC-Profiles/blob/bdd84663061bc4ae95ca70decff54f581e27f702/profiles/sRGB-v4.icc
 /// License: CC0-1.0 public-domain dedication
-/// SHA-256: 0a8a33aea66a6f154a5642ebe168ef287e73265d9f7b51c42a45e6eedbacda7a
+/// SHA-256: c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353
 private enum SharingCanonicalColorProfile {
     private static let jpegICCSignature = Array("ICC_PROFILE\u{0}".utf8)
     private static let encodedProfile =
-        "AAAByGxjbXMCEAAAbW50clJHQiBYWVogB+IAAwAUAAkADgAdYWNzcE1TRlQAAAAA" +
-        "c2F3c2N0cmwAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1oYW5knZEAPUCAsD1AdCyB" +
-        "nqUijgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJZGVzYwAAAPAAAABf" +
-        "Y3BydAAAAQwAAAAMd3RwdAAAARgAAAAUclhZWgAAASwAAAAUZ1hZWgAAAUAAAAAU" +
-        "YlhZWgAAAVQAAAAUclRSQwAAAWgAAABgZ1RSQwAAAWgAAABgYlRSQwAAAWgAAABg" +
-        "ZGVzYwAAAAAAAAAFdVJHQgAAAAAAAAAAAAAAAHRleHQAAAAAQ0MwAFhZWiAAAAAA" +
-        "AADzVAABAAAAARbJWFlaIAAAAAAAAG+gAAA48gAAA49YWVogAAAAAAAAYpYAALeJ" +
-        "AAAY2lhZWiAAAAAAAAAkoAAAD4UAALbEY3VydgAAAAAAAAAqAAAAfAD4AZwCdQOD" +
-        "BMkGTggSChgMYg70Ec8U9hhqHC4gQySsKWoufjPrObM/1kZXTTZUdlwXZB1shnV" +
-        "Wfo2ILJI2nKunjLLbvpnKx9dl5Hfx+f//"
+        "AAAB4GxjbXMEIAAAbW50clJHQiBYWVogB+IAAwAUAAkADgAdYWNzcE1TRlQAAAAA" +
+        "c2F3c2N0cmwAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1oYW5keem/Vlo+AbaDI4VV" +
+        "RvdPqgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKZGVzYwAAAPwAAAAk" +
+        "Y3BydAAAASAAAAAid3RwdAAAAUQAAAAUY2hhZAAAAVgAAAAsclhZWgAAAYQAAAAU" +
+        "Z1hZWgAAAZgAAAAUYlhZWgAAAawAAAAUclRSQwAAAcAAAAAgZ1RSQwAAAcAAAAAg" +
+        "YlRSQwAAAcAAAAAgbWx1YwAAAAAAAAABAAAADGVuVVMAAAAIAAAAHABzAFIARwBC" +
+        "bWx1YwAAAAAAAAABAAAADGVuVVMAAAAGAAAAHABDAEMAMAAAWFlaIAAAAAAAAPbW" +
+        "AAEAAAAA0y1zZjMyAAAAAAABDD8AAAXd///zJgAAB5AAAP2S///7of///aIAAAPc" +
+        "AADAcVhZWiAAAAAAAABvoAAAOPIAAAOPWFlaIAAAAAAAAGKWAAC3iQAAGNpYWVog" +
+        "AAAAAAAAJKAAAA+FAAC2xHBhcmEAAAAAAAMAAAACZmkAAPKnAAANWQAAE9AAAApb"
     private static let expectedSHA256 =
-        "CoozrqZqbxVKVkLr4WjvKH5zJl2fe1HEKkXm7tus2no="
+        "xW4WhdiI9e25L+B/J1Dzh/j+jpGzL/j7C1a/u7lFg1M="
 
     static let data: Data? = {
         guard let data = Data(base64Encoded: encodedProfile),
-              data.count == 456,
+              data.count == 480,
               Data(SHA256.hash(data: data)).base64EncodedString() == expectedSHA256
         else { return nil }
         return data
@@ -68,7 +68,7 @@ private enum SharingCanonicalColorProfile {
     }
 #endif
 
-    /// Parses only the bounded JPEG header. The fixed 456-byte profile fits in
+    /// Parses only the bounded JPEG header. The fixed 480-byte profile fits in
     /// one APP2 segment, so split, duplicate, reordered, or malformed ICC
     /// payloads are outside the protocol and fail closed.
     private static func exactEmbeddedProfileRange(in jpeg: Data) -> Range<Int>? {
