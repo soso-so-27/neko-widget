@@ -138,6 +138,7 @@ actor SharingRuntimeSelfTestRunner {
 
     private static let launchArgument = "--sharing-runtime-self-test"
     private static let reportFilename = "sharing-runtime-self-test.json"
+    private static let progressFilename = "sharing-runtime-self-test-progress.json"
     private var didRun = false
 
     private struct CaseResult: Codable {
@@ -150,6 +151,15 @@ actor SharingRuntimeSelfTestRunner {
         let rendererVersion: String
         let status: String
         let cases: [CaseResult]
+    }
+
+    /// Fixed-string, DEBUG-only breadcrumb for diagnosing a simulator process
+    /// that remains alive without publishing its final report. It deliberately
+    /// contains no paths, identifiers, keys, image data, or error text.
+    private struct Progress: Codable {
+        let schemaVersion: Int
+        let caseID: String
+        let phase: String
     }
 
     private struct StoreFixture {
@@ -191,10 +201,13 @@ actor SharingRuntimeSelfTestRunner {
         })
 
         var fixture: StoreFixture?
+        Self.writeProgress(caseID: "store-fixture", phase: "started")
         do {
             fixture = try Self.makeStoreFixture()
+            Self.writeProgress(caseID: "store-fixture", phase: "passed")
         } catch {
             fixture = nil
+            Self.writeProgress(caseID: "store-fixture", phase: "failed")
         }
 
         if var value = fixture {
@@ -241,16 +254,27 @@ actor SharingRuntimeSelfTestRunner {
         let url = root.appendingPathComponent(Self.reportFilename, isDirectory: false)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        if let data = try? encoder.encode(report) {
-            try? SharingSecureFile.write(data, to: url)
+        do {
+            // This DEBUG-only report contains fixed case IDs and pass/fail
+            // values only. It must remain observable even when the test is
+            // diagnosing the secure writer itself on Simulator.
+            let data = try encoder.encode(report)
+            try data.write(to: url, options: .atomic)
+            Self.writeProgress(caseID: "report", phase: "published")
+        } catch {
+            Self.writeProgress(caseID: "report", phase: "failed")
+            assertionFailure("Sharing runtime self-test report publication failed")
         }
     }
 
     private func run(_ id: String, _ body: () throws -> Void) -> CaseResult {
+        Self.writeProgress(caseID: id, phase: "started")
         do {
             try body()
+            Self.writeProgress(caseID: id, phase: "passed")
             return CaseResult(id: id, status: "passed")
         } catch {
+            Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
         }
     }
@@ -259,12 +283,25 @@ actor SharingRuntimeSelfTestRunner {
         _ id: String,
         _ body: () async throws -> Void
     ) async -> CaseResult {
+        Self.writeProgress(caseID: id, phase: "started")
         do {
             try await body()
+            Self.writeProgress(caseID: id, phase: "passed")
             return CaseResult(id: id, status: "passed")
         } catch {
+            Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
         }
+    }
+
+    private static func writeProgress(caseID: String, phase: String) {
+        guard let root = SharedContainer.containerURL else { return }
+        let value = Progress(schemaVersion: 1, caseID: caseID, phase: phase)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value) else { return }
+        let url = root.appendingPathComponent(progressFilename, isDirectory: false)
+        try? data.write(to: url, options: .atomic)
     }
 
     private static func testSecureFileAttributes() throws {
@@ -274,6 +311,10 @@ actor SharingRuntimeSelfTestRunner {
         let url = root.appendingPathComponent(".sharing-runtime-secure", isDirectory: false)
         defer { try? FileManager.default.removeItem(at: url) }
         try SharingSecureFile.write(Data("runtime".utf8), to: url)
+#if targetEnvironment(simulator)
+        // Simulator lacks reliable Data Protection read-back; the production
+        // helper still proves that backup exclusion was set on this inode.
+#endif
         guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url) else {
             throw DailySharingError.stateUnavailable
         }

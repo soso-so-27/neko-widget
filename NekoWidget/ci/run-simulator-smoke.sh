@@ -7,6 +7,7 @@ FIXTURE_DIRECTORY="$PROJECT_DIRECTORY/ci/fixtures/cats"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-simulator-smoke.py"
 SHARING_RUNTIME_VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
 SHARING_RUNTIME_REPORT_FILENAME="sharing-runtime-self-test.json"
+SHARING_RUNTIME_PROGRESS_FILENAME="sharing-runtime-self-test-progress.json"
 SHARING_RUNTIME_RENDERER_VERSION="cat-aware-full-bleed-v6"
 SIMULATOR_TEST_MODE="${SIMULATOR_TEST_MODE:-smoke}"
 case "$SIMULATOR_TEST_MODE" in
@@ -550,7 +551,11 @@ launch_app() {
 run_sharing_runtime_self_test() {
     local container=""
     local source_report=""
+    local source_progress=""
     local artifact_report="$ARTIFACT_DIRECTORY/$SHARING_RUNTIME_REPORT_FILENAME"
+    local artifact_progress="$ARTIFACT_DIRECTORY/$SHARING_RUNTIME_PROGRESS_FILENAME"
+    local sample_output="$ARTIFACT_DIRECTORY/sharing-runtime-self-test-sample.txt"
+    local sample_log="$ARTIFACT_DIRECTORY/sharing-runtime-self-test-sample.log"
     local poll_attempt=0
 
     container="$(resolve_group_container || true)"
@@ -559,12 +564,15 @@ run_sharing_runtime_self_test() {
         return 1
     fi
     source_report="$container/$SHARING_RUNTIME_REPORT_FILENAME"
+    source_progress="$container/$SHARING_RUNTIME_PROGRESS_FILENAME"
 
     # A previous process or retried CI step must not satisfy this launch. The
     # app publishes the new report atomically only after every generated-data
     # case has reached a terminal result.
     rm -f -- "$source_report"
+    rm -f -- "$source_progress"
     rm -f -- "$artifact_report"
+    rm -f -- "$artifact_progress"
     launch_app "sharing-runtime-self-test" --sharing-runtime-self-test
 
     for poll_attempt in $(seq 1 90); do
@@ -578,6 +586,12 @@ run_sharing_runtime_self_test() {
         sleep 1
     done
     if [[ ! -f "$source_report" ]]; then
+        if [[ -f "$source_progress" ]]; then
+            cp "$source_progress" "$artifact_progress" || true
+        fi
+        if kill -0 "$APP_PID" 2>/dev/null && command -v sample >/dev/null 2>&1; then
+            sample "$APP_PID" 3 -file "$sample_output" > "$sample_log" 2>&1 || true
+        fi
         echo "Timed out waiting for the sharing runtime self-test report." >&2
         return 1
     fi

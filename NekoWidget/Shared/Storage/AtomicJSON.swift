@@ -113,10 +113,20 @@ enum SharingSecureFile {
     }
 
     static func enforceProtectionAndBackupExclusion(_ url: URL) throws {
+#if targetEnvironment(simulator)
+        // The Simulator does not model Data Protection consistently: setting
+        // this attribute can either fail or succeed without being readable
+        // through FileManager. Physical devices still require exact read-back.
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+#else
         try FileManager.default.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
             ofItemAtPath: url.path
         )
+#endif
         var mutable = url
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
@@ -127,12 +137,19 @@ enum SharingSecureFile {
     }
 
     static func hasRequiredProtectionAndBackupExclusion(_ url: URL) -> Bool {
-        guard let verified = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]),
-              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        guard let verified = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        else { return false }
+#if targetEnvironment(simulator)
+        // Backup exclusion is available and remains mandatory in Simulator
+        // runtime tests. Data Protection itself is enforced only on devices.
+        return verified.isExcludedFromBackup == true
+#else
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         else { return false }
         return verified.isExcludedFromBackup == true
             && (attributes[.protectionKey] as? FileProtectionType)
                 == .completeUntilFirstUserAuthentication
+#endif
     }
 
     private static func cleanupStaleTemporaryFiles(in directory: URL) {
