@@ -264,7 +264,7 @@ private extension AnimalPostureClassifier {
         _ skeleton: AnimalPostureSkeleton,
         frame: BodyFrame
     ) -> Bool {
-        guard let nose = decisiveLocations([.nose], in: skeleton)?[.nose],
+        guard let nose = decisiveLocation(.nose, in: skeleton),
               let left = leg(.leftFront, in: skeleton),
               let right = leg(.rightFront, in: skeleton),
               hasDecisiveQuality(
@@ -335,7 +335,7 @@ private extension AnimalPostureClassifier {
         _ skeleton: AnimalPostureSkeleton,
         frame: BodyFrame
     ) -> Bool {
-        guard let nose = decisiveLocations([.nose], in: skeleton)?[.nose],
+        guard let nose = decisiveLocation(.nose, in: skeleton),
               let leftFront = leg(.leftFront, in: skeleton),
               let rightFront = leg(.rightFront, in: skeleton),
               hasDecisiveQuality(
@@ -490,6 +490,17 @@ private extension AnimalPostureClassifier {
         return Dictionary(uniqueKeysWithValues: joints.map {
             ($0, skeleton.points[$0]!.location)
         })
+    }
+
+    static func decisiveLocation(
+        _ joint: AnimalPostureJoint,
+        in skeleton: AnimalPostureSkeleton
+    ) -> CGPoint? {
+        guard let point = skeleton.points[joint],
+              point.confidence >= decisiveJointConfidence else {
+            return nil
+        }
+        return point.location
     }
 
     static func optionalDecisiveLocations(
