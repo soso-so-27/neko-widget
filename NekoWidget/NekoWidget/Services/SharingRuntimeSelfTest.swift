@@ -997,7 +997,7 @@ actor SharingRuntimeSelfTestRunner {
             sourceID: current.sourceID,
             publisherMemberID: current.publisherMemberID,
             summary: changedCountSummary
-        ) else { throw DailySharingError.invalidServerResponse }
+        ) else { throw PairingError.invalidServerResponse }
 
         let monotonicBase = currentVariant(
             current,
@@ -1010,7 +1010,7 @@ actor SharingRuntimeSelfTestRunner {
                 original: monotonicBase,
                 replacement: monotonicBase
             )
-        guard !exactWasNewer else { throw DailySharingError.invalidServerResponse }
+        guard !exactWasNewer else { throw PairingError.invalidServerResponse }
         let monotonicNewer = currentVariant(
             monotonicBase,
             generationID: opaque(62),
@@ -1023,7 +1023,7 @@ actor SharingRuntimeSelfTestRunner {
                 original: monotonicBase,
                 replacement: monotonicNewer
             )
-        guard newerWasAccepted else { throw DailySharingError.invalidServerResponse }
+        guard newerWasAccepted else { throw PairingError.invalidServerResponse }
         let rollback = currentVariant(
             monotonicBase,
             generationID: opaque(63),
@@ -1041,7 +1041,7 @@ actor SharingRuntimeSelfTestRunner {
             rejectedRollback = true
         }
         guard rejectedRollback else {
-            throw DailySharingError.invalidServerResponse
+            throw PairingError.invalidServerResponse
         }
         let equivocated = currentVariant(
             monotonicBase,
@@ -1058,7 +1058,7 @@ actor SharingRuntimeSelfTestRunner {
             rejectedEquivocation = true
         }
         guard rejectedEquivocation else {
-            throw DailySharingError.invalidServerResponse
+            throw PairingError.invalidServerResponse
         }
         let verifiedMediaURL = inboundRoot
             .appendingPathComponent(highWater.verifiedDirectoryName, isDirectory: true)

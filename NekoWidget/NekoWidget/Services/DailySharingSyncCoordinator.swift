@@ -1656,12 +1656,17 @@ actor DailySharingSyncCoordinator {
                     ) else { throw PairingError.invalidServerResponse }
                     if current.shareDayKey == existing.shareDayKey,
                        current.revision == existing.revision {
-                        let intact = exactExisting || (try verifiedInboundGenerationIsIntact(
-                            existing,
-                            spaceID: spaceID,
-                            roomKey: roomKey,
-                            lease: lease
-                        ))
+                        let intact: Bool
+                        if exactExisting {
+                            intact = true
+                        } else {
+                            intact = try verifiedInboundGenerationIsIntact(
+                                existing,
+                                spaceID: spaceID,
+                                roomKey: roomKey,
+                                lease: lease
+                            )
+                        }
                         if intact { continue }
                     }
                 }
@@ -1801,7 +1806,7 @@ actor DailySharingSyncCoordinator {
             candidate: candidate,
             lease: lease
         )
-        guard var draft = state.inboundDownloadBySource[current.sourceID]
+        guard let draft = state.inboundDownloadBySource[current.sourceID]
         else { throw DailySharingError.stateUnavailable }
 
         let storedManifest = try DailySharingStateStore.readInboundDraftManifest(
