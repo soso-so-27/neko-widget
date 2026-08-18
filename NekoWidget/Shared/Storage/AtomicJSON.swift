@@ -199,7 +199,7 @@ enum SharingLifecycleGate {
             }
             released = true
             stateLock.unlock()
-            _ = Darwin.flock(descriptor, LOCK_UN)
+            _ = flock(descriptor, LOCK_UN)
             Darwin.close(descriptor)
         }
 
@@ -220,7 +220,7 @@ enum SharingLifecycleGate {
         )
         guard descriptor >= 0 else { throw Error.unavailable }
         let operation = blocking ? LOCK_EX : (LOCK_EX | LOCK_NB)
-        guard Darwin.flock(descriptor, operation) == 0 else {
+        guard flock(descriptor, operation) == 0 else {
             let code = Darwin.errno
             Darwin.close(descriptor)
             if !blocking, code == EWOULDBLOCK { return nil }
