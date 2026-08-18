@@ -146,12 +146,13 @@ private struct SharingProtocolVectorVerifier {
             roomKey: roomKey,
             aad: mediaAAD
         )
+        let openedMedia = try DailySharingCrypto.openMedia(
+            mediaCiphertext,
+            roomKey: roomKey,
+            aad: mediaAAD
+        )
         try require(
-            try DailySharingCrypto.openMedia(
-                mediaCiphertext,
-                roomKey: roomKey,
-                aad: mediaAAD
-            ) == mediaPlaintext,
+            openedMedia == mediaPlaintext,
             "shared media AEAD round-trip differs"
         )
         var tamperedMedia = mediaCiphertext
@@ -179,12 +180,13 @@ private struct SharingProtocolVectorVerifier {
             roomKey: roomKey,
             aad: manifestAAD
         )
+        let openedManifest = try DailySharingCrypto.openManifest(
+            manifestCiphertext,
+            roomKey: roomKey,
+            aad: manifestAAD
+        )
         try require(
-            try DailySharingCrypto.openManifest(
-                manifestCiphertext,
-                roomKey: roomKey,
-                aad: manifestAAD
-            ) == manifestPlaintext,
+            openedManifest == manifestPlaintext,
             "shared manifest AEAD round-trip differs"
         )
         try requireThrows("media and manifest key domains were not separated") {
