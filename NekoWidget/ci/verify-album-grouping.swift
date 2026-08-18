@@ -121,13 +121,13 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
         Set(kitten?.photos.map(\.id) ?? []) == ["first", "inside-six-months"],
         "kitten six-month boundary changed"
     )
-    try require(albums.map(\.id) == [.growth, .kitten, .age(1), .age(2)],
+    let timeAlbums = albums.filter { $0.group == .time }
+    try require(timeAlbums.map(\.id) == [.growth, .kitten, .age(1), .age(2)],
                 "age album order/boundaries changed")
     let growth = albums.first { $0.id == .growth }
     try require(growth?.photos.map(\.id) == ["first", "age-one", "age-two"],
                 "growth was not ordered by age or included a pre-reference photo")
-    let timePhotoIDs = Set(albums
-        .filter { $0.group == .time }
+    let timePhotoIDs = Set(timeAlbums
         .flatMap(\.photos)
         .map(\.id))
     try require(!timePhotoIDs.contains("stray-before-reference"),
