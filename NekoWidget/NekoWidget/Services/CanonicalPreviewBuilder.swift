@@ -59,6 +59,86 @@ private enum SharingCanonicalColorProfile {
         exactEmbeddedProfileRange(in: jpeg) != nil
     }
 
+    /// ImageIO is allowed to reserialize the ICC representation owned by a
+    /// `CGColorSpace`. Canonicalize that encoder output explicitly so the wire
+    /// contract remains the pinned profile bytes rather than an OS-specific
+    /// serialization of the same color space.
+    static func canonicalizingEmbeddedProfile(in jpeg: Data) -> Data? {
+        guard let profile = data,
+              jpeg.count >= 4,
+              jpeg[0] == 0xFF,
+              jpeg[1] == 0xD8
+        else { return nil }
+
+        let payloadLength = jpegICCSignature.count + 2 + profile.count
+        let segmentLength = payloadLength + 2
+        guard segmentLength <= Int(UInt16.max) else { return nil }
+
+        var profileSegment = Data([0xFF, 0xE2])
+        profileSegment.append(UInt8((segmentLength >> 8) & 0xFF))
+        profileSegment.append(UInt8(segmentLength & 0xFF))
+        profileSegment.append(contentsOf: jpegICCSignature)
+        profileSegment.append(contentsOf: [1, 1])
+        profileSegment.append(profile)
+
+        // Keep JFIF APP0 first when ImageIO emits it. The protocol ICC follows
+        // the leading APP0 segment(s), before all other metadata/codec tables.
+        var result = Data([0xFF, 0xD8])
+        var insertedProfile = false
+        func insertProfileIfNeeded() {
+            guard !insertedProfile else { return }
+            result.append(profileSegment)
+            insertedProfile = true
+        }
+
+        var cursor = 2
+        while cursor < jpeg.count {
+            let markerStart = cursor
+            guard jpeg[cursor] == 0xFF else { return nil }
+            while cursor < jpeg.count, jpeg[cursor] == 0xFF {
+                cursor += 1
+            }
+            guard cursor < jpeg.count else { return nil }
+            let marker = jpeg[cursor]
+            cursor += 1
+
+            if marker == 0xDA {
+                insertProfileIfNeeded()
+                result.append(contentsOf: jpeg[markerStart...])
+                return result
+            }
+            guard marker != 0x00,
+                  marker != 0x01,
+                  !(0xD0...0xD9).contains(marker),
+                  cursor <= jpeg.count - 2
+            else { return nil }
+
+            let sourceSegmentLength = (Int(jpeg[cursor]) << 8) | Int(jpeg[cursor + 1])
+            guard sourceSegmentLength >= 2,
+                  sourceSegmentLength <= jpeg.count - cursor
+            else { return nil }
+            let payloadStart = cursor + 2
+            let payloadEnd = cursor + sourceSegmentLength
+
+            if marker != 0xE0 {
+                insertProfileIfNeeded()
+            }
+            if marker == 0xE2 {
+                let signatureEnd = payloadStart + jpegICCSignature.count
+                guard signatureEnd + 2 <= payloadEnd,
+                      jpeg[payloadStart..<signatureEnd].elementsEqual(jpegICCSignature)
+                else { return nil }
+                // Drop every encoder-produced ICC chunk. The fixed single
+                // chunk inserted above is the only APP2 form this protocol
+                // permits, and the receiver independently verifies it.
+            } else {
+                result.append(contentsOf: jpeg[markerStart..<payloadEnd])
+            }
+            cursor = payloadEnd
+        }
+        return nil
+    }
+
 #if DEBUG
     static func tamperingEmbeddedProfile(in jpeg: Data) -> Data? {
         guard let range = exactEmbeddedProfileRange(in: jpeg) else { return nil }
@@ -584,7 +664,9 @@ actor CanonicalPreviewBuilder {
             [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
         )
         guard CGImageDestinationFinalize(destination) else { return nil }
-        return data as Data
+        return SharingCanonicalColorProfile.canonicalizingEmbeddedProfile(
+            in: data as Data
+        )
     }
 
     private nonisolated static func validateEncodedJPEG(
