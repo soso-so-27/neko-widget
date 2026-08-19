@@ -316,13 +316,14 @@ struct AppRootView: View {
         let legacyExcludedIdentifiers = Set(
             identity.legacyUnscoped?.legacyExcludedAssetIdentifiers ?? []
         )
-        let legacyExcluded = viewModel.excludedCatAssets.compactMap {
-            guard legacyExcludedIdentifiers.contains($0.localIdentifier) else {
+        let legacyExcluded: [LegacyExcludedCatPhotoPresentation] = viewModel
+            .excludedCatAssets.compactMap { excluded -> LegacyExcludedCatPhotoPresentation? in
+            guard legacyExcludedIdentifiers.contains(excluded.localIdentifier) else {
                 return nil
             }
             return LegacyExcludedCatPhotoPresentation(
-                localIdentifier: $0.localIdentifier,
-                creationDate: allAssetsByIdentifier[$0.localIdentifier]?.creationDate
+                localIdentifier: excluded.localIdentifier,
+                creationDate: allAssetsByIdentifier[excluded.localIdentifier]?.creationDate
             )
         }
         let legacyLifeReference: CatProfileLifeReferencePresentation?

@@ -16,7 +16,7 @@ enum AlbumUpdateStatus: Equatable {
     case failed(message: String)
 }
 
-private enum CatIdentityLoadState {
+private enum CatIdentityLoadState: Equatable {
     case loading
     case ready
     case failed
@@ -204,6 +204,8 @@ final class AppViewModel: ObservableObject {
     func start() async {
         guard !hasStarted else { return }
         hasStarted = true
+        var startupSnapshotNeedsSave = false
+        var loadedScanState: ScanState?
         SharedLog.app.info("lifecycle", "Application startup began")
 
         guard await loadCatCandidateCuration() else {
@@ -225,17 +227,13 @@ final class AppViewModel: ObservableObject {
         if let store {
             do {
                 let loaded = try await store.load()
+                loadedScanState = loaded.scanState
                 applySnapshot(loaded, preservingLiveSettings: false)
-                let candidateScanStateWasReconciled = snapshot.scanState
-                    != loaded.scanState
                 let likesChanged = synchronizeSharedLikes(
                     importLegacyLikes: true,
                     trigger: "startup"
                 )
-                chooseCurrentAssetIfNeeded()
-                if likesChanged || candidateScanStateWasReconciled {
-                    await saveSnapshot(reportErrors: false)
-                }
+                startupSnapshotNeedsSave = likesChanged
                 SharedLog.app.info(
                     "storage",
                     "Snapshot loaded",
@@ -262,7 +260,14 @@ final class AppViewModel: ObservableObject {
         // The snapshot was selected before the identity ledger loaded. Apply
         // household exclusions immediately so Home cannot briefly keep a
         // photo that the canonical profiled state has removed.
+        reconcileCandidatePostureState()
         chooseCurrentAssetIfNeeded()
+        let scanStateWasReconciled = loadedScanState.map {
+            $0 != snapshot.scanState
+        } ?? false
+        if startupSnapshotNeedsSave || scanStateWasReconciled {
+            await saveSnapshot(reportErrors: false)
+        }
         hasFinishedSnapshotLoad = true
         openPendingDeepLinkIfNeeded()
         Task { [dailySharingSyncCoordinator] in
@@ -291,6 +296,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func requestAccess() async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "request_access")
+            return
+        }
         errorMessage = nil
         SharedLog.app.info("permission", "Photo authorization request started")
         authorizationStatus = await authorizationService.requestAuthorization()
@@ -318,6 +327,10 @@ final class AppViewModel: ObservableObject {
     /// Any background execution is best effort and is never required for data
     /// correctness or promised to the user.
     func syncOnActive() async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "sync_on_active")
+            return
+        }
         Task { [dailySharingSyncCoordinator] in
             await dailySharingSyncCoordinator.synchronize(trigger: "foreground")
         }
@@ -364,6 +377,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func rescan() async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "full_rescan")
+            return
+        }
         guard canReadPhotos else {
             setError(NekoWidgetError.photoAccessDenied)
             return
@@ -387,6 +404,10 @@ final class AppViewModel: ObservableObject {
     /// photos. It does not increment the detector revision or invalidate the
     /// current Widget/primary cat results.
     func retryPendingPostureClassification() async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "retry_posture")
+            return
+        }
         guard canReadPhotos else {
             setError(NekoWidgetError.photoAccessDenied)
             return
@@ -428,6 +449,10 @@ final class AppViewModel: ObservableObject {
     /// current candidate scope. Primary cat/no-cat decisions, detector
     /// revision, likes, Widget output, and PhotoKit assets remain untouched.
     func rerunPostureClassification() async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "rerun_posture")
+            return
+        }
         guard canReadPhotos else {
             setError(NekoWidgetError.photoAccessDenied)
             return
@@ -495,6 +520,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleLike(id localIdentifier: String) async {
+        guard candidateAuthorityIsReady(operation: "toggle_like") else { return }
         guard let index = snapshot.assets.firstIndex(where: {
             $0.localIdentifier == localIdentifier
         }) else { return }
@@ -548,6 +574,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshPhotoSourceAlbums() async {
+        guard candidateAuthorityIsReady(operation: "refresh_photo_sources") else { return }
         selectedSourceAssetIdentifiers = catCandidateCuration
             .lastKnownSourceAssetIdentifierSet
         guard canReadPhotos else {
@@ -622,6 +649,7 @@ final class AppViewModel: ObservableObject {
     /// Removes candidates from app-managed surfaces only. PhotoKit is never
     /// mutated, and likes remain in their independent user-state ledger.
     func excludeFromCatCandidates(localIdentifiers: [String]) async {
+        guard candidateAuthorityIsReady(operation: "exclude_candidates") else { return }
         await serializeCatIdentityTransition {
             await self.performExcludeFromCatCandidates(
                 localIdentifiers: localIdentifiers
@@ -695,6 +723,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func restoreCatCandidates(localIdentifiers: [String]) async {
+        guard candidateAuthorityIsReady(operation: "restore_candidates") else { return }
         await serializeCatIdentityTransition {
             await self.performRestoreCatCandidates(
                 localIdentifiers: localIdentifiers
@@ -766,6 +795,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectPhotoSourceAlbum(localIdentifier: String?) async {
+        guard candidateAuthorityIsReady(operation: "select_photo_source") else { return }
         guard canReadPhotos, let curationStore else {
             setError(NekoWidgetError.photoAccessDenied)
             return
@@ -841,6 +871,7 @@ final class AppViewModel: ObservableObject {
     /// Album titles, photo identifiers, dates and location data are excluded so
     /// the local diagnostic can be shared without exposing library metadata.
     func recordAlbumOpened(key: String, group: String) async {
+        guard candidateAuthorityIsReady(operation: "record_album_open") else { return }
         guard let safeKey = Self.albumUsageToken(key),
               let safeGroup = Self.albumUsageToken(group) else {
             SharedLog.app.warning(
@@ -874,6 +905,9 @@ final class AppViewModel: ObservableObject {
     /// photo-library scan. Widget deep links call this before routing so the
     /// destination and the global count observe the same like state.
     func syncLikesForPresentation(trigger: String) async {
+        guard candidateAuthorityIsReady(operation: "sync_likes_for_presentation") else {
+            return
+        }
         let likesChanged = synchronizeSharedLikes(
             importLegacyLikes: false,
             trigger: trigger
@@ -883,6 +917,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func createOrUpdateAlbum() async {
+        guard candidateAuthorityIsReady(operation: "create_or_update_album") else {
+            return
+        }
         await createOrUpdateAlbum(reportErrors: true)
     }
 
@@ -894,6 +931,9 @@ final class AppViewModel: ObservableObject {
     /// or rebuilding PhotoKit/Widget outputs. Curated time albums are derived
     /// directly from this published setting and regroup immediately.
     func updateCatLifeReference(_ reference: CatLifeReference?) async {
+        guard candidateAuthorityIsReady(operation: "update_cat_life_reference") else {
+            return
+        }
         var normalized = settings
         normalized.catLifeReference = reference
         normalized = normalized.normalized()
@@ -919,6 +959,7 @@ final class AppViewModel: ObservableObject {
         lifeReferenceIsApproximate: Bool,
         referenceAssetIdentifier: String?
     ) async {
+        guard candidateAuthorityIsReady(operation: "create_cat_profile") else { return }
         await serializeCatIdentityTransition {
             await self.performCreateCatProfile(
                 displayName: displayName,
@@ -988,6 +1029,9 @@ final class AppViewModel: ObservableObject {
         reference: CatLifeReference?,
         isApproximate: Bool
     ) async {
+        guard candidateAuthorityIsReady(operation: "update_profile_life_reference") else {
+            return
+        }
         do {
             _ = try await mutateCatHouseholdIdentity { state in
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
@@ -1004,6 +1048,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func updateCatProfileName(profileID: UUID, displayName: String) async {
+        guard candidateAuthorityIsReady(operation: "update_profile_name") else { return }
         do {
             _ = try await mutateCatHouseholdIdentity { state in
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
@@ -1019,6 +1064,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func deleteCatProfile(profileID: UUID) async {
+        guard candidateAuthorityIsReady(operation: "delete_profile") else { return }
         do {
             _ = try await mutateCatHouseholdIdentity { state in
                 state.removeProfile(id: profileID)
@@ -1036,6 +1082,9 @@ final class AppViewModel: ObservableObject {
     func replaceCatProfileAssignments(
         profileIDsByLocalIdentifier: [String: Set<UUID>]
     ) async {
+        guard candidateAuthorityIsReady(operation: "replace_profile_assignments") else {
+            return
+        }
         let requested = profileIDsByLocalIdentifier.filter { !$0.key.isEmpty }
         guard !requested.isEmpty else { return }
         do {
@@ -1077,6 +1126,9 @@ final class AppViewModel: ObservableObject {
         localIdentifiers: [String],
         decision: CatAssetMembershipDecision
     ) async {
+        guard candidateAuthorityIsReady(operation: "set_profile_membership") else {
+            return
+        }
         let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
         guard !identifiers.isEmpty else { return }
         do {
@@ -1104,6 +1156,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func updateSettings(_ newSettings: AppSettings) async {
+        guard candidateAuthorityIsReady(operation: "update_settings") else { return }
         var normalized = newSettings.normalized()
         let detectionChanged = normalized.confidenceThreshold != settings.confidenceThreshold
             || normalized.minimumCatAreaRatio != settings.minimumCatAreaRatio
@@ -1148,6 +1201,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func exportJSON() async -> URL? {
+        guard candidateAuthorityIsReady(operation: "export_json") else { return nil }
         errorMessage = nil
         do {
             let url = try exporter.export(
@@ -1573,6 +1627,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func launchScan(forceFullAnalysis: Bool) async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "launch_scan")
+            return
+        }
         scanGeneration += 1
         let generation = scanGeneration
 
@@ -2134,6 +2192,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func saveSnapshot(reportErrors: Bool) async {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: "save_snapshot")
+            return
+        }
         guard let store else {
             if reportErrors,
                let storeInitializationError {
@@ -2152,6 +2214,25 @@ final class AppViewModel: ObservableObject {
     private func setError(_ error: Error) {
         errorMessage = error.localizedDescription
         Self.logError(error, category: "error", operation: "present_to_user")
+    }
+
+    private func logCandidateAuthorityUnavailable(operation: String) {
+        SharedLog.app.warning(
+            "cat-identity",
+            "Candidate-authority operation skipped until identity state is ready",
+            metadata: [
+                "operation": operation,
+                "state": catIdentityLoadState == .failed ? "failed" : "loading"
+            ]
+        )
+    }
+
+    private func candidateAuthorityIsReady(operation: String) -> Bool {
+        guard catIdentityLoadState == .ready else {
+            logCandidateAuthorityUnavailable(operation: operation)
+            return false
+        }
+        return true
     }
 
     private static func logError(
