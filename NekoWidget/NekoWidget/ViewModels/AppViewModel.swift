@@ -1630,6 +1630,7 @@ final class AppViewModel: ObservableObject {
     private func refreshCandidateOutputsAfterCurationChange(
         reportErrors: Bool = true
     ) async {
+        logBoundingBoxAspectDistribution(trigger: "candidate-output-refresh")
         // PhotoAlbumService is an actor. Always enqueue this generation behind
         // any in-flight stale membership update; a time-bounded status poll can
         // otherwise return without ever removing an excluded photo.
@@ -1709,6 +1710,7 @@ final class AppViewModel: ObservableObject {
             applySnapshot(final)
             chooseCurrentAssetIfNeeded()
             await saveSnapshot(reportErrors: true)
+            logBoundingBoxAspectDistribution(trigger: "scan-final")
             SharedLog.app.info(
                 "scan",
                 "Final scan result applied",
@@ -1877,6 +1879,21 @@ final class AppViewModel: ObservableObject {
         settings = merged.settings.normalized()
         reconcileCandidatePostureState()
         refreshCurrentAsset()
+    }
+
+    /// Reads only cached detector rectangles from the already-filtered
+    /// candidate snapshot. No PhotoKit image request or Vision request occurs.
+    private func logBoundingBoxAspectDistribution(trigger: String) {
+        let distribution = CatBoundingBoxAspectDistribution(
+            records: candidateSnapshot(snapshot).assets
+        )
+        var metadata = distribution.logMetadata
+        metadata["trigger"] = trigger
+        SharedLog.app.info(
+            "album",
+            "Cat bounding-box aspect distribution measured",
+            metadata: metadata
+        )
     }
 
     private func mergeAnalyzedRecords(_ records: [AssetRecord]) {

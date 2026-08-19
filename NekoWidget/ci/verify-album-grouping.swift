@@ -509,6 +509,114 @@ private func verifyPrimaryDetectionReuseGuard() throws {
     )
 }
 
+private func verifyBoundingBoxAspectDistribution() throws {
+    func record(
+        _ id: String,
+        boxes: [NormalizedRect],
+        catCount: Int? = nil,
+        primaryBox: NormalizedRect? = nil
+    ) -> AssetRecord {
+        AssetRecord(
+            localIdentifier: id,
+            creationDate: nil,
+            isFavorite: false,
+            isScreenshot: false,
+            burstIdentifier: nil,
+            cat: CatDetection(
+                detected: true,
+                confidence: 0.9,
+                boundingBox: primaryBox ?? boxes.first,
+                areaRatio: 0.2,
+                catCount: catCount ?? max(1, boxes.count)
+            ),
+            analysisStatus: .detected,
+            analysisFingerprint: AppSettings.default.analysisFingerprint,
+            albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
+            albumTraits: CatAlbumTraits(
+                postures: [],
+                postureInstances: boxes.map {
+                    CatPostureInstanceOutcome(
+                        boundingBox: $0,
+                        poseMatched: false,
+                        ruleQualityPassed: false,
+                        geometryPassed: false,
+                        postures: []
+                    )
+                },
+                containsPerson: false,
+                isOuting: false,
+                largestCatAreaRatio: 0.2
+            )
+        )
+    }
+
+    let records = [
+        record("below-0.9", boxes: [NormalizedRect(x: 0, y: 0, width: 0.445, height: 0.5)]),
+        record("at-0.9", boxes: [NormalizedRect(x: 0, y: 0, width: 0.45, height: 0.5)]),
+        record("at-1.1", boxes: [NormalizedRect(x: 0, y: 0, width: 0.55, height: 0.5)]),
+        record("above-1.1", boxes: [NormalizedRect(x: 0, y: 0, width: 0.555, height: 0.5)]),
+        record("below-2", boxes: [NormalizedRect(x: 0, y: 0, width: 0.995, height: 0.5)]),
+        record("at-2", boxes: [NormalizedRect(x: 0, y: 0, width: 1, height: 0.5)]),
+        record(
+            "multi",
+            boxes: [
+                NormalizedRect(x: 0, y: 0, width: 0.1, height: 0.2),
+                NormalizedRect(x: 0.5, y: 0, width: 0.5, height: 0.2)
+            ],
+            primaryBox: NormalizedRect(x: 0, y: 0, width: 0.75, height: 0.1)
+        ),
+        record(
+            "missing-multi",
+            boxes: [],
+            catCount: 2,
+            primaryBox: NormalizedRect(x: 0, y: 0, width: 0.75, height: 0.1)
+        ),
+        record(
+            "legacy-single",
+            boxes: [],
+            catCount: 1,
+            primaryBox: NormalizedRect(x: 0, y: 0, width: 0.1, height: 0.1)
+        )
+    ]
+    let distribution = CatBoundingBoxAspectDistribution(records: records)
+    try require(distribution.targetCatAssets == 9, "bbox target asset count changed")
+    try require(distribution.assetsWithValidBoxes == 8, "bbox valid asset count changed")
+    try require(
+        distribution.targetCatAssets
+            == distribution.assetsWithValidBoxes + distribution.missingBoxAssets,
+        "bbox asset accounting no longer partitions the target"
+    )
+    try require(distribution.missingBoxAssets == 1, "multi-cat union was used as a fallback")
+    try require(distribution.validInstances == 9, "bbox instance count changed")
+    try require(distribution.sittingInstances == 2, "sitting boundary changed")
+    try require(distribution.curledInstances == 3, "curled boundaries changed")
+    try require(distribution.unclassifiedInstances == 2, "unclassified interval changed")
+    try require(distribution.sleepingInstances == 2, "sleeping boundary changed")
+    try require(
+        distribution.validInstances
+            == distribution.sittingInstances
+                + distribution.curledInstances
+                + distribution.unclassifiedInstances
+                + distribution.sleepingInstances,
+        "bbox instance buckets no longer partition valid instances"
+    )
+    try require(distribution.classifiedAssets == 6, "classified photo count changed")
+    try require(distribution.fullyUnclassifiedAssets == 2,
+                "fully unclassified photo count changed")
+    try require(
+        distribution.assetsWithValidBoxes
+            == distribution.classifiedAssets + distribution.fullyUnclassifiedAssets,
+        "classified/unclassified photos no longer partition valid photos"
+    )
+    try require(distribution.singleCatFallbackAssets == 1,
+                "single-cat fallback count changed")
+    try require(distribution.multiBucketAssets == 1, "multi-cat overlap was not reported")
+    try require(distribution.sittingAssets == 2 && distribution.sleepingAssets == 2,
+                "photo-level bbox membership changed")
+    try require(distribution.logMetadata.values.allSatisfy { !$0.contains("/") },
+                "bbox diagnostics unexpectedly contain an identifier-like value")
+}
+
 private func requireObject(_ value: Any) throws -> [String: Any] {
     guard let object = value as? [String: Any] else {
         throw VerificationError.failed("encoded snapshot was not a JSON object")
@@ -527,6 +635,7 @@ private struct AlbumGroupingVerifier {
         try verifyBuild12TraitDecode()
         try verifyPostureSummary()
         try verifyPrimaryDetectionReuseGuard()
+        try verifyBoundingBoxAspectDistribution()
         print("Curated grouped albums: PASS")
     }
 }

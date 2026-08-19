@@ -160,6 +160,132 @@ struct CatDetection: Codable, Equatable, Sendable {
     )
 }
 
+/// Measurement-only grouping of the detector's existing per-cat boxes. This
+/// does not run Vision or change album membership; it lets us review the real
+/// width/height distribution before adopting a bounding-box album policy.
+enum CatBoundingBoxAspectBucket: String, CaseIterable, Hashable, Sendable {
+    case sleeping
+    case curled
+    case sitting
+    case unclassified
+
+    static func bucket(for boundingBox: NormalizedRect) -> Self? {
+        guard boundingBox.width.isFinite,
+              boundingBox.height.isFinite,
+              boundingBox.width > 0,
+              boundingBox.height > 0 else { return nil }
+        let ratio = boundingBox.width / boundingBox.height
+        guard ratio.isFinite else { return nil }
+        if ratio < 0.9 { return .sitting }
+        if ratio <= 1.1 { return .curled }
+        if ratio < 2.0 { return .unclassified }
+        return .sleeping
+    }
+}
+
+/// Count-only diagnostics. Asset totals describe the photos an album would
+/// contain; instance totals describe individual detected cats. A multi-cat
+/// photo can belong to more than one asset bucket, so asset bucket totals need
+/// not add up to `targetCatAssets`.
+struct CatBoundingBoxAspectDistribution: Equatable, Sendable {
+    var targetCatAssets = 0
+    var assetsWithValidBoxes = 0
+    var sleepingAssets = 0
+    var curledAssets = 0
+    var sittingAssets = 0
+    var unclassifiedAssets = 0
+    var classifiedAssets = 0
+    var fullyUnclassifiedAssets = 0
+    var multiBucketAssets = 0
+    var missingBoxAssets = 0
+    var singleCatFallbackAssets = 0
+    var validInstances = 0
+    var invalidInstances = 0
+    var sleepingInstances = 0
+    var curledInstances = 0
+    var sittingInstances = 0
+    var unclassifiedInstances = 0
+
+    init(records: [AssetRecord]) {
+        for record in records where record.isCatCandidate {
+            targetCatAssets += 1
+            let storedInstances = record.albumTraits?.postureInstances ?? []
+            var boxes = storedInstances.compactMap { outcome -> NormalizedRect? in
+                guard CatBoundingBoxAspectBucket.bucket(for: outcome.boundingBox) != nil else {
+                    invalidInstances += 1
+                    return nil
+                }
+                return outcome.boundingBox
+            }
+
+            // The primary detector box is a union for multi-cat photos and is
+            // therefore never a valid fallback there. It is safe for a single
+            // cat and keeps legacy/current partial records measurable.
+            if boxes.isEmpty,
+               record.cat.catCount <= 1,
+               let boundingBox = record.cat.boundingBox,
+               CatBoundingBoxAspectBucket.bucket(for: boundingBox) != nil {
+                boxes = [boundingBox]
+                singleCatFallbackAssets += 1
+            }
+
+            guard !boxes.isEmpty else {
+                missingBoxAssets += 1
+                continue
+            }
+            assetsWithValidBoxes += 1
+            validInstances += boxes.count
+            let buckets = boxes.compactMap {
+                CatBoundingBoxAspectBucket.bucket(for: $0)
+            }
+            sleepingInstances += buckets.lazy.filter { $0 == .sleeping }.count
+            curledInstances += buckets.lazy.filter { $0 == .curled }.count
+            sittingInstances += buckets.lazy.filter { $0 == .sitting }.count
+            unclassifiedInstances += buckets.lazy.filter { $0 == .unclassified }.count
+
+            let assetBuckets = Set(buckets)
+            if assetBuckets.contains(.sleeping) { sleepingAssets += 1 }
+            if assetBuckets.contains(.curled) { curledAssets += 1 }
+            if assetBuckets.contains(.sitting) { sittingAssets += 1 }
+            if assetBuckets.contains(.unclassified) { unclassifiedAssets += 1 }
+            let classifiedBuckets: Set<CatBoundingBoxAspectBucket> = [
+                .sleeping,
+                .curled,
+                .sitting
+            ]
+            if !assetBuckets.isDisjoint(with: classifiedBuckets) {
+                classifiedAssets += 1
+            } else if assetBuckets == [.unclassified] {
+                fullyUnclassifiedAssets += 1
+            }
+            if assetBuckets.count > 1 { multiBucketAssets += 1 }
+        }
+    }
+
+    var logMetadata: [String: String] {
+        [
+            "bboxAspectPolicy": "width-height-v1",
+            "bboxAspectTargetAssets": "\(targetCatAssets)",
+            "bboxAspectAssetsWithValidBoxes": "\(assetsWithValidBoxes)",
+            "bboxAspectSleepingAssets": "\(sleepingAssets)",
+            "bboxAspectCurledAssets": "\(curledAssets)",
+            "bboxAspectSittingAssets": "\(sittingAssets)",
+            "bboxAspectUnclassifiedAssets": "\(unclassifiedAssets)",
+            "bboxAspectClassifiedAssets": "\(classifiedAssets)",
+            "bboxAspectFullyUnclassifiedAssets": "\(fullyUnclassifiedAssets)",
+            "bboxAspectMultiBucketAssets": "\(multiBucketAssets)",
+            "bboxAspectMissingBoxAssets": "\(missingBoxAssets)",
+            "bboxAspectSingleCatFallbackAssets": "\(singleCatFallbackAssets)",
+            "bboxAspectValidInstances": "\(validInstances)",
+            "bboxAspectInvalidInstances": "\(invalidInstances)",
+            "bboxAspectSleepingInstances": "\(sleepingInstances)",
+            "bboxAspectCurledInstances": "\(curledInstances)",
+            "bboxAspectSittingInstances": "\(sittingInstances)",
+            "bboxAspectUnclassifiedInstances": "\(unclassifiedInstances)"
+        ]
+    }
+}
+
 private func normalizedPostureRect(_ value: NormalizedRect) -> NormalizedRect {
     guard value.x.isFinite,
           value.y.isFinite,
