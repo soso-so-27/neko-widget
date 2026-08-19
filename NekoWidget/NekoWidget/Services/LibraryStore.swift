@@ -36,6 +36,29 @@ actor LibraryStore {
         try AtomicJSON.write(value, to: snapshotURL)
     }
 
+    /// Recovers only the opaque PhotoKit collection identifier when the full
+    /// snapshot cannot be decoded. This lets startup fail closed without
+    /// trusting settings, assets, or migration state from a damaged/newer
+    /// payload. AtomicJSON guarantees ordinary writes are complete JSON; this
+    /// fallback primarily covers a type/schema decode failure.
+    func recoverAlbumLocalIdentifier() throws -> String? {
+        guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
+            return nil
+        }
+        let object = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: snapshotURL),
+            options: []
+        )
+        guard let dictionary = object as? [String: Any],
+              let identifier = dictionary["albumLocalIdentifier"] as? String,
+              !identifier.isEmpty,
+              identifier.utf8.count <= 1_024,
+              !identifier.contains("\0") else {
+            return nil
+        }
+        return identifier
+    }
+
     /// Build 11 has valid cat detections and Widget output but no grouped-album
     /// traits. Preserve that detector fingerprint and its visible photos while
     /// marking only the missing secondary analysis for a resumable library pass.

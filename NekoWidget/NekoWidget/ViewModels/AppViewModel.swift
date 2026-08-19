@@ -63,7 +63,7 @@ final class AppViewModel: ObservableObject {
     var oldestCatPhotoDate: Date? { catAssets.compactMap(\.creationDate).min() }
     var postureSecondaryPendingAssets: Int {
         guard canPresentCatIdentity else { return 0 }
-        PostureScanSummary(records: candidateSnapshot(snapshot).assets)
+        return PostureScanSummary(records: candidateSnapshot(snapshot).assets)
             .secondaryPendingAssets
     }
     var progress: Double { scanState.progress }
@@ -215,6 +215,9 @@ final class AppViewModel: ObservableObject {
             if let store,
                let loaded = try? await store.load() {
                 snapshot.albumLocalIdentifier = loaded.albumLocalIdentifier
+            } else if let store,
+                      let recovered = try? await store.recoverAlbumLocalIdentifier() {
+                snapshot.albumLocalIdentifier = recovered
             }
             catIdentityLoadState = .failed
             currentAsset = nil
@@ -245,9 +248,23 @@ final class AppViewModel: ObservableObject {
                 )
             } catch {
                 setError(error)
+                snapshot.albumLocalIdentifier = try? await store
+                    .recoverAlbumLocalIdentifier()
+                catIdentityLoadState = .failed
+                currentAsset = nil
+                hasFinishedSnapshotLoad = true
+                discardPendingDeepLink(reason: "snapshot-state-unavailable")
+                await clearAlbumAndWidgetOutputs(reportErrors: false)
+                return
             }
         } else if let storeInitializationError {
             errorMessage = storeInitializationError
+            catIdentityLoadState = .failed
+            currentAsset = nil
+            hasFinishedSnapshotLoad = true
+            discardPendingDeepLink(reason: "snapshot-store-unavailable")
+            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            return
         }
         guard await loadCatHouseholdIdentity() else {
             catIdentityLoadState = .failed
