@@ -19,6 +19,8 @@ struct SettingsView: View {
     let selectPhotoSourceAlbum: (String?) async -> Void
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
+    let catProfilesPresentation: CatProfilesPresentation
+    let catProfilesActions: CatProfilesViewActions
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
@@ -46,7 +48,9 @@ struct SettingsView: View {
         restoreCatCandidates: @escaping ([String]) async -> Void,
         selectPhotoSourceAlbum: @escaping (String?) async -> Void,
         refreshPhotoSourceAlbums: @escaping () async -> Void,
-        exportJSON: @escaping () async -> URL?
+        exportJSON: @escaping () async -> URL?,
+        catProfilesPresentation: CatProfilesPresentation,
+        catProfilesActions: CatProfilesViewActions
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
@@ -65,6 +69,8 @@ struct SettingsView: View {
         self.selectPhotoSourceAlbum = selectPhotoSourceAlbum
         self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.exportJSON = exportJSON
+        self.catProfilesPresentation = catProfilesPresentation
+        self.catProfilesActions = catProfilesActions
         _draft = State(initialValue: settings)
     }
 
@@ -84,31 +90,51 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("年齢の基準", selection: lifeReferenceKind) {
-                    Text("設定しない").tag(nil as CatLifeReferenceKind?)
-                    ForEach(CatLifeReferenceKind.allCases) { kind in
-                        Text(lifeReferenceKindTitle(kind)).tag(Optional(kind))
-                    }
-                }
-
-                if let kind = draft.catLifeReference?.kind {
-                    DatePicker(
-                        lifeReferenceKindTitle(kind),
-                        selection: lifeReferenceDate,
-                        in: ...Date.now,
-                        displayedComponents: .date
+                NavigationLink {
+                    CatProfilesView(
+                        presentation: catProfilesPresentation,
+                        actions: catProfilesActions
                     )
-
-                    Button("日付を削除", role: .destructive) {
-                        draft.catLifeReference = nil
-                    }
+                } label: {
+                    LabeledContent(
+                        "うちの子",
+                        value: catProfilesPresentation.profiles.isEmpty
+                            ? "みんな"
+                            : "\(catProfilesPresentation.profiles.count.formatted())匹"
+                    )
                 }
-            } header: {
-                Text("うちの子の時間")
             } footer: {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("入力すると「1歳のころ」のように分かれます。誕生日が不明なら、推定の日付や迎えた日でかまいません。未入力なら撮影年ごとに表示します。")
-                    Text(isSavingLifeReference ? "自動保存中…" : "変更は自動で保存され、日付は端末内だけで使います。")
+                Text("プロフィールは任意です。多頭の場合だけ、猫ごとの誕生日・迎えた日・写真の所属を設定できます。未判定の写真も「みんな」には残ります。")
+            }
+
+            if catProfilesPresentation.profiles.isEmpty {
+                Section {
+                    Picker("年齢の基準", selection: lifeReferenceKind) {
+                        Text("設定しない").tag(nil as CatLifeReferenceKind?)
+                        ForEach(CatLifeReferenceKind.allCases) { kind in
+                            Text(lifeReferenceKindTitle(kind)).tag(Optional(kind))
+                        }
+                    }
+
+                    if let kind = draft.catLifeReference?.kind {
+                        DatePicker(
+                            lifeReferenceKindTitle(kind),
+                            selection: lifeReferenceDate,
+                            in: ...Date.now,
+                            displayedComponents: .date
+                        )
+
+                        Button("日付を削除", role: .destructive) {
+                            draft.catLifeReference = nil
+                        }
+                    }
+                } header: {
+                    Text("うちの子の時間")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("入力すると「1歳のころ」のように分かれます。誕生日が不明なら、推定の日付や迎えた日でかまいません。未入力なら撮影年ごとに表示します。")
+                        Text(isSavingLifeReference ? "自動保存中…" : "変更は自動で保存され、日付は端末内だけで使います。")
+                    }
                 }
             }
 
@@ -140,7 +166,7 @@ struct SettingsView: View {
                     )
                 }
             } footer: {
-                Text("「この子じゃない」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
+                Text("「うちの子ではない」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
             }
 
             Section {

@@ -106,6 +106,9 @@ struct AppRootView: View {
                 excludedCatPhotos: excludedCatPhotoPresentations,
                 photoSourceAlbums: viewModel.photoSourceAlbums,
                 photoSourceStatus: viewModel.photoSourceStatus,
+                catProfilesPresentation: catProfilesPresentation,
+                profileAlbumPhotos: profileAlbumPhotos,
+                catProfilesActions: catProfilesActions,
                 isLimitedAccess: viewModel.isLimitedAccess,
                 isScanning: viewModel.isScanning,
                 widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
@@ -220,6 +223,319 @@ struct AppRootView: View {
                 creationDate: assetsByIdentifier[exclusion.localIdentifier]?.creationDate,
                 excludedAt: exclusion.excludedAt
             )
+        }
+    }
+
+    private var profileAlbumPhotos: [String: [PhotoPresentation]] {
+        guard let identity = viewModel.catHouseholdIdentity else { return [:] }
+        let assetsByIdentifier = Dictionary(
+            uniqueKeysWithValues: viewModel.catAssets.map { ($0.localIdentifier, $0) }
+        )
+        var result: [String: [PhotoPresentation]] = [:]
+        for profile in identity.profiles {
+            let memberships = identity.memberships.filter {
+                $0.profileID == profile.id && $0.decision == .included
+            }
+            result[profile.id.uuidString] = memberships.compactMap { membership in
+                guard let asset = assetsByIdentifier[membership.assetLocalIdentifier] else {
+                    return nil
+                }
+                return profilePhotoPresentation(asset, membership: membership)
+            }.sorted(by: Self.newestPhotoFirst)
+        }
+        return result
+    }
+
+    private var catProfilesPresentation: CatProfilesPresentation {
+        guard let identity = viewModel.catHouseholdIdentity else {
+            return CatProfilesPresentation(
+                postureDiagnostics: postureDiagnosticsPresentation
+            )
+        }
+        let assets = viewModel.catAssets
+        let assetsByIdentifier = Dictionary(
+            uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0) }
+        )
+        let includedByAsset = Dictionary(grouping: identity.memberships.filter {
+            $0.decision == .included
+        }, by: \.assetLocalIdentifier).mapValues { memberships in
+            Set(memberships.map { $0.profileID.uuidString })
+        }
+        let profiles = identity.profiles.map { profile -> CatProfilePresentation in
+            let memberships = identity.memberships.filter {
+                $0.profileID == profile.id && $0.decision == .included
+            }
+            let confirmed = memberships.compactMap { membership -> CatProfilePhotoPresentation? in
+                guard let asset = assetsByIdentifier[membership.assetLocalIdentifier] else {
+                    return nil
+                }
+                return catProfilePhotoPresentation(
+                    asset,
+                    membership: membership,
+                    assignedProfileIdentifiers: includedByAsset[asset.localIdentifier] ?? []
+                )
+            }.sorted(by: Self.newestProfilePhotoFirst)
+            let lifeReference = profile.lifeReference.flatMap { reference in
+                reference.date.date().map {
+                    CatProfileLifeReferencePresentation(
+                        kind: reference.kind == .birthday ? .birthday : .adoptionDay,
+                        date: $0,
+                        isApproximate: profile.lifeReferenceIsApproximate
+                    )
+                }
+            }
+            return CatProfilePresentation(
+                identifier: profile.id.uuidString,
+                name: profile.displayName,
+                coverPhoto: confirmed.first,
+                confirmedPhotos: confirmed,
+                lifeReference: lifeReference
+            )
+        }
+
+        let assignedIdentifiers = Set(identity.memberships.lazy.filter {
+            $0.decision == .included
+        }.map(\.assetLocalIdentifier))
+        let unassigned = assets.filter {
+            !assignedIdentifiers.contains($0.localIdentifier)
+        }.map { asset in
+            CatProfilePhotoPresentation(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                catBoundingBox: asset.cat.boundingBox?.cgRect,
+                assignedProfileIdentifiers: [],
+                detectedCatCount: asset.cat.catCount
+            )
+        }.sorted(by: Self.newestProfilePhotoFirst)
+
+        let allAssetsByIdentifier = Dictionary(
+            uniqueKeysWithValues: viewModel.snapshot.assets.map {
+                ($0.localIdentifier, $0)
+            }
+        )
+        let legacyExcludedIdentifiers = Set(
+            identity.legacyUnscoped?.legacyExcludedAssetIdentifiers ?? []
+        )
+        let legacyExcluded = viewModel.excludedCatAssets.compactMap {
+            guard legacyExcludedIdentifiers.contains($0.localIdentifier) else {
+                return nil
+            }
+            return LegacyExcludedCatPhotoPresentation(
+                localIdentifier: $0.localIdentifier,
+                creationDate: allAssetsByIdentifier[$0.localIdentifier]?.creationDate
+            )
+        }
+        let legacyLifeReference: CatProfileLifeReferencePresentation?
+        if identity.profiles.isEmpty,
+           let reference = viewModel.settings.catLifeReference,
+           let date = reference.date.date() {
+            legacyLifeReference = CatProfileLifeReferencePresentation(
+                kind: reference.kind == .birthday ? .birthday : .adoptionDay,
+                date: date,
+                isApproximate: false
+            )
+        } else {
+            legacyLifeReference = nil
+        }
+        return CatProfilesPresentation(
+            profiles: profiles,
+            unassignedPhotos: unassigned,
+            legacyExcludedPhotos: legacyExcluded,
+            legacyLifeReference: legacyLifeReference,
+            postureDiagnostics: postureDiagnosticsPresentation
+        )
+    }
+
+    private var postureDiagnosticsPresentation: CatPostureDiagnosticsPresentation {
+        let summary = PostureScanSummary(records: viewModel.visibleLibraryAssets)
+        return CatPostureDiagnosticsPresentation(
+            targetPhotoCount: summary.targetCatAssets,
+            rawPoseObservedPhotoCount: summary.poseObservationAssets,
+            matchedPosePhotoCount: summary.matchedSkeletonAssets,
+            qualityPassedPhotoCount: summary.ruleQualityPassedAssets,
+            geometryPassedPhotoCount: summary.geometryPassedAssets,
+            classifiedPhotoCount: summary.classifiedAnyAssets,
+            unclassifiedPhotoCount: summary.unclassifiedAssets,
+            pendingPhotoCount: summary.secondaryPendingAssets,
+            sleepingPhotoCount: summary.sleepingAssets,
+            bellyUpPhotoCount: summary.bellyUpAssets,
+            loafPhotoCount: summary.loafAssets
+        )
+    }
+
+    private var catProfilesActions: CatProfilesViewActions {
+        CatProfilesViewActions(
+            createProfile: { draft in
+                let reference = Self.lifeReference(from: draft.lifeReference)
+                await viewModel.createCatProfile(
+                    displayName: draft.name,
+                    lifeReference: reference,
+                    lifeReferenceIsApproximate: draft.lifeReference?.isApproximate == true,
+                    referenceAssetIdentifier: draft.referencePhotoIdentifier
+                )
+            },
+            updateName: { identifier, name in
+                guard let profileID = UUID(uuidString: identifier) else { return }
+                await viewModel.updateCatProfileName(
+                    profileID: profileID,
+                    displayName: name
+                )
+            },
+            updateLifeReference: { identifier, reference in
+                guard let profileID = UUID(uuidString: identifier) else { return }
+                await viewModel.updateCatProfileLifeReference(
+                    profileID: profileID,
+                    reference: Self.lifeReference(from: reference),
+                    isApproximate: reference?.isApproximate == true
+                )
+            },
+            confirmProfileMembership: { identifier, photoIdentifiers in
+                guard let profileID = UUID(uuidString: identifier) else { return }
+                await viewModel.setCatProfileMembership(
+                    profileID: profileID,
+                    localIdentifiers: photoIdentifiers,
+                    decision: .included
+                )
+            },
+            removeProfileMembership: { identifier, photoIdentifiers in
+                guard let profileID = UUID(uuidString: identifier) else { return }
+                await viewModel.setCatProfileMembership(
+                    profileID: profileID,
+                    localIdentifiers: photoIdentifiers,
+                    decision: .excluded
+                )
+            },
+            replacePhotoAssignments: { input in
+                let converted = input.mapValues { identifiers in
+                    Set(identifiers.compactMap(UUID.init(uuidString:)))
+                }
+                await viewModel.replaceCatProfileAssignments(
+                    profileIDsByLocalIdentifier: converted
+                )
+            },
+            excludeFromHousehold: { identifiers in
+                await viewModel.excludeFromCatCandidates(localIdentifiers: identifiers)
+            },
+            restoreLegacyExclusions: { identifiers in
+                await viewModel.restoreCatCandidates(localIdentifiers: identifiers)
+            },
+            deleteProfile: { identifier in
+                guard let profileID = UUID(uuidString: identifier) else { return }
+                await viewModel.deleteCatProfile(profileID: profileID)
+            },
+            retryPostureClassification: {
+                if viewModel.postureSecondaryPendingAssets > 0 {
+                    await viewModel.retryPendingPostureClassification()
+                } else {
+                    await viewModel.rerunPostureClassification()
+                }
+            }
+        )
+    }
+
+    private func profilePhotoPresentation(
+        _ asset: AssetRecord,
+        membership: CatAssetProfileMembership
+    ) -> PhotoPresentation {
+        let traits = asset.albumTraits
+        let instances = traits?.postureInstances ?? []
+        let selectedInstance: CatPostureInstanceOutcome?
+        if let subject = membership.subjectBoundingBox {
+            let candidate = instances.max {
+                Self.intersectionOverUnion($0.boundingBox, subject)
+                    < Self.intersectionOverUnion($1.boundingBox, subject)
+            }
+            if let candidate,
+               Self.intersectionOverUnion(candidate.boundingBox, subject) >= 0.35 {
+                selectedInstance = candidate
+            } else {
+                selectedInstance = nil
+            }
+        } else if instances.count == 1 {
+            selectedInstance = instances[0]
+        } else {
+            selectedInstance = nil
+        }
+        let displayBox = membership.subjectBoundingBox
+            ?? selectedInstance?.boundingBox
+            ?? asset.cat.boundingBox
+        let growthBox = membership.subjectBoundingBox
+            ?? selectedInstance?.boundingBox
+            ?? (asset.cat.catCount <= 1 ? asset.cat.boundingBox : nil)
+        return PhotoPresentation(
+            localIdentifier: asset.localIdentifier,
+            creationDate: asset.creationDate,
+            catBoundingBox: displayBox?.cgRect,
+            isLiked: asset.liked,
+            likedAt: asset.likedAt,
+            albumPostures: Set(selectedInstance?.postures ?? []),
+            albumContainsPerson: traits?.containsPerson,
+            albumIsOuting: traits?.isOuting,
+            largestCatAreaRatio: growthBox?.area,
+            isGrowthEligible: growthBox != nil,
+            hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
+                == CatAlbumTraits.currentAnalysisVersion
+                && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion
+        )
+    }
+
+    private func catProfilePhotoPresentation(
+        _ asset: AssetRecord,
+        membership: CatAssetProfileMembership,
+        assignedProfileIdentifiers: Set<String>
+    ) -> CatProfilePhotoPresentation {
+        CatProfilePhotoPresentation(
+            localIdentifier: asset.localIdentifier,
+            creationDate: asset.creationDate,
+            catBoundingBox: (membership.subjectBoundingBox ?? asset.cat.boundingBox)?.cgRect,
+            assignedProfileIdentifiers: assignedProfileIdentifiers,
+            detectedCatCount: asset.cat.catCount
+        )
+    }
+
+    private static func lifeReference(
+        from presentation: CatProfileLifeReferencePresentation?
+    ) -> CatLifeReference? {
+        guard let presentation,
+              let date = CatLifeDate(date: presentation.date) else { return nil }
+        return CatLifeReference(
+            kind: presentation.kind == .birthday ? .birthday : .adoptionDay,
+            date: date
+        )
+    }
+
+    private static func intersectionOverUnion(
+        _ lhs: NormalizedRect,
+        _ rhs: NormalizedRect
+    ) -> Double {
+        let intersection = lhs.cgRect.intersection(rhs.cgRect)
+        guard !intersection.isNull else { return 0 }
+        let intersectionArea = Double(intersection.width * intersection.height)
+        let union = lhs.area + rhs.area - intersectionArea
+        return union > 0 ? intersectionArea / union : 0
+    }
+
+    private static func newestPhotoFirst(
+        _ lhs: PhotoPresentation,
+        _ rhs: PhotoPresentation
+    ) -> Bool {
+        switch (lhs.creationDate, rhs.creationDate) {
+        case let (left?, right?) where left != right: return left > right
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return lhs.localIdentifier < rhs.localIdentifier
+        }
+    }
+
+    private static func newestProfilePhotoFirst(
+        _ lhs: CatProfilePhotoPresentation,
+        _ rhs: CatProfilePhotoPresentation
+    ) -> Bool {
+        switch (lhs.creationDate, rhs.creationDate) {
+        case let (left?, right?) where left != right: return left > right
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return lhs.localIdentifier < rhs.localIdentifier
         }
     }
 

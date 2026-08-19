@@ -4,18 +4,21 @@ import Foundation
 /// birthday/adoption day is known; otherwise the calendar year is retained.
 enum GrowthAlbumPeriod: Hashable {
     case age(Int)
+    case yearsTogether(Int)
     case calendarYear(Int)
 
     var label: String {
         switch self {
         case let .age(years): "\(years)歳"
+        case let .yearsTogether(years):
+            years == 0 ? "お迎えしたころ" : "いっしょに暮らして\(years)年"
         case let .calendarYear(year): "\(year)年"
         }
     }
 
     fileprivate var chronologicalValue: Int {
         switch self {
-        case let .age(years): years
+        case let .age(years), let .yearsTogether(years): years
         case let .calendarYear(year): year
         }
     }
@@ -46,7 +49,7 @@ struct GrowthAlbumSelector {
         from inputPhotos: [PhotoPresentation],
         lifeReference: CatLifeReference?
     ) -> [GrowthAlbumItem] {
-        let photos = uniquePhotos(inputPhotos)
+        let photos = uniquePhotos(inputPhotos).filter(\.isGrowthEligible)
         let candidates: [(period: GrowthAlbumPeriod, photo: PhotoPresentation, anniversary: Date?)]
 
         if let referenceDate = lifeReference?.date.date(in: calendar),
@@ -61,8 +64,11 @@ struct GrowthAlbumSelector {
                           to: capturedDay
                       ).year,
                       age >= 0 else { return nil }
+                let period: GrowthAlbumPeriod = lifeReference?.kind == .adoptionDay
+                    ? .yearsTogether(age)
+                    : .age(age)
                 return (
-                    .age(age),
+                    period,
                     photo,
                     calendar.date(byAdding: .year, value: age, to: referenceDay)
                 )

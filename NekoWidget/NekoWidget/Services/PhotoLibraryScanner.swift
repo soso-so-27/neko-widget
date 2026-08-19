@@ -334,9 +334,11 @@ actor PhotoLibraryScanner {
         final.settings = settings
         final.updatedAt = .now
         var completionMetadata = [
+            "postureAnalysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
             "cats": "\(final.scanState.catAssets)",
             "deferred": "\(final.scanState.deferredAssets)",
             "postureScope": "active-source-before-user-curation",
+            "scanPurpose": scanPurpose.rawValue,
             "total": "\(final.scanState.totalAssets)"
         ]
         completionMetadata.merge(
@@ -601,6 +603,16 @@ actor PhotoLibraryScanner {
     ) -> ScanState {
         let finished = records.compactMap { $0 }
         let cats = finished.filter(\.isCatCandidate)
+        let postureSummary = PostureScanSummary(records: finished)
+        let resultingPurpose: ScanPurpose?
+        if resultKind == .final {
+            resultingPurpose = !requiresFullRescan
+                && postureSummary.secondaryPendingAssets > 0
+                ? .postureRepair
+                : nil
+        } else {
+            resultingPurpose = purpose
+        }
         return ScanState(
             phase: phase,
             resultKind: resultKind,
@@ -618,15 +630,15 @@ actor PhotoLibraryScanner {
                             || record.albumTraits?.analysisVersion
                                 != CatAlbumTraits.currentAnalysisVersion))
             }.count,
-            postureSummary: PostureScanSummary(records: finished),
+            postureSummary: postureSummary,
             // Completing one full pass clears the migration banner even when
             // an iCloud-only known cat could not receive secondary traits.
             // Its nil album version is still retried by the normal reuse path.
             requiresFullRescan: requiresFullRescan,
-            // Keep a lightweight repair purpose through provisional/cancelled
-            // checkpoints so foreground activation can resume it. A final
-            // result clears every scan purpose.
-            purpose: resultKind == .final ? nil : purpose,
+            // Keep a lightweight repair purpose through checkpoints and after
+            // a final pass that still has secondary failures. This preserves
+            // the retry/UI state without turning it into a primary rescan.
+            purpose: resultingPurpose,
             lastError: nil
         )
     }
@@ -1044,7 +1056,7 @@ actor PhotoLibraryScanner {
         try handler.perform([poseRequest, faceRequest])
 
         let poseObservations = poseRequest.results ?? []
-        let postureTags = AnimalPostureClassifier.tags(
+        let posture = AnimalPostureClassifier.classify(
             from: poseObservations,
             matching: catBoundingBoxes
         )
@@ -1056,8 +1068,12 @@ actor PhotoLibraryScanner {
             Double($0.width * $0.height)
         }.max() ?? 0
         return CatAlbumTraits(
-            postures: Array(postureTags),
-            poseObservationCount: poseObservations.count,
+            // The initializer derives the photo-level union from the ordered
+            // per-cat outcomes. The explicit value is legacy fallback only.
+            postures: Array(posture.photoTags),
+            poseObservationCount: posture.diagnostics.rawObservationCount,
+            postureDiagnostics: posture.diagnostics,
+            postureInstances: posture.instances,
             containsPerson: containsPerson,
             isOuting: isOuting,
             largestCatAreaRatio: largestCatAreaRatio

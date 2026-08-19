@@ -270,13 +270,50 @@ private func verifyPostureSummary() throws {
     }
 
     let current = CatAlbumTraits.currentAnalysisVersion
+    try require(current == 3, "posture analysis version was not advanced to v3")
     let records = [
         catRecord(
             "classified",
             albumVersion: current,
             traits: CatAlbumTraits(
-                postures: [.sleeping, .curled],
+                // Per-instance outcomes are authoritative in v3; this legacy
+                // photo-level value must be ignored and re-derived.
+                postures: [.loaf],
                 poseObservationCount: 2,
+                postureDiagnostics: PosturePipelineDiagnostics(
+                    rawObservationCount: 2,
+                    reliableSkeletonCount: 2,
+                    matchedSkeletonCount: 2,
+                    ruleQualityPassedCount: 2,
+                    geometryPassedCount: 2,
+                    classifiedInstanceCount: 2
+                ),
+                postureInstances: [
+                    CatPostureInstanceOutcome(
+                        boundingBox: NormalizedRect(
+                            x: 0.1,
+                            y: 0.2,
+                            width: 0.3,
+                            height: 0.4
+                        ),
+                        poseMatched: true,
+                        ruleQualityPassed: true,
+                        geometryPassed: true,
+                        postures: [.sleeping]
+                    ),
+                    CatPostureInstanceOutcome(
+                        boundingBox: NormalizedRect(
+                            x: 0.6,
+                            y: 0.2,
+                            width: 0.3,
+                            height: 0.4
+                        ),
+                        poseMatched: true,
+                        ruleQualityPassed: true,
+                        geometryPassed: true,
+                        postures: [.curled]
+                    )
+                ],
                 containsPerson: false,
                 isOuting: false,
                 largestCatAreaRatio: 0.2
@@ -288,6 +325,28 @@ private func verifyPostureSummary() throws {
             traits: CatAlbumTraits(
                 postures: [],
                 poseObservationCount: 1,
+                postureDiagnostics: PosturePipelineDiagnostics(
+                    rawObservationCount: 1,
+                    reliableSkeletonCount: 1,
+                    matchedSkeletonCount: 1,
+                    ruleQualityPassedCount: 0,
+                    geometryPassedCount: 0,
+                    classifiedInstanceCount: 0
+                ),
+                postureInstances: [
+                    CatPostureInstanceOutcome(
+                        boundingBox: NormalizedRect(
+                            x: 0.2,
+                            y: 0.2,
+                            width: 0.4,
+                            height: 0.4
+                        ),
+                        poseMatched: true,
+                        ruleQualityPassed: false,
+                        geometryPassed: false,
+                        postures: []
+                    )
+                ],
                 containsPerson: false,
                 isOuting: nil,
                 largestCatAreaRatio: 0.2
@@ -299,6 +358,21 @@ private func verifyPostureSummary() throws {
             traits: CatAlbumTraits(
                 postures: [],
                 poseObservationCount: 0,
+                postureDiagnostics: PosturePipelineDiagnostics.zero,
+                postureInstances: [
+                    CatPostureInstanceOutcome(
+                        boundingBox: NormalizedRect(
+                            x: 0.2,
+                            y: 0.2,
+                            width: 0.4,
+                            height: 0.4
+                        ),
+                        poseMatched: false,
+                        ruleQualityPassed: false,
+                        geometryPassed: false,
+                        postures: []
+                    )
+                ],
                 containsPerson: false,
                 isOuting: nil,
                 largestCatAreaRatio: 0.2
@@ -306,9 +380,9 @@ private func verifyPostureSummary() throws {
         ),
         catRecord(
             "stale",
-            albumVersion: 1,
+            albumVersion: current - 1,
             traits: CatAlbumTraits(
-                analysisVersion: 1,
+                analysisVersion: current - 1,
                 postures: [.loaf],
                 containsPerson: false,
                 isOuting: nil,
@@ -321,6 +395,14 @@ private func verifyPostureSummary() throws {
     let summary = PostureScanSummary(records: records)
     try require(summary.targetCatAssets == 5, "posture target count changed")
     try require(summary.poseObservationAssets == 2, "pose-observation count changed")
+    try require(summary.reliableSkeletonAssets == 2,
+                "reliable-skeleton asset count changed")
+    try require(summary.matchedSkeletonAssets == 2,
+                "matched-skeleton asset count changed")
+    try require(summary.ruleQualityPassedAssets == 1,
+                "rule-quality asset count changed")
+    try require(summary.geometryPassedAssets == 1,
+                "geometry asset count changed")
     try require(summary.sleepingAssets == 1, "sleeping count changed")
     try require(summary.bellyUpAssets == 0, "belly-up count changed")
     try require(summary.loafAssets == 0, "stale loaf leaked into current counts")
@@ -329,6 +411,47 @@ private func verifyPostureSummary() throws {
     try require(summary.classifiedAnyAssets == 1, "classified-any count changed")
     try require(summary.unclassifiedAssets == 2, "unclassified count changed")
     try require(summary.secondaryPendingAssets == 2, "pending count changed")
+    try require(summary.rawObservationInstances == 3,
+                "raw observation instance count changed")
+    try require(summary.reliableSkeletonInstances == 3,
+                "reliable skeleton instance count changed")
+    try require(summary.matchedSkeletonInstances == 3,
+                "matched skeleton instance count changed")
+    try require(summary.ruleQualityPassedInstances == 2,
+                "rule-quality instance count changed")
+    try require(summary.geometryPassedInstances == 2,
+                "geometry instance count changed")
+    try require(summary.classifiedInstances == 2,
+                "classified instance count changed")
+    try require(summary.logMetadata["postureReliableSkeletonAssets"] == "2",
+                "asset-stage log metadata is missing")
+    try require(summary.logMetadata["postureReliableSkeletonInstances"] == "3",
+                "instance-stage log metadata is missing")
+
+    let encoded = try JSONEncoder().encode(summary)
+    var legacyObject = try requireObject(JSONSerialization.jsonObject(with: encoded))
+    for key in [
+        "reliableSkeletonAssets",
+        "matchedSkeletonAssets",
+        "ruleQualityPassedAssets",
+        "geometryPassedAssets",
+        "rawObservationInstances",
+        "reliableSkeletonInstances",
+        "matchedSkeletonInstances",
+        "ruleQualityPassedInstances",
+        "geometryPassedInstances",
+        "classifiedInstances"
+    ] {
+        legacyObject.removeValue(forKey: key)
+    }
+    let decodedLegacy = try JSONDecoder().decode(
+        PostureScanSummary.self,
+        from: JSONSerialization.data(withJSONObject: legacyObject)
+    )
+    try require(decodedLegacy.poseObservationAssets == 2,
+                "legacy posture summary lost its asset count")
+    try require(decodedLegacy.reliableSkeletonAssets == 0,
+                "legacy posture summary did not default new stages")
 }
 
 private func verifyPrimaryDetectionReuseGuard() throws {

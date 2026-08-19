@@ -47,6 +47,21 @@ struct AnimalPostureSkeleton: Equatable {
     }
 }
 
+struct AnimalPostureRuleResult: Equatable {
+    var tags: Set<CatPostureTag>
+    var ruleQualityPassed: Bool
+    var geometryPassed: Bool
+}
+
+struct AnimalPostureClassificationResult: Equatable {
+    var diagnostics: PosturePipelineDiagnostics
+    var instances: [CatPostureInstanceOutcome]
+
+    var photoTags: Set<CatPostureTag> {
+        Set(instances.flatMap(\.postures))
+    }
+}
+
 /// Conservative, explainable rules over Apple's 2D animal-pose joints.
 ///
 /// These tags are intentionally high-precision proxies. In particular, the
@@ -63,61 +78,118 @@ enum AnimalPostureClassifier {
 
     /// Classifies a single cat skeleton. Distances are normalized by the
     /// corresponding cat detector box's diagonal, not by image dimensions.
+    /// Quality and geometry are reported separately so production diagnostics
+    /// can distinguish missing/weak joints from conservative rule thresholds.
+    static func classify(
+        for skeleton: AnimalPostureSkeleton,
+        catBoundingBox: CGRect
+    ) -> AnimalPostureRuleResult {
+        guard let box = sanitizedUnitRect(catBoundingBox) else {
+            return AnimalPostureRuleResult(
+                tags: [],
+                ruleQualityPassed: false,
+                geometryPassed: false
+            )
+        }
+        let boxScale = hypot(box.width, box.height)
+        guard boxScale > 0.000_001 else {
+            return AnimalPostureRuleResult(
+                tags: [],
+                ruleQualityPassed: false,
+                geometryPassed: false
+            )
+        }
+
+        let sleeping = sleepingEvaluation(skeleton, boxScale: boxScale)
+        let frame = bodyFrameEvaluation(for: skeleton, catBoundingBox: box)
+        let evaluations: [(CatPostureTag, RuleEvaluation)] = [
+            (.sleeping, sleeping),
+            (.bellyUp, bellyUpEvaluation(skeleton, frame: frame)),
+            (.loaf, loafEvaluation(skeleton, frame: frame)),
+            (.stretching, stretchingEvaluation(skeleton, frame: frame)),
+            (.curled, curledEvaluation(skeleton, frame: frame))
+        ]
+        var candidates = Set<CatPostureTag>()
+        for (tag, evaluation) in evaluations where evaluation.geometryPassed {
+            candidates.insert(tag)
+        }
+        return AnimalPostureRuleResult(
+            tags: resolvingContradictions(in: candidates),
+            ruleQualityPassed: evaluations.contains { $0.1.qualityPassed },
+            geometryPassed: !candidates.isEmpty
+        )
+    }
+
     static func tags(
         for skeleton: AnimalPostureSkeleton,
         catBoundingBox: CGRect
     ) -> Set<CatPostureTag> {
-        guard let box = sanitizedUnitRect(catBoundingBox) else {
-            return []
-        }
-        let boxScale = hypot(box.width, box.height)
-        guard boxScale > 0.000_001 else { return [] }
-
-        var result = Set<CatPostureTag>()
-        // Sleeping only depends on the head, neck, and folded forelegs. The
-        // original adapter returned before evaluating it whenever tailBottom
-        // was missing, even though this rule never consumes a tail/rear point.
-        // Keep the same confidence and geometry thresholds while removing that
-        // unrelated global prerequisite.
-        if isSleeping(skeleton, boxScale: boxScale) { result.insert(.sleeping) }
-
-        // The remaining rules use a longitudinal trunk frame and therefore
-        // still require the existing high-confidence neck/tail anchors.
-        if let frame = bodyFrame(for: skeleton, catBoundingBox: box) {
-            if isBellyUp(skeleton, frame: frame) { result.insert(.bellyUp) }
-            if isLoaf(skeleton, frame: frame) { result.insert(.loaf) }
-            if isStretching(skeleton, frame: frame) { result.insert(.stretching) }
-            if isCurled(skeleton, frame: frame) { result.insert(.curled) }
-        }
-        return resolvingContradictions(in: result)
+        classify(for: skeleton, catBoundingBox: catBoundingBox).tags
     }
 
-    /// Converts Vision observations only in memory, conservatively associates
-    /// each pose with one cat detector box, and returns photo-level tags.
-    /// Unmatched or ambiguous observations do not contribute a tag.
-    @available(iOS 17.0, macOS 14.0, macCatalyst 17.0, tvOS 17.0, *)
-    static func tags(
-        from observations: [VNAnimalBodyPoseObservation],
+    /// Pure matching entry point used by the production Vision adapter and by
+    /// deterministic fixtures. The raw count may exceed `skeletons.count` when
+    /// a Vision observation contains no finite recognized points.
+    static func classify(
+        skeletons: [AnimalPostureSkeleton],
+        rawObservationCount: Int,
         matching catBoundingBoxes: [CGRect]
-    ) -> Set<CatPostureTag> {
-        let boxes = catBoundingBoxes.compactMap { sanitizedUnitRect($0) }
-        guard !boxes.isEmpty, !observations.isEmpty else { return [] }
+    ) -> AnimalPostureClassificationResult {
+        let boxes = catBoundingBoxes
+            .compactMap { sanitizedUnitRect($0) }
+            .sorted(by: deterministicRectOrder)
+        var outcomes = boxes.map {
+            CatPostureInstanceOutcome(
+                boundingBox: NormalizedRect($0),
+                poseMatched: false,
+                ruleQualityPassed: false,
+                geometryPassed: false,
+                postures: []
+            )
+        }
+        let normalizedRawCount = max(rawObservationCount, skeletons.count)
+        guard !skeletons.isEmpty else {
+            return AnimalPostureClassificationResult(
+                diagnostics: PosturePipelineDiagnostics(
+                    rawObservationCount: normalizedRawCount,
+                    reliableSkeletonCount: 0,
+                    matchedSkeletonCount: 0,
+                    ruleQualityPassedCount: 0,
+                    geometryPassedCount: 0,
+                    classifiedInstanceCount: 0
+                ),
+                instances: outcomes
+            )
+        }
 
-        let skeletons = observations.compactMap { skeleton(from: $0) }
         var candidates = [PoseBoxCandidate]()
+        var reliableSkeletonIndices = Set<Int>()
 
         for (poseIndex, skeleton) in skeletons.enumerated() {
-            let reliable = AnimalPostureJoint.allCases.compactMap { joint -> CGPoint? in
+            let reliableEntries = AnimalPostureJoint.allCases.compactMap {
+                joint -> (AnimalPostureJoint, CGPoint)? in
                 guard let point = skeleton.points[joint],
-                      point.confidence >= matchingJointConfidence else {
+                      point.confidence >= matchingJointConfidence,
+                      point.location.x.isFinite,
+                      point.location.y.isFinite else {
                     return nil
                 }
-                return point.location
+                return (joint, point.location)
             }
-            guard reliable.count >= 6,
-                  let poseBounds = boundingRect(of: reliable) else {
+            let reliableJoints = Set(reliableEntries.map { $0.0 })
+            let supportsMinimalSleepingMatch = reliableJoints.contains(.nose)
+                && reliableJoints.contains(.neck)
+                && ([LegPosition.leftFront, .rightFront].contains { position in
+                    reliableJoints.intersection(Set(position.joints)).count >= 2
+                })
+            guard reliableEntries.count >= 6 || supportsMinimalSleepingMatch else {
                 continue
             }
+            let reliable = reliableEntries.map { $0.1 }
+            guard let poseBounds = boundingRect(of: reliable) else {
+                continue
+            }
+            reliableSkeletonIndices.insert(poseIndex)
             let centroid = average(reliable)
 
             var scores = [(boxIndex: Int, score: CGFloat)]()
@@ -139,7 +211,10 @@ enum AnimalPostureClassifier {
                 scores.append((boxIndex, score))
             }
 
-            scores.sort { $0.score > $1.score }
+            scores.sort {
+                if $0.score == $1.score { return $0.boxIndex < $1.boxIndex }
+                return $0.score > $1.score
+            }
             guard let best = scores.first else { continue }
             if scores.count > 1, best.score - scores[1].score < 0.08 {
                 continue
@@ -166,20 +241,64 @@ enum AnimalPostureClassifier {
 
         var usedPoses = Set<Int>()
         var usedBoxes = Set<Int>()
-        var photoTags = Set<CatPostureTag>()
+        var matchedCount = 0
+        var qualityCount = 0
+        var geometryCount = 0
+        var classifiedCount = 0
         for candidate in candidates {
             guard usedPoses.insert(candidate.poseIndex).inserted,
                   usedBoxes.insert(candidate.boxIndex).inserted else {
                 continue
             }
-            photoTags.formUnion(
-                tags(
-                    for: skeletons[candidate.poseIndex],
-                    catBoundingBox: boxes[candidate.boxIndex]
-                )
+            matchedCount += 1
+            let result = classify(
+                for: skeletons[candidate.poseIndex],
+                catBoundingBox: boxes[candidate.boxIndex]
+            )
+            if result.ruleQualityPassed { qualityCount += 1 }
+            if result.geometryPassed { geometryCount += 1 }
+            if !result.tags.isEmpty { classifiedCount += 1 }
+            outcomes[candidate.boxIndex] = CatPostureInstanceOutcome(
+                boundingBox: NormalizedRect(boxes[candidate.boxIndex]),
+                poseMatched: true,
+                ruleQualityPassed: result.ruleQualityPassed,
+                geometryPassed: result.geometryPassed,
+                postures: Array(result.tags)
             )
         }
-        return photoTags
+        return AnimalPostureClassificationResult(
+            diagnostics: PosturePipelineDiagnostics(
+                rawObservationCount: normalizedRawCount,
+                reliableSkeletonCount: reliableSkeletonIndices.count,
+                matchedSkeletonCount: matchedCount,
+                ruleQualityPassedCount: qualityCount,
+                geometryPassedCount: geometryCount,
+                classifiedInstanceCount: classifiedCount
+            ),
+            instances: outcomes
+        )
+    }
+
+    /// Converts Vision observations only in memory, then delegates to the pure
+    /// matcher. Raw joints and pose-derived coordinates never leave this call.
+    @available(iOS 17.0, macOS 14.0, macCatalyst 17.0, tvOS 17.0, *)
+    static func classify(
+        from observations: [VNAnimalBodyPoseObservation],
+        matching catBoundingBoxes: [CGRect]
+    ) -> AnimalPostureClassificationResult {
+        classify(
+            skeletons: observations.compactMap { skeleton(from: $0) },
+            rawObservationCount: observations.count,
+            matching: catBoundingBoxes
+        )
+    }
+
+    @available(iOS 17.0, macOS 14.0, macCatalyst 17.0, tvOS 17.0, *)
+    static func tags(
+        from observations: [VNAnimalBodyPoseObservation],
+        matching catBoundingBoxes: [CGRect]
+    ) -> Set<CatPostureTag> {
+        classify(from: observations, matching: catBoundingBoxes).photoTags
     }
 
     /// Resolves geometrically incompatible structural labels without
@@ -207,6 +326,21 @@ enum AnimalPostureClassifier {
 // MARK: - Pure posture rules
 
 private extension AnimalPostureClassifier {
+    struct RuleEvaluation: Equatable {
+        var qualityPassed: Bool
+        var geometryPassed: Bool
+
+        init(qualityPassed: Bool, geometryPassed: Bool) {
+            self.qualityPassed = qualityPassed
+            self.geometryPassed = qualityPassed && geometryPassed
+        }
+
+        static let insufficient = RuleEvaluation(
+            qualityPassed: false,
+            geometryPassed: false
+        )
+    }
+
     struct BodyFrame {
         var neck: CGPoint
         var rear: CGPoint
@@ -224,12 +358,28 @@ private extension AnimalPostureClassifier {
         }
     }
 
+    struct BodyFrameEvaluation {
+        var qualityPassed: Bool
+        var frame: BodyFrame?
+    }
+
     struct LegGeometry {
         var elbow: CGPoint
         var knee: CGPoint
         var paw: CGPoint
         var kneeAngleDegrees: CGFloat
         var chordToChainRatio: CGFloat
+    }
+
+    struct VisibleForelegSegment {
+        var positions: [LegPosition]
+        var first: CGPoint
+        var second: CGPoint
+    }
+
+    struct VisibleBilateralPair {
+        var left: CGPoint
+        var right: CGPoint
     }
 
     enum LegPosition {
@@ -248,148 +398,233 @@ private extension AnimalPostureClassifier {
         }
     }
 
-    static func bodyFrame(
+    static func bodyFrameEvaluation(
         for skeleton: AnimalPostureSkeleton,
         catBoundingBox: CGRect
-    ) -> BodyFrame? {
-        guard let box = sanitizedUnitRect(catBoundingBox) else { return nil }
+    ) -> BodyFrameEvaluation {
+        guard let box = sanitizedUnitRect(catBoundingBox) else {
+            return BodyFrameEvaluation(qualityPassed: false, frame: nil)
+        }
         let required: [AnimalPostureJoint] = [.neck, .tailBottom]
-        guard let locations = decisiveLocations(required, in: skeleton) else { return nil }
+        guard let locations = decisiveLocations(required, in: skeleton) else {
+            return BodyFrameEvaluation(qualityPassed: false, frame: nil)
+        }
         let neck = locations[.neck]!
         let rear = locations[.tailBottom]!
         let trunk = vector(from: neck, to: rear)
         let trunkLength = magnitude(trunk)
         let scale = hypot(box.width, box.height)
-        guard trunkLength > 0.000_001, scale > 0.000_001 else { return nil }
+        guard trunkLength > 0.000_001, scale > 0.000_001 else {
+            return BodyFrameEvaluation(qualityPassed: true, frame: nil)
+        }
         let axis = CGVector(dx: trunk.dx / trunkLength, dy: trunk.dy / trunkLength)
-        return BodyFrame(
-            neck: neck,
-            rear: rear,
-            axis: axis,
-            normal: CGVector(dx: -axis.dy, dy: axis.dx),
-            boxScale: scale,
-            normalizedTrunkLength: trunkLength / scale
+        return BodyFrameEvaluation(
+            qualityPassed: true,
+            frame: BodyFrame(
+                neck: neck,
+                rear: rear,
+                axis: axis,
+                normal: CGVector(dx: -axis.dy, dy: axis.dx),
+                boxScale: scale,
+                normalizedTrunkLength: trunkLength / scale
+            )
         )
     }
 
-    static func isSleeping(
+    /// Sleeping needs a resting head and only two visible points from either
+    /// foreleg. Requiring both complete forelegs discarded ordinary photos in
+    /// which the lower paw or the far-side leg was occluded.
+    static func sleepingEvaluation(
         _ skeleton: AnimalPostureSkeleton,
         boxScale: CGFloat
-    ) -> Bool {
+    ) -> RuleEvaluation {
         guard let nose = decisiveLocation(.nose, in: skeleton),
-              let neck = decisiveLocation(.neck, in: skeleton),
-              let left = leg(.leftFront, in: skeleton),
-              let right = leg(.rightFront, in: skeleton),
-              hasDecisiveQuality(
-                [.nose, .neck] + LegPosition.leftFront.joints + LegPosition.rightFront.joints,
-                in: skeleton
-              ) else {
-            return false
+              let neck = decisiveLocation(.neck, in: skeleton) else {
+            return .insufficient
         }
-        let pawCenter = midpoint(left.paw, right.paw)
-        let faceToPawSegment = pointToSegmentDistance(nose, left.paw, right.paw)
-            / boxScale
-        let faceToPawCenter = distance(nose, pawCenter) / boxScale
-        let alignment = cosineSimilarity(
-            vector(from: neck, to: nose),
-            vector(from: neck, to: pawCenter)
-        )
-        return faceToPawSegment <= 0.18
-            && faceToPawCenter <= 0.22
-            && alignment >= 0.80
-            && left.chordToChainRatio <= 0.85
-            && right.chordToChainRatio <= 0.85
-    }
-
-    static func isBellyUp(
-        _ skeleton: AnimalPostureSkeleton,
-        frame: BodyFrame
-    ) -> Bool {
-        guard let leftFront = leg(.leftFront, in: skeleton),
-              let rightFront = leg(.rightFront, in: skeleton),
-              let leftBack = leg(.leftBack, in: skeleton),
-              let rightBack = leg(.rightBack, in: skeleton),
-              hasDecisiveQuality(
-                [.neck, .tailBottom]
-                    + LegPosition.leftFront.joints
-                    + LegPosition.rightFront.joints
-                    + LegPosition.leftBack.joints
-                    + LegPosition.rightBack.joints,
+        let baseJoints: [AnimalPostureJoint] = [.nose, .neck]
+        var visibleSegments = [LegPosition.leftFront, .rightFront].flatMap {
+            visibleForelegSegments(
+                $0,
+                requiring: baseJoints,
                 in: skeleton
-              ) else {
-            return false
+            )
         }
-
-        let forePairLooksSupine = pairStraddlesTrunk(
-            leftFront.knee,
-            rightFront.knee,
-            frame: frame
-        ) || pairStraddlesTrunk(leftFront.paw, rightFront.paw, frame: frame)
-        let hindPairLooksSupine = pairStraddlesTrunk(
-            leftBack.knee,
-            rightBack.knee,
-            frame: frame
-        ) || pairStraddlesTrunk(leftBack.paw, rightBack.paw, frame: frame)
-        guard forePairLooksSupine, hindPairLooksSupine else { return false }
-
-        let pawLongitudes = [
-            leftFront.paw,
-            rightFront.paw,
-            leftBack.paw,
-            rightBack.paw
-        ].map { frame.longitudinal($0) }
-        let insideTrunkSlab = pawLongitudes.filter {
-            $0 >= -0.15 && $0 <= frame.normalizedTrunkLength + 0.15
-        }.count
-        return insideTrunkSlab >= 3
-    }
-
-    static func isLoaf(
-        _ skeleton: AnimalPostureSkeleton,
-        frame: BodyFrame
-    ) -> Bool {
-        guard let nose = decisiveLocation(.nose, in: skeleton),
-              let leftFront = leg(.leftFront, in: skeleton),
-              let rightFront = leg(.rightFront, in: skeleton),
-              hasDecisiveQuality(
-                [.nose, .neck, .tailBottom]
-                    + LegPosition.leftFront.joints
-                    + LegPosition.rightFront.joints,
+        let bilateralCandidates: [(AnimalPostureJoint, AnimalPostureJoint)] = [
+            (.leftFrontPaw, .rightFrontPaw),
+            (.leftFrontKnee, .rightFrontKnee),
+            (.leftFrontElbow, .rightFrontElbow)
+        ]
+        visibleSegments.append(contentsOf: bilateralCandidates.compactMap { candidate in
+            let (firstJoint, secondJoint) = candidate
+            guard hasDecisiveQuality(
+                baseJoints + [firstJoint, secondJoint],
                 in: skeleton
-              ) else {
-            return false
-        }
-        let compactHindLegs = [LegPosition.leftBack, .rightBack]
-            .compactMap { leg($0, in: skeleton) }
-            .filter {
-                $0.kneeAngleDegrees <= 120
-                    && min(
-                        distance($0.paw, frame.rear),
-                        distance($0.paw, $0.elbow)
-                    ) / frame.boxScale <= 0.22
+            ),
+            let first = skeleton.points[firstJoint]?.location,
+            let second = skeleton.points[secondJoint]?.location else {
+                return nil
             }
-        guard !compactHindLegs.isEmpty else { return false }
+            return VisibleForelegSegment(
+                positions: [.leftFront, .rightFront],
+                first: first,
+                second: second
+            )
+        })
+        guard !visibleSegments.isEmpty else { return .insufficient }
 
-        let pawCenter = midpoint(leftFront.paw, rightFront.paw)
-        let pawLongitudinal = frame.longitudinal(pawCenter)
-        return distance(leftFront.paw, rightFront.paw) / frame.boxScale <= 0.16
-            && leftFront.chordToChainRatio <= 0.72
-            && rightFront.chordToChainRatio <= 0.72
-            && leftFront.kneeAngleDegrees <= 110
-            && rightFront.kneeAngleDegrees <= 110
-            && pawLongitudinal >= -0.05
-            && pawLongitudinal <= frame.normalizedTrunkLength * 0.35
-            && abs(frame.transverse(pawCenter)) <= 0.15
-            && distance(nose, pawCenter) / frame.boxScale > 0.22
+        let geometryPassed = visibleSegments.contains { segment in
+            let center = midpoint(segment.first, segment.second)
+            let faceToSegment = pointToSegmentDistance(
+                nose,
+                segment.first,
+                segment.second
+            ) / boxScale
+            let faceToCenter = distance(nose, center) / boxScale
+            let alignment = cosineSimilarity(
+                vector(from: neck, to: nose),
+                vector(from: neck, to: center)
+            )
+            let compactSegment = distance(segment.first, segment.second) / boxScale
+            let clearlyExtended = segment.positions.compactMap {
+                leg($0, in: skeleton)
+            }.contains {
+                $0.kneeAngleDegrees >= 145 && $0.chordToChainRatio >= 0.90
+            }
+            return faceToSegment <= 0.18
+                && faceToCenter <= 0.22
+                && alignment >= 0.80
+                && compactSegment <= 0.22
+                && !clearlyExtended
+        }
+        return RuleEvaluation(qualityPassed: true, geometryPassed: geometryPassed)
     }
 
-    static func isStretching(
+    /// Belly-up needs one visible bilateral pair in the fore region and one in
+    /// the hind region. The pair can be paws, knees, or elbows; four complete
+    /// three-joint leg chains are deliberately not required.
+    static func bellyUpEvaluation(
         _ skeleton: AnimalPostureSkeleton,
-        frame: BodyFrame
-    ) -> Bool {
-        guard frame.normalizedTrunkLength >= 0.40,
-              coreAspectRatio(skeleton) >= 3.0 else {
-            return false
+        frame evaluation: BodyFrameEvaluation
+    ) -> RuleEvaluation {
+        guard evaluation.qualityPassed, let frame = evaluation.frame else {
+            return RuleEvaluation(
+                qualityPassed: evaluation.qualityPassed,
+                geometryPassed: false
+            )
+        }
+        let forePairs = visibleBilateralPairs(
+            candidates: [
+                (.leftFrontPaw, .rightFrontPaw),
+                (.leftFrontKnee, .rightFrontKnee),
+                (.leftFrontElbow, .rightFrontElbow)
+            ],
+            requiring: [.neck, .tailBottom],
+            in: skeleton
+        )
+        let hindPairs = visibleBilateralPairs(
+            candidates: [
+                (.leftBackPaw, .rightBackPaw),
+                (.leftBackKnee, .rightBackKnee),
+                (.leftBackElbow, .rightBackElbow)
+            ],
+            requiring: [.neck, .tailBottom],
+            in: skeleton
+        )
+        guard !forePairs.isEmpty, !hindPairs.isEmpty else {
+            return .insufficient
+        }
+        let geometryPassed = forePairs.contains { forePair in
+            guard pairStraddlesTrunk(
+                forePair.left,
+                forePair.right,
+                frame: frame
+            ) else { return false }
+            return hindPairs.contains { hindPair in
+                guard pairStraddlesTrunk(
+                    hindPair.left,
+                    hindPair.right,
+                    frame: frame
+                ) else { return false }
+                let visibleLongitudes = [
+                    forePair.left,
+                    forePair.right,
+                    hindPair.left,
+                    hindPair.right
+                ].map { frame.longitudinal($0) }
+                return visibleLongitudes.filter {
+                    $0 >= -0.15 && $0 <= frame.normalizedTrunkLength + 0.15
+                }.count >= 3
+            }
+        }
+        return RuleEvaluation(
+            qualityPassed: true,
+            geometryPassed: geometryPassed
+        )
+    }
+
+    /// Loaf is a compact body with visible, tucked forelimb structure. Feet
+    /// and hind legs are often fully occluded, so they are never mandatory.
+    static func loafEvaluation(
+        _ skeleton: AnimalPostureSkeleton,
+        frame evaluation: BodyFrameEvaluation
+    ) -> RuleEvaluation {
+        guard evaluation.qualityPassed, let frame = evaluation.frame else {
+            return RuleEvaluation(
+                qualityPassed: evaluation.qualityPassed,
+                geometryPassed: false
+            )
+        }
+        guard let nose = decisiveLocation(.nose, in: skeleton),
+              let forePoints = optionalDecisiveLocations(
+                LegPosition.leftFront.joints + LegPosition.rightFront.joints,
+                minimumCount: 4,
+                in: skeleton
+              ),
+              forePoints.keys.contains(where: {
+                LegPosition.leftFront.joints.contains($0)
+              }),
+              forePoints.keys.contains(where: {
+                LegPosition.rightFront.joints.contains($0)
+              }),
+              hasDecisiveCoreQuality(minimumCount: 7, in: skeleton) else {
+            return .insufficient
+        }
+        let locations = Array(forePoints.values)
+        let center = average(locations)
+        let spread = boundingRect(of: locations).map {
+            hypot($0.width, $0.height) / frame.boxScale
+        } ?? .infinity
+        let centerLongitudinal = frame.longitudinal(center)
+        let anyClearlyExtended = [
+            LegPosition.leftFront,
+            .rightFront,
+            .leftBack,
+            .rightBack
+        ].compactMap { leg($0, in: skeleton) }.contains {
+            $0.kneeAngleDegrees >= 145 && $0.chordToChainRatio >= 0.90
+        }
+        let geometryPassed = frame.normalizedTrunkLength >= 0.18
+            && frame.normalizedTrunkLength <= 0.62
+            && coreAspectRatio(skeleton) <= 3.50
+            && spread <= 0.28
+            && centerLongitudinal >= -0.05
+            && centerLongitudinal <= frame.normalizedTrunkLength * 0.45
+            && abs(frame.transverse(center)) <= 0.18
+            && distance(nose, center) / frame.boxScale > 0.18
+            && !anyClearlyExtended
+        return RuleEvaluation(qualityPassed: true, geometryPassed: geometryPassed)
+    }
+
+    static func stretchingEvaluation(
+        _ skeleton: AnimalPostureSkeleton,
+        frame evaluation: BodyFrameEvaluation
+    ) -> RuleEvaluation {
+        guard evaluation.qualityPassed, let frame = evaluation.frame else {
+            return RuleEvaluation(
+                qualityPassed: evaluation.qualityPassed,
+                geometryPassed: false
+            )
         }
         let completeLegs: [(LegPosition, LegGeometry)] = [
             LegPosition.leftFront,
@@ -399,12 +634,14 @@ private extension AnimalPostureClassifier {
         ].compactMap { position in
             leg(position, in: skeleton).map { (position, $0) }
         }
+        guard hasDecisiveCoreQuality(minimumCount: 7, in: skeleton),
+              completeLegs.count >= 2 else {
+            return .insufficient
+        }
         let straight = completeLegs.filter {
             $0.1.kneeAngleDegrees >= 150 && $0.1.chordToChainRatio >= 0.90
         }
-        guard straight.count >= 2 else { return false }
-
-        return straight.contains { position, geometry in
+        let hasExtendedEndpoint = straight.contains { position, geometry in
             switch position {
             case .leftFront, .rightFront:
                 frame.longitudinal(geometry.paw) <= -0.18
@@ -413,12 +650,25 @@ private extension AnimalPostureClassifier {
                     >= frame.normalizedTrunkLength + 0.18
             }
         }
+        return RuleEvaluation(
+            qualityPassed: true,
+            geometryPassed: frame.normalizedTrunkLength >= 0.40
+                && coreAspectRatio(skeleton) >= 3.0
+                && straight.count >= 2
+                && hasExtendedEndpoint
+        )
     }
 
-    static func isCurled(
+    static func curledEvaluation(
         _ skeleton: AnimalPostureSkeleton,
-        frame: BodyFrame
-    ) -> Bool {
+        frame evaluation: BodyFrameEvaluation
+    ) -> RuleEvaluation {
+        guard evaluation.qualityPassed, let frame = evaluation.frame else {
+            return RuleEvaluation(
+                qualityPassed: evaluation.qualityPassed,
+                geometryPassed: false
+            )
+        }
         guard let headPoints = decisiveLocations(
             [.nose, .leftEye, .rightEye],
             in: skeleton
@@ -428,7 +678,7 @@ private extension AnimalPostureClassifier {
             minimumCount: 1,
             in: skeleton
         ) else {
-            return false
+            return .insufficient
         }
         let nose = headPoints[.nose]!
         let headCenter = average(
@@ -436,30 +686,34 @@ private extension AnimalPostureClassifier {
                 headPoints[$0]
             }
         )
-        guard distance(nose, frame.rear) / frame.boxScale <= 0.35,
-              tailPoints.values.map({ distance($0, headCenter) }).min()!
-                / frame.boxScale <= 0.25,
-              coreAspectRatio(skeleton) <= 1.8 else {
-            return false
-        }
-
         let completeLegs = [
             LegPosition.leftFront,
             .rightFront,
             .leftBack,
             .rightBack
         ].compactMap { leg($0, in: skeleton) }
-        let bent = completeLegs.filter { $0.kneeAngleDegrees <= 110 }
-        guard bent.count >= 2 else { return false }
-        let center = midpoint(frame.neck, frame.rear)
-        guard completeLegs.allSatisfy({
-            distance($0.paw, center) / frame.boxScale <= 0.40
-        }) else {
-            return false
+        guard completeLegs.count >= 2,
+              hasDecisiveCoreQuality(minimumCount: 7, in: skeleton) else {
+            return .insufficient
         }
-        return !completeLegs.contains {
+        let bent = completeLegs.filter { $0.kneeAngleDegrees <= 110 }
+        let center = midpoint(frame.neck, frame.rear)
+        let allPawsCompact = completeLegs.allSatisfy({
+            distance($0.paw, center) / frame.boxScale <= 0.40
+        })
+        let anyClearlyExtended = completeLegs.contains {
             $0.kneeAngleDegrees >= 145 && $0.chordToChainRatio >= 0.90
         }
+        return RuleEvaluation(
+            qualityPassed: true,
+            geometryPassed: distance(nose, frame.rear) / frame.boxScale <= 0.35
+                && tailPoints.values.map({ distance($0, headCenter) }).min()!
+                    / frame.boxScale <= 0.25
+                && coreAspectRatio(skeleton) <= 1.8
+                && bent.count >= 2
+                && allPawsCompact
+                && !anyClearlyExtended
+        )
     }
 
     static func pairStraddlesTrunk(
@@ -472,6 +726,54 @@ private extension AnimalPostureClassifier {
         return leftOffset * rightOffset < 0
             && abs(leftOffset - rightOffset) >= 0.18
             && abs(abs(leftOffset) - abs(rightOffset)) <= 0.12
+    }
+
+    static func visibleForelegSegments(
+        _ position: LegPosition,
+        requiring baseJoints: [AnimalPostureJoint],
+        in skeleton: AnimalPostureSkeleton
+    ) -> [VisibleForelegSegment] {
+        let joints = position.joints
+        let pairs = [
+            (joints[1], joints[2]),
+            (joints[0], joints[1]),
+            (joints[0], joints[2])
+        ]
+        return pairs.compactMap { candidate in
+            let (firstJoint, secondJoint) = candidate
+            guard hasDecisiveQuality(
+                baseJoints + [firstJoint, secondJoint],
+                in: skeleton
+            ),
+            let first = skeleton.points[firstJoint]?.location,
+            let second = skeleton.points[secondJoint]?.location else {
+                return nil
+            }
+            return VisibleForelegSegment(
+                positions: [position],
+                first: first,
+                second: second
+            )
+        }
+    }
+
+    static func visibleBilateralPairs(
+        candidates: [(AnimalPostureJoint, AnimalPostureJoint)],
+        requiring baseJoints: [AnimalPostureJoint],
+        in skeleton: AnimalPostureSkeleton
+    ) -> [VisibleBilateralPair] {
+        candidates.compactMap { candidate in
+            let (leftJoint, rightJoint) = candidate
+            guard hasDecisiveQuality(
+                baseJoints + [leftJoint, rightJoint],
+                in: skeleton
+            ),
+            let left = skeleton.points[leftJoint]?.location,
+            let right = skeleton.points[rightJoint]?.location else {
+                return nil
+            }
+            return VisibleBilateralPair(left: left, right: right)
+        }
     }
 
     static func leg(
@@ -510,7 +812,9 @@ private extension AnimalPostureClassifier {
         in skeleton: AnimalPostureSkeleton
     ) -> CGPoint? {
         guard let point = skeleton.points[joint],
-              point.confidence >= decisiveJointConfidence else {
+              point.confidence >= decisiveJointConfidence,
+              point.location.x.isFinite,
+              point.location.y.isFinite else {
             return nil
         }
         return point.location
@@ -523,7 +827,9 @@ private extension AnimalPostureClassifier {
     ) -> [AnimalPostureJoint: CGPoint]? {
         let available = joints.compactMap { joint -> (AnimalPostureJoint, AnimalPosturePoint)? in
             guard let point = skeleton.points[joint],
-                  point.confidence >= decisiveJointConfidence else {
+                  point.confidence >= decisiveJointConfidence,
+                  point.location.x.isFinite,
+                  point.location.y.isFinite else {
                 return nil
             }
             return (joint, point)
@@ -543,6 +849,37 @@ private extension AnimalPostureClassifier {
         let points = uniqueJoints.compactMap { skeleton.points[$0] }
         return points.count == uniqueJoints.count
             && points.allSatisfy { $0.confidence >= decisiveJointConfidence }
+            && points.allSatisfy {
+                $0.location.x.isFinite && $0.location.y.isFinite
+            }
+            && median(points.map(\.confidence)) >= decisiveMedianConfidence
+    }
+
+    static func hasDecisiveCoreQuality(
+        minimumCount: Int,
+        in skeleton: AnimalPostureSkeleton
+    ) -> Bool {
+        let excluded: Set<AnimalPostureJoint> = [
+            .leftEarTop,
+            .leftEarMiddle,
+            .leftEarBottom,
+            .rightEarTop,
+            .rightEarMiddle,
+            .rightEarBottom,
+            .tailMiddle,
+            .tailTop
+        ]
+        let points = AnimalPostureJoint.allCases.compactMap { joint -> AnimalPosturePoint? in
+            guard !excluded.contains(joint),
+                  let point = skeleton.points[joint],
+                  point.confidence >= decisiveJointConfidence,
+                  point.location.x.isFinite,
+                  point.location.y.isFinite else {
+                return nil
+            }
+            return point
+        }
+        return points.count >= minimumCount
             && median(points.map(\.confidence)) >= decisiveMedianConfidence
     }
 
@@ -560,7 +897,9 @@ private extension AnimalPostureClassifier {
         let locations = AnimalPostureJoint.allCases.compactMap { joint -> CGPoint? in
             guard !excluded.contains(joint),
                   let point = skeleton.points[joint],
-                  point.confidence >= decisiveJointConfidence else {
+                  point.confidence >= decisiveJointConfidence,
+                  point.location.x.isFinite,
+                  point.location.y.isFinite else {
                 return nil
             }
             return point.location
@@ -664,6 +1003,17 @@ private func sanitizedUnitRect(_ rect: CGRect) -> CGRect? {
         return nil
     }
     return clipped
+}
+
+/// Stable order for persisted per-cat outcomes. Vision observation ordering is
+/// not an API contract, so normalized detector boxes are ordered explicitly.
+private func deterministicRectOrder(_ first: CGRect, _ second: CGRect) -> Bool {
+    let firstValues = [first.minX, first.minY, first.width, first.height]
+    let secondValues = [second.minX, second.minY, second.width, second.height]
+    for (left, right) in zip(firstValues, secondValues) where left != right {
+        return left < right
+    }
+    return false
 }
 
 private func boundingRect(of points: [CGPoint]) -> CGRect? {

@@ -47,6 +47,15 @@ private func sleepingSkeleton() -> AnimalPostureSkeleton {
     ])
 }
 
+private func minimalSleepingSkeleton() -> AnimalPostureSkeleton {
+    skeleton([
+        .nose: CGPoint(x: 0.18, y: 0.50),
+        .neck: CGPoint(x: 0.35, y: 0.50),
+        .leftFrontKnee: CGPoint(x: 0.27, y: 0.42),
+        .leftFrontPaw: CGPoint(x: 0.22, y: 0.48)
+    ])
+}
+
 private func bellyUpSkeleton() -> AnimalPostureSkeleton {
     skeleton([
         .nose: CGPoint(x: 0.12, y: 0.50),
@@ -258,6 +267,58 @@ private func verifyConfidenceAndMissingData() throws {
         ).contains(.bellyUp),
         "Trunk-dependent postures must still require their rear anchor"
     )
+
+    var oneVisibleForeleg = sleepingSkeleton()
+    oneVisibleForeleg.points.removeValue(forKey: .rightFrontElbow)
+    oneVisibleForeleg.points.removeValue(forKey: .rightFrontKnee)
+    oneVisibleForeleg.points.removeValue(forKey: .rightFrontPaw)
+    oneVisibleForeleg.points.removeValue(forKey: .leftFrontElbow)
+    try require(
+        AnimalPostureClassifier.tags(
+            for: oneVisibleForeleg,
+            catBoundingBox: catBox
+        ).contains(.sleeping),
+        "Sleeping must accept nose/neck plus two visible points on one foreleg"
+    )
+
+    var visibleBilateralJoints = bellyUpSkeleton()
+    for joint in [
+        AnimalPostureJoint.leftFrontElbow,
+        .rightFrontElbow,
+        .leftBackElbow,
+        .rightBackElbow,
+        .leftFrontPaw,
+        .rightFrontPaw,
+        .leftBackPaw,
+        .rightBackPaw
+    ] {
+        visibleBilateralJoints.points.removeValue(forKey: joint)
+    }
+    try require(
+        AnimalPostureClassifier.tags(
+            for: visibleBilateralJoints,
+            catBoundingBox: catBox
+        ).contains(.bellyUp),
+        "Belly-up must accept one visible bilateral fore pair and hind pair"
+    )
+
+    var hiddenLoafFeet = loafSkeleton()
+    for joint in [
+        AnimalPostureJoint.leftFrontPaw,
+        .rightFrontPaw,
+        .leftBackElbow,
+        .leftBackKnee,
+        .leftBackPaw
+    ] {
+        hiddenLoafFeet.points.removeValue(forKey: joint)
+    }
+    try require(
+        AnimalPostureClassifier.tags(
+            for: hiddenLoafFeet,
+            catBoundingBox: catBox
+        ).contains(.loaf),
+        "Loaf must use compactness without requiring hidden paws or hind legs"
+    )
 }
 
 private func verifyGeometryBoundary() throws {
@@ -296,6 +357,80 @@ private func verifyContradictions() throws {
     )
 }
 
+private func verifyPipelineStagesAndInstanceAssignment() throws {
+    let leftTransform = SimilarityTransform(
+        scale: 0.42,
+        rotation: 0,
+        mirrored: false,
+        translation: CGPoint(x: 0.02, y: 0.15)
+    )
+    let rightTransform = SimilarityTransform(
+        scale: 0.42,
+        rotation: 0,
+        mirrored: false,
+        translation: CGPoint(x: 0.55, y: 0.15)
+    )
+    let classified = leftTransform.skeleton(minimalSleepingSkeleton())
+    var lowConfidence = rightTransform.skeleton(sleepingSkeleton())
+    lowConfidence.points = lowConfidence.points.mapValues {
+        AnimalPosturePoint(location: $0.location, confidence: 0.50)
+    }
+    let unreliable = AnimalPostureSkeleton(
+        points: [
+            .leftEye: AnimalPosturePoint(location: CGPoint(x: 0.10, y: 0.10), confidence: 0.90),
+            .rightEye: AnimalPosturePoint(location: CGPoint(x: 0.11, y: 0.10), confidence: 0.90),
+            .leftEarTop: AnimalPosturePoint(location: CGPoint(x: 0.10, y: 0.12), confidence: 0.90),
+            .rightEarTop: AnimalPosturePoint(location: CGPoint(x: 0.11, y: 0.12), confidence: 0.90),
+            .tailTop: AnimalPosturePoint(location: CGPoint(x: 0.15, y: 0.10), confidence: 0.90)
+        ]
+    )
+    let leftBox = leftTransform.rect(catBox)
+    let rightBox = rightTransform.rect(catBox)
+    let result = AnimalPostureClassifier.classify(
+        skeletons: [classified, lowConfidence, unreliable],
+        rawObservationCount: 4,
+        matching: [rightBox, leftBox]
+    )
+
+    try require(result.diagnostics.rawObservationCount == 4,
+                "raw observation stage changed")
+    try require(result.diagnostics.reliableSkeletonCount == 2,
+                "reliable-skeleton stage changed")
+    try require(result.diagnostics.matchedSkeletonCount == 2,
+                "cat-box match stage changed")
+    try require(result.diagnostics.ruleQualityPassedCount == 1,
+                "rule-quality stage changed")
+    try require(result.diagnostics.geometryPassedCount == 1,
+                "geometry stage changed")
+    try require(result.diagnostics.classifiedInstanceCount == 1,
+                "classified-instance stage changed")
+    try require(result.instances.count == 2, "one outcome per cat box was not persisted")
+    try require(
+        result.instances[0].boundingBox == NormalizedRect(leftBox),
+        "per-cat outcomes were not deterministically ordered by normalized box"
+    )
+    try require(result.instances[0].postures.contains(.sleeping),
+                "classified cat outcome lost its posture")
+    try require(result.instances[1].poseMatched,
+                "low-confidence skeleton should still match its cat box")
+    try require(!result.instances[1].ruleQualityPassed,
+                "low-confidence fixture unexpectedly passed rule quality")
+    try require(result.photoTags == [.sleeping],
+                "photo-level posture union did not derive from cat outcomes")
+
+    let ambiguous = AnimalPostureClassifier.classify(
+        skeletons: [classified],
+        rawObservationCount: 1,
+        matching: [leftBox, leftBox]
+    )
+    try require(ambiguous.diagnostics.reliableSkeletonCount == 1,
+                "ambiguous fixture stopped before reliable-skeleton stage")
+    try require(ambiguous.diagnostics.matchedSkeletonCount == 0,
+                "ambiguous cat-box assignment must remain unmatched")
+    try require(ambiguous.instances.allSatisfy { !$0.poseMatched },
+                "an ambiguous skeleton was assigned to a cat instance")
+}
+
 @main
 private struct AlbumClassificationVerifier {
     static func main() throws {
@@ -304,6 +439,7 @@ private struct AlbumClassificationVerifier {
         try verifyConfidenceAndMissingData()
         try verifyGeometryBoundary()
         try verifyContradictions()
-        print("Album posture classification v1 geometry: PASS")
+        try verifyPipelineStagesAndInstanceAssignment()
+        print("Album posture classification v3 pipeline: PASS")
     }
 }

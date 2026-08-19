@@ -3,10 +3,18 @@ import SwiftUI
 struct AlbumView: View {
     let sections: [CuratedAlbumSectionPresentation]
     let scan: ScanPresentation
+    let profiles: [CatProfilePresentation]
+    @Binding var selectedScope: CatProfileScopePresentation
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
+                if !profiles.isEmpty {
+                    CatProfileScopePicker(
+                        profiles: profiles,
+                        selection: $selectedScope
+                    )
+                }
                 if scan.isPreparingGroupedAlbums {
                     groupedAlbumPreparationBanner
                 } else if scan.hasFinalResult, scan.hasDeferredAssets {
@@ -147,12 +155,17 @@ struct CuratedAlbumDetailView: View {
     let album: CuratedAlbumPresentation
     let albumOpened: (String, String) -> Void
     let excludeFromCatCandidates: ([String]) -> Void
+    let profiles: [CatProfilePresentation]
+    let assignmentsByPhotoIdentifier: [String: Set<String>]
+    let replaceProfileAssignments: ([String: Set<String>]) -> Void
 
     @State private var didRecordOpen = false
     @State private var isSelecting = false
     @State private var selectedIdentifiers = Set<String>()
     @State private var pendingExclusionIdentifiers: [String] = []
     @State private var showsExclusionConfirmation = false
+    @State private var pendingAssignmentIdentifiers: [String] = []
+    @State private var showsAssignmentSheet = false
 
     private let columns = Array(
         repeating: GridItem(.flexible(), spacing: 2),
@@ -184,20 +197,23 @@ struct CuratedAlbumDetailView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if isSelecting {
-                Button {
-                    requestExclusion(Array(selectedIdentifiers))
-                } label: {
-                    Label(
-                        selectedIdentifiers.isEmpty
-                            ? "写真を選んでください"
-                            : "\(selectedIdentifiers.count.formatted())枚を「この子じゃない」にする",
-                        systemImage: "cat.circle"
-                    )
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    if !profiles.isEmpty {
+                        Button {
+                            pendingAssignmentIdentifiers = Array(selectedIdentifiers)
+                            showsAssignmentSheet = true
+                        } label: {
+                            Label("写っている子", systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                        .disabled(selectedIdentifiers.isEmpty)
+                    }
+                    Button(role: .destructive) {
+                        requestExclusion(Array(selectedIdentifiers))
+                    } label: {
+                        Label("うちの子ではない", systemImage: "eye.slash")
+                    }
+                    .disabled(selectedIdentifiers.isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedIdentifiers.isEmpty)
                 .padding(12)
                 .background(.bar)
             }
@@ -211,11 +227,11 @@ struct CuratedAlbumDetailView: View {
             }
         }
         .confirmationDialog(
-            "「この子じゃない」にしますか？",
+            "「うちの子ではない」にしますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から除外", role: .destructive) {
+            Button("すべてから除外", role: .destructive) {
                 let identifiers = pendingExclusionIdentifiers
                 pendingExclusionIdentifiers.removeAll()
                 selectedIdentifiers.subtract(identifiers)
@@ -227,6 +243,25 @@ struct CuratedAlbumDetailView: View {
             }
         } message: {
             Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+        }
+        .sheet(isPresented: $showsAssignmentSheet) {
+            CatPhotoAssignmentSheet(
+                photoIdentifiers: pendingAssignmentIdentifiers,
+                profiles: profiles,
+                initialAssignmentsByPhotoIdentifier: Dictionary(
+                    uniqueKeysWithValues: pendingAssignmentIdentifiers.map {
+                        ($0, assignmentsByPhotoIdentifier[$0] ?? [])
+                    }
+                ),
+                save: { values in
+                    replaceProfileAssignments(values)
+                    pendingAssignmentIdentifiers.removeAll()
+                },
+                excludeFromHousehold: { identifiers in
+                    excludeFromCatCandidates(identifiers)
+                    pendingAssignmentIdentifiers.removeAll()
+                }
+            )
         }
         .onAppear {
             guard !didRecordOpen else { return }
@@ -260,10 +295,18 @@ struct CuratedAlbumDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(photoAccessibilityLabel(photo))
             .contextMenu {
+                if !profiles.isEmpty {
+                    Button {
+                        pendingAssignmentIdentifiers = [photo.localIdentifier]
+                        showsAssignmentSheet = true
+                    } label: {
+                        Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                    }
+                }
                 Button {
                     requestExclusion([photo.localIdentifier])
                 } label: {
-                    Label("この子じゃない", systemImage: "cat.circle")
+                    Label("うちの子ではない", systemImage: "cat.circle")
                 }
             }
         }
@@ -438,6 +481,9 @@ struct PhotoBrowserView: View {
     let excludedCatCandidateIdentifiers: Set<String>
     let excludeFromCatCandidates: ([String]) -> Void
     let restoreCatCandidates: ([String]) -> Void
+    let profiles: [CatProfilePresentation]
+    let assignmentsByPhotoIdentifier: [String: Set<String>]
+    let replaceProfileAssignments: ([String: Set<String>]) -> Void
     private let browserPhotos: [PhotoPresentation]
     private let browserPhotoIdentifiers: [String]
 
@@ -446,6 +492,7 @@ struct PhotoBrowserView: View {
     @State private var preheatedPhotoIdentifiers: Set<String> = []
     @State private var pendingExclusionIdentifier: String?
     @State private var showsExclusionConfirmation = false
+    @State private var showsAssignmentSheet = false
 
     init(
         photos: [PhotoPresentation],
@@ -456,7 +503,10 @@ struct PhotoBrowserView: View {
         toggleLike: @escaping (String) -> Void,
         excludedCatCandidateIdentifiers: Set<String>,
         excludeFromCatCandidates: @escaping ([String]) -> Void,
-        restoreCatCandidates: @escaping ([String]) -> Void
+        restoreCatCandidates: @escaping ([String]) -> Void,
+        profiles: [CatProfilePresentation],
+        assignmentsByPhotoIdentifier: [String: Set<String>],
+        replaceProfileAssignments: @escaping ([String: Set<String>]) -> Void
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -477,6 +527,9 @@ struct PhotoBrowserView: View {
         self.excludedCatCandidateIdentifiers = excludedCatCandidateIdentifiers
         self.excludeFromCatCandidates = excludeFromCatCandidates
         self.restoreCatCandidates = restoreCatCandidates
+        self.profiles = profiles
+        self.assignmentsByPhotoIdentifier = assignmentsByPhotoIdentifier
+        self.replaceProfileAssignments = replaceProfileAssignments
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
         _performanceProbe = StateObject(
@@ -578,18 +631,26 @@ struct PhotoBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if !profiles.isEmpty,
+                       !excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
+                        Button {
+                            showsAssignmentSheet = true
+                        } label: {
+                            Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                    }
                     if excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
                         Button {
                             restoreCatCandidates([selectedPhotoIdentifier])
                         } label: {
-                            Label("この子の候補に戻す", systemImage: "arrow.uturn.backward.circle")
+                            Label("うちの子候補に戻す", systemImage: "arrow.uturn.backward.circle")
                         }
                     } else {
                         Button {
                             pendingExclusionIdentifier = selectedPhotoIdentifier
                             showsExclusionConfirmation = true
                         } label: {
-                            Label("この子じゃない", systemImage: "cat.circle")
+                            Label("うちの子ではない", systemImage: "cat.circle")
                         }
                     }
                 } label: {
@@ -598,11 +659,11 @@ struct PhotoBrowserView: View {
             }
         }
         .confirmationDialog(
-            "「この子じゃない」にしますか？",
+            "「うちの子ではない」にしますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から除外", role: .destructive) {
+            Button("すべてから除外", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -612,6 +673,18 @@ struct PhotoBrowserView: View {
             }
         } message: {
             Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+        }
+        .sheet(isPresented: $showsAssignmentSheet) {
+            CatPhotoAssignmentSheet(
+                photoIdentifiers: [selectedPhotoIdentifier],
+                profiles: profiles,
+                initialAssignmentsByPhotoIdentifier: [
+                    selectedPhotoIdentifier:
+                        assignmentsByPhotoIdentifier[selectedPhotoIdentifier] ?? []
+                ],
+                save: replaceProfileAssignments,
+                excludeFromHousehold: excludeFromCatCandidates
+            )
         }
         .onAppear {
             performanceProbe.recordContainerAppearance()

@@ -53,6 +53,11 @@
 		100000000000000000000151 /* CatCandidateCuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000111 /* CatCandidateCuration.swift */; };
 		100000000000000000000152 /* CatCandidateCurationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022D /* CatCandidateCurationStore.swift */; };
 		100000000000000000000153 /* CatCandidateCurationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023C /* CatCandidateCurationView.swift */; };
+		100000000000000000000154 /* CatHouseholdIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000112 /* CatHouseholdIdentity.swift */; };
+		100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022E /* CatHouseholdIdentityStore.swift */; };
+		100000000000000000000156 /* CatProfilesPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023D /* CatProfilesPresentation.swift */; };
+		100000000000000000000157 /* CatProfilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023E /* CatProfilesView.swift */; };
+		100000000000000000000158 /* CatProfilePhotoCurationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023F /* CatProfilePhotoCurationViews.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
@@ -150,6 +155,7 @@
 		F0000000000000000000010A /* WidgetManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetManifest.swift; sourceTree = "<group>"; };
 		F00000000000000000000110 /* WidgetRenderPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetRenderPlan.swift; sourceTree = "<group>"; };
 		F00000000000000000000111 /* CatCandidateCuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCandidateCuration.swift; sourceTree = "<group>"; };
+		F00000000000000000000112 /* CatHouseholdIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHouseholdIdentity.swift; sourceTree = "<group>"; };
 		F0000000000000000000010B /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		F0000000000000000000010C /* AtomicJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicJSON.swift; sourceTree = "<group>"; };
 		F0000000000000000000010D /* SharedLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLog.swift; sourceTree = "<group>"; };
@@ -199,6 +205,10 @@
 		F0000000000000000000023B /* GrowthAlbumView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrowthAlbumView.swift; sourceTree = "<group>"; };
 		F0000000000000000000022D /* CatCandidateCurationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCandidateCurationStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000023C /* CatCandidateCurationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatCandidateCurationView.swift; sourceTree = "<group>"; };
+		F0000000000000000000022E /* CatHouseholdIdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatHouseholdIdentityStore.swift; sourceTree = "<group>"; };
+		F0000000000000000000023D /* CatProfilesPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatProfilesPresentation.swift; sourceTree = "<group>"; };
+		F0000000000000000000023E /* CatProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatProfilesView.swift; sourceTree = "<group>"; };
+		F0000000000000000000023F /* CatProfilePhotoCurationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatProfilePhotoCurationViews.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
@@ -336,6 +346,7 @@
 				F0000000000000000000010A /* WidgetManifest.swift */,
 				F00000000000000000000110 /* WidgetRenderPlan.swift */,
 				F00000000000000000000111 /* CatCandidateCuration.swift */,
+				F00000000000000000000112 /* CatHouseholdIdentity.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -430,6 +441,7 @@
 				F0000000000000000000021F /* DailySharingSyncCoordinator.swift */,
 				F0000000000000000000022A /* SharingRuntimeSelfTest.swift */,
 				F0000000000000000000022D /* CatCandidateCurationStore.swift */,
+				F0000000000000000000022E /* CatHouseholdIdentityStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -459,6 +471,9 @@
 				F0000000000000000000023A /* GrowthAlbumSelector.swift */,
 				F0000000000000000000023B /* GrowthAlbumView.swift */,
 				F0000000000000000000023C /* CatCandidateCurationView.swift */,
+				F0000000000000000000023D /* CatProfilesPresentation.swift */,
+				F0000000000000000000023E /* CatProfilesView.swift */,
+				F0000000000000000000023F /* CatProfilePhotoCurationViews.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -650,6 +665,7 @@
 				100000000000000000000141 /* PairingKeychainStore.swift in Sources */,
 				100000000000000000000147 /* DailySharingCore.swift in Sources */,
 				100000000000000000000151 /* CatCandidateCuration.swift in Sources */,
+				100000000000000000000154 /* CatHouseholdIdentity.swift in Sources */,
 				100000000000000000000101 /* AppRootView.swift in Sources */,
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
@@ -673,11 +689,15 @@
 				10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */,
 				10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */,
 				100000000000000000000152 /* CatCandidateCurationStore.swift in Sources */,
+				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
 				10000000000000000000014F /* GrowthAlbumSelector.swift in Sources */,
 				100000000000000000000150 /* GrowthAlbumView.swift in Sources */,
 				100000000000000000000153 /* CatCandidateCurationView.swift in Sources */,
+				100000000000000000000156 /* CatProfilesPresentation.swift in Sources */,
+				100000000000000000000157 /* CatProfilesView.swift in Sources */,
+				100000000000000000000158 /* CatProfilePhotoCurationViews.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
 				100000000000000000000133 /* MainTabView.swift in Sources */,

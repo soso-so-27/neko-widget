@@ -59,7 +59,7 @@ struct CatCandidateCurationView: View {
                     ContentUnavailableView(
                         "除外した写真はありません",
                         systemImage: "cat",
-                        description: Text("写真の大表示メニューやアルバムの長押しから「この子じゃない」を選べます。")
+                        description: Text("写真の大表示メニューやアルバムの長押しから「うちの子ではない」を選べます。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 230)
                     .listRowBackground(Color.clear)
@@ -83,7 +83,7 @@ struct CatCandidateCurationView: View {
                     .disabled(isRestoringAll)
                 }
             } header: {
-                Text("「この子じゃない」")
+                Text("「うちの子ではない」")
             } footer: {
                 Text("ここでの除外や復元は、ホーム、ウィジェット、自動アルバムの候補だけに影響します。写真アプリの写真は削除・変更されません。")
             }

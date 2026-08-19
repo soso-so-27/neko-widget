@@ -187,6 +187,38 @@ jobs:
             -o "$RUNNER_TEMP/verify-cat-curation"
           "$RUNNER_TEMP/verify-cat-curation"
 
+      - name: Verify multi-cat household identity and migration
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/AppSettings.swift \
+            Shared/Models/NormalizedRect.swift \
+            Shared/Models/CatCandidateCuration.swift \
+            Shared/Models/CatHouseholdIdentity.swift \
+            Shared/Models/NekoWidgetError.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            Shared/Models/WidgetManifest.swift \
+            Shared/AppGroup/SharedContainer.swift \
+            NekoWidget/Services/CatHouseholdIdentityStore.swift \
+            ci/verify-cat-household-identity.swift \
+            -o "$RUNNER_TEMP/verify-cat-household-identity"
+          "$RUNNER_TEMP/verify-cat-household-identity"
+
+      - name: Verify multi-cat presentation and posture diagnostics
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Views/CatProfilesPresentation.swift \
+            ci/verify-cat-profiles-presentation.swift \
+            -o "$RUNNER_TEMP/verify-cat-profiles-presentation"
+          "$RUNNER_TEMP/verify-cat-profiles-presentation"
+
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget
         shell: bash

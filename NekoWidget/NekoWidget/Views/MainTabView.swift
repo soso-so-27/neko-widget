@@ -12,6 +12,9 @@ struct MainTabView: View {
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
     let photoSourceAlbums: [PhotoSourceAlbumOption]
     let photoSourceStatus: PhotoSourceAlbumStatus
+    let catProfilesPresentation: CatProfilesPresentation
+    let profileAlbumPhotos: [String: [PhotoPresentation]]
+    let catProfilesActions: CatProfilesViewActions
     let isLimitedAccess: Bool
     let isScanning: Bool
     let widgetIntervalMinutes: Int
@@ -38,6 +41,7 @@ struct MainTabView: View {
     @State private var likesPath: [String] = []
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
+    @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -63,7 +67,12 @@ struct MainTabView: View {
             .tag(AppTab.home)
 
             NavigationStack(path: $albumPath) {
-                AlbumView(sections: curatedAlbumSections, scan: scan)
+                AlbumView(
+                    sections: curatedAlbumSections,
+                    scan: scan,
+                    profiles: catProfilesPresentation.profiles,
+                    selectedScope: $selectedAlbumScope
+                )
                     .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
             }
             .tabItem {
@@ -104,7 +113,9 @@ struct MainTabView: View {
                     restoreCatCandidates: restoreCatCandidates,
                     selectPhotoSourceAlbum: selectPhotoSourceAlbum,
                     refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
-                    exportJSON: exportJSON
+                    exportJSON: exportJSON,
+                    catProfilesPresentation: catProfilesPresentation,
+                    catProfilesActions: catProfilesActions
                 )
             }
             .tabItem {
@@ -142,6 +153,15 @@ struct MainTabView: View {
             // destination whose spoken title no longer exists.
             albumPath.removeAll()
         }
+        .onChange(of: selectedAlbumScope) { _, _ in
+            albumPath.removeAll()
+        }
+        .onChange(of: catProfilesPresentation.availableScopes) { _, scopes in
+            guard scopes.contains(selectedAlbumScope) else {
+                selectedAlbumScope = .everyone
+                return
+            }
+        }
     }
 
     @ViewBuilder
@@ -159,6 +179,11 @@ struct MainTabView: View {
             },
             restoreCatCandidates: { identifiers in
                 Task { await restoreCatCandidates(identifiers) }
+            },
+            profiles: catProfilesPresentation.profiles,
+            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+            replaceProfileAssignments: { values in
+                Task { await catProfilesActions.replacePhotoAssignments(values) }
             }
         )
     }
@@ -171,10 +196,15 @@ struct MainTabView: View {
                 if albumID == .growth {
                     GrowthAlbumDetailView(
                         album: album,
-                        lifeReference: settings.catLifeReference,
+                        lifeReference: scopedLifeReference,
                         albumOpened: albumOpened,
                         excludeFromCatCandidates: { identifiers in
                             Task { await excludeFromCatCandidates(identifiers) }
+                        },
+                        profiles: catProfilesPresentation.profiles,
+                        assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                        replaceProfileAssignments: { values in
+                            Task { await catProfilesActions.replacePhotoAssignments(values) }
                         }
                     )
                 } else {
@@ -183,6 +213,11 @@ struct MainTabView: View {
                         albumOpened: albumOpened,
                         excludeFromCatCandidates: { identifiers in
                             Task { await excludeFromCatCandidates(identifiers) }
+                        },
+                        profiles: catProfilesPresentation.profiles,
+                        assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                        replaceProfileAssignments: { values in
+                            Task { await catProfilesActions.replacePhotoAssignments(values) }
                         }
                     )
                 }
@@ -208,6 +243,11 @@ struct MainTabView: View {
                     },
                     restoreCatCandidates: { identifiers in
                         Task { await restoreCatCandidates(identifiers) }
+                    },
+                    profiles: catProfilesPresentation.profiles,
+                    assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                    replaceProfileAssignments: { values in
+                        Task { await catProfilesActions.replacePhotoAssignments(values) }
                     }
                 )
             } else {
@@ -218,13 +258,52 @@ struct MainTabView: View {
 
     private var curatedAlbumSections: [CuratedAlbumSectionPresentation] {
         CuratedAlbumBuilder().sections(
-            from: catPhotos,
-            lifeReference: settings.catLifeReference
+            from: scopedCatPhotos,
+            lifeReference: scopedLifeReference,
+            includesGrowth: selectedAlbumScope != .everyone
+                || catProfilesPresentation.profiles.isEmpty
+        )
+    }
+
+    private var scopedCatPhotos: [PhotoPresentation] {
+        guard case let .profile(identifier) = selectedAlbumScope else {
+            return catPhotos
+        }
+        return profileAlbumPhotos[identifier] ?? []
+    }
+
+    private var scopedLifeReference: CatLifeReference? {
+        guard case let .profile(identifier) = selectedAlbumScope else {
+            // Preserve Build 13 single-cat behavior until the user explicitly
+            // creates profiles. In profiled mode, mixed-cat "みんな" stays on
+            // calendar years instead of applying one cat's birthday to all.
+            return catProfilesPresentation.profiles.isEmpty
+                ? settings.catLifeReference
+                : nil
+        }
+        guard let reference = catProfilesPresentation
+            .profile(identifier: identifier)?
+            .lifeReference,
+              let date = CatLifeDate(date: reference.date) else { return nil }
+        return CatLifeReference(
+            kind: reference.kind == .birthday ? .birthday : .adoptionDay,
+            date: date
         )
     }
 
     private var excludedCatCandidateIdentifiers: Set<String> {
         Set(excludedCatPhotos.map(\.localIdentifier))
+    }
+
+    private var assignmentsByPhotoIdentifier: [String: Set<String>] {
+        let photos = catProfilesPresentation.unassignedPhotos
+            + catProfilesPresentation.profiles.flatMap(\.confirmedPhotos)
+        var result: [String: Set<String>] = [:]
+        for photo in photos {
+            result[photo.localIdentifier, default: []]
+                .formUnion(photo.assignedProfileIdentifiers)
+        }
+        return result
     }
 
     private func curatedAlbum(

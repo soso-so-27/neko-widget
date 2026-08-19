@@ -16,6 +16,12 @@ enum AlbumUpdateStatus: Equatable {
     case failed(message: String)
 }
 
+private enum CatIdentityLoadState {
+    case loading
+    case ready
+    case failed
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published private(set) var authorizationStatus: PHAuthorizationStatus
@@ -29,24 +35,54 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var exportedURL: URL?
     @Published private(set) var isLikeInteractionReady = false
     @Published private(set) var catCandidateCuration: CatCandidateCurationState = .empty
+    @Published private(set) var catHouseholdIdentity: CatHouseholdIdentityState?
     @Published private(set) var photoSourceAlbums: [PhotoSourceAlbumOption] = []
     @Published private(set) var photoSourceStatus: PhotoSourceAlbumStatus = .allLibrary
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
 
     var isLimitedAccess: Bool { authorizationStatus == .limited }
-    var catAssets: [AssetRecord] { candidateSnapshot(snapshot).catAssets }
-    var likedAssets: [AssetRecord] { candidateSnapshot(snapshot).likedAssets }
-    var visibleLibraryAssets: [AssetRecord] { candidateSnapshot(snapshot).assets }
-    var excludedCatAssets: [ExcludedCatAsset] { catCandidateCuration.excludedAssets }
+    var catAssets: [AssetRecord] {
+        canPresentCatIdentity ? candidateSnapshot(snapshot).catAssets : []
+    }
+    var likedAssets: [AssetRecord] {
+        canPresentCatIdentity ? candidateSnapshot(snapshot).likedAssets : []
+    }
+    var visibleLibraryAssets: [AssetRecord] {
+        canPresentCatIdentity ? candidateSnapshot(snapshot).assets : []
+    }
+    var excludedCatAssets: [ExcludedCatAsset] {
+        guard canPresentCatIdentity else { return [] }
+        if let identity = catHouseholdIdentity,
+           identity.mode == .profiled {
+            return identity.globalExcludedAssets
+        }
+        return catCandidateCuration.excludedAssets
+    }
+    var catProfiles: [CatProfile] { catHouseholdIdentity?.profiles ?? [] }
     var oldestCatPhotoDate: Date? { catAssets.compactMap(\.creationDate).min() }
     var postureSecondaryPendingAssets: Int {
+        guard canPresentCatIdentity else { return 0 }
         PostureScanSummary(records: candidateSnapshot(snapshot).assets)
             .secondaryPendingAssets
     }
     var progress: Double { scanState.progress }
     var isQuickResultReady: Bool { scanState.isQuickResultReady }
     var isComplete: Bool { scanState.isComplete }
+
+    func catAssets(profileID: UUID) -> [AssetRecord] {
+        guard let identity = catHouseholdIdentity else { return [] }
+        let included = Set(identity.memberships.lazy.filter {
+            $0.profileID == profileID && $0.decision == .included
+        }.map(\.assetLocalIdentifier))
+        return catAssets.filter { included.contains($0.localIdentifier) }
+    }
+
+    func profileMemberships(for localIdentifier: String) -> [CatAssetProfileMembership] {
+        catHouseholdIdentity?.memberships.filter {
+            $0.assetLocalIdentifier == localIdentifier
+        } ?? []
+    }
 
     private let authorizationService: PhotoAuthorizationService
     private let scanner: PhotoLibraryScanner
@@ -61,14 +97,26 @@ final class AppViewModel: ObservableObject {
     private let storeInitializationError: String?
     private let curationStore: CatCandidateCurationStore?
     private let curationStoreInitializationError: String?
+    private let identityStore: CatHouseholdIdentityStore?
+    private let identityStoreInitializationError: String?
 
     private var hasStarted = false
     private var hasFinishedSnapshotLoad = false
+    /// Loading and failure are different: loading must preserve scanner state
+    /// internally, while public candidate surfaces stay hidden. Failure also
+    /// makes the internal candidate view empty so managed outputs fail closed.
+    private var catIdentityLoadState: CatIdentityLoadState = .loading
     private var candidatePhotoRouteGate = CandidatePhotoRouteGate()
     private var libraryChangePending = false
     private var lastActivationSyncAt: Date?
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
+    /// Serializes the one-way legacy-to-profiled transition with household
+    /// exclusion mutations. Without this queue, an exclusion can commit to
+    /// the legacy curation actor while profile creation concurrently makes the
+    /// identity ledger canonical before that exclusion is folded in.
+    private var catIdentityTransitionTail: Task<Void, Never>?
+    private var catIdentityTransitionSequence = 0
     /// PhotoAlbumService awaits PhotoKit and is therefore actor-reentrant. This
     /// explicit tail keeps membership reads/writes non-overlapping and ensures
     /// the newest curation generation is always applied last.
@@ -118,6 +166,16 @@ final class AppViewModel: ObservableObject {
             Self.logError(error, category: "curation", operation: "initialize_store")
         }
 
+        do {
+            identityStore = try CatHouseholdIdentityStore()
+            identityStoreInitializationError = nil
+            SharedLog.app.info("cat-identity", "Cat household identity store initialized")
+        } catch {
+            identityStore = nil
+            identityStoreInitializationError = error.localizedDescription
+            Self.logError(error, category: "cat-identity", operation: "initialize_store")
+        }
+
         SharedLog.app.info(
             "lifecycle",
             "Application model initialized",
@@ -149,8 +207,18 @@ final class AppViewModel: ObservableObject {
         SharedLog.app.info("lifecycle", "Application startup began")
 
         guard await loadCatCandidateCuration() else {
+            // Curation is part of the candidate authority. Recover only the
+            // managed-album identifier from the snapshot so both external
+            // outputs can be cleared without publishing any uncurated asset.
+            if let store,
+               let loaded = try? await store.load() {
+                snapshot.albumLocalIdentifier = loaded.albumLocalIdentifier
+            }
+            catIdentityLoadState = .failed
+            currentAsset = nil
             hasFinishedSnapshotLoad = true
             discardPendingDeepLink(reason: "candidate-state-unavailable")
+            await clearAlbumAndWidgetOutputs(reportErrors: false)
             return
         }
 
@@ -183,6 +251,18 @@ final class AppViewModel: ObservableObject {
         } else if let storeInitializationError {
             errorMessage = storeInitializationError
         }
+        guard await loadCatHouseholdIdentity() else {
+            catIdentityLoadState = .failed
+            currentAsset = nil
+            hasFinishedSnapshotLoad = true
+            discardPendingDeepLink(reason: "cat-identity-state-unavailable")
+            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            return
+        }
+        // The snapshot was selected before the identity ledger loaded. Apply
+        // household exclusions immediately so Home cannot briefly keep a
+        // photo that the canonical profiled state has removed.
+        chooseCurrentAssetIfNeeded()
         hasFinishedSnapshotLoad = true
         openPendingDeepLinkIfNeeded()
         Task { [dailySharingSyncCoordinator] in
@@ -201,13 +281,11 @@ final class AppViewModel: ObservableObject {
             return
         }
         await refreshPhotoSourceAlbums()
-        if catCandidateCuration.usesSelectedAlbum
-            || !catCandidateCuration.excludedAssets.isEmpty {
-            // Reconcile a durable decision that may have been saved just before
-            // the previous process was terminated, while its external outputs
-            // still contain the pre-curation generation.
-            await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
-        }
+        // Reconcile every launch, including the empty state after the final
+        // exclusion is restored. Without a persisted output revision receipt,
+        // conditional rebuilding cannot distinguish that crash gap from an
+        // already-current empty curation state.
+        await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
         libraryObserver.start()
         await syncOnActive()
     }
@@ -346,6 +424,49 @@ final class AppViewModel: ObservableObject {
         await launchScan(forceFullAnalysis: false)
     }
 
+    /// Explicitly re-runs only the secondary pose/face album analysis for the
+    /// current candidate scope. Primary cat/no-cat decisions, detector
+    /// revision, likes, Widget output, and PhotoKit assets remain untouched.
+    func rerunPostureClassification() async {
+        guard canReadPhotos else {
+            setError(NekoWidgetError.photoAccessDenied)
+            return
+        }
+        guard !isScanning, !scanState.requiresFullRescan else { return }
+        let targetIdentifiers = Set(
+            candidateSnapshot(snapshot).catAssets.map(\.localIdentifier)
+        )
+        guard !targetIdentifiers.isEmpty else { return }
+
+        var updated = snapshot
+        for index in updated.assets.indices
+        where targetIdentifiers.contains(updated.assets[index].localIdentifier) {
+            // Keep the last derived values on disk for rollback/debugging, but
+            // clear the completion marker so the postureRepair router selects
+            // exactly these known-cat records.
+            updated.assets[index].albumAnalysisVersion = nil
+        }
+        updated.updatedAt = .now
+        snapshot = updated
+        scanState = updated.scanState
+        let summary = PostureScanSummary(records: candidateSnapshot(updated).assets)
+        scanState.postureSummary = summary
+        scanState.requiresFullRescan = false
+        scanState.purpose = .postureRepair
+        snapshot.scanState = scanState
+        errorMessage = nil
+        SharedLog.app.info(
+            "vision",
+            "Posture-only reclassification requested",
+            metadata: [
+                "analysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
+                "targetCats": "\(targetIdentifiers.count)"
+            ]
+        )
+        await saveSnapshot(reportErrors: false)
+        await launchScan(forceFullAnalysis: false)
+    }
+
     func suspendScan() {
         guard isScanning else { return }
         scanGeneration += 1
@@ -467,7 +588,9 @@ final class AppViewModel: ObservableObject {
                                     localIdentifier: sourceAlbumIdentifier,
                                     assetIdentifiers: Array(accessibleIdentifiers)
                                 )
-                            _ = applyNewestCurationState(refreshed)
+                            if applyNewestCurationState(refreshed) {
+                                await acknowledgeLegacyCurationState(refreshed)
+                            }
                         } catch {
                             // Keep this session narrowed to the successfully
                             // resolved set, but surface that crash-safe storage
@@ -499,13 +622,57 @@ final class AppViewModel: ObservableObject {
     /// Removes candidates from app-managed surfaces only. PhotoKit is never
     /// mutated, and likes remain in their independent user-state ledger.
     func excludeFromCatCandidates(localIdentifiers: [String]) async {
+        await serializeCatIdentityTransition {
+            await self.performExcludeFromCatCandidates(
+                localIdentifiers: localIdentifiers
+            )
+        }
+    }
+
+    private func performExcludeFromCatCandidates(
+        localIdentifiers: [String]
+    ) async {
         let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
-        guard !identifiers.isEmpty, let curationStore else { return }
+        guard !identifiers.isEmpty else { return }
+        let legacyCurationIsCanonical = catHouseholdIdentity?.mode == .legacyUnscoped
+        if catHouseholdIdentity != nil, !legacyCurationIsCanonical {
+            do {
+                _ = try await mutateCatHouseholdIdentity { state in
+                    state.setGloballyExcluded(
+                        true,
+                        assetLocalIdentifiers: identifiers
+                    )
+                }
+            } catch {
+                Self.logError(error, category: "cat-identity", operation: "exclude_global")
+                setError(error)
+                return
+            }
+        }
+        guard let curationStore else {
+            if legacyCurationIsCanonical {
+                errorMessage = curationStoreInitializationError
+                    ?? "除外設定を保存できません。アプリを開き直して再度お試しください。"
+                return
+            }
+            // In profiled mode the identity ledger is canonical. Continue to
+            // update visible outputs even if the compatibility mirror is gone.
+            if catHouseholdIdentity != nil {
+                chooseCurrentAssetIfNeeded()
+                await refreshCandidateOutputsAfterCurationChange()
+            }
+            return
+        }
         do {
             let updated = try await curationStore.excluding(
                 localIdentifiers: identifiers
             )
-            _ = applyNewestCurationState(updated)
+            let appliedReturnedState = applyNewestCurationState(updated)
+            if legacyCurationIsCanonical {
+                await acknowledgeLegacyCurationState(
+                    appliedReturnedState ? updated : catCandidateCuration
+                )
+            }
             reconcileCandidatePostureState()
             SharedLog.app.info(
                 "curation",
@@ -520,17 +687,63 @@ final class AppViewModel: ObservableObject {
         } catch {
             Self.logError(error, category: "curation", operation: "exclude_candidates")
             setError(error)
+            if catHouseholdIdentity != nil {
+                chooseCurrentAssetIfNeeded()
+                await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
+            }
         }
     }
 
     func restoreCatCandidates(localIdentifiers: [String]) async {
+        await serializeCatIdentityTransition {
+            await self.performRestoreCatCandidates(
+                localIdentifiers: localIdentifiers
+            )
+        }
+    }
+
+    private func performRestoreCatCandidates(
+        localIdentifiers: [String]
+    ) async {
         let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
-        guard !identifiers.isEmpty, let curationStore else { return }
+        guard !identifiers.isEmpty else { return }
+        let legacyCurationIsCanonical = catHouseholdIdentity?.mode == .legacyUnscoped
+        if catHouseholdIdentity != nil, !legacyCurationIsCanonical {
+            do {
+                _ = try await mutateCatHouseholdIdentity { state in
+                    state.setGloballyExcluded(
+                        false,
+                        assetLocalIdentifiers: identifiers
+                    )
+                }
+            } catch {
+                Self.logError(error, category: "cat-identity", operation: "restore_global")
+                setError(error)
+                return
+            }
+        }
+        guard let curationStore else {
+            if legacyCurationIsCanonical {
+                errorMessage = curationStoreInitializationError
+                    ?? "除外設定を保存できません。アプリを開き直して再度お試しください。"
+                return
+            }
+            if catHouseholdIdentity != nil {
+                chooseCurrentAssetIfNeeded()
+                await refreshCandidateOutputsAfterCurationChange()
+            }
+            return
+        }
         do {
             let updated = try await curationStore.restoring(
                 localIdentifiers: identifiers
             )
-            _ = applyNewestCurationState(updated)
+            let appliedReturnedState = applyNewestCurationState(updated)
+            if legacyCurationIsCanonical {
+                await acknowledgeLegacyCurationState(
+                    appliedReturnedState ? updated : catCandidateCuration
+                )
+            }
             reconcileCandidatePostureState()
             SharedLog.app.info(
                 "curation",
@@ -545,6 +758,10 @@ final class AppViewModel: ObservableObject {
         } catch {
             Self.logError(error, category: "curation", operation: "restore_candidates")
             setError(error)
+            if catHouseholdIdentity != nil {
+                chooseCurrentAssetIfNeeded()
+                await refreshCandidateOutputsAfterCurationChange(reportErrors: false)
+            }
         }
     }
 
@@ -580,7 +797,8 @@ final class AppViewModel: ObservableObject {
                 assetIdentifiers: resolvedIdentifiers
             )
             let changed = updated != catCandidateCuration
-            _ = applyNewestCurationState(updated)
+            guard applyNewestCurationState(updated) else { return }
+            await acknowledgeLegacyCurationState(updated)
             guard changed else { return }
             await refreshPhotoSourceAlbums()
             // A newer source mutation may have completed while PhotoKit or the
@@ -693,6 +911,196 @@ final class AppViewModel: ObservableObject {
             ]
         )
         await saveSnapshot(reportErrors: true)
+    }
+
+    func createCatProfile(
+        displayName: String,
+        lifeReference: CatLifeReference?,
+        lifeReferenceIsApproximate: Bool,
+        referenceAssetIdentifier: String?
+    ) async {
+        await serializeCatIdentityTransition {
+            await self.performCreateCatProfile(
+                displayName: displayName,
+                lifeReference: lifeReference,
+                lifeReferenceIsApproximate: lifeReferenceIsApproximate,
+                referenceAssetIdentifier: referenceAssetIdentifier
+            )
+        }
+    }
+
+    private func performCreateCatProfile(
+        displayName: String,
+        lifeReference: CatLifeReference?,
+        lifeReferenceIsApproximate: Bool,
+        referenceAssetIdentifier: String?
+    ) async {
+        let legacyLifeReference = settings.catLifeReference
+        let latestLegacyCuration = catCandidateCuration
+        let profile = CatProfile(
+            displayName: displayName,
+            lifeReference: lifeReference,
+            lifeReferenceIsApproximate: lifeReferenceIsApproximate
+        )
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                // Profile creation is the one-way boundary where identity
+                // becomes canonical. Fold in the last committed Build 13
+                // curation revision first, including a revision whose prior
+                // best-effort identity acknowledgement failed.
+                state = state.reconcilingLegacyUnscoped(
+                    lifeReference: legacyLifeReference,
+                    curation: latestLegacyCuration
+                )
+                state.upsertProfile(profile)
+                if let referenceAssetIdentifier {
+                    state.setManualMembership(
+                        assetLocalIdentifier: referenceAssetIdentifier,
+                        profileID: profile.id,
+                        decision: .included,
+                        subjectBoundingBox: self.preferredSubjectBoundingBox(
+                            assetLocalIdentifier: referenceAssetIdentifier,
+                            existing: nil
+                        ),
+                        isSimilarityReference: false
+                    )
+                }
+            }
+            // Once a profile exists, the old household-wide date is retained
+            // only in legacy metadata. It must not regroup every cat as one.
+            SharedLog.app.info(
+                "cat-identity",
+                "Cat profile created",
+                metadata: [
+                    "profiles": "\(catProfiles.count)",
+                    "hasReferencePhoto": "\(referenceAssetIdentifier != nil)",
+                    "hasLifeReference": "\(lifeReference != nil)"
+                ]
+            )
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "create_profile")
+            setError(error)
+        }
+    }
+
+    func updateCatProfileLifeReference(
+        profileID: UUID,
+        reference: CatLifeReference?,
+        isApproximate: Bool
+    ) async {
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
+                    return
+                }
+                profile.lifeReference = reference
+                profile.lifeReferenceIsApproximate = reference != nil && isApproximate
+                state.upsertProfile(profile)
+            }
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "update_profile_date")
+            setError(error)
+        }
+    }
+
+    func updateCatProfileName(profileID: UUID, displayName: String) async {
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
+                    return
+                }
+                profile.displayName = displayName
+                state.upsertProfile(profile)
+            }
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "update_profile_name")
+            setError(error)
+        }
+    }
+
+    func deleteCatProfile(profileID: UUID) async {
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                state.removeProfile(id: profileID)
+            }
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "delete_profile")
+            setError(error)
+        }
+    }
+
+    /// Replaces photo-level profile membership. A photo may remain included in
+    /// several profiles. When more than one cat box exists and no explicit box
+    /// has been chosen, the membership remains valid for time/special albums,
+    /// while profile-specific posture/growth deliberately stays unassigned.
+    func replaceCatProfileAssignments(
+        profileIDsByLocalIdentifier: [String: Set<UUID>]
+    ) async {
+        let requested = profileIDsByLocalIdentifier.filter { !$0.key.isEmpty }
+        guard !requested.isEmpty else { return }
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                let validProfiles = Set(state.profiles.map(\.id))
+                for (identifier, requestedProfiles) in requested {
+                    let selected = requestedProfiles.intersection(validProfiles)
+                    for profileID in validProfiles {
+                        let previous = state.membership(
+                            for: identifier,
+                            profileID: profileID
+                        )
+                        let decision: CatAssetMembershipDecision = selected.contains(profileID)
+                            ? .included
+                            : (previous?.decision == .excluded ? .excluded : .unknown)
+                        state.setManualMembership(
+                            assetLocalIdentifier: identifier,
+                            profileID: profileID,
+                            decision: decision,
+                            subjectBoundingBox: decision == .included
+                                ? self.preferredSubjectBoundingBox(
+                                    assetLocalIdentifier: identifier,
+                                    existing: previous?.subjectBoundingBox
+                                )
+                                : nil,
+                            isSimilarityReference: false
+                        )
+                    }
+                }
+            }
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "replace_assignments")
+            setError(error)
+        }
+    }
+
+    func setCatProfileMembership(
+        profileID: UUID,
+        localIdentifiers: [String],
+        decision: CatAssetMembershipDecision
+    ) async {
+        let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
+        guard !identifiers.isEmpty else { return }
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                for identifier in identifiers {
+                    let previous = state.membership(for: identifier, profileID: profileID)
+                    state.setManualMembership(
+                        assetLocalIdentifier: identifier,
+                        profileID: profileID,
+                        decision: decision,
+                        subjectBoundingBox: decision == .included
+                            ? self.preferredSubjectBoundingBox(
+                                assetLocalIdentifier: identifier,
+                                existing: previous?.subjectBoundingBox
+                              )
+                            : nil,
+                        isSimilarityReference: false
+                    )
+                }
+            }
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "set_membership")
+            setError(error)
+        }
     }
 
     func updateSettings(_ newSettings: AppSettings) async {
@@ -816,11 +1224,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func openPhotoRoute(_ route: CandidatePhotoRoute) {
-        guard catCandidateCuration.includesCandidate(
-            localIdentifier: route.localIdentifier,
-            selectedSourceAssetIdentifiers: selectedSourceAssetIdentifiers
-        ),
-        catAssets.contains(where: {
+        guard catAssets.contains(where: {
             $0.localIdentifier == route.localIdentifier
         }) else {
             selectedAssetIdentifier = nil
@@ -933,6 +1337,42 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func loadCatHouseholdIdentity() async -> Bool {
+        guard let identityStore else {
+            if let identityStoreInitializationError {
+                errorMessage = identityStoreInitializationError
+            }
+            return false
+        }
+        do {
+            let loaded = try await identityStore.loadOrMigrate(
+                legacyLifeReference: settings.catLifeReference,
+                legacyCuration: catCandidateCuration
+            )
+            catHouseholdIdentity = loaded
+            catIdentityLoadState = .ready
+            SharedLog.app.info(
+                "cat-identity",
+                "Cat household identity state loaded",
+                metadata: [
+                    "mode": loaded.mode.rawValue,
+                    "profiles": "\(loaded.profiles.count)",
+                    "memberships": "\(loaded.memberships.count)",
+                    "globalExcluded": "\(loaded.globalExcludedAssets.count)",
+                    "revision": "\(loaded.mutationRevision)"
+                ]
+            )
+            return true
+        } catch {
+            catIdentityLoadState = .failed
+            // A missing/unsupported identity ledger must not silently fall
+            // back to a single-cat interpretation of profile-scoped dates.
+            Self.logError(error, category: "cat-identity", operation: "load_state")
+            setError(error)
+            return false
+        }
+    }
+
     @discardableResult
     private func applyNewestCurationState(
         _ incoming: CatCandidateCurationState
@@ -953,8 +1393,90 @@ final class AppViewModel: ObservableObject {
         return true
     }
 
+    @discardableResult
+    private func mutateCatHouseholdIdentity(
+        _ mutation: (inout CatHouseholdIdentityState) -> Void
+    ) async throws -> CatHouseholdIdentityState {
+        guard let identityStore else {
+            throw NekoWidgetError.appGroupUnavailable(SharedContainer.appGroupIdentifier)
+        }
+        var latest = catHouseholdIdentity
+        for _ in 0..<3 {
+            guard let current = latest else {
+                throw CatHouseholdIdentityStoreError.missingState
+            }
+            var proposed = current
+            mutation(&proposed)
+            proposed = proposed.normalized()
+            if proposed == current { return current }
+            do {
+                let committed = try await identityStore.save(
+                    proposed,
+                    expectedMutationRevision: current.mutationRevision
+                )
+                if committed.mutationRevision
+                    >= (catHouseholdIdentity?.mutationRevision ?? -1) {
+                    catHouseholdIdentity = committed
+                }
+                return committed
+            } catch CatHouseholdIdentityRevisionError.stale(_, _) {
+                latest = try await identityStore.load()
+                if let latest,
+                   latest.mutationRevision
+                    >= (catHouseholdIdentity?.mutationRevision ?? -1) {
+                    catHouseholdIdentity = latest
+                }
+            }
+        }
+        throw CatHouseholdIdentityRevisionError.exhausted
+    }
+
+    private func preferredSubjectBoundingBox(
+        assetLocalIdentifier: String,
+        existing: NormalizedRect?
+    ) -> NormalizedRect? {
+        guard let record = snapshot.assets.first(where: {
+            $0.localIdentifier == assetLocalIdentifier
+        }) else { return existing }
+        let boxes = record.albumTraits?.postureInstances?.map(\.boundingBox) ?? []
+        if let existing,
+           boxes.contains(where: { Self.intersectionOverUnion($0, existing) >= 0.5 }) {
+            return existing
+        }
+        if boxes.count == 1 { return boxes[0] }
+        if boxes.isEmpty, record.cat.catCount <= 1 {
+            return record.cat.boundingBox
+        }
+        return nil
+    }
+
+    private static func intersectionOverUnion(
+        _ lhs: NormalizedRect,
+        _ rhs: NormalizedRect
+    ) -> Double {
+        let intersection = lhs.cgRect.intersection(rhs.cgRect)
+        guard !intersection.isNull else { return 0 }
+        let intersectionArea = Double(intersection.width * intersection.height)
+        let unionArea = lhs.area + rhs.area - intersectionArea
+        guard unionArea > 0 else { return 0 }
+        return intersectionArea / unionArea
+    }
+
     private func candidateSnapshot(_ input: LibrarySnapshot) -> LibrarySnapshot {
-        let excludedIdentifiers = catCandidateCuration.excludedAssetIdentifiers
+        if catIdentityLoadState == .failed {
+            var value = input
+            value.assets.removeAll()
+            return value
+        }
+        let excludedIdentifiers: Set<String>
+        if let identity = catHouseholdIdentity,
+           identity.mode == .profiled {
+            excludedIdentifiers = Set(
+                identity.globalExcludedAssets.map(\.localIdentifier)
+            )
+        } else {
+            excludedIdentifiers = catCandidateCuration.excludedAssetIdentifiers
+        }
         let sourceIdentifiers = selectedSourceAssetIdentifiers
             ?? catCandidateCuration.lastKnownSourceAssetIdentifierSet
         let usesSelectedSource = catCandidateCuration.usesSelectedAlbum
@@ -966,6 +1488,57 @@ final class AppViewModel: ObservableObject {
             return sourceIdentifiers?.contains(asset.localIdentifier) != true
         }
         return value
+    }
+
+    private var canPresentCatIdentity: Bool {
+        !hasStarted || catIdentityLoadState == .ready
+    }
+
+    /// While the app is still in the Build 13 compatibility mode, the legacy
+    /// curation ledger remains canonical. Acknowledge each successful mirror
+    /// revision in the identity ledger so a later failed mirror cannot make an
+    /// older curation revision overwrite a newer identity decision at launch.
+    private func acknowledgeLegacyCurationState(
+        _ curation: CatCandidateCurationState
+    ) async {
+        guard catHouseholdIdentity?.mode == .legacyUnscoped else { return }
+        let lifeReference = settings.catLifeReference
+        do {
+            _ = try await mutateCatHouseholdIdentity { state in
+                state = state.reconcilingLegacyUnscoped(
+                    lifeReference: lifeReference,
+                    curation: curation
+                )
+            }
+        } catch {
+            // The curation write already committed and remains authoritative.
+            // A later launch will import this higher revision again.
+            Self.logError(
+                error,
+                category: "cat-identity",
+                operation: "acknowledge_legacy_curation"
+            )
+            setError(error)
+        }
+    }
+
+    private func serializeCatIdentityTransition(
+        _ operation: @escaping @MainActor () async -> Void
+    ) async {
+        catIdentityTransitionSequence += 1
+        let sequence = catIdentityTransitionSequence
+        let previous = catIdentityTransitionTail
+        let current = Task { @MainActor in
+            if let previous {
+                await previous.value
+            }
+            await operation()
+        }
+        catIdentityTransitionTail = current
+        await current.value
+        if catIdentityTransitionSequence == sequence {
+            catIdentityTransitionTail = nil
+        }
     }
 
     private func reconcileCandidatePostureState() {
@@ -1023,9 +1596,11 @@ final class AppViewModel: ObservableObject {
             "scan",
             "Scan generation started",
             metadata: [
+                "analysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
                 "existingRecords": "\(snapshot.assets.count)",
                 "forceFullAnalysis": "\(forceFullAnalysis)",
-                "generation": "\(generation)"
+                "generation": "\(generation)",
+                "scanPurpose": startingState.purpose?.rawValue ?? "regular"
             ]
         )
 
@@ -1359,12 +1934,13 @@ final class AppViewModel: ObservableObject {
     }
 
     private func chooseCurrentAssetIfNeeded() {
+        guard canPresentCatIdentity else {
+            currentAsset = nil
+            return
+        }
+        let eligible = candidateSnapshot(snapshot)
         if let currentAsset,
-           catCandidateCuration.includesCandidate(
-               localIdentifier: currentAsset.localIdentifier,
-               selectedSourceAssetIdentifiers: selectedSourceAssetIdentifiers
-           ),
-           let updated = snapshot.assets.first(where: {
+           let updated = eligible.assets.first(where: {
                $0.localIdentifier == currentAsset.localIdentifier
                    && $0.isCatCandidate
                    && $0.analysisFingerprint == settings.analysisFingerprint
@@ -1372,7 +1948,6 @@ final class AppViewModel: ObservableObject {
             self.currentAsset = updated
             return
         }
-        let eligible = candidateSnapshot(snapshot)
         currentAsset = photoSelector.selectOne(
             from: eligible.assets,
             settings: settings
@@ -1381,15 +1956,14 @@ final class AppViewModel: ObservableObject {
 
     private func refreshCurrentAsset() {
         guard let identifier = currentAsset?.localIdentifier else { return }
-        guard catCandidateCuration.includesCandidate(
-            localIdentifier: identifier,
-            selectedSourceAssetIdentifiers: selectedSourceAssetIdentifiers
-        ) else {
+        guard let updated = candidateSnapshot(snapshot).assets.first(where: {
+            $0.localIdentifier == identifier && $0.isCatCandidate
+        }) else {
             currentAsset = nil
             chooseCurrentAssetIfNeeded()
             return
         }
-        currentAsset = snapshot.assets.first { $0.localIdentifier == identifier }
+        currentAsset = updated
     }
 
     private func createOrUpdateAlbum(reportErrors: Bool) async {
@@ -1607,6 +2181,8 @@ final class AppViewModel: ObservableObject {
             state.postureSummary?.logMetadata ?? [:],
             uniquingKeysWith: { current, _ in current }
         )
+        metadata["postureAnalysisVersion"] = "\(CatAlbumTraits.currentAnalysisVersion)"
+        metadata["scanPurpose"] = state.purpose?.rawValue ?? "none"
         return metadata
     }
 

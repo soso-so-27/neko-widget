@@ -37,13 +37,15 @@ private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
 private func photo(
     _ id: String,
     _ capturedAt: Date?,
-    areas: [Double]
+    areas: [Double],
+    isGrowthEligible: Bool = true
 ) -> PhotoPresentation {
     PhotoPresentation(
         localIdentifier: id,
         creationDate: capturedAt,
         catBoundingBox: CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5),
         largestCatAreaRatio: areas.max(),
+        isGrowthEligible: isGrowthEligible,
         hasCurrentAlbumAnalysis: true
     )
 }
@@ -116,8 +118,30 @@ private func verifyDeterministicTiesAndAdoptionReference() throws {
                 "stable identifier tie-break changed")
     try require(forward.map { $0.photo.id } == reversed.map { $0.photo.id },
                 "growth selection depended on input order")
-    try require(forward.map(\.label) == ["0歳", "1歳"],
-                "adoption-day reference no longer uses the age-period contract")
+    try require(
+        forward.map(\.label) == ["お迎えしたころ", "いっしょに暮らして1年"],
+        "adoption-day reference was incorrectly presented as biological age"
+    )
+}
+
+private func verifyUnresolvedMultiCatPhotoIsSkipped() throws {
+    let photos = [
+        photo(
+            "ambiguous-two-cats",
+            date(2024, 6, 1),
+            areas: [],
+            isGrowthEligible: false
+        ),
+        photo("resolved-cat", date(2025, 6, 1), areas: [0.3])
+    ]
+    let items = GrowthAlbumSelector(timeZone: utc).select(
+        from: photos,
+        lifeReference: nil
+    )
+    try require(
+        items.map { $0.photo.id } == ["resolved-cat"],
+        "an unresolved multi-cat photo entered a profile growth comparison"
+    )
 }
 
 @main
@@ -126,6 +150,7 @@ private struct GrowthAlbumVerifier {
         try verifyAgeSelectionPriorityAndBoundary()
         try verifyCalendarSelectionAndMultipleCats()
         try verifyDeterministicTiesAndAdoptionReference()
+        try verifyUnresolvedMultiCatPhotoIsSkipped()
         print("Growth album selection: PASS")
     }
 }

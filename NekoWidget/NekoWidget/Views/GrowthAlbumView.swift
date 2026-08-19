@@ -7,10 +7,15 @@ struct GrowthAlbumDetailView: View {
     let lifeReference: CatLifeReference?
     let albumOpened: (String, String) -> Void
     let excludeFromCatCandidates: ([String]) -> Void
+    let profiles: [CatProfilePresentation]
+    let assignmentsByPhotoIdentifier: [String: Set<String>]
+    let replaceProfileAssignments: ([String: Set<String>]) -> Void
 
     @State private var didRecordOpen = false
     @State private var pendingExclusionIdentifier: String?
     @State private var showsExclusionConfirmation = false
+    @State private var pendingAssignmentIdentifier: String?
+    @State private var showsAssignmentSheet = false
 
     private var items: [GrowthAlbumItem] {
         GrowthAlbumSelector().select(
@@ -50,11 +55,19 @@ struct GrowthAlbumDetailView: View {
                             .accessibilityLabel(accessibilityLabel(for: item))
                             .accessibilityHint("左右にスワイプして成長を比べられます。タップすると写真を大きく表示します")
                             .contextMenu {
+                                if !profiles.isEmpty {
+                                    Button {
+                                        pendingAssignmentIdentifier = item.photo.localIdentifier
+                                        showsAssignmentSheet = true
+                                    } label: {
+                                        Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                                    }
+                                }
                                 Button {
                                     pendingExclusionIdentifier = item.photo.localIdentifier
                                     showsExclusionConfirmation = true
                                 } label: {
-                                    Label("この子じゃない", systemImage: "cat.circle")
+                                    Label("うちの子ではない", systemImage: "cat.circle")
                                 }
                             }
                         }
@@ -71,11 +84,11 @@ struct GrowthAlbumDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .confirmationDialog(
-            "「この子じゃない」にしますか？",
+            "「うちの子ではない」にしますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("候補から除外", role: .destructive) {
+            Button("すべてから除外", role: .destructive) {
                 guard let identifier = pendingExclusionIdentifier else { return }
                 pendingExclusionIdentifier = nil
                 excludeFromCatCandidates([identifier])
@@ -85,6 +98,25 @@ struct GrowthAlbumDetailView: View {
             }
         } message: {
             Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+        }
+        .sheet(isPresented: $showsAssignmentSheet) {
+            if let identifier = pendingAssignmentIdentifier {
+                CatPhotoAssignmentSheet(
+                    photoIdentifiers: [identifier],
+                    profiles: profiles,
+                    initialAssignmentsByPhotoIdentifier: [
+                        identifier: assignmentsByPhotoIdentifier[identifier] ?? []
+                    ],
+                    save: { values in
+                        replaceProfileAssignments(values)
+                        pendingAssignmentIdentifier = nil
+                    },
+                    excludeFromHousehold: { identifiers in
+                        excludeFromCatCandidates(identifiers)
+                        pendingAssignmentIdentifier = nil
+                    }
+                )
+            }
         }
         .onAppear {
             guard !didRecordOpen else { return }
