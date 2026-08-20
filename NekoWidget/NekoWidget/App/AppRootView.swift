@@ -16,6 +16,7 @@ struct AppRootView: View {
     @StateObject private var widgetInstallationChecker = WidgetInstallationChecker()
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
+    @State private var onboardingScanErrorMessage: String?
 
     var body: some View {
         Group {
@@ -63,6 +64,13 @@ struct AppRootView: View {
         }
         .onChange(of: viewModel.errorMessage) { _, message in
             guard let message, !message.isEmpty else { return }
+            if onboardingState.currentPage == .scanResult {
+                // Keep scan failures inside page three. The global alert clears
+                // AppViewModel errors when dismissed, which would otherwise
+                // send the onboarding back to an endless progress screen.
+                onboardingScanErrorMessage = message
+                return
+            }
             presentedError = PresentedError(message: message)
         }
         .alert(item: $presentedError) { error in
@@ -97,6 +105,7 @@ struct AppRootView: View {
             authorizationStatus: viewModel.authorizationStatus,
             isPhotoRequestReady: viewModel.catHouseholdIdentity != nil,
             scan: scanPresentation,
+            scanErrorMessage: onboardingScanErrorMessage,
             isLimitedAccess: viewModel.isLimitedAccess,
             requestPhotoAccess: {
                 Task { await viewModel.requestAccess() }
@@ -104,6 +113,8 @@ struct AppRootView: View {
             openPhotoSettings: openSystemSettings,
             chooseMorePhotos: presentLimitedLibraryPicker,
             rescan: {
+                onboardingScanErrorMessage = nil
+                viewModel.clearError()
                 Task { await viewModel.rescan() }
             },
             finish: completeOnboarding
@@ -714,6 +725,10 @@ struct AppRootView: View {
                     return
                 }
                 persistOnboardingState(state)
+                if page != .scanResult {
+                    onboardingScanErrorMessage = nil
+                    viewModel.clearError()
+                }
             }
         )
     }

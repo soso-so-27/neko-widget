@@ -13,6 +13,7 @@ struct OnboardingView: View {
     let authorizationStatus: PHAuthorizationStatus
     let isPhotoRequestReady: Bool
     let scan: ScanPresentation
+    let scanErrorMessage: String?
     let isLimitedAccess: Bool
 
     let requestPhotoAccess: () -> Void
@@ -44,7 +45,6 @@ struct OnboardingView: View {
                         page = .pawLike
                     }
                 )
-                .accessibilityIdentifier("onboarding-page-widget-guide")
 
             case .pawLike:
                 OnboardingPawLikePage(onFinish: finish)
@@ -89,7 +89,6 @@ struct OnboardingView: View {
                 .padding(.bottom, 24)
                 .accessibilityIdentifier("onboarding-photo-permission-skip")
             }
-            .accessibilityIdentifier("onboarding-page-photo-permission")
 
         case .authorized, .limited:
             ProgressView()
@@ -120,7 +119,14 @@ struct OnboardingView: View {
                     page = .widgetGuide
                 }
             )
-            .accessibilityIdentifier("onboarding-page-scan-result")
+        } else if let scanErrorMessage, !scanErrorMessage.isEmpty {
+            OnboardingScanErrorPage(
+                message: scanErrorMessage,
+                retry: rescan,
+                continueToWidgetGuide: {
+                    page = .widgetGuide
+                }
+            )
         } else {
             OnboardingScanInProgressPage(scan: scan)
         }
@@ -139,6 +145,46 @@ struct OnboardingView: View {
         @unknown default:
             break
         }
+    }
+}
+
+private struct OnboardingScanErrorPage: View {
+    let message: String
+    let retry: () -> Void
+    let continueToWidgetGuide: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 48, weight: .light))
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+
+            Text("写真を確認できませんでした")
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                Button("もう一度試す", systemImage: "arrow.clockwise", action: retry)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("onboarding-scan-retry")
+
+                Button("ウィジェットの案内へ進む", action: continueToWidgetGuide)
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityIdentifier("onboarding-scan-skip")
+            }
+        }
+        .padding(28)
     }
 }
 
@@ -186,7 +232,6 @@ private struct OnboardingPurposePage: View {
             .background(.bar)
             .accessibilityIdentifier("onboarding-purpose-start")
         }
-        .accessibilityIdentifier("onboarding-page-purpose")
     }
 }
 
@@ -273,7 +318,6 @@ private struct OnboardingPhotoPermissionPage: View {
             .padding(.vertical, 12)
             .background(.bar)
         }
-        .accessibilityIdentifier("onboarding-page-photo-permission")
     }
 }
 
@@ -306,7 +350,6 @@ private struct OnboardingScanInProgressPage: View {
             Spacer()
         }
         .padding(28)
-        .accessibilityIdentifier("onboarding-page-scan-progress")
     }
 }
 
@@ -346,7 +389,6 @@ private struct OnboardingPawLikePage: View {
             .background(.bar)
             .accessibilityIdentifier("onboarding-paw-finish")
         }
-        .accessibilityIdentifier("onboarding-page-paw-like")
     }
 }
 
