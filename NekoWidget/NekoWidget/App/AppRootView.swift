@@ -9,30 +9,26 @@ struct AppRootView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasSeenInitialScanResult.v1") private var hasSeenInitialScanResult = false
+    @AppStorage(OnboardingPresentationPersistence.completedVersionKey)
+    private var onboardingCompletedVersion = 0
+    @AppStorage(OnboardingPresentationPersistence.resumePageIndexKey)
+    private var onboardingResumePageIndex = 0
+    @StateObject private var widgetInstallationChecker = WidgetInstallationChecker()
     @State private var presentedError: PresentedError?
+    @State private var showsWidgetPlacementGuide = false
 
     var body: some View {
         Group {
-            switch viewModel.authorizationStatus {
-            case .authorized, .limited:
-                authorizedContent
-            case .notDetermined, .denied, .restricted:
-                PhotoPermissionView(
-                    status: viewModel.authorizationStatus,
-                    requestAccess: {
-                        Task { await viewModel.requestAccess() }
-                    },
-                    openSettings: openSystemSettings
-                )
-            @unknown default:
-                PhotoPermissionView(
-                    status: .denied,
-                    requestAccess: {},
-                    openSettings: openSystemSettings
-                )
+            if OnboardingPresentationPersistence.requiresPresentation(
+                completedVersion: onboardingCompletedVersion
+            ) {
+                onboardingContent
+            } else {
+                regularContent
             }
         }
         .task {
+            widgetInstallationChecker.refresh()
             await viewModel.start()
         }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
@@ -51,6 +47,7 @@ struct AppRootView: View {
             switch newPhase {
             case .active:
                 UIApplication.shared.isIdleTimerDisabled = viewModel.isScanning
+                widgetInstallationChecker.refresh()
                 Task { await viewModel.syncOnActive() }
             case .inactive, .background:
                 UIApplication.shared.isIdleTimerDisabled = false
@@ -77,6 +74,40 @@ struct AppRootView: View {
                 }
             )
         }
+        .sheet(isPresented: $showsWidgetPlacementGuide) {
+            WidgetPlacementGuideView(
+                onComplete: dismissWidgetPlacementGuide,
+                onSkip: dismissWidgetPlacementGuide
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var regularContent: some View {
+        if hasPhotoAccess {
+            authorizedContent
+        } else {
+            mainTabContent
+        }
+    }
+
+    private var onboardingContent: some View {
+        OnboardingView(
+            page: onboardingPage,
+            authorizationStatus: viewModel.authorizationStatus,
+            isPhotoRequestReady: viewModel.catHouseholdIdentity != nil,
+            scan: scanPresentation,
+            isLimitedAccess: viewModel.isLimitedAccess,
+            requestPhotoAccess: {
+                Task { await viewModel.requestAccess() }
+            },
+            openPhotoSettings: openSystemSettings,
+            chooseMorePhotos: presentLimitedLibraryPicker,
+            rescan: {
+                Task { await viewModel.rescan() }
+            },
+            finish: completeOnboarding
+        )
     }
 
     @ViewBuilder
@@ -94,65 +125,88 @@ struct AppRootView: View {
                 }
             )
         } else {
-            MainTabView(
-                currentPhoto: viewModel.currentAsset.map(photoPresentation),
-                likedPhotos: viewModel.likedAssets.map(photoPresentation),
-                catPhotos: viewModel.catAssets.map(photoPresentation),
-                libraryPhotos: viewModel.visibleLibraryAssets.map(photoPresentation),
-                scan: scanPresentation,
-                albumState: effectiveAlbumState,
-                settings: settingsPresentation,
-                detectionAccuracySample: detectionAccuracySamplePresentation,
-                excludedCatPhotos: excludedCatPhotoPresentations,
-                photoSourceAlbums: viewModel.photoSourceAlbums,
-                photoSourceStatus: viewModel.photoSourceStatus,
-                catProfilesPresentation: catProfilesPresentation,
-                profileAlbumPhotos: profileAlbumPhotos,
-                catProfilesActions: catProfilesActions,
-                isLimitedAccess: viewModel.isLimitedAccess,
-                isScanning: viewModel.isScanning,
-                widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
-                deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
-                deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
-                chooseMorePhotos: presentLimitedLibraryPicker,
-                toggleLike: { identifier in
-                    Task { await viewModel.toggleLike(id: identifier) }
-                },
-                albumOpened: { key, group in
-                    Task {
-                        await viewModel.recordAlbumOpened(key: key, group: group)
-                    }
-                },
-                updateAlbum: updateAlbum,
-                rescan: {
-                    await viewModel.rescan()
-                },
-                retryPendingPostureClassification: {
-                    await viewModel.retryPendingPostureClassification()
-                },
-                saveSettings: { settings in
-                    await viewModel.updateSettings(coreSettings(from: settings))
-                },
-                saveLifeReference: { reference in
-                    await viewModel.updateCatLifeReference(reference)
-                },
-                excludeFromCatCandidates: { identifiers in
-                    await viewModel.excludeFromCatCandidates(localIdentifiers: identifiers)
-                },
-                restoreCatCandidates: { identifiers in
-                    await viewModel.restoreCatCandidates(localIdentifiers: identifiers)
-                },
-                selectPhotoSourceAlbum: { identifier in
-                    await viewModel.selectPhotoSourceAlbum(localIdentifier: identifier)
-                },
-                refreshPhotoSourceAlbums: {
-                    await viewModel.refreshPhotoSourceAlbums()
-                },
-                exportJSON: {
-                    await viewModel.exportJSON()
-                }
-            )
+            mainTabContent
         }
+    }
+
+    private var mainTabContent: some View {
+        MainTabView(
+            currentPhoto: hasPhotoAccess
+                ? viewModel.currentAsset.map(photoPresentation)
+                : nil,
+            likedPhotos: hasPhotoAccess
+                ? viewModel.likedAssets.map(photoPresentation)
+                : [],
+            catPhotos: hasPhotoAccess
+                ? viewModel.catAssets.map(photoPresentation)
+                : [],
+            libraryPhotos: hasPhotoAccess
+                ? viewModel.visibleLibraryAssets.map(photoPresentation)
+                : [],
+            scan: hasPhotoAccess ? scanPresentation : ScanPresentation(),
+            albumState: hasPhotoAccess ? effectiveAlbumState : .idle,
+            settings: settingsPresentation,
+            detectionAccuracySample: hasPhotoAccess
+                ? detectionAccuracySamplePresentation
+                : .init(),
+            excludedCatPhotos: hasPhotoAccess ? excludedCatPhotoPresentations : [],
+            photoSourceAlbums: hasPhotoAccess ? viewModel.photoSourceAlbums : [],
+            photoSourceStatus: hasPhotoAccess ? viewModel.photoSourceStatus : .allLibrary,
+            catProfilesPresentation: hasPhotoAccess
+                ? catProfilesPresentation
+                : CatProfilesPresentation(),
+            profileAlbumPhotos: hasPhotoAccess ? profileAlbumPhotos : [:],
+            catProfilesActions: catProfilesActions,
+            hasPhotoAccess: hasPhotoAccess,
+            isLimitedAccess: hasPhotoAccess && viewModel.isLimitedAccess,
+            isScanning: hasPhotoAccess && viewModel.isScanning,
+            shouldOfferWidgetPlacementGuide: widgetInstallationChecker
+                .shouldOfferPlacementGuide,
+            widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
+            deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
+            deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
+            chooseMorePhotos: presentLimitedLibraryPicker,
+            requestPhotoAccess: requestOrOpenPhotoAccess,
+            showWidgetPlacementGuide: {
+                showsWidgetPlacementGuide = true
+            },
+            toggleLike: { identifier in
+                Task { await viewModel.toggleLike(id: identifier) }
+            },
+            albumOpened: { key, group in
+                Task {
+                    await viewModel.recordAlbumOpened(key: key, group: group)
+                }
+            },
+            updateAlbum: updateAlbum,
+            rescan: {
+                await viewModel.rescan()
+            },
+            retryPendingPostureClassification: {
+                await viewModel.retryPendingPostureClassification()
+            },
+            saveSettings: { settings in
+                await viewModel.updateSettings(coreSettings(from: settings))
+            },
+            saveLifeReference: { reference in
+                await viewModel.updateCatLifeReference(reference)
+            },
+            excludeFromCatCandidates: { identifiers in
+                await viewModel.excludeFromCatCandidates(localIdentifiers: identifiers)
+            },
+            restoreCatCandidates: { identifiers in
+                await viewModel.restoreCatCandidates(localIdentifiers: identifiers)
+            },
+            selectPhotoSourceAlbum: { identifier in
+                await viewModel.selectPhotoSourceAlbum(localIdentifier: identifier)
+            },
+            refreshPhotoSourceAlbums: {
+                await viewModel.refreshPhotoSourceAlbums()
+            },
+            exportJSON: {
+                await viewModel.exportJSON()
+            }
+        )
     }
 
     private var scanPresentation: ScanPresentation {
@@ -603,6 +657,85 @@ struct AppRootView: View {
     private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    private var hasPhotoAccess: Bool {
+        switch viewModel.authorizationStatus {
+        case .authorized, .limited:
+            return true
+        case .notDetermined, .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func requestOrOpenPhotoAccess() {
+        switch viewModel.authorizationStatus {
+        case .notDetermined:
+            Task { await viewModel.requestAccess() }
+        case .denied, .restricted:
+            openSystemSettings()
+        case .authorized, .limited:
+            break
+        @unknown default:
+            openSystemSettings()
+        }
+    }
+
+    private var onboardingState: OnboardingPresentationState {
+        OnboardingPresentationState(
+            persistedResumePageIndex: onboardingResumePageIndex,
+            persistedCompletedVersion: onboardingCompletedVersion
+        )
+    }
+
+    private var onboardingPage: Binding<OnboardingPresentationPage> {
+        Binding(
+            get: {
+                onboardingState.currentPage ?? .purpose
+            },
+            set: { page in
+                var state = onboardingState
+                guard let currentPage = state.currentPage,
+                      currentPage != page else { return }
+
+                switch (currentPage, page) {
+                case (.purpose, .photoPermission),
+                     (.photoPermission, .scanResult),
+                     (.scanResult, .widgetGuide),
+                     (.widgetGuide, .pawLike):
+                    state.advance()
+                case (.photoPermission, .widgetGuide):
+                    state.skipPhotoPermission()
+                case (.scanResult, .photoPermission):
+                    state.reconcilePhotoAuthorization(isReadable: false)
+                default:
+                    return
+                }
+                persistOnboardingState(state)
+            }
+        )
+    }
+
+    private func completeOnboarding() {
+        var state = onboardingState
+        state.advance()
+        persistOnboardingState(state)
+        // Keep the former first-run flag current so a rollback cannot show the
+        // legacy scan-result gate after the five-page flow has completed.
+        hasSeenInitialScanResult = true
+        widgetInstallationChecker.refresh()
+    }
+
+    private func persistOnboardingState(_ state: OnboardingPresentationState) {
+        onboardingResumePageIndex = state.resumePageIndex
+        onboardingCompletedVersion = state.completedVersion
+    }
+
+    private func dismissWidgetPlacementGuide() {
+        showsWidgetPlacementGuide = false
+        widgetInstallationChecker.refresh()
     }
 }
 

@@ -219,6 +219,18 @@ jobs:
             -o "$RUNNER_TEMP/verify-cat-profiles-presentation"
           "$RUNNER_TEMP/verify-cat-profiles-presentation"
 
+      - name: Verify five-screen onboarding presentation
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Views/OnboardingPresentation.swift \
+            ci/verify-onboarding-presentation.swift \
+            -o "$RUNNER_TEMP/verify-onboarding-presentation"
+          "$RUNNER_TEMP/verify-onboarding-presentation"
+
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget
         shell: bash

@@ -3,22 +3,46 @@ import XCTest
 final class PhotoPermissionUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
-        executionTimeAllowance = 60
+        executionTimeAllowance = 120
     }
 
     @MainActor
     func testGrantFullPhotoLibraryAccess() {
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
+        app.launchEnvironment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] = "1"
         app.launch()
 
-        let requestButton = app.buttons["photo-permission-primary"]
+        let startButton = app.buttons["onboarding-purpose-start"]
+        guard startButton.waitForExistence(timeout: 15) else {
+            addDiagnosticAttachment(
+                name: "Missing onboarding start button",
+                contents: app.debugDescription
+            )
+            XCTFail("The first onboarding page did not appear.")
+            return
+        }
+        startButton.tap()
+
+        let requestButton = app.buttons["onboarding-photo-permission-allow"]
         guard requestButton.waitForExistence(timeout: 15) else {
             addDiagnosticAttachment(
                 name: "Missing in-app Photos permission button",
                 contents: app.debugDescription
             )
             XCTFail("The in-app Photos permission button did not appear.")
+            return
+        }
+        let requestReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isEnabled == true"),
+            object: requestButton
+        )
+        guard XCTWaiter.wait(for: [requestReady], timeout: 15) == .completed else {
+            addDiagnosticAttachment(
+                name: "Photos permission button stayed disabled",
+                contents: app.debugDescription
+            )
+            XCTFail("The onboarding permission action did not become ready.")
             return
         }
         requestButton.tap()
@@ -67,10 +91,131 @@ final class PhotoPermissionUITests: XCTestCase {
             "The Photos permission alert did not close after granting full access."
         )
 
+        app.activate()
+
+        // The smoke workflow runs this test before importing any fixtures, so
+        // a successful full-library scan must reach the explicit zero-result
+        // branch instead of merely leaving the progress screen.
+        let zeroResult = app.staticTexts["猫の写真は見つかりませんでした"]
+        guard zeroResult.waitForExistence(timeout: 45) else {
+            fail(
+                "The empty Photo Library did not produce the zero-photo result.",
+                app: app
+            )
+            return
+        }
+
+        let continueFromZero = firstExistingButton(
+            in: app,
+            identifiers: ["initial-scan-continue"],
+            labels: ["次へ", "ホームを見る"],
+            timeout: 10
+        )
+        guard let continueFromZero else {
+            fail(
+                "The zero-photo result did not expose its continue action.",
+                app: app
+            )
+            return
+        }
+        continueFromZero.tap()
+
+        let widgetSkip = app.buttons["widget-placement-skip"]
+        guard widgetSkip.waitForExistence(timeout: 15) else {
+            fail(
+                "The first-run flow did not continue to the Widget placement guide.",
+                app: app
+            )
+            return
+        }
+        widgetSkip.tap()
+
+        let pawFinish = app.buttons["onboarding-paw-finish"]
+        guard pawFinish.waitForExistence(timeout: 15) else {
+            fail(
+                "Skipping the Widget guide did not continue to the paw tutorial.",
+                app: app
+            )
+            return
+        }
+        pawFinish.tap()
+
+        let homeWidgetGuide = app.buttons["home-widget-placement-guide"]
+        guard homeWidgetGuide.waitForExistence(timeout: 20) else {
+            fail(
+                "The completed first-run flow did not show the uninstalled-Widget Home recovery action.",
+                app: app
+            )
+            return
+        }
+
+        let settingsTab = firstExistingButton(
+            in: app,
+            identifiers: ["main-tab-settings"],
+            labels: ["設定"],
+            timeout: 10
+        )
+        guard let settingsTab else {
+            fail("The Settings tab was not available after onboarding.", app: app)
+            return
+        }
+        settingsTab.tap()
+
+        let settingsWidgetGuide = app.buttons["settings-widget-placement-guide"]
+        guard settingsWidgetGuide.waitForExistence(timeout: 15) else {
+            fail(
+                "Settings did not expose the Widget placement guide replay action.",
+                app: app
+            )
+            return
+        }
+        settingsWidgetGuide.tap()
+
+        guard widgetSkip.waitForExistence(timeout: 15) else {
+            fail(
+                "The Widget placement guide did not reopen from Settings.",
+                app: app
+            )
+            return
+        }
+
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screenshot.name = "After full Photos authorization"
+        screenshot.name = "Widget placement guide reopened from Settings"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+
+    @MainActor
+    private func firstExistingButton(
+        in app: XCUIApplication,
+        identifiers: [String],
+        labels: [String],
+        timeout: TimeInterval
+    ) -> XCUIElement? {
+        let candidates = identifiers.map { app.buttons[$0] }
+            + labels.map { app.buttons[$0] }
+        let deadline = Date().addingTimeInterval(timeout)
+
+        repeat {
+            if let candidate = candidates.first(where: \.exists) {
+                return candidate
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+
+        return nil
+    }
+
+    @MainActor
+    private func fail(_ message: String, app: XCUIApplication) {
+        addDiagnosticAttachment(name: message, contents: app.debugDescription)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Screen on onboarding UI test failure"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        XCTFail(message)
     }
 
     private func addDiagnosticAttachment(name: String, contents: String) {

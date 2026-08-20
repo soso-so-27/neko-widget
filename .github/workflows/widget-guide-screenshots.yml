@@ -1,0 +1,163 @@
+name: Capture real Widget guide screenshots
+
+on:
+  workflow_dispatch:
+  # Temporary branch trigger so the first real screenshot set can be captured
+  # before this new workflow exists on the default branch. Remove after the
+  # reviewed PNGs are committed.
+  push:
+    branches:
+      - codex/grouped-cat-albums
+    paths:
+      - .github/workflows/widget-guide-screenshots.yml
+      - NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift
+      - NekoWidget/NekoWidget.xcodeproj/project.pbxproj
+      - NekoWidget/ci/export-widget-guide-screenshots.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: widget-guide-screenshots-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture-widget-guide:
+    name: Capture Japanese iOS 26 Widget placement flow
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      CAPTURE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Capture privacy-safe SpringBoard screenshots
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          artifact_directory="$RUNNER_TEMP/neko-widget-guide-screenshots"
+          derived_data_directory="$RUNNER_TEMP/NekoWidgetGuideDerivedData"
+          result_bundle="$artifact_directory/WidgetPlacementScreenshots.xcresult"
+          mkdir -p "$artifact_directory"
+
+          xcodebuild -version | tee "$artifact_directory/xcode-version.txt"
+          xcrun simctl list devices available --json \
+            > "$artifact_directory/available-simulators.json"
+
+          python3 - \
+            "$artifact_directory/available-simulators.json" \
+            "$artifact_directory/selected-simulator.tsv" \
+            "$CAPTURE_IOS_RUNTIME" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          runtime = sys.argv[3]
+          devices = json.loads(source.read_text(encoding="utf-8"))["devices"]
+          candidates = [
+              device
+              for device in devices.get(runtime, [])
+              if device.get("isAvailable", False)
+              and str(device.get("name", "")).startswith("iPhone")
+          ]
+          if not candidates:
+              raise SystemExit(f"No available iPhone for {runtime}")
+
+          preferred_names = ["iPhone 16 Pro", "iPhone 15 Pro"]
+          selected = next(
+              (device for name in preferred_names for device in candidates if device["name"] == name),
+              candidates[0],
+          )
+          destination.write_text(
+              f"{selected['udid']}\t{selected['name']}\t{runtime}\n",
+              encoding="utf-8",
+          )
+          PY
+
+          IFS=$'\t' read -r simulator_udid simulator_name simulator_runtime \
+            < "$artifact_directory/selected-simulator.tsv"
+          if [[ -z "$simulator_udid" || -z "$simulator_name" || -z "$simulator_runtime" ]]; then
+            echo "The selected Simulator record is incomplete." >&2
+            exit 1
+          fi
+          printf 'Selected Simulator: %s (%s, %s)\n' \
+            "$simulator_name" "$simulator_runtime" "$simulator_udid" \
+            | tee "$artifact_directory/selected-simulator.txt"
+
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            xcrun simctl shutdown "$simulator_udid" || true
+            xcrun simctl erase "$simulator_udid" || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          xcrun simctl shutdown "$simulator_udid" || true
+          xcrun simctl erase "$simulator_udid"
+          xcrun simctl boot "$simulator_udid"
+          xcrun simctl bootstatus "$simulator_udid" -b
+
+          # Set SpringBoard itself to Japanese. -testLanguage below also pins
+          # the app/test process, but is not sufficient for system UI.
+          xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLanguages -array ja-JP
+          xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLocale ja_JP
+          xcrun simctl shutdown "$simulator_udid"
+          xcrun simctl boot "$simulator_udid"
+          xcrun simctl bootstatus "$simulator_udid" -b
+          xcrun simctl status_bar "$simulator_udid" override \
+            --time 09:41 --batteryLevel 100 --batteryState charged || true
+
+          set +e
+          xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$simulator_udid" \
+            -derivedDataPath "$derived_data_directory" \
+            -resultBundlePath "$result_bundle" \
+            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureJapaneseCurrentWidgetPlacementGuide \
+            -parallel-testing-enabled NO \
+            -testLanguage ja \
+            -testRegion JP \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            test 2>&1 | tee "$artifact_directory/xcodebuild-test.log"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$test_status" > "$artifact_directory/test-exit-code.txt"
+          exit "$test_status"
+
+      - name: Export four named PNGs
+        if: always()
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          result_bundle="$RUNNER_TEMP/neko-widget-guide-screenshots/WidgetPlacementScreenshots.xcresult"
+          output_directory="$RUNNER_TEMP/neko-widget-guide-screenshots/exported"
+          bash ci/export-widget-guide-screenshots.sh \
+            "$result_bundle" "$output_directory"
+
+      - name: Upload screenshots and raw result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: widget-guide-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-widget-guide-screenshots
+          if-no-files-found: warn
+          retention-days: 14

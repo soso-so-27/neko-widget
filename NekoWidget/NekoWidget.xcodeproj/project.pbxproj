@@ -58,6 +58,10 @@
 		100000000000000000000156 /* CatProfilesPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023D /* CatProfilesPresentation.swift */; };
 		100000000000000000000157 /* CatProfilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023E /* CatProfilesView.swift */; };
 		100000000000000000000158 /* CatProfilePhotoCurationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023F /* CatProfilePhotoCurationViews.swift */; };
+		100000000000000000000159 /* OnboardingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000240 /* OnboardingPresentation.swift */; };
+		10000000000000000000015A /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000241 /* OnboardingView.swift */; };
+		10000000000000000000015B /* WidgetPlacementGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000242 /* WidgetPlacementGuideView.swift */; };
+		10000000000000000000015C /* WidgetInstallationChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000243 /* WidgetInstallationChecker.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
@@ -108,6 +112,7 @@
 		410000000000000000000005 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000508 /* AppIntents.framework */; };
 		500000000000000000000001 /* NekoWidgetWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000601 /* PhotoPermissionUITests.swift */; };
+		600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -209,6 +214,10 @@
 		F0000000000000000000023D /* CatProfilesPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatProfilesPresentation.swift; sourceTree = "<group>"; };
 		F0000000000000000000023E /* CatProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatProfilesView.swift; sourceTree = "<group>"; };
 		F0000000000000000000023F /* CatProfilePhotoCurationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatProfilePhotoCurationViews.swift; sourceTree = "<group>"; };
+		F00000000000000000000240 /* OnboardingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPresentation.swift; sourceTree = "<group>"; };
+		F00000000000000000000241 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		F00000000000000000000242 /* WidgetPlacementGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPlacementGuideView.swift; sourceTree = "<group>"; };
+		F00000000000000000000243 /* WidgetInstallationChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetInstallationChecker.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
@@ -231,6 +240,7 @@
 		F00000000000000000000507 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
 		F00000000000000000000508 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		F00000000000000000000601 /* PhotoPermissionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionUITests.swift; sourceTree = "<group>"; };
+		F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPlacementScreenshotUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000602 /* NekoWidgetUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NekoWidgetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -442,6 +452,7 @@
 				F0000000000000000000022A /* SharingRuntimeSelfTest.swift */,
 				F0000000000000000000022D /* CatCandidateCurationStore.swift */,
 				F0000000000000000000022E /* CatHouseholdIdentityStore.swift */,
+				F00000000000000000000243 /* WidgetInstallationChecker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -474,6 +485,9 @@
 				F0000000000000000000023D /* CatProfilesPresentation.swift */,
 				F0000000000000000000023E /* CatProfilesView.swift */,
 				F0000000000000000000023F /* CatProfilePhotoCurationViews.swift */,
+				F00000000000000000000240 /* OnboardingPresentation.swift */,
+				F00000000000000000000241 /* OnboardingView.swift */,
+				F00000000000000000000242 /* WidgetPlacementGuideView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -500,6 +514,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000601 /* PhotoPermissionUITests.swift */,
+				F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */,
 			);
 			path = NekoWidgetUITests;
 			sourceTree = "<group>";
@@ -698,6 +713,10 @@
 				100000000000000000000156 /* CatProfilesPresentation.swift in Sources */,
 				100000000000000000000157 /* CatProfilesView.swift in Sources */,
 				100000000000000000000158 /* CatProfilePhotoCurationViews.swift in Sources */,
+				100000000000000000000159 /* OnboardingPresentation.swift in Sources */,
+				10000000000000000000015A /* OnboardingView.swift in Sources */,
+				10000000000000000000015B /* WidgetPlacementGuideView.swift in Sources */,
+				10000000000000000000015C /* WidgetInstallationChecker.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
 				100000000000000000000133 /* MainTabView.swift in Sources */,
@@ -744,6 +763,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */,
+				600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

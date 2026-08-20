@@ -6,8 +6,12 @@ struct HomeView: View {
     let newestPhotoDate: Date?
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
+    let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
+    let shouldOfferWidgetPlacementGuide: Bool
+    let requestPhotoAccess: () -> Void
     let chooseMorePhotos: () -> Void
+    let showWidgetPlacementGuide: () -> Void
     let showLikedPhotos: () -> Void
     let toggleLike: (String) -> Void
     let updateAlbum: () -> Void
@@ -18,16 +22,26 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
-                likedSummary
+                if hasPhotoAccess {
+                    likedSummary
+                } else {
+                    photoAccessCard
+                }
 
-                if isLimitedAccess {
+                if shouldOfferWidgetPlacementGuide {
+                    widgetPlacementCard
+                }
+
+                if hasPhotoAccess, isLimitedAccess {
                     LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                 }
 
-                todayPhoto
-                albumCard
-                ScanProgressCard(scan: scan, rescan: rescan)
-                statisticsCard
+                if hasPhotoAccess {
+                    todayPhoto
+                    albumCard
+                    ScanProgressCard(scan: scan, rescan: rescan)
+                    statisticsCard
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -37,6 +51,61 @@ struct HomeView: View {
         .sheet(isPresented: $showsPhotoShuffleGuide) {
             PhotoShuffleGuideView()
         }
+    }
+
+    private var photoAccessCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("うちの子を探すには写真へのアクセスが必要です", systemImage: "photo.on.rectangle.angled")
+                .font(.headline)
+
+            Text("写真は端末の外に出さず、変更や削除もしません。あとからここで許可できます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Button("写真へのアクセスを許可", action: requestPhotoAccess)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("home-photo-permission")
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var widgetPlacementCard: some View {
+        Button(action: showWidgetPlacementGuide) {
+            HStack(spacing: 14) {
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .font(.system(size: 25, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 14))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("ウィジェットを置く")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("毎日ちがう、うちの子をホーム画面に。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.accentColor.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: 20)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("home-widget-placement-guide")
+        .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
     private var likedSummary: some View {

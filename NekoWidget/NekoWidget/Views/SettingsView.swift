@@ -5,7 +5,9 @@ struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
     let postureSecondaryPendingAssets: Int
+    let hasPhotoAccess: Bool
     let isScanning: Bool
+    let requestPhotoAccess: () -> Void
     let saveSettings: (SettingsPresentation) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let rescan: () async -> Void
@@ -21,6 +23,7 @@ struct SettingsView: View {
     let exportJSON: () async -> URL?
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
+    let showWidgetPlacementGuide: () -> Void
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
@@ -35,7 +38,9 @@ struct SettingsView: View {
         settings: SettingsPresentation,
         detectionAccuracySample: DetectionAccuracySamplePresentation,
         postureSecondaryPendingAssets: Int,
+        hasPhotoAccess: Bool,
         isScanning: Bool,
+        requestPhotoAccess: @escaping () -> Void,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
         saveLifeReference: @escaping (CatLifeReference?) async -> Void,
         rescan: @escaping () async -> Void,
@@ -50,12 +55,15 @@ struct SettingsView: View {
         refreshPhotoSourceAlbums: @escaping () async -> Void,
         exportJSON: @escaping () async -> URL?,
         catProfilesPresentation: CatProfilesPresentation,
-        catProfilesActions: CatProfilesViewActions
+        catProfilesActions: CatProfilesViewActions,
+        showWidgetPlacementGuide: @escaping () -> Void
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
         self.postureSecondaryPendingAssets = postureSecondaryPendingAssets
+        self.hasPhotoAccess = hasPhotoAccess
         self.isScanning = isScanning
+        self.requestPhotoAccess = requestPhotoAccess
         self.saveSettings = saveSettings
         self.saveLifeReference = saveLifeReference
         self.rescan = rescan
@@ -71,11 +79,34 @@ struct SettingsView: View {
         self.exportJSON = exportJSON
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
+        self.showWidgetPlacementGuide = showWidgetPlacementGuide
         _draft = State(initialValue: settings)
     }
 
     var body: some View {
         Form {
+            if !hasPhotoAccess {
+                Section {
+                    Button("写真へのアクセスを許可", action: requestPhotoAccess)
+                        .accessibilityIdentifier("settings-photo-permission")
+                } header: {
+                    Text("写真")
+                } footer: {
+                    Text("許可するまで写真のスキャンは行いません。ウィジェットの案内など、ほかの設定は利用できます。")
+                }
+            }
+
+            Section {
+                Button(action: showWidgetPlacementGuide) {
+                    Label("ウィジェットの置き方を見る", systemImage: "rectangle.on.rectangle.angled")
+                }
+                .accessibilityIdentifier("settings-widget-placement-guide")
+            } header: {
+                Text("使い方")
+            } footer: {
+                Text("一度スキップしても、ここからいつでも案内を開き直せます。")
+            }
+
             Section {
                 Picker("出す範囲", selection: $draft.range) {
                     ForEach(PhotoRangePresentation.allCases) { range in
@@ -230,7 +261,7 @@ struct SettingsView: View {
                 } label: {
                     Label(isRescanning || isScanning ? "スキャン中…" : "最初から再スキャン", systemImage: "arrow.clockwise")
                 }
-                .disabled(isRescanning || isScanning)
+                .disabled(isRescanning || isScanning || !hasPhotoAccess)
 
                 if postureSecondaryPendingAssets > 0 {
                     Button {

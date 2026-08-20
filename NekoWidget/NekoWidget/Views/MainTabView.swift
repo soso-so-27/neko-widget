@@ -15,13 +15,17 @@ struct MainTabView: View {
     let catProfilesPresentation: CatProfilesPresentation
     let profileAlbumPhotos: [String: [PhotoPresentation]]
     let catProfilesActions: CatProfilesViewActions
+    let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
     let isScanning: Bool
+    let shouldOfferWidgetPlacementGuide: Bool
     let widgetIntervalMinutes: Int
     @Binding var deepLinkedPhotoIdentifier: String?
     @Binding var deepLinkedPhotoShownAt: Date?
 
     let chooseMorePhotos: () -> Void
+    let requestPhotoAccess: () -> Void
+    let showWidgetPlacementGuide: () -> Void
     let toggleLike: (String) -> Void
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
@@ -52,8 +56,12 @@ struct MainTabView: View {
                     newestPhotoDate: catPhotos.compactMap(\.creationDate).max(),
                     scan: scan,
                     albumState: albumState,
+                    hasPhotoAccess: hasPhotoAccess,
                     isLimitedAccess: isLimitedAccess,
+                    shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
+                    requestPhotoAccess: requestPhotoAccess,
                     chooseMorePhotos: chooseMorePhotos,
+                    showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showLikedPhotos: showLikedPhotos,
                     toggleLike: toggleLike,
                     updateAlbum: updateAlbum,
@@ -100,7 +108,9 @@ struct MainTabView: View {
                     settings: settings,
                     detectionAccuracySample: detectionAccuracySample,
                     postureSecondaryPendingAssets: scan.postureSecondaryPendingAssets,
+                    hasPhotoAccess: hasPhotoAccess,
                     isScanning: isScanning,
+                    requestPhotoAccess: requestPhotoAccess,
                     saveSettings: saveSettings,
                     saveLifeReference: saveLifeReference,
                     rescan: rescan,
@@ -115,11 +125,13 @@ struct MainTabView: View {
                     refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
                     exportJSON: exportJSON,
                     catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions
+                    catProfilesActions: catProfilesActions,
+                    showWidgetPlacementGuide: showWidgetPlacementGuide
                 )
             }
             .tabItem {
                 Label("設定", systemImage: "gearshape.fill")
+                    .accessibilityIdentifier("main-tab-settings")
             }
             .tag(AppTab.settings)
         }

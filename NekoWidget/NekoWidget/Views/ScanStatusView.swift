@@ -5,6 +5,7 @@ struct InitialScanView: View {
     let isLimitedAccess: Bool
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
+    let continueButtonTitleOverride: String? = nil
     let continueToApp: () -> Void
 
     var body: some View {
@@ -42,6 +43,7 @@ struct InitialScanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityIdentifier("initial-scan-continue")
             }
         }
         .padding(28)
@@ -132,6 +134,7 @@ struct InitialScanView: View {
     }
 
     private var continueButtonTitle: String {
+        if let continueButtonTitleOverride { return continueButtonTitleOverride }
         if isFinalZero { return "ホームを見る" }
         return scan.hasFinalResult ? "はじめる" : "続きはホームで"
     }
