@@ -5,8 +5,24 @@ struct InitialScanView: View {
     let isLimitedAccess: Bool
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
-    let continueButtonTitleOverride: String? = nil
+    let continueButtonTitleOverride: String?
     let continueToApp: () -> Void
+
+    init(
+        scan: ScanPresentation,
+        isLimitedAccess: Bool,
+        chooseMorePhotos: @escaping () -> Void,
+        rescan: @escaping () -> Void,
+        continueButtonTitleOverride: String? = nil,
+        continueToApp: @escaping () -> Void
+    ) {
+        self.scan = scan
+        self.isLimitedAccess = isLimitedAccess
+        self.chooseMorePhotos = chooseMorePhotos
+        self.rescan = rescan
+        self.continueButtonTitleOverride = continueButtonTitleOverride
+        self.continueToApp = continueToApp
+    }
 
     var body: some View {
         VStack(spacing: 24) {
