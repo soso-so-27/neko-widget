@@ -256,7 +256,7 @@ struct CuratedAlbumBuilder {
         } else {
             var grouped: [Int: [PhotoPresentation]] = [:]
             for photo in datedPhotos {
-                guard let capturedAt = $0.creationDate else { continue }
+                guard let capturedAt = photo.creationDate else { continue }
                 grouped[calendar.component(.year, from: capturedAt), default: []]
                     .append(photo)
             }
