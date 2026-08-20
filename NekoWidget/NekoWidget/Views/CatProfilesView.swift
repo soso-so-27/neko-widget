@@ -30,6 +30,12 @@ struct CatProfilesViewActions {
     ) async -> Void
     var excludeFromHousehold: (_ photoIdentifiers: [String]) async -> Void
     var restoreLegacyExclusions: (_ photoIdentifiers: [String]) async -> Void
+    /// The only similarity-review action that writes identity membership.
+    /// Generation, splitting, and deferring remain local to the review view.
+    var confirmSimilarityGroup: (
+        _ profileIdentifier: String,
+        _ candidates: [CatSimilarityCandidateInstance]
+    ) async -> Bool
     var deleteProfile: (_ profileIdentifier: String) async -> Void
 
     static let noOp = CatProfilesViewActions(
@@ -41,6 +47,7 @@ struct CatProfilesViewActions {
         replacePhotoAssignments: { _ in },
         excludeFromHousehold: { _ in },
         restoreLegacyExclusions: { _ in },
+        confirmSimilarityGroup: { _, _ in false },
         deleteProfile: { _ in }
     )
 }
@@ -55,6 +62,7 @@ struct CatProfilesView: View {
         Form {
             optionalSetupSection
             profilesSection
+            similarityReviewSection
             unassignedSection
             legacyExclusionSection
             postureDiagnosticsSection
@@ -68,6 +76,57 @@ struct CatProfilesView: View {
                 initialLifeReference: presentation.legacyLifeReference,
                 createProfile: actions.createProfile
             )
+        }
+    }
+
+    @ViewBuilder
+    private var similarityReviewSection: some View {
+        if !presentation.profiles.isEmpty,
+           !presentation.similarityCandidates.isEmpty {
+            Section {
+                NavigationLink {
+                    CatSimilarityReviewCoordinatorView(
+                        candidates: presentation.similarityCandidates,
+                        profiles: presentation.profiles.map { profile in
+                            CatSimilarityReviewProfilePresentation(
+                                identifier: profile.identifier,
+                                name: profile.displayName,
+                                anchorPhotoCount: profile.similarityReferencePhotoCount,
+                                coverCandidate: profile.coverPhoto.flatMap { photo in
+                                    photo.catBoundingBox.map { box in
+                                        CatSimilarityReviewCandidatePresentation(
+                                            identifier: "cover-\(profile.identifier)",
+                                            assetLocalIdentifier: photo.localIdentifier,
+                                            subjectBoundingBox: box
+                                        )
+                                    }
+                                }
+                            )
+                        },
+                        confirmMembership: { candidates, profileIdentifier in
+                            await actions.confirmSimilarityGroup(
+                                profileIdentifier,
+                                candidates
+                            )
+                        },
+                        openProfileSetup: {
+                            showsAddProfile = true
+                        }
+                    )
+                } label: {
+                    Label {
+                        LabeledContent(
+                            "似た写真をまとめて確認",
+                            value: "\(presentation.similarityCandidates.count.formatted())件"
+                        )
+                    } icon: {
+                        Image(systemName: "square.grid.3x3.fill")
+                    }
+                }
+                .accessibilityIdentifier("cat-similarity-review-link")
+            } footer: {
+                Text("端末内で似た見た目を約20グループに整理します。確認するまで所属は変わらず、混ざったグループはさらに分けられます。")
+            }
         }
     }
 

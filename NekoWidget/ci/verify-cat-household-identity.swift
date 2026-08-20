@@ -17,6 +17,7 @@ enum CatHouseholdIdentityVerifier {
         try verifiesLegacyMigrationIsUnscopedAndIdempotent()
         try verifiesStaleLegacyMirrorCannotUndoIdentityDecision()
         try verifiesManyToManyManualMembership()
+        try verifiesBuild14ReferenceMigrationIsConservative()
         try verifiesGlobalExclusionIsSeparate()
         try verifiesNormalizationSafety()
         try verifiesRevisionPolicyRejectsStaleState()
@@ -234,6 +235,76 @@ enum CatHouseholdIdentityVerifier {
         try require(
             state.membershipDecision(for: "two-cats", profileID: secondID) == .included,
             "excluding one profile removed the other cat"
+        )
+    }
+
+    private static func verifiesBuild14ReferenceMigrationIsConservative() throws {
+        let uniqueProfileID = fixedUUID("00000000-0000-0000-0000-000000000011")
+        let ambiguousProfileID = fixedUUID("00000000-0000-0000-0000-000000000012")
+        let createdAt = Date(timeIntervalSince1970: 1_000)
+        let box = NormalizedRect(x: 0.1, y: 0.1, width: 0.4, height: 0.5)
+        let legacy = CatHouseholdIdentityState(
+            schemaVersion: 1,
+            mode: .profiled,
+            profiles: [
+                CatProfile(
+                    id: uniqueProfileID,
+                    displayName: "むぎ",
+                    createdAt: createdAt,
+                    updatedAt: createdAt
+                ),
+                CatProfile(
+                    id: ambiguousProfileID,
+                    displayName: "あめ",
+                    createdAt: createdAt,
+                    updatedAt: createdAt
+                )
+            ],
+            memberships: [
+                CatAssetProfileMembership(
+                    assetLocalIdentifier: "unique-seed",
+                    profileID: uniqueProfileID,
+                    decision: .included,
+                    subjectBoundingBox: box,
+                    decidedAt: createdAt
+                ),
+                CatAssetProfileMembership(
+                    assetLocalIdentifier: "ambiguous-a",
+                    profileID: ambiguousProfileID,
+                    decision: .included,
+                    subjectBoundingBox: box,
+                    decidedAt: createdAt
+                ),
+                CatAssetProfileMembership(
+                    assetLocalIdentifier: "ambiguous-b",
+                    profileID: ambiguousProfileID,
+                    decision: .included,
+                    subjectBoundingBox: box,
+                    decidedAt: createdAt
+                )
+            ],
+            globalExcludedAssets: [],
+            legacyUnscoped: nil,
+            createdAt: createdAt,
+            updatedAt: createdAt
+        ).normalized()
+
+        try require(
+            legacy.schemaVersion == CatHouseholdIdentityState.currentSchemaVersion,
+            "identity schema was not upgraded"
+        )
+        try require(
+            legacy.membership(
+                for: "unique-seed",
+                profileID: uniqueProfileID
+            )?.isSimilarityReference == true,
+            "unique Build 14 profile seed was not recovered"
+        )
+        try require(
+            legacy.memberships.filter {
+                $0.profileID == ambiguousProfileID && $0.isSimilarityReference
+            }.isEmpty,
+            "ambiguous Build 14 memberships were promoted to anchors"
         )
     }
 

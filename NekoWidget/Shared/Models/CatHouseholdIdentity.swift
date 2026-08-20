@@ -114,7 +114,7 @@ struct CatLegacyUnscopedIdentity: Codable, Equatable, Sendable {
 /// replaceable scanner snapshot. Scanner output is evidence; this file records
 /// the user's household and manual many-to-many identity decisions.
 struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int
     /// Store-owned ordering. Model mutators do not advance it; a successful
@@ -403,6 +403,7 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
     }
 
     func normalized() -> Self {
+        let sourceSchemaVersion = schemaVersion
         var value = self
         value.schemaVersion = Self.currentSchemaVersion
         value.mutationRevision = max(0, mutationRevision)
@@ -484,6 +485,32 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
                 return $0.profileID.uuidString < $1.profileID.uuidString
             }
             return $0.assetLocalIdentifier < $1.assetLocalIdentifier
+        }
+
+        // Build 14 created a profile and its explicitly selected first photo
+        // in the same second, but accidentally persisted the anchor flag as
+        // false. Upgrade only the uniquely identifiable case. Ambiguous older
+        // profiles remain without an anchor and must be selected by the user;
+        // a model suggestion is never promoted here.
+        if sourceSchemaVersion < 2 {
+            for profile in value.profiles {
+                let profileMembershipIndices = value.memberships.indices.filter {
+                    let membership = value.memberships[$0]
+                    return membership.profileID == profile.id
+                        && membership.decision == .included
+                }
+                guard !profileMembershipIndices.contains(where: {
+                    value.memberships[$0].isSimilarityReference
+                }) else { continue }
+                let inferred = profileMembershipIndices.filter {
+                    let membership = value.memberships[$0]
+                    return membership.subjectBoundingBox != nil
+                        && membership.decidedAt == profile.createdAt
+                }
+                if inferred.count == 1 {
+                    value.memberships[inferred[0]].isSimilarityReference = true
+                }
+            }
         }
 
         if var legacy = value.legacyUnscoped {

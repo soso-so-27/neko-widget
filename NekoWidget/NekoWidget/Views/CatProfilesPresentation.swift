@@ -106,6 +106,7 @@ struct CatProfilePresentation: Identifiable, Equatable {
     var coverPhoto: CatProfilePhotoPresentation?
     var confirmedPhotos: [CatProfilePhotoPresentation]
     var lifeReference: CatProfileLifeReferencePresentation?
+    var similarityReferencePhotoCount: Int = 0
 
     var id: String { identifier }
 
@@ -209,6 +210,9 @@ struct CatProfileTimePolicyPresentation: Equatable {
 struct CatProfilesPresentation: Equatable {
     var profiles: [CatProfilePresentation]
     var unassignedPhotos: [CatProfilePhotoPresentation]
+    /// Exact unresolved cat instances. A multi-cat photo may occur more than
+    /// once with a different detector box.
+    var similarityCandidates: [CatSimilarityCandidateInstance]
     var legacyExcludedPhotos: [LegacyExcludedCatPhotoPresentation]
     /// Build 13's one household-wide date. It is offered only while creating
     /// the first profile and is never silently copied to every cat.
@@ -218,12 +222,14 @@ struct CatProfilesPresentation: Equatable {
     init(
         profiles: [CatProfilePresentation] = [],
         unassignedPhotos: [CatProfilePhotoPresentation] = [],
+        similarityCandidates: [CatSimilarityCandidateInstance] = [],
         legacyExcludedPhotos: [LegacyExcludedCatPhotoPresentation] = [],
         legacyLifeReference: CatProfileLifeReferencePresentation? = nil,
         postureDiagnostics: CatPostureDiagnosticsPresentation = .init()
     ) {
         self.profiles = profiles
         self.unassignedPhotos = unassignedPhotos
+        self.similarityCandidates = similarityCandidates
         self.legacyExcludedPhotos = legacyExcludedPhotos
         self.legacyLifeReference = legacyLifeReference
         self.postureDiagnostics = postureDiagnostics

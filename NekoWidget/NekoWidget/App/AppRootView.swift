@@ -347,7 +347,10 @@ struct AppRootView: View {
                 name: profile.displayName,
                 coverPhoto: confirmed.first,
                 confirmedPhotos: confirmed,
-                lifeReference: lifeReference
+                lifeReference: lifeReference,
+                similarityReferencePhotoCount: memberships.lazy.filter {
+                    $0.isSimilarityReference
+                }.count
             )
         }
 
@@ -399,6 +402,7 @@ struct AppRootView: View {
         return CatProfilesPresentation(
             profiles: profiles,
             unassignedPhotos: unassigned,
+            similarityCandidates: viewModel.catSimilarityCandidateInstances,
             legacyExcludedPhotos: legacyExcluded,
             legacyLifeReference: legacyLifeReference,
             postureDiagnostics: postureDiagnosticsPresentation
@@ -477,6 +481,15 @@ struct AppRootView: View {
             },
             restoreLegacyExclusions: { identifiers in
                 await viewModel.restoreCatCandidates(localIdentifiers: identifiers)
+            },
+            confirmSimilarityGroup: { identifier, candidates in
+                guard let profileID = UUID(uuidString: identifier) else {
+                    return false
+                }
+                return await viewModel.confirmCatSimilarityGroup(
+                    profileID: profileID,
+                    candidates: candidates
+                )
             },
             deleteProfile: { identifier in
                 guard let profileID = UUID(uuidString: identifier) else { return }

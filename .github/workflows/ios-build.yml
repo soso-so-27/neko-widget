@@ -228,10 +228,57 @@ jobs:
           xcrun --sdk macosx swiftc \
             -parse-as-library \
             Shared/Models/NormalizedRect.swift \
+            NekoWidget/Services/CatSimilarityGroupingCore.swift \
             NekoWidget/Views/CatProfilesPresentation.swift \
             ci/verify-cat-profiles-presentation.swift \
             -o "$RUNNER_TEMP/verify-cat-profiles-presentation"
           "$RUNNER_TEMP/verify-cat-profiles-presentation"
+
+      - name: Verify local cat similarity grouping
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/NormalizedRect.swift \
+            NekoWidget/Services/CatSimilarityGroupingCore.swift \
+            ci/verify-cat-similarity-grouping.swift \
+            -o "$RUNNER_TEMP/verify-cat-similarity-grouping"
+          "$RUNNER_TEMP/verify-cat-similarity-grouping"
+
+      - name: Verify cat similarity review presentation
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Views/CatSimilarityReviewPresentation.swift \
+            ci/verify-cat-similarity-review-presentation.swift \
+            -o "$RUNNER_TEMP/verify-cat-similarity-review-presentation"
+          "$RUNNER_TEMP/verify-cat-similarity-review-presentation"
+
+      - name: Verify cat similarity privacy boundary
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          service="NekoWidget/Services/CatSimilarityGroupingService.swift"
+          core="NekoWidget/Services/CatSimilarityGroupingCore.swift"
+          grep -Fq 'static let requestRevision = 2' "$core"
+          grep -Fq 'options.isNetworkAccessAllowed = false' "$service"
+          if grep -REn \
+            'VNFeaturePrint|VNGenerateImageFeaturePrintRequest|CatSimilarityCandidate(Group|Instance)' \
+            Shared/Sharing NekoWidget/Services/JSONExporter.swift SharingService; then
+            echo "FeaturePrint proposal data crossed a sharing/export boundary" >&2
+            exit 1
+          fi
+          if grep -En 'SharedLog\.|JSONEncoder\(|:[[:space:]]*Codable|CatHouseholdIdentityStore\(' \
+            "$service"; then
+            echo "Similarity service gained persistence or logging authority" >&2
+            exit 1
+          fi
 
       - name: Verify five-screen onboarding presentation
         working-directory: NekoWidget

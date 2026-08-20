@@ -60,6 +60,35 @@ final class AppViewModel: ObservableObject {
         return catCandidateCuration.excludedAssets
     }
     var catProfiles: [CatProfile] { catHouseholdIdentity?.profiles ?? [] }
+    /// Unresolved detector instances, not unresolved photos. A two-cat photo
+    /// remains here until each exact box has a confirmed profile membership.
+    var catSimilarityCandidateInstances: [CatSimilarityCandidateInstance] {
+        guard canPresentCatIdentity,
+              let identity = catHouseholdIdentity,
+              identity.mode == .profiled,
+              !identity.profiles.isEmpty else { return [] }
+        return catSimilarityCandidateInstances(in: identity)
+    }
+
+    private func catSimilarityCandidateInstances(
+        in identity: CatHouseholdIdentityState
+    ) -> [CatSimilarityCandidateInstance] {
+        let includedByAsset = Dictionary(grouping: identity.memberships.filter {
+            $0.decision == .included
+        }, by: \.assetLocalIdentifier)
+        return CatSimilarityCandidateResolver.unresolvedInstances(
+            from: catAssets.map { asset in
+                CatSimilarityCandidateAsset(
+                    assetLocalIdentifier: asset.localIdentifier,
+                    detectedCatCount: asset.cat.catCount,
+                    resolvedBoundingBoxes: asset.resolvedCatBoundingBoxes.boundingBoxes,
+                    includedMembershipSubjectBoundingBoxes: includedByAsset[
+                        asset.localIdentifier
+                    ]?.map(\.subjectBoundingBox) ?? []
+                )
+            }
+        )
+    }
     var oldestCatPhotoDate: Date? { catAssets.compactMap(\.creationDate).min() }
     var progress: Double { scanState.progress }
     var isQuickResultReady: Bool { scanState.isQuickResultReady }
@@ -923,7 +952,10 @@ final class AppViewModel: ObservableObject {
                             assetLocalIdentifier: referenceAssetIdentifier,
                             existing: nil
                         ),
-                        isSimilarityReference: false
+                        // This is the one photo the user explicitly selected
+                        // while creating the profile. Suggestions never set
+                        // this flag, but an explicit seed must remain usable.
+                        isSimilarityReference: true
                     )
                 }
             }
@@ -1030,7 +1062,8 @@ final class AppViewModel: ObservableObject {
                                     existing: previous?.subjectBoundingBox
                                 )
                                 : nil,
-                            isSimilarityReference: false
+                            isSimilarityReference: decision == .included
+                                && previous?.isSimilarityReference == true
                         )
                     }
                 }
@@ -1065,13 +1098,121 @@ final class AppViewModel: ObservableObject {
                                 existing: previous?.subjectBoundingBox
                               )
                             : nil,
-                        isSimilarityReference: false
+                        isSimilarityReference: decision == .included
+                            && previous?.isSimilarityReference == true
                     )
                 }
             }
         } catch {
             Self.logError(error, category: "cat-identity", operation: "set_membership")
             setError(error)
+        }
+    }
+
+    /// Commits one user-confirmed similarity group in a single identity CAS.
+    /// FeaturePrint output itself never reaches this method as authority: the
+    /// caller supplies the exact boxes only after the user taps a profile.
+    func confirmCatSimilarityGroup(
+        profileID: UUID,
+        candidates: [CatSimilarityCandidateInstance]
+    ) async -> Bool {
+        guard candidateAuthorityIsReady(operation: "confirm_similarity_group") else {
+            return false
+        }
+        let uniqueCandidates = Array(Set(candidates)).sorted(by: stableCandidateOrder)
+        guard !uniqueCandidates.isEmpty,
+              uniqueCandidates.count == candidates.count,
+              Set(uniqueCandidates.map(\.assetLocalIdentifier)).count
+                == uniqueCandidates.count else {
+            return false
+        }
+        // Do not let a stale review session overwrite a correction made in a
+        // different screen while grouping was in progress.
+        let currentlyUnresolved = Set(catSimilarityCandidateInstances)
+        guard uniqueCandidates.allSatisfy(currentlyUnresolved.contains) else {
+            return false
+        }
+
+        var didCommit = false
+        await serializeCatIdentityTransition {
+            didCommit = await self.performConfirmCatSimilarityGroup(
+                profileID: profileID,
+                candidates: uniqueCandidates
+            )
+        }
+        return didCommit
+    }
+
+    private func performConfirmCatSimilarityGroup(
+        profileID: UUID,
+        candidates: [CatSimilarityCandidateInstance]
+    ) async -> Bool {
+        do {
+            var didApplyToLatestState = false
+            let committed = try await mutateCatHouseholdIdentity { state in
+                didApplyToLatestState = false
+                let unresolvedInLatestState = Set(
+                    self.catSimilarityCandidateInstances(in: state)
+                )
+                guard state.profiles.contains(where: { $0.id == profileID }),
+                      candidates.allSatisfy({
+                          !state.isGloballyExcluded($0.assetLocalIdentifier)
+                      }),
+                      candidates.allSatisfy(unresolvedInLatestState.contains),
+                      candidates.allSatisfy({ candidate in
+                          let previous = state.membership(
+                              for: candidate.assetLocalIdentifier,
+                              profileID: profileID
+                          )
+                          return CatSimilaritySuggestionConfirmationPolicy.canAssign(
+                              hasIncludedMembership: previous?.decision == .included,
+                              existingSubjectBoundingBox: previous?.subjectBoundingBox
+                          )
+                      }) else {
+                    return
+                }
+                for candidate in candidates {
+                    let previous = state.membership(
+                        for: candidate.assetLocalIdentifier,
+                        profileID: profileID
+                    )
+                    state.setManualMembership(
+                        assetLocalIdentifier: candidate.assetLocalIdentifier,
+                        profileID: profileID,
+                        decision: .included,
+                        subjectBoundingBox: candidate.boundingBox,
+                        // A suggestion never becomes a learning anchor, but
+                        // reconfirming an existing explicit seed must not erase it.
+                        isSimilarityReference: previous?.isSimilarityReference == true
+                    )
+                }
+                didApplyToLatestState = true
+            }
+            guard didApplyToLatestState else { return false }
+            let didCommitAll = candidates.allSatisfy { candidate in
+                guard let membership = committed.membership(
+                    for: candidate.assetLocalIdentifier,
+                    profileID: profileID
+                ) else { return false }
+                return membership.decision == .included
+                    && membership.subjectBoundingBox == candidate.boundingBox
+            }
+            if didCommitAll {
+                SharedLog.app.info(
+                    "cat-identity",
+                    "User confirmed a similarity review group",
+                    metadata: ["instances": "\(candidates.count)"]
+                )
+            }
+            return didCommitAll
+        } catch {
+            Self.logError(
+                error,
+                category: "cat-identity",
+                operation: "confirm_similarity_group"
+            )
+            setError(error)
+            return false
         }
     }
 
