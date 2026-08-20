@@ -1115,63 +1115,76 @@ final class AppViewModel: ObservableObject {
     func confirmCatSimilarityGroup(
         profileID: UUID,
         candidates: [CatSimilarityCandidateInstance]
-    ) async -> Bool {
+    ) async -> CatSimilarityGroupConfirmationOutcome {
         guard candidateAuthorityIsReady(operation: "confirm_similarity_group") else {
-            return false
+            return .conflict(reason: .staleCandidates)
         }
         let uniqueCandidates = Array(Set(candidates)).sorted(by: stableCandidateOrder)
         guard !uniqueCandidates.isEmpty,
               uniqueCandidates.count == candidates.count,
               Set(uniqueCandidates.map(\.assetLocalIdentifier)).count
                 == uniqueCandidates.count else {
-            return false
-        }
-        // Do not let a stale review session overwrite a correction made in a
-        // different screen while grouping was in progress.
-        let currentlyUnresolved = Set(catSimilarityCandidateInstances)
-        guard uniqueCandidates.allSatisfy(currentlyUnresolved.contains) else {
-            return false
+            return .conflict(reason: .invalidGroup)
         }
 
-        var didCommit = false
+        var outcome = CatSimilarityGroupConfirmationOutcome.failed
         await serializeCatIdentityTransition {
-            didCommit = await self.performConfirmCatSimilarityGroup(
+            outcome = await self.performConfirmCatSimilarityGroup(
                 profileID: profileID,
                 candidates: uniqueCandidates
             )
         }
-        return didCommit
+        return outcome
     }
 
     private func performConfirmCatSimilarityGroup(
         profileID: UUID,
         candidates: [CatSimilarityCandidateInstance]
-    ) async -> Bool {
+    ) async -> CatSimilarityGroupConfirmationOutcome {
         do {
-            var didApplyToLatestState = false
+            var latestOutcome = CatSimilarityGroupConfirmationOutcome.conflict(
+                reason: .staleCandidates
+            )
             let committed = try await mutateCatHouseholdIdentity { state in
-                didApplyToLatestState = false
+                latestOutcome = .conflict(reason: .staleCandidates)
                 let unresolvedInLatestState = Set(
                     self.catSimilarityCandidateInstances(in: state)
                 )
-                guard state.profiles.contains(where: { $0.id == profileID }),
-                      candidates.allSatisfy({
-                          !state.isGloballyExcluded($0.assetLocalIdentifier)
-                      }),
-                      candidates.allSatisfy(unresolvedInLatestState.contains),
-                      candidates.allSatisfy({ candidate in
-                          let previous = state.membership(
-                              for: candidate.assetLocalIdentifier,
-                              profileID: profileID
-                          )
-                          return CatSimilaritySuggestionConfirmationPolicy.canAssign(
-                              hasIncludedMembership: previous?.decision == .included,
-                              existingSubjectBoundingBox: previous?.subjectBoundingBox
-                          )
-                      }) else {
+                guard state.profiles.contains(where: { $0.id == profileID }) else {
                     return
                 }
+                var candidatesToAssign: [CatSimilarityCandidateInstance] = []
+                candidatesToAssign.reserveCapacity(candidates.count)
                 for candidate in candidates {
+                    guard !state.isGloballyExcluded(candidate.assetLocalIdentifier) else {
+                        latestOutcome = .conflict(reason: .staleCandidates)
+                        return
+                    }
+                    let previous = state.membership(
+                        for: candidate.assetLocalIdentifier,
+                        profileID: profileID
+                    )
+                    let decision = CatSimilaritySuggestionConfirmationPolicy.decision(
+                        hasIncludedMembership: previous?.decision == .included,
+                        existingSubjectBoundingBox: previous?.subjectBoundingBox,
+                        candidateBoundingBox: candidate.boundingBox
+                    )
+                    if decision == .alreadyCommitted {
+                        // A retry may include an exact membership that already
+                        // committed before an unrelated persistence failure.
+                        continue
+                    }
+                    guard decision != .profileAlreadyAssigned else {
+                        latestOutcome = .conflict(reason: .profileAlreadyAssigned)
+                        return
+                    }
+                    guard unresolvedInLatestState.contains(candidate) else {
+                        latestOutcome = .conflict(reason: .staleCandidates)
+                        return
+                    }
+                    candidatesToAssign.append(candidate)
+                }
+                for candidate in candidatesToAssign {
                     let previous = state.membership(
                         for: candidate.assetLocalIdentifier,
                         profileID: profileID
@@ -1186,9 +1199,9 @@ final class AppViewModel: ObservableObject {
                         isSimilarityReference: previous?.isSimilarityReference == true
                     )
                 }
-                didApplyToLatestState = true
+                latestOutcome = .committed
             }
-            guard didApplyToLatestState else { return false }
+            guard latestOutcome == .committed else { return latestOutcome }
             let didCommitAll = candidates.allSatisfy { candidate in
                 guard let membership = committed.membership(
                     for: candidate.assetLocalIdentifier,
@@ -1203,8 +1216,14 @@ final class AppViewModel: ObservableObject {
                     "User confirmed a similarity review group",
                     metadata: ["instances": "\(candidates.count)"]
                 )
+                return .committed
             }
-            return didCommitAll
+            SharedLog.app.error(
+                "cat-identity",
+                "Similarity confirmation commit could not be verified",
+                metadata: ["instances": "\(candidates.count)"]
+            )
+            return .failed
         } catch {
             Self.logError(
                 error,
@@ -1212,7 +1231,7 @@ final class AppViewModel: ObservableObject {
                 operation: "confirm_similarity_group"
             )
             setError(error)
-            return false
+            return .failed
         }
     }
 

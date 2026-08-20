@@ -4,6 +4,7 @@ import SwiftUI
 /// membership is explicit and user-confirmed; this build does not perform
 /// automatic individual-cat identification.
 struct CatProfilesViewActions {
+    var currentSimilarityCandidates: @MainActor () -> [CatSimilarityCandidateInstance]
     var createProfile: (CatProfileDraftPresentation) async -> Void
     var updateName: (
         _ profileIdentifier: String,
@@ -35,10 +36,11 @@ struct CatProfilesViewActions {
     var confirmSimilarityGroup: (
         _ profileIdentifier: String,
         _ candidates: [CatSimilarityCandidateInstance]
-    ) async -> Bool
+    ) async -> CatSimilarityGroupConfirmationOutcome
     var deleteProfile: (_ profileIdentifier: String) async -> Void
 
     static let noOp = CatProfilesViewActions(
+        currentSimilarityCandidates: { [] },
         createProfile: { _ in },
         updateName: { _, _ in },
         updateLifeReference: { _, _ in },
@@ -47,7 +49,9 @@ struct CatProfilesViewActions {
         replacePhotoAssignments: { _ in },
         excludeFromHousehold: { _ in },
         restoreLegacyExclusions: { _ in },
-        confirmSimilarityGroup: { _, _ in false },
+        confirmSimilarityGroup: { _, _ in
+            .conflict(reason: .invalidGroup)
+        },
         deleteProfile: { _ in }
     )
 }
@@ -87,6 +91,7 @@ struct CatProfilesView: View {
                 NavigationLink {
                     CatSimilarityReviewCoordinatorView(
                         candidates: presentation.similarityCandidates,
+                        currentCandidates: actions.currentSimilarityCandidates,
                         profiles: presentation.profiles.map { profile in
                             CatSimilarityReviewProfilePresentation(
                                 identifier: profile.identifier,

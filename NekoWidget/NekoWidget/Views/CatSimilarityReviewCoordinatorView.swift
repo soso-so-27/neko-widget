@@ -5,10 +5,11 @@ import SwiftUI
 /// confirms are forwarded to the durable identity ledger.
 @MainActor
 struct CatSimilarityReviewCoordinatorView: View {
+    typealias CandidateProvider = @MainActor () -> [CatSimilarityCandidateInstance]
     typealias ConfirmationHandler = @MainActor (
         _ candidates: [CatSimilarityCandidateInstance],
         _ profileIdentifier: String
-    ) async -> Bool
+    ) async -> CatSimilarityGroupConfirmationOutcome
 
     let openProfileSetup: () -> Void
 
@@ -17,6 +18,7 @@ struct CatSimilarityReviewCoordinatorView: View {
 
     init(
         candidates: [CatSimilarityCandidateInstance],
+        currentCandidates: @escaping CandidateProvider,
         profiles: [CatSimilarityReviewProfilePresentation],
         confirmMembership: @escaping ConfirmationHandler,
         openProfileSetup: @escaping () -> Void
@@ -24,6 +26,7 @@ struct CatSimilarityReviewCoordinatorView: View {
         self.openProfileSetup = openProfileSetup
         _model = StateObject(wrappedValue: CatSimilarityReviewCoordinatorModel(
             candidates: candidates,
+            currentCandidates: currentCandidates,
             profiles: profiles,
             confirmMembership: confirmMembership
         ))
@@ -55,10 +58,16 @@ struct CatSimilarityReviewCoordinatorView: View {
 private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
     typealias ConfirmationHandler = CatSimilarityReviewCoordinatorView
         .ConfirmationHandler
+    typealias CandidateProvider = CatSimilarityReviewCoordinatorView
+        .CandidateProvider
 
     @Published private(set) var presentation: CatSimilarityReviewPresentation
 
-    private let candidates: [CatSimilarityCandidateInstance]
+    private var candidateBuffer: CatSimilarityReviewCandidateBuffer
+    private var candidates: [CatSimilarityCandidateInstance] {
+        candidateBuffer.candidates
+    }
+    private let currentCandidates: CandidateProvider
     private let profiles: [CatSimilarityReviewProfilePresentation]
     private let confirmMembership: ConfirmationHandler
     private let service = CatSimilarityGroupingService()
@@ -82,13 +91,21 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
     private var nextCandidateIdentifier = 0
     private var confirmedGroupCount = 0
     private var deferredGroupCount = 0
+    private var confirmationTracker = CatSimilaritySessionConfirmationTracker()
+    private var disabledProfileIdentifiersByGroupIdentifier: [
+        String: Set<String>
+    ] = [:]
 
     init(
         candidates: [CatSimilarityCandidateInstance],
+        currentCandidates: @escaping CandidateProvider,
         profiles: [CatSimilarityReviewProfilePresentation],
         confirmMembership: @escaping ConfirmationHandler
     ) {
-        self.candidates = candidates
+        candidateBuffer = CatSimilarityReviewCandidateBuffer(
+            candidates: candidates
+        )
+        self.currentCandidates = currentCandidates
         self.profiles = profiles
         self.confirmMembership = confirmMembership
         let target = Self.targetGroupCount(candidateCount: candidates.count)
@@ -105,11 +122,18 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
 
     func startGrouping() async {
         guard groupingTask == nil else { return }
+        let preservesCommittedProgress: Bool
+        if case .failed = presentation.phase {
+            preservesCommittedProgress = !presentation.groups.isEmpty
+        } else {
+            preservesCommittedProgress = false
+        }
         if let discardTask {
             await discardTask.value
             self.discardTask = nil
         }
-        resetReviewState()
+        candidateBuffer.replaceWithLatest(currentCandidates())
+        resetReviewState(preservingReviewCounts: preservesCommittedProgress)
         guard !candidates.isEmpty else {
             presentation = CatSimilarityReviewPresentation(
                 phase: .empty,
@@ -161,19 +185,44 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
               presentation.currentGroup?.identifier == groupIdentifier else {
             return
         }
-        let saved = await confirmMembership(
+        let outcome = await confirmMembership(
             group.instances.map(\.candidate),
             profileIdentifier
         )
-        guard saved else {
+        switch CatSimilarityReviewConfirmationTransition.transition(for: outcome) {
+        case .advanceCommitted:
+            confirmationTracker.recordCommitted(
+                profileIdentifier: profileIdentifier,
+                candidates: group.instances.map(\.candidate)
+            )
+            confirmedGroupCount += 1
+            advancePastCurrentGroup()
+        case .stayForProfileConflict:
+            disabledProfileIdentifiersByGroupIdentifier[
+                groupIdentifier,
+                default: []
+            ].insert(profileIdentifier)
+            refreshCurrentGroup(
+                notice: "この写真にはすでにこの子が設定されています。別の子を選ぶか、「混ざってる」で分けるか、「あとで」を選んでください。"
+            )
+        case .advanceDeferredStale:
+            deferredGroupCount += 1
+            advancePastCurrentGroup(
+                notice: "写真の情報が更新されたため、前のグループは「あとで」にしました。次のグループへ進みます。"
+            )
+        case .stayForInvalidGroup:
+            refreshCurrentGroup(
+                notice: "このグループのままでは保存できません。「混ざってる」で分けるか、「あとで」を選んでください。"
+            )
+        case .fail:
             presentation = CatSimilarityReviewPresentation(
                 phase: .failed(message: "所属を保存できませんでした。もう一度お試しください。"),
-                profiles: profiles
+                profiles: profiles,
+                groups: presentation.groups,
+                currentGroupIndex: presentation.currentGroupIndex,
+                ungroupedCandidateCount: presentation.ungroupedCandidateCount
             )
-            return
         }
-        confirmedGroupCount += 1
-        advancePastCurrentGroup()
     }
 
     func splitMixedGroup(groupIdentifier: String) async {
@@ -183,6 +232,11 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
         }
         do {
             let result = try await service.split(groupID: groupID)
+            // A group-level conflict may have belonged to only one child.
+            // Let the durable guard evaluate each child independently.
+            disabledProfileIdentifiersByGroupIdentifier.removeValue(
+                forKey: groupIdentifier
+            )
             receive(
                 result: result,
                 token: operationToken,
@@ -274,12 +328,21 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
                 ($0.0.identifier, $0.1)
             }
         )
+        let normalizedIndex = min(currentIndex, max(0, groups.count - 1))
+        let currentGroupIdentifier = groups.indices.contains(normalizedIndex)
+            ? groups[normalizedIndex].identifier
+            : nil
+        let disabledProfiles = disabledProfileIdentifiers(
+            forGroupIdentifier: currentGroupIdentifier
+        )
         presentation = CatSimilarityReviewPresentation(
             phase: groups.isEmpty ? .empty : .reviewing,
             profiles: profiles,
             groups: groups,
-            currentGroupIndex: min(currentIndex, max(0, groups.count - 1)),
-            ungroupedCandidateCount: result.ungroupedInstances.count
+            currentGroupIndex: normalizedIndex,
+            ungroupedCandidateCount: result.ungroupedInstances.count,
+            inlineNotice: sessionConflictNotice(for: disabledProfiles),
+            disabledProfileIdentifiers: disabledProfiles
         )
     }
 
@@ -334,7 +397,7 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
         )
     }
 
-    private func advancePastCurrentGroup() {
+    private func advancePastCurrentGroup(notice: String? = nil) {
         let nextIndex = presentation.currentGroupIndex + 1
         if nextIndex >= presentation.groups.count {
             presentation = CatSimilarityReviewPresentation(
@@ -345,26 +408,101 @@ private final class CatSimilarityReviewCoordinatorModel: ObservableObject {
                 profiles: profiles,
                 groups: presentation.groups,
                 currentGroupIndex: presentation.currentGroupIndex,
-                ungroupedCandidateCount: presentation.ungroupedCandidateCount
+                ungroupedCandidateCount: presentation.ungroupedCandidateCount,
+                inlineNotice: notice
             )
         } else {
+            let nextGroupIdentifier = presentation.groups[nextIndex].identifier
+            let disabledProfiles = disabledProfileIdentifiers(
+                forGroupIdentifier: nextGroupIdentifier
+            )
             presentation = CatSimilarityReviewPresentation(
                 phase: .reviewing,
                 profiles: profiles,
                 groups: presentation.groups,
                 currentGroupIndex: nextIndex,
-                ungroupedCandidateCount: presentation.ungroupedCandidateCount
+                ungroupedCandidateCount: presentation.ungroupedCandidateCount,
+                inlineNotice: combinedNotice(
+                    notice,
+                    sessionConflictNotice(for: disabledProfiles)
+                ),
+                disabledProfileIdentifiers: disabledProfiles
             )
         }
     }
 
-    private func resetReviewState() {
-        confirmedGroupCount = 0
-        deferredGroupCount = 0
+    private func refreshCurrentGroup(notice: String) {
+        presentation = CatSimilarityReviewPresentation(
+            phase: .reviewing,
+            profiles: profiles,
+            groups: presentation.groups,
+            currentGroupIndex: presentation.currentGroupIndex,
+            ungroupedCandidateCount: presentation.ungroupedCandidateCount,
+            inlineNotice: notice,
+            disabledProfileIdentifiers: disabledProfileIdentifiers(
+                forGroupIdentifier: presentation.currentGroup?.identifier
+            )
+        )
+    }
+
+    private func disabledProfileIdentifiers(
+        forGroupIdentifier groupIdentifier: String?
+    ) -> Set<String> {
+        guard let groupIdentifier,
+              let group = groupByPresentationIdentifier[groupIdentifier] else {
+            return []
+        }
+        var disabled = disabledProfileIdentifiersByGroupIdentifier[
+            groupIdentifier
+        ] ?? []
+        let candidates = group.instances.map(\.candidate)
+        for profile in profiles where confirmationTracker.conflicts(
+            profileIdentifier: profile.identifier,
+            candidates: candidates
+        ) {
+            disabled.insert(profile.identifier)
+        }
+        return disabled
+    }
+
+    private func sessionConflictNotice(
+        for profileIdentifiers: Set<String>
+    ) -> String? {
+        guard !profileIdentifiers.isEmpty else { return nil }
+        let names = profiles.filter {
+            profileIdentifiers.contains($0.identifier)
+        }.map(\.displayName)
+        let label = names.isEmpty
+            ? "選択済みの子"
+            : names.map { "「\($0)」" }.joined(separator: "・")
+        return "同じ写真ですでに\(label)を確認済みのため、そのボタンは選べません。別の子を選ぶか、「混ざってる」で分けるか、「あとで」を選んでください。"
+    }
+
+    private func combinedNotice(_ first: String?, _ second: String?) -> String? {
+        switch (first, second) {
+        case let (first?, second?):
+            "\(first)\n\(second)"
+        case let (first?, nil):
+            first
+        case let (nil, second?):
+            second
+        case (nil, nil):
+            nil
+        }
+    }
+
+    private func resetReviewState(preservingReviewCounts: Bool = false) {
+        if !preservingReviewCounts {
+            confirmedGroupCount = 0
+            deferredGroupCount = 0
+        }
+        // Confirmed memberships survive an in-screen retry, so the ephemeral
+        // asset/profile tracker must survive too. A new screen gets a new model.
         groupIDByPresentationIdentifier.removeAll(keepingCapacity: true)
         presentationIdentifierByGroupID.removeAll(keepingCapacity: true)
         presentationIdentifierByInstanceID.removeAll(keepingCapacity: true)
         groupByPresentationIdentifier.removeAll(keepingCapacity: true)
+        disabledProfileIdentifiersByGroupIdentifier.removeAll(keepingCapacity: true)
         nextGroupIdentifier = 0
         nextCandidateIdentifier = 0
     }

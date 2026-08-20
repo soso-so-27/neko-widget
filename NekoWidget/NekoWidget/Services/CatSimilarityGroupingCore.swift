@@ -31,6 +31,96 @@ struct CatSimilarityCandidateInstance: Equatable, Hashable, Sendable {
     var boundingBox: NormalizedRect
 }
 
+/// A confirmation can be rejected without a persistence failure. Keeping this
+/// distinction explicit lets the review stay on the current proposal when the
+/// user only needs to choose another profile or split the group again.
+enum CatSimilarityGroupConfirmationConflictReason: Equatable, Sendable {
+    case staleCandidates
+    case profileAlreadyAssigned
+    case invalidGroup
+}
+
+enum CatSimilarityGroupConfirmationOutcome: Equatable, Sendable {
+    case committed
+    case conflict(reason: CatSimilarityGroupConfirmationConflictReason)
+    case failed
+}
+
+enum CatSimilarityReviewConfirmationTransition: Equatable, Sendable {
+    case advanceCommitted
+    case stayForProfileConflict
+    case advanceDeferredStale
+    case stayForInvalidGroup
+    case fail
+
+    static func transition(
+        for outcome: CatSimilarityGroupConfirmationOutcome
+    ) -> Self {
+        switch outcome {
+        case .committed:
+            .advanceCommitted
+        case .conflict(reason: .profileAlreadyAssigned):
+            .stayForProfileConflict
+        case .conflict(reason: .staleCandidates):
+            .advanceDeferredStale
+        case .conflict(reason: .invalidGroup):
+            .stayForInvalidGroup
+        case .failed:
+            .fail
+        }
+    }
+}
+
+/// Replaces the navigation-time snapshot whenever grouping starts or retries.
+/// Keeping this tiny value type pure makes the no-stale-retry contract directly
+/// verifiable without PhotoKit or SwiftUI.
+struct CatSimilarityReviewCandidateBuffer: Equatable, Sendable {
+    private(set) var candidates: [CatSimilarityCandidateInstance]
+
+    init(candidates: [CatSimilarityCandidateInstance]) {
+        self.candidates = candidates
+    }
+
+    mutating func replaceWithLatest(
+        _ latestCandidates: [CatSimilarityCandidateInstance]
+    ) {
+        candidates = latestCandidates
+    }
+}
+
+/// Ephemeral bookkeeping for confirmations made during one review screen. It
+/// grants no identity authority; the durable store remains the final guard.
+/// Its only purpose is to prevent offering the same profile again for another
+/// detector instance from a photo that was just confirmed in this session.
+struct CatSimilaritySessionConfirmationTracker: Equatable, Sendable {
+    private var profileIdentifiersByAssetLocalIdentifier: [
+        String: Set<String>
+    ] = [:]
+
+    mutating func recordCommitted(
+        profileIdentifier: String,
+        candidates: [CatSimilarityCandidateInstance]
+    ) {
+        for candidate in candidates {
+            profileIdentifiersByAssetLocalIdentifier[
+                candidate.assetLocalIdentifier,
+                default: []
+            ].insert(profileIdentifier)
+        }
+    }
+
+    func conflicts(
+        profileIdentifier: String,
+        candidates: [CatSimilarityCandidateInstance]
+    ) -> Bool {
+        candidates.contains { candidate in
+            profileIdentifiersByAssetLocalIdentifier[
+                candidate.assetLocalIdentifier
+            ]?.contains(profileIdentifier) == true
+        }
+    }
+}
+
 /// Read-only input used to derive the instances that still need grouping.
 /// Callers supply only `.included` membership subjects for the asset. Global
 /// exclusions and the current source/fingerprint scope are applied before this
@@ -54,8 +144,8 @@ enum CatSimilarityCandidateResolver {
 
     /// Returns exact detector rectangles in a stable order. A subject-less
     /// positive resolves the sole box of a one-cat photo, but never guesses in
-    /// a multi-cat photo. A stored subject resolves every current box with an
-    /// IoU at or above the same 0.35 boundary used by profile presentation.
+    /// a multi-cat photo. A stored subject resolves at most one current box at
+    /// the same 0.35 IoU boundary used by profile presentation.
     static func unresolvedInstances(
         from assets: [CatSimilarityCandidateAsset]
     ) -> [CatSimilarityCandidateInstance] {
@@ -163,7 +253,25 @@ enum CatSimilarityCandidateResolver {
 /// A similarity proposal may fill an old subject-less photo membership, but
 /// it never replaces an exact cat instance already confirmed for that profile.
 /// Explicit correction screens remain the only authority for such a move.
+enum CatSimilaritySuggestionConfirmationDecision: Equatable, Sendable {
+    case assign
+    case alreadyCommitted
+    case profileAlreadyAssigned
+}
+
 enum CatSimilaritySuggestionConfirmationPolicy {
+    static func decision(
+        hasIncludedMembership: Bool,
+        existingSubjectBoundingBox: NormalizedRect?,
+        candidateBoundingBox: NormalizedRect
+    ) -> CatSimilaritySuggestionConfirmationDecision {
+        guard hasIncludedMembership else { return .assign }
+        guard let existingSubjectBoundingBox else { return .assign }
+        return existingSubjectBoundingBox == candidateBoundingBox
+            ? .alreadyCommitted
+            : .profileAlreadyAssigned
+    }
+
     static func canAssign(
         hasIncludedMembership: Bool,
         existingSubjectBoundingBox: NormalizedRect?

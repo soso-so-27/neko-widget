@@ -428,6 +428,9 @@ struct AppRootView: View {
 
     private var catProfilesActions: CatProfilesViewActions {
         CatProfilesViewActions(
+            currentSimilarityCandidates: {
+                viewModel.catSimilarityCandidateInstances
+            },
             createProfile: { draft in
                 let reference = Self.lifeReference(from: draft.lifeReference)
                 await viewModel.createCatProfile(
@@ -484,7 +487,7 @@ struct AppRootView: View {
             },
             confirmSimilarityGroup: { identifier, candidates in
                 guard let profileID = UUID(uuidString: identifier) else {
-                    return false
+                    return .conflict(reason: .invalidGroup)
                 }
                 return await viewModel.confirmCatSimilarityGroup(
                     profileID: profileID,

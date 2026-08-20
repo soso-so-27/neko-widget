@@ -98,19 +98,28 @@ struct CatSimilarityReviewPresentation: Equatable {
     /// Instances whose image was no longer available locally or whose
     /// FeaturePrint could not be generated. They remain unassigned.
     let ungroupedCandidateCount: Int
+    /// A recoverable review-state message. Unlike `.failed`, this keeps the
+    /// current groups and progress intact so the user can choose another action.
+    let inlineNotice: String?
+    /// Profile choices rejected for only the current provisional group.
+    let disabledProfileIdentifiers: Set<String>
 
     init(
         phase: CatSimilarityReviewPhase,
         profiles: [CatSimilarityReviewProfilePresentation] = [],
         groups: [CatSimilarityReviewGroupPresentation] = [],
         currentGroupIndex: Int = 0,
-        ungroupedCandidateCount: Int = 0
+        ungroupedCandidateCount: Int = 0,
+        inlineNotice: String? = nil,
+        disabledProfileIdentifiers: Set<String> = []
     ) {
         self.phase = phase
         self.profiles = profiles
         self.groups = groups
         self.currentGroupIndex = max(0, currentGroupIndex)
         self.ungroupedCandidateCount = max(0, ungroupedCandidateCount)
+        self.inlineNotice = inlineNotice
+        self.disabledProfileIdentifiers = disabledProfileIdentifiers
     }
 
     /// A review without a destination profile cannot confirm anything. This
@@ -134,6 +143,11 @@ struct CatSimilarityReviewPresentation: Equatable {
         guard let currentGroup else { return false }
         let assetIdentifiers = currentGroup.candidates.map(\.assetLocalIdentifier)
         return Set(assetIdentifiers).count != assetIdentifiers.count
+    }
+
+    func profileConfirmationIsDisabled(_ profileIdentifier: String) -> Bool {
+        currentGroupRequiresSplitBeforeConfirmation
+            || disabledProfileIdentifiers.contains(profileIdentifier)
     }
 
     var reviewProgress: CatSimilarityReviewProgressPresentation {

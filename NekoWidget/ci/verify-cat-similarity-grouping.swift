@@ -17,6 +17,9 @@ enum CatSimilarityGroupingVerifier {
         try verifiesSubjectIoUBoundary()
         try verifiesOneOverlappingSubjectResolvesOnlyOneCat()
         try verifiesSuggestionCannotReplaceAConfirmedInstance()
+        try verifiesSplitSiblingProfileConflictIsRecoverable()
+        try verifiesRetryCandidateBufferUsesLatestUnresolvedCandidates()
+        try verifiesOnlyPersistenceFailureUsesFatalTransition()
         try verifiesTwoSeparatedDistanceGroups()
         try verifiesInputOrderTieBreaksAreDeterministic()
         try verifiesIdenticalPrintsStillProduceNonemptyGroups()
@@ -180,6 +183,117 @@ enum CatSimilarityGroupingVerifier {
                 existingSubjectBoundingBox: box
             ),
             "a suggestion could replace an already confirmed cat instance"
+        )
+        try require(
+            CatSimilaritySuggestionConfirmationPolicy.decision(
+                hasIncludedMembership: true,
+                existingSubjectBoundingBox: box,
+                candidateBoundingBox: box
+            ) == .alreadyCommitted,
+            "an exact retry stopped being idempotent"
+        )
+    }
+
+    private static func verifiesSplitSiblingProfileConflictIsRecoverable() throws {
+        let first = CatSimilarityCandidateInstance(
+            assetLocalIdentifier: "shared-photo",
+            boundingBox: NormalizedRect(x: 0.05, y: 0.1, width: 0.4, height: 0.7)
+        )
+        let second = CatSimilarityCandidateInstance(
+            assetLocalIdentifier: "shared-photo",
+            boundingBox: NormalizedRect(x: 0.55, y: 0.1, width: 0.4, height: 0.7)
+        )
+        var tracker = CatSimilaritySessionConfirmationTracker()
+        tracker.recordCommitted(profileIdentifier: "mugi", candidates: [first])
+
+        try require(
+            tracker.conflicts(profileIdentifier: "mugi", candidates: [second]),
+            "a split sibling offered the same profile twice for one photo"
+        )
+        try require(
+            !tracker.conflicts(profileIdentifier: "ame", candidates: [second]),
+            "a split sibling blocked a different profile for the same photo"
+        )
+        try require(
+            CatSimilaritySuggestionConfirmationPolicy.decision(
+                hasIncludedMembership: true,
+                existingSubjectBoundingBox: first.boundingBox,
+                candidateBoundingBox: second.boundingBox
+            ) == .profileAlreadyAssigned,
+            "the durable guard allowed split sibling B to replace mugi's box A"
+        )
+        try require(
+            CatSimilaritySuggestionConfirmationPolicy.decision(
+                hasIncludedMembership: false,
+                existingSubjectBoundingBox: nil,
+                candidateBoundingBox: second.boundingBox
+            ) == .assign,
+            "split sibling B could not be assigned to ame"
+        )
+        try require(
+            CatSimilarityReviewConfirmationTransition.transition(
+                for: .conflict(reason: .profileAlreadyAssigned)
+            ) == .stayForProfileConflict,
+            "a same-profile split conflict became a fatal review failure"
+        )
+        try require(
+            CatSimilarityReviewConfirmationTransition.transition(for: .committed)
+                == .advanceCommitted,
+            "a different-profile confirmation could not advance"
+        )
+    }
+
+    private static func verifiesRetryCandidateBufferUsesLatestUnresolvedCandidates()
+        throws {
+        let initial = (0..<12).map { index in
+            CatSimilarityCandidateInstance(
+                assetLocalIdentifier: "photo-\(index)",
+                boundingBox: NormalizedRect(
+                    x: Double(index) / 100,
+                    y: 0.1,
+                    width: 0.2,
+                    height: 0.3
+                )
+            )
+        }
+        var buffer = CatSimilarityReviewCandidateBuffer(candidates: initial)
+        let latestAfterEightCommits = CatSimilarityCandidateResolver.unresolvedInstances(
+            from: initial.enumerated().map { index, candidate in
+                CatSimilarityCandidateAsset(
+                    assetLocalIdentifier: candidate.assetLocalIdentifier,
+                    detectedCatCount: 1,
+                    resolvedBoundingBoxes: [candidate.boundingBox],
+                    includedMembershipSubjectBoundingBoxes: index < 8
+                        ? [candidate.boundingBox]
+                        : []
+                )
+            }
+        )
+        buffer.replaceWithLatest(latestAfterEightCommits)
+
+        try require(
+            buffer.candidates == latestAfterEightCommits
+                && buffer.candidates.count == initial.count - 8,
+            "retry reused the navigation-time candidate snapshot"
+        )
+    }
+
+    private static func verifiesOnlyPersistenceFailureUsesFatalTransition() throws {
+        let nonfatalOutcomes: [CatSimilarityGroupConfirmationOutcome] = [
+            .committed,
+            .conflict(reason: .profileAlreadyAssigned),
+            .conflict(reason: .staleCandidates),
+            .conflict(reason: .invalidGroup)
+        ]
+        try require(
+            nonfatalOutcomes.allSatisfy {
+                CatSimilarityReviewConfirmationTransition.transition(for: $0) != .fail
+            },
+            "a recoverable confirmation outcome became fatal"
+        )
+        try require(
+            CatSimilarityReviewConfirmationTransition.transition(for: .failed) == .fail,
+            "a persistence failure stopped using the fatal review state"
         )
     }
 

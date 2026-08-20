@@ -6,6 +6,7 @@ enum CatSimilarityReviewPresentationVerifier {
     static func main() throws {
         try verifiesMultiCatCandidatesRemainSeparate()
         try verifiesSamePhotoInstancesRequireSplitBeforeConfirmation()
+        try verifiesRecoverableConflictDisablesOnlySelectedProfile()
         try verifiesQuestionAndProfileOrdering()
         try verifiesProgressNormalization()
         try verifiesProfileIsTheOnlyBlockingPrerequisite()
@@ -83,6 +84,37 @@ enum CatSimilarityReviewPresentationVerifier {
         try require(
             !separatePhotos.currentGroupRequiresSplitBeforeConfirmation,
             "separate photos were unnecessarily blocked from confirmation"
+        )
+    }
+
+    private static func verifiesRecoverableConflictDisablesOnlySelectedProfile()
+        throws {
+        let presentation = CatSimilarityReviewPresentation(
+            phase: .reviewing,
+            profiles: [profile("mugi", "むぎ"), profile("ame", "あめ")],
+            groups: [
+                CatSimilarityReviewGroupPresentation(
+                    identifier: "split-child",
+                    candidates: [candidate(identifier: "cat-2", asset: "photo")],
+                    suggestedProfileIdentifier: nil
+                )
+            ],
+            inlineNotice: "この写真にはすでにこの子が設定されています。",
+            disabledProfileIdentifiers: ["mugi"]
+        )
+
+        try require(
+            presentation.profileConfirmationIsDisabled("mugi"),
+            "the conflicting profile stayed enabled for the split child"
+        )
+        try require(
+            !presentation.profileConfirmationIsDisabled("ame"),
+            "a different profile was disabled for the split child"
+        )
+        try require(
+            presentation.inlineNotice?.isEmpty == false
+                && presentation.displayPhase == .reviewing,
+            "a recoverable profile conflict lost its inline reviewing state"
         )
     }
 

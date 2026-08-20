@@ -195,6 +195,19 @@ struct CatSimilarityReviewView: View {
                     .accessibilityIdentifier("cat-similarity-split-required")
                 }
 
+                if let notice = presentation.inlineNotice, !notice.isEmpty {
+                    Label(notice, systemImage: "exclamationmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            .orange.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+                        .accessibilityIdentifier("cat-similarity-inline-notice")
+                }
+
                 profileConfirmationButtons(group: group)
 
                 Divider()
@@ -335,7 +348,9 @@ struct CatSimilarityReviewView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(
                     hasPendingAction
-                        || presentation.currentGroupRequiresSplitBeforeConfirmation
+                        || presentation.profileConfirmationIsDisabled(
+                            profile.identifier
+                        )
                 )
                 .accessibilityLabel("このグループは全部\(profile.displayName)")
                 .accessibilityIdentifier(
@@ -428,10 +443,11 @@ struct CatSimilarityReviewView: View {
         let availabilitySummary = presentation.ungroupedCandidateCount == 0
             ? ""
             : " \(presentation.ungroupedCandidateCount.formatted())件は端末内で画像を取得できなかったため、所属を変更していません。"
+        let noticeSummary = presentation.inlineNotice.map { " \($0)" } ?? ""
         return stateCard(
             title: "確認できました",
             systemImage: "checkmark.circle.fill",
-            description: reviewSummary + availabilitySummary
+            description: reviewSummary + availabilitySummary + noticeSummary
         ) {
             closeButton
         }
