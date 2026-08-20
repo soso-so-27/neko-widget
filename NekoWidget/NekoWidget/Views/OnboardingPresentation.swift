@@ -74,8 +74,8 @@ enum OnboardingPresentationCopy {
     static let scanTitle = "うちの子を探しています"
     static let scanBodyLines = [
         "新しい写真から先に見ています。",
-        "全部の集計は、このあと",
-        "バックグラウンドで続きます。"
+        "全部の集計は、",
+        "次にひらいたときに続きます。"
     ]
     static let resultLeadLines = [
         "あなたのカメラロールに",
