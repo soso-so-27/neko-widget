@@ -200,7 +200,9 @@ actor PhotoLibraryScanner {
         let settings = inputSettings.normalized()
         var migratedExisting = existing
         migratedExisting.assets = existing.assets.map {
-            $0.migratedToBoundingBoxPostureAnalysis()
+            $0.migratedToBoundingBoxPostureAnalysis(
+                synthesizingMissingTraits: existing.schemaVersion >= 2
+            )
         }
         // `.postureRepair` is a decode-only legacy route. Bounding-box posture
         // migration is synchronous and must never launch animal body-pose work.

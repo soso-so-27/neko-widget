@@ -105,7 +105,9 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
     /// running Vision. Existing per-cat posture-instance boxes are copied into
     /// the primary detection; only a one-cat union can be used as fallback.
     /// Legacy pose fields remain intact for JSON decode/round-trip compatibility.
-    func migratedToBoundingBoxPostureAnalysis() -> AssetRecord {
+    func migratedToBoundingBoxPostureAnalysis(
+        synthesizingMissingTraits: Bool = false
+    ) -> AssetRecord {
         guard isCatCandidate else {
             var value = self
             if value.albumAnalysisVersion != nil {
@@ -117,10 +119,29 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         let resolution = resolvedCatBoundingBoxes
         var value = self
         value.cat.instanceBoundingBoxes = resolution.boundingBoxes
-        guard let traits = value.albumTraits else { return value }
-        value.albumTraits = traits.migratedToBoundingBoxPostures(
-            boundingBoxes: resolution.boundingBoxes
-        )
+        if let traits = value.albumTraits {
+            value.albumTraits = traits.migratedToBoundingBoxPostures(
+                boundingBoxes: resolution.boundingBoxes
+            )
+        } else if synthesizingMissingTraits {
+            // Build 12+ can occasionally contain a known cat whose secondary
+            // face/location request was deferred. Its bbox posture is still
+            // fully recoverable. Unknown non-posture traits fail closed.
+            value.albumTraits = CatAlbumTraits(
+                postures: CatBoundingBoxAspectBucket.postures(
+                    for: resolution.boundingBoxes
+                ),
+                containsPerson: false,
+                isOuting: nil,
+                largestCatAreaRatio: resolution.boundingBoxes
+                    .lazy
+                    .map(\.area)
+                    .max() ?? 0,
+                analyzedAt: analyzedAt
+            )
+        } else {
+            return value
+        }
         value.albumAnalysisVersion = CatAlbumTraits.currentAnalysisVersion
         return value
     }

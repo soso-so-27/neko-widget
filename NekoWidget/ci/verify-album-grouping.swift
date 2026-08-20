@@ -580,22 +580,29 @@ private func verifyBoundingBoxPostureSummaryAndMigration() throws {
         catCount: 1,
         union: curledBox,
         traits: false
-    ).migratedToBoundingBoxPostureAnalysis()
+    ).migratedToBoundingBoxPostureAnalysis(
+        synthesizingMissingTraits: true
+    )
+    try require(pending.albumTraits?.postures == [.curled],
+                "recoverable missing traits did not receive bbox posture")
+    try require(pending.albumTraits?.containsPerson == false
+                    && pending.albumTraits?.isOuting == nil,
+                "unknown non-posture traits did not fail closed")
     let records = [legacyMulti, primaryWins, singleFallback, unsafeMulti, pending]
     let summary = PostureScanSummary(records: records)
     try require(CatAlbumTraits.currentAnalysisVersion == 4,
                 "bbox posture analysis version changed")
     try require(summary.targetCatAssets == 5, "bbox summary target changed")
     try require(summary.sleepingAssets == 1, "bbox sleeping count changed")
-    try require(summary.curledAssets == 1, "bbox curled count changed")
+    try require(summary.curledAssets == 2, "bbox curled count changed")
     try require(summary.sittingAssets == 1, "bbox sitting count changed")
-    try require(summary.classifiedAnyAssets == 2,
+    try require(summary.classifiedAnyAssets == 3,
                 "multi-tag assets were double-counted")
     try require(summary.unclassifiedAssets == 2,
                 "bbox unclassified asset count changed")
-    try require(summary.secondaryPendingAssets == 1,
-                "missing non-posture traits stopped being reported")
-    try require(summary.classifiedInstances == 3,
+    try require(summary.secondaryPendingAssets == 0,
+                "legacy posture repair remained pending after local migration")
+    try require(summary.classifiedInstances == 4,
                 "bbox classified instance count changed")
     try require(summary.rawObservationInstances == 0,
                 "retired pose diagnostics leaked into current summary")
