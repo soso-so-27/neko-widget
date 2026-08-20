@@ -19,7 +19,7 @@ struct AlbumView: View {
                     groupedAlbumPreparationBanner
                 } else if scan.hasFinalResult, scan.hasDeferredAssets {
                     Label(
-                        "取得または分類できなかった \(scan.deferredAssets.formatted())枚は、次のスキャンで再試行します。",
+                        "取得または分類できなかった \(scan.deferredAssets.formatted())枚は、必要なら設定の「最初から再スキャン」で再試行できます。",
                         systemImage: "exclamationmark.triangle"
                     )
                     .font(.caption)

@@ -83,9 +83,8 @@ struct WeightedPhotoSelector {
         // A cancelled threshold-changing rescan deliberately keeps old records
         // so likes and progress can resume. Never publish those records until
         // they have been analyzed with the active detector fingerprint.
-        let fingerprint = settings.analysisFingerprint
         let cats = assets.filter {
-            $0.isCatCandidate && $0.analysisFingerprint == fingerprint
+            $0.isWidgetEligible(settings: settings)
         }
         guard settings.dateRange == .recentYear,
               let cutoff = calendar.date(byAdding: .year, value: -1, to: now) else {

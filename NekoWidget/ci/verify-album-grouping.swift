@@ -40,6 +40,7 @@ private func photo(
     postures: Set<CatPostureTag> = [],
     person: Bool = false,
     outing: Bool? = false,
+    catCount: Int = 1,
     area: Double = 0.10,
     analyzed: Bool = true
 ) -> PhotoPresentation {
@@ -50,7 +51,8 @@ private func photo(
         albumPostures: postures,
         albumContainsPerson: analyzed ? person : nil,
         albumIsOuting: analyzed ? outing : nil,
-        largestCatAreaRatio: analyzed ? area : nil,
+        detectedCatCount: catCount,
+        largestCatAreaRatio: area,
         hasCurrentAlbumAnalysis: analyzed
     )
 }
@@ -69,7 +71,8 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
             postures: [.sleeping, .curled],
             person: true,
             outing: true,
-            area: 0.40
+            catCount: 2,
+            area: 0.50
         ),
         photo(
             "older",
@@ -80,21 +83,18 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
     ]
     let sections = CuratedAlbumBuilder(timeZone: utc).sections(
         from: photos,
-        lifeReference: nil
+        lifeReference: nil,
+        showsMultipleCatsAlbum: true
     )
-    try require(sections.map(\.id) == [.time, .cuteness, .special],
+    try require(sections.map(\.id) == [.cuteness, .special],
                 "section order changed")
     let ids = allAlbums(sections).map(\.id)
     try require(ids == [
-        .growth,
-        .calendarYear(2021),
-        .calendarYear(2024),
         .sleeping,
         .curled,
         .sitting,
         .closeUp,
-        .together,
-        .outing
+        .together
     ], "album order or zero filtering changed: \(ids)")
     try require(!ids.contains(.kitten),
                 "kitten must stay hidden until a birthday/adoption day is set")
@@ -105,6 +105,10 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
     try require(sleeping?.photos.map(\.id) == ["newest"], "overlap was lost")
     try require(sitting?.photos.map(\.id) == ["older"],
                 "bbox album was incorrectly gated on secondary analysis")
+    try require(CuratedAlbumID.sleeping.title == "ねてる",
+                "spoken sleeping album title changed")
+    try require(CuratedAlbumID.together.title == "2匹いっしょ",
+                "multi-cat album title changed")
 }
 
 private func verifyKittenBoundaryAndAgeBuckets() throws {
@@ -115,8 +119,7 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
     let photos = [
         photo("stray-before-reference", date(2019, 5, 1), area: 0.99),
         photo("first", date(2024, 1, 10)),
-        photo("inside-six-months", date(2024, 6, 30)),
-        photo("at-six-months", date(2024, 7, 1)),
+        photo("inside-first-year", date(2024, 12, 31)),
         photo("age-one", date(2025, 1, 1)),
         photo("age-two", date(2026, 1, 1))
     ]
@@ -126,20 +129,60 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
     ))
     let kitten = albums.first { $0.id == .kitten }
     try require(
-        Set(kitten?.photos.map(\.id) ?? []) == ["first", "inside-six-months"],
-        "kitten six-month boundary changed"
+        Set(kitten?.photos.map(\.id) ?? []) == ["first", "inside-first-year"],
+        "kitten one-year boundary changed"
     )
-    let timeAlbums = albums.filter { $0.group == .time }
-    try require(timeAlbums.map(\.id) == [.growth, .kitten, .age(1), .age(2)],
+    let ageAlbums = albums.filter {
+        if case .age = $0.id { return true }
+        return $0.id == .kitten
+    }
+    try require(ageAlbums.map(\.id) == [.kitten, .age(1), .age(2)],
                 "age album order/boundaries changed")
-    let growth = albums.first { $0.id == .growth }
-    try require(growth?.photos.map(\.id) == ["first", "age-one", "age-two"],
-                "growth was not ordered by age or included a pre-reference photo")
-    let timePhotoIDs = Set(timeAlbums
+    let agePhotoIDs = Set(ageAlbums
         .flatMap(\.photos)
         .map(\.id))
-    try require(!timePhotoIDs.contains("stray-before-reference"),
+    try require(!agePhotoIDs.contains("stray-before-reference"),
                 "a pre-reference cat leaked into an age-based time album")
+
+    let adoption = CatLifeReference(
+        kind: .adoptionDay,
+        date: CatLifeDate(date: date(2024, 1, 1), calendar: calendar)!
+    )
+    let adoptionIDs = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
+        from: photos,
+        lifeReference: adoption
+    )).map(\.id)
+    try require(!adoptionIDs.contains(.kitten)
+                    && !adoptionIDs.contains(where: {
+                        if case .age = $0 { return true }
+                        return false
+                    }),
+                "adoption day incorrectly created biological-age albums")
+}
+
+private func verifyConditionalAlbumsAndCatDay() throws {
+    let photos = [
+        photo("two-cats", date(2024, 2, 22), catCount: 2),
+        photo("ordinary", date(2024, 2, 21))
+    ]
+    let singleHousehold = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
+        from: photos,
+        lifeReference: nil,
+        showsMultipleCatsAlbum: false
+    ))
+    try require(!singleHousehold.map(\.id).contains(.together),
+                "one-cat household displayed the two-cat album")
+    try require(singleHousehold.first(where: { $0.id == .catDay })?.photos.map(\.id)
+                    == ["two-cats"],
+                "Cat Day album did not use February 22")
+
+    let multiHousehold = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
+        from: photos,
+        lifeReference: nil,
+        showsMultipleCatsAlbum: true
+    ))
+    try require(multiHousehold.map(\.id) == [.together, .catDay],
+                "conditional album order changed")
 }
 
 private func verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis() throws {
@@ -156,15 +199,15 @@ private func verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis() throws {
         from: [pending],
         lifeReference: nil
     )
-    try require(sections.map(\.id) == [.time, .cuteness],
+    try require(sections.map(\.id) == [.cuteness],
                 "cached bbox album stayed gated on secondary analysis")
     let ids = allAlbums(sections).map(\.id)
     try require(ids.contains(.sleeping),
                 "cached bbox did not create the sleeping album")
-    try require(!ids.contains(.closeUp)
-                    && !ids.contains(.together)
-                    && !ids.contains(.outing),
-                "unfinished secondary traits leaked into derived albums")
+    try require(ids.contains(.closeUp),
+                "cached bbox area did not create the close-up album")
+    try require(!ids.contains(.together) && !ids.contains(.outing),
+                "retired secondary traits leaked into derived albums")
 }
 
 private func verifyBuild11SettingsDecode() throws {
@@ -830,6 +873,7 @@ private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyFixedOrderAndOverlappingMembership()
         try verifyKittenBoundaryAndAgeBuckets()
+        try verifyConditionalAlbumsAndCatDay()
         try verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis()
         try verifyBuild11SettingsDecode()
         try verifyBuild11SnapshotDecode()

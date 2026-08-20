@@ -4,6 +4,7 @@ import Foundation
 enum CatProfilesPresentationVerifier {
     static func main() throws {
         try verifiesEveryoneIsAlwaysTheDefaultScope()
+        try verifiesIndividualRecognitionCopy()
         try verifiesManyToManyPhotoMembership()
         try verifiesSimilarityReviewKeepsCatInstancesSeparate()
         try verifiesMixedBatchAssignmentsArePreserved()
@@ -11,6 +12,14 @@ enum CatProfilesPresentationVerifier {
         try verifiesProfileBoundingBoxSelection()
         try verifiesPostureDiagnosticStates()
         print("Cat profiles presentation verifier passed")
+    }
+
+    private static func verifiesIndividualRecognitionCopy() throws {
+        try require(
+            CatIndividualRecognitionCopy.unavailable
+                == "いまは自動で見分けることができません。",
+            "deprecated individual-recognition guidance changed"
+        )
     }
 
     private static func verifiesEveryoneIsAlwaysTheDefaultScope() throws {

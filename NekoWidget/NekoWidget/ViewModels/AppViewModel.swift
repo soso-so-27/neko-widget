@@ -1239,8 +1239,9 @@ final class AppViewModel: ObservableObject {
         guard candidateAuthorityIsReady(operation: "update_settings") else { return }
         var normalized = newSettings.normalized()
         let detectionChanged = normalized.confidenceThreshold != settings.confidenceThreshold
-            || normalized.minimumCatAreaRatio != settings.minimumCatAreaRatio
         let displayRangeChanged = normalized.dateRange != settings.dateRange
+        let widgetPolicyChanged = normalized.minimumCatAreaRatio
+            != settings.minimumCatAreaRatio
         if detectionChanged {
             normalized.analysisRevision = settings.analysisRevision + 1
         }
@@ -1253,12 +1254,13 @@ final class AppViewModel: ObservableObject {
                 "albumMaximum": "\(normalized.albumMaximum)",
                 "dateRange": normalized.dateRange.rawValue,
                 "detectionChanged": "\(detectionChanged)",
-                "displayRangeChanged": "\(displayRangeChanged)"
+                "displayRangeChanged": "\(displayRangeChanged)",
+                "widgetPolicyChanged": "\(widgetPolicyChanged)"
             ]
         )
         snapshot.settings = normalized
         snapshot.updatedAt = .now
-        if displayRangeChanged {
+        if displayRangeChanged || widgetPolicyChanged {
             let eligible = candidateSnapshot(snapshot)
             currentAsset = photoSelector.selectOne(
                 from: eligible.assets,
@@ -1273,10 +1275,8 @@ final class AppViewModel: ObservableObject {
             snapshot.scanState = scanState
             await saveSnapshot(reportErrors: false)
             await launchScan(forceFullAnalysis: true)
-        } else if hasEligibleDisplayCandidates(in: snapshot) {
-            await refreshManagedOutputs(reportErrors: false)
         } else {
-            await clearAlbumAndWidgetOutputs(reportErrors: false)
+            await refreshManagedOutputs(reportErrors: false)
         }
     }
 
@@ -1692,14 +1692,9 @@ final class AppViewModel: ObservableObject {
         // PhotoAlbumService is an actor. Always enqueue this generation behind
         // any in-flight stale membership update; a time-bounded status poll can
         // otherwise return without ever removing an excluded photo.
-        if hasEligibleDisplayCandidates(in: snapshot) {
-            // This follows an explicit user correction. Surface a failure
-            // instead of silently leaving a managed album or Widget on the
-            // pre-correction generation.
-            await refreshManagedOutputs(reportErrors: reportErrors)
-        } else {
-            await clearAlbumAndWidgetOutputs(reportErrors: reportErrors)
-        }
+        // This follows an explicit user correction. Surface a failure instead
+        // of silently leaving either managed output on the old generation.
+        await refreshManagedOutputs(reportErrors: reportErrors)
     }
 
     private func launchScan(forceFullAnalysis: Bool) async {
@@ -1782,11 +1777,7 @@ final class AppViewModel: ObservableObject {
                 )
             )
 
-            if hasEligibleDisplayCandidates(in: final) {
-                await refreshManagedOutputs(reportErrors: false)
-            } else {
-                await clearAlbumAndWidgetOutputs(reportErrors: false)
-            }
+            await refreshManagedOutputs(reportErrors: false)
         } catch is CancellationError {
             guard generation == scanGeneration else { return }
             var cancelled = scanState
@@ -1885,15 +1876,10 @@ final class AppViewModel: ObservableObject {
             // Publish a usable v1 experience after the newest 500 assets rather
             // than waiting for a potentially long full-library scan.
             if provisional.scanState.resultKind == .provisional {
-                if hasEligibleDisplayCandidates(in: provisional) {
-                    await refreshManagedOutputs(reportErrors: false)
-                } else {
-                    // Limited access can shrink, or assets can be deleted,
-                    // before a long full scan completes. Do not leave the old
-                    // album/widget visible if the current quick snapshot has
-                    // no eligible photo and the app is backgrounded here.
-                    await clearAlbumAndWidgetOutputs(reportErrors: false)
-                }
+                // Limited access can shrink, or assets can be deleted, before
+                // the full scan completes. Reconcile album and Widget gates
+                // independently so small/low-fidelity cats remain in albums.
+                await refreshManagedOutputs(reportErrors: false)
             }
         }
     }
@@ -2091,9 +2077,8 @@ final class AppViewModel: ObservableObject {
         let eligible = candidateSnapshot(snapshot)
         if let currentAsset,
            let updated = eligible.assets.first(where: {
-               $0.localIdentifier == currentAsset.localIdentifier
-                   && $0.isCatCandidate
-                   && $0.analysisFingerprint == settings.analysisFingerprint
+                $0.localIdentifier == currentAsset.localIdentifier
+                    && $0.isWidgetEligible(settings: settings)
            }) {
             self.currentAsset = updated
             return
@@ -2107,7 +2092,8 @@ final class AppViewModel: ObservableObject {
     private func refreshCurrentAsset() {
         guard let identifier = currentAsset?.localIdentifier else { return }
         guard let updated = candidateSnapshot(snapshot).assets.first(where: {
-            $0.localIdentifier == identifier && $0.isCatCandidate
+            $0.localIdentifier == identifier
+                && $0.isWidgetEligible(settings: settings)
         }) else {
             currentAsset = nil
             chooseCurrentAssetIfNeeded()
@@ -2124,11 +2110,14 @@ final class AppViewModel: ObservableObject {
 
     private func refreshManagedOutputs(reportErrors: Bool) async {
         await enqueueManagedOutputMutation { model in
-            if model.hasEligibleDisplayCandidates(in: model.snapshot) {
+            if model.hasEligibleAlbumCandidates(in: model.snapshot) {
                 await model.performCreateOrUpdateAlbum(reportErrors: reportErrors)
-                await model.performRebuildWidgetCache(reportErrors: reportErrors)
             } else {
                 await model.performClearManagedAlbum(reportErrors: reportErrors)
+            }
+            if model.hasEligibleDisplayCandidates(in: model.snapshot) {
+                await model.performRebuildWidgetCache(reportErrors: reportErrors)
+            } else {
                 await model.performClearWidgetOutput(reportErrors: reportErrors)
             }
         }
@@ -2138,7 +2127,6 @@ final class AppViewModel: ObservableObject {
         let selected = albumSelector.select(from: candidateSnapshot(snapshot))
         guard !selected.isEmpty else {
             await performClearManagedAlbum(reportErrors: false)
-            await performClearWidgetOutput(reportErrors: false)
             albumStatus = .failed(message: NekoWidgetError.noCatPhotos.localizedDescription)
             if reportErrors { setError(NekoWidgetError.noCatPhotos) }
             return
@@ -2283,6 +2271,10 @@ final class AppViewModel: ObservableObject {
         ) != nil
     }
 
+    private func hasEligibleAlbumCandidates(in value: LibrarySnapshot) -> Bool {
+        !albumSelector.select(from: candidateSnapshot(value)).isEmpty
+    }
+
     private func saveSnapshot(reportErrors: Bool) async {
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "save_snapshot")
@@ -2354,8 +2346,16 @@ final class AppViewModel: ObservableObject {
             state.postureSummary?.logMetadata ?? [:],
             uniquingKeysWith: { current, _ in current }
         )
+        metadata.merge(
+            state.recoveryDiagnostics?.logMetadata ?? [:],
+            uniquingKeysWith: { current, _ in current }
+        )
         metadata["bboxAnalysisVersion"] = "\(CatAlbumTraits.currentAnalysisVersion)"
         metadata["scanPurpose"] = state.purpose?.rawValue ?? "none"
+        metadata["scanDurationMs"] = state.scanDurationMilliseconds.map {
+            String(format: "%.1f", $0)
+        } ?? "unknown"
+        metadata["widgetEligibleCats"] = "\(state.widgetEligibleAssets ?? 0)"
         return metadata
     }
 

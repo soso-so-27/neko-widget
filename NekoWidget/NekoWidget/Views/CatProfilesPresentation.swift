@@ -1,6 +1,10 @@
 import CoreGraphics
 import Foundation
 
+enum CatIndividualRecognitionCopy {
+    static let unavailable = "いまは自動で見分けることができません。"
+}
+
 enum CatProfileBoundingBoxSelector {
     static let minimumIntersectionOverUnion = 0.35
 

@@ -4,6 +4,7 @@ import UIKit
 struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
+    let highResolutionRecoverySample: DetectionAccuracySamplePresentation
     let hasPhotoAccess: Bool
     let isScanning: Bool
     let requestPhotoAccess: () -> Void
@@ -34,6 +35,7 @@ struct SettingsView: View {
     init(
         settings: SettingsPresentation,
         detectionAccuracySample: DetectionAccuracySamplePresentation,
+        highResolutionRecoverySample: DetectionAccuracySamplePresentation,
         hasPhotoAccess: Bool,
         isScanning: Bool,
         requestPhotoAccess: @escaping () -> Void,
@@ -55,6 +57,7 @@ struct SettingsView: View {
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
+        self.highResolutionRecoverySample = highResolutionRecoverySample
         self.hasPhotoAccess = hasPhotoAccess
         self.isScanning = isScanning
         self.requestPhotoAccess = requestPhotoAccess
@@ -156,7 +159,7 @@ struct SettingsView: View {
                     Text("うちの子の時間")
                 } footer: {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("入力すると「1歳のころ」のように分かれます。誕生日が不明なら、推定の日付や迎えた日でかまいません。未入力なら撮影年ごとに表示します。")
+                        Text("誕生日を入力すると「子猫のころ」「1歳のころ」のように分かれます。迎えた日はプロフィール情報として保存し、年齢アルバムの基準には使いません。")
                         Text(isSavingLifeReference ? "自動保存中…" : "変更は自動で保存され、日付は端末内だけで使います。")
                     }
                 }
@@ -201,14 +204,14 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("猫の最小面積", value: draft.minimumAreaRatio.formatted(.percent.precision(.fractionLength(0))))
+                    LabeledContent("ウィジェットの最小面積", value: draft.minimumAreaRatio.formatted(.percent.precision(.fractionLength(0))))
                     Slider(value: $draft.minimumAreaRatio, in: 0.01...0.3, step: 0.01)
                 }
                 .padding(.vertical, 4)
             } header: {
                 Text("検出閾値・開発用")
             } footer: {
-                Text("初期値は信頼度70%、最小面積8%です。変更後は再スキャンが必要です。")
+                Text("初期値は信頼度70%、ウィジェットの最小面積8%です。信頼度の変更だけ再スキャンが必要です。")
             }
 
             Section {
@@ -227,6 +230,22 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(!canReviewDetectionAccuracySample)
+
+                if highResolutionRecoverySample.snapshotIsFinal,
+                   !highResolutionRecoverySample.items.isEmpty {
+                    NavigationLink {
+                        DetectionAccuracySampleView(
+                            sample: highResolutionRecoverySample,
+                            navigationTitle: "2048再試行の確認",
+                            reviewInstruction: "猫が写っているかを確認してください。結果はこの画面では保存しません。"
+                        )
+                    } label: {
+                        LabeledContent(
+                            "2048再試行で増えた写真",
+                            value: "上位\(highResolutionRecoverySample.items.count.formatted())枚"
+                        )
+                    }
+                }
             } header: {
                 Text("検出精度")
             } footer: {
@@ -271,7 +290,7 @@ struct SettingsView: View {
             } header: {
                 Text("保存と再スキャン")
             } footer: {
-                Text("ねむってる・まるまり・おすわりは、保存済みの猫の検出枠から作ります。姿勢アルバムのために再スキャンする必要はありません。")
+                Text("ねてる・まるまり・おすわりは、保存済みの猫の検出枠から作ります。姿勢アルバムのために再スキャンする必要はありません。")
             }
 
             Section {
@@ -426,6 +445,8 @@ struct SettingsView: View {
 
 private struct DetectionAccuracySampleView: View {
     let sample: DetectionAccuracySamplePresentation
+    var navigationTitle = "検出精度サンプル"
+    var reviewInstruction: String? = nil
 
     @State private var selectedIndex = 0
 
@@ -454,7 +475,8 @@ private struct DetectionAccuracySampleView: View {
 
                         reviewContext(item)
 
-                        Text("写真を見て、人手ラベルは外部表のreviewNo \(item.reviewNumber)へ記録してください。この画面ではラベルを保存しません。")
+                        Text(reviewInstruction
+                            ?? "写真を見て、人手ラベルは外部表のreviewNo \(item.reviewNumber)へ記録してください。この画面ではラベルを保存しません。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -472,7 +494,7 @@ private struct DetectionAccuracySampleView: View {
                 )
             }
         }
-        .navigationTitle("検出精度サンプル")
+        .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: sample.items.count) { _, count in
             selectedIndex = min(selectedIndex, max(0, count - 1))

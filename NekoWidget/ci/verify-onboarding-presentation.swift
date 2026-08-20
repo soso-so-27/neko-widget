@@ -85,10 +85,10 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.scanBodyLines == [
                 "新しい写真から先に見ています。",
-                "全部の集計は、この画面のあとも続きます。",
-                "アプリを開いている間に進みます。"
+                "全部の集計は、このあと",
+                "バックグラウンドで続きます。"
             ],
-            "progress expectations changed"
+            "scan manuscript copy changed"
         )
         try require(
             OnboardingPresentationCopy.resultLeadLines == [

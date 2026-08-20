@@ -30,11 +30,12 @@ actor LibraryStore {
             value.schemaVersion,
             Self.boundingBoxPostureSnapshotSchemaVersion
         )
+        let activeSettings = value.settings
         value.assets = value.assets.map {
             $0.migratedToBoundingBoxPostureAnalysis(
                 synthesizingMissingTraits: snapshot.schemaVersion
                     >= Self.groupedAlbumSnapshotSchemaVersion
-            )
+            ).migratedToAreaIndependentDetection(settings: activeSettings)
         }
         if value.albumUsage == nil {
             value.albumUsage = .empty
@@ -104,10 +105,11 @@ actor LibraryStore {
             }
         }
 
+        let activeSettings = value.settings
         let migratedAssets = value.assets.map {
             $0.migratedToBoundingBoxPostureAnalysis(
                 synthesizingMissingTraits: !isGroupedAlbumSchemaUpgrade
-            )
+            ).migratedToAreaIndependentDetection(settings: activeSettings)
         }
         if migratedAssets != value.assets {
             value.assets = migratedAssets

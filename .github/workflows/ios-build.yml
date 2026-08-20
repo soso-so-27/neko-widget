@@ -169,6 +169,36 @@ jobs:
             -o "$RUNNER_TEMP/verify-album-grouping"
           "$RUNNER_TEMP/verify-album-grouping"
 
+      - name: Verify scan recovery and Widget eligibility policies
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          scanner="NekoWidget/Services/PhotoLibraryScanner.swift"
+          if grep -Fq 'minimumCatAreaRatio' "$scanner"; then
+            echo "Detector must not apply the Widget area threshold" >&2
+            exit 1
+          fi
+          grep -Fq 'case .localRecovery512: .fastFormat' "$scanner"
+          grep -Fq 'case .localRecovery512: CGSize(width: 512, height: 512)' "$scanner"
+          grep -Fq 'case .highResolution2048: CGSize(width: 2_048, height: 2_048)' "$scanner"
+          if grep -Eq 'isNetworkAccessAllowed[[:space:]]*=[[:space:]]*true' "$scanner"; then
+            echo "Photo scan fallback must not enable network access" >&2
+            exit 1
+          fi
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/AppSettings.swift \
+            Shared/Models/NormalizedRect.swift \
+            Shared/Models/CatDetection.swift \
+            Shared/Models/AssetRecord.swift \
+            Shared/Models/ScanState.swift \
+            Shared/Models/LibrarySnapshot.swift \
+            NekoWidget/Services/PhotoSelectors.swift \
+            ci/verify-scan-recovery-policy.swift \
+            -o "$RUNNER_TEMP/verify-scan-recovery-policy"
+          "$RUNNER_TEMP/verify-scan-recovery-policy"
+
       - name: Verify growth album selection
         working-directory: NekoWidget
         shell: bash
@@ -187,6 +217,29 @@ jobs:
             ci/verify-growth-album.swift \
             -o "$RUNNER_TEMP/verify-growth-album"
           "$RUNNER_TEMP/verify-growth-album"
+
+      - name: Verify local photo-book progress and export boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Services/PhotoBookPolicy.swift \
+            ci/verify-photo-book-policy.swift \
+            -o "$RUNNER_TEMP/verify-photo-book-policy"
+          "$RUNNER_TEMP/verify-photo-book-policy"
+
+          exporter="NekoWidget/Services/PhotoBookPDFExporter.swift"
+          grep -Fq 'options.isNetworkAccessAllowed = false' "$exporter"
+          if grep -Eq 'isNetworkAccessAllowed[[:space:]]*=[[:space:]]*true' "$exporter"; then
+            echo "Photo-book export must not download iCloud photos" >&2
+            exit 1
+          fi
+          if grep -R -Eq '\.badge[[:space:]]*\(' NekoWidget --include='*.swift'; then
+            echo "Build 19 must not add a prompting badge" >&2
+            exit 1
+          fi
 
       - name: Verify cat candidate curation state and export privacy
         working-directory: NekoWidget
@@ -233,6 +286,12 @@ jobs:
             ci/verify-cat-profiles-presentation.swift \
             -o "$RUNNER_TEMP/verify-cat-profiles-presentation"
           "$RUNNER_TEMP/verify-cat-profiles-presentation"
+          if grep -Fq 'cat-similarity-review-link' NekoWidget/Views/CatProfilesView.swift; then
+            echo "Deprecated FeaturePrint review route became visible again" >&2
+            exit 1
+          fi
+          grep -Fq 'Text(CatIndividualRecognitionCopy.unavailable)' \
+            NekoWidget/Views/CatProfilesView.swift
 
       - name: Verify local cat similarity grouping
         working-directory: NekoWidget

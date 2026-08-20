@@ -44,9 +44,8 @@ enum WidgetInstallationState: Equatable, Sendable {
     }
 }
 
-/// Copy derived from `docs/オンボーディング原稿.md`. The scan wording is kept
-/// consistent with the production lifecycle: work pauses outside the app.
-/// Keeping it outside the SwiftUI view makes wording independently verifiable.
+/// Exact copy from `docs/オンボーディング原稿.md`. Keeping it outside the
+/// SwiftUI view makes wording independently verifiable.
 enum OnboardingPresentationCopy {
     static let purposeBodyLines = [
         "うちの子の写真は、",
@@ -75,8 +74,8 @@ enum OnboardingPresentationCopy {
     static let scanTitle = "うちの子を探しています"
     static let scanBodyLines = [
         "新しい写真から先に見ています。",
-        "全部の集計は、この画面のあとも続きます。",
-        "アプリを開いている間に進みます。"
+        "全部の集計は、このあと",
+        "バックグラウンドで続きます。"
     ]
     static let resultLeadLines = [
         "あなたのカメラロールに",

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct HomeView: View {
     let currentPhoto: PhotoPresentation?
@@ -14,16 +15,22 @@ struct HomeView: View {
     let showWidgetPlacementGuide: () -> Void
     let showLikedPhotos: () -> Void
     let toggleLike: (String) -> Void
+    let exportPhotoBook: () async throws -> URL
     let updateAlbum: () -> Void
     let rescan: () -> Void
 
     @State private var showsPhotoShuffleGuide = false
+    @State private var isExportingPhotoBook = false
+    @State private var photoBookExport: PhotoBookExportFile?
+    @State private var photoBookExportDirectory: URL?
+    @State private var photoBookErrorMessage: String?
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
                 if hasPhotoAccess {
                     likedSummary
+                    photoBookProgressCard
                 } else {
                     photoAccessCard
                 }
@@ -50,6 +57,22 @@ struct HomeView: View {
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showsPhotoShuffleGuide) {
             PhotoShuffleGuideView()
+        }
+        .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
+            PhotoBookActivityView(activityItems: [export.url])
+        }
+        .alert(
+            "PDFを作成できませんでした",
+            isPresented: Binding(
+                get: { photoBookErrorMessage != nil },
+                set: { if !$0 { photoBookErrorMessage = nil } }
+            )
+        ) {
+            Button("閉じる", role: .cancel) {
+                photoBookErrorMessage = nil
+            }
+        } message: {
+            Text(photoBookErrorMessage ?? "もう一度お試しください。")
         }
     }
 
@@ -144,6 +167,68 @@ struct HomeView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("これ好き、\(likedCount)枚")
         .accessibilityHint("好きにした写真の一覧を開きます")
+    }
+
+    private var photoBookProgressCard: some View {
+        let progress = PhotoBookPolicy.progress(likedPhotoCount: likedCount)
+        return VStack(alignment: .leading, spacing: 12) {
+            Label("これ好きの1冊", systemImage: "book.closed.fill")
+                .font(.headline)
+
+            Text(progress.statusText)
+                .font(.title3.bold())
+                .monospacedDigit()
+                .accessibilityIdentifier("photo-book-progress")
+
+            if progress.hasCompleteBook {
+                Button {
+                    createPhotoBookPDF()
+                } label: {
+                    HStack {
+                        if isExportingPhotoBook {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "doc.richtext")
+                        }
+                        Text(isExportingPhotoBook ? "PDFを作成中…" : "PDFに書き出す")
+                        Spacer()
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isExportingPhotoBook)
+                .accessibilityIdentifier("photo-book-export")
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func createPhotoBookPDF() {
+        guard !isExportingPhotoBook else { return }
+        isExportingPhotoBook = true
+        Task {
+            defer { isExportingPhotoBook = false }
+            do {
+                let url = try await exportPhotoBook()
+                photoBookExportDirectory = url.deletingLastPathComponent()
+                photoBookExport = PhotoBookExportFile(url: url)
+            } catch is CancellationError {
+                return
+            } catch {
+                photoBookErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func cleanupPhotoBookExport() {
+        if let photoBookExportDirectory {
+            try? FileManager.default.removeItem(at: photoBookExportDirectory)
+        }
+        photoBookExportDirectory = nil
+        photoBookExport = nil
     }
 
     @ViewBuilder
@@ -377,6 +462,27 @@ struct HomeView: View {
         let months = max(components.month ?? 0, 0)
         return months > 0 ? "\(months)か月" : "1か月未満"
     }
+}
+
+private struct PhotoBookExportFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct PhotoBookActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: nil
+        )
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIActivityViewController,
+        context: Context
+    ) {}
 }
 
 private struct Statistic: View {

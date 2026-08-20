@@ -115,13 +115,13 @@ struct CatProfileDetailView: View {
 
     private var timeGroupingExplanation: String {
         guard let reference = profile.lifeReference else {
-            return "このプロフィールの成長写真を年ごとに比べます。日付を設定すると、この子だけの時間でまとめます。"
+            return "誕生日を設定すると、この子だけの「子猫のころ」「1歳のころ」を作ります。"
         }
         switch reference.kind {
         case .birthday:
-            return "このプロフィール内だけで「0歳」「1歳」のようにまとめます。"
+            return "このプロフィール内だけで「子猫のころ」「1歳のころ」のようにまとめます。"
         case .adoptionDay:
-            return "このプロフィール内だけで「お迎えしたころ」「いっしょに暮らして1年」のようにまとめます。"
+            return "迎えた日はプロフィール情報として保存します。年齢アルバムは誕生日だけを基準にします。"
         }
     }
 }
@@ -166,7 +166,7 @@ private struct CatProfileLifeReferenceEditor: View {
                 } footer: {
                     Text(isSaving
                         ? "変更を保存しています…"
-                        : "変更は自動保存されます。誕生日が不明なら推定の日付、または迎えた日でかまいません。")
+                        : "変更は自動保存されます。年齢アルバムは誕生日（推定を含む）だけを基準にします。")
                 }
             }
             .navigationTitle("\(profile.displayName)の日付")

@@ -97,6 +97,8 @@ struct AppSettings: Codable, Equatable, Sendable {
     }
 
     var analysisFingerprint: String {
-        "cat-v2:\(confidenceThreshold.bitPattern):\(minimumCatAreaRatio.bitPattern):\(analysisRevision)"
+        // Minimum area is a Widget presentation policy, not detector input.
+        // Changing it must not invalidate otherwise identical Vision evidence.
+        "cat-v3:\(confidenceThreshold.bitPattern):\(analysisRevision)"
     }
 }

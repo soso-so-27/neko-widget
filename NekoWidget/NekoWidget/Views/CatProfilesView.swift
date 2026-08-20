@@ -66,7 +66,6 @@ struct CatProfilesView: View {
         Form {
             optionalSetupSection
             profilesSection
-            similarityReviewSection
             unassignedSection
             legacyExclusionSection
             postureDiagnosticsSection
@@ -80,58 +79,6 @@ struct CatProfilesView: View {
                 initialLifeReference: presentation.legacyLifeReference,
                 createProfile: actions.createProfile
             )
-        }
-    }
-
-    @ViewBuilder
-    private var similarityReviewSection: some View {
-        if !presentation.profiles.isEmpty,
-           !presentation.similarityCandidates.isEmpty {
-            Section {
-                NavigationLink {
-                    CatSimilarityReviewCoordinatorView(
-                        candidates: presentation.similarityCandidates,
-                        currentCandidates: actions.currentSimilarityCandidates,
-                        profiles: presentation.profiles.map { profile in
-                            CatSimilarityReviewProfilePresentation(
-                                identifier: profile.identifier,
-                                name: profile.displayName,
-                                anchorPhotoCount: profile.similarityReferencePhotoCount,
-                                coverCandidate: profile.coverPhoto.flatMap { photo in
-                                    photo.catBoundingBox.map { box in
-                                        CatSimilarityReviewCandidatePresentation(
-                                            identifier: "cover-\(profile.identifier)",
-                                            assetLocalIdentifier: photo.localIdentifier,
-                                            subjectBoundingBox: box
-                                        )
-                                    }
-                                }
-                            )
-                        },
-                        confirmMembership: { candidates, profileIdentifier in
-                            await actions.confirmSimilarityGroup(
-                                profileIdentifier,
-                                candidates
-                            )
-                        },
-                        openProfileSetup: {
-                            showsAddProfile = true
-                        }
-                    )
-                } label: {
-                    Label {
-                        LabeledContent(
-                            "似た写真をまとめて確認",
-                            value: "\(presentation.similarityCandidates.count.formatted())件"
-                        )
-                    } icon: {
-                        Image(systemName: "square.grid.3x3.fill")
-                    }
-                }
-                .accessibilityIdentifier("cat-similarity-review-link")
-            } footer: {
-                Text("端末内で似た見た目を約20グループに整理します。確認するまで所属は変わらず、混ざったグループはさらに分けられます。")
-            }
         }
     }
 
@@ -180,7 +127,7 @@ struct CatProfilesView: View {
         } header: {
             Text("プロフィール")
         } footer: {
-            Text("プロフィールは任意です。写真は自動で個体判定せず、確認した所属だけを使います。")
+            Text(CatIndividualRecognitionCopy.unavailable)
         }
     }
 
@@ -476,7 +423,7 @@ private struct AddCatProfileView: View {
                 } header: {
                     Text("この子の時間")
                 } footer: {
-                    Text("誕生日が不明なら推定の日付、または迎えた日でかまいません。変更はプロフィールごとに保存します。")
+                    Text("年齢アルバムは誕生日（推定を含む）だけを基準にします。迎えた日もプロフィール情報として保存できます。")
                 }
 
                 Section {
@@ -612,7 +559,7 @@ struct CatPostureDiagnosticsSummaryView: View {
             .font(.subheadline.monospacedDigit())
 
             HStack(spacing: 14) {
-                postureCount("ねむってる", diagnostics.sleepingPhotoCount)
+                postureCount("ねてる", diagnostics.sleepingPhotoCount)
                 postureCount("まるまり", diagnostics.curledPhotoCount)
                 postureCount("おすわり", diagnostics.sittingPhotoCount)
             }

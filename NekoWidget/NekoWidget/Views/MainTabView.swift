@@ -9,6 +9,7 @@ struct MainTabView: View {
     let albumState: AlbumPresentationState
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
+    let highResolutionRecoverySample: DetectionAccuracySamplePresentation
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
     let photoSourceAlbums: [PhotoSourceAlbumOption]
     let photoSourceStatus: PhotoSourceAlbumStatus
@@ -27,6 +28,7 @@ struct MainTabView: View {
     let requestPhotoAccess: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let toggleLike: (String) -> Void
+    let exportPhotoBook: () async throws -> URL
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void
@@ -63,6 +65,7 @@ struct MainTabView: View {
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showLikedPhotos: showLikedPhotos,
                     toggleLike: toggleLike,
+                    exportPhotoBook: exportPhotoBook,
                     updateAlbum: updateAlbum,
                     rescan: { Task { await rescan() } }
                 )
@@ -99,13 +102,13 @@ struct MainTabView: View {
                         .frame(width: 22, height: 22)
                 }
             }
-            .badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)
             .tag(AppTab.likes)
 
             NavigationStack {
                 SettingsView(
                     settings: settings,
                     detectionAccuracySample: detectionAccuracySample,
+                    highResolutionRecoverySample: highResolutionRecoverySample,
                     hasPhotoAccess: hasPhotoAccess,
                     isScanning: isScanning,
                     requestPhotoAccess: requestPhotoAccess,
@@ -269,8 +272,7 @@ struct MainTabView: View {
         CuratedAlbumBuilder().sections(
             from: scopedCatPhotos,
             lifeReference: scopedLifeReference,
-            includesGrowth: selectedAlbumScope != .everyone
-                || catProfilesPresentation.profiles.isEmpty
+            showsMultipleCatsAlbum: catProfilesPresentation.profiles.count >= 2
         )
     }
 

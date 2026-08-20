@@ -24,6 +24,48 @@ actor PhotoLibraryScanner {
     private struct IndexedRecord: Sendable {
         var index: Int
         var record: AssetRecord
+        var recoveryDiagnostics: ScanRecoveryDiagnostics
+    }
+
+    private struct AnalyzedAsset: Sendable {
+        var record: AssetRecord
+        var recoveryDiagnostics: ScanRecoveryDiagnostics = .zero
+    }
+
+    private enum LocalThumbnailProfile: Sendable {
+        case primary1024
+        case localRecovery512
+        case highResolution2048
+
+        var targetSize: CGSize {
+            switch self {
+            case .primary1024: CGSize(width: 1_024, height: 1_024)
+            case .localRecovery512: CGSize(width: 512, height: 512)
+            case .highResolution2048: CGSize(width: 2_048, height: 2_048)
+            }
+        }
+
+        var deliveryMode: PHImageRequestOptionsDeliveryMode {
+            switch self {
+            case .localRecovery512: .fastFormat
+            case .primary1024, .highResolution2048: .highQualityFormat
+            }
+        }
+
+        var acceptsDegradedImage: Bool {
+            switch self {
+            case .localRecovery512: true
+            case .primary1024, .highResolution2048: false
+            }
+        }
+
+        var logName: String {
+            switch self {
+            case .primary1024: "primary1024"
+            case .localRecovery512: "localRecovery512"
+            case .highResolution2048: "highResolution2048"
+            }
+        }
     }
 
     private struct LocalThumbnailRequestOutcome {
@@ -56,20 +98,27 @@ actor PhotoLibraryScanner {
         private let asset: PHAsset
         private let manager = PHImageManager.default()
         private let options: PHImageRequestOptions
+        private let targetSize: CGSize
+        private let acceptsDegradedImage: Bool
         private let timeoutNanoseconds: UInt64
         private let lock = NSLock()
         private var continuation: CheckedContinuation<LocalThumbnailRequestOutcome, Never>?
         private var requestID: PHImageRequestID?
         private var timeoutTask: Task<Void, Never>?
         private var isFinished = false
+        private var sawDegradedOrCloudResult = false
 
         init(
             asset: PHAsset,
             options: PHImageRequestOptions,
+            targetSize: CGSize,
+            acceptsDegradedImage: Bool,
             timeoutNanoseconds: UInt64
         ) {
             self.asset = asset
             self.options = options
+            self.targetSize = targetSize
+            self.acceptsDegradedImage = acceptsDegradedImage
             self.timeoutNanoseconds = timeoutNanoseconds
         }
 
@@ -86,7 +135,7 @@ actor PhotoLibraryScanner {
 
                 let identifier = manager.requestImage(
                     for: asset,
-                    targetSize: CGSize(width: 1_024, height: 1_024),
+                    targetSize: targetSize,
                     contentMode: .aspectFit,
                     options: options
                 ) { [weak self] image, info in
@@ -109,13 +158,14 @@ actor PhotoLibraryScanner {
                     } catch {
                         return
                     }
+                    let sawFallbackEvidence = self.fallbackEvidenceSeen()
                     self.finish(
                         LocalThumbnailRequestOutcome(
                             image: nil,
                             errorDomain: "PhotoLibraryScanner.Timeout",
                             errorCode: 1,
                             wasCancelled: false,
-                            isInCloud: false,
+                            isInCloud: sawFallbackEvidence,
                             isDegraded: false,
                             timedOut: true
                         ),
@@ -142,11 +192,16 @@ actor PhotoLibraryScanner {
             let isInCloud = (info?[PHImageResultIsInCloudKey] as? Bool) == true
             let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
             let error = info?[PHImageErrorKey] as? NSError
+            let sawFallbackEvidence = recordFallbackEvidence(
+                imageWasReturned: image != nil,
+                isDegraded: isDegraded,
+                isInCloud: isInCloud
+            )
 
             // A high-quality asynchronous request may first deliver a degraded
             // image. Wait for the final callback unless the request has ended.
             if isDegraded, !wasCancelled, error == nil {
-                return
+                guard acceptsDegradedImage, image != nil else { return }
             }
             finish(
                 LocalThumbnailRequestOutcome(
@@ -154,12 +209,33 @@ actor PhotoLibraryScanner {
                     errorDomain: error?.domain,
                     errorCode: error?.code,
                     wasCancelled: wasCancelled,
-                    isInCloud: isInCloud,
+                    isInCloud: isInCloud || (image == nil && sawFallbackEvidence),
                     isDegraded: isDegraded,
                     timedOut: false
                 ),
-                cancelImageRequest: false
+                cancelImageRequest: isDegraded && acceptsDegradedImage
             )
+        }
+
+        private func recordFallbackEvidence(
+            imageWasReturned: Bool,
+            isDegraded: Bool,
+            isInCloud: Bool
+        ) -> Bool {
+            lock.lock()
+            if isInCloud || (isDegraded && imageWasReturned) {
+                sawDegradedOrCloudResult = true
+            }
+            let value = sawDegradedOrCloudResult
+            lock.unlock()
+            return value
+        }
+
+        private func fallbackEvidenceSeen() -> Bool {
+            lock.lock()
+            let value = sawDegradedOrCloudResult
+            lock.unlock()
+            return value
         }
 
         private func finish(
@@ -188,7 +264,8 @@ actor PhotoLibraryScanner {
     }
 
     /// Performs a newest-first, two-stage scan. Inference runs up to four
-    /// thumbnails at a time; each is bounded to 1024px and never downloads from
+    /// thumbnails at a time. The normal pass is 1024px, with bounded 512px
+    /// local-recovery and 2048px no-cat fallback passes. None may download from
     /// iCloud. Moving the app out of the foreground cancels the owning Task.
     func scan(
         existing: LibrarySnapshot,
@@ -198,6 +275,7 @@ actor PhotoLibraryScanner {
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws -> LibrarySnapshot {
         let settings = inputSettings.normalized()
+        let scanStartedAt = Date()
         var migratedExisting = existing
         migratedExisting.assets = existing.assets.map {
             $0.migratedToBoundingBoxPostureAnalysis(
@@ -262,9 +340,10 @@ actor PhotoLibraryScanner {
         var records = Array<AssetRecord?>(repeating: nil, count: assets.count)
         var seenBurstIdentifiers = Set<String>()
         let quickEnd = min(settings.quickScanLimit, assets.count)
+        var recoveryDiagnostics = ScanRecoveryDiagnostics.zero
 
         if quickEnd > 0 {
-            try await process(
+            recoveryDiagnostics = try await process(
                 range: 0..<quickEnd,
                 assets: assets,
                 records: &records,
@@ -276,6 +355,7 @@ actor PhotoLibraryScanner {
                 totalAssets: assets.count,
                 phase: .quickScan,
                 purpose: scanPurpose,
+                startingRecoveryDiagnostics: recoveryDiagnostics,
                 onEvent: onEvent
             )
         }
@@ -287,9 +367,12 @@ actor PhotoLibraryScanner {
             phase: assets.count > quickEnd ? .fullScan : .completed,
             resultKind: assets.count > quickEnd ? .provisional : .final,
             requiresFullRescan: forceFullAnalysis && assets.count > quickEnd,
-            purpose: scanPurpose
+            purpose: scanPurpose,
+            settings: settings,
+            recoveryDiagnostics: recoveryDiagnostics
         )
         quickState.lastScannedAt = .now
+        quickState.scanDurationMilliseconds = Date().timeIntervalSince(scanStartedAt) * 1_000
         var quickSnapshot = migratedExisting
         // Keep resumable records only for assets that are still present in the
         // current PhotoKit fetch. This preserves likes for the unprocessed tail
@@ -309,7 +392,7 @@ actor PhotoLibraryScanner {
         await onEvent(.provisional(quickSnapshot))
 
         if quickEnd < assets.count {
-            try await process(
+            recoveryDiagnostics = try await process(
                 range: quickEnd..<assets.count,
                 assets: assets,
                 records: &records,
@@ -321,6 +404,7 @@ actor PhotoLibraryScanner {
                 totalAssets: assets.count,
                 phase: .fullScan,
                 purpose: scanPurpose,
+                startingRecoveryDiagnostics: recoveryDiagnostics,
                 onEvent: onEvent
             )
         }
@@ -335,21 +419,33 @@ actor PhotoLibraryScanner {
             phase: .completed,
             resultKind: .final,
             requiresFullRescan: false,
-            purpose: scanPurpose
+            purpose: scanPurpose,
+            settings: settings,
+            recoveryDiagnostics: recoveryDiagnostics
         )
         final.scanState.lastScannedAt = .now
+        final.scanState.scanDurationMilliseconds = Date().timeIntervalSince(scanStartedAt) * 1_000
         final.settings = settings
         final.updatedAt = .now
         var completionMetadata = [
             "bboxAnalysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
             "cats": "\(final.scanState.catAssets)",
+            "widgetEligibleCats": "\(final.scanState.widgetEligibleAssets ?? 0)",
             "deferred": "\(final.scanState.deferredAssets)",
             "bboxScope": "active-source-before-user-curation",
             "scanPurpose": scanPurpose.rawValue,
+            "scanDurationMs": String(
+                format: "%.1f",
+                final.scanState.scanDurationMilliseconds ?? 0
+            ),
             "total": "\(final.scanState.totalAssets)"
         ]
         completionMetadata.merge(
             final.scanState.postureSummary?.logMetadata ?? [:],
+            uniquingKeysWith: { current, _ in current }
+        )
+        completionMetadata.merge(
+            recoveryDiagnostics.logMetadata,
             uniquingKeysWith: { current, _ in current }
         )
         completionMetadata.merge(
@@ -380,8 +476,9 @@ actor PhotoLibraryScanner {
         totalAssets: Int,
         phase: ScanPhase,
         purpose: ScanPurpose,
+        startingRecoveryDiagnostics: ScanRecoveryDiagnostics,
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
-    ) async throws {
+    ) async throws -> ScanRecoveryDiagnostics {
 #if targetEnvironment(simulator)
         // Hosted Simulators don't expose an iPhone GPU/Neural Engine. Keep
         // CPU-only Vision work narrowly parallel so the UI and XCTest stay
@@ -394,6 +491,7 @@ actor PhotoLibraryScanner {
         var lastPublishedIndex = range.lowerBound
         var newlyAnalyzedCount = 0
         var reusedCount = 0
+        var recoveryDiagnostics = startingRecoveryDiagnostics
 
         while batchStart < range.upperBound {
             try Task.checkCancellation()
@@ -436,11 +534,10 @@ actor PhotoLibraryScanner {
                    (!forceFullAnalysis
                        || (purpose == .groupedAlbumUpgrade
                            && Self.hasCompletedGroupedAlbumAnalysis(previous))),
-                   previous.analysisFingerprint == settings.analysisFingerprint,
+                   Self.canReusePrimaryAnalysis(previous, settings: settings),
                    (previous.sourceModificationDateWasCaptured != true
                        || previous.sourceModificationDate
                            == Self.normalizedModificationDate(asset.modificationDate)),
-                   previous.analysisStatus != .unavailableLocally,
                    previous.analysisStatus != .failed {
                     var reused = previous
                     reused.creationDate = asset.creationDate
@@ -451,6 +548,12 @@ actor PhotoLibraryScanner {
                     reused.isFavorite = asset.isFavorite
                     reused.isScreenshot = false
                     reused.burstIdentifier = asset.burstIdentifier
+                    // Build 18's fingerprint included the Widget-only minimum
+                    // area. Existing positive detections remain valid under the
+                    // same detector settings and migrate without another image
+                    // request. Old no-cat records are deliberately not reusable
+                    // because some were only below that presentation threshold.
+                    reused.analysisFingerprint = settings.analysisFingerprint
                     if reused.analysisStatus == .detected, reused.isCatCandidate {
                         if reused.albumAnalysisVersion
                                 == CatAlbumTraits.currentAnalysisVersion,
@@ -466,6 +569,9 @@ actor PhotoLibraryScanner {
                                 CatAlbumTraits.currentAnalysisVersion
                             records[index] = reused
                             reusedCount += 1
+                            recoveryDiagnostics.merge(.init(
+                                evidence: reused.analysisEvidence
+                            ))
                         } else {
                             pending.append((index, asset, previous, .groupedAlbumOnly))
                         }
@@ -475,6 +581,20 @@ actor PhotoLibraryScanner {
                         reused.albumTraits = nil
                         records[index] = reused
                         reusedCount += 1
+                        recoveryDiagnostics.merge(.init(
+                            evidence: reused.analysisEvidence
+                        ))
+                    } else if reused.analysisStatus == .unavailableLocally {
+                        // Build 19 already exhausted both network-disabled
+                        // local requests. Keep that durable result until an
+                        // explicit full rescan asks to probe local availability
+                        // again; do not repeat thousands of requests on every
+                        // foreground activation.
+                        records[index] = reused
+                        reusedCount += 1
+                        recoveryDiagnostics.merge(.init(
+                            evidence: reused.analysisEvidence
+                        ))
                     } else {
                         pending.append((index, asset, previous, .full))
                     }
@@ -495,7 +615,7 @@ actor PhotoLibraryScanner {
                 for (index, asset, previous, analysisMode) in pending {
                     group.addTask {
                         try Task.checkCancellation()
-                        let record = try await Self.analyze(
+                        let result = try await Self.analyze(
                             asset: asset,
                             settings: settings,
                             previous: previous,
@@ -505,7 +625,11 @@ actor PhotoLibraryScanner {
                                 in: outingByIdentifier
                             )
                         )
-                        return IndexedRecord(index: index, record: record)
+                        return IndexedRecord(
+                            index: index,
+                            record: result.record,
+                            recoveryDiagnostics: result.recoveryDiagnostics
+                        )
                     }
                 }
 
@@ -513,7 +637,10 @@ actor PhotoLibraryScanner {
                 for try await value in group { values.append(value) }
                 return values
             }
-            for value in analyzed { records[value.index] = value.record }
+            for value in analyzed {
+                records[value.index] = value.record
+                recoveryDiagnostics.merge(value.recoveryDiagnostics)
+            }
 
             batchStart = batchEnd
             let isFirstQuickBatch = phase == .quickScan
@@ -529,7 +656,9 @@ actor PhotoLibraryScanner {
                     // doesn't wait for all 500 Vision requests.
                     resultKind: .provisional,
                     requiresFullRescan: forceFullAnalysis,
-                    purpose: purpose
+                    purpose: purpose,
+                    settings: settings,
+                    recoveryDiagnostics: recoveryDiagnostics
                 )
                 await onEvent(
                     .progress(
@@ -562,8 +691,9 @@ actor PhotoLibraryScanner {
                 "reused": "\(reusedCount)",
                 "screenshots": "\(statusCounts[AssetAnalysisStatus.excludedScreenshot.rawValue, default: 0])",
                 "thumbnailTargetPixels": "1024x1024"
-            ]
+            ].merging(recoveryDiagnostics.logMetadata) { current, _ in current }
         )
+        return recoveryDiagnostics
     }
 
     private func makeState(
@@ -573,7 +703,9 @@ actor PhotoLibraryScanner {
         phase: ScanPhase,
         resultKind: ScanResultKind,
         requiresFullRescan: Bool,
-        purpose: ScanPurpose?
+        purpose: ScanPurpose?,
+        settings: AppSettings,
+        recoveryDiagnostics: ScanRecoveryDiagnostics
     ) -> ScanState {
         let finished = records.compactMap { $0 }
         let cats = finished.filter(\.isCatCandidate)
@@ -586,6 +718,9 @@ actor PhotoLibraryScanner {
             totalAssets: totalAssets,
             scannedAssets: scannedAssets,
             catAssets: cats.count,
+            widgetEligibleAssets: cats.lazy.filter {
+                $0.isWidgetEligible(settings: settings)
+            }.count,
             oldestCatPhotoDate: cats.compactMap(\.creationDate).min(),
             deferredAssets: finished.filter { record in
                 record.analysisStatus == .unavailableLocally
@@ -596,6 +731,7 @@ actor PhotoLibraryScanner {
                             || record.albumTraits?.analysisVersion
                                 != CatAlbumTraits.currentAnalysisVersion))
             }.count,
+            recoveryDiagnostics: recoveryDiagnostics,
             postureSummary: postureSummary,
             // Completing one full pass clears the migration banner even when
             // an iCloud-only known cat could not receive secondary traits.
@@ -631,13 +767,30 @@ actor PhotoLibraryScanner {
         return true
     }
 
+    private static func canReusePrimaryAnalysis(
+        _ record: AssetRecord,
+        settings: AppSettings
+    ) -> Bool {
+        record.migratedToAreaIndependentDetection(settings: settings)
+            .analysisFingerprint == settings.analysisFingerprint
+    }
+
+    private struct CatRecognitionResult {
+        var boundingBoxes: [CGRect]
+        var union: CGRect
+        var areaRatio: Double
+        var confidence: Float
+
+        var detected: Bool { !boundingBoxes.isEmpty && !union.isNull }
+    }
+
     private static func analyze(
         asset: PHAsset,
         settings: AppSettings,
         previous: AssetRecord?,
         analysisMode: AnalysisMode,
         isOuting: Bool?
-    ) async throws -> AssetRecord {
+    ) async throws -> AnalyzedAsset {
         let sourcePixelCount = Int64(asset.pixelWidth) * Int64(asset.pixelHeight)
         let tracesLargePhoto = sourcePixelCount >= largePhotoTraceMinimumPixelCount
         let assetHash = tracesLargePhoto
@@ -648,6 +801,50 @@ actor PhotoLibraryScanner {
         var processingOutcome = "unknown"
         var resolvedOutputPixels = "0x0"
         var resolvedDecodedBytes = 0
+        var recoveryDiagnostics = ScanRecoveryDiagnostics.zero
+
+        func finish(_ record: AssetRecord) -> AnalyzedAsset {
+            AnalyzedAsset(
+                record: record,
+                recoveryDiagnostics: recoveryDiagnostics
+            )
+        }
+
+        func terminalRecord(
+            status: AssetAnalysisStatus,
+            evidence: AssetAnalysisEvidence? = nil
+        ) -> AssetRecord {
+            AssetRecord(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
+                isFavorite: asset.isFavorite,
+                isScreenshot: false,
+                burstIdentifier: asset.burstIdentifier,
+                cat: .none,
+                analysisStatus: status,
+                analysisFingerprint: settings.analysisFingerprint,
+                analysisEvidence: evidence,
+                albumAnalysisVersion: status == .noCat
+                    ? CatAlbumTraits.currentAnalysisVersion
+                    : nil,
+                albumTraits: nil
+            ).preservingUserState(from: previous)
+        }
+
+        func preservePreviousOrFinish(
+            _ record: AssetRecord,
+            outcome: String
+        ) -> AnalyzedAsset {
+            if analysisMode.preservesPreviousCatOnFailure,
+               let previous,
+               previous.isCatCandidate {
+                processingOutcome = outcome
+                return finish(pendingGroupedAlbumRecord(asset: asset, previous: previous))
+            }
+            return finish(record)
+        }
 
         if tracesLargePhoto {
             SharedLog.app.info(
@@ -684,36 +881,22 @@ actor PhotoLibraryScanner {
         let thumbnailStartedAt = Date()
         let thumbnailResult: LocalThumbnailLoadResult
         do {
-            thumbnailResult = try await localThumbnail(for: asset)
+            thumbnailResult = try await localThumbnail(
+                for: asset,
+                profile: .primary1024
+            )
         } catch is CancellationError {
             processingOutcome = "cancelled"
-            if tracesLargePhoto {
-                logLargePhotoThumbnailResolved(
-                    assetHash: assetHash,
-                    sourcePixels: sourcePixels,
-                    outputPixels: resolvedOutputPixels,
-                    decodedBytesEstimate: resolvedDecodedBytes,
-                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
-                    outcome: "cancelled"
-                )
-            }
             throw CancellationError()
         } catch {
             processingOutcome = "thumbnailError"
-            if tracesLargePhoto {
-                logLargePhotoThumbnailResolved(
-                    assetHash: assetHash,
-                    sourcePixels: sourcePixels,
-                    outputPixels: resolvedOutputPixels,
-                    decodedBytesEstimate: resolvedDecodedBytes,
-                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
-                    outcome: "error"
-                )
-            }
             throw error
         }
 
-        let image: UIImage
+        var image: UIImage
+        var evidence = AssetAnalysisEvidence(finalPass: .primary1024)
+        var localRecoveryStartedAt: Date?
+
         switch thumbnailResult {
         case .image(let loadedImage):
             image = loadedImage
@@ -734,7 +917,6 @@ actor PhotoLibraryScanner {
                 )
             }
         case .unavailableLocally:
-            processingOutcome = AssetAnalysisStatus.unavailableLocally.rawValue
             if tracesLargePhoto {
                 logLargePhotoThumbnailResolved(
                     assetHash: assetHash,
@@ -745,243 +927,222 @@ actor PhotoLibraryScanner {
                     outcome: AssetAnalysisStatus.unavailableLocally.rawValue
                 )
             }
+            // A secondary repair must never replace a known full-fidelity cat
+            // with a 512px result. Only genuinely deferred primary records use
+            // the local recovery pass.
             if analysisMode.preservesPreviousCatOnFailure,
                let previous,
                previous.isCatCandidate {
-                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+                processingOutcome = "detected-album-pending"
+                return finish(pendingGroupedAlbumRecord(asset: asset, previous: previous))
             }
-            return AssetRecord(
-                localIdentifier: asset.localIdentifier,
-                creationDate: asset.creationDate,
-                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                sourceModificationDateWasCaptured: true,
-                isFavorite: asset.isFavorite,
-                isScreenshot: false,
-                burstIdentifier: asset.burstIdentifier,
-                cat: .none,
-                analysisStatus: .unavailableLocally,
-                analysisFingerprint: settings.analysisFingerprint
-            ).preservingUserState(from: previous)
+
+            recoveryDiagnostics.localRecoveryAttemptedAssets = 1
+            localRecoveryStartedAt = Date()
+            let recoveryResult = try await localThumbnail(
+                for: asset,
+                profile: .localRecovery512
+            )
+            switch recoveryResult {
+            case .image(let recoveredImage):
+                image = recoveredImage
+                evidence = AssetAnalysisEvidence(
+                    finalPass: .localRecovery512,
+                    fallbackReason: .unavailableLocally
+                )
+            case .unavailableLocally:
+                let duration = Date().timeIntervalSince(localRecoveryStartedAt!) * 1_000
+                recoveryDiagnostics.localRecoveryDurationMilliseconds = duration
+                processingOutcome = AssetAnalysisStatus.unavailableLocally.rawValue
+                return finish(terminalRecord(
+                    status: .unavailableLocally,
+                    evidence: AssetAnalysisEvidence(
+                        finalPass: .localRecovery512,
+                        fallbackReason: .unavailableLocally,
+                        fallbackOutcome: .unavailableLocally,
+                        fallbackDurationMilliseconds: duration
+                    )
+                ))
+            case .failed:
+                let duration = Date().timeIntervalSince(localRecoveryStartedAt!) * 1_000
+                recoveryDiagnostics.localRecoveryDurationMilliseconds = duration
+                processingOutcome = AssetAnalysisStatus.unavailableLocally.rawValue
+                // The primary request established the durable reason. A failed
+                // optional recovery must not rewrite it to a generic failure.
+                return finish(terminalRecord(
+                    status: .unavailableLocally,
+                    evidence: AssetAnalysisEvidence(
+                        finalPass: .localRecovery512,
+                        fallbackReason: .unavailableLocally,
+                        fallbackOutcome: .failed,
+                        fallbackDurationMilliseconds: duration
+                    )
+                ))
+            }
         case .failed:
             processingOutcome = AssetAnalysisStatus.failed.rawValue
-            if tracesLargePhoto {
-                logLargePhotoThumbnailResolved(
-                    assetHash: assetHash,
-                    sourcePixels: sourcePixels,
-                    outputPixels: resolvedOutputPixels,
-                    decodedBytesEstimate: resolvedDecodedBytes,
-                    durationMilliseconds: Date().timeIntervalSince(thumbnailStartedAt) * 1_000,
-                    outcome: AssetAnalysisStatus.failed.rawValue
-                )
-            }
-            if analysisMode.preservesPreviousCatOnFailure,
-               let previous,
-               previous.isCatCandidate {
-                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
-            }
-            return AssetRecord(
-                localIdentifier: asset.localIdentifier,
-                creationDate: asset.creationDate,
-                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                sourceModificationDateWasCaptured: true,
-                isFavorite: asset.isFavorite,
-                isScreenshot: false,
-                burstIdentifier: asset.burstIdentifier,
-                cat: .none,
-                analysisStatus: .failed,
-                analysisFingerprint: settings.analysisFingerprint
-            ).preservingUserState(from: previous)
+            return preservePreviousOrFinish(
+                terminalRecord(status: .failed),
+                outcome: "detected-album-pending"
+            )
         }
 
-        guard let cgImage = image.cgImage else {
-            processingOutcome = AssetAnalysisStatus.failed.rawValue
+        guard var cgImage = image.cgImage else {
             SharedLog.app.warning(
                 "image-load",
                 "Photo thumbnail had no CGImage backing",
                 metadata: ["asset": SharedLog.shortHash(asset.localIdentifier)]
             )
-            if analysisMode.preservesPreviousCatOnFailure,
-               let previous,
-               previous.isCatCandidate {
-                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+            if let localRecoveryStartedAt {
+                let duration = Date().timeIntervalSince(localRecoveryStartedAt) * 1_000
+                recoveryDiagnostics.localRecoveryDurationMilliseconds = duration
+                evidence.fallbackOutcome = .failed
+                evidence.fallbackDurationMilliseconds = duration
+                processingOutcome = AssetAnalysisStatus.unavailableLocally.rawValue
+                return finish(terminalRecord(
+                    status: .unavailableLocally,
+                    evidence: evidence
+                ))
             }
-            return AssetRecord(
-                localIdentifier: asset.localIdentifier,
-                creationDate: asset.creationDate,
-                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                sourceModificationDateWasCaptured: true,
-                isFavorite: asset.isFavorite,
-                isScreenshot: false,
-                burstIdentifier: asset.burstIdentifier,
-                cat: .none,
-                analysisStatus: .failed,
-                analysisFingerprint: settings.analysisFingerprint
-            ).preservingUserState(from: previous)
+            processingOutcome = AssetAnalysisStatus.failed.rawValue
+            return preservePreviousOrFinish(
+                terminalRecord(status: .failed, evidence: evidence),
+                outcome: "detected-album-pending"
+            )
         }
 
+        var orientation = CGImagePropertyOrientation(image.imageOrientation)
+        var recognition: CatRecognitionResult
         do {
-            let request = VNRecognizeAnimalsRequest()
-#if targetEnvironment(simulator)
-            // Vision's automatic compute-device selection can stall against
-            // the simulated Metal device. This affects CI only; devices keep
-            // the normal GPU/Neural Engine scheduling path.
-            request.usesCPUOnly = true
-#endif
-            let orientation = CGImagePropertyOrientation(image.imageOrientation)
-            let handler = VNImageRequestHandler(
+            recognition = try recognizeCats(
                 cgImage: cgImage,
                 orientation: orientation,
-                options: [:]
+                confidenceThreshold: settings.confidenceThreshold
             )
-            try handler.perform([request])
-
-            let observations = request.results ?? []
-            let cats: [(VNRecognizedObjectObservation, Float)] = observations.compactMap {
-                observation in
-                guard let label = observation.labels
-                    .filter({ $0.identifier.caseInsensitiveCompare("cat") == .orderedSame })
-                    .max(by: { $0.confidence < $1.confidence }),
-                      label.confidence >= settings.confidenceThreshold else {
-                    return nil
-                }
-                return (observation, label.confidence)
-            }
-
-            let catBoundingBoxes = cats.map { $0.0.boundingBox }
-            let union = catBoundingBoxes.reduce(CGRect.null) { $0.union($1) }
-            let catAreaRatio = min(
-                1,
-                catBoundingBoxes.reduce(0) {
-                    $0 + Double($1.width * $1.height)
-                }
-            )
-            guard !cats.isEmpty,
-                  !union.isNull,
-                  catAreaRatio >= settings.minimumCatAreaRatio else {
-                if analysisMode.preservesPreviousCatOnFailure,
-                   let previous,
-                   previous.isCatCandidate {
-                    processingOutcome = "detected-album-pending"
-                    return pendingGroupedAlbumRecord(asset: asset, previous: previous)
-                }
-                processingOutcome = AssetAnalysisStatus.noCat.rawValue
-                return AssetRecord(
-                    localIdentifier: asset.localIdentifier,
-                    creationDate: asset.creationDate,
-                    sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                    sourceModificationDateWasCaptured: true,
-                    isFavorite: asset.isFavorite,
-                    isScreenshot: false,
-                    burstIdentifier: asset.burstIdentifier,
-                    cat: .none,
-                    analysisStatus: .noCat,
-                    analysisFingerprint: settings.analysisFingerprint,
-                    albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
-                    albumTraits: nil
-                ).preservingUserState(from: previous)
-            }
-
-            let confidence = cats.map { $0.1 }.max() ?? 0
-            let refreshedDetection = CatDetection(
-                detected: true,
-                confidence: confidence,
-                boundingBox: NormalizedRect(union),
-                areaRatio: catAreaRatio,
-                catCount: cats.count,
-                instanceBoundingBoxes: catBoundingBoxes.map(NormalizedRect.init)
-            )
-            let primaryDetection = refreshedDetection
-            let primaryAnalyzedAt = Date.now
-
-            do {
-                try Task.checkCancellation()
-                let traits = try boundingBoxAlbumTraits(
-                    cgImage: cgImage,
-                    orientation: orientation,
-                    catBoundingBoxes: catBoundingBoxes,
-                    isOuting: isOuting
-                )
-                processingOutcome = AssetAnalysisStatus.detected.rawValue
-                return AssetRecord(
-                    localIdentifier: asset.localIdentifier,
-                    creationDate: asset.creationDate,
-                    sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                    sourceModificationDateWasCaptured: true,
-                    isFavorite: asset.isFavorite,
-                    isScreenshot: false,
-                    burstIdentifier: asset.burstIdentifier,
-                    cat: primaryDetection,
-                    analysisStatus: .detected,
-                    analysisFingerprint: settings.analysisFingerprint,
-                    analyzedAt: primaryAnalyzedAt,
-                    albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
-                    albumTraits: traits
-                ).preservingUserState(from: previous)
-            } catch is CancellationError {
-                processingOutcome = "cancelled"
-                throw CancellationError()
-            } catch {
-                // A secondary album classifier must never erase a valid cat or
-                // make it disappear from the existing Widget. Nil versioning
-                // schedules a later retry while the primary result survives.
-                processingOutcome = "detected-album-pending"
-                let value = error as NSError
-                SharedLog.app.warning(
-                    "vision",
-                    "Grouped album analysis deferred",
-                    metadata: [
-                        "asset": SharedLog.shortHash(asset.localIdentifier),
-                        "code": "\(value.code)",
-                        "domain": value.domain
-                    ]
-                )
-                return AssetRecord(
-                    localIdentifier: asset.localIdentifier,
-                    creationDate: asset.creationDate,
-                    sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
-                    sourceModificationDateWasCaptured: true,
-                    isFavorite: asset.isFavorite,
-                    isScreenshot: false,
-                    burstIdentifier: asset.burstIdentifier,
-                    cat: primaryDetection,
-                    analysisStatus: .detected,
-                    analysisFingerprint: settings.analysisFingerprint,
-                    analyzedAt: primaryAnalyzedAt,
-                    albumAnalysisVersion: nil,
-                    albumTraits: nil
-                ).preservingUserState(from: previous)
-            }
         } catch is CancellationError {
             processingOutcome = "cancelled"
             throw CancellationError()
         } catch {
-            let value = error as NSError
+            let duration = localRecoveryStartedAt.map {
+                Date().timeIntervalSince($0) * 1_000
+            }
+            if let duration {
+                recoveryDiagnostics.localRecoveryDurationMilliseconds = duration
+                evidence.fallbackOutcome = .failed
+                evidence.fallbackDurationMilliseconds = duration
+                processingOutcome = AssetAnalysisStatus.unavailableLocally.rawValue
+                logFallbackVisionFailure(error, pass: .localRecovery512)
+                return finish(terminalRecord(
+                    status: .unavailableLocally,
+                    evidence: evidence
+                ))
+            }
+            return visionFailureResult(
+                error: error,
+                asset: asset,
+                settings: settings,
+                previous: previous,
+                analysisMode: analysisMode,
+                processingOutcome: &processingOutcome,
+                recoveryDiagnostics: recoveryDiagnostics
+            )
+        }
+
+        if let localRecoveryStartedAt {
+            let duration = Date().timeIntervalSince(localRecoveryStartedAt) * 1_000
+            recoveryDiagnostics.localRecoveryResolvedAssets = 1
+            recoveryDiagnostics.localRecoveryDetectedAssets = recognition.detected ? 1 : 0
+            recoveryDiagnostics.localRecoveryDurationMilliseconds = duration
+            evidence.fallbackOutcome = recognition.detected ? .detected : .noCat
+            evidence.fallbackDurationMilliseconds = duration
+        } else if !recognition.detected {
+            recoveryDiagnostics.highResolutionAttemptedAssets = 1
+            let highResolutionStartedAt = Date()
+            let highResolutionResult = try await localThumbnail(
+                for: asset,
+                profile: .highResolution2048
+            )
+            var fallbackOutcome: AssetAnalysisFallbackOutcome
+            switch highResolutionResult {
+            case .image(let highResolutionImage):
+                if let highResolutionCGImage = highResolutionImage.cgImage {
+                    do {
+                        let highOrientation = CGImagePropertyOrientation(
+                            highResolutionImage.imageOrientation
+                        )
+                        let highRecognition = try recognizeCats(
+                            cgImage: highResolutionCGImage,
+                            orientation: highOrientation,
+                            confidenceThreshold: settings.confidenceThreshold
+                        )
+                        recoveryDiagnostics.highResolutionResolvedAssets = 1
+                        recoveryDiagnostics.highResolutionDetectedAssets = highRecognition.detected
+                            ? 1
+                            : 0
+                        fallbackOutcome = highRecognition.detected ? .detected : .noCat
+                        image = highResolutionImage
+                        cgImage = highResolutionCGImage
+                        orientation = highOrientation
+                        recognition = highRecognition
+                        evidence.finalPass = .highResolution2048
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        fallbackOutcome = .failed
+                        logFallbackVisionFailure(error, pass: .highResolution2048)
+                    }
+                } else {
+                    fallbackOutcome = .failed
+                }
+            case .unavailableLocally:
+                fallbackOutcome = .unavailableLocally
+            case .failed:
+                fallbackOutcome = .failed
+            }
+            let duration = Date().timeIntervalSince(highResolutionStartedAt) * 1_000
+            recoveryDiagnostics.highResolutionDurationMilliseconds = duration
+            evidence.fallbackReason = .noCatAt1024
+            evidence.fallbackOutcome = fallbackOutcome
+            evidence.fallbackDurationMilliseconds = duration
+        }
+
+        guard recognition.detected else {
             if analysisMode.preservesPreviousCatOnFailure,
                let previous,
                previous.isCatCandidate {
                 processingOutcome = "detected-album-pending"
-                SharedLog.app.warning(
-                    "vision",
-                    "Cat bounds refresh deferred for grouped albums",
-                    metadata: [
-                        "asset": SharedLog.shortHash(asset.localIdentifier),
-                        "code": "\(value.code)",
-                        "domain": value.domain
-                    ]
-                )
-                return pendingGroupedAlbumRecord(asset: asset, previous: previous)
+                return finish(pendingGroupedAlbumRecord(asset: asset, previous: previous))
             }
+            processingOutcome = AssetAnalysisStatus.noCat.rawValue
+            return finish(terminalRecord(status: .noCat, evidence: evidence))
+        }
 
-            processingOutcome = AssetAnalysisStatus.failed.rawValue
-            SharedLog.app.error(
-                "vision",
-                "Vision animal recognition request failed",
-                metadata: [
-                    "code": "\(value.code)",
-                    "domain": value.domain
-                ]
+        // Detection deliberately has no minimum-area gate. The complete area
+        // ratio is persisted and the stricter Widget selector applies it later.
+        let primaryDetection = CatDetection(
+            detected: true,
+            confidence: recognition.confidence,
+            boundingBox: NormalizedRect(recognition.union),
+            areaRatio: recognition.areaRatio,
+            catCount: recognition.boundingBoxes.count,
+            instanceBoundingBoxes: recognition.boundingBoxes.map(NormalizedRect.init)
+        )
+        let primaryAnalyzedAt = Date.now
+
+        do {
+            try Task.checkCancellation()
+            let traits = try boundingBoxAlbumTraits(
+                cgImage: cgImage,
+                orientation: orientation,
+                catBoundingBoxes: recognition.boundingBoxes,
+                isOuting: isOuting
             )
-            return AssetRecord(
+            processingOutcome = evidence.isLowFidelity
+                ? "detected-local-recovery"
+                : (evidence.finalPass == .highResolution2048
+                    ? "detected-high-resolution"
+                    : AssetAnalysisStatus.detected.rawValue)
+            return finish(AssetRecord(
                 localIdentifier: asset.localIdentifier,
                 creationDate: asset.creationDate,
                 sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
@@ -989,11 +1150,150 @@ actor PhotoLibraryScanner {
                 isFavorite: asset.isFavorite,
                 isScreenshot: false,
                 burstIdentifier: asset.burstIdentifier,
+                cat: primaryDetection,
+                analysisStatus: .detected,
+                analysisFingerprint: settings.analysisFingerprint,
+                analyzedAt: primaryAnalyzedAt,
+                analysisEvidence: evidence,
+                albumAnalysisVersion: CatAlbumTraits.currentAnalysisVersion,
+                albumTraits: traits
+            ).preservingUserState(from: previous))
+        } catch is CancellationError {
+            processingOutcome = "cancelled"
+            throw CancellationError()
+        } catch {
+            // A secondary album classifier must never erase a valid cat or
+            // make it disappear from the Widget candidate cache.
+            processingOutcome = "detected-album-pending"
+            let value = error as NSError
+            SharedLog.app.warning(
+                "vision",
+                "Grouped album analysis deferred",
+                metadata: [
+                    "asset": SharedLog.shortHash(asset.localIdentifier),
+                    "code": "\(value.code)",
+                    "domain": value.domain
+                ]
+            )
+            return finish(AssetRecord(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                sourceModificationDate: Self.normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
+                isFavorite: asset.isFavorite,
+                isScreenshot: false,
+                burstIdentifier: asset.burstIdentifier,
+                cat: primaryDetection,
+                analysisStatus: .detected,
+                analysisFingerprint: settings.analysisFingerprint,
+                analyzedAt: primaryAnalyzedAt,
+                analysisEvidence: evidence,
+                albumAnalysisVersion: nil,
+                albumTraits: nil
+            ).preservingUserState(from: previous))
+        }
+    }
+
+    private static func recognizeCats(
+        cgImage: CGImage,
+        orientation: CGImagePropertyOrientation,
+        confidenceThreshold: Float
+    ) throws -> CatRecognitionResult {
+        let request = VNRecognizeAnimalsRequest()
+#if targetEnvironment(simulator)
+        request.usesCPUOnly = true
+#endif
+        let handler = VNImageRequestHandler(
+            cgImage: cgImage,
+            orientation: orientation,
+            options: [:]
+        )
+        try handler.perform([request])
+        let cats: [(CGRect, Float)] = (request.results ?? []).compactMap { observation in
+            guard let label = observation.labels
+                .filter({ $0.identifier.caseInsensitiveCompare("cat") == .orderedSame })
+                .max(by: { $0.confidence < $1.confidence }),
+                  label.confidence >= confidenceThreshold else {
+                return nil
+            }
+            return (observation.boundingBox, label.confidence)
+        }
+        let boxes = cats.map(\.0)
+        return CatRecognitionResult(
+            boundingBoxes: boxes,
+            union: boxes.reduce(CGRect.null) { $0.union($1) },
+            areaRatio: min(1, boxes.reduce(0) {
+                $0 + Double($1.width * $1.height)
+            }),
+            confidence: cats.map(\.1).max() ?? 0
+        )
+    }
+
+    private static func visionFailureResult(
+        error: Error,
+        asset: PHAsset,
+        settings: AppSettings,
+        previous: AssetRecord?,
+        analysisMode: AnalysisMode,
+        processingOutcome: inout String,
+        recoveryDiagnostics: ScanRecoveryDiagnostics
+    ) -> AnalyzedAsset {
+        let value = error as NSError
+        if analysisMode.preservesPreviousCatOnFailure,
+           let previous,
+           previous.isCatCandidate {
+            processingOutcome = "detected-album-pending"
+            SharedLog.app.warning(
+                "vision",
+                "Cat bounds refresh deferred for grouped albums",
+                metadata: [
+                    "asset": SharedLog.shortHash(asset.localIdentifier),
+                    "code": "\(value.code)",
+                    "domain": value.domain
+                ]
+            )
+            return AnalyzedAsset(
+                record: pendingGroupedAlbumRecord(asset: asset, previous: previous),
+                recoveryDiagnostics: recoveryDiagnostics
+            )
+        }
+        processingOutcome = AssetAnalysisStatus.failed.rawValue
+        SharedLog.app.error(
+            "vision",
+            "Vision animal recognition request failed",
+            metadata: ["code": "\(value.code)", "domain": value.domain]
+        )
+        return AnalyzedAsset(
+            record: AssetRecord(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                sourceModificationDate: normalizedModificationDate(asset.modificationDate),
+                sourceModificationDateWasCaptured: true,
+                isFavorite: asset.isFavorite,
+                isScreenshot: false,
+                burstIdentifier: asset.burstIdentifier,
                 cat: .none,
                 analysisStatus: .failed,
                 analysisFingerprint: settings.analysisFingerprint
-            ).preservingUserState(from: previous)
-        }
+            ).preservingUserState(from: previous),
+            recoveryDiagnostics: recoveryDiagnostics
+        )
+    }
+
+    private static func logFallbackVisionFailure(
+        _ error: Error,
+        pass: AssetDetectionPass
+    ) {
+        let value = error as NSError
+        SharedLog.app.warning(
+            "vision",
+            "Cat recovery Vision pass failed; keeping the primary result",
+            metadata: [
+                "code": "\(value.code)",
+                "domain": value.domain,
+                "pass": pass.rawValue
+            ]
+        )
     }
 
     private static func boundingBoxAlbumTraits(
@@ -1093,7 +1393,8 @@ actor PhotoLibraryScanner {
     }
 
     private static func localThumbnail(
-        for asset: PHAsset
+        for asset: PHAsset,
+        profile: LocalThumbnailProfile
     ) async throws -> LocalThumbnailLoadResult {
         let options = PHImageRequestOptions()
         options.version = .current
@@ -1101,7 +1402,7 @@ actor PhotoLibraryScanner {
         // PhotoKit records can fail to return from a synchronous request. The
         // request wrapper enforces a bounded wait and cancels PhotoKit on
         // timeout. Network access stays disabled to avoid iCloud downloads.
-        options.deliveryMode = .highQualityFormat
+        options.deliveryMode = profile.deliveryMode
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = false
         options.isSynchronous = false
@@ -1122,6 +1423,8 @@ actor PhotoLibraryScanner {
             let request = LocalThumbnailRequest(
                 asset: asset,
                 options: options,
+                targetSize: profile.targetSize,
+                acceptsDegradedImage: profile.acceptsDegradedImage,
                 timeoutNanoseconds: 5_000_000_000
             )
             let outcome = await withTaskCancellationHandler {
@@ -1157,11 +1460,11 @@ actor PhotoLibraryScanner {
                         "asset": SharedLog.shortHash(asset.localIdentifier),
                         "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
                         "degraded": "\(outcome.isDegraded)",
-                        "deliveryMode": "highQualityFormat",
+                        "deliveryMode": profile.logName,
                         "estimatedDecodedBytes": "\(width * height * 4)",
                         "networkAllowed": "false",
                         "outputPixels": "\(width)x\(height)",
-                        "targetPixels": "1024x1024"
+                        "targetPixels": "\(Int(profile.targetSize.width))x\(Int(profile.targetSize.height))"
                     ]
                 )
             }
@@ -1174,12 +1477,12 @@ actor PhotoLibraryScanner {
                     "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
                     "cancelled": "\(outcome.wasCancelled)",
                     "code": outcome.errorCode.map { String($0) } ?? "none",
-                    "deliveryMode": "highQualityFormat",
+                    "deliveryMode": profile.logName,
                     "degraded": "\(outcome.isDegraded)",
                     "domain": outcome.errorDomain ?? "none",
                     "inCloud": "\(outcome.isInCloud)",
                     "networkAllowed": "false",
-                    "targetPixels": "1024x1024",
+                    "targetPixels": "\(Int(profile.targetSize.width))x\(Int(profile.targetSize.height))",
                     "timedOut": "\(outcome.timedOut)"
                 ]
             )

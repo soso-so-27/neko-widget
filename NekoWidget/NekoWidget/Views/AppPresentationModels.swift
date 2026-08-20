@@ -14,6 +14,7 @@ struct PhotoPresentation: Identifiable, Hashable {
     let albumPostures: Set<CatPostureTag>
     let albumContainsPerson: Bool?
     let albumIsOuting: Bool?
+    let detectedCatCount: Int
     let largestCatAreaRatio: Double?
     /// False when a profile contains a multi-cat photo but no subject cat was
     /// selected. Time/special albums may still use it; growth must not.
@@ -31,6 +32,7 @@ struct PhotoPresentation: Identifiable, Hashable {
         albumPostures: Set<CatPostureTag> = [],
         albumContainsPerson: Bool? = nil,
         albumIsOuting: Bool? = nil,
+        detectedCatCount: Int = 1,
         largestCatAreaRatio: Double? = nil,
         isGrowthEligible: Bool = true,
         hasCurrentAlbumAnalysis: Bool = false
@@ -43,6 +45,7 @@ struct PhotoPresentation: Identifiable, Hashable {
         self.albumPostures = albumPostures
         self.albumContainsPerson = albumContainsPerson
         self.albumIsOuting = albumIsOuting
+        self.detectedCatCount = max(0, detectedCatCount)
         self.largestCatAreaRatio = largestCatAreaRatio
         self.isGrowthEligible = isGrowthEligible
         self.hasCurrentAlbumAnalysis = hasCurrentAlbumAnalysis
@@ -80,6 +83,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     case closeUp
     case together
     case outing
+    case catDay
 
     var id: Self { self }
 
@@ -91,12 +95,13 @@ enum CuratedAlbumID: Hashable, Identifiable {
         case .adoptionStart: "お迎えしたころ"
         case let .yearsTogether(years): "いっしょに暮らして\(years)年"
         case let .calendarYear(year): "\(year)年"
-        case .sleeping: "ねむってる"
+        case .sleeping: "ねてる"
         case .curled: "まるまり"
         case .sitting: "おすわり"
         case .closeUp: "どアップ"
-        case .together: "いっしょ"
+        case .together: "2匹いっしょ"
         case .outing: "おでかけ"
+        case .catDay: "猫の日"
         }
     }
 
@@ -114,6 +119,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
         case .closeUp: "close_up"
         case .together: "together"
         case .outing: "outing"
+        case .catDay: "cat_day"
         }
     }
 }
@@ -139,12 +145,10 @@ enum AlbumRoute: Hashable {
     case photo(album: CuratedAlbumID, localIdentifier: String)
 }
 
-/// Builds the product's fixed, spoken-language albums. Membership can overlap:
-/// a multi-cat photo can appear in more than one bounding-box posture album,
-/// and a sleeping photo with a person can also appear in「いっしょ」.
+/// Builds the product's fixed, spoken-language albums from evidence already
+/// stored on each photo. Membership can overlap, but empty albums are omitted.
 struct CuratedAlbumBuilder {
-    static let kittenMonthCount = 6
-    static let closeUpAreaRatio = 0.40
+    static let closeUpAreaRatio = 0.50
 
     private let calendar: Calendar
 
@@ -158,15 +162,9 @@ struct CuratedAlbumBuilder {
     func sections(
         from inputPhotos: [PhotoPresentation],
         lifeReference: CatLifeReference?,
-        includesGrowth: Bool = true
+        showsMultipleCatsAlbum: Bool = false
     ) -> [CuratedAlbumSectionPresentation] {
         let photos = orderedUniquePhotos(inputPhotos)
-        let timeAlbums = makeTimeAlbums(
-            from: photos,
-            lifeReference: lifeReference,
-            includesGrowth: includesGrowth
-        )
-        let analyzed = photos.filter(\.hasCurrentAlbumAnalysis)
 
         let cutenessAlbums = compactAlbums([
             album(.sleeping, group: .cuteness, photos: photos.filter {
@@ -178,101 +176,81 @@ struct CuratedAlbumBuilder {
             album(.sitting, group: .cuteness, photos: photos.filter {
                 $0.albumPostures.contains(.sitting)
             }),
-            album(.closeUp, group: .cuteness, photos: analyzed.filter {
+            album(.closeUp, group: .cuteness, photos: photos.filter {
                 ($0.largestCatAreaRatio ?? 0) >= Self.closeUpAreaRatio
             })
         ])
 
-        let specialAlbums = compactAlbums([
-            album(.together, group: .special, photos: analyzed.filter {
-                $0.albumContainsPerson == true
-            }),
-            album(.outing, group: .special, photos: analyzed.filter {
-                $0.albumIsOuting == true
-            })
-        ])
+        var specialAlbums: [CuratedAlbumPresentation?] = []
+        if showsMultipleCatsAlbum {
+            specialAlbums.append(album(.together, group: .special, photos: photos.filter {
+                $0.detectedCatCount >= 2
+            }))
+        }
+        specialAlbums.append(contentsOf: makeBirthdayAlbums(
+            from: photos,
+            lifeReference: lifeReference
+        ))
+        specialAlbums.append(album(.catDay, group: .special, photos: photos.filter {
+            guard let capturedAt = $0.creationDate else { return false }
+            return calendar.component(.month, from: capturedAt) == 2
+                && calendar.component(.day, from: capturedAt) == 22
+        }))
 
         return [
-            section(.time, albums: timeAlbums),
             section(.cuteness, albums: cutenessAlbums),
-            section(.special, albums: specialAlbums)
+            section(.special, albums: compactAlbums(specialAlbums))
         ].compactMap { $0 }
     }
 
-    private func makeTimeAlbums(
+    private func makeBirthdayAlbums(
         from photos: [PhotoPresentation],
-        lifeReference: CatLifeReference?,
-        includesGrowth: Bool
-    ) -> [CuratedAlbumPresentation] {
+        lifeReference: CatLifeReference?
+    ) -> [CuratedAlbumPresentation?] {
+        guard lifeReference?.kind == .birthday,
+              let rawReferenceDate = lifeReference?.date.date(in: calendar),
+              let referenceDate = calendarDay(rawReferenceDate) else { return [] }
+
         let datedPhotos = photos.filter { $0.creationDate != nil }
         var albums: [CuratedAlbumPresentation?] = []
-        if includesGrowth {
-            let growthPhotos = GrowthAlbumSelector(timeZone: calendar.timeZone)
-                .select(from: datedPhotos, lifeReference: lifeReference)
-                .map(\.photo)
-            albums.append(albumPreservingOrder(
-                .growth,
-                group: .time,
-                photos: growthPhotos
-            ))
-        }
 
-        if let rawReferenceDate = lifeReference?.date.date(in: calendar),
-           let referenceDate = calendarDay(rawReferenceDate) {
-            let kittenEnd = calendar.date(
-                byAdding: .month,
-                value: Self.kittenMonthCount,
-                to: referenceDate
-            ) ?? referenceDate
+        let firstBirthday = calendar.date(
+            byAdding: .year,
+            value: 1,
+            to: referenceDate
+        ) ?? referenceDate
+        albums.append(album(
+            .kitten,
+            group: .special,
+            photos: datedPhotos.filter {
+                guard let capturedAt = $0.creationDate,
+                      let date = calendarDay(capturedAt) else { return false }
+                return date >= referenceDate && date < firstBirthday
+            }
+        ))
+
+        var grouped: [Int: [PhotoPresentation]] = [:]
+        for photo in datedPhotos {
+            guard let capturedAt = photo.creationDate,
+                  let date = calendarDay(capturedAt),
+                  date >= firstBirthday,
+                  let age = calendar.dateComponents(
+                      [.year],
+                      from: referenceDate,
+                      to: date
+                  ).year,
+                  age >= 1 else { continue }
+            grouped[age, default: []].append(photo)
+        }
+        for age in grouped.keys.sorted() {
             albums.append(album(
-                lifeReference?.kind == .adoptionDay ? .adoptionStart : .kitten,
-                group: .time,
-                photos: datedPhotos.filter {
-                    guard let capturedAt = $0.creationDate,
-                          let date = calendarDay(capturedAt) else { return false }
-                    return date >= referenceDate && date < kittenEnd
-                }
+                .age(age),
+                group: .special,
+                photos: grouped[age] ?? []
             ))
-
-            var grouped: [Int: [PhotoPresentation]] = [:]
-            for photo in datedPhotos {
-                guard let capturedAt = photo.creationDate,
-                      let date = calendarDay(capturedAt),
-                      date >= referenceDate,
-                      let age = calendar.dateComponents(
-                          [.year],
-                          from: referenceDate,
-                          to: date
-                      ).year,
-                      age >= 1 else { continue }
-                grouped[age, default: []].append(photo)
-            }
-            for age in grouped.keys.sorted() {
-                albums.append(album(
-                    lifeReference?.kind == .adoptionDay
-                        ? .yearsTogether(age)
-                        : .age(age),
-                    group: .time,
-                    photos: grouped[age] ?? []
-                ))
-            }
-        } else {
-            var grouped: [Int: [PhotoPresentation]] = [:]
-            for photo in datedPhotos {
-                guard let capturedAt = photo.creationDate else { continue }
-                grouped[calendar.component(.year, from: capturedAt), default: []]
-                    .append(photo)
-            }
-            for year in grouped.keys.sorted() {
-                albums.append(album(
-                    .calendarYear(year),
-                    group: .time,
-                    photos: grouped[year] ?? []
-                ))
-            }
         }
 
-        return compactAlbums(albums)
+        return albums
     }
 
     private func orderedUniquePhotos(_ photos: [PhotoPresentation]) -> [PhotoPresentation] {
@@ -318,15 +296,6 @@ struct CuratedAlbumBuilder {
         let ordered = photos.sorted(by: newestFirst)
         guard !ordered.isEmpty else { return nil }
         return CuratedAlbumPresentation(id: id, group: group, photos: ordered)
-    }
-
-    private func albumPreservingOrder(
-        _ id: CuratedAlbumID,
-        group: CuratedAlbumGroup,
-        photos: [PhotoPresentation]
-    ) -> CuratedAlbumPresentation? {
-        guard !photos.isEmpty else { return nil }
-        return CuratedAlbumPresentation(id: id, group: group, photos: photos)
     }
 
     private func compactAlbums(

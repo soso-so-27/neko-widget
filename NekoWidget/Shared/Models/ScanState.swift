@@ -297,6 +297,196 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
     }
 }
 
+/// Counts and elapsed time for Build 19's two bounded fallback paths. These
+/// aggregates are enough to compare recovery yield and scan cost without
+/// exporting per-photo identifiers.
+struct ScanRecoveryDiagnostics: Codable, Equatable, Sendable {
+    var localRecoveryAttemptedAssets: Int
+    var localRecoveryResolvedAssets: Int
+    var localRecoveryDetectedAssets: Int
+    var localRecoveryDurationMilliseconds: Double
+    var highResolutionAttemptedAssets: Int
+    var highResolutionResolvedAssets: Int
+    var highResolutionDetectedAssets: Int
+    var highResolutionDurationMilliseconds: Double
+
+    static let zero = ScanRecoveryDiagnostics(
+        localRecoveryAttemptedAssets: 0,
+        localRecoveryResolvedAssets: 0,
+        localRecoveryDetectedAssets: 0,
+        localRecoveryDurationMilliseconds: 0,
+        highResolutionAttemptedAssets: 0,
+        highResolutionResolvedAssets: 0,
+        highResolutionDetectedAssets: 0,
+        highResolutionDurationMilliseconds: 0
+    )
+
+    private enum CodingKeys: String, CodingKey {
+        case localRecoveryAttemptedAssets
+        case localRecoveryResolvedAssets
+        case localRecoveryDetectedAssets
+        case localRecoveryDurationMilliseconds
+        case highResolutionAttemptedAssets
+        case highResolutionResolvedAssets
+        case highResolutionDetectedAssets
+        case highResolutionDurationMilliseconds
+    }
+
+    init(
+        localRecoveryAttemptedAssets: Int,
+        localRecoveryResolvedAssets: Int,
+        localRecoveryDetectedAssets: Int,
+        localRecoveryDurationMilliseconds: Double,
+        highResolutionAttemptedAssets: Int,
+        highResolutionResolvedAssets: Int,
+        highResolutionDetectedAssets: Int,
+        highResolutionDurationMilliseconds: Double
+    ) {
+        let localAttempted = max(0, localRecoveryAttemptedAssets)
+        let localResolved = min(localAttempted, max(0, localRecoveryResolvedAssets))
+        self.localRecoveryAttemptedAssets = localAttempted
+        self.localRecoveryResolvedAssets = localResolved
+        self.localRecoveryDetectedAssets = min(
+            localResolved,
+            max(0, localRecoveryDetectedAssets)
+        )
+        self.localRecoveryDurationMilliseconds = max(
+            0,
+            localRecoveryDurationMilliseconds
+        )
+
+        let highAttempted = max(0, highResolutionAttemptedAssets)
+        let highResolved = min(highAttempted, max(0, highResolutionResolvedAssets))
+        self.highResolutionAttemptedAssets = highAttempted
+        self.highResolutionResolvedAssets = highResolved
+        self.highResolutionDetectedAssets = min(
+            highResolved,
+            max(0, highResolutionDetectedAssets)
+        )
+        self.highResolutionDurationMilliseconds = max(
+            0,
+            highResolutionDurationMilliseconds
+        )
+    }
+
+    /// Reconstructs stable aggregate diagnostics when a completed Build 19
+    /// record is reused on a later foreground scan. This prevents the original
+    /// recovery yield from appearing to reset to zero without rerunning Vision.
+    init(evidence: AssetAnalysisEvidence?) {
+        guard let evidence,
+              let reason = evidence.fallbackReason else {
+            self = .zero
+            return
+        }
+        let resolved = evidence.fallbackOutcome == .detected
+            || evidence.fallbackOutcome == .noCat
+        let detected = evidence.fallbackOutcome == .detected
+        let duration = evidence.fallbackDurationMilliseconds ?? 0
+        switch reason {
+        case .unavailableLocally:
+            self.init(
+                localRecoveryAttemptedAssets: 1,
+                localRecoveryResolvedAssets: resolved ? 1 : 0,
+                localRecoveryDetectedAssets: detected ? 1 : 0,
+                localRecoveryDurationMilliseconds: duration,
+                highResolutionAttemptedAssets: 0,
+                highResolutionResolvedAssets: 0,
+                highResolutionDetectedAssets: 0,
+                highResolutionDurationMilliseconds: 0
+            )
+        case .noCatAt1024:
+            self.init(
+                localRecoveryAttemptedAssets: 0,
+                localRecoveryResolvedAssets: 0,
+                localRecoveryDetectedAssets: 0,
+                localRecoveryDurationMilliseconds: 0,
+                highResolutionAttemptedAssets: 1,
+                highResolutionResolvedAssets: resolved ? 1 : 0,
+                highResolutionDetectedAssets: detected ? 1 : 0,
+                highResolutionDurationMilliseconds: duration
+            )
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            localRecoveryAttemptedAssets: try container.decodeIfPresent(
+                Int.self,
+                forKey: .localRecoveryAttemptedAssets
+            ) ?? 0,
+            localRecoveryResolvedAssets: try container.decodeIfPresent(
+                Int.self,
+                forKey: .localRecoveryResolvedAssets
+            ) ?? 0,
+            localRecoveryDetectedAssets: try container.decodeIfPresent(
+                Int.self,
+                forKey: .localRecoveryDetectedAssets
+            ) ?? 0,
+            localRecoveryDurationMilliseconds: try container.decodeIfPresent(
+                Double.self,
+                forKey: .localRecoveryDurationMilliseconds
+            ) ?? 0,
+            highResolutionAttemptedAssets: try container.decodeIfPresent(
+                Int.self,
+                forKey: .highResolutionAttemptedAssets
+            ) ?? 0,
+            highResolutionResolvedAssets: try container.decodeIfPresent(
+                Int.self,
+                forKey: .highResolutionResolvedAssets
+            ) ?? 0,
+            highResolutionDetectedAssets: try container.decodeIfPresent(
+                Int.self,
+                forKey: .highResolutionDetectedAssets
+            ) ?? 0,
+            highResolutionDurationMilliseconds: try container.decodeIfPresent(
+                Double.self,
+                forKey: .highResolutionDurationMilliseconds
+            ) ?? 0
+        )
+    }
+
+    mutating func merge(_ other: Self) {
+        self = Self(
+            localRecoveryAttemptedAssets: localRecoveryAttemptedAssets
+                + other.localRecoveryAttemptedAssets,
+            localRecoveryResolvedAssets: localRecoveryResolvedAssets
+                + other.localRecoveryResolvedAssets,
+            localRecoveryDetectedAssets: localRecoveryDetectedAssets
+                + other.localRecoveryDetectedAssets,
+            localRecoveryDurationMilliseconds: localRecoveryDurationMilliseconds
+                + other.localRecoveryDurationMilliseconds,
+            highResolutionAttemptedAssets: highResolutionAttemptedAssets
+                + other.highResolutionAttemptedAssets,
+            highResolutionResolvedAssets: highResolutionResolvedAssets
+                + other.highResolutionResolvedAssets,
+            highResolutionDetectedAssets: highResolutionDetectedAssets
+                + other.highResolutionDetectedAssets,
+            highResolutionDurationMilliseconds: highResolutionDurationMilliseconds
+                + other.highResolutionDurationMilliseconds
+        )
+    }
+
+    var logMetadata: [String: String] {
+        [
+            "localRecoveryAttempted": "\(localRecoveryAttemptedAssets)",
+            "localRecoveryResolved": "\(localRecoveryResolvedAssets)",
+            "localRecoveryDetected": "\(localRecoveryDetectedAssets)",
+            "localRecoveryDurationMs": String(
+                format: "%.1f",
+                localRecoveryDurationMilliseconds
+            ),
+            "highResolutionAttempted": "\(highResolutionAttemptedAssets)",
+            "highResolutionResolved": "\(highResolutionResolvedAssets)",
+            "highResolutionDetected": "\(highResolutionDetectedAssets)",
+            "highResolutionDurationMs": String(
+                format: "%.1f",
+                highResolutionDurationMilliseconds
+            )
+        ]
+    }
+}
+
 struct ScanState: Codable, Equatable, Sendable {
     var phase: ScanPhase
     var resultKind: ScanResultKind
@@ -304,8 +494,16 @@ struct ScanState: Codable, Equatable, Sendable {
     var totalAssets: Int
     var scannedAssets: Int
     var catAssets: Int
+    /// Strict area/fidelity population eligible for Widget publication.
+    /// Optional so snapshots written before Build 19 remain decodable.
+    var widgetEligibleAssets: Int? = nil
     var oldestCatPhotoDate: Date?
     var deferredAssets: Int
+    /// Wall-clock duration for the current completed/provisional scan. Optional
+    /// for snapshots written before Build 19.
+    var scanDurationMilliseconds: Double? = nil
+    /// Optional for snapshots written before Build 19.
+    var recoveryDiagnostics: ScanRecoveryDiagnostics? = nil
     /// Aggregate posture diagnostics included in snapshot/export JSON. Optional
     /// so snapshots written before Build 13 remain decodable.
     var postureSummary: PostureScanSummary? = nil
@@ -322,8 +520,11 @@ struct ScanState: Codable, Equatable, Sendable {
         totalAssets: 0,
         scannedAssets: 0,
         catAssets: 0,
+        widgetEligibleAssets: 0,
         oldestCatPhotoDate: nil,
         deferredAssets: 0,
+        scanDurationMilliseconds: nil,
+        recoveryDiagnostics: .zero,
         postureSummary: .empty,
         requiresFullRescan: false,
         lastError: nil

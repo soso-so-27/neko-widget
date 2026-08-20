@@ -125,7 +125,7 @@ struct InitialScanView: View {
                 .foregroundStyle(.secondary)
             } else if scan.hasDeferredAssets {
                 Label(
-                    "端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。次のスキャンで再試行します。",
+                    "端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。必要なら設定の「最初から再スキャン」で再試行できます。",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
@@ -209,7 +209,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.hasFinalResult, scan.hasDeferredAssets {
-                Text("端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。次のスキャンで再試行します。")
+                Text("端末内で取得または分類できなかった \(scan.deferredAssets.formatted())枚は未解析です。必要なら設定の「最初から再スキャン」で再試行できます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -160,6 +160,9 @@ struct AppRootView: View {
             detectionAccuracySample: hasPhotoAccess
                 ? detectionAccuracySamplePresentation
                 : .init(),
+            highResolutionRecoverySample: hasPhotoAccess
+                ? highResolutionRecoverySamplePresentation
+                : .init(),
             excludedCatPhotos: hasPhotoAccess ? excludedCatPhotoPresentations : [],
             photoSourceAlbums: hasPhotoAccess ? viewModel.photoSourceAlbums : [],
             photoSourceStatus: hasPhotoAccess ? viewModel.photoSourceStatus : .allLibrary,
@@ -183,6 +186,9 @@ struct AppRootView: View {
             },
             toggleLike: { identifier in
                 Task { await viewModel.toggleLike(id: identifier) }
+            },
+            exportPhotoBook: {
+                try await PhotoBookPDFExporter().export(from: viewModel.likedAssets)
             },
             albumOpened: { key, group in
                 Task {
@@ -264,6 +270,37 @@ struct AppRootView: View {
                     reviewNumber: item.reviewNumber,
                     localIdentifier: item.record.localIdentifier,
                     creationDate: item.record.creationDate
+                )
+            }
+        )
+    }
+
+    /// Highest-confidence cats found only by the 2048px retry. This keeps the
+    /// Build 19 visual acceptance sample on-device and exports no identifiers.
+    private var highResolutionRecoverySamplePresentation: DetectionAccuracySamplePresentation {
+        guard DetectionAccuracySampler.isFinal(viewModel.snapshot) else {
+            return DetectionAccuracySamplePresentation()
+        }
+        let recovered = viewModel.catAssets.filter {
+            $0.analysisEvidence?.finalPass == .highResolution2048
+                && $0.analysisEvidence?.fallbackOutcome == .detected
+        }.sorted {
+            if $0.cat.confidence != $1.cat.confidence {
+                return $0.cat.confidence > $1.cat.confidence
+            }
+            if $0.creationDate != $1.creationDate {
+                return ($0.creationDate ?? .distantPast)
+                    > ($1.creationDate ?? .distantPast)
+            }
+            return $0.localIdentifier < $1.localIdentifier
+        }
+        return DetectionAccuracySamplePresentation(
+            snapshotIsFinal: true,
+            items: recovered.prefix(20).enumerated().map { offset, record in
+                DetectionAccuracySampleItemPresentation(
+                    reviewNumber: offset + 1,
+                    localIdentifier: record.localIdentifier,
+                    creationDate: record.creationDate
                 )
             }
         )
@@ -515,9 +552,10 @@ struct AppRootView: View {
         let displayBox = membership.subjectBoundingBox
             ?? selectedBox
             ?? asset.cat.boundingBox
-        let growthBox = membership.subjectBoundingBox
-            ?? selectedBox
-            ?? (asset.cat.catCount <= 1 ? asset.cat.boundingBox : nil)
+        // Album traits must come from a detector box that still matches this
+        // profile. A stale saved subject rect is display metadata, not current
+        // evidence for a close-up classification.
+        let growthBox = selectedBox
         return PhotoPresentation(
             localIdentifier: asset.localIdentifier,
             creationDate: asset.creationDate,
@@ -529,6 +567,7 @@ struct AppRootView: View {
             } ?? []),
             albumContainsPerson: traits?.containsPerson,
             albumIsOuting: traits?.isOuting,
+            detectedCatCount: asset.cat.catCount,
             largestCatAreaRatio: growthBox?.area,
             isGrowthEligible: growthBox != nil,
             hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
@@ -628,10 +667,9 @@ struct AppRootView: View {
             )),
             albumContainsPerson: traits?.containsPerson,
             albumIsOuting: traits?.isOuting,
-            // Growth can be built immediately from the primary cat detector.
-            // The secondary pass replaces the union-area fallback with the
-            // more precise largest-single-cat area when it is available.
-            largestCatAreaRatio: traits?.largestCatAreaRatio ?? asset.cat.areaRatio,
+            detectedCatCount: asset.cat.catCount,
+            largestCatAreaRatio: resolvedBoxes.map(\.area).max()
+                ?? (asset.cat.catCount <= 1 ? asset.cat.areaRatio : nil),
             hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
                 == CatAlbumTraits.currentAnalysisVersion
                 && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion
