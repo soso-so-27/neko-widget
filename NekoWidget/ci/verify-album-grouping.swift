@@ -142,7 +142,7 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
                 "a pre-reference cat leaked into an age-based time album")
 }
 
-private func verifyUnanalyzedPhotosDoNotEnterDerivedAlbums() throws {
+private func verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis() throws {
     let pending = photo(
         "pending",
         date(2024, 1, 1),
@@ -156,8 +156,15 @@ private func verifyUnanalyzedPhotosDoNotEnterDerivedAlbums() throws {
         from: [pending],
         lifeReference: nil
     )
-    try require(sections.map(\.id) == [.time],
-                "pending analysis leaked into a derived album")
+    try require(sections.map(\.id) == [.time, .cuteness],
+                "cached bbox album stayed gated on secondary analysis")
+    let ids = allAlbums(sections).map(\.id)
+    try require(ids.contains(.sleeping),
+                "cached bbox did not create the sleeping album")
+    try require(!ids.contains(.closeUp)
+                    && !ids.contains(.together)
+                    && !ids.contains(.outing),
+                "unfinished secondary traits leaked into derived albums")
 }
 
 private func verifyBuild11SettingsDecode() throws {
@@ -823,7 +830,7 @@ private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyFixedOrderAndOverlappingMembership()
         try verifyKittenBoundaryAndAgeBuckets()
-        try verifyUnanalyzedPhotosDoNotEnterDerivedAlbums()
+        try verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis()
         try verifyBuild11SettingsDecode()
         try verifyBuild11SnapshotDecode()
         try verifyBuild12TraitDecode()
