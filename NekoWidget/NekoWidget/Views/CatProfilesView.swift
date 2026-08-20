@@ -68,7 +68,6 @@ struct CatProfilesView: View {
             profilesSection
             unassignedSection
             legacyExclusionSection
-            postureDiagnosticsSection
         }
         .navigationTitle("うちの子")
         .sheet(isPresented: $showsAddProfile) {
@@ -185,17 +184,6 @@ struct CatProfilesView: View {
         }
     }
 
-    private var postureDiagnosticsSection: some View {
-        Section {
-            CatPostureDiagnosticsSummaryView(
-                diagnostics: presentation.postureDiagnostics
-            )
-        } header: {
-            Text("姿勢分類")
-        } footer: {
-            Text("猫の検出枠の幅と高さから分類します。関節点は使わず、保存済みの結果から作るため再スキャンは不要です。")
-        }
-    }
 }
 
 private struct EveryoneProfileRow: View {
@@ -528,78 +516,5 @@ private struct AddCatProfileView: View {
                 draft.lifeReference = reference
             }
         )
-    }
-}
-
-struct CatPostureDiagnosticsSummaryView: View {
-    let diagnostics: CatPostureDiagnosticsPresentation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(diagnostics.statusTitle, systemImage: statusSymbol)
-                .font(.headline)
-                .foregroundStyle(statusColor)
-
-            Text(diagnostics.statusDetail)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
-                diagnosticRow("確認対象", diagnostics.targetPhotoCount)
-                diagnosticRow("検出枠あり", diagnostics.validBoxPhotoCount)
-                diagnosticRow("アルバム分類", diagnostics.classifiedPhotoCount)
-                diagnosticRow("分類なし", diagnostics.fullyUnclassifiedPhotoCount)
-                if diagnostics.missingBoxPhotoCount > 0 {
-                    diagnosticRow("検出枠なし", diagnostics.missingBoxPhotoCount)
-                }
-                if diagnostics.multiAlbumPhotoCount > 0 {
-                    diagnosticRow("複数アルバム", diagnostics.multiAlbumPhotoCount)
-                }
-            }
-            .font(.subheadline.monospacedDigit())
-
-            HStack(spacing: 14) {
-                postureCount("ねてる", diagnostics.sleepingPhotoCount)
-                postureCount("まるまり", diagnostics.curledPhotoCount)
-                postureCount("おすわり", diagnostics.sittingPhotoCount)
-            }
-        }
-        .padding(.vertical, 5)
-        .accessibilityElement(children: .contain)
-    }
-
-    private func diagnosticRow(_ title: String, _ value: Int) -> some View {
-        GridRow {
-            Text(title)
-            Text("\(value.formatted())枚")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func postureCount(_ title: String, _ value: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("\(value.formatted())枚")
-                .font(.subheadline.bold().monospacedDigit())
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var statusSymbol: String {
-        switch diagnostics.state {
-        case .completed: "checkmark.circle.fill"
-        case .completedWithMissingBoxes: "exclamationmark.triangle.fill"
-        case .noTargets: "photo.on.rectangle.angled"
-        }
-    }
-
-    private var statusColor: Color {
-        switch diagnostics.state {
-        case .completed: .green
-        case .completedWithMissingBoxes: .orange
-        case .noTargets: .secondary
-        }
     }
 }

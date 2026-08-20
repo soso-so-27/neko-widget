@@ -272,7 +272,10 @@ struct MainTabView: View {
         CuratedAlbumBuilder().sections(
             from: scopedCatPhotos,
             lifeReference: scopedLifeReference,
-            showsMultipleCatsAlbum: catProfilesPresentation.profiles.count >= 2
+            includesGrowth: catProfilesPresentation.profiles.isEmpty
+                || catProfilesPresentation
+                    .timePolicy(for: selectedAlbumScope)
+                    .showsGrowthComparison
         )
     }
 

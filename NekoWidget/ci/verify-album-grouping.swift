@@ -63,7 +63,7 @@ private func allAlbums(
     sections.flatMap(\.albums)
 }
 
-private func verifyFixedOrderAndOverlappingMembership() throws {
+private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
     let photos = [
         photo(
             "newest",
@@ -71,7 +71,7 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
             postures: [.sleeping, .curled],
             person: true,
             outing: true,
-            catCount: 2,
+            catCount: 3,
             area: 0.50
         ),
         photo(
@@ -84,31 +84,28 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
     let sections = CuratedAlbumBuilder(timeZone: utc).sections(
         from: photos,
         lifeReference: nil,
-        showsMultipleCatsAlbum: true
+        includesGrowth: false
     )
-    try require(sections.map(\.id) == [.cuteness, .special],
+    try require(sections.map(\.id) == [.time, .cuteness, .special],
                 "section order changed")
     let ids = allAlbums(sections).map(\.id)
     try require(ids == [
-        .sleeping,
-        .curled,
-        .sitting,
+        .calendarYear(2021),
+        .calendarYear(2024),
         .closeUp,
-        .together
-    ], "album order or zero filtering changed: \(ids)")
-    try require(!ids.contains(.kitten),
-                "kitten must stay hidden until a birthday/adoption day is set")
-    let curled = allAlbums(sections).first { $0.id == .curled }
-    let sleeping = allAlbums(sections).first { $0.id == .sleeping }
-    let sitting = allAlbums(sections).first { $0.id == .sitting }
-    try require(curled?.photos.map(\.id) == ["newest"], "curled membership changed")
-    try require(sleeping?.photos.map(\.id) == ["newest"], "overlap was lost")
-    try require(sitting?.photos.map(\.id) == ["older"],
-                "bbox album was incorrectly gated on secondary analysis")
-    try require(CuratedAlbumID.sleeping.title == "ねてる",
-                "spoken sleeping album title changed")
-    try require(CuratedAlbumID.together.title == "2匹いっしょ",
-                "multi-cat album title changed")
+        .together,
+        .multipleCats,
+        .outing
+    ], "valuable album order or zero filtering changed: \(ids)")
+    try require(CuratedAlbumID.together.title == "人といっしょ",
+                "person-and-cat album title changed")
+    try require(CuratedAlbumID.multipleCats.title == "猫たち",
+                "multiple-cat album made an exact-count claim")
+    try require(
+        allAlbums(sections).first { $0.id == .multipleCats }?.photos.map(\.id)
+            == ["newest"],
+        "a photo with three cats disappeared from the multiple-cat album"
+    )
 }
 
 private func verifyKittenBoundaryAndAgeBuckets() throws {
@@ -117,7 +114,7 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
         date: CatLifeDate(date: date(2024, 1, 1), calendar: calendar)!
     )
     let photos = [
-        photo("stray-before-reference", date(2019, 5, 1), area: 0.99),
+        photo("stray-before-reference", date(2019, 5, 1)),
         photo("first", date(2024, 1, 10)),
         photo("inside-first-year", date(2024, 12, 31)),
         photo("age-one", date(2025, 1, 1)),
@@ -125,7 +122,8 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
     ]
     let albums = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
         from: photos,
-        lifeReference: anchor
+        lifeReference: anchor,
+        includesGrowth: false
     ))
     let kitten = albums.first { $0.id == .kitten }
     try require(
@@ -150,42 +148,43 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
     )
     let adoptionIDs = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
         from: photos,
-        lifeReference: adoption
+        lifeReference: adoption,
+        includesGrowth: false
     )).map(\.id)
-    try require(!adoptionIDs.contains(.kitten)
-                    && !adoptionIDs.contains(where: {
-                        if case .age = $0 { return true }
-                        return false
-                    }),
-                "adoption day incorrectly created biological-age albums")
+    try require(
+        adoptionIDs == [.adoptionStart, .yearsTogether(1), .yearsTogether(2)],
+        "adoption-based time albums were not restored: \(adoptionIDs)"
+    )
+
+    let withGrowth = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
+        from: photos,
+        lifeReference: anchor,
+        includesGrowth: true
+    )).map(\.id)
+    try require(withGrowth.first == .growth,
+                "profile growth album was not restored")
 }
 
-private func verifyConditionalAlbumsAndCatDay() throws {
+private func verifyMultipleCatsAndCatDay() throws {
     let photos = [
         photo("two-cats", date(2024, 2, 22), catCount: 2),
-        photo("ordinary", date(2024, 2, 21))
+        photo("three-cats", date(2024, 2, 21), catCount: 3),
+        photo("ordinary", date(2024, 2, 20))
     ]
-    let singleHousehold = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
+    let albums = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
         from: photos,
         lifeReference: nil,
-        showsMultipleCatsAlbum: false
+        includesGrowth: false
     ))
-    try require(!singleHousehold.map(\.id).contains(.together),
-                "one-cat household displayed the two-cat album")
-    try require(singleHousehold.first(where: { $0.id == .catDay })?.photos.map(\.id)
+    try require(albums.first(where: { $0.id == .multipleCats })?.photos.map(\.id)
+                    == ["two-cats", "three-cats"],
+                "the multiple-cat album excluded two or three-cat photos")
+    try require(albums.first(where: { $0.id == .catDay })?.photos.map(\.id)
                     == ["two-cats"],
                 "Cat Day album did not use February 22")
-
-    let multiHousehold = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
-        from: photos,
-        lifeReference: nil,
-        showsMultipleCatsAlbum: true
-    ))
-    try require(multiHousehold.map(\.id) == [.together, .catDay],
-                "conditional album order changed")
 }
 
-private func verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis() throws {
+private func verifyCloseUpDoesNotWaitAndLegacyPosturesDoNotLeak() throws {
     let pending = photo(
         "pending",
         date(2024, 1, 1),
@@ -197,17 +196,16 @@ private func verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis() throws {
     )
     let sections = CuratedAlbumBuilder(timeZone: utc).sections(
         from: [pending],
-        lifeReference: nil
+        lifeReference: nil,
+        includesGrowth: false
     )
-    try require(sections.map(\.id) == [.cuteness],
-                "cached bbox album stayed gated on secondary analysis")
+    try require(sections.map(\.id) == [.time, .cuteness],
+                "year or close-up album stayed gated on secondary analysis")
     let ids = allAlbums(sections).map(\.id)
-    try require(ids.contains(.sleeping),
-                "cached bbox did not create the sleeping album")
-    try require(ids.contains(.closeUp),
-                "cached bbox area did not create the close-up album")
+    try require(ids == [.calendarYear(2024), .closeUp],
+                "legacy posture tags leaked into the active album list: \(ids)")
     try require(!ids.contains(.together) && !ids.contains(.outing),
-                "retired secondary traits leaked into derived albums")
+                "unconfirmed secondary traits leaked into derived albums")
 }
 
 private func verifyBuild11SettingsDecode() throws {
@@ -871,10 +869,10 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 @main
 private struct AlbumGroupingVerifier {
     static func main() throws {
-        try verifyFixedOrderAndOverlappingMembership()
+        try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
         try verifyKittenBoundaryAndAgeBuckets()
-        try verifyConditionalAlbumsAndCatDay()
-        try verifyBoundingBoxAlbumsDoNotWaitForSecondaryAnalysis()
+        try verifyMultipleCatsAndCatDay()
+        try verifyCloseUpDoesNotWaitAndLegacyPosturesDoNotLeak()
         try verifyBuild11SettingsDecode()
         try verifyBuild11SnapshotDecode()
         try verifyBuild12TraitDecode()
