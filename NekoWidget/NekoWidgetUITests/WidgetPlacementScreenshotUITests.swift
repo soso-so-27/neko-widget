@@ -181,7 +181,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 let candidates = application.descendants(matching: elementType)
                 for label in labels {
                     let predicate = NSPredicate(
-                        format: "label == %@ OR identifier == %@ OR value == %@",
+                        format: "label == %@ OR identifier == %@ OR value == %@ OR label CONTAINS %@",
+                        label,
                         label,
                         label,
                         label
