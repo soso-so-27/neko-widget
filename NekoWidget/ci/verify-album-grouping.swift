@@ -243,7 +243,7 @@ private func verifyBuild12TraitDecode() throws {
                 "Build 12 traits did not decode without pose diagnostics")
 }
 
-private func verifyPostureSummary() throws {
+private func legacyVerifyPostureSummary() throws {
     func catRecord(
         _ identifier: String,
         albumVersion: Int?,
@@ -454,6 +454,157 @@ private func verifyPostureSummary() throws {
                 "legacy posture summary did not default new stages")
 }
 
+private func verifyBoundingBoxPostureSummaryAndMigration() throws {
+    func outcome(
+        _ box: NormalizedRect,
+        postures: [CatPostureTag] = []
+    ) -> CatPostureInstanceOutcome {
+        CatPostureInstanceOutcome(
+            boundingBox: box,
+            poseMatched: !postures.isEmpty,
+            ruleQualityPassed: !postures.isEmpty,
+            geometryPassed: !postures.isEmpty,
+            postures: postures
+        )
+    }
+
+    func record(
+        _ identifier: String,
+        catCount: Int,
+        union: NormalizedRect,
+        primaryBoxes: [NormalizedRect]? = nil,
+        legacyBoxes: [NormalizedRect] = [],
+        traits: Bool = true
+    ) -> AssetRecord {
+        AssetRecord(
+            localIdentifier: identifier,
+            creationDate: nil,
+            isFavorite: false,
+            isScreenshot: false,
+            burstIdentifier: nil,
+            cat: CatDetection(
+                detected: true,
+                confidence: 0.9,
+                boundingBox: union,
+                areaRatio: 0.3,
+                catCount: catCount,
+                instanceBoundingBoxes: primaryBoxes
+            ),
+            analysisStatus: .detected,
+            analysisFingerprint: AppSettings.default.analysisFingerprint,
+            albumAnalysisVersion: traits ? 3 : nil,
+            albumTraits: traits ? CatAlbumTraits(
+                analysisVersion: 3,
+                postures: [.bellyUp],
+                poseObservationCount: legacyBoxes.count,
+                postureDiagnostics: PosturePipelineDiagnostics(
+                    rawObservationCount: legacyBoxes.count,
+                    reliableSkeletonCount: legacyBoxes.count,
+                    matchedSkeletonCount: legacyBoxes.count,
+                    ruleQualityPassedCount: legacyBoxes.count,
+                    geometryPassedCount: legacyBoxes.count,
+                    classifiedInstanceCount: legacyBoxes.count
+                ),
+                postureInstances: legacyBoxes.map {
+                    outcome($0, postures: [.bellyUp])
+                },
+                containsPerson: true,
+                isOuting: false,
+                largestCatAreaRatio: 0.3
+            ) : nil
+        )
+    }
+
+    let sleepingBox = NormalizedRect(x: 0.1, y: 0.1, width: 0.8, height: 0.4)
+    let curledBox = NormalizedRect(x: 0.1, y: 0.1, width: 0.4, height: 0.4)
+    let sittingBox = NormalizedRect(x: 0.1, y: 0.1, width: 0.2, height: 0.4)
+    let unclassifiedBox = NormalizedRect(x: 0.1, y: 0.1, width: 0.6, height: 0.4)
+
+    let legacyMulti = record(
+        "legacy-multi",
+        catCount: 2,
+        union: NormalizedRect(x: 0, y: 0, width: 1, height: 0.2),
+        legacyBoxes: [sleepingBox, curledBox]
+    ).migratedToBoundingBoxPostureAnalysis()
+    try require(Set(legacyMulti.cat.instanceBoundingBoxes ?? [])
+                    == Set([sleepingBox, curledBox]),
+                "legacy per-cat boxes were not copied into CatDetection")
+    try require(legacyMulti.albumAnalysisVersion == CatAlbumTraits.currentAnalysisVersion,
+                "legacy album record did not advance to bbox analysis")
+    try require(legacyMulti.albumTraits?.analysisVersion
+                    == CatAlbumTraits.currentAnalysisVersion,
+                "legacy traits did not advance to bbox analysis")
+    try require(Set(legacyMulti.albumTraits?.postures ?? []) == [.sleeping, .curled],
+                "legacy joint tags remained authoritative")
+    try require(legacyMulti.albumTraits?.postureInstances?.count == 2,
+                "decode-compatible posture instances were discarded")
+    try require(legacyMulti.albumTraits?.containsPerson == true,
+                "non-posture traits changed during migration")
+
+    let primaryWins = record(
+        "primary-wins",
+        catCount: 2,
+        union: sleepingBox,
+        primaryBoxes: [sittingBox],
+        legacyBoxes: [sleepingBox]
+    ).migratedToBoundingBoxPostureAnalysis()
+    try require(primaryWins.cat.instanceBoundingBoxes == [sittingBox],
+                "primary detector instances did not win resolution")
+    try require(primaryWins.albumTraits?.postures == [.sitting],
+                "primary detector instance was not classified as sitting")
+
+    let singleFallback = record(
+        "single-fallback",
+        catCount: 1,
+        union: unclassifiedBox,
+        legacyBoxes: []
+    ).migratedToBoundingBoxPostureAnalysis()
+    try require(singleFallback.cat.instanceBoundingBoxes == [unclassifiedBox],
+                "single-cat union was not migrated")
+    try require(singleFallback.albumTraits?.postures == [],
+                "1.1-2.0 bbox unexpectedly entered an album")
+
+    let unsafeMulti = record(
+        "unsafe-multi",
+        catCount: 2,
+        union: sleepingBox,
+        legacyBoxes: []
+    ).migratedToBoundingBoxPostureAnalysis()
+    try require(unsafeMulti.cat.instanceBoundingBoxes == [],
+                "multi-cat union was migrated as one cat")
+    try require(unsafeMulti.albumTraits?.postures == [],
+                "multi-cat union produced a posture tag")
+
+    let pending = record(
+        "pending",
+        catCount: 1,
+        union: curledBox,
+        traits: false
+    ).migratedToBoundingBoxPostureAnalysis()
+    let records = [legacyMulti, primaryWins, singleFallback, unsafeMulti, pending]
+    let summary = PostureScanSummary(records: records)
+    try require(CatAlbumTraits.currentAnalysisVersion == 4,
+                "bbox posture analysis version changed")
+    try require(summary.targetCatAssets == 5, "bbox summary target changed")
+    try require(summary.sleepingAssets == 1, "bbox sleeping count changed")
+    try require(summary.curledAssets == 1, "bbox curled count changed")
+    try require(summary.sittingAssets == 1, "bbox sitting count changed")
+    try require(summary.classifiedAnyAssets == 2,
+                "multi-tag assets were double-counted")
+    try require(summary.unclassifiedAssets == 2,
+                "bbox unclassified asset count changed")
+    try require(summary.secondaryPendingAssets == 1,
+                "missing non-posture traits stopped being reported")
+    try require(summary.classifiedInstances == 3,
+                "bbox classified instance count changed")
+    try require(summary.rawObservationInstances == 0,
+                "retired pose diagnostics leaked into current summary")
+    try require(summary.bellyUpAssets == 0 && summary.loafAssets == 0,
+                "legacy joint-only albums leaked into bbox summary")
+    try require(summary.logMetadata["postureSitting"] == "1",
+                "bbox sitting log metadata is missing")
+}
+
 private func verifyPrimaryDetectionReuseGuard() throws {
     let capturedDate = date(2024, 3, 4)
     var record = AssetRecord(
@@ -633,7 +784,7 @@ private struct AlbumGroupingVerifier {
         try verifyBuild11SettingsDecode()
         try verifyBuild11SnapshotDecode()
         try verifyBuild12TraitDecode()
-        try verifyPostureSummary()
+        try verifyBoundingBoxPostureSummaryAndMigration()
         try verifyPrimaryDetectionReuseGuard()
         try verifyBoundingBoxAspectDistribution()
         print("Curated grouped albums: PASS")

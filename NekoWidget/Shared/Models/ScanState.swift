@@ -21,15 +21,17 @@ enum ScanPurpose: String, Codable, Equatable, Sendable {
     case regular
     case manualRescan
     case groupedAlbumUpgrade
-    /// Re-runs only missing/stale secondary album traits for known cat photos.
+    /// Decode-only Build 13-15 value. Current code clears this on load and
+    /// never routes a scan through the retired animal-body-pose pipeline.
     case postureRepair
 }
 
-/// Privacy-minimal aggregate diagnostics for the posture pipeline. These are
-/// counts only: no PhotoKit identifiers, joint coordinates, or image data.
+/// Privacy-minimal aggregate diagnostics. Active album counts come from the
+/// normalized detector-box policy. Former pose-stage fields remain encoded so
+/// Build 13-15 snapshots and exports continue to decode.
 struct PostureScanSummary: Codable, Equatable, Sendable {
     var targetCatAssets: Int
-    /// Assets with one or more raw Vision animal-body-pose observations.
+    /// Legacy animal-body-pose counter; current summaries leave this at zero.
     var poseObservationAssets: Int
     var reliableSkeletonAssets: Int
     var matchedSkeletonAssets: Int
@@ -40,11 +42,13 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
     var loafAssets: Int
     var stretchingAssets: Int
     var curledAssets: Int
+    var sittingAssets: Int
     var classifiedAnyAssets: Int
     var unclassifiedAssets: Int
     var secondaryPendingAssets: Int
-    /// Instance totals are kept separate from asset totals. A photo may contain
-    /// more than one cat/body-pose observation.
+    /// Instance totals are kept separate from asset totals. Current
+    /// `classifiedInstances` counts classified detector boxes; the preceding
+    /// pose-stage instance fields are legacy compatibility counters.
     var rawObservationInstances: Int
     var reliableSkeletonInstances: Int
     var matchedSkeletonInstances: Int
@@ -64,6 +68,7 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
         loafAssets: 0,
         stretchingAssets: 0,
         curledAssets: 0,
+        sittingAssets: 0,
         classifiedAnyAssets: 0,
         unclassifiedAssets: 0,
         secondaryPendingAssets: 0,
@@ -86,46 +91,23 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
                 continue
             }
 
-            if let diagnostics = traits.postureDiagnostics {
-                rawObservationInstances += diagnostics.rawObservationCount
-                reliableSkeletonInstances += diagnostics.reliableSkeletonCount
-                matchedSkeletonInstances += diagnostics.matchedSkeletonCount
-                ruleQualityPassedInstances += diagnostics.ruleQualityPassedCount
-                geometryPassedInstances += diagnostics.geometryPassedCount
-                classifiedInstances += diagnostics.classifiedInstanceCount
-
-                if diagnostics.rawObservationCount > 0 {
-                    poseObservationAssets += 1
-                }
-                if diagnostics.reliableSkeletonCount > 0 {
-                    reliableSkeletonAssets += 1
-                }
-                if diagnostics.matchedSkeletonCount > 0 {
-                    matchedSkeletonAssets += 1
-                }
-                if diagnostics.ruleQualityPassedCount > 0 {
-                    ruleQualityPassedAssets += 1
-                }
-                if diagnostics.geometryPassedCount > 0 {
-                    geometryPassedAssets += 1
-                }
-            } else if (traits.poseObservationCount ?? 0) > 0 {
-                // Compatibility for manually produced pre-v3-style fixtures.
-                // No later stage is inferred from the raw count.
-                poseObservationAssets += 1
-                rawObservationInstances += traits.poseObservationCount ?? 0
-            }
             let tags = Set(traits.postures)
             if tags.contains(.sleeping) { sleepingAssets += 1 }
             if tags.contains(.bellyUp) { bellyUpAssets += 1 }
             if tags.contains(.loaf) { loafAssets += 1 }
             if tags.contains(.stretching) { stretchingAssets += 1 }
             if tags.contains(.curled) { curledAssets += 1 }
+            if tags.contains(.sitting) { sittingAssets += 1 }
             if tags.isEmpty {
                 unclassifiedAssets += 1
             } else {
                 classifiedAnyAssets += 1
             }
+            classifiedInstances += record.resolvedCatBoundingBoxes.boundingBoxes
+                .lazy
+                .compactMap { CatBoundingBoxAspectBucket.bucket(for: $0) }
+                .filter { $0 != .unclassified }
+                .count
         }
     }
 
@@ -141,6 +123,7 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
         loafAssets: Int,
         stretchingAssets: Int,
         curledAssets: Int,
+        sittingAssets: Int,
         classifiedAnyAssets: Int,
         unclassifiedAssets: Int,
         secondaryPendingAssets: Int,
@@ -162,6 +145,7 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
         self.loafAssets = loafAssets
         self.stretchingAssets = stretchingAssets
         self.curledAssets = curledAssets
+        self.sittingAssets = sittingAssets
         self.classifiedAnyAssets = classifiedAnyAssets
         self.unclassifiedAssets = unclassifiedAssets
         self.secondaryPendingAssets = secondaryPendingAssets
@@ -185,6 +169,7 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
         case loafAssets
         case stretchingAssets
         case curledAssets
+        case sittingAssets
         case classifiedAnyAssets
         case unclassifiedAssets
         case secondaryPendingAssets
@@ -242,6 +227,10 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
             0,
             try container.decodeIfPresent(Int.self, forKey: .curledAssets) ?? 0
         )
+        sittingAssets = max(
+            0,
+            try container.decodeIfPresent(Int.self, forKey: .sittingAssets) ?? 0
+        )
         classifiedAnyAssets = max(
             0,
             try container.decodeIfPresent(Int.self, forKey: .classifiedAnyAssets) ?? 0
@@ -294,6 +283,7 @@ struct PostureScanSummary: Codable, Equatable, Sendable {
             "postureLoaf": "\(loafAssets)",
             "postureStretching": "\(stretchingAssets)",
             "postureCurled": "\(curledAssets)",
+            "postureSitting": "\(sittingAssets)",
             "postureClassifiedAny": "\(classifiedAnyAssets)",
             "postureUnclassified": "\(unclassifiedAssets)",
             "postureSecondaryPending": "\(secondaryPendingAssets)",

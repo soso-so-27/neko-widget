@@ -11,7 +11,7 @@ struct LibrarySnapshot: Codable, Equatable, Sendable {
     var updatedAt: Date
 
     static let empty = LibrarySnapshot(
-        schemaVersion: 2,
+        schemaVersion: 3,
         assets: [],
         scanState: .idle,
         settings: .default,

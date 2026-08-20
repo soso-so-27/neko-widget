@@ -94,6 +94,36 @@ struct AssetRecord: Codable, Identifiable, Equatable, Sendable {
         merged.shownCount = previous.shownCount
         return merged
     }
+
+    var resolvedCatBoundingBoxes: CatBoundingBoxResolution {
+        cat.resolvedInstanceBoundingBoxes(
+            legacyPostureInstances: albumTraits?.postureInstances
+        )
+    }
+
+    /// Migrates Build 12-15 posture storage without touching PhotoKit or
+    /// running Vision. Existing per-cat posture-instance boxes are copied into
+    /// the primary detection; only a one-cat union can be used as fallback.
+    /// Legacy pose fields remain intact for JSON decode/round-trip compatibility.
+    func migratedToBoundingBoxPostureAnalysis() -> AssetRecord {
+        guard isCatCandidate else {
+            var value = self
+            if value.albumAnalysisVersion != nil {
+                value.albumAnalysisVersion = CatAlbumTraits.currentAnalysisVersion
+            }
+            return value
+        }
+
+        let resolution = resolvedCatBoundingBoxes
+        var value = self
+        value.cat.instanceBoundingBoxes = resolution.boundingBoxes
+        guard let traits = value.albumTraits else { return value }
+        value.albumTraits = traits.migratedToBoundingBoxPostures(
+            boundingBoxes: resolution.boundingBoxes
+        )
+        value.albumAnalysisVersion = CatAlbumTraits.currentAnalysisVersion
+        return value
+    }
 }
 
 /// Count-only diagnostics. Asset totals describe the photos an album would
@@ -122,23 +152,10 @@ struct CatBoundingBoxAspectDistribution: Equatable, Sendable {
     init(records: [AssetRecord]) {
         for record in records where record.isCatCandidate {
             targetCatAssets += 1
-            let storedInstances = record.albumTraits?.postureInstances ?? []
-            var boxes = storedInstances.compactMap { outcome -> NormalizedRect? in
-                guard CatBoundingBoxAspectBucket.bucket(for: outcome.boundingBox) != nil else {
-                    invalidInstances += 1
-                    return nil
-                }
-                return outcome.boundingBox
-            }
-
-            // The primary detector box is a union for multi-cat photos and is
-            // therefore never a valid fallback there. It is safe for a single
-            // cat and keeps legacy/current partial records measurable.
-            if boxes.isEmpty,
-               record.cat.catCount <= 1,
-               let boundingBox = record.cat.boundingBox,
-               CatBoundingBoxAspectBucket.bucket(for: boundingBox) != nil {
-                boxes = [boundingBox]
+            let resolution = record.resolvedCatBoundingBoxes
+            let boxes = resolution.boundingBoxes
+            invalidInstances += resolution.invalidInstanceCount
+            if resolution.source == .singleCatUnion {
                 singleCatFallbackAssets += 1
             }
 

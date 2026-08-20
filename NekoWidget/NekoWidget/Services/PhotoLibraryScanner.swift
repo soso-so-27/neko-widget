@@ -12,18 +12,12 @@ actor PhotoLibraryScanner {
     private enum AnalysisMode: Sendable {
         case full
         case groupedAlbumOnly
-        case postureRepairOnly
 
         var preservesPreviousCatOnFailure: Bool {
             switch self {
-            case .groupedAlbumOnly, .postureRepairOnly: return true
+            case .groupedAlbumOnly: return true
             case .full: return false
             }
-        }
-
-        var preservesPrimaryDetectionOnSuccess: Bool {
-            if case .postureRepairOnly = self { return true }
-            return false
         }
     }
 
@@ -204,8 +198,17 @@ actor PhotoLibraryScanner {
         onEvent: @escaping @Sendable (ScanEvent) async -> Void
     ) async throws -> LibrarySnapshot {
         let settings = inputSettings.normalized()
-        let scanPurpose = existing.scanState.purpose
+        var migratedExisting = existing
+        migratedExisting.assets = existing.assets.map {
+            $0.migratedToBoundingBoxPostureAnalysis()
+        }
+        // `.postureRepair` is a decode-only legacy route. Bounding-box posture
+        // migration is synchronous and must never launch animal body-pose work.
+        let requestedPurpose = migratedExisting.scanState.purpose
             ?? (forceFullAnalysis ? .manualRescan : .regular)
+        let scanPurpose: ScanPurpose = requestedPurpose == .postureRepair
+            ? .regular
+            : requestedPurpose
         let fetchOptions = PHFetchOptions()
         fetchOptions.sortDescriptors = [
             NSSortDescriptor(key: "creationDate", ascending: false)
@@ -237,7 +240,9 @@ actor PhotoLibraryScanner {
         )
 
         let previousByIdentifier = Dictionary(
-            uniqueKeysWithValues: existing.assets.map { ($0.localIdentifier, $0) }
+            uniqueKeysWithValues: migratedExisting.assets.map {
+                ($0.localIdentifier, $0)
+            }
         )
         let activeIdentifiers = Set(assets.map(\.localIdentifier))
         // A selected album is only a candidate scope, not permission to destroy
@@ -245,11 +250,11 @@ actor PhotoLibraryScanner {
         // durable source membership and become reusable if the user later picks
         // another album or returns to the whole library.
         let dormantIdentifiers = PhotoSourceCachePolicy.dormantIdentifiers(
-            existingIdentifiers: existing.assets.map(\.localIdentifier),
+            existingIdentifiers: migratedExisting.assets.map(\.localIdentifier),
             activeIdentifiers: activeIdentifiers,
             usesSelectedSource: sourceAlbumIdentifier != nil
         )
-        let dormantRecords = existing.assets.filter {
+        let dormantRecords = migratedExisting.assets.filter {
             dormantIdentifiers.contains($0.localIdentifier)
         }
         var records = Array<AssetRecord?>(repeating: nil, count: assets.count)
@@ -283,7 +288,7 @@ actor PhotoLibraryScanner {
             purpose: scanPurpose
         )
         quickState.lastScannedAt = .now
-        var quickSnapshot = existing
+        var quickSnapshot = migratedExisting
         // Keep resumable records only for assets that are still present in the
         // current PhotoKit fetch. This preserves likes for the unprocessed tail
         // without carrying deleted assets or photos removed from limited access
@@ -319,7 +324,7 @@ actor PhotoLibraryScanner {
         }
 
         try Task.checkCancellation()
-        var final = existing
+        var final = migratedExisting
         final.assets = records.compactMap { $0 } + dormantRecords
         final.scanState = makeState(
             records: records,
@@ -343,6 +348,10 @@ actor PhotoLibraryScanner {
         ]
         completionMetadata.merge(
             final.scanState.postureSummary?.logMetadata ?? [:],
+            uniquingKeysWith: { current, _ in current }
+        )
+        completionMetadata.merge(
+            CatBoundingBoxAspectDistribution(records: final.assets).logMetadata,
             uniquingKeysWith: { current, _ in current }
         )
         SharedLog.app.info(
@@ -389,47 +398,6 @@ actor PhotoLibraryScanner {
                 let asset = assets[index]
                 let previous = previousByIdentifier[asset.localIdentifier]
                 let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
-
-                // Build 12's primary cat/no-cat decisions remain valid. A
-                // posture repair touches only known cats whose secondary traits
-                // are nil or stale. Existing non-target records (including
-                // iCloud/failed primary records) are retained without Vision;
-                // genuinely new assets still use the normal path below.
-                if purpose == .postureRepair, let previous {
-                    if previous.isCatCandidate,
-                       !Self.hasCompletedGroupedAlbumAnalysis(previous) {
-                        let currentModificationDate = Self.normalizedModificationDate(
-                            asset.modificationDate
-                        )
-                        let mode: AnalysisMode = previous.canPreservePrimaryDetection(
-                            sourceModificationDate: currentModificationDate,
-                            analysisFingerprint: settings.analysisFingerprint
-                        ) ? .postureRepairOnly : .full
-                        pending.append((index, asset, previous, mode))
-                    } else {
-                        var reused = previous
-                        reused.creationDate = asset.creationDate
-                        reused.sourceModificationDate = Self.normalizedModificationDate(
-                            asset.modificationDate
-                        )
-                        reused.sourceModificationDateWasCaptured = true
-                        reused.isFavorite = asset.isFavorite
-                        reused.isScreenshot = isScreenshot
-                        reused.burstIdentifier = asset.burstIdentifier
-                        if reused.isCatCandidate,
-                           var traits = reused.albumTraits,
-                           traits.analysisVersion == CatAlbumTraits.currentAnalysisVersion {
-                            traits.isOuting = Self.outingValue(
-                                for: asset.localIdentifier,
-                                in: outingByIdentifier
-                            )
-                            reused.albumTraits = traits
-                        }
-                        records[index] = reused
-                        reusedCount += 1
-                    }
-                    continue
-                }
 
                 if isScreenshot {
                     records[index] = Self.excludedRecord(
@@ -604,15 +572,7 @@ actor PhotoLibraryScanner {
         let finished = records.compactMap { $0 }
         let cats = finished.filter(\.isCatCandidate)
         let postureSummary = PostureScanSummary(records: finished)
-        let resultingPurpose: ScanPurpose?
-        if resultKind == .final {
-            resultingPurpose = !requiresFullRescan
-                && postureSummary.secondaryPendingAssets > 0
-                ? .postureRepair
-                : nil
-        } else {
-            resultingPurpose = purpose
-        }
+        let resultingPurpose: ScanPurpose? = resultKind == .final ? nil : purpose
         return ScanState(
             phase: phase,
             resultKind: resultKind,
@@ -635,9 +595,9 @@ actor PhotoLibraryScanner {
             // an iCloud-only known cat could not receive secondary traits.
             // Its nil album version is still retried by the normal reuse path.
             requiresFullRescan: requiresFullRescan,
-            // Keep a lightweight repair purpose through checkpoints and after
-            // a final pass that still has secondary failures. This preserves
-            // the retry/UI state without turning it into a primary rescan.
+            // The former postureRepair route is decode-only. Bounding-box
+            // posture migration is local and a final scan never schedules a
+            // secondary animal-body-pose pass.
             purpose: resultingPurpose,
             lastError: nil
         )
@@ -921,21 +881,15 @@ actor PhotoLibraryScanner {
                 confidence: confidence,
                 boundingBox: NormalizedRect(union),
                 areaRatio: catAreaRatio,
-                catCount: cats.count
+                catCount: cats.count,
+                instanceBoundingBoxes: catBoundingBoxes.map(NormalizedRect.init)
             )
-            let primaryDetection: CatDetection
-            let primaryAnalyzedAt: Date
-            if analysisMode.preservesPrimaryDetectionOnSuccess, let previous {
-                primaryDetection = previous.cat
-                primaryAnalyzedAt = previous.analyzedAt
-            } else {
-                primaryDetection = refreshedDetection
-                primaryAnalyzedAt = .now
-            }
+            let primaryDetection = refreshedDetection
+            let primaryAnalyzedAt = Date.now
 
             do {
                 try Task.checkCancellation()
-                let traits = try groupedAlbumTraits(
+                let traits = try boundingBoxAlbumTraits(
                     cgImage: cgImage,
                     orientation: orientation,
                     catBoundingBoxes: catBoundingBoxes,
@@ -1036,16 +990,14 @@ actor PhotoLibraryScanner {
         }
     }
 
-    private static func groupedAlbumTraits(
+    private static func boundingBoxAlbumTraits(
         cgImage: CGImage,
         orientation: CGImagePropertyOrientation,
         catBoundingBoxes: [CGRect],
         isOuting: Bool?
     ) throws -> CatAlbumTraits {
-        let poseRequest = VNDetectAnimalBodyPoseRequest()
         let faceRequest = VNDetectFaceRectanglesRequest()
 #if targetEnvironment(simulator)
-        poseRequest.usesCPUOnly = true
         faceRequest.usesCPUOnly = true
 #endif
         let handler = VNImageRequestHandler(
@@ -1053,13 +1005,9 @@ actor PhotoLibraryScanner {
             orientation: orientation,
             options: [:]
         )
-        try handler.perform([poseRequest, faceRequest])
+        try handler.perform([faceRequest])
 
-        let poseObservations = poseRequest.results ?? []
-        let posture = AnimalPostureClassifier.classify(
-            from: poseObservations,
-            matching: catBoundingBoxes
-        )
+        let normalizedCatBoxes = catBoundingBoxes.map(NormalizedRect.init)
         let containsPerson = containsProminentHumanFace(
             faceRequest.results ?? [],
             excluding: catBoundingBoxes
@@ -1068,12 +1016,9 @@ actor PhotoLibraryScanner {
             Double($0.width * $0.height)
         }.max() ?? 0
         return CatAlbumTraits(
-            // The initializer derives the photo-level union from the ordered
-            // per-cat outcomes. The explicit value is legacy fallback only.
-            postures: Array(posture.photoTags),
-            poseObservationCount: posture.diagnostics.rawObservationCount,
-            postureDiagnostics: posture.diagnostics,
-            postureInstances: posture.instances,
+            postures: CatBoundingBoxAspectBucket.postures(
+                for: normalizedCatBoxes
+            ),
             containsPerson: containsPerson,
             isOuting: isOuting,
             largestCatAreaRatio: largestCatAreaRatio

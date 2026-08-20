@@ -1,14 +1,16 @@
 import Foundation
 
-/// Versioned, photo-level posture tags derived from Apple's animal body-pose
-/// joints. A photo can carry more than one tag (for example, a sleeping cat
-/// lying belly-up). Raw joints are deliberately never persisted.
+/// Versioned, photo-level posture tags. Build 16 classifies the three active
+/// posture albums from the primary cat detector's normalized bounding boxes.
+/// The former joint-derived cases remain decodable for stored Build 12-15
+/// snapshots, but new analysis never produces them.
 enum CatPostureTag: String, Codable, CaseIterable, Hashable, Sendable {
     case sleeping
     case bellyUp
     case loaf
     case stretching
     case curled
+    case sitting
 }
 
 /// Privacy-minimal counters for the animal-pose pipeline. Counts are stored,
@@ -87,11 +89,11 @@ struct CatPostureInstanceOutcome: Codable, Equatable, Sendable {
 /// Human-face rectangles, pose joints and locations never leave the in-memory
 /// analysis pass; only these derived values are saved.
 struct CatAlbumTraits: Codable, Equatable, Sendable {
-    /// Version 3 records stage diagnostics and per-cat detector-box outcomes,
-    /// and relaxes structural visibility requirements without globally lowering
-    /// any joint-confidence threshold. Existing known cats receive one
-    /// secondary-only retry; primary cat/no-cat decisions remain valid.
-    static let currentAnalysisVersion = 3
+    /// Version 4 replaces animal-body-pose classification with the normalized
+    /// detector-box aspect policy. Existing v3 per-instance boxes and the
+    /// single-cat primary union are enough for an on-load migration; no Vision
+    /// repair pass is required.
+    static let currentAnalysisVersion = 4
 
     var analysisVersion: Int
     var postures: [CatPostureTag]
@@ -127,7 +129,8 @@ struct CatAlbumTraits: Codable, Equatable, Sendable {
         self.analysisVersion = analysisVersion
         let normalizedInstances = postureInstances?.sorted(by: postureInstanceOrder)
         self.postureInstances = normalizedInstances
-        if let normalizedInstances {
+        if analysisVersion < Self.currentAnalysisVersion,
+           let normalizedInstances {
             self.postures = Array(Set(normalizedInstances.flatMap(\.postures)))
                 .sorted { $0.rawValue < $1.rawValue }
         } else {
@@ -150,19 +153,43 @@ struct CatDetection: Codable, Equatable, Sendable {
     var boundingBox: NormalizedRect?
     var areaRatio: Double
     var catCount: Int
+    /// Individual qualifying cat boxes from `VNRecognizeAnimalsRequest`.
+    /// `boundingBox` remains their union for Widget cropping. Optional keeps
+    /// Build 15 and older snapshots decodable; an empty array is a current
+    /// result with no usable individual box.
+    var instanceBoundingBoxes: [NormalizedRect]?
+
+    init(
+        detected: Bool,
+        confidence: Float,
+        boundingBox: NormalizedRect?,
+        areaRatio: Double,
+        catCount: Int,
+        instanceBoundingBoxes: [NormalizedRect]? = nil
+    ) {
+        self.detected = detected
+        self.confidence = confidence
+        self.boundingBox = boundingBox
+        self.areaRatio = areaRatio
+        self.catCount = catCount
+        self.instanceBoundingBoxes = instanceBoundingBoxes.map {
+            normalizedCatBoundingBoxes($0)
+        }
+    }
 
     static let none = CatDetection(
         detected: false,
         confidence: 0,
         boundingBox: nil,
         areaRatio: 0,
-        catCount: 0
+        catCount: 0,
+        instanceBoundingBoxes: []
     )
 }
 
-/// Measurement-only grouping of the detector's existing per-cat boxes. This
-/// does not run Vision or change album membership; it lets us review the real
-/// width/height distribution before adopting a bounding-box album policy.
+/// Active normalized bounding-box posture policy (width / height v1).
+/// Normalized Vision coordinates are used exactly as stored; pixel dimensions
+/// and the photo's source aspect ratio are deliberately not folded into it.
 enum CatBoundingBoxAspectBucket: String, CaseIterable, Hashable, Sendable {
     case sleeping
     case curled
@@ -170,16 +197,111 @@ enum CatBoundingBoxAspectBucket: String, CaseIterable, Hashable, Sendable {
     case unclassified
 
     static func bucket(for boundingBox: NormalizedRect) -> Self? {
-        guard boundingBox.width.isFinite,
-              boundingBox.height.isFinite,
-              boundingBox.width > 0,
-              boundingBox.height > 0 else { return nil }
+        guard let boundingBox = normalizedCatBoundingBox(boundingBox) else {
+            return nil
+        }
         let ratio = boundingBox.width / boundingBox.height
         guard ratio.isFinite else { return nil }
         if ratio < 0.9 { return .sitting }
         if ratio <= 1.1 { return .curled }
         if ratio < 2.0 { return .unclassified }
         return .sleeping
+    }
+
+    var posture: CatPostureTag? {
+        switch self {
+        case .sleeping: .sleeping
+        case .curled: .curled
+        case .sitting: .sitting
+        case .unclassified: nil
+        }
+    }
+
+    static func postures(for boundingBoxes: [NormalizedRect]) -> [CatPostureTag] {
+        Array(Set(boundingBoxes.compactMap { bucket(for: $0)?.posture }))
+            .sorted { $0.rawValue < $1.rawValue }
+    }
+}
+
+enum CatBoundingBoxResolutionSource: String, Equatable, Sendable {
+    case primaryInstances
+    case legacyPostureInstances
+    case singleCatUnion
+    case unavailable
+}
+
+struct CatBoundingBoxResolution: Equatable, Sendable {
+    var boundingBoxes: [NormalizedRect]
+    var source: CatBoundingBoxResolutionSource
+    var invalidInstanceCount: Int
+}
+
+extension CatDetection {
+    /// Resolves per-cat boxes without ever treating a multi-cat union as one
+    /// cat. Current primary instances win, then Build 13-15 posture outcomes,
+    /// then the primary union only when the detector reported at most one cat.
+    func resolvedInstanceBoundingBoxes(
+        legacyPostureInstances: [CatPostureInstanceOutcome]?
+    ) -> CatBoundingBoxResolution {
+        var invalidCount = 0
+
+        func validBoxes(_ candidates: [NormalizedRect]) -> [NormalizedRect] {
+            let values = candidates.compactMap { candidate -> NormalizedRect? in
+                guard let normalized = normalizedCatBoundingBox(candidate) else {
+                    invalidCount += 1
+                    return nil
+                }
+                return normalized
+            }
+            return orderedUniqueCatBoundingBoxes(values)
+        }
+
+        let primary = validBoxes(instanceBoundingBoxes ?? [])
+        if !primary.isEmpty {
+            return CatBoundingBoxResolution(
+                boundingBoxes: primary,
+                source: .primaryInstances,
+                invalidInstanceCount: invalidCount
+            )
+        }
+
+        let legacy = validBoxes(legacyPostureInstances?.map(\.boundingBox) ?? [])
+        if !legacy.isEmpty {
+            return CatBoundingBoxResolution(
+                boundingBoxes: legacy,
+                source: .legacyPostureInstances,
+                invalidInstanceCount: invalidCount
+            )
+        }
+
+        if catCount == 1,
+           let boundingBox,
+           let normalized = normalizedCatBoundingBox(boundingBox) {
+            return CatBoundingBoxResolution(
+                boundingBoxes: [normalized],
+                source: .singleCatUnion,
+                invalidInstanceCount: invalidCount
+            )
+        }
+        if catCount == 1, boundingBox != nil { invalidCount += 1 }
+        return CatBoundingBoxResolution(
+            boundingBoxes: [],
+            source: .unavailable,
+            invalidInstanceCount: invalidCount
+        )
+    }
+}
+
+extension CatAlbumTraits {
+    func migratedToBoundingBoxPostures(
+        boundingBoxes: [NormalizedRect]
+    ) -> CatAlbumTraits {
+        var value = self
+        value.analysisVersion = Self.currentAnalysisVersion
+        value.postures = CatBoundingBoxAspectBucket.postures(
+            for: boundingBoxes
+        )
+        return value
     }
 }
 
@@ -212,6 +334,44 @@ private func normalizedPostureRect(_ value: NormalizedRect) -> NormalizedRect {
         width: maximumX - minimumX,
         height: maximumY - minimumY
     )
+}
+
+private func normalizedCatBoundingBox(_ value: NormalizedRect) -> NormalizedRect? {
+    let normalized = normalizedPostureRect(value)
+    guard normalized.x.isFinite,
+          normalized.y.isFinite,
+          normalized.width.isFinite,
+          normalized.height.isFinite,
+          normalized.width > 0,
+          normalized.height > 0 else { return nil }
+    return normalized
+}
+
+private func normalizedCatBoundingBoxes(
+    _ values: [NormalizedRect]
+) -> [NormalizedRect] {
+    orderedUniqueCatBoundingBoxes(values.compactMap(normalizedCatBoundingBox))
+}
+
+private func orderedUniqueCatBoundingBoxes(
+    _ values: [NormalizedRect]
+) -> [NormalizedRect] {
+    var seen = Set<NormalizedRect>()
+    return values
+        .filter { seen.insert($0).inserted }
+        .sorted(by: catBoundingBoxOrder)
+}
+
+private func catBoundingBoxOrder(
+    _ first: NormalizedRect,
+    _ second: NormalizedRect
+) -> Bool {
+    let firstValues = [first.x, first.y, first.width, first.height]
+    let secondValues = [second.x, second.y, second.width, second.height]
+    for (left, right) in zip(firstValues, secondValues) where left != right {
+        return left < right
+    }
+    return false
 }
 
 private func postureInstanceOrder(

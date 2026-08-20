@@ -2,6 +2,7 @@ import Foundation
 
 actor LibraryStore {
     private static let groupedAlbumSnapshotSchemaVersion = 2
+    private static let boundingBoxPostureSnapshotSchemaVersion = 3
     private let snapshotURL: URL
 
     init(snapshotURL: URL? = SharedContainer.snapshotURL) throws {
@@ -27,8 +28,9 @@ actor LibraryStore {
         var value = snapshot
         value.schemaVersion = max(
             value.schemaVersion,
-            Self.groupedAlbumSnapshotSchemaVersion
+            Self.boundingBoxPostureSnapshotSchemaVersion
         )
+        value.assets = value.assets.map { $0.migratedToBoundingBoxPostureAnalysis() }
         if value.albumUsage == nil {
             value.albumUsage = .empty
         }
@@ -70,8 +72,8 @@ actor LibraryStore {
         let isGroupedAlbumSchemaUpgrade =
             input.schemaVersion < groupedAlbumSnapshotSchemaVersion
 
-        if isGroupedAlbumSchemaUpgrade {
-            value.schemaVersion = groupedAlbumSnapshotSchemaVersion
+        if input.schemaVersion < boundingBoxPostureSnapshotSchemaVersion {
+            value.schemaVersion = boundingBoxPostureSnapshotSchemaVersion
             didChange = true
         }
         if value.albumUsage == nil {
@@ -97,23 +99,25 @@ actor LibraryStore {
             }
         }
 
+        let migratedAssets = value.assets.map {
+            $0.migratedToBoundingBoxPostureAnalysis()
+        }
+        if migratedAssets != value.assets {
+            value.assets = migratedAssets
+            didChange = true
+        }
+
         let postureSummary = PostureScanSummary(records: value.assets)
         if value.scanState.postureSummary != postureSummary {
             value.scanState.postureSummary = postureSummary
             didChange = true
         }
 
-        // Build 12 already has valid primary cat decisions and Widget state.
-        // Analysis version 2 only repairs secondary posture traits, so never
-        // turn this migration into another full-library primary Vision pass.
-        if postureSummary.secondaryPendingAssets > 0,
-           !value.scanState.requiresFullRescan {
-            if value.scanState.purpose != .postureRepair {
-                value.scanState.purpose = .postureRepair
-                didChange = true
-            }
-        } else if postureSummary.secondaryPendingAssets == 0,
-                  value.scanState.purpose == .postureRepair {
+        // Build 16 resolves posture albums from already persisted detector
+        // boxes. Never launch the retired animal-pose repair pass. A genuine
+        // Build 11 grouped-album upgrade above still keeps its full-pass route
+        // for face/location traits that cannot be reconstructed from storage.
+        if value.scanState.purpose == .postureRepair {
             value.scanState.purpose = nil
             didChange = true
         }

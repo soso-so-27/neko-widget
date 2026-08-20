@@ -111,16 +111,20 @@ jobs:
           "$RUNNER_TEMP/verify-sharing-api-responses" \
             ci/fixtures/sharing-api-v1-responses.json
 
-      - name: Verify grouped album posture classification
+      - name: Verify normalized bbox posture classification
         working-directory: NekoWidget
         shell: bash
         run: |
           set -euo pipefail
+          if grep -Eq 'VNDetectAnimalBodyPoseRequest|AnimalPostureClassifier' \
+            NekoWidget/Services/PhotoLibraryScanner.swift; then
+            echo "PhotoLibraryScanner must not invoke the retired joint pipeline" >&2
+            exit 1
+          fi
           xcrun --sdk macosx swiftc \
             -parse-as-library \
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatDetection.swift \
-            NekoWidget/Services/AnimalPostureClassifier.swift \
             ci/verify-album-classification.swift \
             -o "$RUNNER_TEMP/verify-album-classification"
           "$RUNNER_TEMP/verify-album-classification"
