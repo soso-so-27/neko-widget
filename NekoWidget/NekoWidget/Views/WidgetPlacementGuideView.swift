@@ -71,7 +71,7 @@ struct WidgetPlacementGuideView: View {
     }
 
     private var pagerHeight: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? 570 : 440
+        dynamicTypeSize.isAccessibilitySize ? 570 : 460
     }
 
     private var pagePicker: some View {
@@ -124,7 +124,6 @@ private struct WidgetPlacementStepPanel: View {
                     .fill(Color(.secondarySystemBackground))
 
                 illustration
-                    .padding(12)
 
                 GuideArrow(start: arrowPoints.start, end: arrowPoints.end)
                     .stroke(
@@ -132,10 +131,10 @@ private struct WidgetPlacementStepPanel: View {
                         style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
                     )
                     .shadow(color: .black.opacity(0.24), radius: 2, y: 1)
-                    .padding(12)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
+            .aspectRatio(1, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -157,9 +156,22 @@ private struct WidgetPlacementStepPanel: View {
     @ViewBuilder
     private var illustration: some View {
         if let image = screenshotAsset {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
+            GeometryReader { proxy in
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(
+                        width: proxy.size.width * screenshotScale,
+                        height: proxy.size.height * screenshotScale,
+                        alignment: screenshotAlignment
+                    )
+                    .frame(
+                        width: proxy.size.width,
+                        height: proxy.size.height,
+                        alignment: screenshotAlignment
+                    )
+                    .clipped()
+            }
         } else {
             WidgetPlacementFallbackIllustration(kind: illustrationKind)
         }
@@ -203,7 +215,38 @@ private struct WidgetPlacementStepPanel: View {
         }
     }
 
+    /// The source captures are full-height iPhone screenshots. Showing the
+    /// whole bitmap would make the controls illegible, so each step presents
+    /// the relevant real-UI region inside the same square used by its arrow.
+    private var screenshotAlignment: Alignment {
+        switch step.id {
+        case 1, 4:
+            return .bottom
+        case 2:
+            return .topLeading
+        default:
+            return .top
+        }
+    }
+
+    private var screenshotScale: CGFloat {
+        step.id == 2 ? 1.25 : 1
+    }
+
     private var arrowPoints: (start: UnitPoint, end: UnitPoint) {
+        if screenshotAsset != nil {
+            switch step.id {
+            case 1:
+                return (UnitPoint(x: 0.80, y: 0.58), UnitPoint(x: 0.57, y: 0.34))
+            case 2:
+                return (UnitPoint(x: 0.81, y: 0.71), UnitPoint(x: 0.48, y: 0.29))
+            case 3:
+                return (UnitPoint(x: 0.78, y: 0.78), UnitPoint(x: 0.50, y: 0.43))
+            default:
+                return (UnitPoint(x: 0.76, y: 0.50), UnitPoint(x: 0.50, y: 0.79))
+            }
+        }
+
         switch step.id {
         case 1:
             return (UnitPoint(x: 0.78, y: 0.24), UnitPoint(x: 0.57, y: 0.42))

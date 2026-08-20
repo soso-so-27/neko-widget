@@ -2,17 +2,6 @@ name: Capture real Widget guide screenshots
 
 on:
   workflow_dispatch:
-  # Temporary branch trigger so the first real screenshot set can be captured
-  # before this new workflow exists on the default branch. Remove after the
-  # reviewed PNGs are committed.
-  push:
-    branches:
-      - codex/grouped-cat-albums
-    paths:
-      - .github/workflows/widget-guide-screenshots.yml
-      - NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift
-      - NekoWidget/NekoWidget.xcodeproj/project.pbxproj
-      - NekoWidget/ci/export-widget-guide-screenshots.sh
 
 permissions:
   contents: read

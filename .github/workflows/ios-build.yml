@@ -231,6 +231,45 @@ jobs:
             -o "$RUNNER_TEMP/verify-onboarding-presentation"
           "$RUNNER_TEMP/verify-onboarding-presentation"
 
+      - name: Verify real Widget guide screenshots
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import struct
+          from pathlib import Path
+
+          catalog = Path("NekoWidget/Assets.xcassets")
+          names = [
+              "onboarding-widget-step-1",
+              "onboarding-widget-step-2-ios18",
+              "onboarding-widget-step-3",
+              "onboarding-widget-step-4",
+          ]
+          for name in names:
+              imageset = catalog / f"{name}.imageset"
+              png = imageset / f"{name}.png"
+              contents = json.loads((imageset / "Contents.json").read_text(encoding="utf-8"))
+              filenames = {
+                  image.get("filename")
+                  for image in contents.get("images", [])
+                  if image.get("filename")
+              }
+              if png.name not in filenames:
+                  raise SystemExit(f"{name} is not referenced by its asset catalogue")
+              with png.open("rb") as stream:
+                  if stream.read(8) != b"\x89PNG\r\n\x1a\n":
+                      raise SystemExit(f"{name} is not a PNG")
+                  if struct.unpack(">I", stream.read(4))[0] < 8 or stream.read(4) != b"IHDR":
+                      raise SystemExit(f"{name} has no valid IHDR")
+                  width, height = struct.unpack(">II", stream.read(8))
+              if width < 900 or height < 1800 or height <= width:
+                  raise SystemExit(f"{name} has unexpected dimensions: {width}x{height}")
+              print(f"{name}: {width}x{height}")
+          PY
+
       - name: Build app and widget for iOS Simulator
         working-directory: NekoWidget
         shell: bash
