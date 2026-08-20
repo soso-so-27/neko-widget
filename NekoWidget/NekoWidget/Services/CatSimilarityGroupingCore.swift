@@ -74,8 +74,10 @@ enum CatSimilarityCandidateResolver {
             // broad/overlapping subject must never make two cats disappear
             // from review. Greedy highest-IoU matching is deterministic and
             // sufficient for the small number of cats Vision returns here.
-            let matchEdges = subjects.indices.flatMap { subjectIndex in
-                asset.resolvedBoundingBoxes.indices.compactMap { boxIndex in
+            let matchEdges: [CatSimilaritySubjectMatchEdge] = subjects.indices
+                .flatMap { subjectIndex -> [CatSimilaritySubjectMatchEdge] in
+                asset.resolvedBoundingBoxes.indices.compactMap {
+                    boxIndex -> CatSimilaritySubjectMatchEdge? in
                     let score = intersectionOverUnion(
                         subjects[subjectIndex],
                         asset.resolvedBoundingBoxes[boxIndex]
