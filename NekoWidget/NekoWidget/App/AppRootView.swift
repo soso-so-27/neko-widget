@@ -193,9 +193,6 @@ struct AppRootView: View {
             rescan: {
                 await viewModel.rescan()
             },
-            retryPendingPostureClassification: {
-                await viewModel.retryPendingPostureClassification()
-            },
             saveSettings: { settings in
                 await viewModel.updateSettings(coreSettings(from: settings))
             },
@@ -226,14 +223,10 @@ struct AppRootView: View {
             scannedAssets: state.scannedAssets,
             totalAssets: state.totalAssets,
             deferredAssets: state.deferredAssets,
-            postureSecondaryPendingAssets: state.requiresFullRescan
-                ? 0
-                : viewModel.postureSecondaryPendingAssets,
             isScanning: viewModel.isScanning,
             isPaused: state.phase == .cancelled,
             lastScannedAt: state.lastScannedAt,
             isGroupedAlbumUpgrade: state.purpose == .groupedAlbumUpgrade
-                || state.purpose == .postureRepair
         )
 
         switch state.resultKind {
@@ -413,19 +406,19 @@ struct AppRootView: View {
     }
 
     private var postureDiagnosticsPresentation: CatPostureDiagnosticsPresentation {
-        let summary = PostureScanSummary(records: viewModel.visibleLibraryAssets)
+        let distribution = CatBoundingBoxAspectDistribution(
+            records: viewModel.catAssets
+        )
         return CatPostureDiagnosticsPresentation(
-            targetPhotoCount: summary.targetCatAssets,
-            rawPoseObservedPhotoCount: summary.poseObservationAssets,
-            matchedPosePhotoCount: summary.matchedSkeletonAssets,
-            qualityPassedPhotoCount: summary.ruleQualityPassedAssets,
-            geometryPassedPhotoCount: summary.geometryPassedAssets,
-            classifiedPhotoCount: summary.classifiedAnyAssets,
-            unclassifiedPhotoCount: summary.unclassifiedAssets,
-            pendingPhotoCount: summary.secondaryPendingAssets,
-            sleepingPhotoCount: summary.sleepingAssets,
-            bellyUpPhotoCount: summary.bellyUpAssets,
-            loafPhotoCount: summary.loafAssets
+            targetPhotoCount: distribution.targetCatAssets,
+            validBoxPhotoCount: distribution.assetsWithValidBoxes,
+            classifiedPhotoCount: distribution.classifiedAssets,
+            fullyUnclassifiedPhotoCount: distribution.fullyUnclassifiedAssets,
+            missingBoxPhotoCount: distribution.missingBoxAssets,
+            multiAlbumPhotoCount: distribution.multiAlbumAssets,
+            sleepingPhotoCount: distribution.sleepingAssets,
+            curledPhotoCount: distribution.curledAssets,
+            sittingPhotoCount: distribution.sittingAssets
         )
     }
 
@@ -488,13 +481,6 @@ struct AppRootView: View {
             deleteProfile: { identifier in
                 guard let profileID = UUID(uuidString: identifier) else { return }
                 await viewModel.deleteCatProfile(profileID: profileID)
-            },
-            retryPostureClassification: {
-                if viewModel.postureSecondaryPendingAssets > 0 {
-                    await viewModel.retryPendingPostureClassification()
-                } else {
-                    await viewModel.rerunPostureClassification()
-                }
             }
         )
     }
@@ -504,29 +490,17 @@ struct AppRootView: View {
         membership: CatAssetProfileMembership
     ) -> PhotoPresentation {
         let traits = asset.albumTraits
-        let instances = traits?.postureInstances ?? []
-        let selectedInstance: CatPostureInstanceOutcome?
-        if let subject = membership.subjectBoundingBox {
-            let candidate = instances.max {
-                Self.intersectionOverUnion($0.boundingBox, subject)
-                    < Self.intersectionOverUnion($1.boundingBox, subject)
-            }
-            if let candidate,
-               Self.intersectionOverUnion(candidate.boundingBox, subject) >= 0.35 {
-                selectedInstance = candidate
-            } else {
-                selectedInstance = nil
-            }
-        } else if instances.count == 1 {
-            selectedInstance = instances[0]
-        } else {
-            selectedInstance = nil
-        }
+        let boxes = asset.resolvedCatBoundingBoxes.boundingBoxes
+        let selectedBox = CatProfileBoundingBoxSelector.select(
+            from: boxes,
+            detectedCatCount: asset.cat.catCount,
+            subjectBoundingBox: membership.subjectBoundingBox
+        )
         let displayBox = membership.subjectBoundingBox
-            ?? selectedInstance?.boundingBox
+            ?? selectedBox
             ?? asset.cat.boundingBox
         let growthBox = membership.subjectBoundingBox
-            ?? selectedInstance?.boundingBox
+            ?? selectedBox
             ?? (asset.cat.catCount <= 1 ? asset.cat.boundingBox : nil)
         return PhotoPresentation(
             localIdentifier: asset.localIdentifier,
@@ -534,7 +508,9 @@ struct AppRootView: View {
             catBoundingBox: displayBox?.cgRect,
             isLiked: asset.liked,
             likedAt: asset.likedAt,
-            albumPostures: Set(selectedInstance?.postures ?? []),
+            albumPostures: Set(selectedBox.map {
+                CatBoundingBoxAspectBucket.postures(for: [$0])
+            } ?? []),
             albumContainsPerson: traits?.containsPerson,
             albumIsOuting: traits?.isOuting,
             largestCatAreaRatio: growthBox?.area,
@@ -568,17 +544,6 @@ struct AppRootView: View {
             kind: presentation.kind == .birthday ? .birthday : .adoptionDay,
             date: date
         )
-    }
-
-    private static func intersectionOverUnion(
-        _ lhs: NormalizedRect,
-        _ rhs: NormalizedRect
-    ) -> Double {
-        let intersection = lhs.cgRect.intersection(rhs.cgRect)
-        guard !intersection.isNull else { return 0 }
-        let intersectionArea = Double(intersection.width * intersection.height)
-        let union = lhs.area + rhs.area - intersectionArea
-        return union > 0 ? intersectionArea / union : 0
     }
 
     private static func newestPhotoFirst(
@@ -635,13 +600,16 @@ struct AppRootView: View {
 
     private func photoPresentation(_ asset: AssetRecord) -> PhotoPresentation {
         let traits = asset.albumTraits
+        let resolvedBoxes = asset.resolvedCatBoundingBoxes.boundingBoxes
         return PhotoPresentation(
             localIdentifier: asset.localIdentifier,
             creationDate: asset.creationDate,
             catBoundingBox: asset.cat.boundingBox?.cgRect,
             isLiked: asset.liked,
             likedAt: asset.likedAt,
-            albumPostures: Set(traits?.postures ?? []),
+            albumPostures: Set(CatBoundingBoxAspectBucket.postures(
+                for: resolvedBoxes
+            )),
             albumContainsPerson: traits?.containsPerson,
             albumIsOuting: traits?.isOuting,
             // Growth can be built immediately from the primary cat detector.

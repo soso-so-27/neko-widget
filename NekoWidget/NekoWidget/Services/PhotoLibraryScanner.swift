@@ -341,10 +341,10 @@ actor PhotoLibraryScanner {
         final.settings = settings
         final.updatedAt = .now
         var completionMetadata = [
-            "postureAnalysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
+            "bboxAnalysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
             "cats": "\(final.scanState.catAssets)",
             "deferred": "\(final.scanState.deferredAssets)",
-            "postureScope": "active-source-before-user-curation",
+            "bboxScope": "active-source-before-user-curation",
             "scanPurpose": scanPurpose.rawValue,
             "total": "\(final.scanState.totalAssets)"
         ]
@@ -353,7 +353,11 @@ actor PhotoLibraryScanner {
             uniquingKeysWith: { current, _ in current }
         )
         completionMetadata.merge(
-            CatBoundingBoxAspectDistribution(records: final.assets).logMetadata,
+            CatBoundingBoxAspectDistribution(
+                records: records.compactMap { $0 }.filter {
+                    $0.analysisFingerprint == settings.analysisFingerprint
+                }
+            ).logMetadata,
             uniquingKeysWith: { current, _ in current }
         )
         SharedLog.app.info(

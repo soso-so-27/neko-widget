@@ -30,7 +30,6 @@ struct MainTabView: View {
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void
-    let retryPendingPostureClassification: () async -> Void
     let saveSettings: (SettingsPresentation) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let excludeFromCatCandidates: ([String]) async -> Void
@@ -107,14 +106,12 @@ struct MainTabView: View {
                 SettingsView(
                     settings: settings,
                     detectionAccuracySample: detectionAccuracySample,
-                    postureSecondaryPendingAssets: scan.postureSecondaryPendingAssets,
                     hasPhotoAccess: hasPhotoAccess,
                     isScanning: isScanning,
                     requestPhotoAccess: requestPhotoAccess,
                     saveSettings: saveSettings,
                     saveLifeReference: saveLifeReference,
                     rescan: rescan,
-                    retryPendingPostureClassification: retryPendingPostureClassification,
                     excludedCatPhotos: excludedCatPhotos,
                     photoSourceAlbums: photoSourceAlbums,
                     photoSourceStatus: photoSourceStatus,

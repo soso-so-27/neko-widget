@@ -46,7 +46,6 @@
 		10000000000000000000014A /* DailySharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021E /* DailySharingAPIClient.swift */; };
 		10000000000000000000014B /* DailySharingSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021F /* DailySharingSyncCoordinator.swift */; };
 		10000000000000000000014C /* SharingRuntimeSelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022A /* SharingRuntimeSelfTest.swift */; };
-		10000000000000000000014D /* AnimalPostureClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022B /* AnimalPostureClassifier.swift */; };
 		10000000000000000000014E /* HomeLocationClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000022C /* HomeLocationClassifier.swift */; };
 		10000000000000000000014F /* GrowthAlbumSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023A /* GrowthAlbumSelector.swift */; };
 		100000000000000000000150 /* GrowthAlbumView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000023B /* GrowthAlbumView.swift */; };
@@ -193,7 +192,6 @@
 		F0000000000000000000021E /* DailySharingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingAPIClient.swift; sourceTree = "<group>"; };
 		F0000000000000000000021F /* DailySharingSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingSyncCoordinator.swift; sourceTree = "<group>"; };
 		F0000000000000000000022A /* SharingRuntimeSelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRuntimeSelfTest.swift; sourceTree = "<group>"; };
-		F0000000000000000000022B /* AnimalPostureClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimalPostureClassifier.swift; sourceTree = "<group>"; };
 		F0000000000000000000022C /* HomeLocationClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationClassifier.swift; sourceTree = "<group>"; };
 		F00000000000000000000221 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
@@ -438,7 +436,6 @@
 				F00000000000000000000214 /* PhotoImageLoader.swift */,
 				F00000000000000000000215 /* PhotoLibraryObserver.swift */,
 				F00000000000000000000216 /* PhotoLibraryScanner.swift */,
-				F0000000000000000000022B /* AnimalPostureClassifier.swift */,
 				F0000000000000000000022C /* HomeLocationClassifier.swift */,
 				F00000000000000000000217 /* PhotoSelectors.swift */,
 				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
@@ -690,7 +687,6 @@
 				100000000000000000000114 /* PhotoImageLoader.swift in Sources */,
 				100000000000000000000115 /* PhotoLibraryObserver.swift in Sources */,
 				100000000000000000000116 /* PhotoLibraryScanner.swift in Sources */,
-				10000000000000000000014D /* AnimalPostureClassifier.swift in Sources */,
 				10000000000000000000014E /* HomeLocationClassifier.swift in Sources */,
 				100000000000000000000117 /* PhotoSelectors.swift in Sources */,
 				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,

@@ -31,9 +31,6 @@ struct CatProfilesViewActions {
     var excludeFromHousehold: (_ photoIdentifiers: [String]) async -> Void
     var restoreLegacyExclusions: (_ photoIdentifiers: [String]) async -> Void
     var deleteProfile: (_ profileIdentifier: String) async -> Void
-    /// Re-runs only the posture enrichment stage. The implementation decides
-    /// whether that means pending assets or a completed-zero repair pass.
-    var retryPostureClassification: () async -> Void
 
     static let noOp = CatProfilesViewActions(
         createProfile: { _ in },
@@ -44,8 +41,7 @@ struct CatProfilesViewActions {
         replacePhotoAssignments: { _ in },
         excludeFromHousehold: { _ in },
         restoreLegacyExclusions: { _ in },
-        deleteProfile: { _ in },
-        retryPostureClassification: {}
+        deleteProfile: { _ in }
     )
 }
 
@@ -181,13 +177,12 @@ struct CatProfilesView: View {
     private var postureDiagnosticsSection: some View {
         Section {
             CatPostureDiagnosticsSummaryView(
-                diagnostics: presentation.postureDiagnostics,
-                retry: actions.retryPostureClassification
+                diagnostics: presentation.postureDiagnostics
             )
         } header: {
             Text("姿勢分類")
         } footer: {
-            Text("姿勢アルバムは1枚以上に分類できた場合だけ表示します。0件でも、分類済みか未完了かをここで確認できます。")
+            Text("猫の検出枠の幅と高さから分類します。関節点は使わず、保存済みの結果から作るため再スキャンは不要です。")
         }
     }
 }
@@ -527,9 +522,6 @@ private struct AddCatProfileView: View {
 
 struct CatPostureDiagnosticsSummaryView: View {
     let diagnostics: CatPostureDiagnosticsPresentation
-    let retry: () async -> Void
-
-    @State private var isRetrying = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -543,63 +535,22 @@ struct CatPostureDiagnosticsSummaryView: View {
 
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
                 diagnosticRow("確認対象", diagnostics.targetPhotoCount)
-                diagnosticRow("骨格候補", diagnostics.rawPoseObservedPhotoCount)
-                if let matched = diagnostics.matchedPosePhotoCount {
-                    diagnosticRow("猫と対応付け", matched)
-                } else {
-                    GridRow {
-                        Text("猫と対応付け")
-                        Text("次回の解析から記録")
-                            .foregroundStyle(.secondary)
-                        }
-                    }
-                if let quality = diagnostics.qualityPassedPhotoCount {
-                    diagnosticRow("関節の信頼度OK", quality)
-                }
-                if let geometry = diagnostics.geometryPassedPhotoCount {
-                    diagnosticRow("姿勢の形OK", geometry)
-                }
+                diagnosticRow("検出枠あり", diagnostics.validBoxPhotoCount)
                 diagnosticRow("アルバム分類", diagnostics.classifiedPhotoCount)
-                diagnosticRow("未分類", diagnostics.unclassifiedPhotoCount)
-                diagnosticRow("未完了", diagnostics.pendingPhotoCount)
+                diagnosticRow("分類なし", diagnostics.fullyUnclassifiedPhotoCount)
+                if diagnostics.missingBoxPhotoCount > 0 {
+                    diagnosticRow("検出枠なし", diagnostics.missingBoxPhotoCount)
+                }
+                if diagnostics.multiAlbumPhotoCount > 0 {
+                    diagnosticRow("複数アルバム", diagnostics.multiAlbumPhotoCount)
+                }
             }
             .font(.subheadline.monospacedDigit())
 
             HStack(spacing: 14) {
-                postureCount("寝顔", diagnostics.sleepingPhotoCount)
-                postureCount("へそ天", diagnostics.bellyUpPhotoCount)
-                postureCount("香箱", diagnostics.loafPhotoCount)
-            }
-
-            if diagnostics.pendingPhotoCount > 0 {
-                Button {
-                    Task {
-                        isRetrying = true
-                        await retry()
-                        isRetrying = false
-                    }
-                } label: {
-                    Label(
-                        isRetrying ? "再確認中…" : "未完了だけを再確認",
-                        systemImage: "arrow.clockwise.circle"
-                    )
-                }
-                .disabled(isRetrying)
-            } else if diagnostics.classifiedPhotoCount == 0,
-                      diagnostics.targetPhotoCount > 0 {
-                Button {
-                    Task {
-                        isRetrying = true
-                        await retry()
-                        isRetrying = false
-                    }
-                } label: {
-                    Label(
-                        isRetrying ? "再解析中…" : "姿勢分類をもう一度試す",
-                        systemImage: "arrow.clockwise.circle"
-                    )
-                }
-                .disabled(isRetrying)
+                postureCount("ねむってる", diagnostics.sleepingPhotoCount)
+                postureCount("まるまり", diagnostics.curledPhotoCount)
+                postureCount("おすわり", diagnostics.sittingPhotoCount)
             }
         }
         .padding(.vertical, 5)
@@ -627,31 +578,17 @@ struct CatPostureDiagnosticsSummaryView: View {
 
     private var statusSymbol: String {
         switch diagnostics.state {
-        case .completedWithMatches: "checkmark.circle.fill"
-        case .incomplete: "arrow.clockwise.circle"
+        case .completed: "checkmark.circle.fill"
+        case .completedWithMissingBoxes: "exclamationmark.triangle.fill"
         case .noTargets: "photo.on.rectangle.angled"
-        case .completedWithoutPoseObservations,
-             .completedWithoutCatMatches,
-             .completedWithoutQualityMatches,
-             .completedWithoutGeometryMatches,
-             .completedWithoutRuleMatches,
-             .completedWithoutDetailedCause:
-            "exclamationmark.triangle.fill"
         }
     }
 
     private var statusColor: Color {
         switch diagnostics.state {
-        case .completedWithMatches: .green
-        case .incomplete: .orange
+        case .completed: .green
+        case .completedWithMissingBoxes: .orange
         case .noTargets: .secondary
-        case .completedWithoutPoseObservations,
-             .completedWithoutCatMatches,
-             .completedWithoutQualityMatches,
-             .completedWithoutGeometryMatches,
-             .completedWithoutRuleMatches,
-             .completedWithoutDetailedCause:
-            .orange
         }
     }
 }

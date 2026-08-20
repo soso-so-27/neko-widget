@@ -4,14 +4,12 @@ import UIKit
 struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
-    let postureSecondaryPendingAssets: Int
     let hasPhotoAccess: Bool
     let isScanning: Bool
     let requestPhotoAccess: () -> Void
     let saveSettings: (SettingsPresentation) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let rescan: () async -> Void
-    let retryPendingPostureClassification: () async -> Void
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
     let photoSourceAlbums: [PhotoSourceAlbumOption]
     let photoSourceStatus: PhotoSourceAlbumStatus
@@ -30,21 +28,18 @@ struct SettingsView: View {
     @State private var isSavingLifeReference = false
     @State private var lifeReferenceSaveTask: Task<Void, Never>?
     @State private var isRescanning = false
-    @State private var isRetryingPostureClassification = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
 
     init(
         settings: SettingsPresentation,
         detectionAccuracySample: DetectionAccuracySamplePresentation,
-        postureSecondaryPendingAssets: Int,
         hasPhotoAccess: Bool,
         isScanning: Bool,
         requestPhotoAccess: @escaping () -> Void,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
         saveLifeReference: @escaping (CatLifeReference?) async -> Void,
         rescan: @escaping () async -> Void,
-        retryPendingPostureClassification: @escaping () async -> Void,
         excludedCatPhotos: [ExcludedCatPhotoPresentation],
         photoSourceAlbums: [PhotoSourceAlbumOption],
         photoSourceStatus: PhotoSourceAlbumStatus,
@@ -60,14 +55,12 @@ struct SettingsView: View {
     ) {
         self.settings = settings
         self.detectionAccuracySample = detectionAccuracySample
-        self.postureSecondaryPendingAssets = postureSecondaryPendingAssets
         self.hasPhotoAccess = hasPhotoAccess
         self.isScanning = isScanning
         self.requestPhotoAccess = requestPhotoAccess
         self.saveSettings = saveSettings
         self.saveLifeReference = saveLifeReference
         self.rescan = rescan
-        self.retryPendingPostureClassification = retryPendingPostureClassification
         self.excludedCatPhotos = excludedCatPhotos
         self.photoSourceAlbums = photoSourceAlbums
         self.photoSourceStatus = photoSourceStatus
@@ -263,24 +256,6 @@ struct SettingsView: View {
                 }
                 .disabled(isRescanning || isScanning || !hasPhotoAccess)
 
-                if postureSecondaryPendingAssets > 0 {
-                    Button {
-                        Task {
-                            isRetryingPostureClassification = true
-                            await retryPendingPostureClassification()
-                            isRetryingPostureClassification = false
-                        }
-                    } label: {
-                        Label(
-                            isRetryingPostureClassification || isScanning
-                                ? "姿勢を分類中…"
-                                : "未完了の姿勢分類を再試行（\(postureSecondaryPendingAssets.formatted())枚）",
-                            systemImage: "arrow.clockwise.circle"
-                        )
-                    }
-                    .disabled(isRetryingPostureClassification || isScanning)
-                }
-
                 Button {
                     Task {
                         isExporting = true
@@ -296,7 +271,7 @@ struct SettingsView: View {
             } header: {
                 Text("保存と再スキャン")
             } footer: {
-                Text("寝顔・へそ天・香箱は写真のスキャン時に分類します。「未完了の姿勢分類を再試行」が表示された場合は、猫候補の写真だけを再確認します。姿勢のために「最初から再スキャン」を行う必要はありません。")
+                Text("ねむってる・まるまり・おすわりは、保存済みの猫の検出枠から作ります。姿勢アルバムのために再スキャンする必要はありません。")
             }
 
             Section {

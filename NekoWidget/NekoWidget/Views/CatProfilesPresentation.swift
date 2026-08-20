@@ -1,6 +1,45 @@
 import CoreGraphics
 import Foundation
 
+enum CatProfileBoundingBoxSelector {
+    static let minimumIntersectionOverUnion = 0.35
+
+    /// Returns a box only when the membership identifies a current cat, or
+    /// when the detector itself says the photo contains at most one cat.
+    /// A multi-cat photo without a subject remains unclassified.
+    static func select(
+        from boundingBoxes: [NormalizedRect],
+        detectedCatCount: Int,
+        subjectBoundingBox: NormalizedRect?
+    ) -> NormalizedRect? {
+        if let subjectBoundingBox {
+            let candidate = boundingBoxes.max {
+                intersectionOverUnion($0, subjectBoundingBox)
+                    < intersectionOverUnion($1, subjectBoundingBox)
+            }
+            guard let candidate,
+                  intersectionOverUnion(candidate, subjectBoundingBox)
+                    >= minimumIntersectionOverUnion else { return nil }
+            return candidate
+        }
+        guard detectedCatCount <= 1, boundingBoxes.count == 1 else {
+            return nil
+        }
+        return boundingBoxes[0]
+    }
+
+    private static func intersectionOverUnion(
+        _ lhs: NormalizedRect,
+        _ rhs: NormalizedRect
+    ) -> Double {
+        let intersection = lhs.cgRect.intersection(rhs.cgRect)
+        guard !intersection.isNull else { return 0 }
+        let intersectionArea = Double(intersection.width * intersection.height)
+        let union = lhs.area + rhs.area - intersectionArea
+        return union > 0 ? intersectionArea / union : 0
+    }
+}
+
 /// UI-only identifier for the optional household-cat scope. The app always
 /// starts in `everyone`; creating profiles is an enhancement, never an
 /// onboarding requirement.
@@ -87,74 +126,53 @@ struct LegacyExcludedCatPhotoPresentation: Identifiable, Equatable {
     var id: String { localIdentifier }
 }
 
-/// The persisted aggregate deliberately contains only counts. Raw joints,
-/// feature vectors, face rectangles, profile names, and PhotoKit identifiers
-/// don't belong in diagnostics.
+/// Count-only diagnostics for the active normalized bounding-box posture
+/// policy. Feature vectors, profile names, and PhotoKit identifiers never
+/// cross this presentation boundary.
 struct CatPostureDiagnosticsPresentation: Equatable {
     var targetPhotoCount: Int
-    var rawPoseObservedPhotoCount: Int
-    /// Nil represents a snapshot produced before match-stage instrumentation.
-    var matchedPosePhotoCount: Int?
-    var qualityPassedPhotoCount: Int?
-    var geometryPassedPhotoCount: Int?
+    var validBoxPhotoCount: Int
     var classifiedPhotoCount: Int
-    var unclassifiedPhotoCount: Int
-    var pendingPhotoCount: Int
+    var fullyUnclassifiedPhotoCount: Int
+    var missingBoxPhotoCount: Int
+    var multiAlbumPhotoCount: Int
     var sleepingPhotoCount: Int
-    var bellyUpPhotoCount: Int
-    var loafPhotoCount: Int
+    var curledPhotoCount: Int
+    var sittingPhotoCount: Int
 
     init(
         targetPhotoCount: Int = 0,
-        rawPoseObservedPhotoCount: Int = 0,
-        matchedPosePhotoCount: Int? = nil,
-        qualityPassedPhotoCount: Int? = nil,
-        geometryPassedPhotoCount: Int? = nil,
+        validBoxPhotoCount: Int = 0,
         classifiedPhotoCount: Int = 0,
-        unclassifiedPhotoCount: Int = 0,
-        pendingPhotoCount: Int = 0,
+        fullyUnclassifiedPhotoCount: Int = 0,
+        missingBoxPhotoCount: Int = 0,
+        multiAlbumPhotoCount: Int = 0,
         sleepingPhotoCount: Int = 0,
-        bellyUpPhotoCount: Int = 0,
-        loafPhotoCount: Int = 0
+        curledPhotoCount: Int = 0,
+        sittingPhotoCount: Int = 0
     ) {
         self.targetPhotoCount = max(0, targetPhotoCount)
-        self.rawPoseObservedPhotoCount = max(0, rawPoseObservedPhotoCount)
-        self.matchedPosePhotoCount = matchedPosePhotoCount.map { max(0, $0) }
-        self.qualityPassedPhotoCount = qualityPassedPhotoCount.map { max(0, $0) }
-        self.geometryPassedPhotoCount = geometryPassedPhotoCount.map { max(0, $0) }
+        self.validBoxPhotoCount = max(0, validBoxPhotoCount)
         self.classifiedPhotoCount = max(0, classifiedPhotoCount)
-        self.unclassifiedPhotoCount = max(0, unclassifiedPhotoCount)
-        self.pendingPhotoCount = max(0, pendingPhotoCount)
+        self.fullyUnclassifiedPhotoCount = max(0, fullyUnclassifiedPhotoCount)
+        self.missingBoxPhotoCount = max(0, missingBoxPhotoCount)
+        self.multiAlbumPhotoCount = max(0, multiAlbumPhotoCount)
         self.sleepingPhotoCount = max(0, sleepingPhotoCount)
-        self.bellyUpPhotoCount = max(0, bellyUpPhotoCount)
-        self.loafPhotoCount = max(0, loafPhotoCount)
+        self.curledPhotoCount = max(0, curledPhotoCount)
+        self.sittingPhotoCount = max(0, sittingPhotoCount)
     }
 
     var state: CatPostureDiagnosticsStatePresentation {
-        if pendingPhotoCount > 0 { return .incomplete }
         if targetPhotoCount == 0 { return .noTargets }
-        if classifiedPhotoCount > 0 { return .completedWithMatches }
-        if rawPoseObservedPhotoCount == 0 { return .completedWithoutPoseObservations }
-        if matchedPosePhotoCount == 0 { return .completedWithoutCatMatches }
-        if qualityPassedPhotoCount == 0 { return .completedWithoutQualityMatches }
-        if geometryPassedPhotoCount == 0 { return .completedWithoutGeometryMatches }
-        if matchedPosePhotoCount != nil { return .completedWithoutRuleMatches }
-        return .completedWithoutDetailedCause
+        if missingBoxPhotoCount > 0 { return .completedWithMissingBoxes }
+        return .completed
     }
 
     var statusTitle: String {
         switch state {
         case .noTargets: "確認する猫候補がありません"
-        case .incomplete: "姿勢分類に未完了があります"
-        case .completedWithMatches: "姿勢分類は完了しています"
-        case .completedWithoutPoseObservations: "骨格候補を取得できませんでした"
-        case .completedWithoutCatMatches: "骨格候補を猫に対応付けられませんでした"
-        case .completedWithoutQualityMatches: "関節の信頼度が判定条件に届きませんでした"
-        case .completedWithoutGeometryMatches: "姿勢の形が判定条件に一致しませんでした"
-        case .completedWithoutRuleMatches:
-            "現在の判定条件に一致した写真がありません"
-        case .completedWithoutDetailedCause:
-            "姿勢分類は完了しましたが、分類結果は0件です"
+        case .completed: "姿勢分類は完了しています"
+        case .completedWithMissingBoxes: "姿勢分類は完了しています"
         }
     }
 
@@ -162,36 +180,18 @@ struct CatPostureDiagnosticsPresentation: Equatable {
         switch state {
         case .noTargets:
             "猫候補の写真が見つかると、ここに分類状況が表示されます。"
-        case .incomplete:
-            "未完了の \(pendingPhotoCount.formatted())枚だけを再確認できます。最初から再スキャンする必要はありません。"
-        case .completedWithMatches:
-            "寝顔・へそ天・香箱は、判定できた写真が1枚以上ある場合だけアルバムに表示します。"
-        case .completedWithoutPoseObservations:
-            "対象写真の確認は完了しています。再スキャン待ちではありません。"
-        case .completedWithoutCatMatches:
-            "Visionは骨格候補を返しましたが、猫の検出枠との対応付けで分類できませんでした。"
-        case .completedWithoutQualityMatches:
-            "猫との対応付けはできましたが、判定に必要な関節を十分な信頼度で取得できませんでした。"
-        case .completedWithoutGeometryMatches:
-            "必要な関節は取得できましたが、寝顔・へそ天・香箱の形には一致しませんでした。"
-        case .completedWithoutRuleMatches:
-            "骨格候補を猫に対応付けましたが、寝顔・へそ天・香箱の条件を通った写真はありません。"
-        case .completedWithoutDetailedCause:
-            "対象写真の確認は完了しています。次回の解析では、対応付けと判定条件を分けて確認できます。"
+        case .completed:
+            "保存済みの猫の検出枠から分類しています。再スキャンは不要です。"
+        case .completedWithMissingBoxes:
+            "保存済みの検出枠がある写真を分類しました。検出枠のない \(missingBoxPhotoCount.formatted())枚だけは対象外です。"
         }
     }
 }
 
 enum CatPostureDiagnosticsStatePresentation: Equatable {
     case noTargets
-    case incomplete
-    case completedWithMatches
-    case completedWithoutPoseObservations
-    case completedWithoutCatMatches
-    case completedWithoutQualityMatches
-    case completedWithoutGeometryMatches
-    case completedWithoutRuleMatches
-    case completedWithoutDetailedCause
+    case completed
+    case completedWithMissingBoxes
 }
 
 enum CatProfileTimeGroupingPresentation: Equatable {

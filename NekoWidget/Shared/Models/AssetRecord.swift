@@ -161,6 +161,9 @@ struct CatBoundingBoxAspectDistribution: Equatable, Sendable {
     var classifiedAssets = 0
     var fullyUnclassifiedAssets = 0
     var multiBucketAssets = 0
+    /// Photos that enter two or more active posture albums. Unlike
+    /// `multiBucketAssets`, an unclassified cat does not increase this count.
+    var multiAlbumAssets = 0
     var missingBoxAssets = 0
     var singleCatFallbackAssets = 0
     var validInstances = 0
@@ -210,12 +213,15 @@ struct CatBoundingBoxAspectDistribution: Equatable, Sendable {
                 fullyUnclassifiedAssets += 1
             }
             if assetBuckets.count > 1 { multiBucketAssets += 1 }
+            if assetBuckets.intersection(classifiedBuckets).count > 1 {
+                multiAlbumAssets += 1
+            }
         }
     }
 
     var logMetadata: [String: String] {
         [
-            "bboxAspectPolicy": "width-height-v1",
+            "bboxAspectPolicy": "vision-normalized-width-height-v1",
             "bboxAspectTargetAssets": "\(targetCatAssets)",
             "bboxAspectAssetsWithValidBoxes": "\(assetsWithValidBoxes)",
             "bboxAspectSleepingAssets": "\(sleepingAssets)",
@@ -225,6 +231,7 @@ struct CatBoundingBoxAspectDistribution: Equatable, Sendable {
             "bboxAspectClassifiedAssets": "\(classifiedAssets)",
             "bboxAspectFullyUnclassifiedAssets": "\(fullyUnclassifiedAssets)",
             "bboxAspectMultiBucketAssets": "\(multiBucketAssets)",
+            "bboxAspectMultiAlbumAssets": "\(multiAlbumAssets)",
             "bboxAspectMissingBoxAssets": "\(missingBoxAssets)",
             "bboxAspectSingleCatFallbackAssets": "\(singleCatFallbackAssets)",
             "bboxAspectValidInstances": "\(validInstances)",

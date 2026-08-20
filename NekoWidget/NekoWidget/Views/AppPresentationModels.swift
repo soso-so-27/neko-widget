@@ -75,8 +75,8 @@ enum CuratedAlbumID: Hashable, Identifiable {
     case yearsTogether(Int)
     case calendarYear(Int)
     case sleeping
-    case bellyUp
-    case loaf
+    case curled
+    case sitting
     case closeUp
     case together
     case outing
@@ -91,9 +91,9 @@ enum CuratedAlbumID: Hashable, Identifiable {
         case .adoptionStart: "お迎えしたころ"
         case let .yearsTogether(years): "いっしょに暮らして\(years)年"
         case let .calendarYear(year): "\(year)年"
-        case .sleeping: "寝顔"
-        case .bellyUp: "へそ天"
-        case .loaf: "香箱"
+        case .sleeping: "ねむってる"
+        case .curled: "まるまり"
+        case .sitting: "おすわり"
         case .closeUp: "どアップ"
         case .together: "いっしょ"
         case .outing: "おでかけ"
@@ -109,8 +109,8 @@ enum CuratedAlbumID: Hashable, Identifiable {
         case let .yearsTogether(years): "years_together_\(years)"
         case let .calendarYear(year): "calendar_year_\(year)"
         case .sleeping: "sleeping"
-        case .bellyUp: "belly_up"
-        case .loaf: "loaf"
+        case .curled: "curled"
+        case .sitting: "sitting"
         case .closeUp: "close_up"
         case .together: "together"
         case .outing: "outing"
@@ -140,7 +140,8 @@ enum AlbumRoute: Hashable {
 }
 
 /// Builds the product's fixed, spoken-language albums. Membership can overlap:
-/// a belly-up photo with a person can appear in both「へそ天」and「いっしょ」.
+/// a multi-cat photo can appear in more than one bounding-box posture album,
+/// and a sleeping photo with a person can also appear in「いっしょ」.
 struct CuratedAlbumBuilder {
     static let kittenMonthCount = 6
     static let closeUpAreaRatio = 0.40
@@ -168,14 +169,14 @@ struct CuratedAlbumBuilder {
         let analyzed = photos.filter(\.hasCurrentAlbumAnalysis)
 
         let cutenessAlbums = compactAlbums([
-            album(.sleeping, group: .cuteness, photos: analyzed.filter {
+            album(.sleeping, group: .cuteness, photos: photos.filter {
                 $0.albumPostures.contains(.sleeping)
             }),
-            album(.bellyUp, group: .cuteness, photos: analyzed.filter {
-                $0.albumPostures.contains(.bellyUp)
+            album(.curled, group: .cuteness, photos: photos.filter {
+                $0.albumPostures.contains(.curled)
             }),
-            album(.loaf, group: .cuteness, photos: analyzed.filter {
-                $0.albumPostures.contains(.loaf)
+            album(.sitting, group: .cuteness, photos: photos.filter {
+                $0.albumPostures.contains(.sitting)
             }),
             album(.closeUp, group: .cuteness, photos: analyzed.filter {
                 ($0.largestCatAreaRatio ?? 0) >= Self.closeUpAreaRatio
@@ -354,7 +355,6 @@ struct ScanPresentation: Equatable {
     var finalCatAssets: Int?
     var finalOldestDate: Date?
     var deferredAssets = 0
-    var postureSecondaryPendingAssets = 0
     var isScanning = false
     var isPaused = false
     var lastScannedAt: Date?

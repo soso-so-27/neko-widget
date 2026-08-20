@@ -7,6 +7,7 @@ enum CatProfilesPresentationVerifier {
         try verifiesManyToManyPhotoMembership()
         try verifiesMixedBatchAssignmentsArePreserved()
         try verifiesProfileOnlyTimePolicies()
+        try verifiesProfileBoundingBoxSelection()
         try verifiesPostureDiagnosticStates()
         print("Cat profiles presentation verifier passed")
     }
@@ -122,75 +123,101 @@ enum CatProfilesPresentationVerifier {
     }
 
     private static func verifiesPostureDiagnosticStates() throws {
-        let build13 = CatPostureDiagnosticsPresentation(
+        let complete = CatPostureDiagnosticsPresentation(
             targetPhotoCount: 896,
-            rawPoseObservedPhotoCount: 860,
-            matchedPosePhotoCount: nil,
-            classifiedPhotoCount: 0,
-            unclassifiedPhotoCount: 896,
-            pendingPhotoCount: 0
+            validBoxPhotoCount: 896,
+            classifiedPhotoCount: 508,
+            fullyUnclassifiedPhotoCount: 388,
+            multiAlbumPhotoCount: 8,
+            sleepingPhotoCount: 133,
+            curledPhotoCount: 121,
+            sittingPhotoCount: 262
         )
         try require(
-            build13.state == .completedWithoutDetailedCause,
-            "legacy completed-zero diagnostics were presented as pending"
-        )
-
-        let noMatch = CatPostureDiagnosticsPresentation(
-            targetPhotoCount: 100,
-            rawPoseObservedPhotoCount: 90,
-            matchedPosePhotoCount: 0,
-            qualityPassedPhotoCount: 0,
-            geometryPassedPhotoCount: 0,
-            classifiedPhotoCount: 0,
-            unclassifiedPhotoCount: 100,
-            pendingPhotoCount: 0
+            complete.state == .completed,
+            "complete bbox diagnostics were not presented as complete"
         )
         try require(
-            noMatch.state == .completedWithoutCatMatches,
-            "pose-to-cat match failure was not distinguished from rule rejection"
+            complete.statusDetail.contains("再スキャンは不要"),
+            "bbox diagnostics stopped explaining the no-rescan guarantee"
         )
 
-        let noRule = CatPostureDiagnosticsPresentation(
+        let missing = CatPostureDiagnosticsPresentation(
             targetPhotoCount: 100,
-            rawPoseObservedPhotoCount: 90,
-            matchedPosePhotoCount: 80,
-            qualityPassedPhotoCount: 0,
-            geometryPassedPhotoCount: 0,
-            classifiedPhotoCount: 0,
-            unclassifiedPhotoCount: 100,
-            pendingPhotoCount: 0
+            validBoxPhotoCount: 98,
+            classifiedPhotoCount: 60,
+            fullyUnclassifiedPhotoCount: 38,
+            missingBoxPhotoCount: 2
         )
         try require(
-            noRule.state == .completedWithoutQualityMatches,
-            "matched poses rejected by joint quality were not distinguished"
-        )
-
-        let noGeometry = CatPostureDiagnosticsPresentation(
-            targetPhotoCount: 100,
-            rawPoseObservedPhotoCount: 90,
-            matchedPosePhotoCount: 80,
-            qualityPassedPhotoCount: 70,
-            geometryPassedPhotoCount: 0,
-            classifiedPhotoCount: 0,
-            unclassifiedPhotoCount: 100,
-            pendingPhotoCount: 0
+            missing.state == .completedWithMissingBoxes,
+            "missing bbox assets were not disclosed"
         )
         try require(
-            noGeometry.state == .completedWithoutGeometryMatches,
-            "quality-pass geometry rejection was not distinguished"
+            missing.statusDetail.contains("2枚"),
+            "missing bbox count disappeared from the explanation"
         )
 
-        let pending = CatPostureDiagnosticsPresentation(
-            targetPhotoCount: 100,
-            rawPoseObservedPhotoCount: 90,
-            matchedPosePhotoCount: 80,
-            qualityPassedPhotoCount: 70,
-            geometryPassedPhotoCount: 60,
-            classifiedPhotoCount: 12,
-            unclassifiedPhotoCount: 68,
-            pendingPhotoCount: 20
+        let empty = CatPostureDiagnosticsPresentation()
+        try require(empty.state == .noTargets, "empty bbox diagnostics changed")
+
+        let noAlbumMatches = CatPostureDiagnosticsPresentation(
+            targetPhotoCount: 20,
+            validBoxPhotoCount: 20,
+            fullyUnclassifiedPhotoCount: 20
         )
-        try require(pending.state == .incomplete, "pending analysis lost retry priority")
+        try require(
+            noAlbumMatches.statusTitle == "姿勢分類は完了しています",
+            "completed-zero bbox diagnostics claimed an album was created"
+        )
+    }
+
+    private static func verifiesProfileBoundingBoxSelection() throws {
+        let left = NormalizedRect(x: 0.05, y: 0.20, width: 0.30, height: 0.40)
+        let right = NormalizedRect(x: 0.60, y: 0.20, width: 0.30, height: 0.40)
+        let rightSubject = NormalizedRect(
+            x: 0.61,
+            y: 0.21,
+            width: 0.29,
+            height: 0.39
+        )
+        try require(
+            CatProfileBoundingBoxSelector.select(
+                from: [left, right],
+                detectedCatCount: 2,
+                subjectBoundingBox: rightSubject
+            ) == right,
+            "profile subject did not select its matching cat box"
+        )
+        try require(
+            CatProfileBoundingBoxSelector.select(
+                from: [left],
+                detectedCatCount: 1,
+                subjectBoundingBox: nil
+            ) == left,
+            "single-cat safe fallback disappeared"
+        )
+        try require(
+            CatProfileBoundingBoxSelector.select(
+                from: [left],
+                detectedCatCount: 2,
+                subjectBoundingBox: nil
+            ) == nil,
+            "multi-cat photo guessed a profile subject from one surviving box"
+        )
+        try require(
+            CatProfileBoundingBoxSelector.select(
+                from: [left, right],
+                detectedCatCount: 2,
+                subjectBoundingBox: NormalizedRect(
+                    x: 0,
+                    y: 0.8,
+                    width: 0.1,
+                    height: 0.1
+                )
+            ) == nil,
+            "stale profile subject was guessed instead of rejected"
+        )
     }
 
     private static func profile(

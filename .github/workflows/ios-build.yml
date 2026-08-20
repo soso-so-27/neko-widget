@@ -121,6 +121,15 @@ jobs:
             echo "PhotoLibraryScanner must not invoke the retired joint pipeline" >&2
             exit 1
           fi
+          if test -e NekoWidget/Services/AnimalPostureClassifier.swift; then
+            echo "Retired joint classifier must not be part of the app target" >&2
+            exit 1
+          fi
+          if grep -Eq 'scanState\.purpose[[:space:]]*=[[:space:]]*\.postureRepair' \
+            NekoWidget/ViewModels/AppViewModel.swift; then
+            echo "AppViewModel must not re-arm the decode-only posture repair route" >&2
+            exit 1
+          fi
           xcrun --sdk macosx swiftc \
             -parse-as-library \
             Shared/Models/NormalizedRect.swift \
@@ -218,6 +227,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk macosx swiftc \
             -parse-as-library \
+            Shared/Models/NormalizedRect.swift \
             NekoWidget/Views/CatProfilesPresentation.swift \
             ci/verify-cat-profiles-presentation.swift \
             -o "$RUNNER_TEMP/verify-cat-profiles-presentation"

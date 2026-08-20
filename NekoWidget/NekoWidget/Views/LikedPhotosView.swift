@@ -72,7 +72,7 @@ struct AlbumView: View {
             Label("新しいアルバムを準備しています", systemImage: "sparkles.rectangle.stack")
                 .font(.headline)
 
-            Text("寝顔やへそ天などのアルバムを作るために、もう一度写真を見ています。端末内で確認できた写真から順にアルバムへ追加します。")
+            Text("いっしょ・おでかけなどのアルバムに必要な情報を端末内で確認しています。確認できた写真から順に追加します。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

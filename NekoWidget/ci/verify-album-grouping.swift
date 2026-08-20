@@ -66,12 +66,17 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
         photo(
             "newest",
             date(2024, 3, 1),
-            postures: [.sleeping, .bellyUp],
+            postures: [.sleeping, .curled],
             person: true,
             outing: true,
             area: 0.40
         ),
-        photo("older", date(2021, 1, 1), postures: [.loaf])
+        photo(
+            "older",
+            date(2021, 1, 1),
+            postures: [.sitting],
+            analyzed: false
+        )
     ]
     let sections = CuratedAlbumBuilder(timeZone: utc).sections(
         from: photos,
@@ -85,18 +90,21 @@ private func verifyFixedOrderAndOverlappingMembership() throws {
         .calendarYear(2021),
         .calendarYear(2024),
         .sleeping,
-        .bellyUp,
-        .loaf,
+        .curled,
+        .sitting,
         .closeUp,
         .together,
         .outing
     ], "album order or zero filtering changed: \(ids)")
     try require(!ids.contains(.kitten),
                 "kitten must stay hidden until a birthday/adoption day is set")
-    let belly = allAlbums(sections).first { $0.id == .bellyUp }
+    let curled = allAlbums(sections).first { $0.id == .curled }
     let sleeping = allAlbums(sections).first { $0.id == .sleeping }
-    try require(belly?.photos.map(\.id) == ["newest"], "belly-up membership changed")
+    let sitting = allAlbums(sections).first { $0.id == .sitting }
+    try require(curled?.photos.map(\.id) == ["newest"], "curled membership changed")
     try require(sleeping?.photos.map(\.id) == ["newest"], "overlap was lost")
+    try require(sitting?.photos.map(\.id) == ["older"],
+                "bbox album was incorrectly gated on secondary analysis")
 }
 
 private func verifyKittenBoundaryAndAgeBuckets() throws {
@@ -768,11 +776,39 @@ private func verifyBoundingBoxAspectDistribution() throws {
     )
     try require(distribution.singleCatFallbackAssets == 1,
                 "single-cat fallback count changed")
+    try require(
+        distribution.logMetadata["bboxAspectPolicy"]
+            == "vision-normalized-width-height-v1",
+        "bbox policy version became ambiguous"
+    )
     try require(distribution.multiBucketAssets == 1, "multi-cat overlap was not reported")
+    try require(distribution.multiAlbumAssets == 1,
+                "multi-album membership was not reported")
     try require(distribution.sittingAssets == 2 && distribution.sleepingAssets == 2,
                 "photo-level bbox membership changed")
     try require(distribution.logMetadata.values.allSatisfy { !$0.contains("/") },
                 "bbox diagnostics unexpectedly contain an identifier-like value")
+
+    let overlapMeaning = CatBoundingBoxAspectDistribution(records: [
+        record(
+            "two-albums",
+            boxes: [
+                NormalizedRect(x: 0, y: 0, width: 0.1, height: 0.2),
+                NormalizedRect(x: 0.5, y: 0, width: 0.5, height: 0.2)
+            ]
+        ),
+        record(
+            "one-album-plus-unclassified",
+            boxes: [
+                NormalizedRect(x: 0, y: 0, width: 0.1, height: 0.2),
+                NormalizedRect(x: 0.5, y: 0, width: 0.3, height: 0.2)
+            ]
+        )
+    ])
+    try require(overlapMeaning.multiBucketAssets == 2,
+                "mixed bbox buckets stopped being counted")
+    try require(overlapMeaning.multiAlbumAssets == 1,
+                "unclassified cats were mislabeled as a second album")
 }
 
 private func requireObject(_ value: Any) throws -> [String: Any] {

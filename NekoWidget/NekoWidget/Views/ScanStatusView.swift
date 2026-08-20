@@ -40,7 +40,7 @@ struct InitialScanView: View {
                         : "うちの子を探しています")
                         .font(.title3.weight(.semibold))
                     Text(scan.isPreparingGroupedAlbums
-                        ? "寝顔やへそ天などを見つけるため、もう一度写真を見ています。"
+                        ? "いっしょ・おでかけなどに必要な情報を、端末内で確認しています。"
                         : "まず新しい写真500枚を調べます。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -175,7 +175,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.isPreparingGroupedAlbums {
-                Text("寝顔やへそ天などのアルバムを作るために、もう一度写真を見ています。端末内で確認できた写真から順にアルバムへ追加します。")
+                Text("いっしょ・おでかけなどのアルバムに必要な情報を端末内で確認しています。確認できた写真から順に追加します。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

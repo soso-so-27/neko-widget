@@ -61,11 +61,6 @@ final class AppViewModel: ObservableObject {
     }
     var catProfiles: [CatProfile] { catHouseholdIdentity?.profiles ?? [] }
     var oldestCatPhotoDate: Date? { catAssets.compactMap(\.creationDate).min() }
-    var postureSecondaryPendingAssets: Int {
-        guard canPresentCatIdentity else { return 0 }
-        return PostureScanSummary(records: candidateSnapshot(snapshot).assets)
-            .secondaryPendingAssets
-    }
     var progress: Double { scanState.progress }
     var isQuickResultReady: Bool { scanState.isQuickResultReady }
     var isComplete: Bool { scanState.isComplete }
@@ -415,98 +410,6 @@ final class AppViewModel: ObservableObject {
         snapshot.scanState = scanState
         await saveSnapshot(reportErrors: false)
         await launchScan(forceFullAnalysis: true)
-    }
-
-    /// Retries only missing/stale grouped-album traits for already-known cat
-    /// photos. It does not increment the detector revision or invalidate the
-    /// current Widget/primary cat results.
-    func retryPendingPostureClassification() async {
-        guard catIdentityLoadState == .ready else {
-            logCandidateAuthorityUnavailable(operation: "retry_posture")
-            return
-        }
-        guard canReadPhotos else {
-            setError(NekoWidgetError.photoAccessDenied)
-            return
-        }
-        guard !isScanning else { return }
-        guard !scanState.requiresFullRescan else {
-            SharedLog.app.info(
-                "vision",
-                "Posture retry skipped because a primary rescan is required"
-            )
-            return
-        }
-
-        let summary = PostureScanSummary(records: candidateSnapshot(snapshot).assets)
-        guard summary.secondaryPendingAssets > 0 else {
-            SharedLog.app.info(
-                "vision",
-                "Posture retry skipped because no secondary analysis is pending",
-                metadata: summary.logMetadata
-            )
-            return
-        }
-
-        errorMessage = nil
-        scanState.postureSummary = summary
-        scanState.requiresFullRescan = false
-        scanState.purpose = .postureRepair
-        snapshot.scanState = scanState
-        SharedLog.app.info(
-            "vision",
-            "Pending posture classification retry requested",
-            metadata: summary.logMetadata
-        )
-        await saveSnapshot(reportErrors: false)
-        await launchScan(forceFullAnalysis: false)
-    }
-
-    /// Explicitly re-runs only the secondary pose/face album analysis for the
-    /// current candidate scope. Primary cat/no-cat decisions, detector
-    /// revision, likes, Widget output, and PhotoKit assets remain untouched.
-    func rerunPostureClassification() async {
-        guard catIdentityLoadState == .ready else {
-            logCandidateAuthorityUnavailable(operation: "rerun_posture")
-            return
-        }
-        guard canReadPhotos else {
-            setError(NekoWidgetError.photoAccessDenied)
-            return
-        }
-        guard !isScanning, !scanState.requiresFullRescan else { return }
-        let targetIdentifiers = Set(
-            candidateSnapshot(snapshot).catAssets.map(\.localIdentifier)
-        )
-        guard !targetIdentifiers.isEmpty else { return }
-
-        var updated = snapshot
-        for index in updated.assets.indices
-        where targetIdentifiers.contains(updated.assets[index].localIdentifier) {
-            // Keep the last derived values on disk for rollback/debugging, but
-            // clear the completion marker so the postureRepair router selects
-            // exactly these known-cat records.
-            updated.assets[index].albumAnalysisVersion = nil
-        }
-        updated.updatedAt = .now
-        snapshot = updated
-        scanState = updated.scanState
-        let summary = PostureScanSummary(records: candidateSnapshot(updated).assets)
-        scanState.postureSummary = summary
-        scanState.requiresFullRescan = false
-        scanState.purpose = .postureRepair
-        snapshot.scanState = scanState
-        errorMessage = nil
-        SharedLog.app.info(
-            "vision",
-            "Posture-only reclassification requested",
-            metadata: [
-                "analysisVersion": "\(CatAlbumTraits.currentAnalysisVersion)",
-                "targetCats": "\(targetIdentifiers.count)"
-            ]
-        )
-        await saveSnapshot(reportErrors: false)
-        await launchScan(forceFullAnalysis: false)
     }
 
     func suspendScan() {
@@ -1509,14 +1412,13 @@ final class AppViewModel: ObservableObject {
         guard let record = snapshot.assets.first(where: {
             $0.localIdentifier == assetLocalIdentifier
         }) else { return existing }
-        let boxes = record.albumTraits?.postureInstances?.map(\.boundingBox) ?? []
+        let boxes = record.resolvedCatBoundingBoxes.boundingBoxes
         if let existing,
            boxes.contains(where: { Self.intersectionOverUnion($0, existing) >= 0.5 }) {
             return existing
         }
-        if boxes.count == 1 { return boxes[0] }
-        if boxes.isEmpty, record.cat.catCount <= 1 {
-            return record.cat.boundingBox
+        if record.cat.catCount <= 1, boxes.count == 1 {
+            return boxes[0]
         }
         return nil
     }
@@ -1613,16 +1515,12 @@ final class AppViewModel: ObservableObject {
     }
 
     private func reconcileCandidatePostureState() {
-        let summary = PostureScanSummary(records: candidateSnapshot(snapshot).assets)
+        let summary = PostureScanSummary(records: candidateSnapshot(snapshot).catAssets)
         scanState.postureSummary = summary
-        if !scanState.requiresFullRescan, !isScanning {
-            if summary.secondaryPendingAssets > 0 {
-                if scanState.purpose == nil || scanState.purpose == .postureRepair {
-                    scanState.purpose = .postureRepair
-                }
-            } else if scanState.purpose == .postureRepair {
-                scanState.purpose = nil
-            }
+        // Build 13-15's posture repair route is decode-only. Bbox posture
+        // albums are derived locally and must never schedule another scan.
+        if scanState.purpose == .postureRepair {
+            scanState.purpose = nil
         }
         snapshot.scanState = scanState
     }
@@ -1885,7 +1783,7 @@ final class AppViewModel: ObservableObject {
     /// candidate snapshot. No PhotoKit image request or Vision request occurs.
     private func logBoundingBoxAspectDistribution(trigger: String) {
         let distribution = CatBoundingBoxAspectDistribution(
-            records: candidateSnapshot(snapshot).assets
+            records: candidateSnapshot(snapshot).catAssets
         )
         var metadata = distribution.logMetadata
         metadata["trigger"] = trigger
@@ -2296,7 +2194,7 @@ final class AppViewModel: ObservableObject {
             state.postureSummary?.logMetadata ?? [:],
             uniquingKeysWith: { current, _ in current }
         )
-        metadata["postureAnalysisVersion"] = "\(CatAlbumTraits.currentAnalysisVersion)"
+        metadata["bboxAnalysisVersion"] = "\(CatAlbumTraits.currentAnalysisVersion)"
         metadata["scanPurpose"] = state.purpose?.rawValue ?? "none"
         return metadata
     }
