@@ -295,16 +295,44 @@ def main() -> int:
     thumbnail_load_entries = matching(
         "Photo thumbnail loaded (sampled)", "image-load"
     )
-    if len(thumbnail_load_entries) < fixture_count:
-        failures.append(
-            f"Only {len(thumbnail_load_entries)} sampled thumbnail load(s) "
-            f"were recorded; expected at least {fixture_count}."
-        )
-    if any(
-        entry.get("metadata", {}).get("targetPixels") != "1024x1024"
-        or "x" not in entry.get("metadata", {}).get("outputPixels", "")
+    expected_thumbnail_targets = {
+        "localRecovery512": "512x512",
+        "primary1024": "1024x1024",
+        "highResolution2048": "2048x2048",
+    }
+    primary_thumbnail_loads = [
+        entry
         for entry in thumbnail_load_entries
-    ):
+        if entry.get("metadata", {}).get("deliveryMode") == "primary1024"
+    ]
+    if len(primary_thumbnail_loads) < fixture_count:
+        failures.append(
+            f"Only {len(primary_thumbnail_loads)} sampled primary thumbnail "
+            f"load(s) were recorded; expected at least {fixture_count}."
+        )
+    invalid_thumbnail_metadata = False
+    for entry in thumbnail_load_entries:
+        metadata = entry.get("metadata", {})
+        delivery_mode = metadata.get("deliveryMode")
+        target_pixels = metadata.get("targetPixels")
+        output_match = re.fullmatch(
+            r"([1-9][0-9]*)x([1-9][0-9]*)",
+            metadata.get("outputPixels", ""),
+        )
+        expected_target = expected_thumbnail_targets.get(delivery_mode)
+        if expected_target is None or target_pixels != expected_target:
+            invalid_thumbnail_metadata = True
+            break
+        target_width, target_height = (
+            int(component) for component in expected_target.split("x")
+        )
+        if output_match is None or (
+            int(output_match.group(1)) > target_width
+            or int(output_match.group(2)) > target_height
+        ):
+            invalid_thumbnail_metadata = True
+            break
+    if invalid_thumbnail_metadata:
         failures.append("Thumbnail load diagnostics contain invalid pixel metadata.")
 
     error_entries = [entry for entry in entries if entry.get("level") == "error"]
