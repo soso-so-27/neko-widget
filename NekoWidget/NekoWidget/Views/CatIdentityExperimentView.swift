@@ -525,31 +525,27 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
         errorMessage = nil
         let service = self.service
         runTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 await service.discard()
-                guard let self, self.runRevision == revision else { return }
+                guard self.runRevision == revision else { return }
                 let result = try await service.run(
                     references: references,
                     candidates: candidates,
                     progress: { [weak self] progress in
-                        await MainActor.run {
-                            guard let self, self.runRevision == revision else {
-                                return
-                            }
-                            self.progress = progress
-                        }
+                        await self?.receive(progress, revision: revision)
                     }
                 )
-                guard let self, self.runRevision == revision else { return }
+                guard self.runRevision == revision else { return }
                 self.report = result
                 self.progress = nil
                 self.isRunning = false
             } catch is CancellationError {
-                guard let self, self.runRevision == revision else { return }
+                guard self.runRevision == revision else { return }
                 self.progress = nil
                 self.isRunning = false
             } catch {
-                guard let self, self.runRevision == revision else { return }
+                guard self.runRevision == revision else { return }
                 self.progress = nil
                 self.isRunning = false
                 self.errorMessage = Self.message(for: error)
@@ -569,6 +565,14 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
         guard !isRunning else { return }
         report = nil
         errorMessage = nil
+    }
+
+    private func receive(
+        _ progress: CatIdentityExperimentProgress,
+        revision: Int
+    ) {
+        guard runRevision == revision else { return }
+        self.progress = progress
     }
 
     private static func message(for error: Error) -> String {
@@ -614,5 +618,5 @@ private struct CatIdentityExperimentActivityView: UIViewControllerRepresentable 
 }
 
 private extension Int {
-    func clampedToNonnegative() -> Int { max(0, self) }
+    func clampedToNonnegative() -> Int { Swift.max(0, self) }
 }
