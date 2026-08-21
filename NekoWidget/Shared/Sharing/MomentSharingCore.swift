@@ -154,7 +154,13 @@ struct MomentEncryptedManifest: Codable, Equatable, Sendable {
     static func decodeValidated(_ data: Data) throws -> Self {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
-        return try decoder.decode(Self.self, from: data).validated()
+        do {
+            return try decoder.decode(Self.self, from: data).validated()
+        } catch let error as MomentSharingError {
+            throw error
+        } catch {
+            throw MomentSharingError.invalidPayload
+        }
     }
 }
 
@@ -208,9 +214,15 @@ enum MomentCrypto {
             guard data.count <= MomentSharingProtocol.maximumObjectCiphertextBytes else {
                 throw MomentSharingError.payloadTooLarge
             }
-            let value = try PropertyListDecoder().decode(Self.self, from: data)
-            _ = try value.encoded()
-            return value
+            do {
+                let value = try PropertyListDecoder().decode(Self.self, from: data)
+                _ = try value.encoded()
+                return value
+            } catch let error as MomentSharingError {
+                throw error
+            } catch {
+                throw MomentSharingError.invalidPayload
+            }
         }
     }
 
