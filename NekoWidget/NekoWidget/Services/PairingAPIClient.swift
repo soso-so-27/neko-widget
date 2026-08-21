@@ -4,11 +4,30 @@ import Foundation
 struct SharingAPIConfiguration: Equatable {
     let isEnabled: Bool
     let isMediaEnabled: Bool
+    let isShareExtensionSendEnabled: Bool
     let isReviewPreviewEnabled: Bool
     let baseURL: URL?
+    let moderationKeyID: String?
+    let moderationPublicKey: Data?
+    let supportURL: URL?
+    let communityStandardsURL: URL?
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
-    var isMediaAvailable: Bool { isAvailable && isMediaEnabled }
+    var hasOperationalSafetyConfiguration: Bool {
+        moderationKeyID == "moderation-v1"
+            && moderationPublicKey?.count == 32
+            && supportURL != nil
+            && communityStandardsURL != nil
+    }
+    var isMediaAvailable: Bool {
+        isAvailable
+            && isMediaEnabled
+            && isShareExtensionSendEnabled
+            && hasOperationalSafetyConfiguration
+    }
+    var isShareExtensionMediaAvailable: Bool {
+        isMediaAvailable
+    }
     var isReviewVisible: Bool { isAvailable || isReviewPreviewEnabled }
 
     static var current: Self {
@@ -29,6 +48,9 @@ struct SharingAPIConfiguration: Equatable {
         } else {
             mediaEnabled = false
         }
+        let shareExtensionSendEnabled = Self.explicitFlag(
+            info["SharingShareExtensionSendEnabled"]
+        )
         let reviewPreviewEnabled: Bool
         if let number = info["SharingReviewPreviewEnabled"] as? NSNumber {
             reviewPreviewEnabled = number.boolValue
@@ -39,25 +61,81 @@ struct SharingAPIConfiguration: Equatable {
         }
         let rawURL = (info["SharingAPIBaseURL"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let baseURL = URL(string: rawURL).flatMap { url -> URL? in
-            guard url.scheme == "https",
-                  url.host != nil,
-                  url.user == nil,
-                  url.password == nil,
-                  url.query == nil,
-                  url.fragment == nil,
-                  url.path.isEmpty || url.path == "/"
-            else {
-                return nil
-            }
-            return url
+        let baseURL = URL(string: rawURL).flatMap {
+            Self.publicHTTPSURL($0, requiresRootPath: true) ? $0 : nil
         }
+        let moderationKeyID = Self.nonemptyString(
+            info["SharingModerationKeyID"] as? String
+        )
+        let moderationPublicKey = Self.nonemptyString(
+            info["SharingModerationPublicKey"] as? String
+        ).flatMap(Data.init(base64URLString:))
+        let supportURL = Self.httpsRootURL(info["SharingSupportURL"] as? String)
+        let communityStandardsURL = Self.httpsRootURL(
+            info["SharingCommunityStandardsURL"] as? String
+        )
         return Self(
             isEnabled: enabled,
             isMediaEnabled: mediaEnabled,
+            isShareExtensionSendEnabled: shareExtensionSendEnabled,
             isReviewPreviewEnabled: reviewPreviewEnabled,
-            baseURL: baseURL
+            baseURL: baseURL,
+            moderationKeyID: moderationKeyID,
+            moderationPublicKey: moderationPublicKey,
+            supportURL: supportURL,
+            communityStandardsURL: communityStandardsURL
         )
+    }
+
+    private static func nonemptyString(_ value: String?) -> String? {
+        let value = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+
+    private static func explicitFlag(_ value: Any?) -> Bool {
+        if let number = value as? NSNumber { return number.boolValue }
+        if let string = value as? String {
+            return ["1", "true", "yes"].contains(string.lowercased())
+        }
+        return false
+    }
+
+    private static func httpsRootURL(_ value: String?) -> URL? {
+        guard let raw = nonemptyString(value),
+              let url = URL(string: raw),
+              publicHTTPSURL(url, requiresRootPath: false)
+        else { return nil }
+        return url
+    }
+
+    /// Release configuration must point at a publicly routable named host.
+    /// Requiring a DNS name (rather than accepting an IP literal) keeps the
+    /// runtime check aligned with the review gate and TLS deployment model.
+    private static func publicHTTPSURL(_ url: URL, requiresRootPath: Bool) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              let rawHost = url.host?.lowercased(),
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil,
+              !rawHost.hasSuffix("."),
+              rawHost.contains("."),
+              !rawHost.contains(":"),
+              !rawHost.allSatisfy({ $0.isNumber || $0 == "." }),
+              !["localhost", "example", "invalid", "local", "test"].contains(rawHost),
+              ![".localhost", ".example", ".invalid", ".local", ".test"].contains(
+                  where: { rawHost.hasSuffix($0) }
+              ),
+              rawHost.split(separator: ".").allSatisfy({ label in
+                  guard (1...63).contains(label.count),
+                        label.first != "-",
+                        label.last != "-"
+                  else { return false }
+                  return label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+              }),
+              !requiresRootPath || url.path.isEmpty || url.path == "/"
+        else { return false }
+        return true
     }
 }
 

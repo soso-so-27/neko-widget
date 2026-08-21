@@ -164,4 +164,19 @@ enum SharedContainer {
     static var sharingInboundDirectoryURL: URL? {
         sharingCacheDirectoryURL?.appendingPathComponent("inbound", isDirectory: true)
     }
+
+    static var momentSharingStateURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "moment-sharing-state.v1.json",
+            isDirectory: false
+        )
+    }
+
+    static var momentSharingCiphertextDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent("moments", isDirectory: true)
+    }
+
+    static var momentSharingReceivedDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent("received-moments", isDirectory: true)
+    }
 }

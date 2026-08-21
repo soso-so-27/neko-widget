@@ -1,5 +1,5 @@
 import { ApiError, errorResponse, jsonResponse } from "./errors";
-import type { Env } from "./env";
+import { momentRuntimeEnabled, type Env } from "./env";
 import {
   approveEnrollment,
   cancelEnrollment,
@@ -12,7 +12,20 @@ import {
   revokeSpace,
 } from "./handlers";
 import { rejectQuery } from "./http";
-import { runScheduledCleanup } from "./scheduled";
+import {
+  acknowledgeMoment,
+  blockParticipant,
+  commitMoment,
+  commitMomentReport,
+  downloadMomentCiphertext,
+  getMomentChanges,
+  runMomentCleanup,
+  reserveMoment,
+  reserveMomentReport,
+  uploadMomentCiphertext,
+  uploadMomentReportCiphertext,
+} from "./moments";
+import { MOMENT_CLEANUP_CRON, runLegacyScheduledCleanup } from "./scheduled";
 import {
   commitGeneration,
   downloadManifest,
@@ -27,7 +40,7 @@ import {
   uploadMedia,
 } from "./sharing";
 
-async function route(request: Request, env: Env): Promise<Response> {
+export async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
@@ -67,6 +80,55 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (request.method === "POST" && pathname === "/v1/pairing/revoke") {
     return revokeSpace(request, env);
+  }
+  if (pathname === "/v2/moments" || pathname.startsWith("/v2/moments/")) {
+    if (!momentRuntimeEnabled(env)) {
+      throw new ApiError(
+        503,
+        "moment_runtime_disabled",
+        "Moment sharing is temporarily unavailable.",
+      );
+    }
+  }
+  if (request.method === "POST" && pathname === "/v2/moments/reservations") {
+    return reserveMoment(request, env);
+  }
+  if (request.method === "GET" && pathname === "/v2/moments/changes") {
+    return getMomentChanges(request, env);
+  }
+  const momentChangesMatch = pathname.match(/^\/v2\/moments\/changes\/([^/]+)$/u);
+  if (request.method === "GET" && momentChangesMatch?.[1] !== undefined) {
+    return getMomentChanges(request, env, momentChangesMatch[1]);
+  }
+  const momentCiphertextMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/ciphertext$/u);
+  if (request.method === "PUT" && momentCiphertextMatch?.[1] !== undefined) {
+    return uploadMomentCiphertext(request, env, momentCiphertextMatch[1]);
+  }
+  if (request.method === "GET" && momentCiphertextMatch?.[1] !== undefined) {
+    return downloadMomentCiphertext(request, env, momentCiphertextMatch[1]);
+  }
+  const momentCommitMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/commit$/u);
+  if (request.method === "POST" && momentCommitMatch?.[1] !== undefined) {
+    return commitMoment(request, env, momentCommitMatch[1]);
+  }
+  const momentAckMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/ack$/u);
+  if (request.method === "POST" && momentAckMatch?.[1] !== undefined) {
+    return acknowledgeMoment(request, env, momentAckMatch[1]);
+  }
+  const participantBlockMatch = pathname.match(/^\/v2\/participants\/([^/]+)\/block$/u);
+  if (request.method === "POST" && participantBlockMatch?.[1] !== undefined) {
+    return blockParticipant(request, env, participantBlockMatch[1]);
+  }
+  if (request.method === "POST" && pathname === "/v2/reports/reservations") {
+    return reserveMomentReport(request, env);
+  }
+  const reportCiphertextMatch = pathname.match(/^\/v2\/reports\/([^/]+)\/ciphertext$/u);
+  if (request.method === "PUT" && reportCiphertextMatch?.[1] !== undefined) {
+    return uploadMomentReportCiphertext(request, env, reportCiphertextMatch[1]);
+  }
+  const reportCommitMatch = pathname.match(/^\/v2\/reports\/([^/]+)\/commit$/u);
+  if (request.method === "POST" && reportCommitMatch?.[1] !== undefined) {
+    return commitMomentReport(request, env, reportCommitMatch[1]);
   }
   if (request.method === "POST" && pathname === "/v1/sharing/generations/reserve") {
     return reserveGeneration(request, env);
@@ -126,7 +188,11 @@ export default {
       return errorResponse(error);
     }
   },
-  async scheduled(_controller, env, ctx): Promise<void> {
-    ctx.waitUntil(runScheduledCleanup(env));
+  async scheduled(controller, env, ctx): Promise<void> {
+    ctx.waitUntil(
+      controller.cron === MOMENT_CLEANUP_CRON
+        ? runMomentCleanup(env)
+        : runLegacyScheduledCleanup(env),
+    );
   },
 } satisfies ExportedHandler<Env>;

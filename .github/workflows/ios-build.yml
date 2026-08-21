@@ -111,6 +111,85 @@ jobs:
           "$RUNNER_TEMP/verify-sharing-api-responses" \
             ci/fixtures/sharing-api-v1-responses.json
 
+      - name: Verify append-only one-photo moment contract
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            Shared/Sharing/MomentSharingCore.swift \
+            ci/verify-moment-sharing-core.swift \
+            -o "$RUNNER_TEMP/verify-moment-sharing-core"
+          "$RUNNER_TEMP/verify-moment-sharing-core"
+
+          project=NekoWidget.xcodeproj/project.pbxproj
+          grep -Fq 'NekoWidgetShareExtension.appex in Embed App Extensions' "$project"
+          grep -Fq 'MomentSharingCore.swift in Sources' "$project"
+          grep -Fq 'MomentSharingAPIClient.swift in Sources' "$project"
+          grep -Fq '70000000000000000000000D /* WidgetManifest.swift in Sources */' "$project"
+          grep -Fq '70000000000000000000000E /* WidgetRenderPlan.swift in Sources */' "$project"
+          grep -Fq 'SensitiveContentAnalysis.framework in Frameworks' "$project"
+          grep -Fq 'NSExtensionActivationSupportsImageWithMaxCount' \
+            NekoWidgetShareExtension/Info.plist
+          grep -Fq '<integer>1</integer>' NekoWidgetShareExtension/Info.plist
+          for entitlements in \
+            NekoWidget/NekoWidget.entitlements \
+            NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements; do
+            grep -Fq '<string>analysis</string>' "$entitlements"
+          done
+          if grep -Eq 'DailySharing|maximumDaily|generationID' \
+            NekoWidgetShareExtension/*.swift; then
+            echo 'Share Extension must not use the retired daily-sharing protocol' >&2
+            exit 1
+          fi
+          grep -Fq 'case committing' Shared/Sharing/MomentSharingStore.swift
+          grep -Fq 'expected: .committing' NekoWidget/Services/MomentSharingCoordinator.swift
+          grep -Fq 'expected: .committing' NekoWidgetShareExtension/MomentShareExtensionSender.swift
+          grep -Fq 'MOMENT_RUNTIME_ENABLED": "NO"' SharingService/wrangler.example.jsonc
+          grep -Fq 'moment_runtime_disabled' SharingService/src/index.ts
+          grep -Fqx 'SHARING_SHARE_EXTENSION_SEND_ENABLED = NO' Config.xcconfig
+          grep -Fq '<key>SharingShareExtensionSendEnabled</key>' \
+            NekoWidget/Info.plist
+          grep -Fq '<key>SharingShareExtensionSendEnabled</key>' \
+            NekoWidgetShareExtension/Info.plist
+          grep -Fq 'configuration.isShareExtensionMediaAvailable' \
+            NekoWidget/Services/MomentSharePreparationService.swift
+          grep -Fq 'configuration.isShareExtensionMediaAvailable' \
+            NekoWidgetShareExtension/MomentShareExtensionSender.swift
+          grep -Fq 'Direct Share Extension delivery is blocked' \
+            ci/validate-sharing-release.py
+          grep -Fq 'NSPrivacyAccessedAPICategoryFileTimestamp' NekoWidget/PrivacyInfo.xcprivacy
+          grep -Fq '<string>C617.1</string>' NekoWidget/PrivacyInfo.xcprivacy
+          grep -Fq 'プレビュー・送信されません' NekoWidget/Views/SettingsView.swift
+          if grep -Eq '新しい一枚をウィジェットへ優先表示|最近届いた写真と、自分が送った写真を同じ履歴' \
+            NekoWidget/Views/SettingsView.swift; then
+            echo 'Review preview must not present future Widget/sent-history work as implemented' >&2
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("NekoWidget/ViewModels/AppViewModel.swift").read_text()
+          start = source.index("func start() async")
+          launch_sync = source.index('synchronize(trigger: "launch")', start)
+          curation_guard = source.index("guard await loadCatCandidateCuration()", start)
+          foreground = source.index("func syncOnActive() async")
+          foreground_sync = source.index('synchronize(trigger: "foreground")', foreground)
+          identity_guard = source.index("guard catIdentityLoadState == .ready", foreground)
+          if not launch_sync < curation_guard or not foreground_sync < identity_guard:
+              raise SystemExit("Moment sync must not depend on scanner or cat-identity storage")
+
+          coordinator = Path("NekoWidget/Services/MomentSharingCoordinator.swift").read_text()
+          authorization = coordinator.index("private func loadAuthorization()")
+          bootstrap = coordinator.index("PairingInstallationGuard.bootstrap()", authorization)
+          credential = coordinator.index("PairingKeychainStore.load(", authorization)
+          if not bootstrap < credential:
+              raise SystemExit("Host moment network authorization must validate installation first")
+          PY
+
       - name: Verify normalized bbox posture classification
         working-directory: NekoWidget
         shell: bash

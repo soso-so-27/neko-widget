@@ -63,6 +63,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.APP_PROVISIONING_PROFILE_BASE64 }}
           WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+          SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64: ${{ secrets.SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64 }}
           RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
           SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
@@ -74,6 +75,7 @@ jobs:
             KEYCHAIN_PASSWORD
             APP_PROVISIONING_PROFILE_BASE64
             WIDGET_PROVISIONING_PROFILE_BASE64
+            SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64
           )
           for variable_name in "${signing_required[@]}"; do
             if [[ -z "${!variable_name:-}" ]]; then
@@ -147,13 +149,14 @@ jobs:
 
           app_bundle_id="$(read_xcconfig_value APP_BUNDLE_IDENTIFIER)"
           widget_bundle_id="$(read_xcconfig_value WIDGET_BUNDLE_IDENTIFIER)"
+          share_extension_bundle_id="$(read_xcconfig_value SHARE_EXTENSION_BUNDLE_IDENTIFIER)"
           app_group_id="$(read_xcconfig_value APP_GROUP_IDENTIFIER)"
 
-          if [[ -z "$app_bundle_id" || -z "$widget_bundle_id" || -z "$app_group_id" ]]; then
+          if [[ -z "$app_bundle_id" || -z "$widget_bundle_id" || -z "$share_extension_bundle_id" || -z "$app_group_id" ]]; then
             echo "Config.xcconfig contains an empty release identifier." >&2
             exit 1
           fi
-          if [[ "$app_bundle_id" == com.example.* || "$widget_bundle_id" == com.example.* || "$app_group_id" == group.com.example.* ]]; then
+          if [[ "$app_bundle_id" == com.example.* || "$widget_bundle_id" == com.example.* || "$share_extension_bundle_id" == com.example.* || "$app_group_id" == group.com.example.* ]]; then
             echo "Replace all placeholder identifiers in Config.xcconfig before uploading." >&2
             exit 1
           fi
@@ -171,12 +174,24 @@ jobs:
             echo "WIDGET_BUNDLE_IDENTIFIER contains unsupported characters or empty components." >&2
             exit 1
           fi
+          if [[ ! "$share_extension_bundle_id" =~ $bundle_id_pattern ]]; then
+            echo "SHARE_EXTENSION_BUNDLE_IDENTIFIER contains unsupported characters or empty components." >&2
+            exit 1
+          fi
           if [[ ! "$app_group_id" =~ $app_group_pattern ]]; then
             echo "APP_GROUP_IDENTIFIER contains unsupported characters or empty components." >&2
             exit 1
           fi
           if [[ "$widget_bundle_id" != "$app_bundle_id".* ]]; then
             echo "WIDGET_BUNDLE_IDENTIFIER must be a child of APP_BUNDLE_IDENTIFIER." >&2
+            exit 1
+          fi
+          if [[ "$share_extension_bundle_id" != "$app_bundle_id".* ]]; then
+            echo "SHARE_EXTENSION_BUNDLE_IDENTIFIER must be a child of APP_BUNDLE_IDENTIFIER." >&2
+            exit 1
+          fi
+          if [[ "$share_extension_bundle_id" == "$widget_bundle_id" ]]; then
+            echo "Widget and Share Extension bundle identifiers must differ." >&2
             exit 1
           fi
 
@@ -192,6 +207,7 @@ jobs:
           {
             echo "APP_BUNDLE_ID=$app_bundle_id"
             echo "WIDGET_BUNDLE_ID=$widget_bundle_id"
+            echo "SHARE_EXTENSION_BUNDLE_ID=$share_extension_bundle_id"
             echo "APP_GROUP_ID=$app_group_id"
             echo "RELEASE_BUILD_NUMBER=$build_number"
           } >> "$GITHUB_ENV"
@@ -205,14 +221,17 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           APP_PROVISIONING_PROFILE_BASE64: ${{ secrets.APP_PROVISIONING_PROFILE_BASE64 }}
           WIDGET_PROVISIONING_PROFILE_BASE64: ${{ secrets.WIDGET_PROVISIONING_PROFILE_BASE64 }}
+          SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64: ${{ secrets.SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
 
           certificate_path="$RUNNER_TEMP/apple-distribution.p12"
           app_profile_path="$RUNNER_TEMP/app.mobileprovision"
           widget_profile_path="$RUNNER_TEMP/widget.mobileprovision"
+          share_profile_path="$RUNNER_TEMP/share-extension.mobileprovision"
           app_profile_plist="$RUNNER_TEMP/app-profile.plist"
           widget_profile_plist="$RUNNER_TEMP/widget-profile.plist"
+          share_profile_plist="$RUNNER_TEMP/share-extension-profile.plist"
           distribution_certificate_pem="$RUNNER_TEMP/apple-distribution.pem"
           distribution_certificate_der="$RUNNER_TEMP/apple-distribution.der"
           keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
@@ -223,7 +242,8 @@ jobs:
           printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
           printf '%s' "$APP_PROVISIONING_PROFILE_BASE64" | base64 -D > "$app_profile_path"
           printf '%s' "$WIDGET_PROVISIONING_PROFILE_BASE64" | base64 -D > "$widget_profile_path"
-          chmod 600 "$certificate_path" "$app_profile_path" "$widget_profile_path"
+          printf '%s' "$SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64" | base64 -D > "$share_profile_path"
+          chmod 600 "$certificate_path" "$app_profile_path" "$widget_profile_path" "$share_profile_path"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
@@ -256,27 +276,30 @@ jobs:
 
           security cms -D -i "$app_profile_path" > "$app_profile_plist"
           security cms -D -i "$widget_profile_path" > "$widget_profile_plist"
+          security cms -D -i "$share_profile_path" > "$share_profile_plist"
 
           python3 - \
             "$app_profile_plist" \
             "$widget_profile_plist" \
+            "$share_profile_plist" \
             "$distribution_certificate_der" \
             "$APPLE_TEAM_ID" \
             "$APP_BUNDLE_ID" \
             "$WIDGET_BUNDLE_ID" \
+            "$SHARE_EXTENSION_BUNDLE_ID" \
             "$APP_GROUP_ID" <<'PY'
           import datetime
           import hashlib
           import plistlib
           import sys
 
-          app_path, widget_path, certificate_path, team_id, app_id, widget_id, group_id = sys.argv[1:]
+          app_path, widget_path, share_path, certificate_path, team_id, app_id, widget_id, share_id, group_id = sys.argv[1:]
           now = datetime.datetime.now(datetime.timezone.utc)
 
           with open(certificate_path, "rb") as handle:
               signing_certificate = handle.read()
 
-          def validate_profile(path: str, expected_bundle_id: str, label: str) -> None:
+          def validate_profile(path: str, expected_bundle_id: str, label: str, requires_safety_analysis: bool = False) -> None:
               with open(path, "rb") as handle:
                   profile = plistlib.load(handle)
               entitlements = profile.get("Entitlements", {})
@@ -285,6 +308,7 @@ jobs:
               application_identifier = entitlements.get("application-identifier", "")
               groups = entitlements.get("com.apple.security.application-groups", [])
               certificates = profile.get("DeveloperCertificates", [])
+              safety_analysis = entitlements.get("com.apple.developer.sensitivecontentanalysis.client", [])
 
               if team_id not in teams:
                   raise SystemExit(f"{label} profile belongs to another Team.")
@@ -292,6 +316,8 @@ jobs:
                   raise SystemExit(f"{label} profile has the wrong application-identifier.")
               if group_id not in groups:
                   raise SystemExit(f"{label} profile does not contain the App Group.")
+              if requires_safety_analysis and safety_analysis != ["analysis"]:
+                  raise SystemExit(f"{label} profile does not contain Sensitive Content Analysis entitlement.")
               if entitlements.get("get-task-allow") is not False:
                   raise SystemExit(f"{label} profile is not a distribution profile (get-task-allow).")
               if profile.get("ProvisionsAllDevices") is True or profile.get("ProvisionedDevices"):
@@ -311,27 +337,33 @@ jobs:
                       f"(profile certificate hashes: {profile_hashes or 'none'})."
                   )
 
-          validate_profile(app_path, app_id, "App")
+          validate_profile(app_path, app_id, "App", requires_safety_analysis=True)
           validate_profile(widget_path, widget_id, "Widget")
+          validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=True)
           PY
 
           app_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$app_profile_plist")"
           widget_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$widget_profile_plist")"
+          share_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$share_profile_plist")"
           app_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$app_profile_plist")"
           widget_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$widget_profile_plist")"
+          share_profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$share_profile_plist")"
           app_profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$app_profile_plist")"
           widget_profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$widget_profile_plist")"
+          share_profile_team="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$share_profile_plist")"
           app_profile_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$app_profile_plist")"
           widget_profile_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$widget_profile_plist")"
+          share_profile_identifier="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$share_profile_plist")"
           app_profile_groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$app_profile_plist" 2>/dev/null || true)"
           widget_profile_groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$widget_profile_plist" 2>/dev/null || true)"
+          share_profile_groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$share_profile_plist" 2>/dev/null || true)"
 
           contains_exact_line() {
             local expected="$1"
             awk -v expected="$expected" '{ $1 = $1; if ($0 == expected) found = 1 } END { exit(found ? 0 : 1) }'
           }
 
-          if [[ "$app_profile_team" != "$APPLE_TEAM_ID" || "$widget_profile_team" != "$APPLE_TEAM_ID" ]]; then
+          if [[ "$app_profile_team" != "$APPLE_TEAM_ID" || "$widget_profile_team" != "$APPLE_TEAM_ID" || "$share_profile_team" != "$APPLE_TEAM_ID" ]]; then
             echo "A provisioning profile belongs to a different Apple Developer Team." >&2
             exit 1
           fi
@@ -343,6 +375,10 @@ jobs:
             echo "The widget provisioning profile does not match WIDGET_BUNDLE_IDENTIFIER." >&2
             exit 1
           fi
+          if [[ "$share_profile_identifier" != "$APPLE_TEAM_ID.$SHARE_EXTENSION_BUNDLE_ID" ]]; then
+            echo "The Share Extension provisioning profile does not match SHARE_EXTENSION_BUNDLE_IDENTIFIER." >&2
+            exit 1
+          fi
           if ! contains_exact_line "$APP_GROUP_ID" <<< "$app_profile_groups"; then
             echo "The app provisioning profile does not contain APP_GROUP_IDENTIFIER." >&2
             exit 1
@@ -351,20 +387,28 @@ jobs:
             echo "The widget provisioning profile does not contain APP_GROUP_IDENTIFIER." >&2
             exit 1
           fi
+          if ! contains_exact_line "$APP_GROUP_ID" <<< "$share_profile_groups"; then
+            echo "The Share Extension provisioning profile does not contain APP_GROUP_IDENTIFIER." >&2
+            exit 1
+          fi
 
           mkdir -p "$profile_directory"
           {
             echo "APP_INSTALLED_PROFILE_PATH=$profile_directory/$app_profile_uuid.mobileprovision"
             echo "WIDGET_INSTALLED_PROFILE_PATH=$profile_directory/$widget_profile_uuid.mobileprovision"
+            echo "SHARE_INSTALLED_PROFILE_PATH=$profile_directory/$share_profile_uuid.mobileprovision"
           } >> "$GITHUB_ENV"
           cp "$app_profile_path" "$profile_directory/$app_profile_uuid.mobileprovision"
           cp "$widget_profile_path" "$profile_directory/$widget_profile_uuid.mobileprovision"
+          cp "$share_profile_path" "$profile_directory/$share_profile_uuid.mobileprovision"
 
           {
             echo "APP_PROFILE_UUID=$app_profile_uuid"
             echo "WIDGET_PROFILE_UUID=$widget_profile_uuid"
+            echo "SHARE_PROFILE_UUID=$share_profile_uuid"
             echo "APP_PROFILE_SPECIFIER=$app_profile_name"
             echo "WIDGET_PROFILE_SPECIFIER=$widget_profile_name"
+            echo "SHARE_PROFILE_SPECIFIER=$share_profile_name"
           } >> "$GITHUB_ENV"
 
       - name: Archive app and widget
@@ -387,6 +431,7 @@ jobs:
             CODE_SIGN_IDENTITY='Apple Distribution' \
             APP_PROVISIONING_PROFILE_SPECIFIER="$APP_PROFILE_SPECIFIER" \
             WIDGET_PROVISIONING_PROFILE_SPECIFIER="$WIDGET_PROFILE_SPECIFIER" \
+            SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="$SHARE_PROFILE_SPECIFIER" \
             CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \
             "OTHER_CODE_SIGN_FLAGS=--keychain $CI_KEYCHAIN_PATH" \
             archive
@@ -398,8 +443,12 @@ jobs:
         run: |
           set -euo pipefail
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
+          share_path="$app_path/PlugIns/NekoWidgetShareExtension.appex"
+          test -f "$share_path/PrivacyInfo.xcprivacy"
+          cmp "$app_path/PrivacyInfo.xcprivacy" "$share_path/PrivacyInfo.xcprivacy"
           python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
             --info-plist "$app_path/Info.plist" \
+            --share-info-plist "$share_path/Info.plist" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
             --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}"
 
@@ -411,27 +460,37 @@ jobs:
           set -euo pipefail
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
           widget_path="$app_path/PlugIns/NekoWidgetWidgetExtension.appex"
+          share_path="$app_path/PlugIns/NekoWidgetShareExtension.appex"
           app_entitlements="$RUNNER_TEMP/archive-app-entitlements.plist"
           widget_entitlements="$RUNNER_TEMP/archive-widget-entitlements.plist"
+          share_entitlements="$RUNNER_TEMP/archive-share-extension-entitlements.plist"
 
           test -d "$app_path"
           test -d "$widget_path"
+          test -d "$share_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign --verify --strict --verbose=2 "$widget_path"
+          codesign --verify --strict --verbose=2 "$share_path"
           codesign -d --entitlements "$app_entitlements" --xml "$app_path"
           codesign -d --entitlements "$widget_entitlements" --xml "$widget_path"
+          codesign -d --entitlements "$share_entitlements" --xml "$share_path"
           plutil -lint "$app_entitlements"
           plutil -lint "$widget_entitlements"
+          plutil -lint "$share_entitlements"
 
           app_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$app_path/Info.plist")"
           widget_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$widget_path/Info.plist")"
+          share_display_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$share_path/Info.plist")"
           app_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$app_path/Info.plist")"
           widget_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$widget_path/Info.plist")"
+          share_device_family="$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$share_path/Info.plist")"
 
           [[ "$app_display_name" == "ねこのまど" ]]
           [[ "$widget_display_name" == "ねこのまど" ]]
+          [[ "$share_display_name" == "ねこのまど" ]]
           [[ "$app_device_family" == "1" ]]
           [[ "$widget_device_family" == "1" ]]
+          [[ "$share_device_family" == "1" ]]
           if /usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:1' "$app_path/Info.plist" >/dev/null 2>&1; then
             echo 'App archive contains an unexpected second UIDeviceFamily value.' >&2
             exit 1
@@ -440,13 +499,22 @@ jobs:
             echo 'Widget archive contains an unexpected second UIDeviceFamily value.' >&2
             exit 1
           fi
+          if /usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:1' "$share_path/Info.plist" >/dev/null 2>&1; then
+            echo 'Share Extension archive contains an unexpected second UIDeviceFamily value.' >&2
+            exit 1
+          fi
 
           app_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$app_entitlements")"
           widget_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$widget_entitlements")"
+          share_signed_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$share_entitlements")"
           app_signed_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$app_entitlements")"
           widget_signed_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$widget_entitlements")"
+          share_signed_team="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' "$share_entitlements")"
           app_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$app_entitlements" 2>/dev/null || true)"
           widget_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$widget_entitlements" 2>/dev/null || true)"
+          share_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$share_entitlements" 2>/dev/null || true)"
+          app_safety_entitlement="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.sensitivecontentanalysis.client:0' "$app_entitlements" 2>/dev/null || true)"
+          share_safety_entitlement="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.sensitivecontentanalysis.client:0' "$share_entitlements" 2>/dev/null || true)"
 
           contains_exact_line() {
             local expected="$1"
@@ -455,10 +523,15 @@ jobs:
 
           [[ "$app_signed_identifier" == "$APPLE_TEAM_ID.$APP_BUNDLE_ID" ]]
           [[ "$widget_signed_identifier" == "$APPLE_TEAM_ID.$WIDGET_BUNDLE_ID" ]]
+          [[ "$share_signed_identifier" == "$APPLE_TEAM_ID.$SHARE_EXTENSION_BUNDLE_ID" ]]
           [[ "$app_signed_team" == "$APPLE_TEAM_ID" ]]
           [[ "$widget_signed_team" == "$APPLE_TEAM_ID" ]]
+          [[ "$share_signed_team" == "$APPLE_TEAM_ID" ]]
           contains_exact_line "$APP_GROUP_ID" <<< "$app_signed_groups"
           contains_exact_line "$APP_GROUP_ID" <<< "$widget_signed_groups"
+          contains_exact_line "$APP_GROUP_ID" <<< "$share_signed_groups"
+          [[ "$app_safety_entitlement" == "analysis" ]]
+          [[ "$share_safety_entitlement" == "analysis" ]]
 
       - name: Generate export options
         shell: bash
@@ -470,8 +543,10 @@ jobs:
             -e "s|__APPLE_TEAM_ID__|$APPLE_TEAM_ID|g" \
             -e "s|__APP_BUNDLE_ID__|$APP_BUNDLE_ID|g" \
             -e "s|__WIDGET_BUNDLE_ID__|$WIDGET_BUNDLE_ID|g" \
+            -e "s|__SHARE_EXTENSION_BUNDLE_ID__|$SHARE_EXTENSION_BUNDLE_ID|g" \
             -e "s|__APP_PROFILE_UUID__|$APP_PROFILE_UUID|g" \
             -e "s|__WIDGET_PROFILE_UUID__|$WIDGET_PROFILE_UUID|g" \
+            -e "s|__SHARE_PROFILE_UUID__|$SHARE_PROFILE_UUID|g" \
             "$PROJECT_DIRECTORY/ci/ExportOptions.plist.template" \
             > "$RUNNER_TEMP/ExportOptions.plist"
           plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
@@ -610,6 +685,9 @@ jobs:
           if [[ -n "${WIDGET_INSTALLED_PROFILE_PATH:-}" ]]; then
             rm -f "$WIDGET_INSTALLED_PROFILE_PATH"
           fi
+          if [[ -n "${SHARE_INSTALLED_PROFILE_PATH:-}" ]]; then
+            rm -f "$SHARE_INSTALLED_PROFILE_PATH"
+          fi
           if [[ -n "${CI_KEYCHAIN_PATH:-}" ]]; then
             security delete-keychain "$CI_KEYCHAIN_PATH"
           fi
@@ -620,12 +698,15 @@ jobs:
             "$RUNNER_TEMP/apple-distribution.p12" \
             "$RUNNER_TEMP/app.mobileprovision" \
             "$RUNNER_TEMP/widget.mobileprovision" \
+            "$RUNNER_TEMP/share-extension.mobileprovision" \
             "$RUNNER_TEMP/app-profile.plist" \
             "$RUNNER_TEMP/widget-profile.plist" \
+            "$RUNNER_TEMP/share-extension-profile.plist" \
             "$RUNNER_TEMP/apple-distribution.pem" \
             "$RUNNER_TEMP/apple-distribution.der" \
             "$RUNNER_TEMP/archive-app-entitlements.plist" \
             "$RUNNER_TEMP/archive-widget-entitlements.plist" \
+            "$RUNNER_TEMP/archive-share-extension-entitlements.plist" \
             "$RUNNER_TEMP/signed-artifact-contents.txt" \
             "$RUNNER_TEMP/ExportOptions.plist"
 

@@ -4,6 +4,7 @@
 // update all affected identifiers together. Do not derive values with $(...).
 APP_BUNDLE_IDENTIFIER = jp.nekowidget.app
 WIDGET_BUNDLE_IDENTIFIER = jp.nekowidget.app.widget
+SHARE_EXTENSION_BUNDLE_IDENTIFIER = jp.nekowidget.app.share
 APP_GROUP_IDENTIFIER = group.jp.nekowidget.app
 
 // v1 supports iOS 17.1 and later.
@@ -17,14 +18,26 @@ CURRENT_PROJECT_VERSION = 1
 // privacy, moderation, and export-compliance gates are completed.
 SHARING_FEATURE_ENABLED = NO
 SHARING_API_BASE_URL =
-// Pairing can be exercised independently. Daily media upload/download remains
-// separately off until Phase 2 privacy and device gates are complete.
+// Pairing can be exercised independently. One-photo moment upload/download
+// remains separately off until privacy, safety, staging, and device gates pass.
 SHARING_MEDIA_ENABLED = NO
+// Direct Share Extension delivery cannot be enabled until the extension can
+// prove that the host app validated this installation after a reinstall.
+// Candidate/review builds keep the extension visible but fail closed here.
+SHARING_SHARE_EXTENSION_SEND_ENABLED = NO
 // Shows the adopted ADR-015 screens for product review only. This flag must
 // never create a client, access sharing credentials, or send any data.
 SHARING_REVIEW_PREVIEW_ENABLED = YES
+// Required together before media runtime can turn on. The public key encrypts
+// a separate short-lived copy only when the recipient explicitly reports a
+// received moment; the Worker cannot decrypt it.
+SHARING_MODERATION_KEY_ID =
+SHARING_MODERATION_PUBLIC_KEY =
+SHARING_SUPPORT_URL =
+SHARING_COMMUNITY_STANDARDS_URL =
 
-// GitHub Actions injects the names extracted from the two distribution
+// GitHub Actions injects the names extracted from the three distribution
 // provisioning profiles. Keep these empty for Xcode automatic signing.
 APP_PROVISIONING_PROFILE_SPECIFIER =
 WIDGET_PROVISIONING_PROFILE_SPECIFIER =
+SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER =

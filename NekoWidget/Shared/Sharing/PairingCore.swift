@@ -15,9 +15,10 @@ enum PairingRole: String, Codable, Sendable {
 }
 
 enum PairingMediaSharingConsent {
-    /// Increment whenever the automatic upload set, retention/deletion
-    /// behavior, or unrecoverable-copy warning materially changes.
-    static let currentVersion = 1
+    /// Version 2 replaces the retired automatic daily set with an explicit,
+    /// one-photo-at-a-time Share Extension flow. Existing version-1 consent
+    /// must never authorize the new capture-date and delivery semantics.
+    static let currentVersion = 2
 }
 
 enum PairingPhase: String, Codable, Sendable {

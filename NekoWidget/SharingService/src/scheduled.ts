@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { runMomentCleanup } from "./moments";
 import { expireStalePairingState } from "./handlers";
 
 // Space cleanup uses the candidate IDs as bound parameters. Keep ten slots of
@@ -24,7 +25,9 @@ export const CLEANUP_OBJECT_LIMIT = 24_000;
 export const CLEANUP_REVOKED_SCOPE_LIMIT = 50;
 const R2_PREFIX_LIST_LIMIT = 1_000;
 export const R2_DELETE_BATCH_SIZE = 1_000;
-export const CLEANUP_SUBREQUEST_GUARD = 1_200;
+export const CLEANUP_SUBREQUEST_GUARD = 980;
+export const LEGACY_CLEANUP_CRON = "*/5 * * * *";
+export const MOMENT_CLEANUP_CRON = "2,7,12,17,22,27,32,37,42,47,52,57 * * * *";
 // Each CAS tuple has two bindings: (object_key, attempts). 48 tuples use 96
 // parameters, leaving four below D1's hard ceiling.
 export const OBJECT_DELETE_CAS_TUPLE_LIMIT = 48;
@@ -519,7 +522,7 @@ async function cleanupEphemeralRows(env: Env, now: number): Promise<void> {
  * into the next five-minute invocation instead of risking an unbounded transaction
  * that can roll back all privacy cleanup under abusive public space creation.
  */
-export async function runScheduledCleanup(
+export async function runLegacyScheduledCleanup(
   env: Env,
   now = Math.floor(Date.now() / 1000),
 ): Promise<void> {
@@ -540,4 +543,15 @@ export async function runScheduledCleanup(
   // removed atomically with credentials already disabled.
   const queuedSpaceIds = await pendingDeletionCandidates(env);
   await revokeAndPurgeSpaces(env, queuedSpaceIds, now, false);
+}
+
+// Integration tests and local maintenance can run both deterministic phases
+// together. Production dispatches them to separate cron invocations so v1 and
+// v2 retention cannot exhaust each other's D1/subrequest budget.
+export async function runScheduledCleanup(
+  env: Env,
+  now = Math.floor(Date.now() / 1000),
+): Promise<void> {
+  await runLegacyScheduledCleanup(env, now);
+  await runMomentCleanup(env, now);
 }

@@ -4,8 +4,6 @@
 <dict>
 	<key>AppGroupIdentifier</key>
 	<string>$(APP_GROUP_IDENTIFIER)</string>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>ねこのまど</string>
 	<key>CFBundleExecutable</key>
@@ -17,34 +15,13 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
-	<string>APPL</string>
+	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLName</key>
-			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>nekowidget</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>選別した猫の写真を「うちの子」アルバムへ追加するため、写真ライブラリへの追加を許可してください。</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>猫の写真を端末内で見つけて整理し、あなたが共有シートで選んだ1枚だけを最大2,048pxへ縮小して位置情報を除き、家族へ暗号化して届けるため、写真ライブラリへのアクセスを許可してください。原本を自動送信することはありません。</string>
-	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
-	<true/>
 	<key>SharingAPIBaseURL</key>
 	<string>$(SHARING_API_BASE_URL)</string>
 	<key>SharingFeatureEnabled</key>
@@ -54,7 +31,7 @@
 	<key>SharingShareExtensionSendEnabled</key>
 	<string>$(SHARING_SHARE_EXTENSION_SEND_ENABLED)</string>
 	<key>SharingReviewPreviewEnabled</key>
-	<string>$(SHARING_REVIEW_PREVIEW_ENABLED)</string>
+	<false/>
 	<key>SharingModerationKeyID</key>
 	<string>$(SHARING_MODERATION_KEY_ID)</string>
 	<key>SharingModerationPublicKey</key>
@@ -63,7 +40,20 @@
 	<string>$(SHARING_SUPPORT_URL)</string>
 	<key>SharingCommunityStandardsURL</key>
 	<string>$(SHARING_COMMUNITY_STANDARDS_URL)</string>
-	<key>UILaunchScreen</key>
-	<dict/>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>NSExtensionActivationRule</key>
+			<dict>
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
+				<integer>1</integer>
+			</dict>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+	</dict>
 </dict>
 </plist>

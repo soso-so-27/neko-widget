@@ -141,8 +141,10 @@ struct HomeView: View {
                             Text("家族のまど")
                                 .font(.headline)
                                 .foregroundStyle(.primary)
-                            if !SharingAPIConfiguration.current.isAvailable {
-                                Text("プレビュー")
+                            if !SharingAPIConfiguration.current.isMediaAvailable {
+                                Text(SharingAPIConfiguration.current.isAvailable
+                                    ? "準備中"
+                                    : "プレビュー")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.tint)
                                     .padding(.horizontal, 7)
@@ -153,9 +155,7 @@ struct HomeView: View {
                                     )
                             }
                         }
-                        Text(SharingAPIConfiguration.current.isAvailable
-                            ? "家族から届いた一枚を見る"
-                            : "今後追加する体験を先に確認できます")
+                        Text(familyWindowSubtitle)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.leading)
@@ -171,7 +171,9 @@ struct HomeView: View {
                 Divider()
 
                 Label(
-                    "いまの一枚は、写真アプリの共有から届けます",
+                    SharingAPIConfiguration.current.isMediaAvailable
+                        ? "いまの一枚は、写真アプリの共有から届けます"
+                        : "今後は、写真アプリの共有から1枚を届けます",
                     systemImage: "square.and.arrow.up"
                 )
                 .font(.footnote.weight(.medium))
@@ -184,18 +186,32 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("window-family-window-review")
-        .accessibilityHint(SharingAPIConfiguration.current.isAvailable
-            ? "家族のまどを開きます"
-            : "サーバーへ接続しない画面レビューを開きます")
+        .accessibilityHint(familyWindowAccessibilityHint)
     }
 
     @ViewBuilder
     private var familyWindowDestination: some View {
-        if SharingAPIConfiguration.current.isAvailable {
+        if SharingAPIConfiguration.current.isMediaAvailable {
+            FamilyWindowView()
+        } else if SharingAPIConfiguration.current.isAvailable {
             PairingView()
         } else {
             SharingReviewPreviewView()
         }
+    }
+
+    private var familyWindowSubtitle: String {
+        let configuration = SharingAPIConfiguration.current
+        if configuration.isMediaAvailable { return "家族から届いた一枚を見る" }
+        if configuration.isAvailable { return "写真共有前のペアリングを確認する" }
+        return "今後追加する体験を先に確認できます"
+    }
+
+    private var familyWindowAccessibilityHint: String {
+        let configuration = SharingAPIConfiguration.current
+        if configuration.isMediaAvailable { return "家族のまどを開きます" }
+        if configuration.isAvailable { return "共有鍵のペアリング画面を開きます" }
+        return "サーバーへ接続しない画面レビューを開きます"
     }
 
     @ViewBuilder
@@ -203,7 +219,7 @@ struct HomeView: View {
         if let currentPhoto {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("いまの一枚")
+                    Text("思い出の一枚")
                         .font(.title3.bold())
                     Spacer()
                     Text("タップで写真をひらく")

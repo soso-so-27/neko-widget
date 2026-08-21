@@ -11,13 +11,19 @@
   "limits": { "cpu_ms": 30000, "subrequests": 1200 },
   "vars": {
     "ENVIRONMENT": "production",
+    "MOMENT_RUNTIME_ENABLED": "NO",
     "INVITATION_TTL_SECONDS": "86400",
     "CHALLENGE_TTL_SECONDS": "300",
     "PENDING_TTL_SECONDS": "86400",
     "IDEMPOTENCY_TTL_SECONDS": "172800",
     "SPACE_INACTIVITY_TTL_SECONDS": "2592000"
   },
-  "triggers": { "crons": ["*/5 * * * *"] },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+    ]
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -30,6 +36,10 @@
     {
       "binding": "MEDIA",
       "bucket_name": "replace-with-private-r2-bucket"
+    },
+    {
+      "binding": "MODERATION_MEDIA",
+      "bucket_name": "replace-with-private-moderation-r2-bucket"
     }
   ],
   "ratelimits": [

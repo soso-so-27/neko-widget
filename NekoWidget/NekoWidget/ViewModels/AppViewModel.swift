@@ -163,7 +163,7 @@ final class AppViewModel: ObservableObject {
     private let photoSelector: WeightedPhotoSelector
     private let albumSelector: AlbumCandidateSelector
     private let exporter: JSONExporter
-    private let dailySharingSyncCoordinator: DailySharingSyncCoordinator
+    private let momentSharingCoordinator: MomentSharingCoordinator
     private let store: LibraryStore?
     private let storeInitializationError: String?
     private let curationStore: CatCandidateCurationStore?
@@ -243,7 +243,7 @@ final class AppViewModel: ObservableObject {
         photoSelector = WeightedPhotoSelector()
         albumSelector = AlbumCandidateSelector()
         exporter = JSONExporter()
-        dailySharingSyncCoordinator = DailySharingSyncCoordinator()
+        momentSharingCoordinator = MomentSharingCoordinator()
 
         do {
             store = try LibraryStore()
@@ -284,7 +284,7 @@ final class AppViewModel: ObservableObject {
                 "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
             ]
         )
-        let coordinator = dailySharingSyncCoordinator
+        let coordinator = momentSharingCoordinator
         sharingSyncObserver = NotificationCenter.default.addObserver(
             forName: .sharingMediaSyncRequested,
             object: nil,
@@ -306,6 +306,12 @@ final class AppViewModel: ObservableObject {
         var startupSnapshotNeedsSave = false
         var loadedScanState: ScanState?
         SharedLog.app.info("lifecycle", "Application startup began")
+        // The Share Extension promises that a queued explicit send resumes
+        // when the app opens. Keep that lifecycle independent from scanner,
+        // curation and cat-identity storage health.
+        Task { [momentSharingCoordinator] in
+            await momentSharingCoordinator.synchronize(trigger: "launch")
+        }
 
         guard await loadCatCandidateCuration() else {
             // Curation is part of the candidate authority. Recover only the
@@ -386,10 +392,6 @@ final class AppViewModel: ObservableObject {
         }
         hasFinishedSnapshotLoad = true
         openPendingDeepLinkIfNeeded()
-        Task { [dailySharingSyncCoordinator] in
-            await dailySharingSyncCoordinator.synchronize(trigger: "launch")
-        }
-
         authorizationStatus = authorizationService.status
         SharedLog.app.info(
             "permission",
@@ -443,12 +445,12 @@ final class AppViewModel: ObservableObject {
     /// Any background execution is best effort and is never required for data
     /// correctness or promised to the user.
     func syncOnActive() async {
+        Task { [momentSharingCoordinator] in
+            await momentSharingCoordinator.synchronize(trigger: "foreground")
+        }
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "sync_on_active")
             return
-        }
-        Task { [dailySharingSyncCoordinator] in
-            await dailySharingSyncCoordinator.synchronize(trigger: "foreground")
         }
         authorizationStatus = authorizationService.status
         let likesChanged = synchronizeSharedLikes(

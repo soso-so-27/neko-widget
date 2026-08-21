@@ -40,7 +40,7 @@ struct PairingView: View {
                 }
             }
         }
-        .navigationTitle("家族と共有")
+        .navigationTitle("家族のまど")
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.bootstrap() }
         .confirmationDialog(
@@ -60,9 +60,9 @@ struct PairingView: View {
     private var privacySection: some View {
         Section {
             if model.isMediaSyncEnabled {
-                Label("その日のウィジェット候補から最大20枚を、1日1回共有します", systemImage: "rectangle.stack")
-                Label("送るのは縮小・metadata除去・暗号化した画像だけです", systemImage: "lock.shield")
-                Label("原本、位置情報、撮影日時は送りません", systemImage: "photo.badge.checkmark")
+                Label("共有シートで選び、届けると確認した1枚だけ送ります", systemImage: "photo")
+                Label("最大2,048pxへ縮小し、位置情報を除いて暗号化します", systemImage: "lock.shield")
+                Label("撮影日時は、分かる場合だけ暗号化した中に入ります", systemImage: "calendar.badge.clock")
             } else {
                 Label("このビルドでは共有鍵のペアリングだけを行います", systemImage: "key.horizontal")
                 Label("写真や縮小画像は送信しません", systemImage: "photo.badge.checkmark")
@@ -71,7 +71,7 @@ struct PairingView: View {
             Text("共有されるもの")
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "肉球は共有の指示ではありません。招待リンクはLINEなど選んだ送信経路を通るため、信頼できる相手にだけ送ってください。機種変更や再インストールでは共有が切れ、再招待が必要です。"
+                ? "写真が自動送信されることはありません。肉球も共有の指示ではありません。招待コードは信頼できる家族にだけ送り、機種変更や再インストール後は再招待してください。"
                 : "写真同期を有効にするビルドでは、送信前に改めて同意を求めます。招待リンクは信頼できる相手にだけ送り、機種変更や再インストール後は再招待してください。")
         }
     }
@@ -124,7 +124,7 @@ struct PairingView: View {
                 }
             } footer: {
                 Text(model.isMediaSyncEnabled
-                    ? "写真同期は、下の共有条件に同意した端末でだけ動作します。"
+                    ? "写真は共有シートで1枚ずつ確認した時だけ届きます。"
                     : "このビルドではペアリングだけが有効で、写真同期は無効です。")
             }
             if model.isMediaSyncEnabled && !model.hasCurrentMediaSharingConsent {
@@ -144,11 +144,6 @@ struct PairingView: View {
 
     private var createSection: some View {
         Section {
-            DatePicker(
-                "共有の1日更新時刻",
-                selection: $dailyUpdateTime,
-                displayedComponents: .hourAndMinute
-            )
             Button {
                 Task {
                     if model.isMediaSyncEnabled {
@@ -165,7 +160,7 @@ struct PairingView: View {
         } header: {
             Text("招待する")
         } footer: {
-            Text("初期値は午前4時です。作成時のUTC時刻へ一度だけ変換して固定し、旅行や端末の時刻設定変更では自動変更しません。")
+            Text("家族のまどを1つ作り、信頼できる相手を招待します。公開フィードや検索には表示されません。")
         }
     }
 
@@ -210,7 +205,7 @@ struct PairingView: View {
             Text("ペアリング前の確認")
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "ペアリング後、肉球とは無関係に最大20枚の縮小画像が1日1回自動共有されます。原本は送りません。共有解除でサーバー上のデータは削除できますが、相手が保存・スクリーンショットしたコピーは回収できません。再インストールや機種変更後は再招待が必要です。"
+                ? "共有シートで送信を確定した1枚だけを、最大2,048pxへ縮小して暗号化します。位置情報は除き、撮影日時は暗号化した中だけに入ります。共有解除後も、相手が保存・スクリーンショットしたコピーは回収できません。"
                 : "この段階では鍵のペアリングだけを行い、写真はまだ送りません。写真同期を有効にするbuildでは改めて明示的な同意を求めます。共有解除後も、相手が保存・スクリーンショットしたコピーは回収できません。再インストールや機種変更後は再招待が必要です。")
         }
     }
@@ -226,9 +221,9 @@ struct PairingView: View {
             }
             .disabled(!hasAcceptedPairingTerms || model.isWorking)
         } header: {
-            Text("写真同期を始める前の確認")
+            Text("1枚を届ける前の確認")
         } footer: {
-            Text("肉球とは無関係に、その日の候補から最大20枚の縮小画像を1日1回、自動共有します。原本・位置情報・撮影日時は送りません。共有解除でサーバー上のデータは削除しますが、相手が保存・スクリーンショットしたコピーは回収できません。")
+            Text("写真は自動送信しません。共有シートで毎回1枚を選び、届け先と内容を確認して送ります。原本と位置情報は送りません。")
         }
     }
 

@@ -14,6 +14,8 @@
 		<string>__APP_PROFILE_UUID__</string>
 		<key>__WIDGET_BUNDLE_ID__</key>
 		<string>__WIDGET_PROFILE_UUID__</string>
+		<key>__SHARE_EXTENSION_BUNDLE_ID__</key>
+		<string>__SHARE_PROFILE_UUID__</string>
 	</dict>
 	<key>signingCertificate</key>
 	<string>Apple Distribution</string>

@@ -187,6 +187,21 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
         })
+        results.append(run("moment-report-only-terminal-gate") {
+            try Self.testMomentReportOnlyTerminalGate()
+        })
+        results.append(run("moment-empty-cursor-normalization") {
+            try Self.testMomentEmptyCursorNormalization()
+        })
+        results.append(run("moment-expired-delivery-advances") {
+            try Self.testMomentExpiredDeliveryPolicy()
+        })
+        results.append(run("moment-outbox-bounds-and-expiry") {
+            try Self.testMomentOutboxBoundsAndExpiry()
+        })
+        results.append(run("moment-report-outbox-bounds-and-recovery") {
+            try Self.testMomentReportOutboxBoundsAndRecovery()
+        })
         results.append(run("normalizer-orientation-scale-parity") {
             try Self.testNormalizerParity()
         })
@@ -317,6 +332,318 @@ actor SharingRuntimeSelfTestRunner {
 #endif
         guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url) else {
             throw DailySharingError.stateUnavailable
+        }
+    }
+
+    /// A report-only transition must be enforced by the shared store itself.
+    /// The Share Extension and host app are separate processes, so a UI-only
+    /// check would allow older image preparation work to recreate a normal
+    /// outbox entry after a peer block/revocation was already persisted.
+    private static func testMomentReportOnlyTerminalGate() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let roomKey = Data(repeating: 0x31, count: 32)
+        let firstMomentID = UUID()
+        let firstPayload = try MomentCrypto.prepare(
+            canonicalJPEG: Data(repeating: 0x42, count: 512),
+            capturedAt: nil,
+            pixelWidth: 32,
+            pixelHeight: 16,
+            context: MomentRequestContext(
+                spaceID: "space_runtime_fixture",
+                senderParticipantID: "member_runtime_fixture",
+                senderDeviceID: "member_runtime_fixture",
+                clientRequestID: UUID(),
+                clientMomentID: firstMomentID,
+                kind: .live,
+                keyEpoch: 1
+            ),
+            spaceGenerationKey: roomKey
+        )
+        let first = try MomentSharingStateStore.enqueue(
+            payload: firstPayload,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            validating: lifecycleToken
+        )
+        guard let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let firstCiphertext = ciphertextDirectory.appendingPathComponent(
+            first.ciphertextFileName,
+            isDirectory: false
+        )
+        guard FileManager.default.fileExists(atPath: firstCiphertext.path) else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        let reportOnlyUntil = Date(timeIntervalSince1970: 1_900_000_000)
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: reportOnlyUntil,
+            validating: lifecycleToken
+        )
+        let terminal = try MomentSharingStateStore.load()
+        guard terminal.reportOnlyUntil == reportOnlyUntil,
+              terminal.outbox.isEmpty,
+              !FileManager.default.fileExists(atPath: firstCiphertext.path)
+        else { throw MomentSharingError.stateUnavailable }
+
+        let secondPayload = try MomentCrypto.prepare(
+            canonicalJPEG: Data(repeating: 0x43, count: 512),
+            capturedAt: nil,
+            pixelWidth: 32,
+            pixelHeight: 16,
+            context: MomentRequestContext(
+                spaceID: "space_runtime_fixture",
+                senderParticipantID: "member_runtime_fixture",
+                senderDeviceID: "member_runtime_fixture",
+                clientRequestID: UUID(),
+                clientMomentID: UUID(),
+                kind: .live,
+                keyEpoch: 1
+            ),
+            spaceGenerationKey: roomKey
+        )
+        do {
+            _ = try MomentSharingStateStore.enqueue(
+                payload: secondPayload,
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: Date(timeIntervalSince1970: 1_700_000_100),
+                validating: lifecycleToken
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case let .reportOnly(until) = error,
+                  until == reportOnlyUntil,
+                  try MomentSharingStateStore.load().outbox.isEmpty
+            else { throw MomentSharingError.stateUnavailable }
+        }
+    }
+
+    private static func testMomentEmptyCursorNormalization() throws {
+        guard try MomentChangeCursorPolicy.normalize("") == nil,
+              try MomentChangeCursorPolicy.normalize("0123456789abcdef0123456789abcdef")
+                == "0123456789abcdef0123456789abcdef"
+        else { throw MomentSharingError.stateUnavailable }
+        do {
+            _ = try MomentChangeCursorPolicy.normalize("not/a/cursor")
+            throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.invalidPayload {
+            // Expected: an invalid relay cursor must never be persisted.
+        }
+    }
+
+    private static func testMomentExpiredDeliveryPolicy() throws {
+        guard try MomentDeliveryActionPolicy.action(
+            changeType: .momentCommitted,
+            deliveryState: "pending"
+        ) == .download,
+        try MomentDeliveryActionPolicy.action(
+            changeType: .momentCommitted,
+            deliveryState: "expired"
+        ) == .revokeWithoutDownload,
+        try MomentDeliveryActionPolicy.action(
+            changeType: .deliveryRevoked,
+            deliveryState: "revoked"
+        ) == .revokeWithoutDownload
+        else { throw MomentSharingError.stateUnavailable }
+
+        let relayCommit = Date(timeIntervalSince1970: 1_700_000_060)
+        var skewedClockItem = try MomentInboxItem(
+            id: "moment_clock_skew_fixture",
+            senderParticipantID: "member_clock_skew_fixture",
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "moment_clock_skew_fixture.jpg",
+            capturedAt: nil,
+            captureDateIsMissing: true,
+            committedAt: relayCommit,
+            receivedAt: relayCommit.addingTimeInterval(-60),
+            state: .available,
+            accessExpiresAt: relayCommit.addingTimeInterval(3_600)
+        ).validated()
+        skewedClockItem.state = .revoked
+        _ = try skewedClockItem.validated()
+    }
+
+    private static func testMomentOutboxBoundsAndExpiry() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let roomKey = Data(repeating: 0x61, count: 32)
+        let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        func payload(index: Int) throws -> MomentPreparedPayload {
+            try MomentCrypto.prepare(
+                canonicalJPEG: Data(repeating: UInt8(0x30 + index), count: 512),
+                capturedAt: nil,
+                pixelWidth: 32,
+                pixelHeight: 16,
+                context: MomentRequestContext(
+                    spaceID: "space_outbox_fixture",
+                    senderParticipantID: "member_outbox_fixture",
+                    senderDeviceID: "member_outbox_fixture",
+                    clientRequestID: UUID(),
+                    clientMomentID: UUID(),
+                    kind: .live,
+                    keyEpoch: 1
+                ),
+                spaceGenerationKey: roomKey
+            )
+        }
+
+        for index in 0..<10 {
+            _ = try MomentSharingStateStore.enqueue(
+                payload: payload(index: index),
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+        }
+        do {
+            _ = try MomentSharingStateStore.enqueue(
+                payload: payload(index: 10),
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.outboxFull {
+            // Expected: offline use cannot grow a hidden unbounded queue.
+        }
+
+        let ambiguous = try MomentSharingStateStore.load().outbox[0]
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == ambiguous.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.outbox[index].serverMomentID = "moment_commit_fixture"
+            state.outbox[index].phase = .committing
+        }
+        try MomentSharingStateStore.discardPendingOutbox(validating: lifecycleToken)
+        let afterDiscard = try MomentSharingStateStore.load().outbox
+        guard afterDiscard.count == 1,
+              afterDiscard[0].id == ambiguous.id,
+              afterDiscard[0].phase == .committing
+        else {
+            throw MomentSharingError.stateUnavailable
+        }
+        try MomentSharingStateStore.removeCiphertext(for: afterDiscard[0])
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.outbox.removeAll()
+        }
+
+        let expiring = try MomentSharingStateStore.enqueue(
+            payload: payload(index: 11),
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: baseDate,
+            validating: lifecycleToken,
+            now: baseDate
+        )
+        try MomentSharingStateStore.pruneLocalHistory(
+            now: baseDate.addingTimeInterval(7 * 24 * 60 * 60 + 1)
+        )
+        guard let expired = try MomentSharingStateStore.load().outbox.first,
+              expired.id == expiring.id,
+              expired.phase == .failed,
+              let directory = SharedContainer.momentSharingCiphertextDirectoryURL,
+              !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(expired.ciphertextFileName).path
+              )
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testMomentReportOutboxBoundsAndRecovery() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        func prepared(index: Int) -> MomentPreparedReport {
+            let ciphertext = Data(repeating: UInt8(0x70 + index), count: 128)
+            return MomentPreparedReport(
+                ciphertext: ciphertext,
+                ciphertextSHA256: PairingCrypto.sha256(ciphertext),
+                moderationKeyID: "moderation-v1"
+            )
+        }
+
+        var first: MomentReportOutboxItem?
+        for index in 0..<10 {
+            let item = try MomentSharingStateStore.enqueueReport(
+                momentID: "moment_report_fixture_\(index)",
+                reason: .privacy,
+                prepared: prepared(index: index),
+                reporterConsentAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+            if index == 0 { first = item }
+        }
+        do {
+            _ = try MomentSharingStateStore.enqueueReport(
+                momentID: "moment_report_fixture_10",
+                reason: .privacy,
+                prepared: prepared(index: 10),
+                reporterConsentAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.outboxFull {
+            // Expected: moderation copies are bounded independently too.
+        }
+
+        guard let first else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.reportOutbox.firstIndex(where: { $0.id == first.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.reportOutbox[index].serverReportID = "report_reservation_fixture"
+            state.reportOutbox[index].phase = .reserved
+        }
+        guard try MomentSharingStateStore.recoverExpiredReportReservation(
+            itemID: first.id,
+            validating: lifecycleToken,
+            now: baseDate.addingTimeInterval(60)
+        ),
+        let recovered = try MomentSharingStateStore.load().reportOutbox.first(where: {
+            $0.id == first.id
+        }),
+        recovered.phase == .prepared,
+        recovered.serverReportID == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.reportOutbox.firstIndex(where: { $0.id == first.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.reportOutbox[index].serverReportID = "report_commit_fixture"
+            state.reportOutbox[index].phase = .committing
+        }
+        try MomentSharingStateStore.pruneLocalHistory(
+            now: baseDate.addingTimeInterval(24 * 60 * 60 + 1)
+        )
+        let retained = try MomentSharingStateStore.load().reportOutbox
+        guard retained.count == 1,
+              retained[0].id == first.id,
+              retained[0].phase == .committing,
+              let directory = SharedContainer.momentSharingCiphertextDirectoryURL,
+              FileManager.default.fileExists(
+                  atPath: directory.appendingPathComponent(first.ciphertextFileName).path
+              )
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func clearMomentSharingFixture() throws {
+        try SharingLifecycleGate.withExclusive {
+            for url in [
+                SharedContainer.momentSharingStateURL,
+                SharedContainer.momentSharingCiphertextDirectoryURL,
+                SharedContainer.momentSharingReceivedDirectoryURL
+            ].compactMap({ $0 }) where FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
         }
     }
 
