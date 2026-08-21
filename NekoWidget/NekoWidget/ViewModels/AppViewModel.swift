@@ -2162,10 +2162,12 @@ final class AppViewModel: ObservableObject {
     ) async {
         guard generation == scanGeneration else { return }
 
-        if pendingScanProgress?.generation == generation {
-            pendingScanProgress?.state = state
-            pendingScanProgress?.analyzedRecords.append(contentsOf: analyzedRecords)
-            pendingScanProgress?.eventCount = (pendingScanProgress?.eventCount ?? 0) + 1
+        if var pending = pendingScanProgress,
+           pending.generation == generation {
+            pending.state = state
+            pending.analyzedRecords.append(contentsOf: analyzedRecords)
+            pending.eventCount += 1
+            pendingScanProgress = pending
         } else {
             discardPendingScanProgress(generation: pendingScanProgress?.generation)
             pendingScanProgress = PendingScanProgress(
