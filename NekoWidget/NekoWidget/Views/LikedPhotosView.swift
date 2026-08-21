@@ -434,8 +434,9 @@ struct CuratedAlbumDetailView: View {
     }
 }
 
-/// An uncapped collection of photos the user chose with the paw. Capture years
-/// organize browsing; PDF export is an optional action on an explicit subset.
+/// An uncapped collection of photos the user deliberately kept with the paw.
+/// It stays one continuous, liked-at-ordered grid so it does not resemble the
+/// automatically organized albums in "思い出". PDF export is optional.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
@@ -471,25 +472,18 @@ struct LikedPhotosView: View {
                         exportSelectionCard
                     }
 
-                    ForEach(photoYearSections) { section in
-                        VStack(alignment: .leading, spacing: 9) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(section.title)
-                                    .font(.title3.bold())
-                                Spacer()
-                                Text("\(section.photos.count.formatted())枚")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
+                    VStack(alignment: .leading, spacing: 9) {
+                        Label("肉球を押した順", systemImage: "pawprint.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
 
-                            LazyVGrid(columns: photoColumns, spacing: 3) {
-                                ForEach(section.photos) { photo in
-                                    likedPhotoGridItem(photo)
-                                }
+                        LazyVGrid(columns: photoColumns, spacing: 3) {
+                            ForEach(photos) { photo in
+                                likedPhotoGridItem(photo)
                             }
-                            .padding(.horizontal, 3)
                         }
+                        .padding(.horizontal, 3)
                     }
                 }
             }
@@ -553,7 +547,7 @@ struct LikedPhotosView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("好きな写真は何枚でも残せます。必要なときに1〜30枚を選び、PDFとしてまとめられます。")
+            Text("肉球を押して自分で残した写真です。自動で整理する「思い出」とは別に、何枚でも残せます。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("photo-book-progress")
@@ -574,51 +568,6 @@ struct LikedPhotosView: View {
 
     private var photoColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
-    }
-
-    private var photosByCaptureDate: [PhotoPresentation] {
-        photos.sorted { first, second in
-            switch (first.creationDate, second.creationDate) {
-            case let (firstDate?, secondDate?) where firstDate != secondDate:
-                return firstDate > secondDate
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            default:
-                return first.localIdentifier < second.localIdentifier
-            }
-        }
-    }
-
-    private var photoYearSections: [LikedPhotoYearSection] {
-        var grouped: [Int: [PhotoPresentation]] = [:]
-        var undated: [PhotoPresentation] = []
-        for photo in photosByCaptureDate {
-            if let date = photo.creationDate {
-                let year = Calendar.current.component(.year, from: date)
-                grouped[year, default: []].append(photo)
-            } else {
-                undated.append(photo)
-            }
-        }
-        var sections = grouped.keys.sorted(by: >).map { year in
-            LikedPhotoYearSection(
-                id: "year-\(year)",
-                title: "\(year)年",
-                photos: grouped[year] ?? []
-            )
-        }
-        if !undated.isEmpty {
-            sections.append(
-                LikedPhotoYearSection(
-                    id: "undated",
-                    title: "撮影日不明",
-                    photos: undated
-                )
-            )
-        }
-        return sections
     }
 
     private var exportSelectionCard: some View {
@@ -720,24 +669,37 @@ struct LikedPhotosView: View {
                     .padding(7)
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            if !isSelectingForExport, let likedAt = photo.likedAt {
+                HStack(spacing: 3) {
+                    Image(systemName: "pawprint.fill")
+                    Text(likedAt.formatted(.dateTime.year().month().day()))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(.black.opacity(0.58), in: Capsule())
+                .padding(5)
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 
     private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
-        if let creationDate = photo.creationDate {
-            let date = creationDate.formatted(.dateTime.year().month().day())
-            return "\(date)に撮影した、これ好きの猫の写真"
+        if let likedAt = photo.likedAt {
+            let date = likedAt.formatted(.dateTime.year().month().day())
+            return "\(date)にこれ好きへ残した猫の写真"
         }
-        return "撮影日不明の、これ好きの猫の写真"
+        return "これ好きへ残した猫の写真"
     }
 
     private func startExportSelection() {
         isSelectingForExport = true
         selectedExportIdentifiers = Set(
             photos
-                .sorted {
-                    ($0.likedAt ?? .distantPast) > ($1.likedAt ?? .distantPast)
-                }
                 .prefix(PhotoBookPolicy.maximumPhotosPerExport)
                 .map(\.localIdentifier)
         )
@@ -791,12 +753,6 @@ struct LikedPhotosView: View {
         photoBookExportDirectory = nil
         photoBookExport = nil
     }
-}
-
-private struct LikedPhotoYearSection: Identifiable {
-    let id: String
-    let title: String
-    let photos: [PhotoPresentation]
 }
 
 private struct LikedPhotoBookExportFile: Identifiable {

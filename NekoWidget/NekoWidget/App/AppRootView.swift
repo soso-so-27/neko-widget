@@ -1001,11 +1001,13 @@ private final class PhotoPresentationCache: ObservableObject {
                 likedPhotos.append(presentation)
             }
         }
-        likedPhotos.sort {
-            if $0.likedAt == $1.likedAt {
-                return $0.localIdentifier < $1.localIdentifier
-            }
-            return ($0.likedAt ?? .distantPast) > ($1.likedAt ?? .distantPast)
+        likedPhotos.sort { first, second in
+            LikedPhotoOrderingPolicy.comesBefore(
+                firstIdentifier: first.localIdentifier,
+                firstLikedAt: first.likedAt,
+                secondIdentifier: second.localIdentifier,
+                secondLikedAt: second.likedAt
+            )
         }
         cachedProjection = Projection(
             libraryPhotos: libraryPhotos,

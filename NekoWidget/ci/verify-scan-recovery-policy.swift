@@ -284,6 +284,47 @@ private func verifyScanProgressPublicationPolicy() throws {
     )
 }
 
+private func verifyThumbnailCropAlwaysFillsTheFrame() throws {
+    let wide = PhotoThumbnailCropPolicy.cropRect(
+        aroundVisionRect: CGRect(x: 0.05, y: 0.2, width: 0.9, height: 0.4),
+        imagePixelSize: CGSize(width: 4_000, height: 2_000),
+        targetAspectRatio: 1
+    )
+    try require(wide != nil, "a wide cat union fell back to letterboxing")
+    try require(
+        abs((wide?.width ?? 0) - 0.5) < 0.000_001
+            && abs((wide?.height ?? 0) - 1) < 0.000_001,
+        "landscape cover crop stopped producing a square output"
+    )
+
+    let tall = PhotoThumbnailCropPolicy.cropRect(
+        aroundVisionRect: CGRect(x: 0.2, y: 0.05, width: 0.4, height: 0.9),
+        imagePixelSize: CGSize(width: 2_000, height: 4_000),
+        targetAspectRatio: 1
+    )
+    try require(tall != nil, "a tall cat union fell back to letterboxing")
+    try require(
+        abs((tall?.width ?? 0) - 1) < 0.000_001
+            && abs((tall?.height ?? 0) - 0.5) < 0.000_001,
+        "portrait cover crop stopped producing a square output"
+    )
+    for crop in [wide, tall].compactMap({ $0 }) {
+        try require(
+            crop.minX >= 0 && crop.minY >= 0
+                && crop.maxX <= 1 && crop.maxY <= 1,
+            "thumbnail crop escaped the PhotoKit unit rectangle"
+        )
+    }
+    try require(
+        PhotoThumbnailCropPolicy.cropRect(
+            aroundVisionRect: .zero,
+            imagePixelSize: .zero,
+            targetAspectRatio: 1
+        ) == nil,
+        "invalid thumbnail geometry was accepted"
+    )
+}
+
 private func requireObject(_ value: Any) throws -> [String: Any] {
     guard let object = value as? [String: Any] else {
         throw VerificationError.failed("encoded value was not a JSON object")
@@ -300,6 +341,7 @@ private struct ScanRecoveryPolicyVerifier {
         try verifyEvidenceAndStateBackwardCompatibility()
         try verifyRecoveryCounterAccounting()
         try verifyScanProgressPublicationPolicy()
+        try verifyThumbnailCropAlwaysFillsTheFrame()
         print("Scan recovery and eligibility policies: PASS")
     }
 }

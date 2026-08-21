@@ -188,3 +188,61 @@ enum ScanProgressPublicationPolicy {
         return value
     }
 }
+
+/// Produces a full-bleed display crop centred on the detected cat. Even when
+/// a wide union cannot fit wholly inside a square, it returns the best cover
+/// crop instead of introducing letterboxing into the thumbnail itself.
+enum PhotoThumbnailCropPolicy {
+    static func cropRect(
+        aroundVisionRect visionRect: CGRect,
+        imagePixelSize: CGSize,
+        targetAspectRatio: CGFloat
+    ) -> CGRect? {
+        guard imagePixelSize.width > 0,
+              imagePixelSize.height > 0,
+              targetAspectRatio > 0 else {
+            return nil
+        }
+
+        // Vision uses a bottom-left origin; PhotoKit uses top-left here.
+        let photoRect = CGRect(
+            x: visionRect.minX,
+            y: 1 - visionRect.maxY,
+            width: visionRect.width,
+            height: visionRect.height
+        )
+        let imageAspect = imagePixelSize.width / imagePixelSize.height
+
+        let cropWidth: CGFloat
+        let cropHeight: CGFloat
+        if imageAspect > targetAspectRatio {
+            cropWidth = targetAspectRatio / imageAspect
+            cropHeight = 1
+        } else {
+            cropWidth = 1
+            cropHeight = imageAspect / targetAspectRatio
+        }
+
+        let horizontalMargin = visionRect.width * 0.12
+        let verticalMargin = visionRect.height * 0.12
+        let paddedPhotoRect = photoRect.insetBy(
+            dx: -horizontalMargin,
+            dy: -verticalMargin
+        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !paddedPhotoRect.isNull,
+              !paddedPhotoRect.isEmpty,
+              paddedPhotoRect.midX.isFinite,
+              paddedPhotoRect.midY.isFinite else {
+            return nil
+        }
+
+        let preferredX = paddedPhotoRect.midX - cropWidth / 2
+        let preferredY = paddedPhotoRect.midY - cropHeight / 2
+        return CGRect(
+            x: min(max(preferredX, 0), 1 - cropWidth),
+            y: min(max(preferredY, 0), 1 - cropHeight),
+            width: cropWidth,
+            height: cropHeight
+        )
+    }
+}

@@ -43,6 +43,28 @@ enum PhotoBookPolicy {
     }
 }
 
+/// "これ好き" is a manual collection, so its primary order follows the
+/// user's paw actions rather than the photo's capture year or album grouping.
+enum LikedPhotoOrderingPolicy {
+    static func comesBefore(
+        firstIdentifier: String,
+        firstLikedAt: Date?,
+        secondIdentifier: String,
+        secondLikedAt: Date?
+    ) -> Bool {
+        switch (firstLikedAt, secondLikedAt) {
+        case let (firstDate?, secondDate?) where firstDate != secondDate:
+            return firstDate > secondDate
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            return firstIdentifier < secondIdentifier
+        }
+    }
+}
+
 struct PhotoBookPhotoCandidate: Equatable, Sendable {
     var localIdentifier: String
     var creationDate: Date?

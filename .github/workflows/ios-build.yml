@@ -252,17 +252,37 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'Label("写真を選んでまとめる"' \
             NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'Label("肉球を押した順", systemImage: "pawprint.fill")' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
+            NekoWidget/App/AppRootView.swift
+          grep -Fq 'にこれ好きへ残した猫の写真' \
+            NekoWidget/Views/LikedPhotosView.swift
+          if grep -Eq 'photoYearSections|LikedPhotoYearSection' \
+            NekoWidget/Views/LikedPhotosView.swift; then
+            echo "これ好き must remain one liked-at-ordered collection" >&2
+            exit 1
+          fi
           grep -Fq '"pager": "bounded-native-paging"' \
             NekoWidget/Views/LikedPhotosView.swift
           if grep -Fq 'LazyHStack(' NekoWidget/Views/LikedPhotosView.swift; then
             echo "The photo browser must keep a bounded page window" >&2
             exit 1
           fi
-          grep -Fq 'options.deliveryMode = showsFullImage ? .opportunistic : .fastFormat' \
+          grep -Fq 'options.deliveryMode = .opportunistic' \
             NekoWidget/Views/PhotoAssetImageView.swift
+          grep -Fq 'if !showsFullImage, !degraded {' \
+            NekoWidget/Views/PhotoAssetImageView.swift
+          grep -Fq 'PhotoThumbnailCropPolicy.cropRect(' \
+            NekoWidget/Views/PhotoAssetImageView.swift
+          grep -Fq 'verifyThumbnailCropAlwaysFillsTheFrame()' \
+            ci/verify-scan-recovery-policy.swift
+          if grep -Eq 'fastFormat|PhotoAssetThumbnailComposer' \
+            NekoWidget/Views/PhotoAssetImageView.swift; then
+            echo "Grid previews must upgrade to an uncached final thumbnail without letterboxing" >&2
+            exit 1
+          fi
           grep -Fq 'private actor PhotoAssetResolver' \
-            NekoWidget/Views/PhotoAssetImageView.swift
-          grep -Fq 'PhotoAssetThumbnailComposer.composeWideThumbnail' \
             NekoWidget/Views/PhotoAssetImageView.swift
           if grep -Fq 'withAnimation(' NekoWidget/Views/PhotoAssetImageView.swift; then
             echo "Grid thumbnail callbacks must not animate every PhotoKit delivery" >&2

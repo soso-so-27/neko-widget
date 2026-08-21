@@ -99,10 +99,10 @@ struct PhotoAssetImageView: View {
                         .resizable()
                         .scaledToFit()
                 } else {
-                    // Grid cells are deliberately one full-bleed layer. The
-                    // previous ambient-background fallback drew the same image
-                    // twice and caused visible scroll hitches on large lists.
-                    // The full photo remains available in the detail browser.
+                    // Every thumbnail fills its fixed frame. If a cat union is
+                    // wider than the frame, the best centred crop is preferred
+                    // over letterboxing; the detail browser still shows all of
+                    // the original photo.
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
@@ -285,6 +285,8 @@ private final class PhotoAssetImageLoader: ObservableObject {
 
     private var requestID: PHImageRequestID?
     private var loadGeneration = 0
+    private var finalImageGeneration: Int?
+    private var displayedImageGeneration: Int?
 
     func load(
         localIdentifier: String,
@@ -322,15 +324,17 @@ private final class PhotoAssetImageLoader: ObservableObject {
         guard loadGeneration == generation, !Task.isCancelled else { return }
 
         let options = PHImageRequestOptions()
-        options.deliveryMode = showsFullImage ? .opportunistic : .fastFormat
+        // Opportunistic delivery gives the grid a quick preview followed by a
+        // display-sized final image. A degraded preview is never cached as the
+        // terminal thumbnail, which previously made Build 24 remain blurry.
+        options.deliveryMode = .opportunistic
         options.isNetworkAccessAllowed = networkAccessAllowed
         options.version = .current
-        var requestedContentMode: PHImageContentMode = showsFullImage ? .aspectFit : .aspectFill
-        var composesWideFallback = false
+        let requestedContentMode: PHImageContentMode = showsFullImage ? .aspectFit : .aspectFill
         if showsFullImage {
             options.resizeMode = .fast
         } else if let catBoundingBox {
-            if let cropRect = Self.cropRect(
+            if let cropRect = PhotoThumbnailCropPolicy.cropRect(
                 aroundVisionRect: catBoundingBox,
                 imagePixelSize: CGSize(width: asset.pixelWidth, height: asset.pixelHeight),
                 targetAspectRatio: targetAspectRatio
@@ -338,13 +342,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
                 options.normalizedCropRect = cropRect
                 options.resizeMode = .exact
             } else {
-                // A wide union (often multiple cats) cannot fit a cat-centred
-                // crop without cutting one animal off. Request the full image,
-                // then flatten an ambient fill and the uncropped foreground
-                // into one cached bitmap. Scrolling still renders one layer.
-                requestedContentMode = .aspectFit
                 options.resizeMode = .fast
-                composesWideFallback = true
             }
         } else {
             options.resizeMode = .fast
@@ -364,30 +362,23 @@ private final class PhotoAssetImageLoader: ObservableObject {
                       self.loadGeneration == generation,
                       !cancelled else { return }
                 if let image {
-                    let displayImage: UIImage
-                    if composesWideFallback {
-                        let source = SendablePhotoImage(value: image)
-                        let rendered = await Task.detached(priority: .utility) {
-                            SendablePhotoImage(
-                                value: PhotoAssetThumbnailComposer.composeWideThumbnail(
-                                    source.value,
-                                    targetPixelSize: targetPixelSize
-                                )
-                            )
-                        }.value
-                        displayImage = rendered.value
-                    } else {
-                        displayImage = image
+                    if degraded, self.finalImageGeneration == generation {
+                        return
+                    }
+                    if !degraded {
+                        self.finalImageGeneration = generation
                     }
                     guard self.loadGeneration == generation else { return }
-                    if !showsFullImage {
+                    self.displayedImageGeneration = generation
+                    if !showsFullImage, !degraded {
                         PhotoAssetDisplayCache.shared.storeThumbnail(
-                            displayImage,
+                            image,
                             for: loadKey
                         )
                     }
-                    self.state = .loaded(displayImage)
-                } else if error != nil || !degraded {
+                    self.state = .loaded(image)
+                } else if (error != nil || !degraded),
+                          self.displayedImageGeneration != generation {
                     self.state = .failed
                 }
             }
@@ -400,137 +391,9 @@ private final class PhotoAssetImageLoader: ObservableObject {
             PhotoAssetImagePipeline.manager.cancelImageRequest(requestID)
         }
         requestID = nil
+        finalImageGeneration = nil
+        displayedImageGeneration = nil
         state = .loading
-    }
-
-    private static func cropRect(
-        aroundVisionRect visionRect: CGRect,
-        imagePixelSize: CGSize,
-        targetAspectRatio: CGFloat
-    ) -> CGRect? {
-        guard imagePixelSize.width > 0,
-              imagePixelSize.height > 0,
-              targetAspectRatio > 0 else {
-            return nil
-        }
-
-        // Vision uses a bottom-left origin; PhotoKit's normalizedCropRect uses top-left.
-        let photoRect = CGRect(
-            x: visionRect.minX,
-            y: 1 - visionRect.maxY,
-            width: visionRect.width,
-            height: visionRect.height
-        )
-        let imageAspect = imagePixelSize.width / imagePixelSize.height
-
-        let cropWidth: CGFloat
-        let cropHeight: CGFloat
-        if imageAspect > targetAspectRatio {
-            cropWidth = targetAspectRatio / imageAspect
-            cropHeight = 1
-        } else {
-            cropWidth = 1
-            cropHeight = imageAspect / targetAspectRatio
-        }
-
-        let horizontalMargin = visionRect.width * 0.12
-        let verticalMargin = visionRect.height * 0.12
-        let paddedPhotoRect = photoRect.insetBy(
-            dx: -horizontalMargin,
-            dy: -verticalMargin
-        ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !paddedPhotoRect.isNull,
-              !paddedPhotoRect.isEmpty,
-              paddedPhotoRect.midX.isFinite,
-              paddedPhotoRect.midY.isFinite,
-              paddedPhotoRect.width <= cropWidth,
-              paddedPhotoRect.height <= cropHeight else {
-            return nil
-        }
-
-        let preferredX = paddedPhotoRect.midX - cropWidth / 2
-        let preferredY = paddedPhotoRect.midY - cropHeight / 2
-        return CGRect(
-            x: min(max(preferredX, 0), 1 - cropWidth),
-            y: min(max(preferredY, 0), 1 - cropHeight),
-            width: cropWidth,
-            height: cropHeight
-        )
-    }
-}
-
-private struct SendablePhotoImage: @unchecked Sendable {
-    let value: UIImage
-}
-
-private enum PhotoAssetThumbnailComposer {
-    static func composeWideThumbnail(
-        _ image: UIImage,
-        targetPixelSize: CGSize
-    ) -> UIImage {
-        guard image.size.width > 0,
-              image.size.height > 0,
-              targetPixelSize.width.isFinite,
-              targetPixelSize.height.isFinite,
-              targetPixelSize.width > 0,
-              targetPixelSize.height > 0 else {
-            return image
-        }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let bounds = CGRect(origin: .zero, size: targetPixelSize)
-        return UIGraphicsImageRenderer(
-            size: targetPixelSize,
-            format: format
-        ).image { _ in
-            UIColor.black.setFill()
-            UIRectFill(bounds)
-            image.draw(
-                in: aspectFillRect(imageSize: image.size, inside: bounds),
-                blendMode: .normal,
-                alpha: 0.48
-            )
-            UIColor.black.withAlphaComponent(0.22).setFill()
-            UIRectFill(bounds)
-            image.draw(in: aspectFitRect(imageSize: image.size, inside: bounds))
-        }
-    }
-
-    private static func aspectFitRect(
-        imageSize: CGSize,
-        inside bounds: CGRect
-    ) -> CGRect {
-        scaledRect(imageSize: imageSize, inside: bounds, useMaximumScale: false)
-    }
-
-    private static func aspectFillRect(
-        imageSize: CGSize,
-        inside bounds: CGRect
-    ) -> CGRect {
-        scaledRect(imageSize: imageSize, inside: bounds, useMaximumScale: true)
-    }
-
-    private static func scaledRect(
-        imageSize: CGSize,
-        inside bounds: CGRect,
-        useMaximumScale: Bool
-    ) -> CGRect {
-        let widthScale = bounds.width / imageSize.width
-        let heightScale = bounds.height / imageSize.height
-        let scale = useMaximumScale
-            ? max(widthScale, heightScale)
-            : min(widthScale, heightScale)
-        let size = CGSize(
-            width: imageSize.width * scale,
-            height: imageSize.height * scale
-        )
-        return CGRect(
-            x: bounds.midX - size.width / 2,
-            y: bounds.midY - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
     }
 
 }

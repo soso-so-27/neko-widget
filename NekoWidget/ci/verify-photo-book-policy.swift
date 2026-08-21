@@ -103,12 +103,38 @@ private func verifyExplicitSelectionCanUseAnyLikedPhoto() throws {
     )
 }
 
+private func verifyLikedCollectionUsesPawOrder() throws {
+    let values: [(identifier: String, likedAt: Date?)] = [
+        ("nil-z", nil),
+        ("older", Date(timeIntervalSince1970: 100)),
+        ("newer", Date(timeIntervalSince1970: 300)),
+        ("same-b", Date(timeIntervalSince1970: 200)),
+        ("same-a", Date(timeIntervalSince1970: 200)),
+        ("nil-a", nil)
+    ]
+    let ordered = values.sorted { first, second in
+        LikedPhotoOrderingPolicy.comesBefore(
+            firstIdentifier: first.identifier,
+            firstLikedAt: first.likedAt,
+            secondIdentifier: second.identifier,
+            secondLikedAt: second.likedAt
+        )
+    }
+    try require(
+        ordered.map(\.identifier) == [
+            "newer", "same-a", "same-b", "older", "nil-a", "nil-z"
+        ],
+        "これ好き stopped following stable paw-action order"
+    )
+}
+
 @main
 private enum PhotoBookPolicyVerifier {
     static func main() throws {
         try verifySelectionBoundary()
         try verifyLikedOnlyOldestFirstSelection()
         try verifyExplicitSelectionCanUseAnyLikedPhoto()
+        try verifyLikedCollectionUsesPawOrder()
         print("Photo-book policy: PASS")
     }
 }
