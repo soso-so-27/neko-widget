@@ -395,8 +395,8 @@ struct SettingsView: View {
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("猫の見分けを10枚で計測")
-                                Text("2匹×5枚・所属は変更しません")
+                                Text("猫の見分けを40枚で計測")
+                                Text("各猫20枚・学習5＋評価15")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -411,7 +411,7 @@ struct SettingsView: View {
                     Text("実験")
                 } footer: {
                     Text(
-                        "FeaturePrintと色を同じbboxで比較します。結果が固定基準を通るまで、個体推定の製品UIは有効にしません。"
+                        "FeaturePrintと色を同じbboxで比較します。評価30枚の正解率と判定率を分けて測り、所属は変更しません。"
                     )
                 }
             }

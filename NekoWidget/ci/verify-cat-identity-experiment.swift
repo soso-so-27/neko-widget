@@ -9,298 +9,386 @@ import Foundation
 
 @main
 enum CatIdentityExperimentVerifier {
-    static func main() throws {
-        try verifiesFixedThresholdsAndFeaturePrintDecision()
-        try verifiesHistogramFallback()
-        try verifiesColorGateFailsClosed()
-        try verifiesLowMarginBecomesUnknown()
-        try verifiesCandidateCannotUseReferenceFromSameEpisode()
-        try verifiesInstanceCoverageCannotBeHiddenByEpisodeCoverage()
-        try verifiesSameProfileMultiBoxCollisionBecomesUnknown()
-        try verifiesDuplicateEpisodeReferencesAreRejected()
-        try verifiesMissingReferenceFeatureFailsOnlyThatMethod()
-        try verifiesAggregateExportContainsNoInputIdentityData()
-        print("Cat identity experiment verifier passed")
+    private enum EvaluationOutcome {
+        case correct
+        case wrong
+        case unknown
+        case unavailable
     }
 
-    private static func verifiesFixedThresholdsAndFeaturePrintDecision() throws {
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: separatedMatrix(),
-            histogramMatrix: separatedMatrix(),
-            candidates: confidentCandidates()
+    static func main() throws {
+        try verifiesExactDecisionUsesHeldOutSetNotCandidates()
+        try verifiesHistogramFallbackOnlyAfterExactCoverageFailure()
+        try verifiesHistogramCannotRescueLowExactPrecision()
+        try verifiesRawCountPrecisionBoundary()
+        try verifiesBoundaryConfusionAndLocalWrongDetail()
+        try verifiesColorGateFailsClosed()
+        try verifiesAllFortyEpisodesMustBeIndependent()
+        try verifiesDuplicateEvaluationOrdinalIsRejected()
+        try verifiesMethodEvaluationSamplesMustMatch()
+        try verifiesInvalidEvaluationDistancesAreRejected()
+        try verifiesAggregateExportExcludesLocalDetail()
+        print("Cat identity held-out experiment verifier passed")
+    }
+
+    private static func verifiesExactDecisionUsesHeldOutSetNotCandidates()
+        throws {
+        let result = try evaluate(
+            exactOutcomes: perfectOutcomes(),
+            histogramOutcomes: perfectOutcomes(),
+            candidates: []
         )
+        let report = result.report
         try require(
             report.thresholds.maximumRadiusMultiplier == 1.25
                 && report.thresholds.maximumBestToRunnerUpRatio == 0.70
                 && report.thresholds.minimumColorSeparationRatio == 1.50
-                && report.thresholds.minimumCandidateCoverage == 0.50
-                && report.thresholds.minimumCandidateEpisodeCoverage == 0.50,
-            "fixed v1 thresholds changed"
+                && report.thresholds.minimumEvaluationPrecision == 0.95
+                && report.thresholds.minimumEvaluationCoverage == 0.70,
+            "fixed held-out thresholds changed"
+        )
+        try require(
+            report.input.referenceCount == 10
+                && report.input.evaluationCount == 30
+                && report.input.totalIndependentEpisodeCount == 40
+                && report.input.minimumTrainingEpisodesPerProfile == 5
+                && report.input.minimumEvaluationEpisodesPerProfile == 15,
+            "the 10-training/30-evaluation split changed"
         )
         try require(report.colorEligibilityGatePassed, "color gate did not pass")
         try require(
             report.decision == .featurePrintExact
                 && report.selectedMethod == .featurePrintExact,
-            "exact bbox FeaturePrint was not preferred"
+            "exact bbox FeaturePrint was not selected"
         )
+
         let exact = try method(.featurePrintExact, in: report)
         try require(
-            exact.loo.trialCount == 10
-                && exact.loo.top1CorrectCount == 10
-                && exact.loo.assignedCount == 10
-                && exact.loo.wrongAssignedCount == 0,
-            "separated LOO references did not pass"
+            exact.evaluation.trialCount == 30
+                && exact.evaluation.assignedCount == 30
+                && exact.evaluation.correctAssignedCount == 30
+                && exact.evaluation.wrongAssignedCount == 0
+                && exact.evaluation.unknownCount == 0
+                && exact.evaluation.precision == 1
+                && exact.evaluation.coverage == 1,
+            "perfect held-out evaluation was counted incorrectly"
         )
         try require(
-            exact.loo.profiles.count == 2
-                && exact.loo.profiles.allSatisfy {
-                    $0.trialCount == 5
-                        && $0.top1CorrectCount == 5
-                        && $0.correctAssignedCount == 5
-                        && $0.wrongAssignedCount == 0
-                        && $0.unknownCount == 0
-                }
-                && exact.loo.profiles[0].assignedToProfileCounts == [5, 0]
-                && exact.loo.profiles[1].assignedToProfileCounts == [0, 5],
-            "per-profile confusion summary changed"
+            exact.evaluation.profiles.count == 2
+                && exact.evaluation.profiles[0].assignedToProfileCounts == [15, 0]
+                && exact.evaluation.profiles[1].assignedToProfileCounts == [0, 15],
+            "held-out profile confusion rows changed"
         )
         try require(
-            exact.distanceSummary.sameProfilePairCount == 20
-                && exact.distanceSummary.differentProfilePairCount == 25
-                && exact.distanceSummary.sameProfileMedian != nil
-                && exact.distanceSummary.sameProfileP90 != nil
-                && exact.distanceSummary.differentProfileP10 != nil
-                && exact.distanceSummary.differentProfileMedian != nil,
-            "aggregate reference distance summary disappeared"
+            exact.candidates.candidateCount == 0
+                && exact.candidates.coverage == 0
+                && exact.candidates.episodeCoverage == 0
+                && exact.passesEvaluationGate
+                && exact.passesPerformanceGate,
+            "unlabeled candidate coverage affected the decision gate"
         )
         try require(
-            exact.candidates.candidateCount == 4
-                && exact.candidates.assignedCount == 4
-                && exact.candidates.episodeCoverage == 1,
-            "confident unlabeled candidates were not covered"
+            result.localDetail.wrongEvaluationOrdinalsByMethod.values
+                .allSatisfy(\.isEmpty),
+            "perfect evaluation emitted local wrong-photo detail"
         )
     }
 
-    private static func verifiesHistogramFallback() throws {
-        let report = try evaluate(
-            expandedMatrix: tiedMatrix(),
-            exactMatrix: tiedMatrix(),
-            histogramMatrix: separatedMatrix(),
-            candidates: confidentCandidates()
+    private static func verifiesHistogramFallbackOnlyAfterExactCoverageFailure()
+        throws {
+        var exact = perfectOutcomes()
+        for index in 10...14 { exact[index] = .unavailable }
+        for index in 25...29 { exact[index] = .unavailable }
+        let result = try evaluate(
+            exactOutcomes: exact,
+            histogramOutcomes: perfectOutcomes()
+        )
+        let exactReport = try method(.featurePrintExact, in: result.report)
+        try require(
+            exactReport.evaluation.precision == 1
+                && approximately(
+                    exactReport.evaluation.coverage,
+                    Double(20) / Double(30)
+                )
+                && exactReport.evaluation.unknownCount == 10
+                && exactReport.evaluation.trialCount == 30
+                && !exactReport.passesEvaluationGate,
+            "unavailable features did not remain unknown in the 30-photo denominator"
         )
         try require(
-            report.decision == .histogramOnly
-                && report.selectedMethod == .hsvHistogramExact,
-            "histogram did not become the only fallback after FeaturePrint failed"
+            result.report.decision == .histogramOnly
+                && result.report.selectedMethod == .hsvHistogramExact,
+            "histogram was not used after precise-but-low-coverage exact FP"
+        )
+    }
+
+    private static func verifiesHistogramCannotRescueLowExactPrecision() throws {
+        let exact = perProfileOutcomes(
+            first: (correct: 14, wrong: 1, unknown: 0),
+            second: (correct: 14, wrong: 1, unknown: 0)
+        )
+        let result = try evaluate(
+            expandedOutcomes: perfectOutcomes(),
+            exactOutcomes: exact,
+            histogramOutcomes: perfectOutcomes()
+        )
+        let exactReport = try method(.featurePrintExact, in: result.report)
+        try require(
+            approximately(exactReport.evaluation.precision, Double(28) / 30)
+                && exactReport.evaluation.coverage == 1,
+            "low exact-FeaturePrint precision was counted incorrectly"
+        )
+        try require(
+            result.report.decision == .noGo
+                && result.report.selectedMethod == nil,
+            "histogram or expanded10 incorrectly rescued low exact-FP precision"
+        )
+    }
+
+    private static func verifiesRawCountPrecisionBoundary() throws {
+        let below = try evaluate(
+            exactOutcomes: aggregateOutcomes(
+                correct: 18,
+                wrong: 1,
+                unknown: 11
+            ),
+            histogramOutcomes: perfectOutcomes()
+        )
+        let belowExact = try method(.featurePrintExact, in: below.report)
+        try require(
+            belowExact.evaluation.correctAssignedCount == 18
+                && belowExact.evaluation.assignedCount == 19
+                && below.report.decision == .noGo,
+            "18/19 incorrectly passed the raw 95-percent precision gate"
+        )
+
+        let boundary = try evaluate(
+            exactOutcomes: aggregateOutcomes(
+                correct: 19,
+                wrong: 1,
+                unknown: 10
+            ),
+            histogramOutcomes: perfectOutcomes()
+        )
+        let boundaryExact = try method(.featurePrintExact, in: boundary.report)
+        try require(
+            boundaryExact.evaluation.correctAssignedCount == 19
+                && boundaryExact.evaluation.assignedCount == 20
+                && boundaryExact.evaluation.precision == 0.95
+                && !boundaryExact.passesEvaluationGate
+                && boundary.report.decision == .histogramOnly,
+            "19/20 did not pass precision before the 20/30 coverage fallback"
+        )
+    }
+
+    private static func verifiesBoundaryConfusionAndLocalWrongDetail() throws {
+        var exact = perfectOutcomes()
+        exact[17] = .wrong
+        for index in 20...28 { exact[index] = .unknown }
+        let result = try evaluate(
+            exactOutcomes: exact,
+            histogramOutcomes: perfectOutcomes()
+        )
+        let report = try method(.featurePrintExact, in: result.report)
+        try require(
+            report.evaluation.assignedCount == 21
+                && report.evaluation.correctAssignedCount == 20
+                && report.evaluation.wrongAssignedCount == 1
+                && report.evaluation.unknownCount == 9
+                && approximately(
+                    report.evaluation.precision,
+                    Double(20) / Double(21)
+                )
+                && approximately(report.evaluation.coverage, 0.70),
+            "the overall 95%-precision/70%-coverage boundary was miscounted"
+        )
+        try require(
+            result.report.decision == .featurePrintExact
+                && report.passesEvaluationGate,
+            "a method on the fixed overall boundary did not pass"
+        )
+        try require(
+            report.evaluation.profiles[0].assignedToProfileCounts == [15, 0]
+                && report.evaluation.profiles[0].correctAssignedCount == 15
+                && report.evaluation.profiles[0].wrongAssignedCount == 0
+                && report.evaluation.profiles[0].unknownCount == 0
+                && report.evaluation.profiles[1].assignedToProfileCounts == [1, 5]
+                && report.evaluation.profiles[1].correctAssignedCount == 5
+                && report.evaluation.profiles[1].wrongAssignedCount == 1
+                && report.evaluation.profiles[1].unknownCount == 9,
+            "per-profile held-out confusion detail changed"
+        )
+        try require(
+            result.localDetail.wrongEvaluationOrdinalsByMethod[
+                .featurePrintExact
+            ] == [evaluationOrdinal(for: 17)],
+            "wrong held-out ordinal was not returned as local-only detail"
         )
     }
 
     private static func verifiesColorGateFailsClosed() throws {
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: separatedMatrix(),
-            histogramMatrix: weaklySeparatedMatrix(),
-            candidates: confidentCandidates()
+        let result = try evaluate(
+            exactOutcomes: perfectOutcomes(),
+            histogramOutcomes: perfectOutcomes(),
+            histogramMatrix: weaklySeparatedMatrix()
         )
-        try require(!report.colorEligibilityGatePassed, "weak colors passed")
+        try require(!result.report.colorEligibilityGatePassed, "weak colors passed")
         try require(
-            report.decision == .noGo && report.selectedMethod == nil,
+            result.report.decision == .noGo
+                && result.report.selectedMethod == nil
+                && result.report.reasonCodes.contains(.colorGateFailed),
             "a classifier escaped the household color gate"
         )
-        try require(
-            report.reasonCodes.contains(.colorGateFailed),
-            "color gate failure reason disappeared"
-        )
     }
 
-    private static func verifiesLowMarginBecomesUnknown() throws {
-        let lowMargin = candidate(
-            ordinal: 0,
-            asset: 0,
-            episode: 100,
-            profileZeroDistance: 0.40,
-            profileOneDistance: 0.50
-        )
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: separatedMatrix(),
-            histogramMatrix: separatedMatrix(),
-            candidates: [lowMargin]
-        )
-        let exact = try method(.featurePrintExact, in: report)
-        try require(
-            exact.candidates.assignedCount == 0
-                && exact.candidates.unknownCount == 1,
-            "a low-margin candidate was assigned"
-        )
-    }
-
-    private static func verifiesInstanceCoverageCannotBeHiddenByEpisodeCoverage()
-        throws {
-        let candidates = [
-            candidate(
-                ordinal: 0,
-                asset: 0,
-                episode: 100,
-                profileZeroDistance: 0.10,
-                profileOneDistance: 1.0
-            ),
-            candidate(
-                ordinal: 1,
-                asset: 1,
-                episode: 100,
-                profileZeroDistance: 0.40,
-                profileOneDistance: 0.50
-            ),
-            candidate(
-                ordinal: 2,
-                asset: 2,
-                episode: 100,
-                profileZeroDistance: 0.50,
-                profileOneDistance: 0.40
-            )
-        ]
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: separatedMatrix(),
-            histogramMatrix: separatedMatrix(),
-            candidates: candidates
-        )
-        let exact = try method(.featurePrintExact, in: report)
-        try require(
-            exact.candidates.coverage < 0.50
-                && exact.candidates.episodeCoverage == 1
-                && !exact.passesCandidateCoverageGate
-                && report.decision == .noGo,
-            "one assigned item hid low instance coverage inside an episode"
-        )
-    }
-
-    private static func verifiesCandidateCannotUseReferenceFromSameEpisode()
-        throws {
-        let candidate = CatIdentityExperimentCandidateDistances(
-            sample: CatIdentityExperimentCandidateSample(
-                ordinal: 0,
-                assetIndex: 20,
-                episodeIndex: 0
-            ),
-            distancesToReferences: [
-                0.01, 0.12, 0.13, 0.50, 0.50,
-                1.00, 1.00, 1.00, 1.00, 1.00
-            ],
-            featureIsAvailable: true
-        )
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: separatedMatrix(),
-            histogramMatrix: separatedMatrix(),
-            candidates: [candidate]
-        )
-        let exact = try method(.featurePrintExact, in: report)
-        try require(
-            exact.candidates.assignedCount == 0
-                && exact.candidates.unknownCount == 1,
-            "a candidate reused a reference from the same capture episode"
-        )
-    }
-
-    private static func verifiesSameProfileMultiBoxCollisionBecomesUnknown()
-        throws {
-        let candidates = [
-            candidate(
-                ordinal: 0,
-                asset: 9,
-                episode: 100,
-                profileZeroDistance: 0.08,
-                profileOneDistance: 1.0
-            ),
-            candidate(
-                ordinal: 1,
-                asset: 9,
-                episode: 100,
-                profileZeroDistance: 0.08,
-                profileOneDistance: 1.0
-            ),
-            candidate(
-                ordinal: 2,
-                asset: 10,
-                episode: 101,
-                profileZeroDistance: 1.0,
-                profileOneDistance: 0.08
-            )
-        ]
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: separatedMatrix(),
-            histogramMatrix: separatedMatrix(),
-            candidates: candidates
-        )
-        let exact = try method(.featurePrintExact, in: report)
-        try require(
-            exact.candidates.collisionAssetCount == 1
-                && exact.candidates.assignedCount == 1
-                && exact.candidates.unknownCount == 2,
-            "two boxes were assigned the same profile in one photo"
-        )
-    }
-
-    private static func verifiesDuplicateEpisodeReferencesAreRejected() throws {
-        var references = standardReferences()
-        references[1] = CatIdentityExperimentReferenceSample(
-            ordinal: references[1].ordinal,
-            profileIndex: references[1].profileIndex,
+    private static func verifiesAllFortyEpisodesMustBeIndependent() throws {
+        let references = standardReferences()
+        var evaluations = standardEvaluations()
+        evaluations[0] = CatIdentityExperimentEvaluationSample(
+            ordinal: evaluations[0].ordinal,
+            profileIndex: evaluations[0].profileIndex,
             episodeIndex: references[0].episodeIndex
         )
         do {
             _ = try CatIdentityExperimentEvaluator.evaluate(
                 references: references,
+                evaluations: evaluations,
                 methods: methodInputs(
+                    evaluations: evaluations,
                     expandedMatrix: separatedMatrix(),
                     exactMatrix: separatedMatrix(),
                     histogramMatrix: separatedMatrix(),
-                    candidates: confidentCandidates()
+                    expandedOutcomes: perfectOutcomes(),
+                    exactOutcomes: perfectOutcomes(),
+                    histogramOutcomes: perfectOutcomes(),
+                    candidates: []
                 )
             )
-            throw VerificationError("duplicate episode references were accepted")
-        } catch CatIdentityExperimentCoreError.invalidReferenceSet {
-            // Expected: five photos from one burst are not five observations.
+            throw VerificationError("training/evaluation episode overlap passed")
+        } catch CatIdentityExperimentCoreError.invalidEvaluationSet {
+            // Expected: all 40 photos represent independent capture episodes.
         }
     }
 
-    private static func verifiesMissingReferenceFeatureFailsOnlyThatMethod()
-        throws {
-        var unavailable = separatedMatrix()
-        for index in unavailable.indices {
-            unavailable[0][index] = nil
-            unavailable[index][0] = nil
+    private static func verifiesDuplicateEvaluationOrdinalIsRejected() throws {
+        let references = standardReferences()
+        var evaluations = standardEvaluations()
+        evaluations[1] = CatIdentityExperimentEvaluationSample(
+            ordinal: evaluations[0].ordinal,
+            profileIndex: evaluations[1].profileIndex,
+            episodeIndex: evaluations[1].episodeIndex
+        )
+        do {
+            _ = try CatIdentityExperimentEvaluator.evaluate(
+                references: references,
+                evaluations: evaluations,
+                methods: methodInputs(
+                    evaluations: evaluations,
+                    expandedMatrix: separatedMatrix(),
+                    exactMatrix: separatedMatrix(),
+                    histogramMatrix: separatedMatrix(),
+                    expandedOutcomes: perfectOutcomes(),
+                    exactOutcomes: perfectOutcomes(),
+                    histogramOutcomes: perfectOutcomes(),
+                    candidates: []
+                )
+            )
+            throw VerificationError("duplicate evaluation ordinal passed")
+        } catch CatIdentityExperimentCoreError.duplicateEvaluationOrdinal {
+            // Expected.
         }
-        let report = try evaluate(
-            expandedMatrix: separatedMatrix(),
-            exactMatrix: unavailable,
-            histogramMatrix: separatedMatrix(),
-            candidates: confidentCandidates()
-        )
-        let exact = try method(.featurePrintExact, in: report)
-        try require(
-            exact.referenceFeatureUnavailableCount == 1
-                && !exact.passesPerformanceGate,
-            "one unavailable reference was counted incorrectly"
-        )
-        try require(
-            report.decision == .histogramOnly,
-            "an unavailable FeaturePrint prevented the safe histogram fallback"
-        )
     }
 
-    private static func verifiesAggregateExportContainsNoInputIdentityData()
-        throws {
-        let report = try evaluate(
+    private static func verifiesMethodEvaluationSamplesMustMatch() throws {
+        let references = standardReferences()
+        let evaluations = standardEvaluations()
+        var inputs = methodInputs(
+            evaluations: evaluations,
             expandedMatrix: separatedMatrix(),
             exactMatrix: separatedMatrix(),
             histogramMatrix: separatedMatrix(),
-            candidates: confidentCandidates()
+            expandedOutcomes: perfectOutcomes(),
+            exactOutcomes: perfectOutcomes(),
+            histogramOutcomes: perfectOutcomes(),
+            candidates: []
         )
+        var mismatched = evaluations
+        mismatched[0] = CatIdentityExperimentEvaluationSample(
+            ordinal: evaluations[0].ordinal + 1,
+            profileIndex: evaluations[0].profileIndex,
+            episodeIndex: evaluations[0].episodeIndex
+        )
+        inputs[0] = CatIdentityExperimentMethodInput(
+            method: .featurePrintExpanded10,
+            referenceDistances: separatedMatrix(),
+            evaluations: evaluationDistances(
+                samples: mismatched,
+                outcomes: perfectOutcomes()
+            ),
+            candidates: []
+        )
+        do {
+            _ = try CatIdentityExperimentEvaluator.evaluate(
+                references: references,
+                evaluations: evaluations,
+                methods: inputs
+            )
+            throw VerificationError("method-specific evaluation samples diverged")
+        } catch CatIdentityExperimentCoreError.invalidMethodSet {
+            // Expected: every method evaluates the exact same 30 photos.
+        }
+    }
+
+    private static func verifiesInvalidEvaluationDistancesAreRejected() throws {
+        let references = standardReferences()
+        let evaluations = standardEvaluations()
+        var inputs = methodInputs(
+            evaluations: evaluations,
+            expandedMatrix: separatedMatrix(),
+            exactMatrix: separatedMatrix(),
+            histogramMatrix: separatedMatrix(),
+            expandedOutcomes: perfectOutcomes(),
+            exactOutcomes: perfectOutcomes(),
+            histogramOutcomes: perfectOutcomes(),
+            candidates: []
+        )
+        var invalidEvaluations = evaluationDistances(
+            samples: evaluations,
+            outcomes: perfectOutcomes()
+        )
+        invalidEvaluations[0] = CatIdentityExperimentEvaluationDistances(
+            sample: invalidEvaluations[0].sample,
+            distancesToReferences: Array(repeating: 0.08, count: 9),
+            featureIsAvailable: true
+        )
+        inputs[1] = CatIdentityExperimentMethodInput(
+            method: .featurePrintExact,
+            referenceDistances: separatedMatrix(),
+            evaluations: invalidEvaluations,
+            candidates: []
+        )
+        do {
+            _ = try CatIdentityExperimentEvaluator.evaluate(
+                references: references,
+                evaluations: evaluations,
+                methods: inputs
+            )
+            throw VerificationError("invalid held-out distance vector passed")
+        } catch CatIdentityExperimentCoreError.invalidEvaluationDistances(
+            method: .featurePrintExact
+        ) {
+            // Expected.
+        }
+    }
+
+    private static func verifiesAggregateExportExcludesLocalDetail() throws {
+        var exact = perfectOutcomes()
+        exact[17] = .wrong
+        let result = try evaluate(
+            exactOutcomes: exact,
+            histogramOutcomes: perfectOutcomes()
+        )
+        let report = result.report
         try require(
             !report.containsPhotoData
                 && !report.containsFeatureData
@@ -316,15 +404,19 @@ enum CatIdentityExperimentVerifier {
         defer { try? FileManager.default.removeItem(at: url) }
         let text = try String(contentsOf: url, encoding: .utf8)
         for forbidden in [
-            "asset-secret-sentinel",
-            "profile-secret-sentinel",
+            "wrongEvaluationOrdinalsByMethod",
+            "ordinal",
+            String(evaluationOrdinal(for: 17)),
+            "assetIdentifier",
+            "profileName",
             "featureVector",
             "histogramValues",
-            "boundingBoxCoordinates"
+            "creationDate",
+            "boundingBox"
         ] {
             try require(
                 !text.contains(forbidden),
-                "aggregate export contained forbidden input material"
+                "aggregate export contained local or identity material"
             )
         }
         let decoded = try JSONDecoder().decode(
@@ -335,42 +427,66 @@ enum CatIdentityExperimentVerifier {
     }
 
     private static func evaluate(
-        expandedMatrix: [[Double?]],
-        exactMatrix: [[Double?]],
-        histogramMatrix: [[Double?]],
-        candidates: [CatIdentityExperimentCandidateDistances]
-    ) throws -> CatIdentityExperimentReport {
-        try CatIdentityExperimentEvaluator.evaluate(
-            references: standardReferences(),
+        expandedOutcomes: [EvaluationOutcome]? = nil,
+        exactOutcomes: [EvaluationOutcome],
+        histogramOutcomes: [EvaluationOutcome],
+        histogramMatrix: [[Double?]]? = nil,
+        candidates: [CatIdentityExperimentCandidateDistances] = []
+    ) throws -> CatIdentityExperimentResult {
+        let references = standardReferences()
+        let evaluations = standardEvaluations()
+        return try CatIdentityExperimentEvaluator.evaluate(
+            references: references,
+            evaluations: evaluations,
             methods: methodInputs(
-                expandedMatrix: expandedMatrix,
-                exactMatrix: exactMatrix,
-                histogramMatrix: histogramMatrix,
+                evaluations: evaluations,
+                expandedMatrix: separatedMatrix(),
+                exactMatrix: separatedMatrix(),
+                histogramMatrix: histogramMatrix ?? separatedMatrix(),
+                expandedOutcomes: expandedOutcomes ?? perfectOutcomes(),
+                exactOutcomes: exactOutcomes,
+                histogramOutcomes: histogramOutcomes,
                 candidates: candidates
             )
         )
     }
 
     private static func methodInputs(
+        evaluations: [CatIdentityExperimentEvaluationSample],
         expandedMatrix: [[Double?]],
         exactMatrix: [[Double?]],
         histogramMatrix: [[Double?]],
+        expandedOutcomes: [EvaluationOutcome],
+        exactOutcomes: [EvaluationOutcome],
+        histogramOutcomes: [EvaluationOutcome],
         candidates: [CatIdentityExperimentCandidateDistances]
     ) -> [CatIdentityExperimentMethodInput] {
         [
             CatIdentityExperimentMethodInput(
                 method: .featurePrintExpanded10,
                 referenceDistances: expandedMatrix,
+                evaluations: evaluationDistances(
+                    samples: evaluations,
+                    outcomes: expandedOutcomes
+                ),
                 candidates: candidates
             ),
             CatIdentityExperimentMethodInput(
                 method: .featurePrintExact,
                 referenceDistances: exactMatrix,
+                evaluations: evaluationDistances(
+                    samples: evaluations,
+                    outcomes: exactOutcomes
+                ),
                 candidates: candidates
             ),
             CatIdentityExperimentMethodInput(
                 method: .hsvHistogramExact,
                 referenceDistances: histogramMatrix,
+                evaluations: evaluationDistances(
+                    samples: evaluations,
+                    outcomes: histogramOutcomes
+                ),
                 candidates: candidates
             )
         ]
@@ -387,6 +503,103 @@ enum CatIdentityExperimentVerifier {
         }
     }
 
+    private static func standardEvaluations()
+        -> [CatIdentityExperimentEvaluationSample] {
+        (0..<30).map { index in
+            CatIdentityExperimentEvaluationSample(
+                ordinal: evaluationOrdinal(for: index),
+                profileIndex: index < 15 ? 0 : 1,
+                episodeIndex: 1_000 + index
+            )
+        }
+    }
+
+    private static func evaluationOrdinal(for index: Int) -> Int {
+        900_000 + index
+    }
+
+    private static func evaluationDistances(
+        samples: [CatIdentityExperimentEvaluationSample],
+        outcomes: [EvaluationOutcome]
+    ) -> [CatIdentityExperimentEvaluationDistances] {
+        precondition(samples.count == outcomes.count)
+        return zip(samples, outcomes).map { sample, outcome in
+            let trueProfile = sample.profileIndex
+            switch outcome {
+            case .correct:
+                return evaluationDistance(sample: sample, assignedLike: trueProfile)
+            case .wrong:
+                return evaluationDistance(sample: sample, assignedLike: 1 - trueProfile)
+            case .unknown:
+                return CatIdentityExperimentEvaluationDistances(
+                    sample: sample,
+                    distancesToReferences: Array(repeating: 0.40, count: 5)
+                        + Array(repeating: 0.50, count: 5),
+                    featureIsAvailable: true
+                )
+            case .unavailable:
+                return CatIdentityExperimentEvaluationDistances(
+                    sample: sample,
+                    distancesToReferences: Array(repeating: nil, count: 10),
+                    featureIsAvailable: false
+                )
+            }
+        }
+    }
+
+    private static func evaluationDistance(
+        sample: CatIdentityExperimentEvaluationSample,
+        assignedLike profile: Int
+    ) -> CatIdentityExperimentEvaluationDistances {
+        let profileZeroDistance = profile == 0 ? 0.08 : 1.0
+        let profileOneDistance = profile == 1 ? 0.08 : 1.0
+        return CatIdentityExperimentEvaluationDistances(
+            sample: sample,
+            distancesToReferences: Array(
+                repeating: profileZeroDistance,
+                count: 5
+            ) + Array(repeating: profileOneDistance, count: 5),
+            featureIsAvailable: true
+        )
+    }
+
+    private static func perfectOutcomes() -> [EvaluationOutcome] {
+        Array(repeating: .correct, count: 30)
+    }
+
+    private static func perProfileOutcomes(
+        first: (correct: Int, wrong: Int, unknown: Int),
+        second: (correct: Int, wrong: Int, unknown: Int)
+    ) -> [EvaluationOutcome] {
+        profileOutcomes(first) + profileOutcomes(second)
+    }
+
+    private static func aggregateOutcomes(
+        correct: Int,
+        wrong: Int,
+        unknown: Int
+    ) -> [EvaluationOutcome] {
+        let values = Array(
+            repeating: EvaluationOutcome.correct,
+            count: correct
+        ) + Array(repeating: .wrong, count: wrong)
+            + Array(repeating: .unknown, count: unknown)
+        precondition(values.count == 30)
+        return values
+    }
+
+    private static func profileOutcomes(
+        _ counts: (correct: Int, wrong: Int, unknown: Int)
+    ) -> [EvaluationOutcome] {
+        let values = Array(
+            repeating: EvaluationOutcome.correct,
+            count: counts.correct
+        ) + Array(repeating: .wrong, count: counts.wrong)
+            + Array(repeating: .unknown, count: counts.unknown)
+        precondition(values.count == 15)
+        return values
+    }
+
     private static func separatedMatrix() -> [[Double?]] {
         matrix { first, second in
             if first == second { return 0 }
@@ -401,14 +614,10 @@ enum CatIdentityExperimentVerifier {
         matrix { first, second in
             if first == second { return 0 }
             let sameProfile = (first < 5) == (second < 5)
-            // The 0.69 nearest-class ratio passes the reject margin, while
-            // 0.29 / 0.20 = 1.45 deliberately misses the 1.50 color gate.
+            // LOO still assigns correctly, but 0.29 / 0.20 = 1.45 misses
+            // the fixed 1.50 household color-separation gate.
             return sameProfile ? 0.20 : 0.29
         }
-    }
-
-    private static func tiedMatrix() -> [[Double?]] {
-        matrix { first, second in first == second ? 0 : 0.25 }
     }
 
     private static func matrix(
@@ -419,61 +628,6 @@ enum CatIdentityExperimentVerifier {
         }
     }
 
-    private static func confidentCandidates()
-        -> [CatIdentityExperimentCandidateDistances] {
-        [
-            candidate(
-                ordinal: 0,
-                asset: 0,
-                episode: 100,
-                profileZeroDistance: 0.10,
-                profileOneDistance: 1.0
-            ),
-            candidate(
-                ordinal: 1,
-                asset: 1,
-                episode: 101,
-                profileZeroDistance: 0.11,
-                profileOneDistance: 1.0
-            ),
-            candidate(
-                ordinal: 2,
-                asset: 2,
-                episode: 102,
-                profileZeroDistance: 1.0,
-                profileOneDistance: 0.10
-            ),
-            candidate(
-                ordinal: 3,
-                asset: 3,
-                episode: 103,
-                profileZeroDistance: 1.0,
-                profileOneDistance: 0.11
-            )
-        ]
-    }
-
-    private static func candidate(
-        ordinal: Int,
-        asset: Int,
-        episode: Int,
-        profileZeroDistance: Double,
-        profileOneDistance: Double
-    ) -> CatIdentityExperimentCandidateDistances {
-        CatIdentityExperimentCandidateDistances(
-            sample: CatIdentityExperimentCandidateSample(
-                ordinal: ordinal,
-                assetIndex: asset,
-                episodeIndex: episode
-            ),
-            distancesToReferences: Array(
-                repeating: profileZeroDistance,
-                count: 5
-            ) + Array(repeating: profileOneDistance, count: 5),
-            featureIsAvailable: true
-        )
-    }
-
     private static func method(
         _ method: CatIdentityExperimentMethod,
         in report: CatIdentityExperimentReport
@@ -482,6 +636,14 @@ enum CatIdentityExperimentVerifier {
             throw VerificationError("missing method report")
         }
         return value
+    }
+
+    private static func approximately(
+        _ lhs: Double,
+        _ rhs: Double,
+        tolerance: Double = 0.000_000_1
+    ) -> Bool {
+        abs(lhs - rhs) <= tolerance
     }
 
     private static func require(

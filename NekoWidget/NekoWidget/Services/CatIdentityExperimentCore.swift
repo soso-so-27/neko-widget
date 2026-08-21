@@ -13,24 +13,26 @@ struct CatIdentityExperimentThresholds: Equatable, Sendable {
     static let v1 = CatIdentityExperimentThresholds(
         requiredProfileCount: 2,
         requiredReferencesPerProfile: 5,
+        requiredEvaluationsPerProfile: 15,
         maximumRadiusMultiplier: 1.25,
         maximumBestToRunnerUpRatio: 0.70,
         minimumColorSeparationRatio: 1.50,
         minimumAssignedLOOTrials: 8,
         minimumAssignedLOOTrialsPerProfile: 4,
-        minimumCandidateCoverage: 0.50,
-        minimumCandidateEpisodeCoverage: 0.50
+        minimumEvaluationPrecision: 0.95,
+        minimumEvaluationCoverage: 0.70
     )
 
     let requiredProfileCount: Int
     let requiredReferencesPerProfile: Int
+    let requiredEvaluationsPerProfile: Int
     let maximumRadiusMultiplier: Double
     let maximumBestToRunnerUpRatio: Double
     let minimumColorSeparationRatio: Double
     let minimumAssignedLOOTrials: Int
     let minimumAssignedLOOTrialsPerProfile: Int
-    let minimumCandidateCoverage: Double
-    let minimumCandidateEpisodeCoverage: Double
+    let minimumEvaluationPrecision: Double
+    let minimumEvaluationCoverage: Double
 }
 
 /// Pure-core values contain only run-local integer ordinals. PhotoKit IDs,
@@ -54,10 +56,27 @@ struct CatIdentityExperimentCandidateDistances: Equatable, Sendable {
     let featureIsAvailable: Bool
 }
 
+/// Ground-truth samples are a completely held-out set. These run-local
+/// ordinals are the only per-photo values that may be returned to an on-device
+/// review screen, and this type is intentionally not Codable.
+struct CatIdentityExperimentEvaluationSample: Equatable, Hashable, Sendable {
+    let ordinal: Int
+    let profileIndex: Int
+    let episodeIndex: Int
+}
+
+struct CatIdentityExperimentEvaluationDistances: Equatable, Sendable {
+    let sample: CatIdentityExperimentEvaluationSample
+    /// One entry per training reference, in the same order as `references`.
+    let distancesToReferences: [Double?]
+    let featureIsAvailable: Bool
+}
+
 struct CatIdentityExperimentMethodInput: Equatable, Sendable {
     let method: CatIdentityExperimentMethod
     /// A small 10x10 symmetric matrix. Nil means feature extraction failed.
     let referenceDistances: [[Double?]]
+    let evaluations: [CatIdentityExperimentEvaluationDistances]
     let candidates: [CatIdentityExperimentCandidateDistances]
 }
 
@@ -71,13 +90,15 @@ enum CatIdentityExperimentReasonCode: String, Codable, Equatable, Sendable {
     case colorGateFailed
     case exactFeaturePrintGateFailed
     case histogramGateFailed
-    case insufficientCandidateCoverage
 }
 
 struct CatIdentityExperimentInputSummary: Codable, Equatable, Sendable {
     let profileCount: Int
     let referenceCount: Int
-    let minimumIndependentEpisodesPerProfile: Int
+    let evaluationCount: Int
+    let totalIndependentEpisodeCount: Int
+    let minimumTrainingEpisodesPerProfile: Int
+    let minimumEvaluationEpisodesPerProfile: Int
     let candidateCount: Int
     let candidateEpisodeCount: Int
 }
@@ -114,6 +135,33 @@ struct CatIdentityExperimentProfileLOOSummary: Codable, Equatable, Sendable {
     let unknownCount: Int
 }
 
+struct CatIdentityExperimentEvaluationSummary: Codable, Equatable, Sendable {
+    let trialCount: Int
+    let assignedCount: Int
+    let correctAssignedCount: Int
+    let wrongAssignedCount: Int
+    let unknownCount: Int
+    let precision: Double
+    let coverage: Double
+    /// Aggregate confusion rows keyed only by run-local profile 0/1.
+    let profiles: [CatIdentityExperimentProfileEvaluationSummary]
+}
+
+struct CatIdentityExperimentProfileEvaluationSummary:
+    Codable,
+    Equatable,
+    Sendable {
+    let profileIndex: Int
+    let trialCount: Int
+    /// Fixed two-entry row: assigned counts to profile 0 and profile 1.
+    let assignedToProfileCounts: [Int]
+    let correctAssignedCount: Int
+    let wrongAssignedCount: Int
+    let unknownCount: Int
+    let precision: Double
+    let coverage: Double
+}
+
 struct CatIdentityExperimentCandidateSummary: Codable, Equatable, Sendable {
     let candidateCount: Int
     let featureUnavailableCount: Int
@@ -130,6 +178,7 @@ struct CatIdentityExperimentMethodReport: Codable, Equatable, Sendable {
     let method: CatIdentityExperimentMethod
     let referenceFeatureUnavailableCount: Int
     let loo: CatIdentityExperimentLOOSummary
+    let evaluation: CatIdentityExperimentEvaluationSummary
     let candidates: CatIdentityExperimentCandidateSummary
     let distanceSummary: CatIdentityExperimentDistanceSummary
     /// Present only for the histogram method. Nil also represents the valid
@@ -138,7 +187,7 @@ struct CatIdentityExperimentMethodReport: Codable, Equatable, Sendable {
     let colorSeparationRatio: Double?
     let colorDistributionsAreDisjoint: Bool?
     let passesLOOGate: Bool
-    let passesCandidateCoverageGate: Bool
+    let passesEvaluationGate: Bool
     let passesPerformanceGate: Bool
 }
 
@@ -173,33 +222,54 @@ struct CatIdentityExperimentReport: Codable, Equatable, Sendable {
     let methods: [CatIdentityExperimentMethodReport]
 }
 
+/// Wrong held-out ordinals are useful for a local visual audit but must never
+/// enter the Codable aggregate report or exporter.
+struct CatIdentityExperimentLocalDetail: Equatable, Sendable {
+    let wrongEvaluationOrdinalsByMethod: [
+        CatIdentityExperimentMethod: [Int]
+    ]
+}
+
+struct CatIdentityExperimentResult: Equatable, Sendable {
+    let report: CatIdentityExperimentReport
+    let localDetail: CatIdentityExperimentLocalDetail
+}
+
 struct CatIdentityExperimentExportedThresholds: Codable, Equatable, Sendable {
     let maximumRadiusMultiplier: Double
     let maximumBestToRunnerUpRatio: Double
     let minimumColorSeparationRatio: Double
     let minimumAssignedLOOTrials: Int
     let minimumAssignedLOOTrialsPerProfile: Int
-    let minimumCandidateCoverage: Double
-    let minimumCandidateEpisodeCoverage: Double
+    let minimumEvaluationPrecision: Double
+    let minimumEvaluationCoverage: Double
 }
 
 enum CatIdentityExperimentCoreError: Error, Equatable, Sendable {
     case invalidReferenceSet
     case duplicateReferenceOrdinal
+    case invalidEvaluationSet
+    case duplicateEvaluationOrdinal
     case invalidMethodSet
     case invalidDistanceMatrix(method: CatIdentityExperimentMethod)
     case invalidCandidateDistances(method: CatIdentityExperimentMethod)
+    case invalidEvaluationDistances(method: CatIdentityExperimentMethod)
 }
 
 enum CatIdentityExperimentEvaluator {
-    static let protocolVersion = "cat-identity-separability-v1"
+    static let protocolVersion = "cat-identity-held-out-v2"
 
     static func evaluate(
         references: [CatIdentityExperimentReferenceSample],
+        evaluations: [CatIdentityExperimentEvaluationSample],
         methods: [CatIdentityExperimentMethodInput],
         thresholds: CatIdentityExperimentThresholds = .v1
-    ) throws -> CatIdentityExperimentReport {
-        try validate(references: references, thresholds: thresholds)
+    ) throws -> CatIdentityExperimentResult {
+        try validate(
+            references: references,
+            evaluations: evaluations,
+            thresholds: thresholds
+        )
         var methodByID: [
             CatIdentityExperimentMethod: CatIdentityExperimentMethodInput
         ] = [:]
@@ -216,19 +286,25 @@ enum CatIdentityExperimentEvaluator {
         }
         let canonicalCandidateSamples = methodByID[.featurePrintExact]!
             .candidates.map(\.sample)
+        let canonicalEvaluationSamples = methodByID[.featurePrintExact]!
+            .evaluations.map(\.sample)
         guard methodByID.values.allSatisfy({
             $0.candidates.map(\.sample) == canonicalCandidateSamples
+                && $0.evaluations.map(\.sample) == canonicalEvaluationSamples
+                && $0.evaluations.map(\.sample) == evaluations
         }) else {
             throw CatIdentityExperimentCoreError.invalidMethodSet
         }
 
-        let reports = try CatIdentityExperimentMethod.allCases.map { method in
+        let evaluatedMethods = try CatIdentityExperimentMethod.allCases.map {
+            method in
             try evaluate(
                 input: methodByID[method]!,
                 references: references,
                 thresholds: thresholds
             )
         }
+        let reports = evaluatedMethods.map(\.report)
         let reportByMethod = Dictionary(uniqueKeysWithValues: reports.map {
             ($0.method, $0)
         })
@@ -243,10 +319,28 @@ enum CatIdentityExperimentEvaluator {
         let histogramReport = reportByMethod[.hsvHistogramExact]!
         let decision: CatIdentityExperimentDecision
         let selectedMethod: CatIdentityExperimentMethod?
-        if colorGatePassed, exactFeatureReport.passesPerformanceGate {
+        let exactPrecisionPassed = evaluationPrecisionPassed(
+            exactFeatureReport.evaluation,
+            thresholds: thresholds
+        )
+        let exactCoveragePassed = evaluationCoveragePassed(
+            exactFeatureReport.evaluation,
+            thresholds: thresholds
+        )
+        let histogramEvaluationPassed = evaluationPrecisionPassed(
+            histogramReport.evaluation,
+            thresholds: thresholds
+        ) && evaluationCoveragePassed(
+            histogramReport.evaluation,
+            thresholds: thresholds
+        )
+        if colorGatePassed, exactPrecisionPassed, exactCoveragePassed {
             decision = .featurePrintExact
             selectedMethod = .featurePrintExact
-        } else if colorGatePassed, histogramReport.passesPerformanceGate {
+        } else if colorGatePassed,
+                  exactPrecisionPassed,
+                  !exactCoveragePassed,
+                  histogramEvaluationPassed {
             decision = .histogramOnly
             selectedMethod = .hsvHistogramExact
         } else {
@@ -256,30 +350,33 @@ enum CatIdentityExperimentEvaluator {
 
         var reasons: [CatIdentityExperimentReasonCode] = []
         if !colorGatePassed { reasons.append(.colorGateFailed) }
-        if !exactFeatureReport.passesLOOGate {
+        if !exactFeatureReport.passesEvaluationGate {
             reasons.append(.exactFeaturePrintGateFailed)
         }
-        if !histogramReport.passesLOOGate {
+        if exactPrecisionPassed,
+           !exactCoveragePassed,
+           !histogramReport.passesEvaluationGate {
             reasons.append(.histogramGateFailed)
-        }
-        if colorGatePassed,
-           !exactFeatureReport.passesCandidateCoverageGate,
-           !histogramReport.passesCandidateCoverageGate {
-            reasons.append(.insufficientCandidateCoverage)
         }
 
         let profileIndices = Set(references.map(\.profileIndex))
-        let minimumEpisodes = profileIndices.map { profileIndex in
+        let minimumTrainingEpisodes = profileIndices.map { profileIndex in
             Set(references.lazy.filter { $0.profileIndex == profileIndex }
                 .map(\.episodeIndex)).count
         }.min() ?? 0
+        let minimumEvaluationEpisodes = profileIndices.map { profileIndex in
+            Set(evaluations.lazy.filter { $0.profileIndex == profileIndex }
+                .map(\.episodeIndex)).count
+        }.min() ?? 0
+        let totalEpisodes = Set(references.map(\.episodeIndex))
+            .union(evaluations.map(\.episodeIndex)).count
         let representativeCandidates = methodByID[.featurePrintExact]!.candidates
         let candidateEpisodes = Set(representativeCandidates.map {
             $0.sample.episodeIndex
         })
 
-        return CatIdentityExperimentReport(
-            schemaVersion: 1,
+        let report = CatIdentityExperimentReport(
+            schemaVersion: 2,
             protocolVersion: protocolVersion,
             containsPhotoData: false,
             containsFeatureData: false,
@@ -295,15 +392,18 @@ enum CatIdentityExperimentEvaluator {
                 minimumAssignedLOOTrials: thresholds.minimumAssignedLOOTrials,
                 minimumAssignedLOOTrialsPerProfile:
                     thresholds.minimumAssignedLOOTrialsPerProfile,
-                minimumCandidateCoverage:
-                    thresholds.minimumCandidateCoverage,
-                minimumCandidateEpisodeCoverage:
-                    thresholds.minimumCandidateEpisodeCoverage
+                minimumEvaluationPrecision:
+                    thresholds.minimumEvaluationPrecision,
+                minimumEvaluationCoverage:
+                    thresholds.minimumEvaluationCoverage
             ),
             input: CatIdentityExperimentInputSummary(
                 profileCount: profileIndices.count,
                 referenceCount: references.count,
-                minimumIndependentEpisodesPerProfile: minimumEpisodes,
+                evaluationCount: evaluations.count,
+                totalIndependentEpisodeCount: totalEpisodes,
+                minimumTrainingEpisodesPerProfile: minimumTrainingEpisodes,
+                minimumEvaluationEpisodesPerProfile: minimumEvaluationEpisodes,
                 candidateCount: representativeCandidates.count,
                 candidateEpisodeCount: candidateEpisodes.count
             ),
@@ -313,10 +413,21 @@ enum CatIdentityExperimentEvaluator {
             reasonCodes: reasons,
             methods: reports
         )
+        return CatIdentityExperimentResult(
+            report: report,
+            localDetail: CatIdentityExperimentLocalDetail(
+                wrongEvaluationOrdinalsByMethod: Dictionary(
+                    uniqueKeysWithValues: evaluatedMethods.map {
+                        ($0.report.method, $0.wrongEvaluationOrdinals)
+                    }
+                )
+            )
+        )
     }
 
     private static func validate(
         references: [CatIdentityExperimentReferenceSample],
+        evaluations: [CatIdentityExperimentEvaluationSample],
         thresholds: CatIdentityExperimentThresholds
     ) throws {
         let profileIndices = Set(references.map(\.profileIndex))
@@ -328,6 +439,14 @@ enum CatIdentityExperimentEvaluator {
         guard Set(references.map(\.ordinal)).count == references.count else {
             throw CatIdentityExperimentCoreError.duplicateReferenceOrdinal
         }
+        guard evaluations.count == thresholds.requiredProfileCount
+                * thresholds.requiredEvaluationsPerProfile,
+              Set(evaluations.map(\.profileIndex)) == profileIndices else {
+            throw CatIdentityExperimentCoreError.invalidEvaluationSet
+        }
+        guard Set(evaluations.map(\.ordinal)).count == evaluations.count else {
+            throw CatIdentityExperimentCoreError.duplicateEvaluationOrdinal
+        }
         for profileIndex in profileIndices {
             let profileReferences = references.filter {
                 $0.profileIndex == profileIndex
@@ -338,17 +457,46 @@ enum CatIdentityExperimentEvaluator {
                     == thresholds.requiredReferencesPerProfile else {
                 throw CatIdentityExperimentCoreError.invalidReferenceSet
             }
+            let profileEvaluations = evaluations.filter {
+                $0.profileIndex == profileIndex
+            }
+            guard profileEvaluations.count
+                    == thresholds.requiredEvaluationsPerProfile,
+                  Set(profileEvaluations.map(\.episodeIndex)).count
+                    == thresholds.requiredEvaluationsPerProfile else {
+                throw CatIdentityExperimentCoreError.invalidEvaluationSet
+            }
         }
+        let allEpisodes = references.map(\.episodeIndex)
+            + evaluations.map(\.episodeIndex)
+        guard Set(allEpisodes).count == allEpisodes.count else {
+            throw CatIdentityExperimentCoreError.invalidEvaluationSet
+        }
+    }
+
+    private struct EvaluatedMethod {
+        let report: CatIdentityExperimentMethodReport
+        let wrongEvaluationOrdinals: [Int]
+    }
+
+    private struct EvaluatedHeldOutSet {
+        let summary: CatIdentityExperimentEvaluationSummary
+        let wrongOrdinals: [Int]
     }
 
     private static func evaluate(
         input: CatIdentityExperimentMethodInput,
         references: [CatIdentityExperimentReferenceSample],
         thresholds: CatIdentityExperimentThresholds
-    ) throws -> CatIdentityExperimentMethodReport {
+    ) throws -> EvaluatedMethod {
         try validate(
             matrix: input.referenceDistances,
             expectedCount: references.count,
+            method: input.method
+        )
+        try validate(
+            evaluations: input.evaluations,
+            referenceCount: references.count,
             method: input.method
         )
         try validate(
@@ -371,6 +519,12 @@ enum CatIdentityExperimentEvaluator {
             candidates: input.candidates,
             thresholds: thresholds
         )
+        let heldOut = evaluateHeldOut(
+            references: references,
+            referenceDistances: input.referenceDistances,
+            evaluations: input.evaluations,
+            thresholds: thresholds
+        )
         let colorSeparation = input.method == .hsvHistogramExact
             ? colorSeparation(
                 references: references,
@@ -388,23 +542,29 @@ enum CatIdentityExperimentEvaluator {
             && loo.assignedCount >= thresholds.minimumAssignedLOOTrials
             && loo.minimumCorrectAssignedCountPerProfile
                 >= thresholds.minimumAssignedLOOTrialsPerProfile
-        let passesCandidates = candidateSummary.episodeCount > 0
-            && candidateSummary.coverage
-                >= thresholds.minimumCandidateCoverage
-            && candidateSummary.episodeCoverage
-                >= thresholds.minimumCandidateEpisodeCoverage
+        let passesEvaluation = evaluationPrecisionPassed(
+            heldOut.summary,
+            thresholds: thresholds
+        ) && evaluationCoveragePassed(
+            heldOut.summary,
+            thresholds: thresholds
+        )
 
-        return CatIdentityExperimentMethodReport(
-            method: input.method,
-            referenceFeatureUnavailableCount: unavailableReferences,
-            loo: loo,
-            candidates: candidateSummary,
-            distanceSummary: referenceDistanceSummary,
-            colorSeparationRatio: colorSeparation?.ratio,
-            colorDistributionsAreDisjoint: colorSeparation?.isDisjoint,
-            passesLOOGate: passesLOO,
-            passesCandidateCoverageGate: passesCandidates,
-            passesPerformanceGate: passesLOO && passesCandidates
+        return EvaluatedMethod(
+            report: CatIdentityExperimentMethodReport(
+                method: input.method,
+                referenceFeatureUnavailableCount: unavailableReferences,
+                loo: loo,
+                evaluation: heldOut.summary,
+                candidates: candidateSummary,
+                distanceSummary: referenceDistanceSummary,
+                colorSeparationRatio: colorSeparation?.ratio,
+                colorDistributionsAreDisjoint: colorSeparation?.isDisjoint,
+                passesLOOGate: passesLOO,
+                passesEvaluationGate: passesEvaluation,
+                passesPerformanceGate: passesEvaluation
+            ),
+            wrongEvaluationOrdinals: heldOut.wrongOrdinals
         )
     }
 
@@ -443,6 +603,24 @@ enum CatIdentityExperimentEvaluator {
     }
 
     private static func validate(
+        evaluations: [CatIdentityExperimentEvaluationDistances],
+        referenceCount: Int,
+        method: CatIdentityExperimentMethod
+    ) throws {
+        guard Set(evaluations.map(\.sample.ordinal)).count == evaluations.count,
+              evaluations.allSatisfy({ evaluation in
+                  evaluation.distancesToReferences.count == referenceCount
+                    && evaluation.distancesToReferences.allSatisfy {
+                        $0?.isFinite != false && $0.map({ $0 >= 0 }) != false
+                    }
+              }) else {
+            throw CatIdentityExperimentCoreError.invalidEvaluationDistances(
+                method: method
+            )
+        }
+    }
+
+    private static func validate(
         candidates: [CatIdentityExperimentCandidateDistances],
         referenceCount: Int,
         method: CatIdentityExperimentMethod
@@ -463,6 +641,100 @@ enum CatIdentityExperimentEvaluator {
     private struct Classification {
         let topProfile: Int?
         let assignedProfile: Int?
+    }
+
+    private static func evaluateHeldOut(
+        references: [CatIdentityExperimentReferenceSample],
+        referenceDistances: [[Double?]],
+        evaluations: [CatIdentityExperimentEvaluationDistances],
+        thresholds: CatIdentityExperimentThresholds
+    ) -> EvaluatedHeldOutSet {
+        let allReferenceIndices = Array(references.indices)
+        var assigned = 0
+        var correctAssigned = 0
+        var wrongAssigned = 0
+        var unknown = 0
+        var wrongOrdinals: [Int] = []
+        var trialCountByProfile: [Int: Int] = [:]
+        var correctAssignedByProfile: [Int: Int] = [:]
+        var wrongAssignedByProfile: [Int: Int] = [:]
+        var unknownByProfile: [Int: Int] = [:]
+        var assignedToProfileByActual: [Int: [Int]] = [:]
+
+        for evaluation in evaluations {
+            let actualProfile = evaluation.sample.profileIndex
+            trialCountByProfile[actualProfile, default: 0] += 1
+            guard evaluation.featureIsAvailable else {
+                unknown += 1
+                unknownByProfile[actualProfile, default: 0] += 1
+                continue
+            }
+            let classification = classify(
+                distancesToReferences: evaluation.distancesToReferences,
+                trainingIndices: allReferenceIndices,
+                references: references,
+                referenceDistances: referenceDistances,
+                thresholds: thresholds
+            )
+            guard let assignedProfile = classification.assignedProfile else {
+                unknown += 1
+                unknownByProfile[actualProfile, default: 0] += 1
+                continue
+            }
+
+            assigned += 1
+            var confusionRow = assignedToProfileByActual[
+                actualProfile,
+                default: Array(
+                    repeating: 0,
+                    count: thresholds.requiredProfileCount
+                )
+            ]
+            confusionRow[assignedProfile] += 1
+            assignedToProfileByActual[actualProfile] = confusionRow
+            if assignedProfile == actualProfile {
+                correctAssigned += 1
+                correctAssignedByProfile[actualProfile, default: 0] += 1
+            } else {
+                wrongAssigned += 1
+                wrongAssignedByProfile[actualProfile, default: 0] += 1
+                wrongOrdinals.append(evaluation.sample.ordinal)
+            }
+        }
+
+        let profiles = (0..<thresholds.requiredProfileCount).map { profile in
+            let profileTrialCount = trialCountByProfile[profile, default: 0]
+            let profileCorrect = correctAssignedByProfile[profile, default: 0]
+            let profileWrong = wrongAssignedByProfile[profile, default: 0]
+            let profileAssigned = profileCorrect + profileWrong
+            return CatIdentityExperimentProfileEvaluationSummary(
+                profileIndex: profile,
+                trialCount: profileTrialCount,
+                assignedToProfileCounts: assignedToProfileByActual[profile]
+                    ?? Array(
+                        repeating: 0,
+                        count: thresholds.requiredProfileCount
+                    ),
+                correctAssignedCount: profileCorrect,
+                wrongAssignedCount: profileWrong,
+                unknownCount: unknownByProfile[profile, default: 0],
+                precision: rate(profileCorrect, profileAssigned),
+                coverage: rate(profileAssigned, profileTrialCount)
+            )
+        }
+        return EvaluatedHeldOutSet(
+            summary: CatIdentityExperimentEvaluationSummary(
+                trialCount: evaluations.count,
+                assignedCount: assigned,
+                correctAssignedCount: correctAssigned,
+                wrongAssignedCount: wrongAssigned,
+                unknownCount: unknown,
+                precision: rate(correctAssigned, assigned),
+                coverage: rate(assigned, evaluations.count),
+                profiles: profiles
+            ),
+            wrongOrdinals: wrongOrdinals.sorted()
+        )
     }
 
     private static func leaveOneEpisodeOut(
@@ -796,6 +1068,33 @@ enum CatIdentityExperimentEvaluator {
         let fraction = position - Double(lowerIndex)
         return sorted[lowerIndex]
             + (sorted[upperIndex] - sorted[lowerIndex]) * fraction
+    }
+
+    private static func evaluationPrecisionPassed(
+        _ evaluation: CatIdentityExperimentEvaluationSummary,
+        thresholds: CatIdentityExperimentThresholds
+    ) -> Bool {
+        // Gate on raw counts. Rounded percentages are presentation only:
+        // for v1 this is correct * 100 >= assigned * 95.
+        let requiredPercent = Int(
+            (thresholds.minimumEvaluationPrecision * 100).rounded()
+        )
+        return evaluation.assignedCount > 0
+            && evaluation.correctAssignedCount * 100
+                >= evaluation.assignedCount * requiredPercent
+    }
+
+    private static func evaluationCoveragePassed(
+        _ evaluation: CatIdentityExperimentEvaluationSummary,
+        thresholds: CatIdentityExperimentThresholds
+    ) -> Bool {
+        // For v1 this is assigned * 100 >= all held-out trials * 70.
+        let requiredPercent = Int(
+            (thresholds.minimumEvaluationCoverage * 100).rounded()
+        )
+        return evaluation.trialCount > 0
+            && evaluation.assignedCount * 100
+                >= evaluation.trialCount * requiredPercent
     }
 
     private static func rate(_ numerator: Int, _ denominator: Int) -> Double {

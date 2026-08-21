@@ -23,6 +23,22 @@ struct CatIdentityExperimentReferenceInput: Equatable, Hashable, Sendable {
     }
 }
 
+struct CatIdentityExperimentEvaluationInput: Equatable, Hashable, Sendable {
+    let profileIndex: Int
+    let assetLocalIdentifier: String
+    let boundingBox: NormalizedRect
+
+    init(
+        profileIndex: Int,
+        assetLocalIdentifier: String,
+        boundingBox: NormalizedRect
+    ) {
+        self.profileIndex = profileIndex
+        self.assetLocalIdentifier = assetLocalIdentifier
+        self.boundingBox = boundingBox
+    }
+}
+
 struct CatIdentityExperimentCandidateInput: Equatable, Hashable, Sendable {
     let assetLocalIdentifier: String
     let boundingBox: NormalizedRect
@@ -87,11 +103,16 @@ actor CatIdentityExperimentService {
 
     func run(
         references: [CatIdentityExperimentReferenceInput],
+        evaluations: [CatIdentityExperimentEvaluationInput],
         candidates: [CatIdentityExperimentCandidateInput],
         progress: ProgressHandler? = nil
-    ) async throws -> CatIdentityExperimentReport {
+    ) async throws -> CatIdentityExperimentResult {
         let operation = beginOperation()
-        try Self.validate(references: references, candidates: candidates)
+        try Self.validate(
+            references: references,
+            evaluations: evaluations,
+            candidates: candidates
+        )
 
         let referenceKeys = Set(references.map {
             InstanceKey(
@@ -99,9 +120,16 @@ actor CatIdentityExperimentService {
                 boundingBox: $0.boundingBox
             )
         })
-        // Reference crops are training data, not unlabeled coverage trials.
+        let evaluationKeys = Set(evaluations.map {
+            InstanceKey(
+                assetLocalIdentifier: $0.assetLocalIdentifier,
+                boundingBox: $0.boundingBox
+            )
+        })
+        let labeledKeys = referenceKeys.union(evaluationKeys)
+        // Labeled crops are not unlabeled coverage trials.
         let filteredCandidates = candidates.filter {
-            !referenceKeys.contains(
+            !labeledKeys.contains(
                 InstanceKey(
                     assetLocalIdentifier: $0.assetLocalIdentifier,
                     boundingBox: $0.boundingBox
@@ -109,7 +137,7 @@ actor CatIdentityExperimentService {
             )
         }
         let allKeys = Array(Set(
-            referenceKeys.union(filteredCandidates.map {
+            labeledKeys.union(filteredCandidates.map {
                 InstanceKey(
                     assetLocalIdentifier: $0.assetLocalIdentifier,
                     boundingBox: $0.boundingBox
@@ -233,7 +261,16 @@ actor CatIdentityExperimentService {
                     ?? offset
             )
         }
-        let candidateSamples = filteredCandidates.enumerated().map {
+        let evaluationSamples = evaluations.enumerated().map { offset, input in
+            CatIdentityExperimentEvaluationSample(
+                ordinal: offset,
+                profileIndex: input.profileIndex,
+                episodeIndex: episodeIndexByAsset[input.assetLocalIdentifier]
+                    ?? assetIndexByIdentifier[input.assetLocalIdentifier]
+                    ?? (references.count + offset)
+            )
+        }
+        let provisionalCandidateSamples = filteredCandidates.enumerated().map {
             offset, input in
             CatIdentityExperimentCandidateSample(
                 ordinal: offset,
@@ -244,13 +281,34 @@ actor CatIdentityExperimentService {
                     ?? offset
             )
         }
+        let labeledEpisodes = Set(
+            referenceSamples.map(\.episodeIndex)
+                + evaluationSamples.map(\.episodeIndex)
+        )
+        let independentCandidatePairs = zip(
+            filteredCandidates,
+            provisionalCandidateSamples
+        ).filter {
+            !labeledEpisodes.contains($0.1.episodeIndex)
+        }
+        let independentCandidates = independentCandidatePairs.map { $0.0 }
+        let candidateSamples = independentCandidatePairs.enumerated().map {
+            offset, pair in
+            CatIdentityExperimentCandidateSample(
+                ordinal: offset,
+                assetIndex: pair.1.assetIndex,
+                episodeIndex: pair.1.episodeIndex
+            )
+        }
         let methodInputs = try CatIdentityExperimentMethod.allCases.map {
             method in
             try methodInput(
                 method: method,
                 references: references,
                 referenceSamples: referenceSamples,
-                candidates: filteredCandidates,
+                evaluations: evaluations,
+                evaluationSamples: evaluationSamples,
+                candidates: independentCandidates,
                 candidateSamples: candidateSamples,
                 featuresByKey: featuresByKey
             )
@@ -258,6 +316,7 @@ actor CatIdentityExperimentService {
         try ensureCurrent(operation)
         let result = try CatIdentityExperimentEvaluator.evaluate(
             references: referenceSamples,
+            evaluations: evaluationSamples,
             methods: methodInputs
         )
         try await report(
@@ -307,13 +366,21 @@ actor CatIdentityExperimentService {
 
     private static func validate(
         references: [CatIdentityExperimentReferenceInput],
+        evaluations: [CatIdentityExperimentEvaluationInput],
         candidates: [CatIdentityExperimentCandidateInput]
     ) throws {
         guard references.count == 10,
+              evaluations.count == 30,
               Set(references.map(\.profileIndex)) == [0, 1],
+              Set(evaluations.map(\.profileIndex)) == [0, 1],
               references.filter({ $0.profileIndex == 0 }).count == 5,
               references.filter({ $0.profileIndex == 1 }).count == 5,
+              evaluations.filter({ $0.profileIndex == 0 }).count == 15,
+              evaluations.filter({ $0.profileIndex == 1 }).count == 15,
               references.allSatisfy({
+                  valid(identifier: $0.assetLocalIdentifier, box: $0.boundingBox)
+              }),
+              evaluations.allSatisfy({
                   valid(identifier: $0.assetLocalIdentifier, box: $0.boundingBox)
               }),
               candidates.allSatisfy({
@@ -328,6 +395,16 @@ actor CatIdentityExperimentService {
             )
         }
         guard Set(referenceKeys).count == referenceKeys.count else {
+            throw CatIdentityExperimentServiceError.duplicateReference
+        }
+        let evaluationKeys = evaluations.map {
+            InstanceKey(
+                assetLocalIdentifier: $0.assetLocalIdentifier,
+                boundingBox: $0.boundingBox
+            )
+        }
+        guard Set(evaluationKeys).count == evaluationKeys.count,
+              Set(referenceKeys).isDisjoint(with: evaluationKeys) else {
             throw CatIdentityExperimentServiceError.duplicateReference
         }
         let candidateKeys = candidates.map {
@@ -443,6 +520,8 @@ actor CatIdentityExperimentService {
         method: CatIdentityExperimentMethod,
         references: [CatIdentityExperimentReferenceInput],
         referenceSamples: [CatIdentityExperimentReferenceSample],
+        evaluations: [CatIdentityExperimentEvaluationInput],
+        evaluationSamples: [CatIdentityExperimentEvaluationSample],
         candidates: [CatIdentityExperimentCandidateInput],
         candidateSamples: [CatIdentityExperimentCandidateSample],
         featuresByKey: [InstanceKey: InstanceFeatures]
@@ -477,6 +556,23 @@ actor CatIdentityExperimentService {
             }
         }
 
+        let evaluationDistances = zip(evaluations, evaluationSamples).map {
+            input, sample in
+            let feature = featuresByKey[
+                InstanceKey(
+                    assetLocalIdentifier: input.assetLocalIdentifier,
+                    boundingBox: input.boundingBox
+                )
+            ] ?? .unavailable
+            return CatIdentityExperimentEvaluationDistances(
+                sample: sample,
+                distancesToReferences: referenceFeatures.map {
+                    Self.distance(feature, $0, method: method)
+                },
+                featureIsAvailable: Self.hasFeature(feature, method: method)
+            )
+        }
+
         let candidateDistances = zip(candidates, candidateSamples).map {
             input, sample in
             let feature = featuresByKey[
@@ -494,9 +590,11 @@ actor CatIdentityExperimentService {
             )
         }
         precondition(referenceSamples.count == referenceFeatures.count)
+        precondition(evaluationSamples.count == evaluationDistances.count)
         return CatIdentityExperimentMethodInput(
             method: method,
             referenceDistances: matrix,
+            evaluations: evaluationDistances,
             candidates: candidateDistances
         )
     }
