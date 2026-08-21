@@ -353,6 +353,21 @@ actor SharingRuntimeSelfTestRunner {
         let base = Date(timeIntervalSince1970: 1_800_000_000)
         let acceptedAt = base.addingTimeInterval(-1)
         let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+        let privateMetadataJPEG = try momentJPEGWithSyntheticPrivateMetadata(preview.jpeg)
+        guard MomentCanonicalPreviewBuilder.runtimeSelfTestStrippingPrivateMetadata(
+            from: privateMetadataJPEG
+        ) == preview.jpeg else { throw MomentSharingError.invalidPayload }
+        do {
+            try MomentCanonicalPreviewBuilder.validateReceived(
+                privateMetadataJPEG,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                expectedPlaintextSHA256: PairingCrypto.sha256(privateMetadataJPEG)
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard error == .invalidPayload else { throw error }
+        }
 
         let firstCatalog = try MomentShareHandoffStore.publishAdmissions(
             [MomentShareAdmissionInput(
@@ -462,7 +477,7 @@ actor SharingRuntimeSelfTestRunner {
             MomentShareHandoffStore.captureLifetime + 12
         )
         _ = try MomentShareHandoffStore.activeAdmissions(now: expiredReadAt)
-        guard !MomentShareHandoffStore.captureHasRequiredProtection(recovered) else {
+        guard !MomentShareHandoffStore.captureExists(recovered) else {
             throw MomentSharingError.stateUnavailable
         }
         guard try MomentShareHandoffStore.nextPendingCapture(
@@ -996,6 +1011,51 @@ actor SharingRuntimeSelfTestRunner {
             UIColor(red: 0.94, green: 0.86, blue: 0.18, alpha: 1).setFill()
             context.cgContext.fill(scaled(CGRect(x: 17, y: 49, width: 23, height: 13)))
         }
+    }
+
+    /// Adds fixed synthetic APPn/COM segments without using any device or photo
+    /// metadata. The Moment encoder must remove every segment byte-for-byte.
+    private static func momentJPEGWithSyntheticPrivateMetadata(_ jpeg: Data) throws -> Data {
+        guard jpeg.count >= 4,
+              jpeg[0] == 0xFF,
+              jpeg[1] == 0xD8,
+              jpeg[jpeg.count - 2] == 0xFF,
+              jpeg[jpeg.count - 1] == 0xD9
+        else {
+            throw MomentSharingError.invalidPayload
+        }
+        let segments = try momentSyntheticPrivateMetadataSegments()
+        var result = Data([0xFF, 0xD8])
+        // Exercise both the ordinary header and markers found after entropy
+        // data but before EOI. The latter prevents an SOS-to-EOF shortcut from
+        // silently accepting private metadata between scans.
+        result.append(segments)
+        result.append(contentsOf: jpeg.dropFirst(2).dropLast(2))
+        result.append(segments)
+        result.append(contentsOf: [0xFF, 0xD9])
+        return result
+    }
+
+    private static func momentSyntheticPrivateMetadataSegments() throws -> Data {
+        var result = Data()
+        for (marker, payload) in [
+            (UInt8(0xE0), Array("JFIF\u{0}runtime-private".utf8)),
+            (UInt8(0xE1), Array("Exif\u{0}\u{0}runtime".utf8)),
+            (UInt8(0xE3), Array("runtime-unknown-app".utf8)),
+            (UInt8(0xED), Array("Photoshop 3.0\u{0}runtime".utf8)),
+            (UInt8(0xFE), Array("runtime-comment".utf8))
+        ] {
+            let length = payload.count + 2
+            guard length <= Int(UInt16.max) else {
+                throw MomentSharingError.invalidPayload
+            }
+            result.append(0xFF)
+            result.append(marker)
+            result.append(UInt8((length >> 8) & 0xFF))
+            result.append(UInt8(length & 0xFF))
+            result.append(contentsOf: payload)
+        }
+        return result
     }
 
     private static func legacyNormalizedImage(_ image: UIImage) -> UIImage {

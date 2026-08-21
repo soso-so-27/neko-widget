@@ -234,7 +234,8 @@ private enum MomentShareHandoffProtectedFile {
     }
 
     static func hasRequiredProtectionAndBackupExclusion(_ url: URL) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]),
+        guard FileManager.default.fileExists(atPath: url.path),
+              let values = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]),
               values.isExcludedFromBackup == true
         else { return false }
 #if targetEnvironment(simulator)
@@ -663,6 +664,13 @@ enum MomentShareHandoffStore {
         guard let url = try? captureURL(for: record.id) else { return false }
         return MomentShareHandoffProtectedFile
             .hasRequiredProtectionAndBackupExclusion(url)
+    }
+
+    /// Runtime/self-test hook for physical retention checks. Protection and
+    /// existence are deliberately separate assertions.
+    static func captureExists(_ record: MomentPendingCaptureRecord) -> Bool {
+        guard let url = try? captureURL(for: record.id) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
     }
 
     // MARK: - Locked storage

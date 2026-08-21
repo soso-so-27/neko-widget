@@ -29,18 +29,26 @@ enum MomentCanonicalPreviewBuilder {
         )
         let scales: [CGFloat] = [1, 0.9, 0.8, 0.7, 0.6].map { baseScale * $0 }
         let qualities: [CGFloat] = [0.92, 0.86, 0.80, 0.74, 0.68, 0.62, 0.56]
+        var encounteredCanonicalizationFailure = false
 
         for scale in scales {
             let width = max(1, Int((CGFloat(source.width) * scale).rounded(.down)))
             let height = max(1, Int((CGFloat(source.height) * scale).rounded(.down)))
             guard width <= MomentSharingProtocol.maximumCanonicalPixelDimension,
-                  height <= MomentSharingProtocol.maximumCanonicalPixelDimension,
-                  let normalized = normalizedSRGBImage(source, width: width, height: height)
+                  height <= MomentSharingProtocol.maximumCanonicalPixelDimension
             else { continue }
+            guard let normalized = normalizedSRGBImage(source, width: width, height: height)
+            else {
+                encounteredCanonicalizationFailure = true
+                continue
+            }
 
             for quality in qualities {
-                guard let data = jpegData(normalized, quality: quality),
-                      data.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28
+                guard let data = jpegData(normalized, quality: quality) else {
+                    encounteredCanonicalizationFailure = true
+                    continue
+                }
+                guard data.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28
                 else { continue }
                 do {
                     try validateJPEG(data, pixelWidth: width, pixelHeight: height)
@@ -50,11 +58,14 @@ enum MomentCanonicalPreviewBuilder {
                         pixelHeight: height
                     )
                 } catch {
+                    encounteredCanonicalizationFailure = true
                     continue
                 }
             }
         }
-        throw MomentSharingError.payloadTooLarge
+        throw encounteredCanonicalizationFailure
+            ? MomentSharingError.invalidPayload
+            : MomentSharingError.payloadTooLarge
     }
 
     static func validateReceived(
@@ -111,18 +122,116 @@ enum MomentCanonicalPreviewBuilder {
             [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
         )
         guard CGImageDestinationFinalize(destination) else { return nil }
-        return result as Data
+        // ImageIO may synthesize application metadata even when its input is a
+        // freshly rendered CGImage. This protocol needs no APP payload, so
+        // remove every APPn segment and comment before validation and hashing.
+        return strippingPrivateMetadata(from: result as Data)
     }
+
+    /// Rewrites the bounded JPEG marker stream, including markers between
+    /// progressive scans. Entropy-coded bytes, byte stuffing, and restart
+    /// markers remain unchanged; APPn and COM metadata containers do not.
+    private static func strippingPrivateMetadata(from jpeg: Data) -> Data? {
+        guard jpeg.count >= 4,
+              jpeg[0] == 0xFF,
+              jpeg[1] == 0xD8
+        else { return nil }
+
+        var output = Data([0xFF, 0xD8])
+        var cursor = 2
+        var isReadingEntropyData = false
+        var sawStartOfScan = false
+        while cursor < jpeg.count {
+            if isReadingEntropyData {
+                guard jpeg[cursor] == 0xFF else {
+                    output.append(jpeg[cursor])
+                    cursor += 1
+                    continue
+                }
+
+                let markerStart = cursor
+                while cursor < jpeg.count, jpeg[cursor] == 0xFF {
+                    cursor += 1
+                }
+                guard cursor < jpeg.count else { return nil }
+                let marker = jpeg[cursor]
+
+                // A stuffed zero and restart markers are part of the scan,
+                // not the start of a marker segment.
+                if marker == 0x00 || (0xD0...0xD7).contains(marker) {
+                    output.append(contentsOf: jpeg[markerStart...cursor])
+                    cursor += 1
+                    continue
+                }
+
+                // Re-process the marker outside entropy mode so its declared
+                // length is bounds checked and private segments can be removed.
+                cursor = markerStart
+                isReadingEntropyData = false
+                continue
+            }
+
+            let markerStart = cursor
+            guard jpeg[cursor] == 0xFF else { return nil }
+            while cursor < jpeg.count, jpeg[cursor] == 0xFF {
+                cursor += 1
+            }
+            guard cursor < jpeg.count else { return nil }
+            let marker = jpeg[cursor]
+            cursor += 1
+
+            if marker == 0xD9 {
+                guard sawStartOfScan else { return nil }
+                output.append(contentsOf: jpeg[markerStart..<cursor])
+                guard cursor == jpeg.count else { return nil }
+                return output
+            }
+            guard marker != 0x00,
+                  marker != 0xD8,
+                  !(0xD0...0xD7).contains(marker)
+            else { return nil }
+
+            if marker == 0x01 {
+                output.append(contentsOf: jpeg[markerStart..<cursor])
+                continue
+            }
+
+            guard cursor <= jpeg.count - 2 else { return nil }
+
+            let segmentLength = (Int(jpeg[cursor]) << 8) | Int(jpeg[cursor + 1])
+            guard segmentLength >= 2,
+                  segmentLength <= jpeg.count - cursor
+            else { return nil }
+            let segmentEnd = cursor + segmentLength
+
+            if !(0xE0...0xEF).contains(marker), marker != 0xFE {
+                output.append(contentsOf: jpeg[markerStart..<segmentEnd])
+            }
+            cursor = segmentEnd
+            if marker == 0xDA {
+                sawStartOfScan = true
+                isReadingEntropyData = true
+            }
+        }
+        return nil
+    }
+
+#if DEBUG
+    static func runtimeSelfTestStrippingPrivateMetadata(from jpeg: Data) -> Data? {
+        strippingPrivateMetadata(from: jpeg)
+    }
+#endif
 
     private static func validateJPEG(
         _ data: Data,
         pixelWidth: Int,
         pixelHeight: Int
     ) throws {
-        guard let source = CGImageSourceCreateWithData(
-            data as CFData,
-            [kCGImageSourceShouldCache: false] as CFDictionary
-        ),
+        guard strippingPrivateMetadata(from: data) == data,
+              let source = CGImageSourceCreateWithData(
+                  data as CFData,
+                  [kCGImageSourceShouldCache: false] as CFDictionary
+              ),
         CGImageSourceGetCount(source) == 1,
         CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
