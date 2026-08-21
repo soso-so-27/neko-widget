@@ -149,13 +149,28 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
 
-        guard app.tabBars.buttons["これ好き"].waitForExistence(timeout: 10) else {
+        guard firstExistingButton(
+            in: app,
+            identifiers: ["main-tab-likes"],
+            labels: ["これ好き"],
+            timeout: 10
+        ) != nil else {
             fail("The liked-photos tab disappeared from the tab bar.", app: app)
             return
         }
 
-        guard app.tabBars.buttons["まど"].exists,
-              app.tabBars.buttons["思い出"].exists else {
+        guard firstExistingButton(
+            in: app,
+            identifiers: ["main-tab-window"],
+            labels: ["まど"],
+            timeout: 10
+        ) != nil,
+              firstExistingButton(
+                  in: app,
+                  identifiers: ["main-tab-memories"],
+                  labels: ["思い出"],
+                  timeout: 10
+              ) != nil else {
             fail("The primary Window or Memories tab was not available.", app: app)
             return
         }
