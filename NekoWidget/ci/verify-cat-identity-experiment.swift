@@ -212,14 +212,14 @@ enum CatIdentityExperimentVerifier {
                 ordinal: 0,
                 asset: 9,
                 episode: 100,
-                profileZeroDistance: 0.11,
+                profileZeroDistance: 0.08,
                 profileOneDistance: 1.0
             ),
             candidate(
                 ordinal: 1,
                 asset: 9,
                 episode: 100,
-                profileZeroDistance: 0.12,
+                profileZeroDistance: 0.08,
                 profileOneDistance: 1.0
             ),
             candidate(
@@ -227,7 +227,7 @@ enum CatIdentityExperimentVerifier {
                 asset: 10,
                 episode: 101,
                 profileZeroDistance: 1.0,
-                profileOneDistance: 0.11
+                profileOneDistance: 0.08
             )
         ]
         let report = try evaluate(
