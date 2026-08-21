@@ -1,25 +1,29 @@
 import Foundation
 
-/// The local photo-book milestone is intentionally fixed at one 30-photo book.
+/// A local PDF is an optional export from the uncapped "これ好き" collection.
+/// It never chooses a global prefix silently: the caller explicitly supplies
+/// one to thirty identifiers, and only currently liked photos can be exported.
 /// This policy has no notification, badge, Widget, PhotoKit, or UI side effects.
 enum PhotoBookPolicy {
-    static let photosPerBook = 30
+    static let minimumPhotosPerExport = 1
+    static let maximumPhotosPerExport = 30
 
-    static func progress(likedPhotoCount: Int) -> PhotoBookProgress {
-        PhotoBookProgress(likedPhotoCount: likedPhotoCount)
-    }
-
-    /// Selects only liked photos, oldest capture date first. Missing capture
-    /// dates sort after every known date, and identifiers make all ties stable.
-    /// Only the first book is selected even when more than 30 photos are liked.
+    /// Selects only the explicitly requested liked photos, oldest capture date
+    /// first. Missing dates sort last and identifiers make ties stable.
     static func selection(
-        from candidates: [PhotoBookPhotoCandidate]
+        from candidates: [PhotoBookPhotoCandidate],
+        selectedIdentifiers: [String]
     ) -> [PhotoBookPhotoCandidate] {
-        candidates
-            .filter(\.isLiked)
+        let requestedIdentifiers = Set(selectedIdentifiers)
+        guard requestedIdentifiers.count >= minimumPhotosPerExport,
+              requestedIdentifiers.count <= maximumPhotosPerExport else {
+            return []
+        }
+        return candidates
+            .filter {
+                $0.isLiked && requestedIdentifiers.contains($0.localIdentifier)
+            }
             .sorted(by: selectionOrder)
-            .prefix(photosPerBook)
-            .map { $0 }
     }
 
     private static func selectionOrder(
@@ -52,30 +56,5 @@ struct PhotoBookPhotoCandidate: Equatable, Sendable {
         self.localIdentifier = localIdentifier
         self.creationDate = creationDate
         self.isLiked = isLiked
-    }
-}
-
-struct PhotoBookProgress: Equatable, Sendable {
-    let likedPhotoCount: Int
-
-    init(likedPhotoCount: Int) {
-        self.likedPhotoCount = max(0, likedPhotoCount)
-    }
-
-    var requiredPhotoCount: Int { PhotoBookPolicy.photosPerBook }
-
-    var remainingPhotoCount: Int {
-        max(0, requiredPhotoCount - likedPhotoCount)
-    }
-
-    var hasCompleteBook: Bool {
-        likedPhotoCount >= requiredPhotoCount
-    }
-
-    var statusText: String {
-        if hasCompleteBook {
-            return "1冊分たまりました"
-        }
-        return "あと\(remainingPhotoCount)枚で1冊になります"
     }
 }

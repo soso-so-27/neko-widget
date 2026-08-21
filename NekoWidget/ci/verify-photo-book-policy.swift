@@ -29,31 +29,25 @@ private func candidate(
     )
 }
 
-private func verifyProgressCopyAndBoundary() throws {
-    try require(PhotoBookPolicy.photosPerBook == 30, "book size changed")
+private func verifySelectionBoundary() throws {
+    try require(PhotoBookPolicy.minimumPhotosPerExport == 1, "minimum changed")
+    try require(PhotoBookPolicy.maximumPhotosPerExport == 30, "maximum changed")
+    let input = (0..<40).map {
+        candidate("photo-\($0)", TimeInterval($0))
+    }
     try require(
-        PhotoBookPolicy.progress(likedPhotoCount: -4).statusText
-            == "あと30枚で1冊になります",
-        "negative count was not normalized"
+        PhotoBookPolicy.selection(
+            from: input,
+            selectedIdentifiers: []
+        ).isEmpty,
+        "empty export selection was accepted"
     )
     try require(
-        PhotoBookPolicy.progress(likedPhotoCount: 0).statusText
-            == "あと30枚で1冊になります",
-        "empty progress copy changed"
-    )
-    try require(
-        PhotoBookPolicy.progress(likedPhotoCount: 29).statusText
-            == "あと1枚で1冊になります",
-        "remaining-one copy changed"
-    )
-    let complete = PhotoBookPolicy.progress(likedPhotoCount: 30)
-    try require(complete.hasCompleteBook, "30 photos did not complete a book")
-    try require(complete.remainingPhotoCount == 0, "complete progress went negative")
-    try require(complete.statusText == "1冊分たまりました", "completion copy changed")
-    try require(
-        PhotoBookPolicy.progress(likedPhotoCount: 80).statusText
-            == "1冊分たまりました",
-        "overflow count changed the one-book completion copy"
+        PhotoBookPolicy.selection(
+            from: input,
+            selectedIdentifiers: input.map(\.localIdentifier)
+        ).isEmpty,
+        "more than 30 export photos were accepted"
     )
 }
 
@@ -67,7 +61,13 @@ private func verifyLikedOnlyOldestFirstSelection() throws {
         candidate("same-a", 200),
         candidate("nil-a", nil)
     ]
-    let selected = PhotoBookPolicy.selection(from: input)
+    let selected = PhotoBookPolicy.selection(
+        from: input,
+        selectedIdentifiers: [
+            "nil-z", "same-b", "ignored", "newer",
+            "oldest", "same-a", "nil-a"
+        ]
+    )
     try require(
         selected.map(\.localIdentifier) == [
             "oldest",
@@ -81,29 +81,34 @@ private func verifyLikedOnlyOldestFirstSelection() throws {
     )
 }
 
-private func verifyFirstThirtyLimit() throws {
-    let input = (0..<40).reversed().map { index in
+private func verifyExplicitSelectionCanUseAnyLikedPhoto() throws {
+    let input = (0..<40).map { index in
         candidate(
             String(format: "photo-%02d", index),
             TimeInterval(index)
         )
     }
-    let selected = PhotoBookPolicy.selection(from: input)
-    try require(selected.count == 30, "selection exceeded one book")
+    let requested = ["photo-39", "photo-31", "photo-05"]
+    let selected = PhotoBookPolicy.selection(
+        from: input,
+        selectedIdentifiers: requested
+    )
     try require(
-        selected.map(\.localIdentifier) == (0..<30).map {
-            String(format: "photo-%02d", $0)
-        },
-        "selection did not keep the oldest first 30 liked photos"
+        selected.map(\.localIdentifier) == ["photo-05", "photo-31", "photo-39"],
+        "explicit photos were not selected in stable capture order"
+    )
+    try require(
+        !selected.contains { $0.localIdentifier == "photo-00" },
+        "an unselected global-prefix photo leaked into the PDF"
     )
 }
 
 @main
 private enum PhotoBookPolicyVerifier {
     static func main() throws {
-        try verifyProgressCopyAndBoundary()
+        try verifySelectionBoundary()
         try verifyLikedOnlyOldestFirstSelection()
-        try verifyFirstThirtyLimit()
+        try verifyExplicitSelectionCanUseAnyLikedPhoto()
         print("Photo-book policy: PASS")
     }
 }

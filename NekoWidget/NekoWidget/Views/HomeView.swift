@@ -40,7 +40,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("ねこのまど")
+        .navigationTitle("まど")
         .background(Color(.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -125,30 +125,58 @@ struct HomeView: View {
         Button {
             showsFamilyWindow = true
         } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "rectangle.on.rectangle")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.tint)
-                    .frame(width: 48, height: 48)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(.tint)
+                        .frame(width: 44, height: 44)
+                        .background(
+                            Color.accentColor.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 13)
+                        )
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("家族のまど")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text(SharingAPIConfiguration.current.isAvailable
-                        ? "届いた写真と、届けた写真を確認"
-                        : "窓と「いまの一枚」の画面を確認")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 7) {
+                            Text("家族のまど")
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            if !SharingAPIConfiguration.current.isAvailable {
+                                Text("プレビュー")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.tint)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        Color.accentColor.opacity(0.12),
+                                        in: Capsule()
+                                    )
+                            }
+                        }
+                        Text(SharingAPIConfiguration.current.isAvailable
+                            ? "家族から届いた一枚を見る"
+                            : "今後追加する体験を先に確認できます")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                 }
 
-                Spacer(minLength: 4)
+                Divider()
 
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                Label(
+                    "いまの一枚は、写真アプリの共有から届けます",
+                    systemImage: "square.and.arrow.up"
+                )
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,54 +201,83 @@ struct HomeView: View {
     @ViewBuilder
     private var todayPhoto: some View {
         if let currentPhoto {
-            VStack(spacing: 0) {
-                NavigationLink(value: currentPhoto.localIdentifier) {
-                    PhotoAssetImageView(
-                        localIdentifier: currentPhoto.localIdentifier,
-                        catBoundingBox: currentPhoto.catBoundingBox,
-                        targetPixelSize: CGSize(width: 900, height: 1125),
-                        targetAspectRatio: 4 / 5
-                    )
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(4 / 5, contentMode: .fit)
-                    .overlay(alignment: .topLeading) {
-                        Text(windowPhotoSourceLabel(currentPhoto))
-                            .font(.caption.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.black.opacity(0.45), in: Capsule())
-                            .padding(14)
-                    }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("いまの一枚")
+                        .font(.title3.bold())
+                    Spacer()
+                    Text("タップで写真をひらく")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("window-current-photo")
 
-                Button {
-                    toggleLike(currentPhoto.localIdentifier)
-                } label: {
-                    HStack(spacing: 9) {
-                        CatPawMark(isFilled: currentPhoto.isLiked)
-                            .frame(width: 22, height: 22)
-                        Text(currentPhoto.isLiked ? "これ好き済み" : "これ好き")
-                        Spacer()
+                ZStack(alignment: .bottom) {
+                    NavigationLink(value: currentPhoto.localIdentifier) {
+                        PhotoAssetImageView(
+                            localIdentifier: currentPhoto.localIdentifier,
+                            catBoundingBox: currentPhoto.catBoundingBox,
+                            targetPixelSize: CGSize(width: 900, height: 900),
+                            targetAspectRatio: 1
+                        )
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(1, contentMode: .fit)
                     }
-                    .font(.headline)
-                    .foregroundStyle(currentPhoto.isLiked ? Color.white : Color.primary)
-                    .padding(.horizontal, 18)
-                    .frame(height: 58)
-                    .background(
-                        currentPhoto.isLiked ? Color.pink : Color(.secondarySystemBackground)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("window-current-photo")
+
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.62)],
+                        startPoint: .center,
+                        endPoint: .bottom
                     )
+                    .allowsHitTesting(false)
+
+                    Text(windowPhotoSourceLabel(currentPhoto))
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.42), in: Capsule())
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                        .allowsHitTesting(false)
+
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button {
+                                toggleLike(currentPhoto.localIdentifier)
+                            } label: {
+                                CatPawMark(isFilled: currentPhoto.isLiked)
+                                    .frame(width: 27, height: 27)
+                                    .foregroundStyle(
+                                        currentPhoto.isLiked ? Color.white : Color.primary
+                                    )
+                                    .frame(width: 52, height: 52)
+                                    .background(
+                                        currentPhoto.isLiked
+                                            ? Color.pink
+                                            : Color(.systemBackground),
+                                        in: Circle()
+                                    )
+                                    .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
+                            }
+                            .padding(12)
+                            .accessibilityLabel(
+                                currentPhoto.isLiked ? "好きを解除" : "これ好き"
+                            )
+                            .accessibilityHint(
+                                currentPhoto.isLiked
+                                    ? "タップすると好きを解除します"
+                                    : "タップすると好き一覧に追加します"
+                            )
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint(currentPhoto.isLiked ? "タップすると好きを解除します" : "タップすると好き一覧に追加します")
+                .aspectRatio(1, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 24))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 24))
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 24)
-            )
         } else {
             emptyPhotoState
         }

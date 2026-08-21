@@ -28,7 +28,7 @@ struct MainTabView: View {
     let requestPhotoAccess: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let toggleLike: (String) -> Void
-    let exportPhotoBook: () async throws -> URL
+    let exportPhotoBook: ([String]) async throws -> URL
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void

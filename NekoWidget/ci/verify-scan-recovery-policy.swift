@@ -224,6 +224,66 @@ private func verifyRecoveryCounterAccounting() throws {
                 "reused 2048px evidence lost its diagnostics")
 }
 
+private func verifyScanProgressPublicationPolicy() throws {
+    let interval = ScanProgressPublicationPolicy.minimumInterval
+    try require(interval == 1.0,
+                "scan progress publication interval changed: \(interval)")
+    try require(
+        ScanProgressPublicationPolicy.delay(
+            lastPublicationUptime: nil,
+            nowUptime: 100
+        ) == 0,
+        "the first scan progress event was delayed"
+    )
+    try require(
+        abs(ScanProgressPublicationPolicy.delay(
+            lastPublicationUptime: 100,
+            nowUptime: 100.1
+        ) - 0.9) < 0.000_001,
+        "rapid scan progress was not coalesced to one update per second"
+    )
+    try require(
+        ScanProgressPublicationPolicy.delay(
+            lastPublicationUptime: 100,
+            nowUptime: 101
+        ) == 0,
+        "ready scan progress was delayed"
+    )
+    try require(
+        !ScanProgressPublicationPolicy.isResumeCheckpoint(scannedAssets: 0)
+            && !ScanProgressPublicationPolicy.isResumeCheckpoint(scannedAssets: 999)
+            && ScanProgressPublicationPolicy.isResumeCheckpoint(scannedAssets: 1_000)
+            && ScanProgressPublicationPolicy.isResumeCheckpoint(scannedAssets: 9_000),
+        "durable resume checkpoint cadence changed"
+    )
+
+    var pending = ScanState.idle
+    pending.purpose = .regular
+    var requested = pending
+    requested.requiresFullRescan = true
+    requested.purpose = .manualRescan
+    let preserved = ScanProgressPublicationPolicy.preservingLiveRescanIntent(
+        pending: pending,
+        live: requested
+    )
+    try require(
+        preserved.requiresFullRescan && preserved.purpose == .manualRescan,
+        "an old progress timer could roll back a requested full rescan"
+    )
+    var ordinaryLive = pending
+    ordinaryLive.requiresFullRescan = false
+    var pendingFull = pending
+    pendingFull.requiresFullRescan = true
+    let unchanged = ScanProgressPublicationPolicy.preservingLiveRescanIntent(
+        pending: pendingFull,
+        live: ordinaryLive
+    )
+    try require(
+        unchanged.requiresFullRescan,
+        "pending full-rescan intent was cleared without a terminal snapshot"
+    )
+}
+
 private func requireObject(_ value: Any) throws -> [String: Any] {
     guard let object = value as? [String: Any] else {
         throw VerificationError.failed("encoded value was not a JSON object")
@@ -239,6 +299,7 @@ private struct ScanRecoveryPolicyVerifier {
         try verifyPositiveV2MigrationKeepsExistingWidgetPopulation()
         try verifyEvidenceAndStateBackwardCompatibility()
         try verifyRecoveryCounterAccounting()
+        try verifyScanProgressPublicationPolicy()
         print("Scan recovery and eligibility policies: PASS")
     }
 }

@@ -2,15 +2,18 @@
 import UIKit
 
 enum PhotoBookPDFExportError: LocalizedError, Equatable {
-    case notEnoughLikedPhotos(required: Int, actual: Int)
+    case invalidSelection(minimum: Int, maximum: Int, actual: Int)
+    case selectedPhotosUnavailable(expected: Int, actual: Int)
     case photoUnavailable(page: Int)
     case imageUnavailable(page: Int)
     case couldNotCreatePDF
 
     var errorDescription: String? {
         switch self {
-        case let .notEnoughLikedPhotos(required, actual):
-            "PDFにはお気に入りが\(required)枚必要です。現在は\(actual)枚です。"
+        case let .invalidSelection(minimum, maximum, actual):
+            "PDFには\(minimum)〜\(maximum)枚を選んでください。現在は\(actual)枚です。"
+        case let .selectedPhotosUnavailable(expected, actual):
+            "選んだ\(expected)枚のうち、\(actual)枚だけを確認できました。選び直してください。"
         case let .photoUnavailable(page):
             "\(page)ページ目の写真を写真ライブラリから取得できませんでした。"
         case let .imageUnavailable(page):
@@ -21,8 +24,8 @@ enum PhotoBookPDFExportError: LocalizedError, Equatable {
     }
 }
 
-/// Creates one local A4-portrait PDF from the first 30 liked photos selected by
-/// `PhotoBookPolicy`. The returned temporary file can be passed directly to a
+/// Creates one local A4-portrait PDF from one to thirty explicitly selected
+/// liked photos. The returned temporary file can be passed directly to a
 /// `UIActivityViewController`. The caller owns the file's eventual cleanup.
 struct PhotoBookPDFExporter {
     static let pageSize = CGSize(width: 595.2, height: 841.8)
@@ -39,22 +42,40 @@ struct PhotoBookPDFExporter {
     /// pure policy, so passing the full candidate snapshot cannot export an
     /// unliked photo accidentally.
     @MainActor
-    func export(from records: [AssetRecord]) async throws -> URL {
+    func export(
+        from records: [AssetRecord],
+        selectedIdentifiers: [String]
+    ) async throws -> URL {
         try await export(from: records.map {
             PhotoBookPhotoCandidate(
                 localIdentifier: $0.localIdentifier,
                 creationDate: $0.creationDate,
                 isLiked: $0.liked
             )
-        })
+        }, selectedIdentifiers: selectedIdentifiers)
     }
 
     @MainActor
-    func export(from candidates: [PhotoBookPhotoCandidate]) async throws -> URL {
-        let selected = PhotoBookPolicy.selection(from: candidates)
-        guard selected.count == PhotoBookPolicy.photosPerBook else {
-            throw PhotoBookPDFExportError.notEnoughLikedPhotos(
-                required: PhotoBookPolicy.photosPerBook,
+    func export(
+        from candidates: [PhotoBookPhotoCandidate],
+        selectedIdentifiers: [String]
+    ) async throws -> URL {
+        let uniqueSelection = Set(selectedIdentifiers)
+        guard uniqueSelection.count >= PhotoBookPolicy.minimumPhotosPerExport,
+              uniqueSelection.count <= PhotoBookPolicy.maximumPhotosPerExport else {
+            throw PhotoBookPDFExportError.invalidSelection(
+                minimum: PhotoBookPolicy.minimumPhotosPerExport,
+                maximum: PhotoBookPolicy.maximumPhotosPerExport,
+                actual: uniqueSelection.count
+            )
+        }
+        let selected = PhotoBookPolicy.selection(
+            from: candidates,
+            selectedIdentifiers: Array(uniqueSelection)
+        )
+        guard selected.count == uniqueSelection.count else {
+            throw PhotoBookPDFExportError.selectedPhotosUnavailable(
+                expected: uniqueSelection.count,
                 actual: selected.count
             )
         }
@@ -81,13 +102,13 @@ struct PhotoBookPDFExporter {
             throw PhotoBookPDFExportError.couldNotCreatePDF
         }
         let outputURL = exportDirectory.appendingPathComponent(
-            "ねこのまど-フォトブック.pdf",
+            "ねこのまど-写真まとめ.pdf",
             isDirectory: false
         )
 
         let pageBounds = CGRect(origin: .zero, size: Self.pageSize)
         let documentInfo: [AnyHashable: Any] = [
-            kCGPDFContextTitle as String: "ねこのまど フォトブック",
+            kCGPDFContextTitle as String: "ねこのまど 写真まとめ",
             kCGPDFContextCreator as String: "ねこのまど"
         ]
         guard let consumer = CGDataConsumer(url: outputURL as CFURL) else {
@@ -161,9 +182,10 @@ struct PhotoBookPDFExporter {
         options.version = .current
         options.resizeMode = .exact
         options.deliveryMode = .highQualityFormat
-        // Build 19 never downloads iCloud originals. A user can retry after
-        // opening the photo in Photos so a local derivative becomes available.
-        options.isNetworkAccessAllowed = false
+        // Export is an explicit user action. The selection grid may show an
+        // iCloud-backed thumbnail, so the matching display-sized derivative
+        // must also be allowed here instead of failing after selection.
+        options.isNetworkAccessAllowed = true
         options.isSynchronous = false
 
         let request = PhotoBookImageRequest(
@@ -211,7 +233,10 @@ struct PhotoBookPDFExporter {
 /// request. Degraded previews are ignored so each PDF page receives one final,
 /// high-quality image and the continuation is resumed exactly once.
 private final class PhotoBookImageRequest: @unchecked Sendable {
-    private static let timeoutNanoseconds: UInt64 = 10_000_000_000
+    /// iCloud-backed display derivatives can legitimately take longer than the
+    /// former local-only ten-second budget. Keep a finite escape hatch while
+    /// the UI exposes explicit task cancellation.
+    private static let timeoutNanoseconds: UInt64 = 120_000_000_000
 
     private let asset: PHAsset
     private let targetSize: CGSize

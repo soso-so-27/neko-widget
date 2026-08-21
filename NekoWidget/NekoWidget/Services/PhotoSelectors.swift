@@ -157,3 +157,34 @@ struct AlbumCandidateSelector {
         return Array(candidates.prefix(snapshot.settings.albumMaximum))
     }
 }
+
+/// Keeps progress presentation below the refresh rate a person can perceive
+/// while preserving the existing 1,000-photo durable resume checkpoints.
+/// Terminal/stage snapshots are published by their owning paths and therefore
+/// do not use this timer.
+enum ScanProgressPublicationPolicy {
+    static let minimumInterval: TimeInterval = 1.0
+
+    static func delay(
+        lastPublicationUptime: TimeInterval?,
+        nowUptime: TimeInterval
+    ) -> TimeInterval {
+        guard let lastPublicationUptime else { return 0 }
+        return max(0, minimumInterval - (nowUptime - lastPublicationUptime))
+    }
+
+    static func isResumeCheckpoint(scannedAssets: Int) -> Bool {
+        scannedAssets > 0 && scannedAssets.isMultiple(of: 1_000)
+    }
+
+    static func preservingLiveRescanIntent(
+        pending: ScanState,
+        live: ScanState
+    ) -> ScanState {
+        guard live.requiresFullRescan else { return pending }
+        var value = pending
+        value.requiresFullRescan = true
+        value.purpose = live.purpose ?? value.purpose
+        return value
+    }
+}

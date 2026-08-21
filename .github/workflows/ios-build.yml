@@ -218,7 +218,7 @@ jobs:
             -o "$RUNNER_TEMP/verify-growth-album"
           "$RUNNER_TEMP/verify-growth-album"
 
-      - name: Verify local photo-book progress and export boundaries
+      - name: Verify local photo-summary and export boundaries
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -231,11 +231,8 @@ jobs:
           "$RUNNER_TEMP/verify-photo-book-policy"
 
           exporter="NekoWidget/Services/PhotoBookPDFExporter.swift"
-          grep -Fq 'options.isNetworkAccessAllowed = false' "$exporter"
-          if grep -Eq 'isNetworkAccessAllowed[[:space:]]*=[[:space:]]*true' "$exporter"; then
-            echo "Photo-book export must not download iCloud photos" >&2
-            exit 1
-          fi
+          grep -Fq 'options.isNetworkAccessAllowed = true' "$exporter"
+          grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
           grep -Fq 'Label("これ好き", systemImage: "pawprint.fill")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("まど", systemImage: "rectangle.on.rectangle")' \
@@ -247,6 +244,32 @@ jobs:
           grep -Fq 'LikedPhotosView(' NekoWidget/Views/MainTabView.swift
           grep -Fq 'exportPhotoBook: exportPhotoBook' \
             NekoWidget/Views/MainTabView.swift
+          grep -Fq 'selectedIdentifiers: identifiers' \
+            NekoWidget/App/AppRootView.swift
+          grep -Fq 'PhotoBrowserPager(' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'private var footerHeight: CGFloat = 48' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'Label("写真を選んでまとめる"' \
+            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq '"pager": "bounded-native-paging"' \
+            NekoWidget/Views/LikedPhotosView.swift
+          if grep -Fq 'LazyHStack(' NekoWidget/Views/LikedPhotosView.swift; then
+            echo "The photo browser must keep a bounded page window" >&2
+            exit 1
+          fi
+          grep -Fq 'options.deliveryMode = showsFullImage ? .opportunistic : .fastFormat' \
+            NekoWidget/Views/PhotoAssetImageView.swift
+          grep -Fq 'private actor PhotoAssetResolver' \
+            NekoWidget/Views/PhotoAssetImageView.swift
+          grep -Fq 'PhotoAssetThumbnailComposer.composeWideThumbnail' \
+            NekoWidget/Views/PhotoAssetImageView.swift
+          if grep -Fq 'withAnimation(' NekoWidget/Views/PhotoAssetImageView.swift; then
+            echo "Grid thumbnail callbacks must not animate every PhotoKit delivery" >&2
+            exit 1
+          fi
+          grep -Fq 'static let minimumInterval: TimeInterval = 1.0' \
+            NekoWidget/Services/PhotoSelectors.swift
           if grep -Fq '.badge(' NekoWidget/Views/MainTabView.swift; then
             echo "Top-level collection totals must not use unread-style badges" >&2
             exit 1

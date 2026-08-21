@@ -1,5 +1,6 @@
 import Photos
 import SwiftUI
+import UIKit
 
 /// A shared PhotoKit pipeline lets the photo browser warm the same cache used
 /// by its visible pages. The browser keeps this cache window deliberately
@@ -91,34 +92,23 @@ struct PhotoAssetImageView: View {
         ZStack {
             Color.secondary.opacity(0.12)
 
-            if let image = loader.image {
-                if loader.prefersAspectFit {
-                    if showsFullImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .transition(.opacity)
-                    } else {
-                        ZStack {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .saturation(0.82)
-                                .opacity(0.52)
-                            Color.black.opacity(0.12)
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                        }
-                        .transition(.opacity)
-                    }
+            switch loader.state {
+            case let .loaded(image):
+                if showsFullImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
                 } else {
+                    // Grid cells are deliberately one full-bleed layer. The
+                    // previous ambient-background fallback drew the same image
+                    // twice and caused visible scroll hitches on large lists.
+                    // The full photo remains available in the detail browser.
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .transition(.opacity)
                 }
-            } else if loader.didFail {
+
+            case .failed:
                 ContentUnavailableView(
                     "写真を表示できません",
                     systemImage: "photo",
@@ -126,9 +116,10 @@ struct PhotoAssetImageView: View {
                         networkAccessAllowed
                             ? "iCloud上の写真は、通信できるときに再度読み込みます。"
                             : "この計測では、端末内にある写真だけを使います。"
-                    )
+                        )
                 )
-            } else {
+
+            case .loading:
                 ProgressView()
                     .controlSize(.small)
             }
@@ -142,7 +133,7 @@ struct PhotoAssetImageView: View {
             showsFullImage: showsFullImage,
             networkAccessAllowed: networkAccessAllowed
         )) {
-            loader.load(
+            await loader.load(
                 localIdentifier: localIdentifier,
                 catBoundingBox: catBoundingBox,
                 targetPixelSize: targetPixelSize,
@@ -167,11 +158,130 @@ private struct LoadKey: Hashable {
     let networkAccessAllowed: Bool
 }
 
+private enum PhotoAssetImageLoadState {
+    case loading
+    case loaded(UIImage)
+    case failed
+}
+
+private final class PhotoAssetDisplayCache: @unchecked Sendable {
+    static let shared = PhotoAssetDisplayCache()
+
+    private let thumbnails = NSCache<PhotoAssetDisplayCacheKey, UIImage>()
+    private let assets = NSCache<NSString, PHAsset>()
+
+    private init() {
+        thumbnails.countLimit = 240
+        thumbnails.totalCostLimit = 32 * 1_024 * 1_024
+        assets.countLimit = 1_024
+    }
+
+    func thumbnail(for key: LoadKey) -> UIImage? {
+        thumbnails.object(forKey: PhotoAssetDisplayCacheKey(key))
+    }
+
+    func storeThumbnail(_ image: UIImage, for key: LoadKey) {
+        let pixelHeight = image.cgImage?.height ?? Int(image.size.height * image.scale)
+        let bytesPerRow = image.cgImage?.bytesPerRow
+            ?? Int(image.size.width * image.scale) * 4
+        thumbnails.setObject(
+            image,
+            forKey: PhotoAssetDisplayCacheKey(key),
+            cost: max(1, pixelHeight * bytesPerRow)
+        )
+    }
+
+    func cachedAsset(localIdentifier: String) -> PHAsset? {
+        let key = localIdentifier as NSString
+        return assets.object(forKey: key)
+    }
+
+    func storeAsset(_ asset: PHAsset) {
+        assets.setObject(asset, forKey: asset.localIdentifier as NSString)
+    }
+}
+
+private struct SendablePhotoAssetBatch: @unchecked Sendable {
+    let values: [String: PHAsset]
+}
+
+/// Coalesces the first wave of grid-cell lookups into one PhotoKit fetch and
+/// performs it away from the main actor. NSCache and immutable PHAsset proxies
+/// are safe to share for this read-only display path.
+private actor PhotoAssetResolver {
+    static let shared = PhotoAssetResolver()
+
+    private var waiters: [String: [CheckedContinuation<PHAsset?, Never>]] = [:]
+    private var scheduledFlush: Task<Void, Never>?
+
+    func asset(localIdentifier: String) async -> PHAsset? {
+        if let cached = PhotoAssetDisplayCache.shared.cachedAsset(
+            localIdentifier: localIdentifier
+        ) {
+            return cached
+        }
+        return await withCheckedContinuation { continuation in
+            waiters[localIdentifier, default: []].append(continuation)
+            scheduleFlushIfNeeded()
+        }
+    }
+
+    private func scheduleFlushIfNeeded() {
+        guard scheduledFlush == nil else { return }
+        scheduledFlush = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(2))
+            await self?.flush()
+        }
+    }
+
+    private func flush() async {
+        let pendingWaiters = waiters
+        waiters.removeAll(keepingCapacity: true)
+        scheduledFlush = nil
+        let identifiers = Array(pendingWaiters.keys)
+        guard !identifiers.isEmpty else { return }
+
+        let batch = await Task.detached(priority: .userInitiated) {
+            let result = PHAsset.fetchAssets(
+                withLocalIdentifiers: identifiers,
+                options: nil
+            )
+            var values: [String: PHAsset] = [:]
+            values.reserveCapacity(result.count)
+            result.enumerateObjects { asset, _, _ in
+                values[asset.localIdentifier] = asset
+            }
+            return SendablePhotoAssetBatch(values: values)
+        }.value
+
+        for asset in batch.values.values {
+            PhotoAssetDisplayCache.shared.storeAsset(asset)
+        }
+        for (identifier, continuations) in pendingWaiters {
+            let asset = batch.values[identifier]
+            continuations.forEach { $0.resume(returning: asset) }
+        }
+    }
+}
+
+private final class PhotoAssetDisplayCacheKey: NSObject {
+    let value: LoadKey
+
+    init(_ value: LoadKey) {
+        self.value = value
+    }
+
+    override var hash: Int { value.hashValue }
+
+    override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? PhotoAssetDisplayCacheKey else { return false }
+        return value == other.value
+    }
+}
+
 @MainActor
 private final class PhotoAssetImageLoader: ObservableObject {
-    @Published private(set) var image: UIImage?
-    @Published private(set) var didFail = false
-    @Published private(set) var prefersAspectFit = false
+    @Published private(set) var state: PhotoAssetImageLoadState = .loading
 
     private var requestID: PHImageRequestID?
     private var loadGeneration = 0
@@ -183,27 +293,40 @@ private final class PhotoAssetImageLoader: ObservableObject {
         targetAspectRatio: CGFloat,
         showsFullImage: Bool,
         networkAccessAllowed: Bool
-    ) {
+    ) async {
         cancel()
         let generation = loadGeneration
-        image = nil
-        didFail = false
-        prefersAspectFit = showsFullImage
-
-        let result = PHAsset.fetchAssets(
-            withLocalIdentifiers: [localIdentifier],
-            options: nil
+        let loadKey = LoadKey(
+            localIdentifier: localIdentifier,
+            boundingBox: catBoundingBox,
+            targetSize: targetPixelSize,
+            targetAspectRatio: targetAspectRatio,
+            showsFullImage: showsFullImage,
+            networkAccessAllowed: networkAccessAllowed
         )
-        guard let asset = result.firstObject else {
-            didFail = true
+        state = .loading
+
+        if !showsFullImage,
+           let cached = PhotoAssetDisplayCache.shared.thumbnail(for: loadKey) {
+            state = .loaded(cached)
             return
         }
 
+        guard let asset = await PhotoAssetResolver.shared.asset(
+            localIdentifier: localIdentifier
+        ) else {
+            guard loadGeneration == generation, !Task.isCancelled else { return }
+            state = .failed
+            return
+        }
+        guard loadGeneration == generation, !Task.isCancelled else { return }
+
         let options = PHImageRequestOptions()
-        options.deliveryMode = .opportunistic
+        options.deliveryMode = showsFullImage ? .opportunistic : .fastFormat
         options.isNetworkAccessAllowed = networkAccessAllowed
         options.version = .current
         var requestedContentMode: PHImageContentMode = showsFullImage ? .aspectFit : .aspectFill
+        var composesWideFallback = false
         if showsFullImage {
             options.resizeMode = .fast
         } else if let catBoundingBox {
@@ -215,12 +338,13 @@ private final class PhotoAssetImageLoader: ObservableObject {
                 options.normalizedCropRect = cropRect
                 options.resizeMode = .exact
             } else {
-                // A wide union (often multiple cats) cannot fit the requested
-                // crop. Keep the full asset and let the view fill the remaining
-                // space with an ambient copy of the same photo.
-                prefersAspectFit = true
+                // A wide union (often multiple cats) cannot fit a cat-centred
+                // crop without cutting one animal off. Request the full image,
+                // then flatten an ambient fill and the uncropped foreground
+                // into one cached bitmap. Scrolling still renders one layer.
                 requestedContentMode = .aspectFit
                 options.resizeMode = .fast
+                composesWideFallback = true
             }
         } else {
             options.resizeMode = .fast
@@ -240,11 +364,31 @@ private final class PhotoAssetImageLoader: ObservableObject {
                       self.loadGeneration == generation,
                       !cancelled else { return }
                 if let image {
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        self.image = image
+                    let displayImage: UIImage
+                    if composesWideFallback {
+                        let source = SendablePhotoImage(value: image)
+                        let rendered = await Task.detached(priority: .utility) {
+                            SendablePhotoImage(
+                                value: PhotoAssetThumbnailComposer.composeWideThumbnail(
+                                    source.value,
+                                    targetPixelSize: targetPixelSize
+                                )
+                            )
+                        }.value
+                        displayImage = rendered.value
+                    } else {
+                        displayImage = image
                     }
+                    guard self.loadGeneration == generation else { return }
+                    if !showsFullImage {
+                        PhotoAssetDisplayCache.shared.storeThumbnail(
+                            displayImage,
+                            for: loadKey
+                        )
+                    }
+                    self.state = .loaded(displayImage)
                 } else if error != nil || !degraded {
-                    self.didFail = true
+                    self.state = .failed
                 }
             }
         }
@@ -256,8 +400,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
             PhotoAssetImagePipeline.manager.cancelImageRequest(requestID)
         }
         requestID = nil
-        image = nil
-        didFail = false
+        state = .loading
     }
 
     private static func cropRect(
@@ -314,4 +457,80 @@ private final class PhotoAssetImageLoader: ObservableObject {
             height: cropHeight
         )
     }
+}
+
+private struct SendablePhotoImage: @unchecked Sendable {
+    let value: UIImage
+}
+
+private enum PhotoAssetThumbnailComposer {
+    static func composeWideThumbnail(
+        _ image: UIImage,
+        targetPixelSize: CGSize
+    ) -> UIImage {
+        guard image.size.width > 0,
+              image.size.height > 0,
+              targetPixelSize.width.isFinite,
+              targetPixelSize.height.isFinite,
+              targetPixelSize.width > 0,
+              targetPixelSize.height > 0 else {
+            return image
+        }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let bounds = CGRect(origin: .zero, size: targetPixelSize)
+        return UIGraphicsImageRenderer(
+            size: targetPixelSize,
+            format: format
+        ).image { _ in
+            UIColor.black.setFill()
+            UIRectFill(bounds)
+            image.draw(
+                in: aspectFillRect(imageSize: image.size, inside: bounds),
+                blendMode: .normal,
+                alpha: 0.48
+            )
+            UIColor.black.withAlphaComponent(0.22).setFill()
+            UIRectFill(bounds)
+            image.draw(in: aspectFitRect(imageSize: image.size, inside: bounds))
+        }
+    }
+
+    private static func aspectFitRect(
+        imageSize: CGSize,
+        inside bounds: CGRect
+    ) -> CGRect {
+        scaledRect(imageSize: imageSize, inside: bounds, useMaximumScale: false)
+    }
+
+    private static func aspectFillRect(
+        imageSize: CGSize,
+        inside bounds: CGRect
+    ) -> CGRect {
+        scaledRect(imageSize: imageSize, inside: bounds, useMaximumScale: true)
+    }
+
+    private static func scaledRect(
+        imageSize: CGSize,
+        inside bounds: CGRect,
+        useMaximumScale: Bool
+    ) -> CGRect {
+        let widthScale = bounds.width / imageSize.width
+        let heightScale = bounds.height / imageSize.height
+        let scale = useMaximumScale
+            ? max(widthScale, heightScale)
+            : min(widthScale, heightScale)
+        let size = CGSize(
+            width: imageSize.width * scale,
+            height: imageSize.height * scale
+        )
+        return CGRect(
+            x: bounds.midX - size.width / 2,
+            y: bounds.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
 }

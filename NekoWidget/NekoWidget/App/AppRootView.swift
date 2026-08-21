@@ -14,6 +14,7 @@ struct AppRootView: View {
     @AppStorage(OnboardingPresentationPersistence.resumePageIndexKey)
     private var onboardingResumePageIndex = 0
     @StateObject private var widgetInstallationChecker = WidgetInstallationChecker()
+    @StateObject private var photoPresentationCache = PhotoPresentationCache()
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @State private var onboardingScanErrorMessage: String?
@@ -104,7 +105,7 @@ struct AppRootView: View {
             page: onboardingPage,
             authorizationStatus: viewModel.authorizationStatus,
             isPhotoRequestReady: viewModel.catHouseholdIdentity != nil,
-            scan: scanPresentation,
+            scan: scanPresentation(records: viewModel.catAssets),
             scanErrorMessage: onboardingScanErrorMessage,
             isLimitedAccess: viewModel.isLimitedAccess,
             requestPhotoAccess: {
@@ -125,7 +126,7 @@ struct AppRootView: View {
     private var authorizedContent: some View {
         if !hasSeenInitialScanResult {
             InitialScanView(
-                scan: scanPresentation,
+                scan: scanPresentation(records: viewModel.catAssets),
                 isLimitedAccess: viewModel.isLimitedAccess,
                 chooseMorePhotos: presentLimitedLibraryPicker,
                 rescan: {
@@ -141,35 +142,62 @@ struct AppRootView: View {
     }
 
     private var mainTabContent: some View {
-        MainTabView(
+        let visibleSnapshot = hasPhotoAccess
+            ? viewModel.presentationSnapshot
+            : .empty
+        let photoProjection = photoPresentationCache.projection(
+            snapshot: visibleSnapshot,
+            sourceSnapshot: hasPhotoAccess ? viewModel.snapshot : .empty,
+            version: viewModel.presentationVersion,
+            transform: photoPresentation
+        )
+        let visibleCatAssets = photoProjection.catAssets
+        let assetsByIdentifier = photoProjection.assetsByIdentifier
+        let identity = hasPhotoAccess ? viewModel.catHouseholdIdentity : nil
+        let identityProjection = identity.map { profileIdentityProjection($0) }
+        let postureDiagnostics = postureDiagnosticsPresentation(
+            records: visibleCatAssets
+        )
+        let profilesPresentation = makeCatProfilesPresentation(
+            identity: identity,
+            projection: identityProjection,
+            assetsByIdentifier: assetsByIdentifier,
+            candidateAssets: visibleCatAssets,
+            postureDiagnostics: postureDiagnostics
+        )
+        let profilePhotos = makeProfileAlbumPhotos(
+            identity: identity,
+            projection: identityProjection,
+            assetsByIdentifier: assetsByIdentifier
+        )
+
+        return MainTabView(
             currentPhoto: hasPhotoAccess
                 ? viewModel.currentAsset.map(photoPresentation)
                 : nil,
-            likedPhotos: hasPhotoAccess
-                ? viewModel.likedAssets.map(photoPresentation)
-                : [],
-            catPhotos: hasPhotoAccess
-                ? viewModel.catAssets.map(photoPresentation)
-                : [],
-            libraryPhotos: hasPhotoAccess
-                ? viewModel.visibleLibraryAssets.map(photoPresentation)
-                : [],
-            scan: hasPhotoAccess ? scanPresentation : ScanPresentation(),
-            albumState: hasPhotoAccess ? effectiveAlbumState : .idle,
+            likedPhotos: photoProjection.likedPhotos,
+            catPhotos: photoProjection.catPhotos,
+            libraryPhotos: photoProjection.libraryPhotos,
+            scan: hasPhotoAccess
+                ? scanPresentation(records: visibleCatAssets)
+                : ScanPresentation(),
+            albumState: hasPhotoAccess
+                ? effectiveAlbumState(catAssetCount: visibleCatAssets.count)
+                : .idle,
             settings: settingsPresentation,
             detectionAccuracySample: hasPhotoAccess
                 ? detectionAccuracySamplePresentation
                 : .init(),
             highResolutionRecoverySample: hasPhotoAccess
-                ? highResolutionRecoverySamplePresentation
+                ? highResolutionRecoverySamplePresentation(records: visibleCatAssets)
                 : .init(),
-            excludedCatPhotos: hasPhotoAccess ? excludedCatPhotoPresentations : [],
+            excludedCatPhotos: hasPhotoAccess
+                ? excludedCatPhotoPresentations(assetsByIdentifier: assetsByIdentifier)
+                : [],
             photoSourceAlbums: hasPhotoAccess ? viewModel.photoSourceAlbums : [],
             photoSourceStatus: hasPhotoAccess ? viewModel.photoSourceStatus : .allLibrary,
-            catProfilesPresentation: hasPhotoAccess
-                ? catProfilesPresentation
-                : CatProfilesPresentation(),
-            profileAlbumPhotos: hasPhotoAccess ? profileAlbumPhotos : [:],
+            catProfilesPresentation: profilesPresentation,
+            profileAlbumPhotos: profilePhotos,
             catProfilesActions: catProfilesActions,
             hasPhotoAccess: hasPhotoAccess,
             isLimitedAccess: hasPhotoAccess && viewModel.isLimitedAccess,
@@ -187,8 +215,11 @@ struct AppRootView: View {
             toggleLike: { identifier in
                 Task { await viewModel.toggleLike(id: identifier) }
             },
-            exportPhotoBook: {
-                try await PhotoBookPDFExporter().export(from: viewModel.likedAssets)
+            exportPhotoBook: { identifiers in
+                try await PhotoBookPDFExporter().export(
+                    from: viewModel.likedAssets,
+                    selectedIdentifiers: identifiers
+                )
             },
             albumOpened: { key, group in
                 Task {
@@ -223,7 +254,7 @@ struct AppRootView: View {
         )
     }
 
-    private var scanPresentation: ScanPresentation {
+    private func scanPresentation(records: [AssetRecord]) -> ScanPresentation {
         let state = viewModel.scanState
         var presentation = ScanPresentation(
             scannedAssets: state.scannedAssets,
@@ -239,11 +270,11 @@ struct AppRootView: View {
         case .none:
             break
         case .provisional:
-            presentation.preliminaryCatAssets = viewModel.catAssets.count
-            presentation.preliminaryOldestDate = viewModel.oldestCatPhotoDate
+            presentation.preliminaryCatAssets = records.count
+            presentation.preliminaryOldestDate = records.compactMap(\.creationDate).min()
         case .final:
-            presentation.finalCatAssets = viewModel.catAssets.count
-            presentation.finalOldestDate = viewModel.oldestCatPhotoDate
+            presentation.finalCatAssets = records.count
+            presentation.finalOldestDate = records.compactMap(\.creationDate).min()
         }
         return presentation
     }
@@ -277,11 +308,13 @@ struct AppRootView: View {
 
     /// Highest-confidence cats found only by the 2048px retry. This keeps the
     /// Build 19 visual acceptance sample on-device and exports no identifiers.
-    private var highResolutionRecoverySamplePresentation: DetectionAccuracySamplePresentation {
+    private func highResolutionRecoverySamplePresentation(
+        records: [AssetRecord]
+    ) -> DetectionAccuracySamplePresentation {
         guard DetectionAccuracySampler.isFinal(viewModel.snapshot) else {
             return DetectionAccuracySamplePresentation()
         }
-        let recovered = viewModel.catAssets.filter {
+        let recovered = records.filter {
             $0.analysisEvidence?.finalPass == .highResolution2048
                 && $0.analysisEvidence?.fallbackOutcome == .detected
         }.sorted {
@@ -306,12 +339,9 @@ struct AppRootView: View {
         )
     }
 
-    private var excludedCatPhotoPresentations: [ExcludedCatPhotoPresentation] {
-        let assetsByIdentifier = Dictionary(
-            uniqueKeysWithValues: viewModel.snapshot.assets.map {
-                ($0.localIdentifier, $0)
-            }
-        )
+    private func excludedCatPhotoPresentations(
+        assetsByIdentifier: [String: AssetRecord]
+    ) -> [ExcludedCatPhotoPresentation] {
         return viewModel.excludedCatAssets.map { exclusion in
             ExcludedCatPhotoPresentation(
                 localIdentifier: exclusion.localIdentifier,
@@ -321,14 +351,12 @@ struct AppRootView: View {
         }
     }
 
-    private var profileAlbumPhotos: [String: [PhotoPresentation]] {
-        guard let identity = viewModel.catHouseholdIdentity else { return [:] }
-        let projection = profileIdentityProjection(identity)
-        let assetsByIdentifier = Dictionary(
-            uniqueKeysWithValues: viewModel.snapshot.assets.map {
-                ($0.localIdentifier, $0)
-            }
-        )
+    private func makeProfileAlbumPhotos(
+        identity: CatHouseholdIdentityState?,
+        projection: ProfileIdentityProjection?,
+        assetsByIdentifier: [String: AssetRecord]
+    ) -> [String: [PhotoPresentation]] {
+        guard let identity, let projection else { return [:] }
         var result: [String: [PhotoPresentation]] = [:]
         for profile in identity.profiles {
             result[profile.id.uuidString] = (projection.confirmedByProfile[profile.id] ?? [])
@@ -349,19 +377,18 @@ struct AppRootView: View {
         return result
     }
 
-    private var catProfilesPresentation: CatProfilesPresentation {
-        guard let identity = viewModel.catHouseholdIdentity else {
+    private func makeCatProfilesPresentation(
+        identity: CatHouseholdIdentityState?,
+        projection: ProfileIdentityProjection?,
+        assetsByIdentifier: [String: AssetRecord],
+        candidateAssets: [AssetRecord],
+        postureDiagnostics: CatPostureDiagnosticsPresentation
+    ) -> CatProfilesPresentation {
+        guard let identity, let projection else {
             return CatProfilesPresentation(
-                postureDiagnostics: postureDiagnosticsPresentation
+                postureDiagnostics: postureDiagnostics
             )
         }
-        let projection = profileIdentityProjection(identity)
-        let candidateAssets = viewModel.catAssets
-        let assetsByIdentifier = Dictionary(
-            uniqueKeysWithValues: viewModel.snapshot.assets.map {
-                ($0.localIdentifier, $0)
-            }
-        )
         let allCandidatePhotos = candidateAssets.map { asset in
             CatProfilePhotoPresentation(
                 localIdentifier: asset.localIdentifier,
@@ -447,11 +474,6 @@ struct AppRootView: View {
             $0.assignedProfileIdentifiers.isEmpty
         }
 
-        let allAssetsByIdentifier = Dictionary(
-            uniqueKeysWithValues: viewModel.snapshot.assets.map {
-                ($0.localIdentifier, $0)
-            }
-        )
         let legacyExcludedIdentifiers = Set(
             identity.legacyUnscoped?.legacyExcludedAssetIdentifiers ?? []
         )
@@ -462,7 +484,7 @@ struct AppRootView: View {
             }
             return LegacyExcludedCatPhotoPresentation(
                 localIdentifier: excluded.localIdentifier,
-                creationDate: allAssetsByIdentifier[excluded.localIdentifier]?.creationDate
+                creationDate: assetsByIdentifier[excluded.localIdentifier]?.creationDate
             )
         }
         let legacyLifeReference: CatProfileLifeReferencePresentation?
@@ -481,16 +503,20 @@ struct AppRootView: View {
             profiles: profiles,
             photoAlbumOptions: photoAlbumOptions,
             unassignedPhotos: unassigned,
-            similarityCandidates: viewModel.catSimilarityCandidateInstances,
+            similarityCandidates: viewModel.catSimilarityCandidateInstances(
+                from: candidateAssets
+            ),
             legacyExcludedPhotos: legacyExcluded,
             legacyLifeReference: legacyLifeReference,
-            postureDiagnostics: postureDiagnosticsPresentation
+            postureDiagnostics: postureDiagnostics
         )
     }
 
-    private var postureDiagnosticsPresentation: CatPostureDiagnosticsPresentation {
+    private func postureDiagnosticsPresentation(
+        records: [AssetRecord]
+    ) -> CatPostureDiagnosticsPresentation {
         let distribution = CatBoundingBoxAspectDistribution(
-            records: viewModel.catAssets
+            records: records
         )
         return CatPostureDiagnosticsPresentation(
             targetPhotoCount: distribution.targetCatAssets,
@@ -765,11 +791,13 @@ struct AppRootView: View {
         }
     }
 
-    private var effectiveAlbumState: AlbumPresentationState {
+    private func effectiveAlbumState(
+        catAssetCount: Int
+    ) -> AlbumPresentationState {
         switch viewModel.albumStatus {
         case .idle where viewModel.snapshot.albumLocalIdentifier != nil:
             return .ready(
-                photoCount: min(viewModel.catAssets.count, viewModel.settings.albumMaximum),
+                photoCount: min(catAssetCount, viewModel.settings.albumMaximum),
                 updatedAt: viewModel.snapshot.updatedAt
             )
         case .idle:
@@ -913,6 +941,85 @@ struct AppRootView: View {
     private func dismissWidgetPlacementGuide() {
         showsWidgetPlacementGuide = false
         widgetInstallationChecker.refresh()
+    }
+}
+
+@MainActor
+private final class PhotoPresentationCache: ObservableObject {
+    struct Projection {
+        var libraryPhotos: [PhotoPresentation]
+        var catPhotos: [PhotoPresentation]
+        var likedPhotos: [PhotoPresentation]
+        var catAssets: [AssetRecord]
+        var assetsByIdentifier: [String: AssetRecord]
+    }
+
+    private struct Key: Equatable {
+        var version: LibraryPresentationVersion
+        var visibleAssetCount: Int
+        var sourceAssetCount: Int
+    }
+
+    private var cachedKey: Key?
+    private var cachedProjection = Projection(
+        libraryPhotos: [],
+        catPhotos: [],
+        likedPhotos: [],
+        catAssets: [],
+        assetsByIdentifier: [:]
+    )
+
+    func projection(
+        snapshot: LibrarySnapshot,
+        sourceSnapshot: LibrarySnapshot,
+        version: LibraryPresentationVersion,
+        transform: (AssetRecord) -> PhotoPresentation
+    ) -> Projection {
+        let key = Key(
+            version: version,
+            visibleAssetCount: snapshot.assets.count,
+            sourceAssetCount: sourceSnapshot.assets.count
+        )
+        guard cachedKey != key else { return cachedProjection }
+
+        let fingerprint = snapshot.settings.analysisFingerprint
+        var libraryPhotos: [PhotoPresentation] = []
+        var catPhotos: [PhotoPresentation] = []
+        var likedPhotos: [PhotoPresentation] = []
+        var catAssets: [AssetRecord] = []
+        libraryPhotos.reserveCapacity(snapshot.assets.count)
+        catPhotos.reserveCapacity(snapshot.assets.count / 8)
+        for asset in snapshot.assets {
+            let presentation = transform(asset)
+            libraryPhotos.append(presentation)
+            if asset.isCatCandidate,
+               asset.analysisFingerprint == fingerprint {
+                catPhotos.append(presentation)
+                catAssets.append(asset)
+            }
+            if asset.liked {
+                likedPhotos.append(presentation)
+            }
+        }
+        likedPhotos.sort {
+            if $0.likedAt == $1.likedAt {
+                return $0.localIdentifier < $1.localIdentifier
+            }
+            return ($0.likedAt ?? .distantPast) > ($1.likedAt ?? .distantPast)
+        }
+        cachedProjection = Projection(
+            libraryPhotos: libraryPhotos,
+            catPhotos: catPhotos,
+            likedPhotos: likedPhotos,
+            catAssets: catAssets,
+            assetsByIdentifier: Dictionary(
+                uniqueKeysWithValues: sourceSnapshot.assets.map {
+                    ($0.localIdentifier, $0)
+                }
+            )
+        )
+        cachedKey = key
+        return cachedProjection
     }
 }
 

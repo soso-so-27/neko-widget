@@ -185,6 +185,8 @@ struct AlbumView: View {
 private struct CuratedAlbumCard: View {
     let album: CuratedAlbumPresentation
 
+    @ScaledMetric(relativeTo: .headline) private var footerHeight: CGFloat = 48
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             PhotoAssetImageView(
@@ -196,19 +198,22 @@ private struct CuratedAlbumCard: View {
             .aspectRatio(1, contentMode: .fit)
             .clipped()
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .center, spacing: 6) {
                 Text(album.title)
                     .font(.headline)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .truncationMode(.tail)
                 Spacer(minLength: 0)
                 Text("\(album.photos.count.formatted())枚")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .padding(.horizontal, 11)
-            .padding(.vertical, 10)
+            .frame(height: footerHeight)
         }
+        .frame(maxWidth: .infinity)
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
@@ -429,16 +434,19 @@ struct CuratedAlbumDetailView: View {
     }
 }
 
-/// A deliberate collection of photos the user chose with the paw. Capture
-/// dates lead the presentation because the same order is used to make a book.
+/// An uncapped collection of photos the user chose with the paw. Capture years
+/// organize browsing; PDF export is an optional action on an explicit subset.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
-    let exportPhotoBook: () async throws -> URL
+    let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var isExportingPhotoBook = false
     @State private var photoBookExport: LikedPhotoBookExportFile?
     @State private var photoBookExportDirectory: URL?
     @State private var photoBookErrorMessage: String?
+    @State private var isSelectingForExport = false
+    @State private var selectedExportIdentifiers = Set<String>()
+    @State private var photoBookExportTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -459,49 +467,51 @@ struct LikedPhotosView: View {
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .padding()
                 } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("写真")
-                            .font(.title3.bold())
-                        Text("撮影日の新しい順")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    if isSelectingForExport {
+                        exportSelectionCard
                     }
-                    .padding(.horizontal, 16)
 
-                    LazyVGrid(columns: photoColumns, spacing: 3) {
-                        ForEach(photosByCaptureDate) { photo in
-                            NavigationLink(value: photo.localIdentifier) {
-                                PhotoAssetImageView(
-                                    localIdentifier: photo.localIdentifier,
-                                    catBoundingBox: photo.catBoundingBox,
-                                    targetPixelSize: CGSize(width: 360, height: 360),
-                                    targetAspectRatio: 1
-                                )
-                                .aspectRatio(1, contentMode: .fit)
-                                .overlay(alignment: .bottomLeading) {
-                                    Text(captureDateText(photo.creationDate))
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                        .lineLimit(1)
-                                        .padding(.horizontal, 7)
-                                        .padding(.vertical, 5)
-                                        .background(.black.opacity(0.58), in: Capsule())
-                                        .padding(6)
-                                }
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                    ForEach(photoYearSections) { section in
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(section.title)
+                                    .font(.title3.bold())
+                                Spacer()
+                                Text("\(section.photos.count.formatted())枚")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
-                            .accessibilityHint("写真を大きく表示します")
+                            .padding(.horizontal, 16)
+
+                            LazyVGrid(columns: photoColumns, spacing: 3) {
+                                ForEach(section.photos) { photo in
+                                    likedPhotoGridItem(photo)
+                                }
+                            }
+                            .padding(.horizontal, 3)
                         }
                     }
-                    .padding(.horizontal, 3)
                 }
             }
             .padding(.vertical, 12)
         }
         .navigationTitle("これ好き")
         .background(Color(.systemGroupedBackground))
+        .toolbar {
+            if !photos.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isSelectingForExport ? "キャンセル" : "まとめる") {
+                        if isSelectingForExport {
+                            cancelExportSelection()
+                        } else {
+                            startExportSelection()
+                        }
+                    }
+                    .disabled(isExportingPhotoBook)
+                    .accessibilityIdentifier("liked-summary-selection-toggle")
+                }
+            }
+        }
         .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
             LikedPhotoBookActivityView(activityItems: [export.url])
         }
@@ -520,11 +530,20 @@ struct LikedPhotosView: View {
         } message: {
             Text(photoBookErrorMessage ?? "時間をおいて、もう一度お試しください。")
         }
+        .onChange(of: Set(photos.map(\.localIdentifier))) { _, available in
+            selectedExportIdentifiers.formIntersection(available)
+            if available.isEmpty {
+                isSelectingForExport = false
+            }
+        }
+        .onDisappear {
+            photoBookExportTask?.cancel()
+            photoBookExportTask = nil
+        }
     }
 
     private var summaryCard: some View {
-        let progress = PhotoBookPolicy.progress(likedPhotoCount: photos.count)
-        return VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(photos.count.formatted())
                     .font(.system(size: 42, weight: .bold, design: .rounded))
@@ -534,47 +553,18 @@ struct LikedPhotosView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Divider()
-
-            HStack {
-                Label("30枚のまとめ", systemImage: "book.closed.fill")
-                    .font(.headline)
-                Spacer()
-                Text("\(min(progress.likedPhotoCount, progress.requiredPhotoCount).formatted()) / \(progress.requiredPhotoCount.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            ProgressView(
-                value: Double(min(progress.likedPhotoCount, progress.requiredPhotoCount)),
-                total: Double(progress.requiredPhotoCount)
-            )
-            .tint(.accentColor)
-
-            Text(progress.hasCompleteBook
-                ? "最初の30枚を、撮影日の古い順にPDFへまとめられます。"
-                : "あと\(progress.remainingPhotoCount.formatted())枚でPDFにまとめられます。")
+            Text("好きな写真は何枚でも残せます。必要なときに1〜30枚を選び、PDFとしてまとめられます。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("photo-book-progress")
 
-            if progress.hasCompleteBook {
-                Button(action: createPhotoBookPDF) {
-                    HStack {
-                        if isExportingPhotoBook {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "doc.richtext")
-                        }
-                        Text(isExportingPhotoBook ? "PDFを作成中…" : "PDFに書き出す")
-                        Spacer()
-                    }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+            if !photos.isEmpty, !isSelectingForExport {
+                Button(action: startExportSelection) {
+                    Label("写真を選んでまとめる", systemImage: "square.grid.3x3.square")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(isExportingPhotoBook)
-                .accessibilityIdentifier("photo-book-export")
+                .buttonStyle(.bordered)
             }
         }
         .padding(16)
@@ -601,6 +591,138 @@ struct LikedPhotosView: View {
         }
     }
 
+    private var photoYearSections: [LikedPhotoYearSection] {
+        var grouped: [Int: [PhotoPresentation]] = [:]
+        var undated: [PhotoPresentation] = []
+        for photo in photosByCaptureDate {
+            if let date = photo.creationDate {
+                let year = Calendar.current.component(.year, from: date)
+                grouped[year, default: []].append(photo)
+            } else {
+                undated.append(photo)
+            }
+        }
+        var sections = grouped.keys.sorted(by: >).map { year in
+            LikedPhotoYearSection(
+                id: "year-\(year)",
+                title: "\(year)年",
+                photos: grouped[year] ?? []
+            )
+        }
+        if !undated.isEmpty {
+            sections.append(
+                LikedPhotoYearSection(
+                    id: "undated",
+                    title: "撮影日不明",
+                    photos: undated
+                )
+            )
+        }
+        return sections
+    }
+
+    private var exportSelectionCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("PDFにまとめる写真", systemImage: "doc.richtext")
+                    .font(.headline)
+                Spacer()
+                Text("\(selectedExportIdentifiers.count.formatted()) / \(PhotoBookPolicy.maximumPhotosPerExport.formatted())枚")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("写真をタップして入れ替えられます。PDFは選んだ写真だけを撮影日の古い順に並べます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Button {
+                if isExportingPhotoBook {
+                    photoBookExportTask?.cancel()
+                } else {
+                    createPhotoBookPDF()
+                }
+            } label: {
+                HStack {
+                    if isExportingPhotoBook {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    Text(isExportingPhotoBook ? "PDF作成をキャンセル" : "選んだ写真をPDFとして共有")
+                    Spacer()
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
+            .accessibilityIdentifier("photo-book-export")
+        }
+        .padding(16)
+        .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func likedPhotoGridItem(_ photo: PhotoPresentation) -> some View {
+        if isSelectingForExport {
+            let isSelected = selectedExportIdentifiers.contains(photo.localIdentifier)
+            Button {
+                toggleExportSelection(photo.localIdentifier)
+            } label: {
+                likedPhotoThumbnail(photo, isSelected: isSelected)
+            }
+            .buttonStyle(.plain)
+            .disabled(
+                isExportingPhotoBook
+                    || (!isSelected
+                        && selectedExportIdentifiers.count
+                            >= PhotoBookPolicy.maximumPhotosPerExport)
+            )
+            .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
+            .accessibilityValue(isSelected ? "PDFに選択中" : "未選択")
+        } else {
+            NavigationLink(value: photo.localIdentifier) {
+                likedPhotoThumbnail(photo, isSelected: false)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
+            .accessibilityHint("写真を大きく表示します")
+        }
+    }
+
+    private func likedPhotoThumbnail(
+        _ photo: PhotoPresentation,
+        isSelected: Bool
+    ) -> some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            catBoundingBox: photo.catBoundingBox,
+            targetPixelSize: CGSize(width: 360, height: 360),
+            targetAspectRatio: 1
+        )
+        .aspectRatio(1, contentMode: .fit)
+        .overlay {
+            if isSelectingForExport, !isSelected {
+                Color.black.opacity(0.22)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if isSelectingForExport {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(
+                        Color.white,
+                        isSelected ? Color.accentColor : Color.black.opacity(0.45)
+                    )
+                    .padding(7)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+    }
+
     private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         if let creationDate = photo.creationDate {
             let date = creationDate.formatted(.dateTime.year().month().day())
@@ -609,18 +731,49 @@ struct LikedPhotosView: View {
         return "撮影日不明の、これ好きの猫の写真"
     }
 
-    private func captureDateText(_ date: Date?) -> String {
-        guard let date else { return "撮影日不明" }
-        return date.formatted(.dateTime.year().month().day())
+    private func startExportSelection() {
+        isSelectingForExport = true
+        selectedExportIdentifiers = Set(
+            photos
+                .sorted {
+                    ($0.likedAt ?? .distantPast) > ($1.likedAt ?? .distantPast)
+                }
+                .prefix(PhotoBookPolicy.maximumPhotosPerExport)
+                .map(\.localIdentifier)
+        )
+    }
+
+    private func cancelExportSelection() {
+        isSelectingForExport = false
+        selectedExportIdentifiers.removeAll()
+    }
+
+    private func toggleExportSelection(_ identifier: String) {
+        if selectedExportIdentifiers.contains(identifier) {
+            selectedExportIdentifiers.remove(identifier)
+        } else if selectedExportIdentifiers.count < PhotoBookPolicy.maximumPhotosPerExport {
+            selectedExportIdentifiers.insert(identifier)
+        }
     }
 
     private func createPhotoBookPDF() {
         guard !isExportingPhotoBook else { return }
+        let identifiers = Array(selectedExportIdentifiers)
+        guard !identifiers.isEmpty else { return }
         isExportingPhotoBook = true
-        Task {
-            defer { isExportingPhotoBook = false }
+        photoBookExportTask = Task {
+            defer {
+                isExportingPhotoBook = false
+                photoBookExportTask = nil
+            }
             do {
-                let url = try await exportPhotoBook()
+                let url = try await exportPhotoBook(identifiers)
+                if Task.isCancelled {
+                    try? FileManager.default.removeItem(
+                        at: url.deletingLastPathComponent()
+                    )
+                    return
+                }
                 photoBookExportDirectory = url.deletingLastPathComponent()
                 photoBookExport = LikedPhotoBookExportFile(url: url)
             } catch is CancellationError {
@@ -638,6 +791,12 @@ struct LikedPhotosView: View {
         photoBookExportDirectory = nil
         photoBookExport = nil
     }
+}
+
+private struct LikedPhotoYearSection: Identifiable {
+    let id: String
+    let title: String
+    let photos: [PhotoPresentation]
 }
 
 private struct LikedPhotoBookExportFile: Identifiable {
@@ -684,6 +843,8 @@ struct PhotoBrowserView: View {
     let replaceProfileAssignments: ([String: Set<String>]) -> Void
     private let browserPhotos: [PhotoPresentation]
     private let browserPhotoIdentifiers: [String]
+    private let browserPhotoByIdentifier: [String: PhotoPresentation]
+    private let browserIndexByIdentifier: [String: Int]
 
     @StateObject private var performanceProbe: PhotoBrowserPerformanceProbe
     @State private var selectedPhotoIdentifier: String
@@ -730,6 +891,16 @@ struct PhotoBrowserView: View {
         self.replaceProfileAssignments = replaceProfileAssignments
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
+        browserPhotoByIdentifier = Dictionary(
+            uniqueKeysWithValues: browserPhotos.map {
+                ($0.localIdentifier, $0)
+            }
+        )
+        browserIndexByIdentifier = Dictionary(
+            uniqueKeysWithValues: browserPhotos.enumerated().map {
+                ($0.element.localIdentifier, $0.offset)
+            }
+        )
         _performanceProbe = StateObject(
             wrappedValue: PhotoBrowserPerformanceProbe(
                 constructionStartedAtUptime: constructionStartedAtUptime,
@@ -741,26 +912,12 @@ struct PhotoBrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                // LazyHStack keeps the complete ordered identity space without
-                // constructing hundreds of page bodies up front. The system
-                // ScrollView still owns finger tracking, inertia and snapping.
-                LazyHStack(spacing: 0) {
-                    ForEach(browserPhotos) { photo in
-                        PhotoBrowserPage(
-                            photo: photo,
-                            imageTargetPixelSize: Self.imageTargetPixelSize,
-                            performanceProbe: performanceProbe
-                        )
-                        .containerRelativeFrame([.horizontal, .vertical])
-                        .id(photo.localIdentifier)
-                    }
-                }
-                .scrollTargetLayout()
-            }
-            .scrollIndicators(.hidden)
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: selectedPhotoScrollPosition)
+            PhotoBrowserPager(
+                photos: browserPhotos,
+                selectedPhotoIdentifier: $selectedPhotoIdentifier,
+                imageTargetPixelSize: Self.imageTargetPixelSize,
+                performanceProbe: performanceProbe
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topTrailing) {
                 if browserPhotos.count > 1 {
@@ -950,31 +1107,16 @@ struct PhotoBrowserView: View {
         }
     }
 
-    /// Scroll position is optional in SwiftUI so it can represent the brief
-    /// moment before layout resolves. Keep the app's selection non-optional and
-    /// ignore that transient nil rather than losing the deep-linked first page.
-    private var selectedPhotoScrollPosition: Binding<String?> {
-        Binding(
-            get: { selectedPhotoIdentifier },
-            set: { identifier in
-                guard let identifier else { return }
-                selectedPhotoIdentifier = identifier
-            }
-        )
-    }
-
     private var selectedPhoto: PhotoPresentation? {
-        browserPhotos.first { $0.localIdentifier == selectedPhotoIdentifier }
+        browserPhotoByIdentifier[selectedPhotoIdentifier]
     }
 
     /// Preheat the current photo and two neighbours on either side. The lazy
-    /// paging stack remains responsible for page lifetime; PhotoKit only keeps
+    /// native pager remains responsible for page lifetime; PhotoKit only keeps
     /// this small display-sized cache window ready for the next native swipe.
     private var nearbyPhotoIdentifiers: Set<String> {
         let orderedPhotos = browserPhotos
-        guard let selectedIndex = orderedPhotos.firstIndex(where: {
-            $0.localIdentifier == selectedPhotoIdentifier
-        }) else {
+        guard let selectedIndex = browserIndexByIdentifier[selectedPhotoIdentifier] else {
             return Set(orderedPhotos.prefix(1).map(\.localIdentifier))
         }
         let lowerBound = max(selectedIndex - Self.preheatRadius, orderedPhotos.startIndex)
@@ -1002,11 +1144,10 @@ struct PhotoBrowserView: View {
     }
 
     private var pagePositionText: String {
-        let orderedPhotos = browserPhotos
-        guard let selectedIndex = orderedPhotos.firstIndex(where: {
-            $0.localIdentifier == selectedPhotoIdentifier
-        }) else { return "" }
-        return "\((selectedIndex + 1).formatted()) / \(orderedPhotos.count.formatted())"
+        guard let selectedIndex = browserIndexByIdentifier[selectedPhotoIdentifier] else {
+            return ""
+        }
+        return "\((selectedIndex + 1).formatted()) / \(browserPhotos.count.formatted())"
     }
 
     private func photos(onSameDayAs date: Date) -> [PhotoPresentation] {
@@ -1050,6 +1191,190 @@ struct PhotoBrowserView: View {
             return "最後に変わったのは約1分前"
         }
         return "最後に変わったのは約\(elapsedMinutes.formatted())分前"
+    }
+}
+
+/// UIKit's page controller keeps only the visible page and its neighbours.
+/// SwiftUI's `LazyHStack + scrollPosition` still constructed every preceding
+/// page when opening a photo near the end of a large library (375 pages for a
+/// single device tap in diagnostics). This bounded adapter makes initial cost
+/// independent of the selected photo's position.
+private struct PhotoBrowserPager: UIViewControllerRepresentable {
+    let photos: [PhotoPresentation]
+    @Binding var selectedPhotoIdentifier: String
+    let imageTargetPixelSize: CGSize
+    let performanceProbe: PhotoBrowserPerformanceProbe
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let controller = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        controller.dataSource = context.coordinator
+        controller.delegate = context.coordinator
+        controller.view.backgroundColor = .black
+        context.coordinator.update(parent: self, controller: controller)
+        return controller
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIPageViewController,
+        context: Context
+    ) {
+        context.coordinator.update(parent: self, controller: uiViewController)
+    }
+
+    static func dismantleUIViewController(
+        _ uiViewController: UIPageViewController,
+        coordinator: Coordinator
+    ) {
+        uiViewController.dataSource = nil
+        uiViewController.delegate = nil
+        coordinator.removeAllControllers()
+    }
+
+    @MainActor
+    final class Coordinator: NSObject,
+        UIPageViewControllerDataSource,
+        UIPageViewControllerDelegate {
+        private var parent: PhotoBrowserPager
+        private var photoByIdentifier: [String: PhotoPresentation] = [:]
+        private var indexByIdentifier: [String: Int] = [:]
+        private var identifiersByController: [ObjectIdentifier: String] = [:]
+
+        init(parent: PhotoBrowserPager) {
+            self.parent = parent
+            super.init()
+        }
+
+        func update(
+            parent: PhotoBrowserPager,
+            controller: UIPageViewController
+        ) {
+            let previousIndex = indexByIdentifier[self.parent.selectedPhotoIdentifier]
+            self.parent = parent
+            photoByIdentifier = Dictionary(
+                uniqueKeysWithValues: parent.photos.map {
+                    ($0.localIdentifier, $0)
+                }
+            )
+            indexByIdentifier = Dictionary(
+                uniqueKeysWithValues: parent.photos.enumerated().map {
+                    ($0.element.localIdentifier, $0.offset)
+                }
+            )
+
+            guard !parent.photos.isEmpty else {
+                controller.setViewControllers([], direction: .forward, animated: false)
+                identifiersByController.removeAll()
+                return
+            }
+
+            let requestedIdentifier = photoByIdentifier[parent.selectedPhotoIdentifier] == nil
+                ? parent.photos[0].localIdentifier
+                : parent.selectedPhotoIdentifier
+            if requestedIdentifier != parent.selectedPhotoIdentifier {
+                parent.selectedPhotoIdentifier = requestedIdentifier
+            }
+
+            if let visible = controller.viewControllers?.first,
+               identifier(for: visible) == requestedIdentifier {
+                refresh(visible, identifier: requestedIdentifier)
+                return
+            }
+
+            guard let requestedController = makeController(
+                identifier: requestedIdentifier
+            ) else { return }
+            let requestedIndex = indexByIdentifier[requestedIdentifier] ?? 0
+            let direction: UIPageViewController.NavigationDirection =
+                requestedIndex >= (previousIndex ?? requestedIndex) ? .forward : .reverse
+            controller.setViewControllers(
+                [requestedController],
+                direction: direction,
+                animated: false
+            )
+        }
+
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            viewControllerBefore viewController: UIViewController
+        ) -> UIViewController? {
+            adjacentController(to: viewController, offset: -1)
+        }
+
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            viewControllerAfter viewController: UIViewController
+        ) -> UIViewController? {
+            adjacentController(to: viewController, offset: 1)
+        }
+
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            didFinishAnimating finished: Bool,
+            previousViewControllers: [UIViewController],
+            transitionCompleted completed: Bool
+        ) {
+            guard completed,
+                  let visible = pageViewController.viewControllers?.first,
+                  let identifier = identifier(for: visible) else { return }
+            parent.selectedPhotoIdentifier = identifier
+        }
+
+        func removeAllControllers() {
+            identifiersByController.removeAll()
+        }
+
+        private func adjacentController(
+            to controller: UIViewController,
+            offset: Int
+        ) -> UIViewController? {
+            guard let identifier = identifier(for: controller),
+                  let index = indexByIdentifier[identifier] else { return nil }
+            let targetIndex = index + offset
+            guard parent.photos.indices.contains(targetIndex) else { return nil }
+            return makeController(
+                identifier: parent.photos[targetIndex].localIdentifier
+            )
+        }
+
+        private func makeController(identifier: String) -> UIViewController? {
+            guard let photo = photoByIdentifier[identifier] else { return nil }
+            let controller = UIHostingController(
+                rootView: PhotoBrowserPage(
+                    photo: photo,
+                    imageTargetPixelSize: parent.imageTargetPixelSize,
+                    performanceProbe: parent.performanceProbe
+                )
+            )
+            controller.view.backgroundColor = .black
+            identifiersByController[ObjectIdentifier(controller)] = identifier
+            return controller
+        }
+
+        private func identifier(for controller: UIViewController) -> String? {
+            identifiersByController[ObjectIdentifier(controller)]
+        }
+
+        private func refresh(
+            _ controller: UIViewController,
+            identifier: String
+        ) {
+            guard let photo = photoByIdentifier[identifier],
+                  let hostingController = controller as? UIHostingController<PhotoBrowserPage>
+            else { return }
+            guard hostingController.rootView.photo != photo else { return }
+            hostingController.rootView = PhotoBrowserPage(
+                photo: photo,
+                imageTargetPixelSize: parent.imageTargetPixelSize,
+                performanceProbe: parent.performanceProbe
+            )
+        }
     }
 }
 
@@ -1126,7 +1451,7 @@ private final class PhotoBrowserPerformanceProbe: ObservableObject {
             "photo-browser",
             "Initial lazy paging window measured",
             metadata: [
-                "pager": "lazy-scroll-paging",
+                "pager": "bounded-native-paging",
                 "page_count": String(pageCount),
                 "requested_page_position": String(requestedPagePosition),
                 "settled_page_position": String(settledPagePosition),

@@ -22,6 +22,16 @@ private enum CatIdentityLoadState: Equatable {
     case failed
 }
 
+struct LibraryPresentationVersion: Equatable {
+    let snapshotUpdatedAt: Date
+    let snapshotAssetCount: Int
+    let analysisFingerprint: String
+    let curationMutationRevision: Int
+    let identityMutationRevision: Int?
+    let sourceResolutionRevision: Int
+    let canPresent: Bool
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published private(set) var authorizationStatus: PHAuthorizationStatus
@@ -47,14 +57,38 @@ final class AppViewModel: ObservableObject {
     @Published var selectedAssetShownAt: Date?
 
     var isLimitedAccess: Bool { authorizationStatus == .limited }
+    /// One already-curated value for a SwiftUI presentation pass. Large
+    /// libraries must not repeat the source/exclusion projection separately
+    /// for every tab input while scan progress is publishing.
+    var presentationSnapshot: LibrarySnapshot {
+        let version = presentationVersion
+        if let cachedPresentationSnapshot,
+           cachedPresentationSnapshot.version == version {
+            return cachedPresentationSnapshot.snapshot
+        }
+        let value = canPresentCatIdentity ? candidateSnapshot(snapshot) : .empty
+        cachedPresentationSnapshot = (version, value)
+        return value
+    }
+    var presentationVersion: LibraryPresentationVersion {
+        LibraryPresentationVersion(
+            snapshotUpdatedAt: snapshot.updatedAt,
+            snapshotAssetCount: snapshot.assets.count,
+            analysisFingerprint: snapshot.settings.analysisFingerprint,
+            curationMutationRevision: catCandidateCuration.mutationRevision,
+            identityMutationRevision: catHouseholdIdentity?.mutationRevision,
+            sourceResolutionRevision: presentationSourceResolutionRevision,
+            canPresent: canPresentCatIdentity
+        )
+    }
     var catAssets: [AssetRecord] {
-        canPresentCatIdentity ? candidateSnapshot(snapshot).catAssets : []
+        presentationSnapshot.catAssets
     }
     var likedAssets: [AssetRecord] {
-        canPresentCatIdentity ? candidateSnapshot(snapshot).likedAssets : []
+        presentationSnapshot.likedAssets
     }
     var visibleLibraryAssets: [AssetRecord] {
-        canPresentCatIdentity ? candidateSnapshot(snapshot).assets : []
+        presentationSnapshot.assets
     }
     var excludedCatAssets: [ExcludedCatAsset] {
         guard canPresentCatIdentity else { return [] }
@@ -68,21 +102,31 @@ final class AppViewModel: ObservableObject {
     /// Unresolved detector instances, not unresolved photos. A two-cat photo
     /// remains here until each exact box has a confirmed profile membership.
     var catSimilarityCandidateInstances: [CatSimilarityCandidateInstance] {
+        catSimilarityCandidateInstances(from: catAssets)
+    }
+
+    func catSimilarityCandidateInstances(
+        from candidateAssets: [AssetRecord]
+    ) -> [CatSimilarityCandidateInstance] {
         guard canPresentCatIdentity,
               let identity = catHouseholdIdentity,
               identity.mode == .profiled,
               !identity.profiles.isEmpty else { return [] }
-        return catSimilarityCandidateInstances(in: identity)
+        return catSimilarityCandidateInstances(
+            in: identity,
+            candidateAssets: candidateAssets
+        )
     }
 
     private func catSimilarityCandidateInstances(
-        in identity: CatHouseholdIdentityState
+        in identity: CatHouseholdIdentityState,
+        candidateAssets: [AssetRecord]? = nil
     ) -> [CatSimilarityCandidateInstance] {
         let includedByAsset = Dictionary(grouping: identity.memberships.filter {
             $0.decision == .included
         }, by: \.assetLocalIdentifier)
         return CatSimilarityCandidateResolver.unresolvedInstances(
-            from: catAssets.map { asset in
+            from: (candidateAssets ?? catAssets).map { asset in
                 CatSimilarityCandidateAsset(
                     assetLocalIdentifier: asset.localIdentifier,
                     detectedCatCount: asset.cat.catCount,
@@ -138,6 +182,28 @@ final class AppViewModel: ObservableObject {
     private var lastActivationSyncAt: Date?
     private var scanTask: Task<Void, Never>?
     private var scanGeneration = 0
+    /// Scanner events may arrive in reuse-heavy bursts much faster than the UI
+    /// can draw. Keep the newest state plus every analyzed record until the
+    /// next bounded presentation publication.
+    private struct PendingScanProgress {
+        var generation: Int
+        var state: ScanState
+        var analyzedRecords: [AssetRecord]
+        var eventCount: Int
+    }
+    private struct ScanProgressSnapshot {
+        var snapshot: LibrarySnapshot
+        var state: ScanState
+        var catAssetCount: Int
+    }
+    private var pendingScanProgress: PendingScanProgress?
+    private var scanProgressFlushTask: Task<Void, Never>?
+    private var scanProgressFlushSequence = 0
+    private var lastScanProgressPublicationUptime: TimeInterval?
+    private var cachedPresentationSnapshot: (
+        version: LibraryPresentationVersion,
+        snapshot: LibrarySnapshot
+    )?
     /// Serializes the one-way legacy-to-profiled transition with household
     /// exclusion mutations. Without this queue, an exclusion can commit to
     /// the legacy curation actor while profile creation concurrently makes the
@@ -155,7 +221,13 @@ final class AppViewModel: ObservableObject {
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
-    private var selectedSourceAssetIdentifiers: Set<String>?
+    private var selectedSourceAssetIdentifiers: Set<String>? {
+        didSet {
+            presentationSourceResolutionRevision &+= 1
+            cachedPresentationSnapshot = nil
+        }
+    }
+    private var presentationSourceResolutionRevision = 0
 
     private lazy var libraryObserver = PhotoLibraryObserver { [weak self] in
         self?.libraryChangePending = true
@@ -446,6 +518,14 @@ final class AppViewModel: ObservableObject {
 
     func suspendScan() {
         guard isScanning else { return }
+        let suspendedGeneration = scanGeneration
+        var cancelled = latestScanProgressState(generation: suspendedGeneration)
+        cancelled.phase = .cancelled
+        publishTerminalScanProgress(
+            cancelled,
+            generation: suspendedGeneration,
+            operation: "suspend"
+        )
         scanGeneration += 1
         scanTask?.cancel()
         scanTask = nil
@@ -460,12 +540,6 @@ final class AppViewModel: ObservableObject {
                 "total": "\(scanState.totalAssets)"
             ]
         )
-
-        var cancelled = scanState
-        cancelled.phase = .cancelled
-        scanState = cancelled
-        snapshot.scanState = cancelled
-        snapshot.updatedAt = .now
         Task { [snapshot, store] in
             try? await store?.save(snapshot)
         }
@@ -1889,8 +1963,23 @@ final class AppViewModel: ObservableObject {
             logCandidateAuthorityUnavailable(operation: "launch_scan")
             return
         }
+        // A replacement scan should be able to reuse every batch already
+        // analyzed by the previous generation. Merge its pending records before
+        // invalidating that generation; the new scan will apply its own starting
+        // state immediately below.
+        if pendingScanProgress?.generation == scanGeneration {
+            // `rescan()` may already have changed purpose/settings on the live
+            // state. Merge old-generation records without letting its older
+            // progress state roll that user action back.
+            publishTerminalScanProgress(
+                scanState,
+                generation: scanGeneration,
+                operation: "replace_generation"
+            )
+        }
         scanGeneration += 1
         let generation = scanGeneration
+        resetScanProgressCoalescer()
 
         if let previousTask = scanTask {
             previousTask.cancel()
@@ -1947,7 +2036,9 @@ final class AppViewModel: ObservableObject {
             }
             guard generation == scanGeneration else { return }
 
+            discardPendingScanProgress(generation: generation)
             applySnapshot(final)
+            lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
             chooseCurrentAssetIfNeeded()
             await saveSnapshot(reportErrors: true)
             logBoundingBoxAspectDistribution(trigger: "scan-final")
@@ -1967,10 +2058,13 @@ final class AppViewModel: ObservableObject {
             await refreshManagedOutputs(reportErrors: false)
         } catch is CancellationError {
             guard generation == scanGeneration else { return }
-            var cancelled = scanState
+            var cancelled = latestScanProgressState(generation: generation)
             cancelled.phase = .cancelled
-            scanState = cancelled
-            snapshot.scanState = cancelled
+            publishTerminalScanProgress(
+                cancelled,
+                generation: generation,
+                operation: "cancel"
+            )
             SharedLog.app.info(
                 "scan",
                 "Scan task cancelled",
@@ -1980,13 +2074,16 @@ final class AppViewModel: ObservableObject {
         } catch CatCandidateCurationError.selectedSourceUnavailable {
             guard generation == scanGeneration else { return }
             photoSourceStatus = .unavailable
-            var failed = scanState
+            var failed = latestScanProgressState(generation: generation)
             failed.phase = .failed
             failed.lastError = CatCandidateCurationError
                 .selectedSourceUnavailable
                 .localizedDescription
-            scanState = failed
-            snapshot.scanState = failed
+            publishTerminalScanProgress(
+                failed,
+                generation: generation,
+                operation: "source_unavailable"
+            )
             SharedLog.app.warning(
                 "curation",
                 "Selected photo source became unavailable; previous candidates retained"
@@ -1995,11 +2092,14 @@ final class AppViewModel: ObservableObject {
             await saveSnapshot(reportErrors: false)
         } catch {
             guard generation == scanGeneration else { return }
-            var failed = scanState
+            var failed = latestScanProgressState(generation: generation)
             failed.phase = .failed
             failed.lastError = error.localizedDescription
-            scanState = failed
-            snapshot.scanState = failed
+            publishTerminalScanProgress(
+                failed,
+                generation: generation,
+                operation: "failure"
+            )
             Self.logError(error, category: "scan", operation: "perform_scan")
             setError(error)
             await saveSnapshot(reportErrors: false)
@@ -2017,34 +2117,18 @@ final class AppViewModel: ObservableObject {
             if published.phase == .quickScan || published.phase == .fullScan {
                 published.resultKind = .provisional
             }
-            scanState = published
-            mergeAnalyzedRecords(analyzedRecords)
-            snapshot.scanState = published
-            snapshot.updatedAt = .now
-            reconcileCandidatePostureState()
-            chooseCurrentAssetIfNeeded()
-            SharedLog.app.info(
-                "scan",
-                "Scan progress published",
-                metadata: Self.scanLogMetadata(
-                    [
-                    "cats": "\(catAssets.count)",
-                    "deferred": "\(published.deferredAssets)",
-                    "phase": published.phase.rawValue,
-                    "scanned": "\(published.scannedAssets)",
-                    "total": "\(published.totalAssets)"
-                    ],
-                    state: scanState
-                )
+            await enqueueScanProgress(
+                published,
+                analyzedRecords: analyzedRecords,
+                generation: generation
             )
-            // Persist resumable full-scan checkpoints without rewriting a
-            // potentially large JSON file for every progress publication.
-            if published.scannedAssets.isMultiple(of: 1_000) {
-                await saveSnapshot(reportErrors: false)
-            }
 
         case let .provisional(provisional):
+            // The scanner's provisional snapshot contains every quick-stage
+            // record, including any still held by the UI coalescer.
+            discardPendingScanProgress(generation: generation)
             applySnapshot(provisional)
+            lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
             chooseCurrentAssetIfNeeded()
             SharedLog.app.info(
                 "scan",
@@ -2069,6 +2153,245 @@ final class AppViewModel: ObservableObject {
                 await refreshManagedOutputs(reportErrors: false)
             }
         }
+    }
+
+    private func enqueueScanProgress(
+        _ state: ScanState,
+        analyzedRecords: [AssetRecord],
+        generation: Int
+    ) async {
+        guard generation == scanGeneration else { return }
+
+        if pendingScanProgress?.generation == generation {
+            pendingScanProgress?.state = state
+            pendingScanProgress?.analyzedRecords.append(contentsOf: analyzedRecords)
+            pendingScanProgress?.eventCount = (pendingScanProgress?.eventCount ?? 0) + 1
+        } else {
+            discardPendingScanProgress(generation: pendingScanProgress?.generation)
+            pendingScanProgress = PendingScanProgress(
+                generation: generation,
+                state: state,
+                analyzedRecords: analyzedRecords,
+                eventCount: 1
+            )
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        let delay = ScanProgressPublicationPolicy.delay(
+            lastPublicationUptime: lastScanProgressPublicationUptime,
+            nowUptime: now
+        )
+        let isResumeCheckpoint = ScanProgressPublicationPolicy
+            .isResumeCheckpoint(scannedAssets: state.scannedAssets)
+
+        if delay == 0 {
+            publishPendingScanProgress(
+                generation: generation,
+                operation: "timer_ready"
+            )
+            if isResumeCheckpoint {
+                await saveSnapshot(reportErrors: false)
+            }
+            return
+        }
+
+        scheduleScanProgressPublication(
+            after: delay,
+            generation: generation
+        )
+
+        if isResumeCheckpoint {
+            // Persistence must not depend on a screen refresh. Save a merged
+            // value containing every pending record while leaving UI delivery
+            // on its one-update-per-second cadence.
+            await savePendingScanCheckpoint(generation: generation)
+        }
+    }
+
+    private func scheduleScanProgressPublication(
+        after delay: TimeInterval,
+        generation: Int
+    ) {
+        guard scanProgressFlushTask == nil else { return }
+        let delayMilliseconds = max(1, Int((delay * 1_000).rounded(.up)))
+        scanProgressFlushSequence &+= 1
+        let sequence = scanProgressFlushSequence
+        scanProgressFlushTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(delayMilliseconds))
+            } catch {
+                return
+            }
+            guard let self,
+                  generation == self.scanGeneration,
+                  sequence == self.scanProgressFlushSequence else { return }
+            self.scanProgressFlushTask = nil
+            self.publishPendingScanProgress(
+                generation: generation,
+                operation: "coalesced_timer"
+            )
+        }
+    }
+
+    private func publishPendingScanProgress(
+        generation: Int,
+        operation: String
+    ) {
+        guard let pending = pendingScanProgress,
+              pending.generation == generation else { return }
+
+        scanProgressFlushTask?.cancel()
+        scanProgressFlushTask = nil
+        scanProgressFlushSequence &+= 1
+        pendingScanProgress = nil
+
+        let publication = makeScanProgressSnapshot(
+            state: pending.state,
+            analyzedRecords: pending.analyzedRecords
+        )
+        scanState = publication.state
+        snapshot = publication.snapshot
+        lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
+        chooseCurrentAssetIfNeeded()
+
+        SharedLog.app.info(
+            "scan",
+            "Scan progress published",
+            metadata: Self.scanLogMetadata(
+                [
+                    "cats": "\(publication.catAssetCount)",
+                    "coalescedEvents": "\(pending.eventCount)",
+                    "deferred": "\(publication.state.deferredAssets)",
+                    "operation": operation,
+                    "records": "\(pending.analyzedRecords.count)",
+                    "phase": publication.state.phase.rawValue,
+                    "scanned": "\(publication.state.scannedAssets)",
+                    "total": "\(publication.state.totalAssets)"
+                ],
+                state: publication.state
+            )
+        )
+    }
+
+    private func publishTerminalScanProgress(
+        _ terminalState: ScanState,
+        generation: Int,
+        operation: String
+    ) {
+        let analyzedRecords: [AssetRecord]
+        if let pending = pendingScanProgress,
+           pending.generation == generation {
+            analyzedRecords = pending.analyzedRecords
+        } else {
+            analyzedRecords = []
+        }
+        discardPendingScanProgress(generation: generation)
+
+        let publication = makeScanProgressSnapshot(
+            state: terminalState,
+            analyzedRecords: analyzedRecords
+        )
+        scanState = publication.state
+        snapshot = publication.snapshot
+        lastScanProgressPublicationUptime = ProcessInfo.processInfo.systemUptime
+        chooseCurrentAssetIfNeeded()
+        SharedLog.app.debug(
+            "scan",
+            "Pending scan progress flushed at scan boundary",
+            metadata: [
+                "operation": operation,
+                "records": "\(analyzedRecords.count)",
+                "scanned": "\(publication.state.scannedAssets)"
+            ]
+        )
+    }
+
+    private func latestScanProgressState(generation: Int) -> ScanState {
+        guard let pending = pendingScanProgress,
+              pending.generation == generation else { return scanState }
+        return pending.state
+    }
+
+    private func discardPendingScanProgress(generation: Int?) {
+        guard generation == nil
+            || pendingScanProgress?.generation == generation else { return }
+        scanProgressFlushTask?.cancel()
+        scanProgressFlushTask = nil
+        scanProgressFlushSequence &+= 1
+        pendingScanProgress = nil
+    }
+
+    private func resetScanProgressCoalescer() {
+        scanProgressFlushTask?.cancel()
+        scanProgressFlushTask = nil
+        scanProgressFlushSequence &+= 1
+        pendingScanProgress = nil
+        lastScanProgressPublicationUptime = nil
+    }
+
+    private func savePendingScanCheckpoint(generation: Int) async {
+        guard let pending = pendingScanProgress,
+              pending.generation == generation else { return }
+        let checkpoint = makeScanProgressSnapshot(
+            state: pending.state,
+            analyzedRecords: pending.analyzedRecords
+        )
+        await saveSnapshot(checkpoint.snapshot, reportErrors: false)
+    }
+
+    /// Produces the one value assigned to `snapshot` for a UI publication. A
+    /// stable index preserves the existing asset order and lets every pending
+    /// batch be merged in one pass instead of rebuilding a full dictionary for
+    /// each scanner event.
+    private func makeScanProgressSnapshot(
+        state: ScanState,
+        analyzedRecords: [AssetRecord]
+    ) -> ScanProgressSnapshot {
+        var updated = snapshot
+        if !analyzedRecords.isEmpty {
+            var indexByIdentifier = Dictionary(
+                uniqueKeysWithValues: updated.assets.indices.map {
+                    (updated.assets[$0].localIdentifier, $0)
+                }
+            )
+            for record in analyzedRecords {
+                let existingIndex = indexByIdentifier[record.localIdentifier]
+                var merged = record.preservingUserState(
+                    from: existingIndex.map { updated.assets[$0] }
+                )
+                if let sharedLike = sharedLikeRecords[record.localIdentifier] {
+                    merged.liked = sharedLike.isLiked
+                    merged.likedAt = sharedLike.likedAt
+                }
+                if let existingIndex {
+                    updated.assets[existingIndex] = merged
+                } else {
+                    indexByIdentifier[record.localIdentifier] = updated.assets.count
+                    updated.assets.append(merged)
+                }
+            }
+        }
+
+        let candidateCats = candidateSnapshot(updated).catAssets
+        var reconciledState = ScanProgressPublicationPolicy
+            .preservingLiveRescanIntent(
+                pending: state,
+                live: snapshot.scanState
+            )
+        // A user-requested full scan is monotonic until the replacement scan
+        // starts. An older generation's delayed timer must not roll the intent
+        // back while `rescan()` is awaiting durable storage.
+        reconciledState.postureSummary = PostureScanSummary(records: candidateCats)
+        if reconciledState.purpose == .postureRepair {
+            reconciledState.purpose = nil
+        }
+        updated.scanState = reconciledState
+        updated.updatedAt = .now
+        return ScanProgressSnapshot(
+            snapshot: updated,
+            state: reconciledState,
+            catAssetCount: candidateCats.count
+        )
     }
 
     private func applySnapshot(
@@ -2105,10 +2428,15 @@ final class AppViewModel: ObservableObject {
             merged.settings = snapshot.settings
         }
 
+        let candidateCats = candidateSnapshot(merged).catAssets
+        merged.scanState.postureSummary = PostureScanSummary(records: candidateCats)
+        if merged.scanState.purpose == .postureRepair {
+            merged.scanState.purpose = nil
+        }
+
         snapshot = merged
         scanState = merged.scanState
         settings = merged.settings.normalized()
-        reconcileCandidatePostureState()
         refreshCurrentAsset()
     }
 
@@ -2125,24 +2453,6 @@ final class AppViewModel: ObservableObject {
             "Cat bounding-box aspect distribution measured",
             metadata: metadata
         )
-    }
-
-    private func mergeAnalyzedRecords(_ records: [AssetRecord]) {
-        guard !records.isEmpty else { return }
-        var existingByIdentifier = Dictionary(
-            uniqueKeysWithValues: snapshot.assets.map { ($0.localIdentifier, $0) }
-        )
-        for record in records {
-            var merged = record.preservingUserState(
-                from: existingByIdentifier[record.localIdentifier]
-            )
-            if let sharedLike = sharedLikeRecords[record.localIdentifier] {
-                merged.liked = sharedLike.isLiked
-                merged.likedAt = sharedLike.likedAt
-            }
-            existingByIdentifier[record.localIdentifier] = merged
-        }
-        snapshot.assets = Array(existingByIdentifier.values)
     }
 
     /// The small App Group file is the canonical cross-process source for
@@ -2463,6 +2773,13 @@ final class AppViewModel: ObservableObject {
     }
 
     private func saveSnapshot(reportErrors: Bool) async {
+        await saveSnapshot(snapshot, reportErrors: reportErrors)
+    }
+
+    private func saveSnapshot(
+        _ value: LibrarySnapshot,
+        reportErrors: Bool
+    ) async {
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "save_snapshot")
             return
@@ -2475,7 +2792,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         do {
-            try await store.save(snapshot)
+            try await store.save(value)
         } catch {
             Self.logError(error, category: "storage", operation: "save_snapshot")
             if reportErrors { setError(error) }
