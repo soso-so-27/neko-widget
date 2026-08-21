@@ -15,6 +15,17 @@ enum CatCandidateCurationError: LocalizedError {
     }
 }
 
+enum CatProfilePhotoAlbumError: LocalizedError {
+    case unavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "選択した写真アルバムを利用できません。写真へのアクセス範囲を確認するか、別のアルバムを選んでください。"
+        }
+    }
+}
+
 actor CatCandidateCurationStore {
     private let stateURL: URL
 
@@ -99,6 +110,11 @@ struct PhotoSourceAlbumOption: Identifiable, Equatable, Sendable {
     var accessibleAssetCount: Int
 
     var id: String { localIdentifier }
+}
+
+struct PhotoSourceAlbumAssetMetadata: Equatable, Sendable {
+    var localIdentifier: String
+    var creationDate: Date?
 }
 
 enum PhotoSourceAlbumStatus: Equatable, Sendable {
@@ -186,12 +202,25 @@ enum PhotoSourceAlbumCatalog {
     static func accessibleImageAssetIdentifiers(
         sourceAlbumIdentifier: String
     ) throws -> Set<String> {
+        Set(try accessibleImageAssets(
+            sourceAlbumIdentifier: sourceAlbumIdentifier
+        ).map(\.localIdentifier))
+    }
+
+    static func accessibleImageAssets(
+        sourceAlbumIdentifier: String
+    ) throws -> [PhotoSourceAlbumAssetMetadata] {
         let options = PHFetchOptions()
         let assets = try fetchImageAssets(
             sourceAlbumIdentifier: sourceAlbumIdentifier,
             options: options
         )
-        return Set(assets.map(\.localIdentifier))
+        return assets.map {
+            PhotoSourceAlbumAssetMetadata(
+                localIdentifier: $0.localIdentifier,
+                creationDate: $0.creationDate
+            )
+        }
     }
 
     private static func normalizedTitle(_ input: String?) -> String {

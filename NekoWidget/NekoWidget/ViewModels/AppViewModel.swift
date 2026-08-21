@@ -38,6 +38,11 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var catHouseholdIdentity: CatHouseholdIdentityState?
     @Published private(set) var photoSourceAlbums: [PhotoSourceAlbumOption] = []
     @Published private(set) var photoSourceStatus: PhotoSourceAlbumStatus = .allLibrary
+    /// Creation dates for currently accessible profile-linked album assets.
+    /// PhotoKit identifiers and dates remain in memory/local identity storage
+    /// and are never added to diagnostics or sharing payloads.
+    @Published private(set) var profilePhotoAlbumAssetDates: [String: Date] = [:]
+    @Published private(set) var unavailableProfilePhotoAlbumIdentifiers = Set<String>()
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
 
@@ -96,9 +101,7 @@ final class AppViewModel: ObservableObject {
 
     func catAssets(profileID: UUID) -> [AssetRecord] {
         guard let identity = catHouseholdIdentity else { return [] }
-        let included = Set(identity.memberships.lazy.filter {
-            $0.profileID == profileID && $0.decision == .included
-        }.map(\.assetLocalIdentifier))
+        let included = identity.confirmedAssetIdentifiers(for: profileID)
         return catAssets.filter { included.contains($0.localIdentifier) }
     }
 
@@ -531,6 +534,12 @@ final class AppViewModel: ObservableObject {
             photoSourceStatus = catCandidateCuration.usesSelectedAlbum
                 ? .unavailable
                 : .allLibrary
+            unavailableProfilePhotoAlbumIdentifiers = Set(
+                catHouseholdIdentity?.profiles.compactMap {
+                    $0.photoAlbumLink?.localIdentifier
+                } ?? []
+            )
+            profilePhotoAlbumAssetDates = [:]
             return
         }
         let albums = PhotoSourceAlbumCatalog.availableAlbums(
@@ -591,8 +600,104 @@ final class AppViewModel: ObservableObject {
         } else if !catCandidateCuration.usesSelectedAlbum {
             selectedSourceAssetIdentifiers = nil
         }
+        await refreshProfilePhotoAlbumLinks(availableAlbums: albums)
         reconcileCandidatePostureState()
         chooseCurrentAssetIfNeeded()
+    }
+
+    private func refreshProfilePhotoAlbumLinks(
+        availableAlbums: [PhotoSourceAlbumOption]
+    ) async {
+        guard let identity = catHouseholdIdentity,
+              identity.mode == .profiled else {
+            profilePhotoAlbumAssetDates = [:]
+            unavailableProfilePhotoAlbumIdentifiers = []
+            return
+        }
+        let availableIdentifiers = Set(availableAlbums.map(\.localIdentifier))
+        let links = identity.profiles.compactMap { profile in
+            profile.photoAlbumLink.map { (profile.id, $0) }
+        }
+        guard !links.isEmpty else {
+            profilePhotoAlbumAssetDates = [:]
+            unavailableProfilePhotoAlbumIdentifiers = []
+            return
+        }
+
+        var assetsByAlbum: [String: [PhotoSourceAlbumAssetMetadata]] = [:]
+        var unavailableIdentifiers = Set(
+            links.map { $0.1.localIdentifier }
+        ).subtracting(availableIdentifiers)
+        for albumIdentifier in Set(links.map { $0.1.localIdentifier })
+        where availableIdentifiers.contains(albumIdentifier) {
+            do {
+                let assets = try PhotoSourceAlbumCatalog.accessibleImageAssets(
+                    sourceAlbumIdentifier: albumIdentifier
+                )
+                assetsByAlbum[albumIdentifier] = assets
+            } catch {
+                unavailableIdentifiers.insert(albumIdentifier)
+                Self.logError(
+                    error,
+                    category: "cat-identity",
+                    operation: "refresh_profile_album"
+                )
+            }
+        }
+        var dates: [String: Date] = [:]
+        for assets in assetsByAlbum.values {
+            for asset in assets {
+                if let creationDate = asset.creationDate {
+                    dates[asset.localIdentifier] = creationDate
+                }
+            }
+        }
+        profilePhotoAlbumAssetDates = dates
+
+        let updates = links.compactMap { profileID, link -> (UUID, String, [String])? in
+            guard let assets = assetsByAlbum[link.localIdentifier] else { return nil }
+            let resolution = CatProfilePhotoAlbumRefreshPolicy.resolve(
+                lastKnownAssetLocalIdentifiers: link.lastKnownAssetLocalIdentifiers,
+                accessibleAssetLocalIdentifiers: assets.map(\.localIdentifier),
+                hasLimitedPhotosAccess: authorizationStatus == .limited
+            )
+            if resolution.shouldWarnAccessIsIncomplete {
+                unavailableIdentifiers.insert(link.localIdentifier)
+            }
+            return (
+                profileID,
+                link.localIdentifier,
+                assets.map(\.localIdentifier)
+            )
+        }
+        unavailableProfilePhotoAlbumIdentifiers = unavailableIdentifiers
+        guard !updates.isEmpty else { return }
+        do {
+            let hasLimitedPhotosAccess = authorizationStatus == .limited
+            _ = try await mutateCatHouseholdIdentity { state in
+                for update in updates {
+                    let latestLastKnown = state.profiles.first(where: {
+                        $0.id == update.0
+                    })?.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? []
+                    let resolution = CatProfilePhotoAlbumRefreshPolicy.resolve(
+                        lastKnownAssetLocalIdentifiers: latestLastKnown,
+                        accessibleAssetLocalIdentifiers: update.2,
+                        hasLimitedPhotosAccess: hasLimitedPhotosAccess
+                    )
+                    state.refreshProfilePhotoAlbumLink(
+                        profileID: update.0,
+                        localIdentifier: update.1,
+                        assetLocalIdentifiers: resolution.assetLocalIdentifiers
+                    )
+                }
+            }
+        } catch {
+            Self.logError(
+                error,
+                category: "cat-identity",
+                operation: "save_profile_album_refresh"
+            )
+        }
     }
 
     /// Removes candidates from app-managed surfaces only. PhotoKit is never
@@ -1015,6 +1120,79 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func setCatProfilePhotoAlbum(
+        profileID: UUID,
+        localIdentifier: String?
+    ) async -> Bool {
+        guard candidateAuthorityIsReady(operation: "set_profile_photo_album") else {
+            return false
+        }
+        guard canReadPhotos else {
+            setError(NekoWidgetError.photoAccessDenied)
+            return false
+        }
+
+        do {
+            let assetIdentifiers: [String]
+            if let localIdentifier {
+                await refreshPhotoSourceAlbums()
+                guard localIdentifier != snapshot.albumLocalIdentifier,
+                      photoSourceAlbums.contains(where: {
+                          $0.localIdentifier == localIdentifier
+                      }) else {
+                    throw CatProfilePhotoAlbumError.unavailable
+                }
+                let assets = try PhotoSourceAlbumCatalog.accessibleImageAssets(
+                    sourceAlbumIdentifier: localIdentifier
+                )
+                guard authorizationStatus != .limited || !assets.isEmpty else {
+                    throw CatProfilePhotoAlbumError.unavailable
+                }
+                assetIdentifiers = assets.map(\.localIdentifier)
+                unavailableProfilePhotoAlbumIdentifiers.remove(localIdentifier)
+                var dates = profilePhotoAlbumAssetDates
+                for asset in assets {
+                    if let creationDate = asset.creationDate {
+                        dates[asset.localIdentifier] = creationDate
+                    }
+                }
+                profilePhotoAlbumAssetDates = dates
+            } else {
+                assetIdentifiers = []
+            }
+
+            let committed = try await mutateCatHouseholdIdentity { state in
+                state.setProfilePhotoAlbumLink(
+                    profileID: profileID,
+                    localIdentifier: localIdentifier,
+                    assetLocalIdentifiers: assetIdentifiers
+                )
+            }
+            guard let committedProfile = committed.profiles.first(where: {
+                $0.id == profileID
+            }), committedProfile.photoAlbumLink?.localIdentifier
+                == localIdentifier else { return false }
+            SharedLog.app.info(
+                "cat-identity",
+                "Profile Photos album link changed",
+                metadata: [
+                    "linked": "\(localIdentifier != nil)",
+                    "photos": "\(assetIdentifiers.count)"
+                ]
+            )
+            return true
+        } catch {
+            Self.logError(
+                error,
+                category: "cat-identity",
+                operation: "set_profile_photo_album"
+            )
+            setError(error)
+            return false
+        }
+    }
+
     func deleteCatProfile(profileID: UUID) async {
         guard candidateAuthorityIsReady(operation: "delete_profile") else { return }
         do {
@@ -1049,9 +1227,18 @@ final class AppViewModel: ObservableObject {
                             for: identifier,
                             profileID: profileID
                         )
-                        let decision: CatAssetMembershipDecision = selected.contains(profileID)
-                            ? .included
-                            : (previous?.decision == .excluded ? .excluded : .unknown)
+                        let isLinkedAlbumPhoto = state.linkedPhotoAlbumContains(
+                            identifier,
+                            profileID: profileID
+                        )
+                        // Saving an unchanged album-derived assignment must not
+                        // materialize it as a manual positive; otherwise unlinking
+                        // the album would incorrectly retain every linked photo.
+                        guard let decision = CatProfileManualAssignmentPolicy.decision(
+                            isSelected: selected.contains(profileID),
+                            previousDecision: previous?.decision,
+                            isLinkedAlbumPhoto: isLinkedAlbumPhoto
+                        ) else { continue }
                         state.setManualMembership(
                             assetLocalIdentifier: identifier,
                             profileID: profileID,

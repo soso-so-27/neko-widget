@@ -17,6 +17,7 @@ enum CatHouseholdIdentityVerifier {
         try verifiesLegacyMigrationIsUnscopedAndIdempotent()
         try verifiesStaleLegacyMirrorCannotUndoIdentityDecision()
         try verifiesManyToManyManualMembership()
+        try verifiesProfileAlbumMembershipPrecedence()
         try verifiesBuild14ReferenceMigrationIsConservative()
         try verifiesGlobalExclusionIsSeparate()
         try verifiesNormalizationSafety()
@@ -238,6 +239,141 @@ enum CatHouseholdIdentityVerifier {
         )
     }
 
+    private static func verifiesProfileAlbumMembershipPrecedence() throws {
+        let firstID = fixedUUID("00000000-0000-0000-0000-000000000021")
+        let secondID = fixedUUID("00000000-0000-0000-0000-000000000022")
+        var state = emptyProfiledState()
+        state.upsertProfile(CatProfile(id: firstID, displayName: "むぎ"))
+        state.upsertProfile(CatProfile(id: secondID, displayName: "あめ"))
+        state.setProfilePhotoAlbumLink(
+            profileID: firstID,
+            localIdentifier: "mugi-album",
+            assetLocalIdentifiers: ["shared", "album-only", "shared"]
+        )
+        state.setProfilePhotoAlbumLink(
+            profileID: secondID,
+            localIdentifier: "ame-album",
+            assetLocalIdentifiers: ["shared", "ame-only"]
+        )
+        state.setManualMembership(
+            assetLocalIdentifier: "manual-only",
+            profileID: firstID,
+            decision: .included
+        )
+
+        try require(
+            state.confirmedAssetIdentifiers(for: firstID)
+                == ["album-only", "manual-only", "shared"],
+            "manual and linked-album positives were not resolved as one set"
+        )
+        try require(
+            state.confirmedProfileIDs(for: "shared") == [firstID, secondID],
+            "one linked photo could not belong to two profiles"
+        )
+        try require(
+            CatProfileManualAssignmentPolicy.decision(
+                isSelected: true,
+                previousDecision: nil,
+                isLinkedAlbumPhoto: true
+            ) == nil,
+            "saving an unchanged album assignment created manual provenance"
+        )
+        try require(
+            CatProfileManualAssignmentPolicy.decision(
+                isSelected: false,
+                previousDecision: nil,
+                isLinkedAlbumPhoto: true
+            ) == .excluded,
+            "removing an album assignment did not create a manual override"
+        )
+        try require(
+            CatProfileManualAssignmentPolicy.decision(
+                isSelected: false,
+                previousDecision: .included,
+                isLinkedAlbumPhoto: false
+            ) == .unknown,
+            "removing a manual-only assignment left a false negative"
+        )
+        let limitedRefresh = CatProfilePhotoAlbumRefreshPolicy.resolve(
+            lastKnownAssetLocalIdentifiers: ["old-a", "old-b"],
+            accessibleAssetLocalIdentifiers: ["old-a", "new-c"],
+            hasLimitedPhotosAccess: true
+        )
+        try require(
+            limitedRefresh.assetLocalIdentifiers == ["new-c", "old-a", "old-b"]
+                && limitedRefresh.shouldWarnAccessIsIncomplete,
+            "limited Photos access destructively erased last-known membership"
+        )
+        let fullRefresh = CatProfilePhotoAlbumRefreshPolicy.resolve(
+            lastKnownAssetLocalIdentifiers: ["old-a", "old-b"],
+            accessibleAssetLocalIdentifiers: ["old-a", "new-c"],
+            hasLimitedPhotosAccess: false
+        )
+        try require(
+            fullRefresh.assetLocalIdentifiers == ["new-c", "old-a"]
+                && !fullRefresh.shouldWarnAccessIsIncomplete,
+            "full Photos access failed to apply authoritative album removals"
+        )
+
+        state.setManualMembership(
+            assetLocalIdentifier: "album-only",
+            profileID: firstID,
+            decision: .excluded
+        )
+        try require(
+            !state.confirmsAsset("album-only", for: firstID),
+            "manual exclusion did not override the linked album"
+        )
+
+        let beforeNoOpRefresh = state
+        state.refreshProfilePhotoAlbumLink(
+            profileID: firstID,
+            localIdentifier: "mugi-album",
+            assetLocalIdentifiers: ["shared", "album-only"],
+            at: Date(timeIntervalSince1970: 9_999)
+        )
+        try require(
+            state == beforeNoOpRefresh,
+            "an unchanged album refresh rewrote identity state"
+        )
+        state.refreshProfilePhotoAlbumLink(
+            profileID: firstID,
+            localIdentifier: "stale-album",
+            assetLocalIdentifiers: ["stale-photo"]
+        )
+        try require(
+            !state.confirmsAsset("stale-photo", for: firstID),
+            "a stale album refresh replaced the current link"
+        )
+
+        state.setProfilePhotoAlbumLink(
+            profileID: firstID,
+            localIdentifier: nil
+        )
+        try require(
+            state.confirmedAssetIdentifiers(for: firstID) == ["manual-only"],
+            "unlinking an album removed a manual positive or retained album-only photos"
+        )
+        try require(
+            state.confirmsAsset("shared", for: secondID),
+            "unlinking one profile altered another profile's album"
+        )
+
+        state.setGloballyExcluded(
+            true,
+            assetLocalIdentifiers: ["shared"]
+        )
+        try require(
+            state.confirmedProfileIDs(for: "shared").isEmpty,
+            "global exclusion did not override a linked album"
+        )
+        state.setGloballyExcluded(false, assetLocalIdentifiers: ["shared"])
+        try require(
+            state.confirmedProfileIDs(for: "shared") == [secondID],
+            "restoring a household candidate did not honor its still-linked album"
+        )
+    }
+
     private static func verifiesBuild14ReferenceMigrationIsConservative() throws {
         let uniqueProfileID = fixedUUID("00000000-0000-0000-0000-000000000011")
         let ambiguousProfileID = fixedUUID("00000000-0000-0000-0000-000000000012")
@@ -362,6 +498,11 @@ enum CatHouseholdIdentityVerifier {
             ),
             isSimilarityReference: true
         )
+        state.setProfilePhotoAlbumLink(
+            profileID: profileID,
+            localIdentifier: "mugi-album",
+            assetLocalIdentifiers: ["linked-b", "linked-a", "linked-b"]
+        )
         let normalized = state.normalized()
         try require(
             normalized.profiles.first?.displayName == "むぎ",
@@ -425,6 +566,11 @@ enum CatHouseholdIdentityVerifier {
             subjectBoundingBox: NormalizedRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4),
             isSimilarityReference: true
         )
+        state.setProfilePhotoAlbumLink(
+            profileID: profileID,
+            localIdentifier: "mugi-album",
+            assetLocalIdentifiers: ["linked-b", "linked-a", "linked-b"]
+        )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let decoder = JSONDecoder()
@@ -434,6 +580,41 @@ enum CatHouseholdIdentityVerifier {
             from: encoder.encode(state)
         ).normalized()
         try require(decoded == state.normalized(), "identity round-trip lost data")
+        try require(
+            decoded.profiles.first?.photoAlbumLink?.lastKnownAssetLocalIdentifiers
+                == ["linked-a", "linked-b"],
+            "profile album membership was not normalized or persisted"
+        )
+
+        var schemaTwo = state
+        schemaTwo.schemaVersion = 2
+        schemaTwo.profiles[0].photoAlbumLink = nil
+        guard var schemaTwoObject = try JSONSerialization.jsonObject(
+            with: encoder.encode(schemaTwo)
+        ) as? [String: Any] else {
+            throw VerificationError.failed("schema 2 identity JSON was unavailable")
+        }
+        guard var schemaTwoProfiles = schemaTwoObject["profiles"]
+                as? [[String: Any]] else {
+            throw VerificationError.failed("schema 2 profile JSON was unavailable")
+        }
+        for index in schemaTwoProfiles.indices {
+            schemaTwoProfiles[index].removeValue(forKey: "photoAlbumLink")
+        }
+        schemaTwoObject["profiles"] = schemaTwoProfiles
+        let schemaTwoData = try JSONSerialization.data(
+            withJSONObject: schemaTwoObject
+        )
+        let schemaTwoDecoded = try decoder.decode(
+            CatHouseholdIdentityState.self,
+            from: schemaTwoData
+        ).normalized()
+        try require(
+            schemaTwoDecoded.schemaVersion
+                == CatHouseholdIdentityState.currentSchemaVersion
+                && schemaTwoDecoded.profiles.first?.photoAlbumLink == nil,
+            "schema 2 identity did not migrate without inventing an album link"
+        )
     }
 
     private static func verifiesProtectedAtomicStore() async throws {

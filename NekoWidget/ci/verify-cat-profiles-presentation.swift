@@ -6,6 +6,7 @@ enum CatProfilesPresentationVerifier {
         try verifiesEveryoneIsAlwaysTheDefaultScope()
         try verifiesIndividualRecognitionCopy()
         try verifiesManyToManyPhotoMembership()
+        try verifiesProfileAlbumLinkPresentation()
         try verifiesSimilarityReviewKeepsCatInstancesSeparate()
         try verifiesMixedBatchAssignmentsArePreserved()
         try verifiesProfileOnlyTimePolicies()
@@ -64,6 +65,42 @@ enum CatProfilesPresentationVerifier {
             "one photo could not retain multiple confirmed cat memberships"
         )
         try require(photo.detectedCatCount == 2, "multiple cats in one photo were collapsed")
+    }
+
+    private static func verifiesProfileAlbumLinkPresentation() throws {
+        let linked = CatProfilePhotoAlbumLinkPresentation(
+            identifier: "mugi-album",
+            title: "むぎ",
+            accessiblePhotoCount: 42,
+            profilePhotoCount: 40
+        )
+        try require(linked.isAvailable, "available profile album was marked unavailable")
+        try require(linked.displayTitle == "むぎ", "current album title was not shown")
+
+        let unavailable = CatProfilePhotoAlbumLinkPresentation(
+            identifier: "missing-album",
+            title: nil,
+            accessiblePhotoCount: nil,
+            profilePhotoCount: 40,
+            isAvailable: false
+        )
+        try require(
+            !unavailable.isAvailable
+                && unavailable.displayTitle == "利用できないアルバム",
+            "missing linked album silently looked available"
+        )
+
+        let value = CatProfilesPresentation(photoAlbumOptions: [
+            CatProfilePhotoAlbumOptionPresentation(
+                identifier: "mugi-album",
+                title: "むぎ",
+                accessiblePhotoCount: 42
+            )
+        ])
+        try require(
+            value.photoAlbumOptions.first?.identifier == "mugi-album",
+            "regular Photos album option did not cross the presentation boundary"
+        )
     }
 
     private static func verifiesSimilarityReviewKeepsCatInstancesSeparate() throws {

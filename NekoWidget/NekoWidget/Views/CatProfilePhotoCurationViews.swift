@@ -3,7 +3,8 @@ import SwiftUI
 struct CatProfileDetailView: View {
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
-    let unassignedPhotos: [CatProfilePhotoPresentation]
+    let manualCandidatePhotos: [CatProfilePhotoPresentation]
+    let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let actions: CatProfilesViewActions
 
     @State private var showsLifeReferenceEditor = false
@@ -20,7 +21,7 @@ struct CatProfileDetailView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(profile.displayName)
                             .font(.title2.bold())
-                        Text("確認済み \(profile.confirmedPhotoCount.formatted())枚")
+                        Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -47,22 +48,60 @@ struct CatProfileDetailView: View {
             }
 
             Section {
-                if !unassignedPhotos.isEmpty {
-                    NavigationLink {
-                        UnassignedCatPhotosView(
-                            photos: unassignedPhotos,
-                            profiles: allProfiles,
-                            actions: actions
+                NavigationLink {
+                    UnassignedCatPhotosView(
+                        photos: manualCandidatePhotos,
+                        profiles: allProfiles,
+                        actions: actions,
+                        navigationTitle: "\(profile.displayName)の写真を選ぶ",
+                        preselectedProfileIdentifier: profile.identifier
+                    )
+                } label: {
+                    Label {
+                        LabeledContent(
+                            "アプリで写真を選ぶ",
+                            value: manualCandidatePhotos.isEmpty
+                                ? "追加できる写真なし"
+                                : "候補 \(manualCandidatePhotos.count.formatted())枚"
                         )
-                    } label: {
-                        Label {
-                            LabeledContent(
-                                "この子の写真を追加",
-                                value: "未判定 \(unassignedPhotos.count.formatted())枚"
-                            )
-                        } icon: {
-                            Image(systemName: "photo.badge.plus")
-                        }
+                    } icon: {
+                        Image(systemName: "photo.badge.plus")
+                    }
+                }
+                .disabled(manualCandidatePhotos.isEmpty)
+
+                NavigationLink {
+                    CatProfilePhotoAlbumSelectionView(
+                        profile: profile,
+                        albums: photoAlbumOptions,
+                        actions: actions
+                    )
+                } label: {
+                    Label {
+                        LabeledContent(
+                            "写真アプリのアルバムをつなぐ",
+                            value: profile.photoAlbumLink?.displayTitle ?? "未連携"
+                        )
+                    } icon: {
+                        Image(systemName: "rectangle.stack.badge.plus")
+                    }
+                }
+
+                if let link = profile.photoAlbumLink {
+                    if link.isAvailable {
+                        Label(
+                            "「\(link.displayTitle)」から \(link.profilePhotoCount.formatted())枚を表示中",
+                            systemImage: "checkmark.circle.fill"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    } else {
+                        Label(
+                            "つないだアルバムを利用できません。以前確認できた写真は保持しています。",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
                     }
                 }
 
@@ -75,7 +114,7 @@ struct CatProfileDetailView: View {
                 } label: {
                     Label {
                         LabeledContent(
-                            "確認済みの写真",
+                            "この子の写真",
                             value: "\(profile.confirmedPhotoCount.formatted())枚"
                         )
                     } icon: {
@@ -84,7 +123,7 @@ struct CatProfileDetailView: View {
                 }
                 .disabled(profile.confirmedPhotos.isEmpty)
             } footer: {
-                Text("自動で個体を決めません。未判定から写真を選び、「写っている子を設定」でこの子を追加できます。2匹が一緒なら両方を選べます。")
+                Text("自動で個体を決めません。アプリで指定した写真と、明示的につないだ通常アルバムだけを使います。写真アプリの写真を削除・移動しません。2匹が一緒なら両方へ追加できます。")
             }
 
             Section {
@@ -92,7 +131,7 @@ struct CatProfileDetailView: View {
                     showsDeleteConfirmation = true
                 }
             } footer: {
-                Text("プロフィールを削除しても写真は削除されません。所属だけを外し、どの子か未判定に戻します。")
+                Text("プロフィールを削除しても写真は削除されません。この子への手動所属とアルバム連携だけを外し、他の子の所属は保ちます。")
             }
         }
         .navigationTitle(profile.displayName)
@@ -143,6 +182,102 @@ struct CatProfileDetailView: View {
         case .adoptionDay:
             return "迎えた日を基準に「お迎えしたころ」「いっしょに暮らして1年」のようにまとめます。"
         }
+    }
+}
+
+private struct CatProfilePhotoAlbumSelectionView: View {
+    let profile: CatProfilePresentation
+    let albums: [CatProfilePhotoAlbumOptionPresentation]
+    let actions: CatProfilesViewActions
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var savingIdentifier: String?
+
+    var body: some View {
+        List {
+            if let link = profile.photoAlbumLink, !link.isAvailable {
+                Section {
+                    Label(
+                        "現在つないでいるアルバムを利用できません。写真へのアクセス範囲を確認するか、別のアルバムを選んでください。",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                }
+            }
+
+            Section {
+                albumButton(
+                    identifier: nil,
+                    title: "連携しない",
+                    subtitle: "手動で追加した写真だけを使う",
+                    isSelected: profile.photoAlbumLink == nil
+                )
+
+                ForEach(albums) { album in
+                    albumButton(
+                        identifier: album.identifier,
+                        title: album.title,
+                        subtitle: "アクセス可能な写真 \(album.accessiblePhotoCount.formatted())枚",
+                        isSelected: profile.photoAlbumLink?.identifier
+                            == album.identifier
+                    )
+                }
+
+                if albums.isEmpty {
+                    Text("選べる通常アルバムがありません。写真アプリでアルバムを作るか、写真へのアクセス範囲を確認してください。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("\(profile.displayName)の写真")
+            } footer: {
+                Text("写真アプリで自分が作った通常アルバムを、\(profile.displayName)の明示的な所属として読み取ります。アルバムの写真は変更しません。連携を外しても、アプリで手動追加した写真は残ります。")
+            }
+        }
+        .navigationTitle("アルバムをつなぐ")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await actions.refreshPhotoAlbums() }
+        .accessibilityIdentifier("profile-photo-album-selection")
+    }
+
+    private func albumButton(
+        identifier: String?,
+        title: String,
+        subtitle: String,
+        isSelected: Bool
+    ) -> some View {
+        Button {
+            Task {
+                let token = identifier ?? "__none__"
+                savingIdentifier = token
+                let saved = await actions.setProfilePhotoAlbum(
+                    profile.identifier,
+                    identifier
+                )
+                savingIdentifier = nil
+                if saved { dismiss() }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if savingIdentifier == (identifier ?? "__none__") {
+                    ProgressView()
+                } else if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.headline)
+                        .foregroundStyle(.tint)
+                }
+            }
+        }
+        .disabled(savingIdentifier != nil || isSelected)
     }
 }
 
@@ -362,6 +497,10 @@ struct UnassignedCatPhotosView: View {
     let photos: [CatProfilePhotoPresentation]
     let profiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
+    var navigationTitle = "どの子かまだわからない"
+    /// A picker opened from one cat's page starts with that cat selected while
+    /// preserving any other explicit profile assignments on the same photo.
+    var preselectedProfileIdentifier: String? = nil
 
     @State private var selection = Set<String>()
     @State private var showsAssignmentSheet = false
@@ -378,7 +517,7 @@ struct UnassignedCatPhotosView: View {
                 CatSelectablePhotoGrid(photos: photos, selection: $selection)
             }
         }
-        .navigationTitle("どの子かまだわからない")
+        .navigationTitle(navigationTitle)
         .safeAreaInset(edge: .bottom) {
             if !selection.isEmpty { actionBar }
         }
@@ -410,7 +549,11 @@ struct UnassignedCatPhotosView: View {
     private var selectedAssignmentsByPhotoIdentifier: [String: Set<String>] {
         let selectedPhotos = photos.filter { selection.contains($0.localIdentifier) }
         return Dictionary(uniqueKeysWithValues: selectedPhotos.map {
-            ($0.localIdentifier, $0.assignedProfileIdentifiers)
+            var identifiers = $0.assignedProfileIdentifiers
+            if let preselectedProfileIdentifier {
+                identifiers.insert(preselectedProfileIdentifier)
+            }
+            return ($0.localIdentifier, identifiers)
         })
     }
 
@@ -557,7 +700,7 @@ struct LegacyCatExclusionReviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("以前の「この子じゃない」は単頭向けでした。戻した写真は、どの子か未判定になり、写真ライブラリから削除されません。")
+            Text("以前の「この子じゃない」は単頭向けでした。戻すと手動の所属は未判定になります。つないだ写真アルバムに含まれる場合は、そのプロフィールに再び表示されます。写真ライブラリからは削除されません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -577,7 +720,7 @@ struct LegacyCatExclusionReviewView: View {
                 }
             } label: {
                 Label(
-                    isRestoring ? "戻しています…" : "未判定に戻す（\(selection.count.formatted())枚）",
+                    isRestoring ? "戻しています…" : "候補に戻す（\(selection.count.formatted())枚）",
                     systemImage: "arrow.uturn.backward.circle"
                 )
                 .frame(maxWidth: .infinity)

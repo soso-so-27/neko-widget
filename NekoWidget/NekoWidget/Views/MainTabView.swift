@@ -79,7 +79,7 @@ struct MainTabView: View {
                     sections: curatedAlbumSections,
                     scan: scan,
                     profiles: catProfilesPresentation.profiles,
-                    unassignedPhotos: catProfilesPresentation.unassignedPhotos,
+                    photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
                     profileActions: catProfilesActions,
                     selectedScope: $selectedAlbumScope
                 )

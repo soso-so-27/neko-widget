@@ -323,19 +323,27 @@ struct AppRootView: View {
 
     private var profileAlbumPhotos: [String: [PhotoPresentation]] {
         guard let identity = viewModel.catHouseholdIdentity else { return [:] }
+        let projection = profileIdentityProjection(identity)
         let assetsByIdentifier = Dictionary(
-            uniqueKeysWithValues: viewModel.catAssets.map { ($0.localIdentifier, $0) }
+            uniqueKeysWithValues: viewModel.snapshot.assets.map {
+                ($0.localIdentifier, $0)
+            }
         )
         var result: [String: [PhotoPresentation]] = [:]
         for profile in identity.profiles {
-            let memberships = identity.memberships.filter {
-                $0.profileID == profile.id && $0.decision == .included
-            }
-            result[profile.id.uuidString] = memberships.compactMap { membership in
-                guard let asset = assetsByIdentifier[membership.assetLocalIdentifier] else {
-                    return nil
-                }
-                return profilePhotoPresentation(asset, membership: membership)
+            result[profile.id.uuidString] = (projection.confirmedByProfile[profile.id] ?? [])
+                .map { identifier in
+                    profilePhotoPresentation(
+                        assetsByIdentifier[identifier],
+                        localIdentifier: identifier,
+                        creationDate: profilePhotoCreationDate(
+                            identifier: identifier,
+                            asset: assetsByIdentifier[identifier]
+                        ),
+                        membership: projection.membershipByProfile[profile.id]?[identifier],
+                        isLinkedAlbumPhoto: projection.linkedByProfile[profile.id]?
+                            .contains(identifier) == true
+                    )
             }.sorted(by: Self.newestPhotoFirst)
         }
         return result
@@ -347,28 +355,50 @@ struct AppRootView: View {
                 postureDiagnostics: postureDiagnosticsPresentation
             )
         }
-        let assets = viewModel.catAssets
+        let projection = profileIdentityProjection(identity)
+        let candidateAssets = viewModel.catAssets
         let assetsByIdentifier = Dictionary(
-            uniqueKeysWithValues: assets.map { ($0.localIdentifier, $0) }
+            uniqueKeysWithValues: viewModel.snapshot.assets.map {
+                ($0.localIdentifier, $0)
+            }
         )
-        let includedByAsset = Dictionary(grouping: identity.memberships.filter {
-            $0.decision == .included
-        }, by: \.assetLocalIdentifier).mapValues { memberships in
-            Set(memberships.map { $0.profileID.uuidString })
+        let allCandidatePhotos = candidateAssets.map { asset in
+            CatProfilePhotoPresentation(
+                localIdentifier: asset.localIdentifier,
+                creationDate: asset.creationDate,
+                catBoundingBox: asset.cat.boundingBox?.cgRect,
+                assignedProfileIdentifiers: projection.assignedByAsset[
+                    asset.localIdentifier
+                ] ?? [],
+                detectedCatCount: asset.cat.catCount
+            )
+        }.sorted(by: Self.newestProfilePhotoFirst)
+        let photoAlbumOptions = viewModel.photoSourceAlbums.map {
+            CatProfilePhotoAlbumOptionPresentation(
+                identifier: $0.localIdentifier,
+                title: $0.title,
+                accessiblePhotoCount: $0.accessibleAssetCount
+            )
         }
         let profiles = identity.profiles.map { profile -> CatProfilePresentation in
-            let memberships = identity.memberships.filter {
-                $0.profileID == profile.id && $0.decision == .included
-            }
-            let confirmed = memberships.compactMap { membership -> CatProfilePhotoPresentation? in
-                guard let asset = assetsByIdentifier[membership.assetLocalIdentifier] else {
-                    return nil
-                }
-                return catProfilePhotoPresentation(
-                    asset,
-                    membership: membership,
-                    assignedProfileIdentifiers: includedByAsset[asset.localIdentifier] ?? []
-                )
+            let memberships = projection.membershipByProfile[profile.id]?.values.filter {
+                $0.decision == .included
+            } ?? []
+            let confirmedIdentifiers = projection.confirmedByProfile[profile.id] ?? []
+            let confirmed = confirmedIdentifiers
+                .map { identifier in
+                    catProfilePhotoPresentation(
+                        assetsByIdentifier[identifier],
+                        localIdentifier: identifier,
+                        creationDate: profilePhotoCreationDate(
+                            identifier: identifier,
+                            asset: assetsByIdentifier[identifier]
+                        ),
+                        membership: projection.membershipByProfile[profile.id]?[identifier],
+                        assignedProfileIdentifiers: projection.assignedByAsset[
+                            identifier
+                        ] ?? []
+                    )
             }.sorted(by: Self.newestProfilePhotoFirst)
             let lifeReference = profile.lifeReference.flatMap { reference in
                 reference.date.date().map {
@@ -379,32 +409,43 @@ struct AppRootView: View {
                     )
                 }
             }
+            let albumLink = profile.photoAlbumLink.map { link in
+                let option = viewModel.photoSourceAlbums.first {
+                    $0.localIdentifier == link.localIdentifier
+                }
+                let isAvailable = option != nil
+                    && !viewModel.unavailableProfilePhotoAlbumIdentifiers
+                        .contains(link.localIdentifier)
+                let linkedProfilePhotoCount = Set(
+                    link.lastKnownAssetLocalIdentifiers
+                ).intersection(confirmedIdentifiers).count
+                return CatProfilePhotoAlbumLinkPresentation(
+                    identifier: link.localIdentifier,
+                    title: option?.title,
+                    accessiblePhotoCount: option?.accessibleAssetCount,
+                    profilePhotoCount: linkedProfilePhotoCount,
+                    isAvailable: isAvailable
+                )
+            }
             return CatProfilePresentation(
                 identifier: profile.id.uuidString,
                 name: profile.displayName,
                 coverPhoto: confirmed.first,
                 confirmedPhotos: confirmed,
+                manualCandidatePhotos: allCandidatePhotos.filter {
+                    !confirmedIdentifiers.contains($0.localIdentifier)
+                },
                 lifeReference: lifeReference,
+                photoAlbumLink: albumLink,
                 similarityReferencePhotoCount: memberships.lazy.filter {
                     $0.isSimilarityReference
                 }.count
             )
         }
 
-        let assignedIdentifiers = Set(identity.memberships.lazy.filter {
-            $0.decision == .included
-        }.map(\.assetLocalIdentifier))
-        let unassigned = assets.filter {
-            !assignedIdentifiers.contains($0.localIdentifier)
-        }.map { asset in
-            CatProfilePhotoPresentation(
-                localIdentifier: asset.localIdentifier,
-                creationDate: asset.creationDate,
-                catBoundingBox: asset.cat.boundingBox?.cgRect,
-                assignedProfileIdentifiers: [],
-                detectedCatCount: asset.cat.catCount
-            )
-        }.sorted(by: Self.newestProfilePhotoFirst)
+        let unassigned = allCandidatePhotos.filter {
+            $0.assignedProfileIdentifiers.isEmpty
+        }
 
         let allAssetsByIdentifier = Dictionary(
             uniqueKeysWithValues: viewModel.snapshot.assets.map {
@@ -438,6 +479,7 @@ struct AppRootView: View {
         }
         return CatProfilesPresentation(
             profiles: profiles,
+            photoAlbumOptions: photoAlbumOptions,
             unassignedPhotos: unassigned,
             similarityCandidates: viewModel.catSimilarityCandidateInstances,
             legacyExcludedPhotos: legacyExcluded,
@@ -492,6 +534,18 @@ struct AppRootView: View {
                     isApproximate: reference?.isApproximate == true
                 )
             },
+            setProfilePhotoAlbum: { profileIdentifier, albumIdentifier in
+                guard let profileID = UUID(uuidString: profileIdentifier) else {
+                    return false
+                }
+                return await viewModel.setCatProfilePhotoAlbum(
+                    profileID: profileID,
+                    localIdentifier: albumIdentifier
+                )
+            },
+            refreshPhotoAlbums: {
+                await viewModel.refreshPhotoSourceAlbums()
+            },
             confirmProfileMembership: { identifier, photoIdentifiers in
                 guard let profileID = UUID(uuidString: identifier) else { return }
                 await viewModel.setCatProfileMembership(
@@ -539,17 +593,31 @@ struct AppRootView: View {
     }
 
     private func profilePhotoPresentation(
-        _ asset: AssetRecord,
-        membership: CatAssetProfileMembership
+        _ asset: AssetRecord?,
+        localIdentifier: String,
+        creationDate: Date?,
+        membership: CatAssetProfileMembership?,
+        isLinkedAlbumPhoto: Bool
     ) -> PhotoPresentation {
+        guard let asset else {
+            return PhotoPresentation(
+                localIdentifier: localIdentifier,
+                creationDate: creationDate,
+                detectedCatCount: 0,
+                isGrowthEligible: isLinkedAlbumPhoto
+            )
+        }
         let traits = asset.albumTraits
         let boxes = asset.resolvedCatBoundingBoxes.boundingBoxes
+        let subjectBoundingBox = membership?.decision == .included
+            ? membership?.subjectBoundingBox
+            : nil
         let selectedBox = CatProfileBoundingBoxSelector.select(
             from: boxes,
             detectedCatCount: asset.cat.catCount,
-            subjectBoundingBox: membership.subjectBoundingBox
+            subjectBoundingBox: subjectBoundingBox
         )
-        let displayBox = membership.subjectBoundingBox
+        let displayBox = subjectBoundingBox
             ?? selectedBox
             ?? asset.cat.boundingBox
         // Album traits must come from a detector box that still matches this
@@ -569,7 +637,12 @@ struct AppRootView: View {
             albumIsOuting: traits?.isOuting,
             detectedCatCount: asset.cat.catCount,
             largestCatAreaRatio: growthBox?.area,
-            isGrowthEligible: growthBox != nil,
+            // A linked album is explicit profile authority, but a scanned
+            // multi-cat photo still needs an exact subject box before it can
+            // represent one cat's growth. Unscanned linked photos keep their
+            // date-only eligibility in the nil-asset branch above.
+            isGrowthEligible: growthBox != nil
+                || (isLinkedAlbumPhoto && asset.cat.catCount <= 1),
             hasCurrentAlbumAnalysis: asset.albumAnalysisVersion
                 == CatAlbumTraits.currentAnalysisVersion
                 && traits?.analysisVersion == CatAlbumTraits.currentAnalysisVersion
@@ -577,21 +650,83 @@ struct AppRootView: View {
     }
 
     private func catProfilePhotoPresentation(
-        _ asset: AssetRecord,
-        membership: CatAssetProfileMembership,
+        _ asset: AssetRecord?,
+        localIdentifier: String,
+        creationDate: Date?,
+        membership: CatAssetProfileMembership?,
         assignedProfileIdentifiers: Set<String>
     ) -> CatProfilePhotoPresentation {
+        guard let asset else {
+            return CatProfilePhotoPresentation(
+                localIdentifier: localIdentifier,
+                creationDate: creationDate,
+                assignedProfileIdentifiers: assignedProfileIdentifiers
+            )
+        }
+        let subjectBoundingBox = membership?.decision == .included
+            ? membership?.subjectBoundingBox
+            : nil
         let currentBox = CatProfileBoundingBoxSelector.select(
             from: asset.resolvedCatBoundingBoxes.boundingBoxes,
             detectedCatCount: asset.cat.catCount,
-            subjectBoundingBox: membership.subjectBoundingBox
+            subjectBoundingBox: subjectBoundingBox
         )
         return CatProfilePhotoPresentation(
             localIdentifier: asset.localIdentifier,
-            creationDate: asset.creationDate,
-            catBoundingBox: currentBox?.cgRect,
+            creationDate: creationDate,
+            catBoundingBox: (currentBox ?? asset.cat.boundingBox)?.cgRect,
             assignedProfileIdentifiers: assignedProfileIdentifiers,
             detectedCatCount: asset.cat.catCount
+        )
+    }
+
+    private func profilePhotoCreationDate(
+        identifier: String,
+        asset: AssetRecord?
+    ) -> Date? {
+        asset?.creationDate ?? viewModel.profilePhotoAlbumAssetDates[identifier]
+    }
+
+    private struct ProfileIdentityProjection {
+        var confirmedByProfile: [UUID: Set<String>]
+        var membershipByProfile: [UUID: [String: CatAssetProfileMembership]]
+        var linkedByProfile: [UUID: Set<String>]
+        var assignedByAsset: [String: Set<String>]
+    }
+
+    /// Builds all effective membership indexes once per presentation pass.
+    /// Album links may contain thousands of identifiers, so rendering must not
+    /// repeatedly scan those arrays or the manual-membership ledger per tile.
+    private func profileIdentityProjection(
+        _ identity: CatHouseholdIdentityState
+    ) -> ProfileIdentityProjection {
+        var confirmedByProfile: [UUID: Set<String>] = [:]
+        var membershipByProfile: [UUID: [String: CatAssetProfileMembership]] = [:]
+        var linkedByProfile: [UUID: Set<String>] = [:]
+        var assignedByAsset: [String: Set<String>] = [:]
+
+        for membership in identity.memberships {
+            membershipByProfile[membership.profileID, default: [:]][
+                membership.assetLocalIdentifier
+            ] = membership
+        }
+        for profile in identity.profiles {
+            let confirmed = identity.confirmedAssetIdentifiers(for: profile.id)
+            confirmedByProfile[profile.id] = confirmed
+            linkedByProfile[profile.id] = Set(
+                profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? []
+            )
+            for identifier in confirmed {
+                assignedByAsset[identifier, default: []].insert(
+                    profile.id.uuidString
+                )
+            }
+        }
+        return ProfileIdentityProjection(
+            confirmedByProfile: confirmedByProfile,
+            membershipByProfile: membershipByProfile,
+            linkedByProfile: linkedByProfile,
+            assignedByAsset: assignedByAsset
         )
     }
 

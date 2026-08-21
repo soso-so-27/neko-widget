@@ -14,6 +14,13 @@ struct CatProfilesViewActions {
         _ profileIdentifier: String,
         _ reference: CatProfileLifeReferencePresentation?
     ) async -> Void
+    /// Links or unlinks one read-only, user-created Photos album. The result is
+    /// false when PhotoKit or persistence rejects the selection.
+    var setProfilePhotoAlbum: (
+        _ profileIdentifier: String,
+        _ albumIdentifier: String?
+    ) async -> Bool
+    var refreshPhotoAlbums: () async -> Void
     var confirmProfileMembership: (
         _ profileIdentifier: String,
         _ photoIdentifiers: [String]
@@ -44,6 +51,8 @@ struct CatProfilesViewActions {
         createProfile: { _ in },
         updateName: { _, _ in },
         updateLifeReference: { _, _ in },
+        setProfilePhotoAlbum: { _, _ in false },
+        refreshPhotoAlbums: {},
         confirmProfileMembership: { _, _ in },
         removeProfileMembership: { _, _ in },
         replacePhotoAssignments: { _ in },
@@ -111,7 +120,8 @@ struct CatProfilesView: View {
                     CatProfileDetailView(
                         profile: profile,
                         allProfiles: presentation.profiles,
-                        unassignedPhotos: presentation.unassignedPhotos,
+                        manualCandidatePhotos: profile.manualCandidatePhotos,
+                        photoAlbumOptions: presentation.photoAlbumOptions,
                         actions: actions
                     )
                 } label: {
@@ -234,7 +244,7 @@ private struct CatProfileRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(profile.displayName)
                     .font(.headline)
-                Text("確認済み \(profile.confirmedPhotoCount.formatted())枚")
+                Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

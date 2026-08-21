@@ -104,12 +104,49 @@ struct CatProfilePhotoPresentation: Identifiable, Equatable {
     }
 }
 
+struct CatProfilePhotoAlbumOptionPresentation: Identifiable, Equatable {
+    var identifier: String
+    var title: String
+    var accessiblePhotoCount: Int
+
+    var id: String { identifier }
+}
+
+struct CatProfilePhotoAlbumLinkPresentation: Equatable {
+    var identifier: String
+    var title: String?
+    var accessiblePhotoCount: Int?
+    var profilePhotoCount: Int
+    var isAvailable: Bool
+
+    var displayTitle: String { title ?? "利用できないアルバム" }
+
+    init(
+        identifier: String,
+        title: String?,
+        accessiblePhotoCount: Int?,
+        profilePhotoCount: Int,
+        isAvailable: Bool = true
+    ) {
+        self.identifier = identifier
+        self.title = title
+        self.accessiblePhotoCount = accessiblePhotoCount
+        self.profilePhotoCount = profilePhotoCount
+        self.isAvailable = isAvailable
+    }
+}
+
 struct CatProfilePresentation: Identifiable, Equatable {
     var identifier: String
     var name: String?
     var coverPhoto: CatProfilePhotoPresentation?
     var confirmedPhotos: [CatProfilePhotoPresentation]
+    /// Every current library candidate not already confirmed for this profile.
+    /// It intentionally includes photos assigned to another profile so a
+    /// two-cat photo can be added from either cat's page.
+    var manualCandidatePhotos: [CatProfilePhotoPresentation] = []
     var lifeReference: CatProfileLifeReferencePresentation?
+    var photoAlbumLink: CatProfilePhotoAlbumLinkPresentation? = nil
     var similarityReferencePhotoCount: Int = 0
 
     var id: String { identifier }
@@ -213,6 +250,7 @@ struct CatProfileTimePolicyPresentation: Equatable {
 
 struct CatProfilesPresentation: Equatable {
     var profiles: [CatProfilePresentation]
+    var photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     var unassignedPhotos: [CatProfilePhotoPresentation]
     /// Exact unresolved cat instances. A multi-cat photo may occur more than
     /// once with a different detector box.
@@ -225,6 +263,7 @@ struct CatProfilesPresentation: Equatable {
 
     init(
         profiles: [CatProfilePresentation] = [],
+        photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation] = [],
         unassignedPhotos: [CatProfilePhotoPresentation] = [],
         similarityCandidates: [CatSimilarityCandidateInstance] = [],
         legacyExcludedPhotos: [LegacyExcludedCatPhotoPresentation] = [],
@@ -232,6 +271,7 @@ struct CatProfilesPresentation: Equatable {
         postureDiagnostics: CatPostureDiagnosticsPresentation = .init()
     ) {
         self.profiles = profiles
+        self.photoAlbumOptions = photoAlbumOptions
         self.unassignedPhotos = unassignedPhotos
         self.similarityCandidates = similarityCandidates
         self.legacyExcludedPhotos = legacyExcludedPhotos

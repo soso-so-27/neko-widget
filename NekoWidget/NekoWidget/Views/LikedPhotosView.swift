@@ -5,7 +5,7 @@ struct AlbumView: View {
     let sections: [CuratedAlbumSectionPresentation]
     let scan: ScanPresentation
     let profiles: [CatProfilePresentation]
-    let unassignedPhotos: [CatProfilePhotoPresentation]
+    let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let profileActions: CatProfilesViewActions
     @Binding var selectedScope: CatProfileScopePresentation
 
@@ -89,7 +89,7 @@ struct AlbumView: View {
             Label("猫ごとの思い出", systemImage: "pawprint.fill")
                 .font(.headline)
 
-            Text("「みんな」には見つかった猫写真をまとめて表示します。猫を選ぶと、自分で確認した写真だけに切り替わります。")
+            Text("「みんな」には見つかった猫写真をまとめて表示します。猫を選ぶと、自分で指定した写真と、その子につないだ写真アルバムだけに切り替わります。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -108,7 +108,7 @@ struct AlbumView: View {
 
     private func selectedProfileNotice(_ profile: CatProfilePresentation) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(profile.displayName)として確認した\(profile.confirmedPhotoCount.formatted())枚から作っています。自動判定ではありません。")
+            Text("\(profile.displayName)として明示した\(profile.confirmedPhotoCount.formatted())枚から作っています。自動判定ではありません。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -116,7 +116,8 @@ struct AlbumView: View {
                 CatProfileDetailView(
                     profile: profile,
                     allProfiles: profiles,
-                    unassignedPhotos: unassignedPhotos,
+                    manualCandidatePhotos: profile.manualCandidatePhotos,
+                    photoAlbumOptions: photoAlbumOptions,
                     actions: profileActions
                 )
             } label: {

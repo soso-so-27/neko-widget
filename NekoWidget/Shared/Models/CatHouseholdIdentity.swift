@@ -13,6 +13,48 @@ enum CatHouseholdIdentityMode: String, Codable, Equatable, Sendable {
     case profiled
 }
 
+/// A user-selected, regular Photos album that acts as an explicit source for
+/// one profile. The asset identifiers remain local-only. Keeping the last
+/// successfully read membership makes an album rename or a transient Limited
+/// Photos Access gap non-destructive; removing the link discards only this
+/// source and never changes manual decisions.
+struct CatProfilePhotoAlbumLink: Codable, Equatable, Sendable {
+    var localIdentifier: String
+    var lastKnownAssetLocalIdentifiers: [String]
+    var linkedAt: Date
+    var refreshedAt: Date
+
+    init(
+        localIdentifier: String,
+        lastKnownAssetLocalIdentifiers: [String],
+        linkedAt: Date = .now,
+        refreshedAt: Date = .now
+    ) {
+        self.localIdentifier = localIdentifier
+        self.lastKnownAssetLocalIdentifiers = lastKnownAssetLocalIdentifiers
+        self.linkedAt = catIdentityTimestamp(linkedAt)
+        self.refreshedAt = catIdentityTimestamp(max(linkedAt, refreshedAt))
+    }
+
+    func normalized() -> Self? {
+        guard Self.isValidIdentifier(localIdentifier) else { return nil }
+        var value = self
+        value.lastKnownAssetLocalIdentifiers = Array(Set(
+            lastKnownAssetLocalIdentifiers.filter(Self.isValidIdentifier)
+        )).sorted()
+        value.linkedAt = catIdentityTimestamp(value.linkedAt)
+        value.refreshedAt = catIdentityTimestamp(
+            max(value.linkedAt, value.refreshedAt)
+        )
+        return value
+    }
+
+    private static func isValidIdentifier(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && value.utf8.count <= 4_096
+    }
+}
+
 /// A user-owned cat identity. Vision detections never create profiles or move
 /// a life reference between profiles.
 struct CatProfile: Codable, Equatable, Identifiable, Sendable {
@@ -22,6 +64,10 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
     /// Rescue cats often have an estimated birthday. This flag is display
     /// metadata only and must not affect Vision analysis.
     var lifeReferenceIsApproximate: Bool
+    /// Optional explicit input from a user-created Photos album. This is not
+    /// the household scan-source album and not the app-managed `うちの子`
+    /// output album.
+    var photoAlbumLink: CatProfilePhotoAlbumLink?
     var createdAt: Date
     var updatedAt: Date
 
@@ -30,6 +76,7 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
         displayName: String,
         lifeReference: CatLifeReference? = nil,
         lifeReferenceIsApproximate: Bool = false,
+        photoAlbumLink: CatProfilePhotoAlbumLink? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -38,6 +85,7 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
         self.lifeReference = lifeReference
         self.lifeReferenceIsApproximate = lifeReference != nil
             && lifeReferenceIsApproximate
+        self.photoAlbumLink = photoAlbumLink
         self.createdAt = catIdentityTimestamp(createdAt)
         self.updatedAt = catIdentityTimestamp(max(createdAt, updatedAt))
     }
@@ -52,6 +100,7 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
         if value.lifeReference == nil {
             value.lifeReferenceIsApproximate = false
         }
+        value.photoAlbumLink = value.photoAlbumLink?.normalized()
         value.createdAt = catIdentityTimestamp(value.createdAt)
         value.updatedAt = catIdentityTimestamp(max(value.createdAt, value.updatedAt))
         return value
@@ -65,6 +114,58 @@ enum CatAssetMembershipDecision: String, Codable, Equatable, Sendable {
     case unknown
     case included
     case excluded
+}
+
+enum CatProfileManualAssignmentPolicy {
+    /// nil means the linked album already supplies the requested positive and
+    /// no manual record should be created.
+    static func decision(
+        isSelected: Bool,
+        previousDecision: CatAssetMembershipDecision?,
+        isLinkedAlbumPhoto: Bool
+    ) -> CatAssetMembershipDecision? {
+        if isSelected {
+            if isLinkedAlbumPhoto,
+               previousDecision != .included,
+               previousDecision != .excluded {
+                return nil
+            }
+            return .included
+        }
+        if previousDecision == .excluded || isLinkedAlbumPhoto {
+            return .excluded
+        }
+        return .unknown
+    }
+}
+
+struct CatProfilePhotoAlbumRefreshResolution: Equatable, Sendable {
+    var assetLocalIdentifiers: [String]
+    var shouldWarnAccessIsIncomplete: Bool
+}
+
+enum CatProfilePhotoAlbumRefreshPolicy {
+    /// Full Photos access is authoritative for additions and removals. Limited
+    /// access is not: an omitted last-known asset may merely be unauthorized,
+    /// so the safe result is a union plus an explicit warning.
+    static func resolve(
+        lastKnownAssetLocalIdentifiers: [String],
+        accessibleAssetLocalIdentifiers: [String],
+        hasLimitedPhotosAccess: Bool
+    ) -> CatProfilePhotoAlbumRefreshResolution {
+        let lastKnown = Set(lastKnownAssetLocalIdentifiers)
+        let accessible = Set(accessibleAssetLocalIdentifiers)
+        if hasLimitedPhotosAccess {
+            return CatProfilePhotoAlbumRefreshResolution(
+                assetLocalIdentifiers: Array(lastKnown.union(accessible)).sorted(),
+                shouldWarnAccessIsIncomplete: !accessible.isSuperset(of: lastKnown)
+            )
+        }
+        return CatProfilePhotoAlbumRefreshResolution(
+            assetLocalIdentifiers: Array(accessible).sorted(),
+            shouldWarnAccessIsIncomplete: false
+        )
+    }
 }
 
 /// A manual, per-profile decision for one PhotoKit asset. The composite key is
@@ -114,7 +215,7 @@ struct CatLegacyUnscopedIdentity: Codable, Equatable, Sendable {
 /// replaceable scanner snapshot. Scanner output is evidence; this file records
 /// the user's household and manual many-to-many identity decisions.
 struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var schemaVersion: Int
     /// Store-owned ordering. Model mutators do not advance it; a successful
@@ -297,6 +398,71 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         }.map(\.profileID))
     }
 
+    /// Explicit profile membership is the union of a manual positive and the
+    /// profile's linked Photos album. A manual negative always wins so a user
+    /// can correct an album without editing it. Global household exclusion is
+    /// still the highest-precedence decision.
+    func confirmedProfileIDs(for assetLocalIdentifier: String) -> Set<UUID> {
+        guard !isGloballyExcluded(assetLocalIdentifier) else { return [] }
+        return Set(profiles.compactMap { profile in
+            confirmsAsset(assetLocalIdentifier, for: profile.id)
+                ? profile.id
+                : nil
+        })
+    }
+
+    func confirmedAssetIdentifiers(for profileID: UUID) -> Set<String> {
+        guard let profile = profiles.first(where: { $0.id == profileID }) else {
+            return []
+        }
+        let globallyExcluded = Set(globalExcludedAssets.map(\.localIdentifier))
+        let linked = Set(
+            profile.photoAlbumLink?.lastKnownAssetLocalIdentifiers ?? []
+        )
+        let relevantManual = memberships.filter { $0.profileID == profileID }
+        let manualIncluded = Set(relevantManual.lazy.filter {
+            $0.decision == .included
+        }.map(\.assetLocalIdentifier))
+        let manualExcluded = Set(relevantManual.lazy.filter {
+            $0.decision == .excluded
+        }.map(\.assetLocalIdentifier))
+        return linked
+            .union(manualIncluded)
+            .subtracting(manualExcluded)
+            .subtracting(globallyExcluded)
+    }
+
+    func linkedPhotoAlbumContains(
+        _ assetLocalIdentifier: String,
+        profileID: UUID
+    ) -> Bool {
+        profiles.first(where: { $0.id == profileID })?
+            .photoAlbumLink?
+            .lastKnownAssetLocalIdentifiers
+            .contains(assetLocalIdentifier) == true
+    }
+
+    func confirmsAsset(
+        _ assetLocalIdentifier: String,
+        for profileID: UUID
+    ) -> Bool {
+        guard !isGloballyExcluded(assetLocalIdentifier) else { return false }
+        switch membershipDecision(
+            for: assetLocalIdentifier,
+            profileID: profileID
+        ) {
+        case .included:
+            return true
+        case .excluded:
+            return false
+        case .unknown:
+            return linkedPhotoAlbumContains(
+                assetLocalIdentifier,
+                profileID: profileID
+            )
+        }
+    }
+
     func subjectBoundingBox(
         for assetLocalIdentifier: String,
         profileID: UUID
@@ -334,6 +500,55 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         self = normalized()
     }
 
+    mutating func setProfilePhotoAlbumLink(
+        profileID: UUID,
+        localIdentifier: String?,
+        assetLocalIdentifiers: [String] = [],
+        at date: Date = .now
+    ) {
+        guard var profile = profiles.first(where: { $0.id == profileID }) else {
+            return
+        }
+        if let localIdentifier {
+            profile.photoAlbumLink = CatProfilePhotoAlbumLink(
+                localIdentifier: localIdentifier,
+                lastKnownAssetLocalIdentifiers: assetLocalIdentifiers,
+                linkedAt: date,
+                refreshedAt: date
+            ).normalized()
+            guard profile.photoAlbumLink != nil else { return }
+        } else {
+            profile.photoAlbumLink = nil
+        }
+        upsertProfile(profile, at: date)
+    }
+
+    /// Refreshes membership only while the same album remains linked. This is
+    /// safe when a PhotoKit read races with a later user selection.
+    mutating func refreshProfilePhotoAlbumLink(
+        profileID: UUID,
+        localIdentifier: String,
+        assetLocalIdentifiers: [String],
+        at date: Date = .now
+    ) {
+        guard var profile = profiles.first(where: { $0.id == profileID }),
+              var link = profile.photoAlbumLink,
+              link.localIdentifier == localIdentifier else { return }
+        let normalizedIdentifiers = Array(Set(
+            assetLocalIdentifiers.filter { identifier in
+                !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && identifier.utf8.count <= 4_096
+            }
+        )).sorted()
+        guard link.lastKnownAssetLocalIdentifiers != normalizedIdentifiers else {
+            return
+        }
+        link.lastKnownAssetLocalIdentifiers = normalizedIdentifiers
+        link.refreshedAt = date
+        profile.photoAlbumLink = link.normalized()
+        upsertProfile(profile, at: date)
+    }
+
     /// Records a user decision only. Similarity suggestions must use a separate
     /// proposal type and call this method only after explicit confirmation.
     mutating func setManualMembership(
@@ -366,9 +581,9 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         self = normalized()
     }
 
-    /// A global exclusion removes all per-profile decisions for that photo. If
-    /// it is restored later, it deliberately returns as unknown rather than
-    /// silently restoring a previous identity assignment.
+    /// A global exclusion removes all manual per-profile decisions for that
+    /// photo. Restoring it returns manual membership to unknown; a still-linked
+    /// Photos album may explicitly include it again for that profile.
     mutating func setGloballyExcluded(
         _ excluded: Bool,
         assetLocalIdentifiers: some Sequence<String>,
