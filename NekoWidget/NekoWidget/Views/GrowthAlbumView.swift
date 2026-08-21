@@ -26,7 +26,7 @@ struct GrowthAlbumDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("1年ごとの写真を、左右にスワイプして比べられます。")
+            Text(introductionCopy)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
@@ -123,6 +123,13 @@ struct GrowthAlbumDetailView: View {
             didRecordOpen = true
             albumOpened(album.id.logKey, album.group.logKey)
         }
+    }
+
+    private var introductionCopy: String {
+        if album.id == .householdGrowth {
+            return "見つかった猫の写真から、撮影年ごとに1枚ずつ並べています。猫ごとの自動判定はしていません。"
+        }
+        return "1年ごとの写真を、左右にスワイプして比べられます。"
     }
 
     private func growthCard(

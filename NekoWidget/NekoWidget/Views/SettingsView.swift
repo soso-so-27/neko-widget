@@ -386,36 +386,6 @@ struct SettingsView: View {
                 Text(detectionAccuracySampleFooter)
             }
 
-            if catProfilesPresentation.profiles.count == 2 {
-                Section {
-                    NavigationLink {
-                        CatIdentityExperimentView(
-                            presentation: catProfilesPresentation
-                        )
-                    } label: {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("猫の見分けを40枚で計測")
-                                Text("各猫20枚・学習5＋評価15")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "ruler")
-                        }
-                    }
-                    .accessibilityIdentifier(
-                        "settings-cat-identity-experiment"
-                    )
-                } header: {
-                    Text("実験")
-                } footer: {
-                    Text(
-                        "FeaturePrintと色を同じbboxで比較します。評価30枚の正解率と判定率を分けて測り、所属は変更しません。"
-                    )
-                }
-            }
-
             Section {
                 Button {
                     Task {

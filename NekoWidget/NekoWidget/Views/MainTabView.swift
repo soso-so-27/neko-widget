@@ -136,9 +136,9 @@ struct MainTabView: View {
             widgetShownAt = nil
         }
         .onChange(of: settings.catLifeReference) { _, _ in
-            // A saved reference replaces calendar-year albums with age albums
-            // (or vice versa). Pop stale typed routes instead of leaving a
-            // destination whose spoken title no longer exists.
+            // A legacy single-cat reference replaces calendar-year albums with
+            // age/adoption buckets. Pop typed routes whose album may no longer
+            // exist after the setting changes.
             albumPath.removeAll()
         }
         .onChange(of: selectedAlbumScope) { _, _ in
@@ -289,10 +289,14 @@ struct MainTabView: View {
 
     private var curatedAlbumSections: [CuratedAlbumSectionPresentation] {
         let builder = CuratedAlbumBuilder()
-        let includesScopedGrowth = catProfilesPresentation.profiles.isEmpty
-            || catProfilesPresentation
+        let includesScopedGrowth: Bool
+        if selectedAlbumScope == .everyone {
+            includesScopedGrowth = false
+        } else {
+            includesScopedGrowth = catProfilesPresentation
                 .timePolicy(for: selectedAlbumScope)
                 .showsGrowthComparison
+        }
         let baseSections = builder.sections(
             from: scopedCatPhotos,
             lifeReference: scopedLifeReference,
@@ -300,33 +304,23 @@ struct MainTabView: View {
         )
 
         guard selectedAlbumScope == .everyone,
-              !catProfilesPresentation.profiles.isEmpty else {
+              let householdGrowth = HouseholdGrowthAlbumBuilder().album(
+                from: catPhotos
+              ) else {
             return baseSections
         }
-
-        let profileGrowthAlbums = ProfileGrowthAlbumBuilder().albums(
-            from: catProfilesPresentation.profiles.map { profile in
-                ProfileGrowthAlbumSource(
-                    profileIdentifier: profile.identifier,
-                    displayName: profile.displayName,
-                    photos: profileAlbumPhotos[profile.identifier] ?? [],
-                    lifeReference: lifeReference(for: profile.identifier)
-                )
-            }
-        )
-        guard !profileGrowthAlbums.isEmpty else { return baseSections }
 
         var sections = baseSections
         if let timeIndex = sections.firstIndex(where: { $0.id == .time }) {
             sections[timeIndex] = CuratedAlbumSectionPresentation(
                 id: .time,
-                albums: profileGrowthAlbums + sections[timeIndex].albums
+                albums: [householdGrowth] + sections[timeIndex].albums
             )
         } else {
             sections.insert(
                 CuratedAlbumSectionPresentation(
                     id: .time,
-                    albums: profileGrowthAlbums
+                    albums: [householdGrowth]
                 ),
                 at: 0
             )
@@ -343,9 +337,10 @@ struct MainTabView: View {
 
     private var scopedLifeReference: CatLifeReference? {
         guard case let .profile(identifier) = selectedAlbumScope else {
-            // Preserve Build 13 single-cat behavior until the user explicitly
-            // creates profiles. In profiled mode, mixed-cat "みんな" stays on
-            // calendar years instead of applying one cat's birthday to all.
+            // Preserve the legacy single-cat birthday/adoption buckets until a
+            // profile exists. Once profiles exist, "みんな" must not apply one
+            // cat's date to the whole household. Household growth itself is
+            // always built separately from calendar years.
             return catProfilesPresentation.profiles.isEmpty
                 ? settings.catLifeReference
                 : nil
@@ -365,10 +360,16 @@ struct MainTabView: View {
     }
 
     private func growthLifeReference(for albumID: CuratedAlbumID) -> CatLifeReference? {
-        guard let profileIdentifier = albumID.growthProfileIdentifier else {
+        switch albumID {
+        case .householdGrowth:
+            return nil
+        case .growth:
             return scopedLifeReference
+        case let .profileGrowth(profileIdentifier, _):
+            return lifeReference(for: profileIdentifier)
+        default:
+            return nil
         }
-        return lifeReference(for: profileIdentifier)
     }
 
     private var excludedCatCandidateIdentifiers: Set<String> {

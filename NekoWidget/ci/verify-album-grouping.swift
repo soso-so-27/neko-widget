@@ -36,12 +36,13 @@ private func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
 
 private func photo(
     _ id: String,
-    _ capturedAt: Date,
+    _ capturedAt: Date?,
     postures: Set<CatPostureTag> = [],
     person: Bool = false,
     outing: Bool? = false,
     catCount: Int = 1,
     area: Double = 0.10,
+    isGrowthEligible: Bool = true,
     analyzed: Bool = true
 ) -> PhotoPresentation {
     PhotoPresentation(
@@ -53,6 +54,7 @@ private func photo(
         albumIsOuting: analyzed ? outing : nil,
         detectedCatCount: catCount,
         largestCatAreaRatio: area,
+        isGrowthEligible: isGrowthEligible,
         hasCurrentAlbumAnalysis: analyzed
     )
 }
@@ -101,6 +103,12 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "person-and-cat album title changed")
     try require(CuratedAlbumID.multipleCats.title == "猫たち",
                 "multiple-cat album made an exact-count claim")
+    try require(CuratedAlbumID.householdGrowth.title == "この家の猫たちの成長",
+                "household growth title changed")
+    try require(CuratedAlbumID.householdGrowth.logKey == "household_growth",
+                "household growth log key changed")
+    try require(CuratedAlbumID.householdGrowth.isGrowthComparison,
+                "household growth must use the comparison presentation")
     let profileGrowth = CuratedAlbumID.profileGrowth(
         identifier: "profile-a",
         displayName: "むぎ"
@@ -136,13 +144,46 @@ private func verifyProfileGrowthNeverMixesCats() throws {
             lifeReference: nil
         )
     ])
-    try require(albums.map(\.title) == ["むぎの成長", "あめの成長"],
+    try require(albums.map(\.title) == ["むぎの成長"],
                 "profile growth titles or order changed")
-    try require(albums.count == 2, "one profile growth album disappeared")
+    try require(albums.count == 1,
+                "a one-period profile was presented as growth")
     try require(albums[0].photos.map(\.id) == ["mugi-2023", "mugi-2024"],
                 "another cat leaked into Mugi's growth album")
-    try require(albums[1].photos.map(\.id) == ["ame-2024"],
-                "another cat leaked into Ame's growth album")
+}
+
+private func verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears() throws {
+    let builder = HouseholdGrowthAlbumBuilder(timeZone: utc)
+    let album = builder.album(from: [
+        photo(
+            "unresolved-multi-cat",
+            date(2023, 6, 1),
+            catCount: 2,
+            area: 0.80,
+            isGrowthEligible: false
+        ),
+        photo("same-year-smaller", date(2023, 7, 1), area: 0.20),
+        photo("next-year", date(2024, 6, 1), area: 0.40),
+        photo("missing-date", nil, area: 1.0)
+    ])
+
+    try require(album?.id == .householdGrowth,
+                "household growth ID changed")
+    try require(
+        album?.photos.map(\.id) == ["unresolved-multi-cat", "next-year"],
+        "household growth excluded a multi-cat photo or stopped selecting one per year"
+    )
+    try require(album?.countLabel == "2年分",
+                "household growth count was presented as a photo count")
+    try require(album?.cardTitle == "猫たちの成長",
+                "household growth card title no longer fits the shared card")
+    try require(
+        builder.album(from: [
+            photo("only-year-a", date(2024, 1, 1)),
+            photo("only-year-b", date(2024, 12, 31))
+        ]) == nil,
+        "a one-period household history was presented as growth"
+    )
 }
 
 private func verifyKittenBoundaryAndAgeBuckets() throws {
@@ -200,6 +241,14 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
     )).map(\.id)
     try require(withGrowth.first == .growth,
                 "profile growth album was not restored")
+
+    let onePeriod = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
+        from: [photo("one-period", date(2024, 2, 1))],
+        lifeReference: nil,
+        includesGrowth: true
+    )).map(\.id)
+    try require(!onePeriod.contains(.growth),
+                "a one-period legacy growth comparison was shown")
 }
 
 private func verifyMultipleCatsAndCatDay() throws {
@@ -908,6 +957,7 @@ private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
         try verifyProfileGrowthNeverMixesCats()
+        try verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears()
         try verifyKittenBoundaryAndAgeBuckets()
         try verifyMultipleCatsAndCatDay()
         try verifyCloseUpDoesNotWaitAndLegacyPosturesDoNotLeak()

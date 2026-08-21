@@ -705,9 +705,11 @@ final class AppViewModel: ObservableObject {
         for albumIdentifier in Set(links.map { $0.1.localIdentifier })
         where availableIdentifiers.contains(albumIdentifier) {
             do {
-                let assets = try PhotoSourceAlbumCatalog.accessibleImageAssets(
-                    sourceAlbumIdentifier: albumIdentifier
-                )
+                let assets = try await Task.detached(priority: .userInitiated) {
+                    try PhotoSourceAlbumCatalog.accessibleImageAssets(
+                        sourceAlbumIdentifier: albumIdentifier
+                    )
+                }.value
                 assetsByAlbum[albumIdentifier] = assets
             } catch {
                 unavailableIdentifiers.insert(albumIdentifier)
@@ -1217,9 +1219,11 @@ final class AppViewModel: ObservableObject {
                       }) else {
                     throw CatProfilePhotoAlbumError.unavailable
                 }
-                let assets = try PhotoSourceAlbumCatalog.accessibleImageAssets(
-                    sourceAlbumIdentifier: localIdentifier
-                )
+                let assets = try await Task.detached(priority: .userInitiated) {
+                    try PhotoSourceAlbumCatalog.accessibleImageAssets(
+                        sourceAlbumIdentifier: localIdentifier
+                    )
+                }.value
                 guard authorizationStatus != .limited || !assets.isEmpty else {
                     throw CatProfilePhotoAlbumError.unavailable
                 }

@@ -57,7 +57,7 @@ struct AlbumView: View {
                         CuratedAlbumCard(album: album)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(album.title)、\(album.photos.count.formatted())枚")
+                    .accessibilityLabel("\(album.title)、\(album.countLabel)")
                     .accessibilityHint("写真の一覧を開きます")
                 }
             }
@@ -199,12 +199,12 @@ private struct CuratedAlbumCard: View {
             .clipped()
 
             HStack(alignment: .center, spacing: 6) {
-                Text(album.title)
+                Text(album.cardTitle)
                     .font(.headline)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
-                Text("\(album.photos.count.formatted())枚")
+                Text(album.countLabel)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

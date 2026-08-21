@@ -17,7 +17,8 @@ struct PhotoPresentation: Identifiable, Hashable {
     let detectedCatCount: Int
     let largestCatAreaRatio: Double?
     /// False when a profile contains a multi-cat photo but no subject cat was
-    /// selected. Time/special albums may still use it; growth must not.
+    /// selected. Individual growth must not use it; household/time/special
+    /// albums may because they make no individual-subject claim.
     let isGrowthEligible: Bool
     let hasCurrentAlbumAnalysis: Bool
 
@@ -71,6 +72,7 @@ enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum CuratedAlbumID: Hashable, Identifiable {
+    case householdGrowth
     case growth
     case profileGrowth(identifier: String, displayName: String)
     case kitten
@@ -88,6 +90,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var title: String {
         switch self {
+        case .householdGrowth: "この家の猫たちの成長"
         case .growth: "成長"
         case let .profileGrowth(_, displayName): "\(displayName)の成長"
         case .kitten: "子猫のころ"
@@ -105,6 +108,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var logKey: String {
         switch self {
+        case .householdGrowth: "household_growth"
         case .growth: "growth"
         case .profileGrowth(_, _): "profile_growth"
         case .kitten: "kitten"
@@ -122,16 +126,11 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var isGrowthComparison: Bool {
         switch self {
-        case .growth, .profileGrowth(_, _):
+        case .householdGrowth, .growth, .profileGrowth(_, _):
             true
         default:
             false
         }
-    }
-
-    var growthProfileIdentifier: String? {
-        guard case let .profileGrowth(identifier, _) = self else { return nil }
-        return identifier
     }
 }
 
@@ -141,7 +140,15 @@ struct CuratedAlbumPresentation: Identifiable, Hashable {
     let photos: [PhotoPresentation]
 
     var title: String { id.title }
+    var cardTitle: String {
+        id == .householdGrowth ? "猫たちの成長" : title
+    }
     var coverPhoto: PhotoPresentation { photos[0] }
+    var countLabel: String {
+        id.isGrowthComparison
+            ? "\(photos.count.formatted())年分"
+            : "\(photos.count.formatted())枚"
+    }
 }
 
 struct CuratedAlbumSectionPresentation: Identifiable, Hashable {
@@ -156,6 +163,40 @@ struct ProfileGrowthAlbumSource {
     let displayName: String
     let photos: [PhotoPresentation]
     let lifeReference: CatLifeReference?
+}
+
+enum GrowthAlbumVisibilityPolicy {
+    static let minimumComparablePeriods = 2
+}
+
+/// Builds one household history without claiming that photos from different
+/// years contain the same cat. Household input comes from the visible detected
+/// cat set, so profile-level subject ambiguity must not remove multi-cat photos.
+struct HouseholdGrowthAlbumBuilder {
+    private let timeZone: TimeZone
+
+    init(timeZone: TimeZone = .current) {
+        self.timeZone = timeZone
+    }
+
+    func album(
+        from inputPhotos: [PhotoPresentation]
+    ) -> CuratedAlbumPresentation? {
+        let photos = GrowthAlbumSelector(timeZone: timeZone)
+            .select(
+                from: inputPhotos.map(\.householdGrowthCandidate),
+                lifeReference: nil
+            )
+            .map(\.photo)
+        guard photos.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods else {
+            return nil
+        }
+        return CuratedAlbumPresentation(
+            id: .householdGrowth,
+            group: .time,
+            photos: photos
+        )
+    }
 }
 
 /// Builds one comparison per explicitly assigned profile. Keeping this pure
@@ -174,7 +215,9 @@ struct ProfileGrowthAlbumBuilder {
             let photos = GrowthAlbumSelector(timeZone: timeZone)
                 .select(from: source.photos, lifeReference: source.lifeReference)
                 .map(\.photo)
-            guard !photos.isEmpty else { return nil }
+            guard photos.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods else {
+                return nil
+            }
             return CuratedAlbumPresentation(
                 id: .profileGrowth(
                     identifier: source.profileIdentifier,
@@ -260,11 +303,13 @@ struct CuratedAlbumBuilder {
             let growthPhotos = GrowthAlbumSelector(timeZone: calendar.timeZone)
                 .select(from: datedPhotos, lifeReference: lifeReference)
                 .map(\.photo)
-            albums.append(albumPreservingOrder(
-                .growth,
-                group: .time,
-                photos: growthPhotos
-            ))
+            if growthPhotos.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods {
+                albums.append(albumPreservingOrder(
+                    .growth,
+                    group: .time,
+                    photos: growthPhotos
+                ))
+            }
         }
 
         if let rawReferenceDate = lifeReference?.date.date(in: calendar),
@@ -391,6 +436,29 @@ struct CuratedAlbumBuilder {
     ) -> CuratedAlbumSectionPresentation? {
         guard !albums.isEmpty else { return nil }
         return CuratedAlbumSectionPresentation(id: group, albums: albums)
+    }
+}
+
+private extension PhotoPresentation {
+    /// Individual eligibility protects a profile from an unresolved subject.
+    /// A household timeline makes no individual-subject claim, so it can use
+    /// every visible detected-cat photo, including multi-cat photos.
+    var householdGrowthCandidate: PhotoPresentation {
+        guard !isGrowthEligible else { return self }
+        return PhotoPresentation(
+            localIdentifier: localIdentifier,
+            creationDate: creationDate,
+            catBoundingBox: catBoundingBox,
+            isLiked: isLiked,
+            likedAt: likedAt,
+            albumPostures: albumPostures,
+            albumContainsPerson: albumContainsPerson,
+            albumIsOuting: albumIsOuting,
+            detectedCatCount: detectedCatCount,
+            largestCatAreaRatio: largestCatAreaRatio,
+            isGrowthEligible: true,
+            hasCurrentAlbumAnalysis: hasCurrentAlbumAnalysis
+        )
     }
 }
 

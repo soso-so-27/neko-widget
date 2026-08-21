@@ -252,8 +252,9 @@ struct CatProfilesPresentation: Equatable {
     var profiles: [CatProfilePresentation]
     var photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     var unassignedPhotos: [CatProfilePhotoPresentation]
-    /// Exact unresolved cat instances. A multi-cat photo may occur more than
-    /// once with a different detector box.
+    /// Input contract retained for the archived, read-only identity experiment.
+    /// Product presentation builders leave this empty, so ordinary rendering
+    /// does not enumerate unresolved detector instances.
     var similarityCandidates: [CatSimilarityCandidateInstance]
     var legacyExcludedPhotos: [LegacyExcludedCatPhotoPresentation]
     /// Build 13's one household-wide date. It is offered only while creating
@@ -295,9 +296,9 @@ struct CatProfilesPresentation: Equatable {
         availableScopes.contains(proposedScope) ? proposedScope : .everyone
     }
 
-    /// `everyone` remains calendar-based. Growth comparisons belong to an
-    /// individual cat, so callers must build one profile-scoped comparison per
-    /// cat instead of mixing different cats into one household timeline.
+    /// `everyone` remains calendar-based. Its household comparison is built
+    /// separately and makes no individual-cat claim; this policy controls only
+    /// the selected profile's explicitly sourced growth comparison.
     func timePolicy(
         for scope: CatProfileScopePresentation
     ) -> CatProfileTimePolicyPresentation {

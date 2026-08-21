@@ -503,9 +503,6 @@ struct AppRootView: View {
             profiles: profiles,
             photoAlbumOptions: photoAlbumOptions,
             unassignedPhotos: unassigned,
-            similarityCandidates: viewModel.catSimilarityCandidateInstances(
-                from: candidateAssets
-            ),
             legacyExcludedPhotos: legacyExcluded,
             legacyLifeReference: legacyLifeReference,
             postureDiagnostics: postureDiagnostics
