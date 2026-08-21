@@ -68,6 +68,10 @@
 		100000000000000000000161 /* CatSimilarityReviewCoordinatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000248 /* CatSimilarityReviewCoordinatorView.swift */; };
 		100000000000000000000162 /* PhotoBookPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000249 /* PhotoBookPolicy.swift */; };
 		100000000000000000000163 /* PhotoBookPDFExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000024A /* PhotoBookPDFExporter.swift */; };
+		100000000000000000000164 /* CatIdentityExperimentCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000024B /* CatIdentityExperimentCore.swift */; };
+		100000000000000000000165 /* CatIdentityExperimentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000024C /* CatIdentityExperimentService.swift */; };
+		100000000000000000000166 /* CatIdentityExperimentExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000024D /* CatIdentityExperimentExporter.swift */; };
+		100000000000000000000167 /* CatIdentityExperimentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000024E /* CatIdentityExperimentView.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
@@ -230,6 +234,10 @@
 		F00000000000000000000248 /* CatSimilarityReviewCoordinatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatSimilarityReviewCoordinatorView.swift; sourceTree = "<group>"; };
 		F00000000000000000000249 /* PhotoBookPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoBookPolicy.swift; sourceTree = "<group>"; };
 		F0000000000000000000024A /* PhotoBookPDFExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoBookPDFExporter.swift; sourceTree = "<group>"; };
+		F0000000000000000000024B /* CatIdentityExperimentCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityExperimentCore.swift; sourceTree = "<group>"; };
+		F0000000000000000000024C /* CatIdentityExperimentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityExperimentService.swift; sourceTree = "<group>"; };
+		F0000000000000000000024D /* CatIdentityExperimentExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityExperimentExporter.swift; sourceTree = "<group>"; };
+		F0000000000000000000024E /* CatIdentityExperimentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatIdentityExperimentView.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
@@ -468,6 +476,9 @@
 				F00000000000000000000245 /* CatSimilarityGroupingService.swift */,
 				F00000000000000000000249 /* PhotoBookPolicy.swift */,
 				F0000000000000000000024A /* PhotoBookPDFExporter.swift */,
+				F0000000000000000000024B /* CatIdentityExperimentCore.swift */,
+				F0000000000000000000024C /* CatIdentityExperimentService.swift */,
+				F0000000000000000000024D /* CatIdentityExperimentExporter.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -506,6 +517,7 @@
 				F00000000000000000000246 /* CatSimilarityReviewPresentation.swift */,
 				F00000000000000000000247 /* CatSimilarityReviewView.swift */,
 				F00000000000000000000248 /* CatSimilarityReviewCoordinatorView.swift */,
+				F0000000000000000000024E /* CatIdentityExperimentView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -741,6 +753,10 @@
 				100000000000000000000161 /* CatSimilarityReviewCoordinatorView.swift in Sources */,
 				100000000000000000000162 /* PhotoBookPolicy.swift in Sources */,
 				100000000000000000000163 /* PhotoBookPDFExporter.swift in Sources */,
+				100000000000000000000164 /* CatIdentityExperimentCore.swift in Sources */,
+				100000000000000000000165 /* CatIdentityExperimentService.swift in Sources */,
+				100000000000000000000166 /* CatIdentityExperimentExporter.swift in Sources */,
+				100000000000000000000167 /* CatIdentityExperimentView.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
 				100000000000000000000133 /* MainTabView.swift in Sources */,

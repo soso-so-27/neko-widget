@@ -581,10 +581,15 @@ struct AppRootView: View {
         membership: CatAssetProfileMembership,
         assignedProfileIdentifiers: Set<String>
     ) -> CatProfilePhotoPresentation {
-        CatProfilePhotoPresentation(
+        let currentBox = CatProfileBoundingBoxSelector.select(
+            from: asset.resolvedCatBoundingBoxes.boundingBoxes,
+            detectedCatCount: asset.cat.catCount,
+            subjectBoundingBox: membership.subjectBoundingBox
+        )
+        return CatProfilePhotoPresentation(
             localIdentifier: asset.localIdentifier,
             creationDate: asset.creationDate,
-            catBoundingBox: (membership.subjectBoundingBox ?? asset.cat.boundingBox)?.cgRect,
+            catBoundingBox: currentBox?.cgRect,
             assignedProfileIdentifiers: assignedProfileIdentifiers,
             detectedCatCount: asset.cat.catCount
         )

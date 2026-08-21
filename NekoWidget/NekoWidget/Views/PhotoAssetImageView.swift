@@ -67,6 +67,7 @@ struct PhotoAssetImageView: View {
     var targetPixelSize: CGSize
     var targetAspectRatio: CGFloat
     var showsFullImage: Bool
+    var networkAccessAllowed: Bool
 
     @StateObject private var loader = PhotoAssetImageLoader()
 
@@ -75,13 +76,15 @@ struct PhotoAssetImageView: View {
         catBoundingBox: CGRect? = nil,
         targetPixelSize: CGSize = CGSize(width: 800, height: 800),
         targetAspectRatio: CGFloat = 1,
-        showsFullImage: Bool = false
+        showsFullImage: Bool = false,
+        networkAccessAllowed: Bool = true
     ) {
         self.localIdentifier = localIdentifier
         self.catBoundingBox = catBoundingBox
         self.targetPixelSize = targetPixelSize
         self.targetAspectRatio = targetAspectRatio
         self.showsFullImage = showsFullImage
+        self.networkAccessAllowed = networkAccessAllowed
     }
 
     var body: some View {
@@ -119,7 +122,11 @@ struct PhotoAssetImageView: View {
                 ContentUnavailableView(
                     "写真を表示できません",
                     systemImage: "photo",
-                    description: Text("iCloud上の写真は、通信できるときに再度読み込みます。")
+                    description: Text(
+                        networkAccessAllowed
+                            ? "iCloud上の写真は、通信できるときに再度読み込みます。"
+                            : "この計測では、端末内にある写真だけを使います。"
+                    )
                 )
             } else {
                 ProgressView()
@@ -132,14 +139,16 @@ struct PhotoAssetImageView: View {
             boundingBox: catBoundingBox,
             targetSize: targetPixelSize,
             targetAspectRatio: targetAspectRatio,
-            showsFullImage: showsFullImage
+            showsFullImage: showsFullImage,
+            networkAccessAllowed: networkAccessAllowed
         )) {
             loader.load(
                 localIdentifier: localIdentifier,
                 catBoundingBox: catBoundingBox,
                 targetPixelSize: targetPixelSize,
                 targetAspectRatio: targetAspectRatio,
-                showsFullImage: showsFullImage
+                showsFullImage: showsFullImage,
+                networkAccessAllowed: networkAccessAllowed
             )
         }
         .onDisappear {
@@ -155,6 +164,7 @@ private struct LoadKey: Hashable {
     let targetSize: CGSize
     let targetAspectRatio: CGFloat
     let showsFullImage: Bool
+    let networkAccessAllowed: Bool
 }
 
 @MainActor
@@ -171,7 +181,8 @@ private final class PhotoAssetImageLoader: ObservableObject {
         catBoundingBox: CGRect?,
         targetPixelSize: CGSize,
         targetAspectRatio: CGFloat,
-        showsFullImage: Bool
+        showsFullImage: Bool,
+        networkAccessAllowed: Bool
     ) {
         cancel()
         let generation = loadGeneration
@@ -190,7 +201,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
 
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
-        options.isNetworkAccessAllowed = true
+        options.isNetworkAccessAllowed = networkAccessAllowed
         options.version = .current
         var requestedContentMode: PHImageContentMode = showsFullImage ? .aspectFit : .aspectFill
         if showsFullImage {
@@ -222,6 +233,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
             options: options
         ) { [weak self] image, info in
             let cancelled = (info?[PHImageCancelledKey] as? Bool) == true
+            let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
             let error = info?[PHImageErrorKey] as? Error
             Task { @MainActor in
                 guard let self,
@@ -231,7 +243,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
                     withAnimation(.easeOut(duration: 0.16)) {
                         self.image = image
                     }
-                } else if error != nil {
+                } else if error != nil || !degraded {
                     self.didFail = true
                 }
             }

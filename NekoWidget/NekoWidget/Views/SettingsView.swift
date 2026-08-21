@@ -386,6 +386,36 @@ struct SettingsView: View {
                 Text(detectionAccuracySampleFooter)
             }
 
+            if catProfilesPresentation.profiles.count == 2 {
+                Section {
+                    NavigationLink {
+                        CatIdentityExperimentView(
+                            presentation: catProfilesPresentation
+                        )
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("猫の見分けを10枚で計測")
+                                Text("2匹×5枚・所属は変更しません")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "ruler")
+                        }
+                    }
+                    .accessibilityIdentifier(
+                        "settings-cat-identity-experiment"
+                    )
+                } header: {
+                    Text("実験")
+                } footer: {
+                    Text(
+                        "FeaturePrintと色を同じbboxで比較します。結果が固定基準を通るまで、個体推定の製品UIは有効にしません。"
+                    )
+                }
+            }
+
             Section {
                 Button {
                     Task {

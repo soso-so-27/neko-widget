@@ -354,6 +354,58 @@ jobs:
             exit 1
           fi
 
+      - name: Verify read-only cat identity experiment
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Services/CatIdentityExperimentCore.swift \
+            NekoWidget/Services/CatIdentityExperimentExporter.swift \
+            ci/verify-cat-identity-experiment.swift \
+            -o "$RUNNER_TEMP/verify-cat-identity-experiment"
+          "$RUNNER_TEMP/verify-cat-identity-experiment"
+
+          service="NekoWidget/Services/CatIdentityExperimentService.swift"
+          exporter="NekoWidget/Services/CatIdentityExperimentExporter.swift"
+          grep -Fq 'options.isNetworkAccessAllowed = false' "$service"
+          grep -Fq 'containsPhotoIdentifiers: false' \
+            NekoWidget/Services/CatIdentityExperimentCore.swift
+          if grep -Fq 'options.isNetworkAccessAllowed = true' "$service"; then
+            echo "Identity experiment enabled PhotoKit network access" >&2
+            exit 1
+          fi
+          if grep -En \
+            'SharedLog\.|CatHouseholdIdentityStore\(|mutateCatHouseholdIdentity|JSONEncoder\(|:[[:space:]]*Codable' \
+            "$service"; then
+            echo "Identity experiment service gained write or logging authority" >&2
+            exit 1
+          fi
+          if grep -REn \
+            'CatIdentityExperiment|VNGenerateImageFeaturePrintRequest' \
+            Shared/Sharing NekoWidget/Services/JSONExporter.swift SharingService; then
+            echo "Identity experiment data crossed sharing/export boundaries" >&2
+            exit 1
+          fi
+          grep -Fq 'FileManager.default.temporaryDirectory' "$exporter"
+          grep -Fq 'settings-cat-identity-experiment' \
+            NekoWidget/Views/SettingsView.swift
+          grep -Fq 'photo.detectedCatCount <= 1' \
+            NekoWidget/Views/CatIdentityExperimentView.swift
+          grep -Fq 'networkAccessAllowed: false' \
+            NekoWidget/Views/CatIdentityExperimentView.swift
+          grep -Fq 'CatProfileBoundingBoxSelector.select(' \
+            NekoWidget/App/AppRootView.swift
+          if grep -Fq 'CatIdentityExperimentView' \
+            NekoWidget/Views/CatProfilesView.swift \
+            NekoWidget/Views/MainTabView.swift \
+            NekoWidget/Views/HomeView.swift \
+            NekoWidget/Views/OnboardingView.swift; then
+            echo "Identity experiment escaped detailed diagnostics" >&2
+            exit 1
+          fi
+
       - name: Verify five-screen onboarding presentation
         working-directory: NekoWidget
         shell: bash
