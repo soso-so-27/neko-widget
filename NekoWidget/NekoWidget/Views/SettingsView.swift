@@ -7,7 +7,10 @@ struct SettingsView: View {
     let highResolutionRecoverySample: DetectionAccuracySamplePresentation
     let hasPhotoAccess: Bool
     let isScanning: Bool
+    let albumState: AlbumPresentationState
+    let canUpdatePhotoLibraryAlbum: Bool
     let requestPhotoAccess: () -> Void
+    let updatePhotoLibraryAlbum: () -> Void
     let saveSettings: (SettingsPresentation) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let rescan: () async -> Void
@@ -38,7 +41,10 @@ struct SettingsView: View {
         highResolutionRecoverySample: DetectionAccuracySamplePresentation,
         hasPhotoAccess: Bool,
         isScanning: Bool,
+        albumState: AlbumPresentationState,
+        canUpdatePhotoLibraryAlbum: Bool,
         requestPhotoAccess: @escaping () -> Void,
+        updatePhotoLibraryAlbum: @escaping () -> Void,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
         saveLifeReference: @escaping (CatLifeReference?) async -> Void,
         rescan: @escaping () async -> Void,
@@ -60,7 +66,10 @@ struct SettingsView: View {
         self.highResolutionRecoverySample = highResolutionRecoverySample
         self.hasPhotoAccess = hasPhotoAccess
         self.isScanning = isScanning
+        self.albumState = albumState
+        self.canUpdatePhotoLibraryAlbum = canUpdatePhotoLibraryAlbum
         self.requestPhotoAccess = requestPhotoAccess
+        self.updatePhotoLibraryAlbum = updatePhotoLibraryAlbum
         self.saveSettings = saveSettings
         self.saveLifeReference = saveLifeReference
         self.rescan = rescan
@@ -81,15 +90,33 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            if !hasPhotoAccess {
-                Section {
+            Section {
+                if hasPhotoAccess {
+                    LabeledContent(
+                        "写真へのアクセス",
+                        value: isLimitedAccess ? "選択した写真" : "許可済み"
+                    )
+
+                    if isLimitedAccess {
+                        Button("写真を追加・変更", action: chooseMorePhotos)
+                    }
+                } else {
                     Button("写真へのアクセスを許可", action: requestPhotoAccess)
                         .accessibilityIdentifier("settings-photo-permission")
-                } header: {
-                    Text("写真")
-                } footer: {
-                    Text("許可するまで写真のスキャンは行いません。ウィジェットの案内など、ほかの設定は利用できます。")
                 }
+
+                Picker("出す範囲", selection: $draft.range) {
+                    ForEach(PhotoRangePresentation.allCases) { range in
+                        Text(range.rawValue).tag(range)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("写真")
+            } footer: {
+                Text(hasPhotoAccess
+                    ? "出す範囲は、まど・ウィジェット・思い出の候補に共通で使います。"
+                    : "許可するまで写真のスキャンは行いません。ウィジェットの案内など、ほかの設定は利用できます。")
             }
 
             Section {
@@ -98,22 +125,9 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
             } header: {
-                Text("使い方")
+                Text("ウィジェット")
             } footer: {
                 Text("一度スキップしても、ここからいつでも案内を開き直せます。")
-            }
-
-            Section {
-                Picker("出す範囲", selection: $draft.range) {
-                    ForEach(PhotoRangePresentation.allCases) { range in
-                        Text(range.rawValue).tag(range)
-                    }
-                }
-                .pickerStyle(.segmented)
-            } header: {
-                Text("写真の範囲")
-            } footer: {
-                Text("ホーム、ウィジェット、「うちの子」アルバムの候補に使います。")
             }
 
             Section {
@@ -131,7 +145,7 @@ struct SettingsView: View {
                     )
                 }
             } footer: {
-                Text("プロフィールは任意です。多頭の場合だけ、猫ごとの誕生日・迎えた日・写真の所属を設定できます。未判定の写真も「みんな」には残ります。")
+                Text("プロフィールは任意です。多頭の場合は、猫ごとの日付と確認した写真を設定できます。未確認の写真も「みんな」には残ります。")
             }
 
             if catProfilesPresentation.profiles.isEmpty {
@@ -165,12 +179,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("「うちの子」アルバム") {
-                Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
-                    LabeledContent("枚数上限", value: "\(draft.albumLimit.formatted())枚")
-                }
-            }
-
             Section {
                 NavigationLink {
                     CatCandidateCurationView(
@@ -186,30 +194,156 @@ struct SettingsView: View {
                     )
                 } label: {
                     LabeledContent(
-                        "写真の整理",
+                        "対象と除外を管理",
                         value: excludedCatPhotos.isEmpty
                             ? sourceSummary
                             : "除外 \(excludedCatPhotos.count.formatted())枚"
                     )
                 }
+
+                Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
+                    LabeledContent("思い出の枚数上限", value: "\(draft.albumLimit.formatted())枚")
+                }
+
+                NavigationLink {
+                    PhotoLibraryAlbumSettingsView(
+                        state: albumState,
+                        canUpdate: canUpdatePhotoLibraryAlbum,
+                        update: updatePhotoLibraryAlbum
+                    )
+                } label: {
+                    Label("写真アプリとの連携", systemImage: "rectangle.stack.badge.plus")
+                }
+            } header: {
+                Text("写真の整理")
             } footer: {
                 Text("「うちの子ではない」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
             }
 
             Section {
+                Button {
+                    Task {
+                        isSaving = true
+                        await saveSettings(draft)
+                        isSaving = false
+                    }
+                } label: {
+                    Label(isSaving ? "保存中…" : "写真の設定を保存", systemImage: "checkmark.circle")
+                }
+                .disabled(isSaving || draft == settings)
+            } footer: {
+                Text("写真の範囲と、思い出に表示する枚数上限の変更を保存します。")
+            }
+
+            if SharingAPIConfiguration.current.isReviewVisible {
+                Section {
+                    NavigationLink {
+                        if SharingAPIConfiguration.current.isAvailable {
+                            PairingView()
+                        } else {
+                            SharingReviewPreviewView()
+                        }
+                    } label: {
+                        Label("家族のまど", systemImage: "person.2.fill")
+                    }
+                    .accessibilityIdentifier("settings-sharing-review")
+                } header: {
+                    Text("家族のまど")
+                } footer: {
+                    Text(SharingAPIConfiguration.current.isAvailable
+                        ? "招待した家族と、同じまどをホーム画面に置けます。"
+                        : "将来の体験を確認する静的レビューです。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。")
+                }
+            }
+
+            Section {
+                Label("写真は端末内で見つけます", systemImage: "lock.iphone")
+                Text(SharingAPIConfiguration.current.isMediaAvailable
+                    ? "写真の検出は端末内で行います。写真共有へ同意した場合だけ、位置情報などを除いた縮小画像を暗号化して共有します。原本は送りません。"
+                    : "すべての検出は端末内で行います。サーバーへの写真送信や、写真本体の複製はしません。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                LabeledContent("対応OS", value: "iOS 17.1以上")
+            } header: {
+                Text("プライバシーとアプリ情報")
+            }
+
+            Section {
+                NavigationLink {
+                    advancedDiagnosticsView
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("詳細・診断")
+                            Text("検出設定、標本、再スキャン、書き出し、ログ")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "wrench.and.screwdriver")
+                    }
+                }
+            } header: {
+                Text("サポート")
+            } footer: {
+                Text("通常は変更する必要はありません。問題の調査や検出結果の検証に使います。")
+            }
+        }
+        .navigationTitle("設定")
+        .onChange(of: settings) { _, newSettings in
+            if isSavingLifeReference {
+                draft.catLifeReference = newSettings.catLifeReference
+            } else if !isSaving {
+                draft = newSettings
+            }
+        }
+        .onChange(of: draft.catLifeReference) { _, newValue in
+            scheduleLifeReferenceSave(newValue)
+        }
+        .sheet(item: $exportedFile) { file in
+            ActivityView(activityItems: [file.url])
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var advancedDiagnosticsView: some View {
+        Form {
+            Section {
+                Label("通常は変更する必要はありません", systemImage: "info.circle")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("猫の信頼度", value: draft.confidenceThreshold.formatted(.percent.precision(.fractionLength(0))))
+                    LabeledContent(
+                        "猫の信頼度",
+                        value: draft.confidenceThreshold.formatted(.percent.precision(.fractionLength(0)))
+                    )
                     Slider(value: $draft.confidenceThreshold, in: 0.5...0.95, step: 0.01)
                 }
                 .padding(.vertical, 4)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("ウィジェットの最小面積", value: draft.minimumAreaRatio.formatted(.percent.precision(.fractionLength(0))))
+                    LabeledContent(
+                        "ウィジェットの最小面積",
+                        value: draft.minimumAreaRatio.formatted(.percent.precision(.fractionLength(0)))
+                    )
                     Slider(value: $draft.minimumAreaRatio, in: 0.01...0.3, step: 0.01)
                 }
                 .padding(.vertical, 4)
+
+                Button {
+                    Task {
+                        isSaving = true
+                        await saveSettings(draft)
+                        isSaving = false
+                    }
+                } label: {
+                    Label(isSaving ? "保存中…" : "検出設定を適用", systemImage: "checkmark.circle")
+                }
+                .disabled(isSaving || draft == settings)
             } header: {
-                Text("検出閾値・開発用")
+                Text("検出の調整")
             } footer: {
                 Text("初期値は信頼度70%、ウィジェットの最小面積8%です。信頼度の変更だけ再スキャンが必要です。")
             }
@@ -247,23 +381,12 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("検出精度")
+                Text("検出結果の確認")
             } footer: {
                 Text(detectionAccuracySampleFooter)
             }
 
             Section {
-                Button {
-                    Task {
-                        isSaving = true
-                        await saveSettings(draft)
-                        isSaving = false
-                    }
-                } label: {
-                    Label(isSaving ? "保存中…" : "設定を適用", systemImage: "checkmark.circle")
-                }
-                .disabled(isSaving || draft == settings)
-
                 Button {
                     Task {
                         isRescanning = true
@@ -288,9 +411,9 @@ struct SettingsView: View {
                 }
                 .disabled(isExporting)
             } header: {
-                Text("保存と再スキャン")
+                Text("再スキャンと書き出し")
             } footer: {
-                Text("アルバムは保存済みの撮影日と検出結果から作ります。表示を直すために再スキャンする必要はありません。")
+                Text("思い出は保存済みの撮影日と検出結果から作ります。表示を直すためだけに再スキャンする必要はありません。")
             }
 
             Section {
@@ -300,58 +423,13 @@ struct SettingsView: View {
                     Label("診断ログを見る", systemImage: "stethoscope")
                 }
             } header: {
-                Text("トラブルシューティング")
+                Text("ログ")
             } footer: {
-                Text("アプリとウィジェットのログをApp Group経由で統合表示します。写真自体やPhotoKitの識別子全文は記録しません。")
-            }
-
-            if SharingAPIConfiguration.current.isReviewVisible {
-                Section {
-                    NavigationLink {
-                        if SharingAPIConfiguration.current.isAvailable {
-                            PairingView()
-                        } else {
-                            SharingReviewPreviewView()
-                        }
-                    } label: {
-                        Label("家族と共有", systemImage: "person.2.fill")
-                    }
-                    .accessibilityIdentifier("settings-sharing-review")
-                } header: {
-                    Text("共有・レビュー")
-                } footer: {
-                    Text(SharingAPIConfiguration.current.isAvailable
-                        ? "共有サーバーへ接続された開発機能です。"
-                        : "画面レビュー用です。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。")
-                }
-            }
-
-            Section {
-                LabeledContent("対応OS", value: "iOS 17.1以上")
-                Text(SharingAPIConfiguration.current.isMediaAvailable
-                    ? "写真の検出は端末内で行います。写真共有へ同意した場合だけ、位置情報などを除いた縮小画像を暗号化して共有します。原本は送りません。"
-                    : "すべての検出は端末内で行います。サーバーへの写真送信や、写真本体の複製はしません。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("このアプリについて")
+                Text("アプリとウィジェットのログを統合表示します。写真自体やPhotoKitの識別子全文は記録しません。")
             }
         }
-        .navigationTitle("設定")
-        .onChange(of: settings) { _, newSettings in
-            if isSavingLifeReference {
-                draft.catLifeReference = newSettings.catLifeReference
-            } else if !isSaving {
-                draft = newSettings
-            }
-        }
-        .onChange(of: draft.catLifeReference) { _, newValue in
-            scheduleLifeReferenceSave(newValue)
-        }
-        .sheet(item: $exportedFile) { file in
-            ActivityView(activityItems: [file.url])
-                .presentationDetents([.medium, .large])
-        }
+        .navigationTitle("詳細・診断")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var canReviewDetectionAccuracySample: Bool {
@@ -448,92 +526,303 @@ struct SettingsView: View {
     }
 }
 
-/// Static product-review surface for ADR-015. It deliberately owns no model,
-/// credential store, URLSession, or persistence. Shipping this view does not
-/// enable pairing, upload, APNs, or Widget synchronization.
-private struct SharingReviewPreviewView: View {
+private struct PhotoLibraryAlbumSettingsView: View {
+    let state: AlbumPresentationState
+    let canUpdate: Bool
+    let update: () -> Void
+
+    @State private var showsPhotoShuffleGuide = false
+
     var body: some View {
         Form {
             Section {
-                Label("画面レビュー用・サーバー未接続", systemImage: "eye")
-                    .foregroundStyle(.orange)
-                Text("この画面では招待、送信、同期、鍵の作成を行いません。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+                status
 
-            Section {
-                Label("家族の窓", systemImage: "rectangle.on.rectangle")
-                    .font(.headline)
-                LabeledContent("参加者", value: "あなた ＋ 招待した家族")
-                LabeledContent("無料版", value: "家族の窓 1つ")
-                Button("窓を作る（実装前）") {}
-                    .disabled(true)
-                Button("招待リンクで入る（実装前）") {}
-                    .disabled(true)
+                Button(action: update) {
+                    Label(updateTitle, systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(!canUpdate || state == .updating)
+                .accessibilityIdentifier("settings-photo-library-album-update")
             } header: {
-                Text("窓")
+                Text("写真アプリの「うちの子」")
             } footer: {
-                Text("1つのWidgetには1つの窓だけを表示し、別の窓の写真は混ぜません。")
+                Text("写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。")
             }
 
             Section {
-                Label("いま撮った写真", systemImage: "paperplane.fill")
-                    .font(.headline)
-                Text("標準カメラの共有シートから、選んだ1枚を家族の窓へ送ります。")
-                LabeledContent("無料の送信枠", value: "1日5枚")
-                Button("共有シートで送る（実装前）") {}
-                    .disabled(true)
-            } header: {
-                Text("いま送る")
-            }
-
-            Section {
-                Label("最初の写真", systemImage: "photo.stack")
-                    .font(.headline)
-                Text("窓を作るとき、候補を最大20枚見せて「これを送りますか」と一度だけ確認します。")
-                LabeledContent("毎日1枚を自動で送る", value: "既定 OFF")
-                Text("ONにした人だけ、過去写真を1日1枚送ります。設定からいつでも停止できます。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("過去の写真")
-            }
-
-            Section {
-                Label("いま届いた", systemImage: "sparkles.rectangle.stack")
-                    .font(.headline)
-                Text("新しく届いた写真を2〜4時間、または反応するまで優先してWidgetへ表示します。")
-                LabeledContent("その後", value: "共有履歴へ")
-                LabeledContent("サーバー保持", value: "受領後7日／未受領30日")
-            } header: {
-                Text("届いた写真")
-            }
-
-            Section {
-                Label("E2E暗号化", systemImage: "lock.shield.fill")
-                Label("長辺2,048px・原本や位置情報は送らない", systemImage: "photo.badge.checkmark")
-                Label("撮影日時は暗号化した内容にだけ入れる", systemImage: "calendar.badge.clock")
-                Text("共有履歴はバックアップではありません。すべての参加端末が鍵を失うと、保持期間内でも復元できません。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("安全と保持")
-            }
-
-            Section {
-                Label("写真を通報", systemImage: "exclamationmark.bubble")
-                Label("相手をブロックして表示と取得を停止", systemImage: "person.crop.circle.badge.xmark")
-                Label("共有を解除", systemImage: "person.2.slash")
-            } header: {
-                Text("困ったとき")
+                Button("写真シャッフルの設定手順", systemImage: "lock.rotation") {
+                    showsPhotoShuffleGuide = true
+                }
             } footer: {
-                Text("通報・ブロック・公開連絡先の運用を用意するまで、実際の共有は有効にしません。")
+                Text("写真シャッフルはOS側の機能です。アルバム更新後は、壁紙側でアルバムを選び直す必要があります。")
             }
         }
-        .navigationTitle("家族と共有")
+        .navigationTitle("写真アプリとの連携")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showsPhotoShuffleGuide) {
+            PhotoShuffleGuideView()
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch state {
+        case .idle:
+            Text("まだ写真アプリへ反映していません")
+                .foregroundStyle(.secondary)
+        case .updating:
+            HStack {
+                ProgressView()
+                Text("アルバムを更新しています…")
+            }
+        case let .ready(photoCount, updatedAt):
+            VStack(alignment: .leading, spacing: 4) {
+                Label("\(photoCount.formatted())枚を反映しました", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                if let updatedAt {
+                    Text("更新: \(updatedAt.formatted(.dateTime.month().day().hour().minute()))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        case let .failed(message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private var updateTitle: String {
+        switch state {
+        case .idle: "アルバムを作る"
+        case .updating: "更新中"
+        case .ready: "アルバムを更新する"
+        case .failed: "もう一度試す"
+        }
+    }
+}
+
+/// Static product-review surface for ADR-015. It deliberately owns no model,
+/// credential store, URLSession, or persistence. Shipping this view does not
+/// enable pairing, upload, APNs, or Widget synchronization.
+struct SharingReviewPreviewView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("静的プレビュー・サーバー未接続", systemImage: "eye")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                    Text("ここでは招待、送信、同期、鍵の作成を行いません。将来の画面と流れだけを確認できます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+
+                familyWindowMock
+
+                reviewSection("家族のまどをはじめる", systemImage: "person.2.fill") {
+                    Text("招待した少数の家族だけで、同じまどを見ます。公開フィード、検索、フォローはありません。")
+                        .font(.subheadline)
+
+                    HStack {
+                        Button("まどをつくる") {}
+                            .buttonStyle(.borderedProminent)
+                            .disabled(true)
+                        Button("招待で入る") {}
+                            .buttonStyle(.bordered)
+                            .disabled(true)
+                    }
+
+                    Label("無料では家族のまど1つ", systemImage: "checkmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                reviewSection("いまの一枚を届ける", systemImage: "paperplane.fill") {
+                    Text("猫を待たせないため、アプリ内カメラではなく標準カメラと写真アプリから届けます。")
+                        .font(.subheadline)
+
+                    flowStep(1, title: "標準カメラで撮る", detail: "または写真アプリで1枚を選ぶ")
+                    flowStep(2, title: "共有ボタンを押す", detail: "共有先から「ねこのまど」を選ぶ")
+                    flowStep(3, title: "届け先を確認する", detail: "家族のまどへ、その1枚だけを届ける")
+
+                    Label("無料の送信枠は1日5枚", systemImage: "paperplane.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                reviewSection("最初の思い出を選ぶ", systemImage: "photo.stack") {
+                    Text("まどを作るときは候補を最大20枚並べ、送る写真を一度確認します。確認せずに過去写真を送りません。")
+                        .font(.subheadline)
+                    Text("最初の20枚は、1つのまどにつき最初の1回だけです。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("毎日1枚、思い出を届ける", isOn: .constant(false))
+                        .disabled(true)
+                    Text("既定はOFF。自分でONにした場合だけ、過去写真から1日1枚を届けます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                reviewSection("届いた写真と履歴", systemImage: "sparkles.rectangle.stack") {
+                    HStack(spacing: 12) {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.secondary.opacity(0.16))
+                            .frame(width: 82, height: 82)
+                            .overlay {
+                                Image(systemName: "photo.on.rectangle.angled")
+                                    .font(.title)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Label("いま届いた・家族から", systemImage: "sparkles")
+                                .font(.subheadline.weight(.semibold))
+                            Text("新しい一枚をウィジェットへ優先表示")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    Label("2〜4時間、または反応するまで優先", systemImage: "clock")
+                    Label("その後は「まどの履歴」で見返す", systemImage: "clock.arrow.circlepath")
+                    Text("最近届いた写真と、自分が送った写真を同じ履歴で確認できます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                reviewSection("安全と保持", systemImage: "lock.shield.fill") {
+                    safetyRow(
+                        "E2E暗号化",
+                        detail: "写真と撮影日時は、参加端末だけが読めます。",
+                        systemImage: "lock.shield.fill"
+                    )
+                    safetyRow(
+                        "原本や位置情報は送らない",
+                        detail: "長辺2,048pxへ縮小し、位置情報などを除きます。",
+                        systemImage: "photo.badge.checkmark"
+                    )
+                    safetyRow(
+                        "短いサーバー保持",
+                        detail: "受領後7日、まだ受領されていない写真は30日です。",
+                        systemImage: "timer"
+                    )
+
+                    Text("家族のまどはバックアップではありません。すべての参加端末が鍵を失うと、保持期間内でも復元できません。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                reviewSection("困ったとき", systemImage: "exclamationmark.bubble") {
+                    Label("写真を通報", systemImage: "exclamationmark.bubble")
+                    Label("相手をブロックして表示と取得を停止", systemImage: "person.crop.circle.badge.xmark")
+                    Label("共有を解除", systemImage: "person.2.slash")
+
+                    Text("通報・ブロック・公開連絡先の運用を用意するまで、実際の共有は有効にしません。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding()
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+        .navigationTitle("家族のまど")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("sharing-review-preview")
+    }
+
+    private var familyWindowMock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("家族のまど", systemImage: "rectangle.on.rectangle")
+                    .font(.headline)
+                Spacer()
+                Text("3人")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.black)
+                .aspectRatio(1.3, contentMode: .fit)
+                .overlay {
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 38))
+                        Text("いま届いた・家族から")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(.white.opacity(0.82))
+                }
+
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .foregroundStyle(Color.accentColor)
+                Text("1つのウィジェットには1つのまどを表示します。別のまどの写真は混ざりません。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("このまどをホーム画面に置く") {}
+                .buttonStyle(.bordered)
+                .disabled(true)
+        }
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func reviewSection<Content: View>(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(Color.accentColor)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func flowStep(_ number: Int, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number.formatted())
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Color.accentColor, in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func safetyRow(_ title: String, detail: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemImage)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

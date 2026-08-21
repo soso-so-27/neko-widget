@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AlbumView: View {
     let sections: [CuratedAlbumSectionPresentation]
@@ -12,23 +13,18 @@ struct AlbumView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
                 if !profiles.isEmpty {
-                    CatProfileScopePicker(
-                        profiles: profiles,
-                        selection: $selectedScope
-                    )
-                    if let selectedProfile {
-                        selectedProfileNotice(selectedProfile)
-                    }
+                    profileScopeSection
                 }
                 if scan.isPreparingGroupedAlbums {
                     groupedAlbumPreparationBanner
                 } else if scan.hasFinalResult, scan.hasDeferredAssets {
-                    Label(
-                        "取得または分類できなかった \(scan.deferredAssets.formatted())枚は、必要なら設定の「最初から再スキャン」で再試行できます。",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
+                            .font(.subheadline.weight(.semibold))
+                        Text("見つかった思い出は表示しています。もう一度確認したい場合は、設定から再スキャンできます。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 ForEach(sections) { section in
@@ -42,7 +38,7 @@ struct AlbumView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("アルバム")
+        .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
     }
 
@@ -51,7 +47,7 @@ struct AlbumView: View {
         _ section: CuratedAlbumSectionPresentation
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(section.title)
+            Text(sectionTitle(for: section.id))
                 .font(.title3.bold())
                 .accessibilityAddTraits(.isHeader)
 
@@ -68,6 +64,17 @@ struct AlbumView: View {
         }
     }
 
+    private func sectionTitle(for group: CuratedAlbumGroup) -> String {
+        switch group {
+        case .time:
+            "成長・年ごと"
+        case .cuteness:
+            "近くで撮れた写真"
+        case .special:
+            "いっしょ・特別な日"
+        }
+    }
+
     private var cardColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
     }
@@ -77,9 +84,31 @@ struct AlbumView: View {
         return profiles.first { $0.identifier == identifier }
     }
 
+    private var profileScopeSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("猫ごとの思い出", systemImage: "pawprint.fill")
+                .font(.headline)
+
+            Text("「みんな」には見つかった猫写真をまとめて表示します。猫を選ぶと、自分で確認した写真だけに切り替わります。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            CatProfileScopePicker(
+                profiles: profiles,
+                selection: $selectedScope
+            )
+
+            if let selectedProfile {
+                selectedProfileNotice(selectedProfile)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+
     private func selectedProfileNotice(_ profile: CatProfilePresentation) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("自動で個体を決めず、確認済みの\(profile.displayName) \(profile.confirmedPhotoCount.formatted())枚だけを表示しています。")
+            Text("\(profile.displayName)として確認した\(profile.confirmedPhotoCount.formatted())枚から作っています。自動判定ではありません。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -91,7 +120,7 @@ struct AlbumView: View {
                     actions: profileActions
                 )
             } label: {
-                Label("この子の写真を確認・追加", systemImage: "photo.badge.plus")
+                Label("\(profile.displayName)のページをひらく", systemImage: "photo.badge.plus")
                     .font(.headline)
             }
             .accessibilityIdentifier("album-profile-add-photos")
@@ -102,10 +131,10 @@ struct AlbumView: View {
 
     private var groupedAlbumPreparationBanner: some View {
         VStack(alignment: .leading, spacing: 11) {
-            Label("新しいアルバムを準備しています", systemImage: "sparkles.rectangle.stack")
+            Label("新しい思い出を準備しています", systemImage: "sparkles.rectangle.stack")
                 .font(.headline)
 
-            Text("いっしょ・おでかけなどのアルバムに必要な情報を端末内で確認しています。確認できた写真から順に追加します。")
+            Text("人といっしょ・おでかけなどに必要な情報を端末内で確認し、準備できた写真から追加します。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -136,16 +165,16 @@ struct AlbumView: View {
     private var emptyState: some View {
         if scan.isPreparingGroupedAlbums || scan.isScanning {
             ContentUnavailableView(
-                "アルバムを準備しています",
+                "思い出を準備しています",
                 systemImage: "rectangle.stack.badge.plus",
-                description: Text("分類が終わった写真から、ここにアルバムが現れます。")
+                description: Text("準備できた写真から、ここにまとまって表示されます。")
             )
             .frame(maxWidth: .infinity, minHeight: 320)
         } else {
             ContentUnavailableView(
-                "アルバムにできる写真がまだありません",
+                "猫の思い出がまだありません",
                 systemImage: "photo.on.rectangle",
-                description: Text("猫の写真が見つかると、思い出に合わせて自動でまとまります。")
+                description: Text("猫の写真が見つかると、成長や撮影年ごとにまとまります。")
             )
             .frame(maxWidth: .infinity, minHeight: 420)
         }
@@ -275,7 +304,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("まど、ウィジェット、思い出の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -399,101 +428,236 @@ struct CuratedAlbumDetailView: View {
     }
 }
 
-/// The dated list remains separate from the album grid because it is the
-/// measurement-facing history of when the user pressed the paw.
+/// A deliberate collection of photos the user chose with the paw. Capture
+/// dates lead the presentation because the same order is used to make a book.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
+    let exportPhotoBook: () async throws -> URL
+
+    @State private var isExportingPhotoBook = false
+    @State private var photoBookExport: LikedPhotoBookExportFile?
+    @State private var photoBookExportDirectory: URL?
+    @State private var photoBookErrorMessage: String?
 
     var body: some View {
         ScrollView {
-            if photos.isEmpty {
-                ContentUnavailableView {
-                    Label {
-                        Text("まだ「これ好き」はありません")
-                    } icon: {
-                        CatPawMark(isFilled: false)
-                            .frame(width: 28, height: 28)
+            LazyVStack(alignment: .leading, spacing: 22) {
+                summaryCard
+
+                if photos.isEmpty {
+                    ContentUnavailableView {
+                        Label {
+                            Text("まだ「これ好き」はありません")
+                        } icon: {
+                            CatPawMark(isFilled: false)
+                                .frame(width: 28, height: 28)
+                        }
+                    } description: {
+                        Text("写真の肉球ボタンを押すと、ここに溜まります。")
                     }
-                } description: {
-                    Text("写真の肉球ボタンを押すと、ここに溜まります。")
-                }
-                .frame(maxWidth: .infinity, minHeight: 420)
-                .padding()
-            } else {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(photos.count.formatted())
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .contentTransition(.numericText())
-                        Text("枚の「これ好き」")
-                            .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 260)
+                    .padding()
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("写真")
+                            .font(.title3.bold())
+                        Text("撮影日の新しい順")
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 16)
 
-                    LazyVStack(spacing: 10) {
-                        ForEach(photos) { photo in
+                    LazyVGrid(columns: photoColumns, spacing: 3) {
+                        ForEach(photosByCaptureDate) { photo in
                             NavigationLink(value: photo.localIdentifier) {
-                                HStack(spacing: 14) {
-                                    PhotoAssetImageView(
-                                        localIdentifier: photo.localIdentifier,
-                                        catBoundingBox: photo.catBoundingBox,
-                                        targetPixelSize: CGSize(width: 240, height: 240),
-                                        targetAspectRatio: 1
-                                    )
-                                    .frame(width: 88, height: 88)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                                    VStack(alignment: .leading, spacing: 7) {
-                                        Label {
-                                            Text("これ好き")
-                                        } icon: {
-                                            CatPawMark(isFilled: true)
-                                                .frame(width: 18, height: 18)
-                                        }
-                                        .font(.headline)
-                                        .foregroundStyle(.primary)
-                                        Text(likedDateText(photo.likedAt))
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .padding(10)
-                                .background(
-                                    Color(.secondarySystemBackground),
-                                    in: RoundedRectangle(cornerRadius: 16)
+                                PhotoAssetImageView(
+                                    localIdentifier: photo.localIdentifier,
+                                    catBoundingBox: photo.catBoundingBox,
+                                    targetPixelSize: CGSize(width: 360, height: 360),
+                                    targetAspectRatio: 1
                                 )
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay(alignment: .bottomLeading) {
+                                    Text(captureDateText(photo.creationDate))
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 5)
+                                        .background(.black.opacity(0.58), in: Capsule())
+                                        .padding(6)
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
+                            .accessibilityHint("写真を大きく表示します")
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 3)
                 }
-                .padding(.vertical, 12)
             }
+            .padding(.vertical, 12)
         }
         .navigationTitle("これ好き")
         .background(Color(.systemGroupedBackground))
+        .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
+            LikedPhotoBookActivityView(activityItems: [export.url])
+        }
+        .alert(
+            "PDFを作成できませんでした",
+            isPresented: Binding(
+                get: { photoBookErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented { photoBookErrorMessage = nil }
+                }
+            )
+        ) {
+            Button("閉じる", role: .cancel) {
+                photoBookErrorMessage = nil
+            }
+        } message: {
+            Text(photoBookErrorMessage ?? "時間をおいて、もう一度お試しください。")
+        }
+    }
+
+    private var summaryCard: some View {
+        let progress = PhotoBookPolicy.progress(likedPhotoCount: photos.count)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(photos.count.formatted())
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .contentTransition(.numericText())
+                Text("枚の「これ好き」")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            HStack {
+                Label("30枚のまとめ", systemImage: "book.closed.fill")
+                    .font(.headline)
+                Spacer()
+                Text("\(min(progress.likedPhotoCount, progress.requiredPhotoCount).formatted()) / \(progress.requiredPhotoCount.formatted())枚")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(
+                value: Double(min(progress.likedPhotoCount, progress.requiredPhotoCount)),
+                total: Double(progress.requiredPhotoCount)
+            )
+            .tint(.accentColor)
+
+            Text(progress.hasCompleteBook
+                ? "最初の30枚を、撮影日の古い順にPDFへまとめられます。"
+                : "あと\(progress.remainingPhotoCount.formatted())枚でPDFにまとめられます。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("photo-book-progress")
+
+            if progress.hasCompleteBook {
+                Button(action: createPhotoBookPDF) {
+                    HStack {
+                        if isExportingPhotoBook {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "doc.richtext")
+                        }
+                        Text(isExportingPhotoBook ? "PDFを作成中…" : "PDFに書き出す")
+                        Spacer()
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isExportingPhotoBook)
+                .accessibilityIdentifier("photo-book-export")
+            }
+        }
+        .padding(16)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 16)
+    }
+
+    private var photoColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
+    }
+
+    private var photosByCaptureDate: [PhotoPresentation] {
+        photos.sorted { first, second in
+            switch (first.creationDate, second.creationDate) {
+            case let (firstDate?, secondDate?) where firstDate != secondDate:
+                return firstDate > secondDate
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                return first.localIdentifier < second.localIdentifier
+            }
+        }
     }
 
     private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
-        if let likedAt = photo.likedAt {
-            let date = likedAt.formatted(.dateTime.year().month().day().hour().minute())
-            return "\(date)に好きにした猫の写真"
+        if let creationDate = photo.creationDate {
+            let date = creationDate.formatted(.dateTime.year().month().day())
+            return "\(date)に撮影した、これ好きの猫の写真"
         }
-        return "好きな猫の写真、日付不明"
+        return "撮影日不明の、これ好きの猫の写真"
     }
 
-    private func likedDateText(_ date: Date?) -> String {
-        guard let date else { return "好きにした日時：不明" }
-        return "好きにした日時：\(date.formatted(.dateTime.year().month().day().hour().minute()))"
+    private func captureDateText(_ date: Date?) -> String {
+        guard let date else { return "撮影日不明" }
+        return date.formatted(.dateTime.year().month().day())
     }
+
+    private func createPhotoBookPDF() {
+        guard !isExportingPhotoBook else { return }
+        isExportingPhotoBook = true
+        Task {
+            defer { isExportingPhotoBook = false }
+            do {
+                let url = try await exportPhotoBook()
+                photoBookExportDirectory = url.deletingLastPathComponent()
+                photoBookExport = LikedPhotoBookExportFile(url: url)
+            } catch is CancellationError {
+                return
+            } catch {
+                photoBookErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func cleanupPhotoBookExport() {
+        if let photoBookExportDirectory {
+            try? FileManager.default.removeItem(at: photoBookExportDirectory)
+        }
+        photoBookExportDirectory = nil
+        photoBookExport = nil
+    }
+}
+
+private struct LikedPhotoBookExportFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct LikedPhotoBookActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: nil
+        )
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIActivityViewController,
+        context: Context
+    ) {}
 }
 
 /// The destination shared by widget deep links and in-app photo links.
@@ -705,7 +869,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("まど、ウィジェット、思い出の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(

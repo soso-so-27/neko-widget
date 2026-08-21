@@ -3,34 +3,24 @@ import UIKit
 
 struct HomeView: View {
     let currentPhoto: PhotoPresentation?
-    let likedCount: Int
-    let newestPhotoDate: Date?
     let scan: ScanPresentation
-    let albumState: AlbumPresentationState
     let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
     let shouldOfferWidgetPlacementGuide: Bool
     let requestPhotoAccess: () -> Void
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
-    let showLikedPhotos: () -> Void
+    let showSettings: () -> Void
     let toggleLike: (String) -> Void
-    let exportPhotoBook: () async throws -> URL
-    let updateAlbum: () -> Void
     let rescan: () -> Void
 
-    @State private var showsPhotoShuffleGuide = false
-    @State private var isExportingPhotoBook = false
-    @State private var photoBookExport: PhotoBookExportFile?
-    @State private var photoBookExportDirectory: URL?
-    @State private var photoBookErrorMessage: String?
+    @State private var showsFamilyWindow = false
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
                 if hasPhotoAccess {
-                    likedSummary
-                    photoBookProgressCard
+                    todayPhoto
                 } else {
                     photoAccessCard
                 }
@@ -43,11 +33,8 @@ struct HomeView: View {
                     LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                 }
 
-                if hasPhotoAccess {
-                    todayPhoto
-                    albumCard
-                    ScanProgressCard(scan: scan, rescan: rescan)
-                    statisticsCard
+                if SharingAPIConfiguration.current.isReviewVisible {
+                    familyWindowCard
                 }
             }
             .padding(.horizontal, 16)
@@ -55,24 +42,27 @@ struct HomeView: View {
         }
         .navigationTitle("ねこのまど")
         .background(Color(.systemGroupedBackground))
-        .sheet(isPresented: $showsPhotoShuffleGuide) {
-            PhotoShuffleGuideView()
-        }
-        .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
-            PhotoBookActivityView(activityItems: [export.url])
-        }
-        .alert(
-            "PDFを作成できませんでした",
-            isPresented: Binding(
-                get: { photoBookErrorMessage != nil },
-                set: { if !$0 { photoBookErrorMessage = nil } }
-            )
-        ) {
-            Button("閉じる", role: .cancel) {
-                photoBookErrorMessage = nil
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: showSettings) {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("設定")
+                .accessibilityIdentifier("window-settings-button")
             }
-        } message: {
-            Text(photoBookErrorMessage ?? "もう一度お試しください。")
+        }
+        .sheet(isPresented: $showsFamilyWindow) {
+            NavigationStack {
+                familyWindowDestination
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("閉じる") {
+                                showsFamilyWindow = false
+                            }
+                        }
+                    }
+            }
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -131,31 +121,31 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
-    private var likedSummary: some View {
-        Button(action: showLikedPhotos) {
+    private var familyWindowCard: some View {
+        Button {
+            showsFamilyWindow = true
+        } label: {
             HStack(spacing: 14) {
-                CatPawMark(isFilled: likedCount > 0)
-                    .frame(width: 24, height: 24)
+                Image(systemName: "rectangle.on.rectangle")
+                    .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.tint)
-                    .frame(width: 44, height: 44)
-                    .background(Color.accentColor.opacity(0.12), in: Circle())
+                    .frame(width: 48, height: 48)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("これ好き")
-                        .font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("家族のまど")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(SharingAPIConfiguration.current.isAvailable
+                        ? "届いた写真と、届けた写真を確認"
+                        : "窓と「いまの一枚」の画面を確認")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
-                        Text(likedCount.formatted())
-                            .font(.system(size: 30, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .contentTransition(.numericText())
-                        Text("枚")
-                            .font(.headline)
-                    }
-                    .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
+
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -165,70 +155,19 @@ struct HomeView: View {
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("これ好き、\(likedCount)枚")
-        .accessibilityHint("好きにした写真の一覧を開きます")
+        .accessibilityIdentifier("window-family-window-review")
+        .accessibilityHint(SharingAPIConfiguration.current.isAvailable
+            ? "家族のまどを開きます"
+            : "サーバーへ接続しない画面レビューを開きます")
     }
 
-    private var photoBookProgressCard: some View {
-        let progress = PhotoBookPolicy.progress(likedPhotoCount: likedCount)
-        return VStack(alignment: .leading, spacing: 12) {
-            Label("これ好きの1冊", systemImage: "book.closed.fill")
-                .font(.headline)
-
-            Text(progress.statusText)
-                .font(.title3.bold())
-                .monospacedDigit()
-                .accessibilityIdentifier("photo-book-progress")
-
-            if progress.hasCompleteBook {
-                Button {
-                    createPhotoBookPDF()
-                } label: {
-                    HStack {
-                        if isExportingPhotoBook {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "doc.richtext")
-                        }
-                        Text(isExportingPhotoBook ? "PDFを作成中…" : "PDFに書き出す")
-                        Spacer()
-                    }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(isExportingPhotoBook)
-                .accessibilityIdentifier("photo-book-export")
-            }
+    @ViewBuilder
+    private var familyWindowDestination: some View {
+        if SharingAPIConfiguration.current.isAvailable {
+            PairingView()
+        } else {
+            SharingReviewPreviewView()
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private func createPhotoBookPDF() {
-        guard !isExportingPhotoBook else { return }
-        isExportingPhotoBook = true
-        Task {
-            defer { isExportingPhotoBook = false }
-            do {
-                let url = try await exportPhotoBook()
-                photoBookExportDirectory = url.deletingLastPathComponent()
-                photoBookExport = PhotoBookExportFile(url: url)
-            } catch is CancellationError {
-                return
-            } catch {
-                photoBookErrorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private func cleanupPhotoBookExport() {
-        if let photoBookExportDirectory {
-            try? FileManager.default.removeItem(at: photoBookExportDirectory)
-        }
-        photoBookExportDirectory = nil
-        photoBookExport = nil
     }
 
     @ViewBuilder
@@ -245,7 +184,7 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity)
                     .aspectRatio(4 / 5, contentMode: .fit)
                     .overlay(alignment: .topLeading) {
-                        Text("今日の1枚")
+                        Text(windowPhotoSourceLabel(currentPhoto))
                             .font(.caption.bold())
                             .foregroundStyle(.white)
                             .padding(.horizontal, 10)
@@ -255,6 +194,7 @@ struct HomeView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("window-current-photo")
 
                 Button {
                     toggleLike(currentPhoto.localIdentifier)
@@ -264,9 +204,6 @@ struct HomeView: View {
                             .frame(width: 22, height: 22)
                         Text(currentPhoto.isLiked ? "これ好き済み" : "これ好き")
                         Spacer()
-                        Text(likedCount.formatted())
-                            .monospacedDigit()
-                        Text("枚")
                     }
                     .font(.headline)
                     .foregroundStyle(currentPhoto.isLiked ? Color.white : Color.primary)
@@ -287,6 +224,14 @@ struct HomeView: View {
         } else {
             emptyPhotoState
         }
+    }
+
+    private func windowPhotoSourceLabel(_ photo: PhotoPresentation) -> String {
+        guard let creationDate = photo.creationDate else {
+            return "まどに表示中"
+        }
+        let year = Calendar.current.component(.year, from: creationDate)
+        return "思い出から・\(year)年"
     }
 
     @ViewBuilder
@@ -329,178 +274,6 @@ struct HomeView: View {
         }
     }
 
-    private var albumCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("写真アプリの「うちの子」", systemImage: "rectangle.stack.badge.plus")
-                .font(.headline)
-
-            Text("選別した写真を複製せず、アルバムとしてまとめます。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            albumStatus
-
-            Button(action: updateAlbum) {
-                HStack {
-                    if case .updating = albumState {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                    }
-                    Text(albumActionTitle)
-                    Spacer()
-                }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(
-                albumState == .updating
-                    || !scan.hasPreliminaryResult
-                    || scan.displayedCatCount == 0
-            )
-
-            Button("写真シャッフルの設定手順", systemImage: "lock.rotation", action: {
-                showsPhotoShuffleGuide = true
-            })
-            .font(.subheadline.weight(.semibold))
-        }
-        .padding(18)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    @ViewBuilder
-    private var albumStatus: some View {
-        switch albumState {
-        case .idle:
-            EmptyView()
-        case .updating:
-            Text("アルバムを更新しています…")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case let .ready(photoCount, updatedAt):
-            VStack(alignment: .leading, spacing: 3) {
-                Label("\(photoCount.formatted())枚をアルバムに反映しました", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                if let updatedAt {
-                    Text("更新: \(updatedAt.formatted(.dateTime.month().day().hour().minute()))")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .font(.caption)
-        case let .failed(message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.orange)
-        }
-    }
-
-    private var albumButtonTitle: String {
-        switch albumState {
-        case .idle: "アルバムを作る"
-        case .updating: "更新中"
-        case .ready: "アルバムを更新する"
-        case .failed: "もう一度試す"
-        }
-    }
-
-    private var albumActionTitle: String {
-        if scan.hasPreliminaryResult && scan.displayedCatCount == 0 {
-            return "猫の写真が見つかると作れます"
-        }
-        return albumButtonTitle
-    }
-
-    private var statisticsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("見つけた写真")
-                .font(.headline)
-
-            Grid(horizontalSpacing: 22, verticalSpacing: 14) {
-                GridRow {
-                Statistic(
-                    value: scan.displayedCatCount.formatted(),
-                    label: scan.hasFinalResult
-                        ? (scan.hasDeferredAssets ? "端末内・確定" : "総枚数・確定")
-                        : "枚数・速報"
-                )
-                    Statistic(value: likedCount.formatted(), label: "これ好き")
-                }
-
-                if let oldestDate = scan.displayedOldestDate {
-                    Divider()
-                        .gridCellColumns(2)
-
-                    GridRow {
-                        Statistic(
-                            value: oldestDate.formatted(.dateTime.year().month().day()),
-                            label: scan.hasFinalResult ? "一番古い写真" : "今の最古"
-                        )
-                        Statistic(
-                            value: periodText(from: oldestDate),
-                            label: "写真の期間"
-                        )
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private func periodText(from oldestDate: Date) -> String {
-        guard let newestPhotoDate else { return "計算中" }
-        let calendar = Calendar.current
-        let components = calendar.dateComponents([.year, .month], from: oldestDate, to: newestPhotoDate)
-        if let years = components.year, years > 0 {
-            let months = components.month ?? 0
-            return months > 0 ? "\(years)年\(months)か月" : "\(years)年"
-        }
-        let months = max(components.month ?? 0, 0)
-        return months > 0 ? "\(months)か月" : "1か月未満"
-    }
-}
-
-private struct PhotoBookExportFile: Identifiable {
-    let id = UUID()
-    let url: URL
-}
-
-private struct PhotoBookActivityView: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(
-            activityItems: activityItems,
-            applicationActivities: nil
-        )
-    }
-
-    func updateUIViewController(
-        _ uiViewController: UIActivityViewController,
-        context: Context
-    ) {}
-}
-
-private struct Statistic: View {
-    let value: String
-    let label: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(value)
-                .font(.headline.monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
 }
 
 struct PhotoShuffleGuideView: View {

@@ -36,7 +36,7 @@ struct InitialScanView: View {
                     ProgressView()
                         .controlSize(.large)
                     Text(scan.isPreparingGroupedAlbums
-                        ? "新しいアルバムを準備しています"
+                        ? "新しい思い出を準備しています"
                         : "うちの子を探しています")
                         .font(.title3.weight(.semibold))
                     Text(scan.isPreparingGroupedAlbums
@@ -151,8 +151,8 @@ struct InitialScanView: View {
 
     private var continueButtonTitle: String {
         if let continueButtonTitleOverride { return continueButtonTitleOverride }
-        if isFinalZero { return "ホームを見る" }
-        return scan.hasFinalResult ? "はじめる" : "続きはホームで"
+        if isFinalZero { return "まどを見る" }
+        return scan.hasFinalResult ? "まどを見る" : "続きはまどで"
     }
 }
 
@@ -164,7 +164,7 @@ struct ScanProgressCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text(scan.isPreparingGroupedAlbums
-                    ? "新しいアルバムを準備中"
+                    ? "新しい思い出を準備中"
                     : "スキャン")
                     .font(.headline)
                 Spacer()
@@ -175,7 +175,7 @@ struct ScanProgressCard: View {
             }
 
             if scan.isPreparingGroupedAlbums {
-                Text("いっしょ・おでかけなどのアルバムに必要な情報を端末内で確認しています。確認できた写真から順に追加します。")
+                Text("人といっしょ・おでかけなどに必要な情報を端末内で確認しています。確認できた写真から順に追加します。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

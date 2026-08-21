@@ -318,7 +318,7 @@ struct CatProfileConfirmedPhotosView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
-            Text("すべてのプロフィール、アルバム、Widgetから除外します。写真ライブラリからは削除しません。")
+            Text("すべてのプロフィール、思い出、ウィジェットから除外します。写真ライブラリからは削除しません。")
         }
     }
 
@@ -507,7 +507,7 @@ struct CatPhotoAssignmentSheet: View {
                 } header: {
                     Text("全体から外す")
                 } footer: {
-                    Text("プロフィールの所属訂正とは別の操作です。すべてのアルバムとWidgetから除外しますが、写真ライブラリからは削除しません。")
+                    Text("プロフィールの所属訂正とは別の操作です。すべての思い出とウィジェットから除外しますが、写真ライブラリからは削除しません。")
                 }
             }
             .navigationTitle("写っている子")

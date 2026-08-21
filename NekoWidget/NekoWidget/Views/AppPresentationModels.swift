@@ -475,8 +475,7 @@ enum AlbumPresentationState: Equatable {
 }
 
 enum AppTab: Hashable {
-    case home
-    case album
+    case window
+    case memories
     case likes
-    case settings
 }

@@ -108,7 +108,7 @@ final class PhotoPermissionUITests: XCTestCase {
         let continueFromZero = firstExistingButton(
             in: app,
             identifiers: ["initial-scan-continue"],
-            labels: ["次へ", "ホームを見る"],
+            labels: ["次へ", "まどを見る", "ホームを見る"],
             timeout: 10
         )
         guard let continueFromZero else {
@@ -143,7 +143,7 @@ final class PhotoPermissionUITests: XCTestCase {
         let homeWidgetGuide = app.buttons["home-widget-placement-guide"]
         guard homeWidgetGuide.waitForExistence(timeout: 20) else {
             fail(
-                "The completed first-run flow did not show the uninstalled-Widget Home recovery action.",
+                "The completed first-run flow did not show the uninstalled-Widget Window recovery action.",
                 app: app
             )
             return
@@ -154,17 +154,28 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
 
-        let settingsTab = firstExistingButton(
+        guard app.tabBars.buttons["まど"].exists,
+              app.tabBars.buttons["思い出"].exists else {
+            fail("The primary Window or Memories tab was not available.", app: app)
+            return
+        }
+
+        guard !app.tabBars.buttons["設定"].exists else {
+            fail("Settings remained a peer tab instead of moving under the Window.", app: app)
+            return
+        }
+
+        let settingsButton = firstExistingButton(
             in: app,
-            identifiers: ["main-tab-settings"],
+            identifiers: ["window-settings-button"],
             labels: ["設定"],
             timeout: 10
         )
-        guard let settingsTab else {
-            fail("The Settings tab was not available after onboarding.", app: app)
+        guard let settingsButton else {
+            fail("The Window did not expose its Settings action after onboarding.", app: app)
             return
         }
-        settingsTab.tap()
+        settingsButton.tap()
 
         let settingsWidgetGuide = app.buttons["settings-widget-placement-guide"]
         guard settingsWidgetGuide.waitForExistence(timeout: 15) else {

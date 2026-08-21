@@ -40,10 +40,12 @@ struct MainTabView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
 
-    @State private var selectedTab: AppTab = .home
+    @State private var selectedTab: AppTab = .window
     @State private var homePath: [String] = []
     @State private var albumPath: [AlbumRoute] = []
     @State private var likesPath: [String] = []
+    @State private var showsSettings = false
+    @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
     @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
@@ -53,28 +55,24 @@ struct MainTabView: View {
             NavigationStack(path: $homePath) {
                 HomeView(
                     currentPhoto: currentPhoto,
-                    likedCount: likedPhotos.count,
-                    newestPhotoDate: catPhotos.compactMap(\.creationDate).max(),
                     scan: scan,
-                    albumState: albumState,
                     hasPhotoAccess: hasPhotoAccess,
                     isLimitedAccess: isLimitedAccess,
                     shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
                     requestPhotoAccess: requestPhotoAccess,
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
-                    showLikedPhotos: showLikedPhotos,
+                    showSettings: { showsSettings = true },
                     toggleLike: toggleLike,
-                    exportPhotoBook: exportPhotoBook,
-                    updateAlbum: updateAlbum,
                     rescan: { Task { await rescan() } }
                 )
                 .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
-                Label("ホーム", systemImage: "house.fill")
+                Label("まど", systemImage: "rectangle.on.rectangle")
+                    .accessibilityIdentifier("main-tab-window")
             }
-            .tag(AppTab.home)
+            .tag(AppTab.window)
 
             NavigationStack(path: $albumPath) {
                 AlbumView(
@@ -88,12 +86,16 @@ struct MainTabView: View {
                     .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
             }
             .tabItem {
-                Label("アルバム", systemImage: "square.grid.3x3.fill")
+                Label("思い出", systemImage: "square.grid.3x3.fill")
+                    .accessibilityIdentifier("main-tab-memories")
             }
-            .tag(AppTab.album)
+            .tag(AppTab.memories)
 
             NavigationStack(path: $likesPath) {
-                LikedPhotosView(photos: likedPhotos)
+                LikedPhotosView(
+                    photos: likedPhotos,
+                    exportPhotoBook: exportPhotoBook
+                )
                     .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
@@ -101,40 +103,12 @@ struct MainTabView: View {
                 // A standard symbol keeps the destination visible; the custom
                 // paw remains inside the feature's own screens.
                 Label("これ好き", systemImage: "pawprint.fill")
+                    .accessibilityIdentifier("main-tab-likes")
             }
-            .badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)
             .tag(AppTab.likes)
-
-            NavigationStack {
-                SettingsView(
-                    settings: settings,
-                    detectionAccuracySample: detectionAccuracySample,
-                    highResolutionRecoverySample: highResolutionRecoverySample,
-                    hasPhotoAccess: hasPhotoAccess,
-                    isScanning: isScanning,
-                    requestPhotoAccess: requestPhotoAccess,
-                    saveSettings: saveSettings,
-                    saveLifeReference: saveLifeReference,
-                    rescan: rescan,
-                    excludedCatPhotos: excludedCatPhotos,
-                    photoSourceAlbums: photoSourceAlbums,
-                    photoSourceStatus: photoSourceStatus,
-                    isLimitedAccess: isLimitedAccess,
-                    chooseMorePhotos: chooseMorePhotos,
-                    restoreCatCandidates: restoreCatCandidates,
-                    selectPhotoSourceAlbum: selectPhotoSourceAlbum,
-                    refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
-                    exportJSON: exportJSON,
-                    catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions,
-                    showWidgetPlacementGuide: showWidgetPlacementGuide
-                )
-            }
-            .tabItem {
-                Label("設定", systemImage: "gearshape.fill")
-                    .accessibilityIdentifier("main-tab-settings")
-            }
-            .tag(AppTab.settings)
+        }
+        .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
+            settingsSheet
         }
         .onChange(of: deepLinkSelection, initial: true) { _, selection in
             guard let identifier = selection.identifier else { return }
@@ -150,7 +124,8 @@ struct MainTabView: View {
             }
             widgetOpenedPhotoIdentifier = identifier
             widgetShownAt = selection.shownAt
-            selectedTab = .home
+            showsSettings = false
+            selectedTab = .window
             homePath = [identifier]
             deepLinkedPhotoIdentifier = nil
             deepLinkedPhotoShownAt = nil
@@ -175,6 +150,49 @@ struct MainTabView: View {
                 return
             }
         }
+    }
+
+    private var settingsSheet: some View {
+        NavigationStack {
+            SettingsView(
+                settings: settings,
+                detectionAccuracySample: detectionAccuracySample,
+                highResolutionRecoverySample: highResolutionRecoverySample,
+                hasPhotoAccess: hasPhotoAccess,
+                isScanning: isScanning,
+                albumState: albumState,
+                canUpdatePhotoLibraryAlbum: scan.hasPreliminaryResult
+                    && scan.displayedCatCount > 0,
+                requestPhotoAccess: requestPhotoAccess,
+                updatePhotoLibraryAlbum: updateAlbum,
+                saveSettings: saveSettings,
+                saveLifeReference: saveLifeReference,
+                rescan: rescan,
+                excludedCatPhotos: excludedCatPhotos,
+                photoSourceAlbums: photoSourceAlbums,
+                photoSourceStatus: photoSourceStatus,
+                isLimitedAccess: isLimitedAccess,
+                chooseMorePhotos: chooseMorePhotos,
+                restoreCatCandidates: restoreCatCandidates,
+                selectPhotoSourceAlbum: selectPhotoSourceAlbum,
+                refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
+                exportJSON: exportJSON,
+                catProfilesPresentation: catProfilesPresentation,
+                catProfilesActions: catProfilesActions,
+                showWidgetPlacementGuide: {
+                    replaysWidgetGuideAfterSettingsDismiss = true
+                    showsSettings = false
+                }
+            )
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") {
+                        showsSettings = false
+                    }
+                }
+            }
+        }
+        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -379,9 +397,9 @@ struct MainTabView: View {
 
     private var missingAlbumView: some View {
         ContentUnavailableView(
-            "アルバムを更新しています",
+            "思い出を更新しています",
             systemImage: "rectangle.stack",
-            description: Text("スキャン結果が更新されました。アルバム一覧へ戻って、もう一度開いてください。")
+            description: Text("スキャン結果が更新されました。思い出の一覧へ戻って、もう一度開いてください。")
         )
     }
 
@@ -407,9 +425,12 @@ struct MainTabView: View {
         )
     }
 
-    private func showLikedPhotos() {
-        selectedTab = .likes
+    private func presentDeferredWidgetGuide() {
+        guard replaysWidgetGuideAfterSettingsDismiss else { return }
+        replaysWidgetGuideAfterSettingsDismiss = false
+        showWidgetPlacementGuide()
     }
+
 }
 
 private struct DeepLinkSelection: Equatable {

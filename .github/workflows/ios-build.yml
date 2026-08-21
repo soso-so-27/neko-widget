@@ -236,10 +236,25 @@ jobs:
             echo "Photo-book export must not download iCloud photos" >&2
             exit 1
           fi
-          grep -Fq '.badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)' \
-            NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("これ好き", systemImage: "pawprint.fill")' \
             NekoWidget/Views/MainTabView.swift
+          grep -Fq 'Label("まど", systemImage: "rectangle.on.rectangle")' \
+            NekoWidget/Views/MainTabView.swift
+          grep -Fq 'Label("思い出", systemImage: "square.grid.3x3.fill")' \
+            NekoWidget/Views/MainTabView.swift
+          grep -Fq 'accessibilityIdentifier("window-settings-button")' \
+            NekoWidget/Views/HomeView.swift
+          grep -Fq 'LikedPhotosView(' NekoWidget/Views/MainTabView.swift
+          grep -Fq 'exportPhotoBook: exportPhotoBook' \
+            NekoWidget/Views/MainTabView.swift
+          if grep -Fq '.badge(' NekoWidget/Views/MainTabView.swift; then
+            echo "Top-level collection totals must not use unread-style badges" >&2
+            exit 1
+          fi
+          if grep -Fq '.tag(AppTab.settings)' NekoWidget/Views/MainTabView.swift; then
+            echo "Settings must stay under the Window instead of a peer tab" >&2
+            exit 1
+          fi
 
       - name: Verify cat candidate curation state and export privacy
         working-directory: NekoWidget
