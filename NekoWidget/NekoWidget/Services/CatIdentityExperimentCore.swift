@@ -256,8 +256,108 @@ enum CatIdentityExperimentCoreError: Error, Equatable, Sendable {
     case invalidEvaluationDistances(method: CatIdentityExperimentMethod)
 }
 
+struct CatIdentityExperimentDuplicateSelectionPair: Equatable, Hashable, Sendable {
+    let firstOrdinal: Int
+    let secondOrdinal: Int
+}
+
+struct CatIdentityExperimentLabeledEpisodeSample: Equatable, Sendable {
+    let ordinal: Int
+    let profileIndex: Int
+    let episodeIndex: Int
+}
+
+enum CatIdentityExperimentLabeledSelectionPhase: Equatable, Sendable {
+    case training
+    case evaluation
+}
+
+struct CatIdentityExperimentLabeledSelectionLocation: Equatable, Sendable {
+    let profileIndex: Int
+    let phase: CatIdentityExperimentLabeledSelectionPhase
+    let slot: Int
+}
+
+private struct CatIdentityExperimentEpisodeKey: Hashable {
+    let profileIndex: Int
+    let episodeIndex: Int
+}
+
+enum CatIdentityExperimentEpisodePolicy {
+    static func labeledAssetsAreUnique(_ assetIdentifiers: [String]) -> Bool {
+        Set(assetIdentifiers).count == assetIdentifiers.count
+    }
+
+    static func duplicateSelectionPairs(
+        in samples: [CatIdentityExperimentLabeledEpisodeSample]
+    ) -> [CatIdentityExperimentDuplicateSelectionPair] {
+        var firstOrdinalByEpisode: [CatIdentityExperimentEpisodeKey: Int] = [:]
+        var pairs: [CatIdentityExperimentDuplicateSelectionPair] = []
+        for sample in samples {
+            let key = CatIdentityExperimentEpisodeKey(
+                profileIndex: sample.profileIndex,
+                episodeIndex: sample.episodeIndex
+            )
+            if let firstOrdinal = firstOrdinalByEpisode[key] {
+                pairs.append(
+                    CatIdentityExperimentDuplicateSelectionPair(
+                        firstOrdinal: firstOrdinal,
+                        secondOrdinal: sample.ordinal
+                    )
+                )
+            } else {
+                firstOrdinalByEpisode[key] = sample.ordinal
+            }
+        }
+        return pairs
+    }
+
+    static func independentCandidateAssetIdentifiers(
+        labeledAssetIdentifiers: [String],
+        candidateAssetIdentifiers: [String],
+        episodeIndexByAsset: [String: Int]
+    ) -> [String] {
+        let labeledEpisodes = Set(labeledAssetIdentifiers.compactMap {
+            episodeIndexByAsset[$0]
+        })
+        return candidateAssetIdentifiers.filter { identifier in
+            episodeIndexByAsset[identifier].map {
+                !labeledEpisodes.contains($0)
+            } ?? true
+        }
+    }
+
+    static func labeledSelectionLocation(
+        ordinal: Int,
+        profileCount: Int = 2,
+        trainingCountPerProfile: Int = 5,
+        evaluationCountPerProfile: Int = 15
+    ) -> CatIdentityExperimentLabeledSelectionLocation? {
+        guard ordinal >= 0,
+              profileCount > 0,
+              trainingCountPerProfile > 0,
+              evaluationCountPerProfile > 0 else { return nil }
+        let totalTraining = profileCount * trainingCountPerProfile
+        if ordinal < totalTraining {
+            return CatIdentityExperimentLabeledSelectionLocation(
+                profileIndex: ordinal / trainingCountPerProfile,
+                phase: .training,
+                slot: ordinal % trainingCountPerProfile + 1
+            )
+        }
+        let evaluationOrdinal = ordinal - totalTraining
+        let totalEvaluation = profileCount * evaluationCountPerProfile
+        guard evaluationOrdinal < totalEvaluation else { return nil }
+        return CatIdentityExperimentLabeledSelectionLocation(
+            profileIndex: evaluationOrdinal / evaluationCountPerProfile,
+            phase: .evaluation,
+            slot: evaluationOrdinal % evaluationCountPerProfile + 1
+        )
+    }
+}
+
 enum CatIdentityExperimentEvaluator {
-    static let protocolVersion = "cat-identity-held-out-v2"
+    static let protocolVersion = "cat-identity-held-out-v3"
 
     static func evaluate(
         references: [CatIdentityExperimentReferenceSample],
@@ -368,8 +468,17 @@ enum CatIdentityExperimentEvaluator {
             Set(evaluations.lazy.filter { $0.profileIndex == profileIndex }
                 .map(\.episodeIndex)).count
         }.min() ?? 0
-        let totalEpisodes = Set(references.map(\.episodeIndex))
-            .union(evaluations.map(\.episodeIndex)).count
+        let totalEpisodes = profileIndices.reduce(into: 0) { total, profileIndex in
+            total += Set(
+                references.lazy
+                    .filter { $0.profileIndex == profileIndex }
+                    .map(\.episodeIndex)
+            ).union(
+                evaluations.lazy
+                    .filter { $0.profileIndex == profileIndex }
+                    .map(\.episodeIndex)
+            ).count
+        }
         let representativeCandidates = methodByID[.featurePrintExact]!.candidates
         let candidateEpisodes = Set(representativeCandidates.map {
             $0.sample.episodeIndex
@@ -466,11 +575,11 @@ enum CatIdentityExperimentEvaluator {
                     == thresholds.requiredEvaluationsPerProfile else {
                 throw CatIdentityExperimentCoreError.invalidEvaluationSet
             }
-        }
-        let allEpisodes = references.map(\.episodeIndex)
-            + evaluations.map(\.episodeIndex)
-        guard Set(allEpisodes).count == allEpisodes.count else {
-            throw CatIdentityExperimentCoreError.invalidEvaluationSet
+            let profileEpisodes = profileReferences.map(\.episodeIndex)
+                + profileEvaluations.map(\.episodeIndex)
+            guard Set(profileEpisodes).count == profileEpisodes.count else {
+                throw CatIdentityExperimentCoreError.invalidEvaluationSet
+            }
         }
     }
 

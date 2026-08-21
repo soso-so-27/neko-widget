@@ -23,7 +23,12 @@ enum CatIdentityExperimentVerifier {
         try verifiesRawCountPrecisionBoundary()
         try verifiesBoundaryConfusionAndLocalWrongDetail()
         try verifiesColorGateFailsClosed()
-        try verifiesAllFortyEpisodesMustBeIndependent()
+        try verifiesEpisodesMustBeIndependentWithinEachProfile()
+        try verifiesCrossProfileEpisodeOverlapIsAllowed()
+        try verifiesLocalEpisodePolicyIsProfileScoped()
+        try verifiesLabeledAssetReuseIsRejected()
+        try verifiesCandidatesCannotBridgeLabeledEpisodes()
+        try verifiesCombinedOrdinalLayout()
         try verifiesDuplicateEvaluationOrdinalIsRejected()
         try verifiesMethodEvaluationSamplesMustMatch()
         try verifiesInvalidEvaluationDistancesAreRejected()
@@ -54,6 +59,10 @@ enum CatIdentityExperimentVerifier {
                 && report.input.minimumTrainingEpisodesPerProfile == 5
                 && report.input.minimumEvaluationEpisodesPerProfile == 15,
             "the 10-training/30-evaluation split changed"
+        )
+        try require(
+            report.protocolVersion == "cat-identity-held-out-v3",
+            "the profile-scoped episode protocol changed"
         )
         try require(report.colorEligibilityGatePassed, "color gate did not pass")
         try require(
@@ -241,7 +250,8 @@ enum CatIdentityExperimentVerifier {
         )
     }
 
-    private static func verifiesAllFortyEpisodesMustBeIndependent() throws {
+    private static func verifiesEpisodesMustBeIndependentWithinEachProfile()
+        throws {
         let references = standardReferences()
         var evaluations = standardEvaluations()
         evaluations[0] = CatIdentityExperimentEvaluationSample(
@@ -266,8 +276,144 @@ enum CatIdentityExperimentVerifier {
             )
             throw VerificationError("training/evaluation episode overlap passed")
         } catch CatIdentityExperimentCoreError.invalidEvaluationSet {
-            // Expected: all 40 photos represent independent capture episodes.
+            // Expected: all 20 photos for one profile are independent episodes.
         }
+    }
+
+    private static func verifiesCrossProfileEpisodeOverlapIsAllowed() throws {
+        let references = standardReferences()
+        var evaluations = standardEvaluations()
+        evaluations[15] = CatIdentityExperimentEvaluationSample(
+            ordinal: evaluations[15].ordinal,
+            profileIndex: evaluations[15].profileIndex,
+            episodeIndex: references[0].episodeIndex
+        )
+        let result = try CatIdentityExperimentEvaluator.evaluate(
+            references: references,
+            evaluations: evaluations,
+            methods: methodInputs(
+                evaluations: evaluations,
+                expandedMatrix: separatedMatrix(),
+                exactMatrix: separatedMatrix(),
+                histogramMatrix: separatedMatrix(),
+                expandedOutcomes: perfectOutcomes(),
+                exactOutcomes: perfectOutcomes(),
+                histogramOutcomes: perfectOutcomes(),
+                candidates: []
+            )
+        )
+        try require(
+            result.report.input.totalIndependentEpisodeCount == 40,
+            "different cats sharing a capture episode were treated as duplicates"
+        )
+    }
+
+    private static func verifiesLocalEpisodePolicyIsProfileScoped() throws {
+        let pairs = CatIdentityExperimentEpisodePolicy.duplicateSelectionPairs(
+            in: [
+                CatIdentityExperimentLabeledEpisodeSample(
+                    ordinal: 0,
+                    profileIndex: 0,
+                    episodeIndex: 7
+                ),
+                CatIdentityExperimentLabeledEpisodeSample(
+                    ordinal: 1,
+                    profileIndex: 0,
+                    episodeIndex: 7
+                ),
+                CatIdentityExperimentLabeledEpisodeSample(
+                    ordinal: 2,
+                    profileIndex: 1,
+                    episodeIndex: 7
+                )
+            ]
+        )
+        try require(
+            pairs == [
+                CatIdentityExperimentDuplicateSelectionPair(
+                    firstOrdinal: 0,
+                    secondOrdinal: 1
+                )
+            ],
+            "cross-profile evidence was reported as a duplicate selection"
+        )
+    }
+
+    private static func verifiesLabeledAssetReuseIsRejected() throws {
+        try require(
+            CatIdentityExperimentEpisodePolicy.labeledAssetsAreUnique(
+                ["asset-a", "asset-b"]
+            ),
+            "distinct labeled assets were rejected"
+        )
+        try require(
+            !CatIdentityExperimentEpisodePolicy.labeledAssetsAreUnique(
+                ["asset-a", "asset-a"]
+            ),
+            "one PhotoKit asset could be labeled twice"
+        )
+    }
+
+    private static func verifiesCandidatesCannotBridgeLabeledEpisodes() throws {
+        let labeledPairs = CatIdentityExperimentEpisodePolicy
+            .duplicateSelectionPairs(
+                in: [
+                    CatIdentityExperimentLabeledEpisodeSample(
+                        ordinal: 0,
+                        profileIndex: 0,
+                        episodeIndex: 0
+                    ),
+                    CatIdentityExperimentLabeledEpisodeSample(
+                        ordinal: 1,
+                        profileIndex: 0,
+                        episodeIndex: 1
+                    )
+                ]
+            )
+        let independentCandidates = CatIdentityExperimentEpisodePolicy
+            .independentCandidateAssetIdentifiers(
+                labeledAssetIdentifiers: ["labeled-a", "labeled-b"],
+                candidateAssetIdentifiers: ["bridge", "independent"],
+                episodeIndexByAsset: [
+                    "labeled-a": 9,
+                    "labeled-b": 9,
+                    "bridge": 9,
+                    "independent": 10
+                ]
+            )
+        try require(
+            labeledPairs.isEmpty && independentCandidates == ["independent"],
+            "an unlabeled candidate changed labeled validity or escaped filtering"
+        )
+    }
+
+    private static func verifiesCombinedOrdinalLayout() throws {
+        let expected: [
+            Int: CatIdentityExperimentLabeledSelectionLocation
+        ] = [
+            0: .init(profileIndex: 0, phase: .training, slot: 1),
+            4: .init(profileIndex: 0, phase: .training, slot: 5),
+            5: .init(profileIndex: 1, phase: .training, slot: 1),
+            9: .init(profileIndex: 1, phase: .training, slot: 5),
+            10: .init(profileIndex: 0, phase: .evaluation, slot: 1),
+            24: .init(profileIndex: 0, phase: .evaluation, slot: 15),
+            25: .init(profileIndex: 1, phase: .evaluation, slot: 1),
+            39: .init(profileIndex: 1, phase: .evaluation, slot: 15)
+        ]
+        for (ordinal, location) in expected {
+            try require(
+                CatIdentityExperimentEpisodePolicy.labeledSelectionLocation(
+                    ordinal: ordinal
+                ) == location,
+                "combined labeled ordinal mapped to the wrong profile or slot"
+            )
+        }
+        try require(
+            CatIdentityExperimentEpisodePolicy.labeledSelectionLocation(
+                ordinal: 40
+            ) == nil,
+            "an out-of-range labeled ordinal was accepted"
+        )
     }
 
     private static func verifiesDuplicateEvaluationOrdinalIsRejected() throws {

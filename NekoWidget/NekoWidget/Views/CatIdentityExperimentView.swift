@@ -8,6 +8,30 @@ private struct CatIdentityExperimentSelectablePhoto: Identifiable, Equatable {
     let creationDate: Date
 }
 
+private struct CatIdentityCloseCaptureAdvisory: Identifiable {
+    let profileIdentifier: String
+    let profileName: String
+    let firstPhotoID: String
+    let secondPhotoID: String
+    let firstSlot: String
+    let secondSlot: String
+    let firstDate: Date
+    let secondDate: Date
+
+    var id: String {
+        [profileName, firstPhotoID, secondPhotoID].joined(separator: "|")
+    }
+
+    var intervalInSeconds: Int {
+        Int(secondDate.timeIntervalSince(firstDate).rounded())
+    }
+}
+
+private struct CatIdentityPhotoSelectionKey: Hashable {
+    let profileIdentifier: String
+    let photoID: String
+}
+
 /// Diagnostic-only household separability measurement. It never writes cat
 /// memberships or turns an experimental prediction into a training sample.
 struct CatIdentityExperimentView: View {
@@ -82,13 +106,35 @@ struct CatIdentityExperimentView: View {
                 referenceSection(profile: profile)
             }
 
-            if hasKnownEpisodeConflict {
+            if !closeCaptureAdvisories.isEmpty {
                 Section {
                     Label(
-                        "同じ猫で30秒以内に撮った写真があります。別の場面の写真を選んでください。",
+                        "撮影日時が近い写真があります（計測はできます）",
                         systemImage: "exclamationmark.triangle"
                     )
                     .foregroundStyle(.orange)
+
+                    ForEach(Array(closeCaptureAdvisories.prefix(4))) { advisory in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(
+                                "\(advisory.profileName)  \(advisory.firstSlot) ↔ \(advisory.secondSlot)（\(advisory.intervalInSeconds)秒差）"
+                            )
+                            .font(.subheadline.weight(.semibold))
+                            Text(
+                                "\(exactCaptureDate(advisory.firstDate)) / \(exactCaptureDate(advisory.secondDate))"
+                            )
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if closeCaptureAdvisories.count > 4 {
+                        Text("ほか\((closeCaptureAdvisories.count - 4).formatted())組")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } footer: {
+                    Text("オレンジ枠の写真が連写やほぼ同じ場面なら、片方を替えると結果がより確かになります。撮影日時だけでは停止しません。")
                 }
             }
 
@@ -135,6 +181,21 @@ struct CatIdentityExperimentView: View {
                 Section {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
+
+                    ForEach(model.duplicateSelectionPairs, id: \.self) { pair in
+                        if let first = labeledSelectionDescription(
+                            ordinal: pair.firstOrdinal
+                        ), let second = labeledSelectionDescription(
+                            ordinal: pair.secondOrdinal
+                        ) {
+                            Text("\(first) ↔ \(second)")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                } footer: {
+                    if !model.duplicateSelectionPairs.isEmpty {
+                        Text("赤枠の2枚は同じ猫の連写またはほぼ同じ写真です。どちらか片方を外して、別の場面を選んでください。")
+                    }
                 }
             }
 
@@ -148,6 +209,13 @@ struct CatIdentityExperimentView: View {
     private func referenceSection(profile: CatProfilePresentation) -> some View {
         let photos = eligiblePhotos(for: profile)
         let selected = selectedPhotoIDs(for: profile)
+        let advisoryPhotoKeys = closeCapturePhotoKeys
+        let duplicatePhotoKeys = duplicateSelectionPhotoKeys
+        let selectedAssetIdentifiers = Set(
+            presentation.profiles.flatMap { selectedProfile in
+                selectedPhotos(for: selectedProfile).map(\.assetLocalIdentifier)
+            }
+        )
         Section {
             if photos.isEmpty {
                 ContentUnavailableView(
@@ -163,7 +231,22 @@ struct CatIdentityExperimentView: View {
                         referencePhotoButton(
                             photo: photo,
                             profile: profile,
-                            selection: selected
+                            selection: selected,
+                            hasCloseCaptureAdvisory:
+                                advisoryPhotoKeys.contains(
+                                    CatIdentityPhotoSelectionKey(
+                                        profileIdentifier: profile.identifier,
+                                        photoID: photo.id
+                                    )
+                                ),
+                            hasHardDuplicate:
+                                duplicatePhotoKeys.contains(
+                                    CatIdentityPhotoSelectionKey(
+                                        profileIdentifier: profile.identifier,
+                                        photoID: photo.id
+                                    )
+                                ),
+                            selectedAssetIdentifiers: selectedAssetIdentifiers
                         )
                     }
                 }
@@ -188,15 +271,16 @@ struct CatIdentityExperimentView: View {
     private func referencePhotoButton(
         photo: CatIdentityExperimentSelectablePhoto,
         profile: CatProfilePresentation,
-        selection: [String]
+        selection: [String],
+        hasCloseCaptureAdvisory: Bool,
+        hasHardDuplicate: Bool,
+        selectedAssetIdentifiers: Set<String>
     ) -> some View {
         let selectedIndex = selection.firstIndex(of: photo.id)
         let isSelected = selectedIndex != nil
         let selectionIsFull = selection.count >= 20
-        let isSelectedForAnotherProfile = presentation.profiles.contains {
-            $0.identifier != profile.identifier
-                && selectedPhotoIDs(for: $0).contains(photo.id)
-        }
+        let isAssetSelectedByAnotherPhoto = !isSelected
+            && selectedAssetIdentifiers.contains(photo.assetLocalIdentifier)
         return Button {
             toggle(photo: photo, for: profile)
         } label: {
@@ -246,12 +330,23 @@ struct CatIdentityExperimentView: View {
                 .background(.black.opacity(0.55), in: Capsule())
                 .padding(5)
             }
+            .overlay {
+                Rectangle()
+                    .stroke(
+                        hasHardDuplicate
+                            ? Color.red
+                            : hasCloseCaptureAdvisory
+                                ? Color.orange
+                                : Color.clear,
+                        lineWidth: 3
+                    )
+            }
         }
         .buttonStyle(.plain)
         .disabled(
             model.isRunning
                 || model.report != nil
-                || isSelectedForAnotherProfile
+                || (!isSelected && isAssetSelectedByAnotherPhoto)
                 || (selectionIsFull && !isSelected)
         )
         .accessibilityLabel(referenceAccessibilityLabel(photo))
@@ -453,18 +548,119 @@ struct CatIdentityExperimentView: View {
     private var canStart: Bool {
         presentation.profiles.allSatisfy {
             selectedPhotoIDs(for: $0).count == 20
-        } && !hasKnownEpisodeConflict
-            && !model.isRunning
+        } && !model.isRunning
             && model.report == nil
     }
 
-    private var hasKnownEpisodeConflict: Bool {
-        let dates = presentation.profiles.flatMap {
-            selectedPhotos(for: $0).map(\.creationDate)
-        }.sorted()
-        return zip(dates, dates.dropFirst()).contains { pair in
-            pair.1.timeIntervalSince(pair.0) <= 30
+    private var closeCaptureAdvisories: [CatIdentityCloseCaptureAdvisory] {
+        presentation.profiles.flatMap { profile in
+            let selected = selectedPhotos(for: profile)
+            let slotsByID = Dictionary(
+                uniqueKeysWithValues: selected.enumerated().map { index, photo in
+                    (
+                        photo.id,
+                        index < 5 ? "学習\(index + 1)" : "評価\(index - 4)"
+                    )
+                }
+            )
+            let dated = selected.sorted { lhs, rhs in
+                if lhs.creationDate != rhs.creationDate {
+                    return lhs.creationDate < rhs.creationDate
+                }
+                return lhs.id < rhs.id
+            }
+            return dated.indices.flatMap { firstIndex in
+                var advisories: [CatIdentityCloseCaptureAdvisory] = []
+                var secondIndex = firstIndex + 1
+                while secondIndex < dated.count,
+                      dated[secondIndex].creationDate.timeIntervalSince(
+                        dated[firstIndex].creationDate
+                      ) <= 30 {
+                    let first = dated[firstIndex]
+                    let second = dated[secondIndex]
+                    advisories.append(
+                        CatIdentityCloseCaptureAdvisory(
+                            profileIdentifier: profile.identifier,
+                            profileName: profile.displayName,
+                            firstPhotoID: first.id,
+                            secondPhotoID: second.id,
+                            firstSlot: slotsByID[first.id] ?? "選択写真",
+                            secondSlot: slotsByID[second.id] ?? "選択写真",
+                            firstDate: first.creationDate,
+                            secondDate: second.creationDate
+                        )
+                    )
+                    secondIndex += 1
+                }
+                return advisories
+            }
         }
+    }
+
+    private var closeCapturePhotoKeys: Set<CatIdentityPhotoSelectionKey> {
+        Set(closeCaptureAdvisories.flatMap {
+            [
+                CatIdentityPhotoSelectionKey(
+                    profileIdentifier: $0.profileIdentifier,
+                    photoID: $0.firstPhotoID
+                ),
+                CatIdentityPhotoSelectionKey(
+                    profileIdentifier: $0.profileIdentifier,
+                    photoID: $0.secondPhotoID
+                )
+            ]
+        })
+    }
+
+    private var labeledPhotosInServiceOrder: [
+        CatIdentityExperimentSelectablePhoto
+    ] {
+        let selectedByProfile = presentation.profiles.map { selectedPhotos(for: $0) }
+        return selectedByProfile.flatMap { Array($0.prefix(5)) }
+            + selectedByProfile.flatMap { Array($0.dropFirst(5).prefix(15)) }
+    }
+
+    private var duplicateSelectionPhotoKeys: Set<CatIdentityPhotoSelectionKey> {
+        let photos = labeledPhotosInServiceOrder
+        return Set(model.duplicateSelectionPairs.flatMap { pair in
+            [pair.firstOrdinal, pair.secondOrdinal].compactMap { ordinal in
+                guard photos.indices.contains(ordinal),
+                      let profileIdentifier = profileIdentifier(
+                        forLabeledOrdinal: ordinal
+                      ) else { return nil }
+                return CatIdentityPhotoSelectionKey(
+                    profileIdentifier: profileIdentifier,
+                    photoID: photos[ordinal].id
+                )
+            }
+        })
+    }
+
+    private func profileIdentifier(forLabeledOrdinal ordinal: Int) -> String? {
+        guard let location = CatIdentityExperimentEpisodePolicy
+            .labeledSelectionLocation(
+                ordinal: ordinal,
+                profileCount: presentation.profiles.count
+            ), presentation.profiles.indices.contains(location.profileIndex) else {
+            return nil
+        }
+        return presentation.profiles[location.profileIndex].identifier
+    }
+
+    private func labeledSelectionDescription(ordinal: Int) -> String? {
+        guard let location = CatIdentityExperimentEpisodePolicy
+            .labeledSelectionLocation(
+                ordinal: ordinal,
+                profileCount: presentation.profiles.count
+            ), presentation.profiles.indices.contains(location.profileIndex) else {
+            return nil
+        }
+        let phase = location.phase == .training ? "学習" : "評価"
+        return "\(presentation.profiles[location.profileIndex].displayName) \(phase)\(location.slot)"
+    }
+
+    private func exactCaptureDate(_ date: Date) -> String {
+        date.formatted(date: .numeric, time: .standard)
     }
 
     private func eligiblePhotos(
@@ -544,7 +740,12 @@ struct CatIdentityExperimentView: View {
         var selected = selectedPhotoIDs(for: profile)
         if let index = selected.firstIndex(of: photo.id) {
             selected.remove(at: index)
-        } else if selected.count < 20 {
+        } else if selected.count < 20,
+                  !presentation.profiles.contains(where: { selectedProfile in
+                      selectedPhotos(for: selectedProfile).contains {
+                          $0.assetLocalIdentifier == photo.assetLocalIdentifier
+                      }
+                  }) {
             selected.append(photo.id)
         }
         selectedPhotoIDsByProfile[profile.identifier] = selected
@@ -722,6 +923,9 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
     @Published private(set) var report: CatIdentityExperimentReport?
     @Published private(set) var localDetail: CatIdentityExperimentLocalDetail?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var duplicateSelectionPairs: [
+        CatIdentityExperimentDuplicateSelectionPair
+    ] = []
     @Published private(set) var isRunning = false
 
     private let service = CatIdentityExperimentService()
@@ -742,6 +946,7 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
         report = nil
         localDetail = nil
         errorMessage = nil
+        duplicateSelectionPairs = []
         let service = self.service
         runTask = Task { [weak self] in
             guard let self else { return }
@@ -769,6 +974,10 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
                 guard self.runRevision == revision else { return }
                 self.progress = nil
                 self.isRunning = false
+                if let serviceError = error as? CatIdentityExperimentServiceError,
+                   case let .duplicateLabeledEpisodes(pairs) = serviceError {
+                    self.duplicateSelectionPairs = pairs
+                }
                 self.errorMessage = Self.message(for: error)
             }
         }
@@ -781,6 +990,7 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
         isRunning = false
         progress = nil
         localDetail = nil
+        duplicateSelectionPairs = []
     }
 
     func resetResult() {
@@ -788,6 +998,7 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
         report = nil
         localDetail = nil
         errorMessage = nil
+        duplicateSelectionPairs = []
     }
 
     private func receive(
@@ -803,6 +1014,8 @@ private final class CatIdentityExperimentViewModel: ObservableObject {
             switch serviceError {
             case .invalidInput, .duplicateReference, .duplicateCandidate:
                 return "選んだ写真を計測に使えませんでした。各猫20枚を選び直してください。"
+            case .duplicateLabeledEpisodes:
+                return "同じ猫の連写またはほぼ同じ写真が含まれています。"
             case .colorSpaceUnavailable:
                 return "写真の色を端末内で読み取れませんでした。"
             }

@@ -372,6 +372,15 @@ jobs:
           grep -Fq 'options.isNetworkAccessAllowed = false' "$service"
           grep -Fq 'containsPhotoIdentifiers: false' \
             NekoWidget/Services/CatIdentityExperimentCore.swift
+          grep -Fq 'cat-identity-held-out-v3' \
+            NekoWidget/Services/CatIdentityExperimentCore.swift
+          grep -Fq 'labeledEpisodeIndexByProfile' "$service"
+          grep -Fq '撮影日時だけでは停止しません' \
+            NekoWidget/Views/CatIdentityExperimentView.swift
+          if grep -Fq 'let datedAssets' "$service"; then
+            echo "Identity experiment restored the timestamp hard gate" >&2
+            exit 1
+          fi
           if grep -Fq 'options.isNetworkAccessAllowed = true' "$service"; then
             echo "Identity experiment enabled PhotoKit network access" >&2
             exit 1

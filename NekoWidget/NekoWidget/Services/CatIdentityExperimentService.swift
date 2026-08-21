@@ -65,6 +65,7 @@ enum CatIdentityExperimentServiceError: Error, Equatable, Sendable {
     case invalidInput
     case duplicateReference
     case duplicateCandidate
+    case duplicateLabeledEpisodes([CatIdentityExperimentDuplicateSelectionPair])
     case colorSpaceUnavailable
 }
 
@@ -81,7 +82,6 @@ actor CatIdentityExperimentService {
     }
 
     private struct AssetMetadata {
-        let creationDate: Date?
         let burstIdentifier: String?
     }
 
@@ -198,7 +198,6 @@ actor CatIdentityExperimentService {
                 continue
             }
             metadataByAsset[assetIdentifier] = AssetMetadata(
-                creationDate: asset.creationDate,
                 burstIdentifier: asset.burstIdentifier
             )
             let imageOutcome = await localImage(for: asset)
@@ -241,12 +240,46 @@ actor CatIdentityExperimentService {
             operation: operation,
             handler: progress
         )
-        let episodeIndexByAsset = Self.episodeIndices(
+        let allEpisodeIndexByAsset = Self.episodeIndices(
             assetIdentifiers: assetIdentifiers,
             metadataByAsset: metadataByAsset,
             instanceKeys: allKeys,
             featuresByKey: featuresByKey
         )
+        let labeledInstanceKeys = Array(labeledKeys).sorted(
+            by: Self.stableInstanceOrder
+        )
+        let labeledAssetIdentifiers = Array(Set(
+            labeledInstanceKeys.map(\.assetLocalIdentifier)
+        )).sorted()
+        let profileIndices = Set(
+            references.map(\.profileIndex) + evaluations.map(\.profileIndex)
+        ).sorted()
+        var labeledEpisodeIndexByProfile: [Int: [String: Int]] = [:]
+        var nextLabeledEpisodeIndex = 0
+        for profileIndex in profileIndices {
+            let profileAssetIdentifiers = Array(Set(
+                references
+                    .filter { $0.profileIndex == profileIndex }
+                    .map(\.assetLocalIdentifier)
+                    + evaluations
+                    .filter { $0.profileIndex == profileIndex }
+                    .map(\.assetLocalIdentifier)
+            )).sorted()
+            let profileAssetSet = Set(profileAssetIdentifiers)
+            let profileInstanceKeys = labeledInstanceKeys.filter {
+                profileAssetSet.contains($0.assetLocalIdentifier)
+            }
+            let localEpisodes = Self.episodeIndices(
+                assetIdentifiers: profileAssetIdentifiers,
+                metadataByAsset: metadataByAsset,
+                instanceKeys: profileInstanceKeys,
+                featuresByKey: featuresByKey
+            )
+            labeledEpisodeIndexByProfile[profileIndex] =
+                localEpisodes.mapValues { $0 + nextLabeledEpisodeIndex }
+            nextLabeledEpisodeIndex += (localEpisodes.values.max() ?? -1) + 1
+        }
         let assetIndexByIdentifier = Dictionary(
             uniqueKeysWithValues: assetIdentifiers.enumerated().map {
                 ($0.element, $0.offset)
@@ -256,7 +289,9 @@ actor CatIdentityExperimentService {
             CatIdentityExperimentReferenceSample(
                 ordinal: offset,
                 profileIndex: input.profileIndex,
-                episodeIndex: episodeIndexByAsset[input.assetLocalIdentifier]
+                episodeIndex: labeledEpisodeIndexByProfile[input.profileIndex]?[
+                    input.assetLocalIdentifier
+                ]
                     ?? assetIndexByIdentifier[input.assetLocalIdentifier]
                     ?? offset
             )
@@ -265,31 +300,67 @@ actor CatIdentityExperimentService {
             CatIdentityExperimentEvaluationSample(
                 ordinal: offset,
                 profileIndex: input.profileIndex,
-                episodeIndex: episodeIndexByAsset[input.assetLocalIdentifier]
+                episodeIndex: labeledEpisodeIndexByProfile[input.profileIndex]?[
+                    input.assetLocalIdentifier
+                ]
                     ?? assetIndexByIdentifier[input.assetLocalIdentifier]
                     ?? (references.count + offset)
             )
         }
+        let labeledSamples = referenceSamples.enumerated().map { offset, sample in
+            CatIdentityExperimentLabeledEpisodeSample(
+                ordinal: offset,
+                profileIndex: sample.profileIndex,
+                episodeIndex: sample.episodeIndex
+            )
+        } + evaluationSamples.enumerated().map { offset, sample in
+            CatIdentityExperimentLabeledEpisodeSample(
+                ordinal: references.count + offset,
+                profileIndex: sample.profileIndex,
+                episodeIndex: sample.episodeIndex
+            )
+        }
+        let duplicateSelectionPairs =
+            CatIdentityExperimentEpisodePolicy.duplicateSelectionPairs(
+                in: labeledSamples
+            )
+        if !duplicateSelectionPairs.isEmpty {
+            throw CatIdentityExperimentServiceError.duplicateLabeledEpisodes(
+                duplicateSelectionPairs
+            )
+        }
+        let candidateEpisodeOffset = nextLabeledEpisodeIndex
         let provisionalCandidateSamples = filteredCandidates.enumerated().map {
             offset, input in
             CatIdentityExperimentCandidateSample(
                 ordinal: offset,
                 assetIndex: assetIndexByIdentifier[input.assetLocalIdentifier]
                     ?? offset,
-                episodeIndex: episodeIndexByAsset[input.assetLocalIdentifier]
-                    ?? assetIndexByIdentifier[input.assetLocalIdentifier]
-                    ?? offset
+                episodeIndex: candidateEpisodeOffset
+                    + (
+                        allEpisodeIndexByAsset[input.assetLocalIdentifier]
+                            ?? assetIndexByIdentifier[input.assetLocalIdentifier]
+                            ?? offset
+                    )
             )
         }
-        let labeledEpisodes = Set(
-            referenceSamples.map(\.episodeIndex)
-                + evaluationSamples.map(\.episodeIndex)
+        let independentCandidateAssetIdentifiers = Set(
+            CatIdentityExperimentEpisodePolicy
+                .independentCandidateAssetIdentifiers(
+                    labeledAssetIdentifiers: labeledAssetIdentifiers,
+                    candidateAssetIdentifiers: filteredCandidates.map(
+                        \.assetLocalIdentifier
+                    ),
+                    episodeIndexByAsset: allEpisodeIndexByAsset
+                )
         )
         let independentCandidatePairs = zip(
             filteredCandidates,
             provisionalCandidateSamples
         ).filter {
-            !labeledEpisodes.contains($0.1.episodeIndex)
+            independentCandidateAssetIdentifiers.contains(
+                $0.0.assetLocalIdentifier
+            )
         }
         let independentCandidates = independentCandidatePairs.map { $0.0 }
         let candidateSamples = independentCandidatePairs.enumerated().map {
@@ -405,6 +476,13 @@ actor CatIdentityExperimentService {
         }
         guard Set(evaluationKeys).count == evaluationKeys.count,
               Set(referenceKeys).isDisjoint(with: evaluationKeys) else {
+            throw CatIdentityExperimentServiceError.duplicateReference
+        }
+        let labeledAssetIdentifiers = references.map(\.assetLocalIdentifier)
+            + evaluations.map(\.assetLocalIdentifier)
+        guard CatIdentityExperimentEpisodePolicy.labeledAssetsAreUnique(
+            labeledAssetIdentifiers
+        ) else {
             throw CatIdentityExperimentServiceError.duplicateReference
         }
         let candidateKeys = candidates.map {
@@ -684,27 +762,6 @@ actor CatIdentityExperimentService {
                 union.merge(first, index)
             } else {
                 firstIndexByBurst[burst] = index
-            }
-        }
-
-        let datedAssets = assetIdentifiers.compactMap { identifier -> (
-            index: Int,
-            date: Date
-        )? in
-            guard let index = assetIndex[identifier],
-                  let date = metadataByAsset[identifier]?.creationDate else {
-                return nil
-            }
-            return (index, date)
-        }.sorted { $0.date < $1.date }
-        for first in datedAssets.indices {
-            var second = first + 1
-            while second < datedAssets.count,
-                  datedAssets[second].date.timeIntervalSince(
-                    datedAssets[first].date
-                  ) <= 30 {
-                union.merge(datedAssets[first].index, datedAssets[second].index)
-                second += 1
             }
         }
 
