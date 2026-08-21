@@ -68,6 +68,7 @@ jobs:
           xcrun swiftc \
             -parse-as-library \
             Shared/Sharing/PairingCore.swift \
+            Shared/Sharing/SharingAPIConfiguration.swift \
             NekoWidget/Services/PairingAPIClient.swift \
             ci/verify-pairing-api-responses.swift \
             -o "$RUNNER_TEMP/verify-pairing-api-responses"
@@ -103,6 +104,7 @@ jobs:
             Shared/Sharing/DailySharingCore.swift \
             Shared/AppGroup/SharedContainer.swift \
             Shared/Storage/AtomicJSON.swift \
+            Shared/Sharing/SharingAPIConfiguration.swift \
             NekoWidget/Services/PairingAPIClient.swift \
             NekoWidget/Services/DailySharingStore.swift \
             NekoWidget/Services/DailySharingAPIClient.swift \
@@ -130,15 +132,15 @@ jobs:
           grep -Fq 'MomentSharingAPIClient.swift in Sources' "$project"
           grep -Fq '70000000000000000000000D /* WidgetManifest.swift in Sources */' "$project"
           grep -Fq '70000000000000000000000E /* WidgetRenderPlan.swift in Sources */' "$project"
-          grep -Fq 'SensitiveContentAnalysis.framework in Frameworks' "$project"
           grep -Fq 'NSExtensionActivationSupportsImageWithMaxCount' \
             NekoWidgetShareExtension/Info.plist
           grep -Fq '<integer>1</integer>' NekoWidgetShareExtension/Info.plist
-          for entitlements in \
-            NekoWidget/NekoWidget.entitlements \
-            NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements; do
-            grep -Fq '<string>analysis</string>' "$entitlements"
-          done
+          grep -Fq '<string>analysis</string>' NekoWidget/NekoWidget.entitlements
+          if grep -Fq 'sensitivecontentanalysis' \
+            NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements; then
+            echo 'Capture-only Share Extension must not have Sensitive Content Analysis entitlement' >&2
+            exit 1
+          fi
           if grep -Eq 'DailySharing|maximumDaily|generationID' \
             NekoWidgetShareExtension/*.swift; then
             echo 'Share Extension must not use the retired daily-sharing protocol' >&2
@@ -146,22 +148,34 @@ jobs:
           fi
           grep -Fq 'case committing' Shared/Sharing/MomentSharingStore.swift
           grep -Fq 'expected: .committing' NekoWidget/Services/MomentSharingCoordinator.swift
-          grep -Fq 'expected: .committing' NekoWidgetShareExtension/MomentShareExtensionSender.swift
           grep -Fq 'MOMENT_RUNTIME_ENABLED": "NO"' SharingService/wrangler.example.jsonc
           grep -Fq 'moment_runtime_disabled' SharingService/src/index.ts
+          grep -Fqx 'SHARING_SHARE_EXTENSION_HANDOFF_ENABLED = NO' Config.xcconfig
           grep -Fqx 'SHARING_SHARE_EXTENSION_SEND_ENABLED = NO' Config.xcconfig
+          grep -Fq '<key>SharingShareExtensionHandoffEnabled</key>' \
+            NekoWidget/Info.plist
+          grep -Fq '<key>SharingShareExtensionHandoffEnabled</key>' \
+            NekoWidgetShareExtension/Info.plist
           grep -Fq '<key>SharingShareExtensionSendEnabled</key>' \
             NekoWidget/Info.plist
           grep -Fq '<key>SharingShareExtensionSendEnabled</key>' \
             NekoWidgetShareExtension/Info.plist
-          grep -Fq 'configuration.isShareExtensionMediaAvailable' \
-            NekoWidget/Services/MomentSharePreparationService.swift
-          grep -Fq 'configuration.isShareExtensionMediaAvailable' \
-            NekoWidgetShareExtension/MomentShareExtensionSender.swift
-          grep -Fq 'Direct Share Extension delivery is blocked' \
+          grep -Fq 'configuration.isShareExtensionHandoffAvailable' \
+            NekoWidgetShareExtension/ShareViewController.swift
+          grep -Fq 'MomentShareHandoffStore.stageCapture' \
+            NekoWidgetShareExtension/MomentShareIngressService.swift
+          grep -Fq 'PairingInstallationGuard.bootstrap()' \
+            NekoWidget/Services/MomentSharingCoordinator.swift
+          grep -Fq 'refreshAdmissionsAndDrain' \
+            NekoWidget/Services/MomentSharingCoordinator.swift
+          grep -Fq 'Direct Share Extension delivery is permanently blocked' \
             ci/validate-sharing-release.py
           grep -Fq 'NSPrivacyAccessedAPICategoryFileTimestamp' NekoWidget/PrivacyInfo.xcprivacy
           grep -Fq '<string>C617.1</string>' NekoWidget/PrivacyInfo.xcprivacy
+          grep -Fq 'NSPrivacyAccessedAPICategoryFileTimestamp' \
+            NekoWidgetShareExtension/PrivacyInfo.xcprivacy
+          grep -Fq '<string>C617.1</string>' \
+            NekoWidgetShareExtension/PrivacyInfo.xcprivacy
           grep -Fq 'プレビュー・送信されません' NekoWidget/Views/SettingsView.swift
           if grep -Eq '新しい一枚をウィジェットへ優先表示|最近届いた写真と、自分が送った写真を同じ履歴' \
             NekoWidget/Views/SettingsView.swift; then
@@ -188,6 +202,79 @@ jobs:
           credential = coordinator.index("PairingKeychainStore.load(", authorization)
           if not bootstrap < credential:
               raise SystemExit("Host moment network authorization must validate installation first")
+
+          project = Path("NekoWidget.xcodeproj/project.pbxproj").read_text()
+          share_start = project.index("A0000000000000000000002B /* Sources */ = {")
+          share_end = project.index("/* End PBXSourcesBuildPhase section */", share_start)
+          share_sources = project[share_start:share_end]
+          required = {
+              "MomentShareHandoffStore.swift in Sources",
+              "SharingAPIConfiguration.swift in Sources",
+              "MomentShareIngressService.swift in Sources",
+              "MomentCanonicalPreviewBuilder.swift in Sources",
+              "MomentSharingCore.swift in Sources",
+              "ShareViewController.swift in Sources",
+          }
+          forbidden = {
+              "PairingCore.swift in Sources",
+              "PairingKeychainStore.swift in Sources",
+              "MomentSharingStore.swift in Sources",
+              "PairingAPIClient.swift in Sources",
+              "MomentSharePreparationService.swift in Sources",
+              "MomentSharingAPIClient.swift in Sources",
+              "MomentShareExtensionSender.swift in Sources",
+          }
+          missing = sorted(value for value in required if value not in share_sources)
+          leaked = sorted(value for value in forbidden if value in share_sources)
+          if missing or leaked:
+              raise SystemExit(
+                  f"Capture-only Share target boundary failed; missing={missing}, leaked={leaked}"
+              )
+          share_framework_start = project.index(
+              "A0000000000000000000002C /* Frameworks */ = {"
+          )
+          share_framework_end = project.index(
+              "/* End PBXFrameworksBuildPhase section */",
+              share_framework_start,
+          )
+          share_frameworks = project[share_framework_start:share_framework_end]
+          if "SensitiveContentAnalysis.framework" in share_frameworks:
+              raise SystemExit(
+                  "Capture-only Share target must not link SensitiveContentAnalysis"
+              )
+
+          share_code = "\n".join(
+              path.read_text()
+              for path in Path("NekoWidgetShareExtension").glob("*.swift")
+          )
+          forbidden_symbols = (
+              "PairingStateStore",
+              "PairingKeychainStore",
+              "MomentSharingStateStore",
+              "URLSession",
+              "SensitiveContentAnalysis",
+              "reserve(",
+              "upload(",
+              "commit(",
+          )
+          leaked_symbols = [value for value in forbidden_symbols if value in share_code]
+          if leaked_symbols:
+              raise SystemExit(
+                  f"Capture-only Share code crosses host authorization boundary: {leaked_symbols}"
+              )
+
+          keychain = Path("Shared/Sharing/PairingKeychainStore.swift").read_text()
+          if "jp.nekowidget.sharing.credentials.v2.host" not in keychain:
+              raise SystemExit("Pairing credential must use the host-only v2 Keychain service")
+          if "kSecAttrAccessibleWhenUnlockedThisDeviceOnly" not in keychain:
+              raise SystemExit("Pairing credential must remain this-device-only")
+          active_query_start = keychain.index("private static func itemQuery(")
+          active_query_end = keychain.index(
+              "private static func deleteLegacySharedCredential(",
+              active_query_start,
+          )
+          if "kSecAttrAccessGroup" in keychain[active_query_start:active_query_end]:
+              raise SystemExit("Active room credential must use the host default Keychain group")
           PY
 
       - name: Verify normalized bbox posture classification

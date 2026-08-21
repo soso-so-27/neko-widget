@@ -9,6 +9,7 @@ actor MomentSharingCoordinator {
 
     private let configuration: SharingAPIConfiguration
     private let moderation: MomentModerationService
+    private let handoffProcessor: MomentShareHandoffProcessor
     private var isSynchronizing = false
 
     init(
@@ -17,12 +18,34 @@ actor MomentSharingCoordinator {
     ) {
         self.configuration = configuration
         self.moderation = moderation
+        handoffProcessor = MomentShareHandoffProcessor(moderation: moderation)
     }
 
     func synchronize(trigger: String) async {
-        guard configuration.isMediaAvailable, !isSynchronizing else { return }
+        guard !isSynchronizing else { return }
         isSynchronizing = true
         defer { isSynchronizing = false }
+
+        // Disabling media/handoff must also revoke any previously published
+        // Share Extension admission and physically remove staged plaintext.
+        // Bootstrap first so a reinstall cleanup wins before App Group state
+        // is inspected or retained.
+        guard configuration.isMediaAvailable else {
+            do {
+                let bootstrap = try PairingInstallationGuard.bootstrap()
+                try handoffProcessor.revokeAdmissions(
+                    lifecycleToken: bootstrap.lifecycleToken
+                )
+            } catch {
+                SharedLog.app.warning(
+                    "moment-sharing",
+                    "Disabled moment handoff cleanup deferred",
+                    metadata: ["trigger": String(trigger.prefix(32))]
+                )
+            }
+            return
+        }
+
         var authorization: Authorization?
         do {
             try MomentSharingStateStore.pruneLocalHistory()
@@ -44,6 +67,9 @@ actor MomentSharingCoordinator {
             )
             if let reportOnlyUntil = localSharingState.reportOnlyUntil {
                 if reportOnlyUntil > .now {
+                    try? handoffProcessor.revokeAdmissions(
+                        lifecycleToken: loadedAuthorization.lifecycleToken
+                    )
                     if reported > 0 {
                         SharedLog.app.info(
                             "moment-sharing",
@@ -53,6 +79,19 @@ actor MomentSharingCoordinator {
                     }
                     return
                 }
+            }
+            let handedOff: Int
+            if configuration.isShareExtensionHandoffAvailable {
+                handedOff = try await handoffProcessor.refreshAdmissionsAndDrain(
+                    pairing: loadedAuthorization.state,
+                    credential: loadedAuthorization.credential,
+                    lifecycleToken: loadedAuthorization.lifecycleToken
+                )
+            } else {
+                try handoffProcessor.revokeAdmissions(
+                    lifecycleToken: loadedAuthorization.lifecycleToken
+                )
+                handedOff = 0
             }
             let sent = try await sendOutbox(
                 api: api,
@@ -71,6 +110,7 @@ actor MomentSharingCoordinator {
                 "Moment synchronization completed",
                 metadata: [
                     "trigger": String(trigger.prefix(32)),
+                    "handedOff": "\(handedOff)",
                     "sent": "\(sent)",
                     "received": "\(received)"
                 ]
@@ -82,6 +122,9 @@ actor MomentSharingCoordinator {
                 try? MomentSharingStateStore.enterReportOnlyMode(
                     until: until,
                     validating: authorization.lifecycleToken
+                )
+                try? handoffProcessor.revokeAdmissions(
+                    lifecycleToken: authorization.lifecycleToken
                 )
             } else if let authorization, Self.requiresLocalRevocationReset(error) {
                 try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(

@@ -51,6 +51,8 @@
 	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>SharingMediaEnabled</key>
 	<string>$(SHARING_MEDIA_ENABLED)</string>
+	<key>SharingShareExtensionHandoffEnabled</key>
+	<string>$(SHARING_SHARE_EXTENSION_HANDOFF_ENABLED)</string>
 	<key>SharingShareExtensionSendEnabled</key>
 	<string>$(SHARING_SHARE_EXTENSION_SEND_ENABLED)</string>
 	<key>SharingReviewPreviewEnabled</key>

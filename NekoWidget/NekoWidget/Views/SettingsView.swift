@@ -651,13 +651,14 @@ struct SharingReviewPreviewView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                reviewSection("いまの一枚を届ける", systemImage: "paperplane.fill") {
+                reviewSection("今の一枚を届ける", systemImage: "paperplane.fill") {
                     Text("猫を待たせないため、アプリ内カメラではなく標準カメラと写真アプリから届けます。")
                         .font(.subheadline)
 
                     flowStep(1, title: "標準カメラで撮る", detail: "または写真アプリで1枚を選ぶ")
                     flowStep(2, title: "共有ボタンを押す", detail: "共有先から「ねこのまど」を選ぶ")
-                    flowStep(3, title: "届け先を確認する", detail: "家族のまどへ、その1枚だけを届ける")
+                    flowStep(3, title: "写真と届け先を確認する", detail: "この端末へ短時間だけ一時保存する。まだ送信されない")
+                    flowStep(4, title: "「ねこのまど」を開く", detail: "現在のまどを確認し、安全確認・暗号化をして届ける")
 
                     Label("無料の送信枠は1日5枚", systemImage: "paperplane.circle")
                         .font(.footnote)

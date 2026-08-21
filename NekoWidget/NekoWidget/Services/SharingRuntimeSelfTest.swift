@@ -187,6 +187,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
         })
+        results.append(await runAsync("moment-install-bound-handoff") {
+            try await Self.testMomentInstallBoundHandoff()
+        })
         results.append(run("moment-report-only-terminal-gate") {
             try Self.testMomentReportOnlyTerminalGate()
         })
@@ -333,6 +336,323 @@ actor SharingRuntimeSelfTestRunner {
         guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url) else {
             throw DailySharingError.stateUnavailable
         }
+    }
+
+    /// The Share Extension may only leave a bounded, short-lived canonical
+    /// input. A host-issued binding change and an installation reset must
+    /// remove it before any room credential or network client is involved.
+    private static func testMomentInstallBoundHandoff() async throws {
+        let initial = try PairingInstallationGuard.bootstrap()
+        _ = try PairingInstallationGuard.resetLocalSharing(
+            expectedState: initial.state,
+            lifecycleToken: initial.lifecycleToken,
+            message: nil
+        )
+        let bootstrap = try PairingInstallationGuard.bootstrap()
+        let token = bootstrap.lifecycleToken
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        let acceptedAt = base.addingTimeInterval(-1)
+        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+
+        let firstCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: Data(repeating: 0x51, count: 32),
+                displayName: "家族のまど"
+            )],
+            validating: token,
+            now: base
+        )
+        guard let firstAdmission = firstCatalog.destinations.first else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        var staged: [MomentPendingCaptureRecord] = []
+        for offset in 0..<MomentShareHandoffStore.maximumPendingCaptureCount {
+            let record = try MomentShareHandoffStore.stageCapture(
+                admissionID: firstAdmission.id,
+                canonicalJPEG: preview.jpeg,
+                capturedAt: nil,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: acceptedAt,
+                now: base.addingTimeInterval(TimeInterval(offset))
+            )
+            guard MomentShareHandoffStore.captureHasRequiredProtection(record) else {
+                throw MomentSharingError.stateUnavailable
+            }
+            staged.append(record)
+        }
+        guard staged.count == MomentShareHandoffStore.maximumPendingCaptureCount else {
+            throw MomentSharingError.stateUnavailable
+        }
+        do {
+            _ = try MomentShareHandoffStore.stageCapture(
+                admissionID: firstAdmission.id,
+                canonicalJPEG: preview.jpeg,
+                capturedAt: nil,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: acceptedAt,
+                now: base.addingTimeInterval(4)
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard error == .outboxFull else { throw error }
+        }
+
+        // A different current installation/pairing binding keeps no capture
+        // admitted by the previous one.
+        let secondCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: Data(repeating: 0x52, count: 32),
+                displayName: "家族のまど"
+            )],
+            validating: token,
+            now: base.addingTimeInterval(10)
+        )
+        guard let secondAdmission = secondCatalog.destinations.first,
+              secondAdmission.id != firstAdmission.id,
+              try MomentShareHandoffStore.nextPendingCapture(
+                  admissionID: firstAdmission.id,
+                  validating: token,
+                  now: base.addingTimeInterval(10)
+              ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let pending = try MomentShareHandoffStore.stageCapture(
+            admissionID: secondAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(11)
+        )
+        guard let claim = try MomentShareHandoffStore.claimCapture(
+            pending,
+            validating: token,
+            now: base.addingTimeInterval(12)
+        ), try MomentShareHandoffStore.claimCapture(
+            pending,
+            validating: token,
+            now: base.addingTimeInterval(12)
+        ) == nil,
+        try MomentShareHandoffStore.nextPendingCapture(
+            admissionID: secondAdmission.id,
+            validating: token,
+            now: base.addingTimeInterval(13)
+        ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let recoveredAt = base.addingTimeInterval(
+            12 + MomentShareHandoffStore.claimRecoveryInterval
+        )
+        guard let recovered = try MomentShareHandoffStore.nextPendingCapture(
+            admissionID: secondAdmission.id,
+            validating: token,
+            now: recoveredAt
+        ), recovered.id == claim.record.id, recovered.phase == .pending else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        let expiredReadAt = base.addingTimeInterval(
+            MomentShareHandoffStore.captureLifetime + 12
+        )
+        _ = try MomentShareHandoffStore.activeAdmissions(now: expiredReadAt)
+        guard !MomentShareHandoffStore.captureHasRequiredProtection(recovered) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard try MomentShareHandoffStore.nextPendingCapture(
+            admissionID: secondAdmission.id,
+            validating: token,
+            now: expiredReadAt
+        ) == nil else { throw MomentSharingError.stateUnavailable }
+
+        let reconcileRecord = try MomentShareHandoffStore.stageCapture(
+            admissionID: secondAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(2 * 60 * 60)
+        )
+        let spaceID = opaque(0x61)
+        let memberID = opaque(0x62)
+        let context = MomentRequestContext(
+            spaceID: spaceID,
+            senderParticipantID: memberID,
+            senderDeviceID: memberID,
+            clientRequestID: reconcileRecord.clientRequestID,
+            clientMomentID: reconcileRecord.id,
+            kind: .live,
+            keyEpoch: 1
+        )
+        let payload = try MomentCrypto.prepare(
+            canonicalJPEG: reconcileRecord.canonicalJPEG,
+            capturedAt: reconcileRecord.capturedAt,
+            pixelWidth: reconcileRecord.pixelWidth,
+            pixelHeight: reconcileRecord.pixelHeight,
+            context: context,
+            spaceGenerationKey: Data(repeating: 0x63, count: 32)
+        )
+        let durable = try MomentSharingStateStore.enqueue(
+            payload: payload,
+            senderPolicyVersion: reconcileRecord.senderPolicyVersion,
+            senderPolicyAcceptedAt: reconcileRecord.senderPolicyAcceptedAt,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60)
+        )
+        guard let reconcileClaim = try MomentShareHandoffStore.claimCapture(
+            reconcileRecord,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 1)
+        ) else { throw MomentSharingError.stateUnavailable }
+        let reconciled = try MomentShareHandoffStore.promoteCapture(
+            reconcileClaim,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 2)
+        ) { record in
+            guard let existing = try MomentSharingStateStore
+                .existingOutboxWhileLifecycleLocked(
+                    clientMomentID: record.id,
+                    clientRequestID: record.clientRequestID,
+                    spaceID: spaceID,
+                    senderParticipantID: memberID,
+                    senderDeviceID: memberID,
+                    kind: record.kind,
+                    keyEpoch: 1,
+                    senderPolicyVersion: record.senderPolicyVersion,
+                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
+                ) else { throw MomentSharingError.stateUnavailable }
+            return existing
+        }
+        guard reconciled.id == durable.id,
+              try MomentShareHandoffStore.nextPendingCapture(
+                  admissionID: secondAdmission.id,
+                  validating: token,
+                  now: base.addingTimeInterval(2 * 60 * 60 + 2)
+              ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let blockedRecord = try MomentShareHandoffStore.stageCapture(
+            admissionID: secondAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(2 * 60 * 60 + 3)
+        )
+        guard let blockedClaim = try MomentShareHandoffStore.claimCapture(
+            blockedRecord,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 4)
+        ) else { throw MomentSharingError.stateUnavailable }
+        let reportOnlyUntil = base.addingTimeInterval(3 * 60 * 60)
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: reportOnlyUntil,
+            validating: token
+        )
+        do {
+            _ = try MomentShareHandoffStore.promoteCapture(
+                blockedClaim,
+                validating: token,
+                now: base.addingTimeInterval(2 * 60 * 60 + 6)
+            ) { record in
+                try MomentSharingStateStore.enqueueWhileLifecycleLocked(
+                    payload: try MomentCrypto.prepare(
+                        canonicalJPEG: record.canonicalJPEG,
+                        capturedAt: record.capturedAt,
+                        pixelWidth: record.pixelWidth,
+                        pixelHeight: record.pixelHeight,
+                        context: MomentRequestContext(
+                            spaceID: spaceID,
+                            senderParticipantID: memberID,
+                            senderDeviceID: memberID,
+                            clientRequestID: record.clientRequestID,
+                            clientMomentID: record.id,
+                            kind: record.kind,
+                            keyEpoch: 1
+                        ),
+                        spaceGenerationKey: Data(repeating: 0x63, count: 32)
+                    ),
+                    senderPolicyVersion: record.senderPolicyVersion,
+                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
+                )
+            }
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case let .reportOnly(until) = error,
+                  until == reportOnlyUntil
+            else { throw error }
+        }
+
+        // A rollback build with sharing disabled must still bootstrap the
+        // host installation boundary and physically remove any admission and
+        // staged canonical plaintext left by an earlier enabled build.
+        let disabledConfiguration = SharingAPIConfiguration(
+            isEnabled: false,
+            isMediaEnabled: false,
+            isShareExtensionHandoffEnabled: false,
+            isShareExtensionSendEnabled: false,
+            isReviewPreviewEnabled: true,
+            baseURL: nil,
+            moderationKeyID: nil,
+            moderationPublicKey: nil,
+            supportURL: nil,
+            communityStandardsURL: nil
+        )
+        let disabledCoordinator = MomentSharingCoordinator(
+            configuration: disabledConfiguration
+        )
+        await disabledCoordinator.synchronize(trigger: "runtime-disabled")
+        guard try MomentShareHandoffStore.activeAdmissions(
+            now: base.addingTimeInterval(2 * 60 * 60)
+        ).isEmpty,
+        SharedContainer.momentShareHandoffDirectoryURL.map({
+            !FileManager.default.fileExists(atPath: $0.path)
+        }) == true else { throw MomentSharingError.stateUnavailable }
+
+        // Recreate a local-only handoff to independently verify that the
+        // installation reset also removes the whole subtree.
+        let resetCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: Data(repeating: 0x53, count: 32),
+                displayName: "家族のまど"
+            )],
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 7)
+        )
+        guard let resetAdmission = resetCatalog.destinations.first else {
+            throw MomentSharingError.stateUnavailable
+        }
+        _ = try MomentShareHandoffStore.stageCapture(
+            admissionID: resetAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(2 * 60 * 60 + 8)
+        )
+        _ = try PairingInstallationGuard.resetLocalSharing(
+            expectedState: bootstrap.state,
+            lifecycleToken: token,
+            message: nil
+        )
+        guard try MomentShareHandoffStore.activeAdmissions(
+            now: base.addingTimeInterval(2 * 60 * 60)
+        ).isEmpty,
+        SharedContainer.momentShareHandoffDirectoryURL.map({
+            !FileManager.default.fileExists(atPath: $0.path)
+        }) == true else { throw MomentSharingError.stateUnavailable }
     }
 
     /// A report-only transition must be enforced by the shared store itself.

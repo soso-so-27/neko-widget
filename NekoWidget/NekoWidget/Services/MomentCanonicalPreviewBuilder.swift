@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ImageIO
 import UIKit
@@ -65,7 +66,7 @@ enum MomentCanonicalPreviewBuilder {
         guard !data.isEmpty,
               data.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28,
               expectedPlaintextSHA256.count == 32,
-              PairingCrypto.sha256(data) == expectedPlaintextSHA256,
+              Data(SHA256.hash(data: data)) == expectedPlaintextSHA256,
               (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(pixelWidth),
               (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(pixelHeight)
         else { throw MomentSharingError.invalidPayload }

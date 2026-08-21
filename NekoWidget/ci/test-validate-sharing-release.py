@@ -55,11 +55,15 @@ def info(
     endpoint: str = "",
     review_preview: object = "NO",
     share_extension_send: object = "NO",
+    share_extension_handoff: object | None = None,
 ) -> dict:
+    if share_extension_handoff is None:
+        share_extension_handoff = media
     return {
         "SharingFeatureEnabled": pairing,
         "SharingMediaEnabled": media,
         "SharingShareExtensionSendEnabled": share_extension_send,
+        "SharingShareExtensionHandoffEnabled": share_extension_handoff,
         "SharingReviewPreviewEnabled": review_preview,
         "SharingAPIBaseURL": endpoint,
         "NSPhotoLibraryUsageDescription": (
@@ -77,6 +81,14 @@ def info(
 def share_info_from(app_info: dict) -> dict:
     value = dict(app_info)
     value["SharingReviewPreviewEnabled"] = False
+    for key in (
+        "SharingAPIBaseURL",
+        "SharingModerationKeyID",
+        "SharingModerationPublicKey",
+        "SharingSupportURL",
+        "SharingCommunityStandardsURL",
+    ):
+        value.pop(key, None)
     return value
 
 
@@ -87,12 +99,14 @@ class SharingReleasePreflightTests(unittest.TestCase):
         privacy_value: dict,
         export_reviewed: str = "YES",
         share_info_value: dict | None = None,
+        share_privacy_value: dict | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             info_path = root / "Info.plist"
             share_info_path = root / "ShareInfo.plist"
             privacy_path = root / "PrivacyInfo.xcprivacy"
+            share_privacy_path = root / "SharePrivacyInfo.xcprivacy"
             with info_path.open("wb") as stream:
                 plistlib.dump(info_value, stream)
             with share_info_path.open("wb") as stream:
@@ -102,6 +116,8 @@ class SharingReleasePreflightTests(unittest.TestCase):
                 )
             with privacy_path.open("wb") as stream:
                 plistlib.dump(privacy_value, stream)
+            with share_privacy_path.open("wb") as stream:
+                plistlib.dump(share_privacy_value or privacy(), stream)
             return subprocess.run(
                 [
                     sys.executable,
@@ -112,6 +128,8 @@ class SharingReleasePreflightTests(unittest.TestCase):
                     str(share_info_path),
                     "--privacy-manifest",
                     str(privacy_path),
+                    "--share-privacy-manifest",
+                    str(share_privacy_path),
                     "--export-reviewed",
                     export_reviewed,
                 ],
@@ -201,8 +219,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             info("YES", "YES", ENDPOINT),
             privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
         )
-        self.assertNotEqual(complete.returncode, 0)
-        self.assertIn("host handoff", complete.stderr)
+        self.assertEqual(complete.returncode, 0, complete.stderr)
 
     def test_media_requires_safety_configuration(self) -> None:
         expected_privacy = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
@@ -242,7 +259,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         app = info("NO", "NO", share_extension_send="YES")
         result = self.run_preflight(app, privacy(), "NO")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("install-bound host authorization", result.stderr)
+        self.assertIn("permanently blocked", result.stderr)
 
         app = info("NO", "NO")
         share = share_info_from(app)
@@ -269,7 +286,33 @@ class SharingReleasePreflightTests(unittest.TestCase):
         share["SharingAPIBaseURL"] = ENDPOINT
         result = self.run_preflight(app, privacy(), "NO", share)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("SharingAPIBaseURL does not match", result.stderr)
+        self.assertIn("SharingAPIBaseURL must be absent", result.stderr)
+
+    def test_media_requires_installation_bound_handoff(self) -> None:
+        app = info(
+            "YES",
+            "YES",
+            ENDPOINT,
+            share_extension_handoff="NO",
+        )
+        result = self.run_preflight(
+            app,
+            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires the installation-bound", result.stderr)
+
+        app = info("NO", "NO", share_extension_handoff="YES")
+        result = self.run_preflight(app, privacy(), "NO")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires both", result.stderr)
+
+        app = info("NO", "NO")
+        share = share_info_from(app)
+        share["SharingShareExtensionHandoffEnabled"] = "YES"
+        result = self.run_preflight(app, privacy(), "NO", share)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HandoffEnabled does not match", result.stderr)
 
     def test_app_group_file_metadata_requires_declared_reason(self) -> None:
         value = info("NO", "NO")

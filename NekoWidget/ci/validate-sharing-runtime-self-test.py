@@ -19,6 +19,7 @@ REQUIRED_CASES = {
     "moment-report-only-terminal-gate",
     "moment-empty-cursor-normalization",
     "moment-expired-delivery-advances",
+    "moment-install-bound-handoff",
     "moment-outbox-bounds-and-expiry",
     "moment-report-outbox-bounds-and-recovery",
     "normalizer-orientation-scale-parity",

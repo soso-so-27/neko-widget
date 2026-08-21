@@ -172,7 +172,7 @@ struct HomeView: View {
 
                 Label(
                     SharingAPIConfiguration.current.isMediaAvailable
-                        ? "いまの一枚は、写真アプリの共有から届けます"
+                        ? "今の一枚は、写真アプリで1枚を選び、アプリを開いて届けます"
                         : "今後は、写真アプリの共有から1枚を届けます",
                     systemImage: "square.and.arrow.up"
                 )

@@ -1,28 +1,24 @@
-import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
 final class ShareViewController: UIViewController {
-    private static let maximumSourceBytes = 64 * 1_024 * 1_024
+    private let ingressService = MomentShareIngressService()
     private let imageView = UIImageView()
     private let titleLabel = UILabel()
     private let detailLabel = UILabel()
+    private let destinationLabel = UILabel()
     private let statusLabel = UILabel()
-    private let sendButton = UIButton(type: .system)
+    private let continueButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
     private let spinner = UIActivityIndicatorView(style: .medium)
-    private var copiedSourceURL: URL?
-    private var isSending = false
+    private var preparedPhoto: MomentShareIngressPhoto?
+    private var selectedAdmission: MomentShareDestinationAdmission?
+    private var isStaging = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        try? MomentPlaintextTemporaryStore.pruneStaleFiles()
         configureView()
         Task { await loadSelectedImage() }
-    }
-
-    deinit {
-        if let copiedSourceURL { try? FileManager.default.removeItem(at: copiedSourceURL) }
     }
 
     private func configureView() {
@@ -34,33 +30,46 @@ final class ShareViewController: UIViewController {
         titleLabel.font = .preferredFont(forTextStyle: .title2)
         titleLabel.adjustsFontForContentSizeCategory = true
 
-        detailLabel.text = "家族のまどへ、この1枚だけを届けます。最大2,048pxへ縮小し、位置情報を除いて暗号化します。"
+        detailLabel.text = "この1枚を家族のまどへ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 0
 
+        destinationLabel.text = "届け先　家族のまど"
+        destinationLabel.font = .preferredFont(forTextStyle: .subheadline)
+        destinationLabel.textColor = .label
+        destinationLabel.adjustsFontForContentSizeCategory = true
+        destinationLabel.numberOfLines = 0
+        destinationLabel.accessibilityLabel = "届け先、家族のまど"
+        destinationLabel.accessibilityIdentifier = "moment-share-destination"
+
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .secondaryLabel
         statusLabel.numberOfLines = 0
-        statusLabel.text = "写真を安全に読み込んでいます…"
+        statusLabel.text = "写真を確認しています…"
+        statusLabel.accessibilityIdentifier = "moment-share-status"
 
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .secondarySystemBackground
         imageView.layer.cornerRadius = 16
         imageView.clipsToBounds = true
+        imageView.isAccessibilityElement = true
+        imageView.accessibilityLabel = "選んだ写真"
 
-        sendButton.configuration = .filled()
-        sendButton.configuration?.title = "この1枚を届ける"
-        sendButton.configuration?.image = UIImage(systemName: "paperplane.fill")
-        sendButton.configuration?.imagePadding = 8
-        sendButton.isEnabled = false
-        sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
+        continueButton.configuration = .filled()
+        continueButton.configuration?.title = "この1枚で続ける"
+        continueButton.configuration?.image = UIImage(systemName: "arrow.right.circle.fill")
+        continueButton.configuration?.imagePadding = 8
+        continueButton.isEnabled = false
+        continueButton.addTarget(self, action: #selector(continueTapped), for: .touchUpInside)
+        continueButton.accessibilityIdentifier = "moment-share-continue"
 
         cancelButton.configuration = .plain()
         cancelButton.configuration?.title = "キャンセル"
         cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+        cancelButton.accessibilityIdentifier = "moment-share-cancel"
 
-        let buttonRow = UIStackView(arrangedSubviews: [cancelButton, sendButton])
+        let buttonRow = UIStackView(arrangedSubviews: [cancelButton, continueButton])
         buttonRow.axis = .horizontal
         buttonRow.spacing = 12
         buttonRow.distribution = .fillEqually
@@ -73,6 +82,7 @@ final class ShareViewController: UIViewController {
         let stack = UIStackView(arrangedSubviews: [
             titleLabel,
             detailLabel,
+            destinationLabel,
             imageView,
             statusRow,
             buttonRow
@@ -96,12 +106,13 @@ final class ShareViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
             stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40),
             imageView.heightAnchor.constraint(equalToConstant: 260),
-            sendButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48)
+            continueButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48)
         ])
     }
 
     @objc private func cancelTapped() {
-        removeCopiedSource()
+        preparedPhoto = nil
+        selectedAdmission = nil
         extensionContext?.cancelRequest(
             withError: NSError(
                 domain: NSCocoaErrorDomain,
@@ -110,81 +121,118 @@ final class ShareViewController: UIViewController {
         )
     }
 
-    @objc private func sendTapped() {
-        guard !isSending, let sourceURL = copiedSourceURL else { return }
-        isSending = true
-        sendButton.isEnabled = false
+    @objc private func continueTapped() {
+        guard !isStaging, let preparedPhoto, let selectedAdmission else { return }
+        isStaging = true
+        continueButton.isEnabled = false
         cancelButton.isEnabled = false
         spinner.startAnimating()
-        statusLabel.text = "安全確認をして暗号化しています…"
+        statusLabel.textColor = .secondaryLabel
+        statusLabel.text = "送信準備として一時保存しています…"
         Task {
-            var didEnqueue = false
             do {
-                let item = try await MomentSharePreparationService().prepareAndEnqueue(
-                    sourceURL: sourceURL,
+                try await ingressService.stage(
+                    preparedPhoto,
+                    admissionID: selectedAdmission.id,
                     senderPolicyAcceptedAt: .now
                 )
-                didEnqueue = true
-                statusLabel.text = "家族のまどへ届けています…"
-                let outcome = try await MomentShareExtensionSender().send(itemID: item.id)
-                switch outcome {
-                case .delivered:
-                    statusLabel.text = "家族のまどへ届けました。"
-                case .queued:
-                    // The protected outbox is the source of truth. A host-app
-                    // foreground sync resumes the exact reservation/upload/
-                    // commit state without creating a duplicate moment.
-                    statusLabel.text = "送信待ちに保存しました。アプリを開くと再試行します。"
-                }
+                self.preparedPhoto = nil
+                self.selectedAdmission = nil
                 spinner.stopAnimating()
-                try? await Task.sleep(for: .milliseconds(650))
-                removeCopiedSource()
+                statusLabel.textColor = .systemGreen
+                statusLabel.text = "保存しました。次に「ねこのまど」アプリを開いてください。"
+                UIAccessibility.post(notification: .announcement, argument: statusLabel.text)
+                try? await Task.sleep(for: .milliseconds(900))
                 extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
             } catch {
                 spinner.stopAnimating()
                 statusLabel.textColor = .systemOrange
-                statusLabel.text = error.localizedDescription
-                // Once an outbox record exists, a terminal server response
-                // must not let repeated taps create new logical moments.
-                sendButton.isEnabled = !didEnqueue
+                if let sharingError = error as? MomentSharingError {
+                    switch sharingError {
+                    case .notPaired:
+                        statusLabel.text = "届け先を確認できません。アプリを開いて家族のまどを確認してください。"
+                        selectedAdmission = nil
+                    case .outboxFull:
+                        statusLabel.text = "送信準備中の写真が3枚あります。アプリを開いてから、もう一度試してください。"
+                        selectedAdmission = nil
+                    case .stateUnavailable:
+                        statusLabel.text = "この写真を一時保存できませんでした。空き容量を確認して、もう一度お試しください。"
+                        continueButton.isEnabled = true
+                    case .invalidPayload, .payloadTooLarge:
+                        statusLabel.text = "この写真を一時保存できませんでした。写真を選び直してください。"
+                    default:
+                        statusLabel.text = sharingError.localizedDescription
+                        continueButton.isEnabled = true
+                    }
+                } else {
+                    statusLabel.text = error.localizedDescription
+                    continueButton.isEnabled = true
+                }
                 cancelButton.isEnabled = true
-                isSending = false
+                isStaging = false
             }
         }
     }
 
     @MainActor
     private func loadSelectedImage() async {
+        let provider: NSItemProvider
         do {
-            let provider = try selectedImageProvider()
-            let copied = try await copyFileRepresentation(from: provider)
-            copiedSourceURL = copied
-            imageView.image = try makeThumbnail(from: copied)
-            statusLabel.text = "写真は自動送信されません。上の1枚と届け先を確認してください。"
-            let configuration = SharingAPIConfiguration.current
-            let pairing = try? PairingStateStore.load()
-            let sharingState = try? MomentSharingStateStore.load()
-            let isReady = configuration.isShareExtensionMediaAvailable
-                && sharingState != nil
-                && pairing?.phase == .paired
-                && pairing?.mediaSharingConsentVersion
-                    == PairingMediaSharingConsent.currentVersion
-                && pairing?.mediaSharingConsentAcceptedAt != nil
-                && sharingState?.reportOnlyUntil == nil
-            sendButton.isEnabled = isReady
-            if !configuration.isShareExtensionMediaAvailable {
-                statusLabel.textColor = .systemOrange
-                statusLabel.text = "このビルドでは画面だけ確認できます。今の一枚はまだ送信されません。"
-            } else if sharingState?.reportOnlyUntil != nil {
-                statusLabel.textColor = .systemOrange
-                statusLabel.text = "この家族のまどは終了しているため、新しい写真は届けられません。"
-            } else if !isReady {
-                statusLabel.textColor = .systemOrange
-                statusLabel.text = "先に「ねこのまど」アプリで家族のまどを設定してください。"
-            }
+            provider = try selectedImageProvider()
         } catch {
             statusLabel.textColor = .systemOrange
-            statusLabel.text = "1枚の写真を選び直してください。"
+            statusLabel.text = "写真を1枚だけ選び直してください。"
+            return
+        }
+
+        let preparedPhoto: MomentShareIngressPhoto
+        do {
+            preparedPhoto = try await ingressService.prepare(from: provider)
+            try Task.checkCancellation()
+            self.preparedPhoto = preparedPhoto
+            imageView.image = try preparedPhoto.previewImage()
+        } catch is CancellationError {
+            return
+        } catch {
+            statusLabel.textColor = .systemOrange
+            if let sharingError = error as? MomentSharingError,
+               sharingError == .payloadTooLarge {
+                statusLabel.text = "画質を保ったまま準備できませんでした。別の写真を選んでください。"
+            } else {
+                statusLabel.text = "この写真を準備できませんでした。別の写真を1枚選んでください。"
+            }
+            return
+        }
+
+        let configuration = SharingAPIConfiguration.current
+        guard configuration.isShareExtensionHandoffAvailable else {
+            statusLabel.textColor = .systemOrange
+            statusLabel.text = "このビルドでは画面だけ確認できます。写真は保存も送信もしません。"
+            return
+        }
+
+        do {
+            let admissions = try await ingressService.activeAdmissions()
+            try Task.checkCancellation()
+            if admissions.count == 1, let admission = admissions.first {
+                selectedAdmission = admission
+                destinationLabel.text = "届け先　\(admission.displayName)"
+                destinationLabel.accessibilityLabel = "届け先、\(admission.displayName)"
+                statusLabel.textColor = .secondaryLabel
+                statusLabel.text = "この端末に一時保存します。保存後にアプリを開くと、安全確認して届けます。"
+                continueButton.isEnabled = true
+            } else if admissions.isEmpty {
+                statusLabel.textColor = .systemOrange
+                statusLabel.text = "先に「ねこのまど」アプリで家族のまどを設定してください。"
+            } else {
+                statusLabel.textColor = .systemOrange
+                statusLabel.text = "届け先をアプリで確認してから、もう一度選び直してください。"
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            statusLabel.textColor = .systemOrange
+            statusLabel.text = "家族のまどを確認できません。アプリを開いてから、もう一度お試しください。"
         }
     }
 
@@ -196,61 +244,5 @@ final class ShareViewController: UIViewController {
             throw MomentSharingError.invalidPayload
         }
         return provider
-    }
-
-    private func copyFileRepresentation(from provider: NSItemProvider) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) {
-                source, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let source else {
-                    continuation.resume(throwing: MomentSharingError.invalidPayload)
-                    return
-                }
-                do {
-                    let values = try source.resourceValues(forKeys: [.fileSizeKey])
-                    guard let byteCount = values.fileSize,
-                          (1...Self.maximumSourceBytes).contains(byteCount)
-                    else { throw MomentSharingError.invalidPayload }
-                    let directory = MomentPlaintextTemporaryStore.sourceDirectory
-                    let destination = directory.appendingPathComponent(
-                        "source-\(UUID().uuidString).image",
-                        isDirectory: false
-                    )
-                    let data = try Data(contentsOf: source, options: [.mappedIfSafe])
-                    guard data.count == byteCount else {
-                        throw MomentSharingError.invalidPayload
-                    }
-                    try SharingSecureFile.write(data, to: destination)
-                    continuation.resume(returning: destination)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
-    private func removeCopiedSource() {
-        guard let copiedSourceURL else { return }
-        try? FileManager.default.removeItem(at: copiedSourceURL)
-        self.copiedSourceURL = nil
-    }
-
-    private func makeThumbnail(from url: URL) throws -> UIImage {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(
-                source,
-                0,
-                [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 1_024
-                ] as CFDictionary
-              )
-        else { throw MomentSharingError.invalidPayload }
-        return UIImage(cgImage: image)
     }
 }

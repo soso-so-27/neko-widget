@@ -22,24 +22,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>SharingAPIBaseURL</key>
-	<string>$(SHARING_API_BASE_URL)</string>
 	<key>SharingFeatureEnabled</key>
 	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>SharingMediaEnabled</key>
 	<string>$(SHARING_MEDIA_ENABLED)</string>
+	<key>SharingShareExtensionHandoffEnabled</key>
+	<string>$(SHARING_SHARE_EXTENSION_HANDOFF_ENABLED)</string>
 	<key>SharingShareExtensionSendEnabled</key>
 	<string>$(SHARING_SHARE_EXTENSION_SEND_ENABLED)</string>
 	<key>SharingReviewPreviewEnabled</key>
 	<false/>
-	<key>SharingModerationKeyID</key>
-	<string>$(SHARING_MODERATION_KEY_ID)</string>
-	<key>SharingModerationPublicKey</key>
-	<string>$(SHARING_MODERATION_PUBLIC_KEY)</string>
-	<key>SharingSupportURL</key>
-	<string>$(SHARING_SUPPORT_URL)</string>
-	<key>SharingCommunityStandardsURL</key>
-	<string>$(SHARING_COMMUNITY_STANDARDS_URL)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

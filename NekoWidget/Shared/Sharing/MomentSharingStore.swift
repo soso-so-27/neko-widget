@@ -283,12 +283,34 @@ enum MomentSharingStateStore {
         validating lifecycleToken: SharingLifecycleGate.Token? = nil,
         now: Date = .now
     ) throws -> MomentOutboxItem {
+        return try withLifecycleLock(validating: lifecycleToken) {
+            try enqueueWhileLifecycleLocked(
+                payload: payload,
+                senderPolicyVersion: senderPolicyVersion,
+                senderPolicyAcceptedAt: senderPolicyAcceptedAt,
+                now: now
+            )
+        }
+    }
+
+    /// Promotes a host-validated Share Extension handoff while the caller
+    /// already owns the lifecycle flock through `promoteCapture`. This method
+    /// must never be called by the Share Extension or outside that critical
+    /// section; acquiring the flock again here would deadlock and separating
+    /// the two writes would let a concurrent cancel/revoke race the enqueue.
+    static func enqueueWhileLifecycleLocked(
+        payload: MomentPreparedPayload,
+        senderPolicyVersion: Int,
+        senderPolicyAcceptedAt: Date,
+        now: Date = .now
+    ) throws -> MomentOutboxItem {
         let payload = try payload.validated()
         let item = try MomentOutboxItem(
             id: payload.context.clientMomentID,
             context: payload.context,
             phase: .prepared,
-            ciphertextFileName: "\(payload.context.clientMomentID.uuidString.lowercased()).ciphertext",
+            ciphertextFileName:
+                "\(payload.context.clientMomentID.uuidString.lowercased()).ciphertext",
             ciphertextSize: payload.ciphertext.count,
             ciphertextSHA256: payload.ciphertextSHA256,
             moderationVersion: payload.moderationVersion,
@@ -298,49 +320,107 @@ enum MomentSharingStateStore {
             createdAt: now,
             updatedAt: now
         ).validated()
-
-        try withLifecycleLock(validating: lifecycleToken) {
-            guard !SharingLifecycleGate.isCleanupRequired,
-                  let directory = SharedContainer.momentSharingCiphertextDirectoryURL
+        guard !SharingLifecycleGate.isCleanupRequired,
+              let directory = SharedContainer.momentSharingCiphertextDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let url = directory.appendingPathComponent(item.ciphertextFileName, isDirectory: false)
+        var state = try loadWhileLocked()
+        // `reportOnlyUntil` is a persisted terminal gate, not just UI state.
+        // Recheck it inside the same lock that validates the handoff claim.
+        if let reportOnlyUntil = state.reportOnlyUntil {
+            throw MomentSharingError.reportOnly(until: reportOnlyUntil)
+        }
+        if let existing = state.outbox.first(where: { $0.id == item.id }) {
+            guard existing.context == item.context,
+                  existing.ciphertextSHA256 == item.ciphertextSHA256,
+                  existing.senderPolicyVersion == item.senderPolicyVersion,
+                  samePersistedSecond(
+                      existing.senderPolicyAcceptedAt,
+                      item.senderPolicyAcceptedAt
+                  )
             else { throw MomentSharingError.stateUnavailable }
-            let url = directory.appendingPathComponent(item.ciphertextFileName, isDirectory: false)
-            var state = try loadWhileLocked()
-            // `reportOnlyUntil` is a persisted terminal gate, not just UI
-            // state. A Share Extension may have started preparing an image
-            // before another process learned that the peer blocked/revoked
-            // this room. Rejecting the write here prevents that older async
-            // work from recreating a normal-send outbox after report-only mode
-            // has already removed it.
-            if let reportOnlyUntil = state.reportOnlyUntil {
-                throw MomentSharingError.reportOnly(until: reportOnlyUntil)
-            }
-            if let existing = state.outbox.first(where: { $0.id == item.id }) {
-                guard existing.ciphertextSHA256 == item.ciphertextSHA256 else {
-                    throw MomentSharingError.stateUnavailable
-                }
-                return
-            }
-            let pending = state.outbox.filter {
-                $0.phase == .prepared || $0.phase == .reserved
-                    || $0.phase == .uploaded || $0.phase == .committing
-            }
-            let pendingBytes = pending.reduce(0) { partial, value in
-                partial + value.ciphertextSize
-            }
-            guard pending.count < maximumPendingOutboxCount,
-                  pendingBytes <= maximumPendingOutboxBytes - item.ciphertextSize
-            else { throw MomentSharingError.outboxFull }
-            try SharingSecureFile.write(payload.ciphertext, to: url)
-            do {
-                state.outbox.append(item)
-                state.storageRevision += 1
-                try writeWhileLocked(try state.validated())
-            } catch {
-                try? FileManager.default.removeItem(at: url)
-                throw error
-            }
+            return existing
+        }
+        let pending = state.outbox.filter {
+            $0.phase == .prepared || $0.phase == .reserved
+                || $0.phase == .uploaded || $0.phase == .committing
+        }
+        let pendingBytes = pending.reduce(0) { partial, value in
+            partial + value.ciphertextSize
+        }
+        guard pending.count < maximumPendingOutboxCount,
+              pendingBytes <= maximumPendingOutboxBytes - item.ciphertextSize
+        else { throw MomentSharingError.outboxFull }
+        try SharingSecureFile.write(payload.ciphertext, to: url)
+        do {
+            state.outbox.append(item)
+            state.storageRevision += 1
+            try writeWhileLocked(try state.validated())
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
         }
         return item
+    }
+
+    /// Exact, local-only reconciliation for a crash after an outbox became
+    /// durable but before the handoff JPEG was removed. The caller already
+    /// holds the lifecycle flock through `promoteCapture`.
+    static func existingOutboxWhileLifecycleLocked(
+        clientMomentID: UUID,
+        clientRequestID: UUID,
+        spaceID: String,
+        senderParticipantID: String,
+        senderDeviceID: String,
+        kind: MomentKind,
+        keyEpoch: Int,
+        senderPolicyVersion: Int,
+        senderPolicyAcceptedAt: Date
+    ) throws -> MomentOutboxItem? {
+        let state = try loadWhileLocked()
+        if let reportOnlyUntil = state.reportOnlyUntil {
+            throw MomentSharingError.reportOnly(until: reportOnlyUntil)
+        }
+        guard let existing = state.outbox.first(where: { $0.id == clientMomentID }) else {
+            return nil
+        }
+        guard existing.context.clientMomentID == clientMomentID,
+              existing.context.clientRequestID == clientRequestID,
+              existing.context.spaceID == spaceID,
+              existing.context.senderParticipantID == senderParticipantID,
+              existing.context.senderDeviceID == senderDeviceID,
+              existing.context.kind == kind,
+              existing.context.keyEpoch == keyEpoch,
+              existing.senderPolicyVersion == senderPolicyVersion,
+              samePersistedSecond(
+                  existing.senderPolicyAcceptedAt,
+                  senderPolicyAcceptedAt
+              )
+        else { throw MomentSharingError.stateUnavailable }
+        if existing.phase != .committed && existing.phase != .failed {
+            guard let directory = SharedContainer.momentSharingCiphertextDirectoryURL else {
+                throw MomentSharingError.stateUnavailable
+            }
+            guard let ciphertext = try? Data(
+                contentsOf: directory.appendingPathComponent(
+                    existing.ciphertextFileName,
+                    isDirectory: false
+                )
+            ), ciphertext.count == existing.ciphertextSize,
+                  PairingCrypto.sha256(ciphertext) == existing.ciphertextSHA256
+            else { throw MomentSharingError.stateUnavailable }
+        }
+        return existing
+    }
+
+    /// Moment outbox JSON uses Foundation's ISO-8601 strategy, which may
+    /// round-trip at whole-second precision, while a binary handoff plist can
+    /// retain subsecond precision. IDs/context remain the authority; normalize
+    /// only the local consent timestamp so crash reconciliation does not treat
+    /// that encoding difference as a different logical send.
+    private static func samePersistedSecond(_ lhs: Date, _ rhs: Date) -> Bool {
+        Int64(lhs.timeIntervalSince1970.rounded(.down))
+            == Int64(rhs.timeIntervalSince1970.rounded(.down))
     }
 
     static func readCiphertext(for item: MomentOutboxItem) throws -> Data {

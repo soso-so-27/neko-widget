@@ -196,7 +196,7 @@ struct FamilyWindowView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("今の一枚を届ける", systemImage: "paperplane.fill")
                 .font(.headline)
-            Text("カメラや写真アプリで1枚を開き、共有ボタンから「ねこのまど」を選びます。アプリ内に撮影ボタンや自動送信は置きません。")
+            Text("カメラや写真アプリで1枚を開き、共有先から「ねこのまど」を選びます。一時保存したあと、このアプリを開くと安全確認して届けます。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Label("1日5枚まで・最大2,048px・原本と位置情報は送信しません", systemImage: "lock.shield")

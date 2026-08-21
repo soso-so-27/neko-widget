@@ -318,6 +318,8 @@ jobs:
                   raise SystemExit(f"{label} profile does not contain the App Group.")
               if requires_safety_analysis and safety_analysis != ["analysis"]:
                   raise SystemExit(f"{label} profile does not contain Sensitive Content Analysis entitlement.")
+              if not requires_safety_analysis and safety_analysis:
+                  raise SystemExit(f"{label} profile unexpectedly contains Sensitive Content Analysis entitlement.")
               if entitlements.get("get-task-allow") is not False:
                   raise SystemExit(f"{label} profile is not a distribution profile (get-task-allow).")
               if profile.get("ProvisionsAllDevices") is True or profile.get("ProvisionedDevices"):
@@ -339,7 +341,7 @@ jobs:
 
           validate_profile(app_path, app_id, "App", requires_safety_analysis=True)
           validate_profile(widget_path, widget_id, "Widget")
-          validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=True)
+          validate_profile(share_path, share_id, "Share Extension", requires_safety_analysis=False)
           PY
 
           app_profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$app_profile_plist")"
@@ -445,11 +447,11 @@ jobs:
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
           share_path="$app_path/PlugIns/NekoWidgetShareExtension.appex"
           test -f "$share_path/PrivacyInfo.xcprivacy"
-          cmp "$app_path/PrivacyInfo.xcprivacy" "$share_path/PrivacyInfo.xcprivacy"
           python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
             --info-plist "$app_path/Info.plist" \
             --share-info-plist "$share_path/Info.plist" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
+            --share-privacy-manifest "$share_path/PrivacyInfo.xcprivacy" \
             --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}"
 
       - name: Verify archive signatures and App Group entitlements
@@ -514,6 +516,7 @@ jobs:
           widget_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$widget_entitlements" 2>/dev/null || true)"
           share_signed_groups="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups' "$share_entitlements" 2>/dev/null || true)"
           app_safety_entitlement="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.sensitivecontentanalysis.client:0' "$app_entitlements" 2>/dev/null || true)"
+          widget_safety_entitlement="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.sensitivecontentanalysis.client:0' "$widget_entitlements" 2>/dev/null || true)"
           share_safety_entitlement="$(/usr/libexec/PlistBuddy -c 'Print :com.apple.developer.sensitivecontentanalysis.client:0' "$share_entitlements" 2>/dev/null || true)"
 
           contains_exact_line() {
@@ -531,7 +534,8 @@ jobs:
           contains_exact_line "$APP_GROUP_ID" <<< "$widget_signed_groups"
           contains_exact_line "$APP_GROUP_ID" <<< "$share_signed_groups"
           [[ "$app_safety_entitlement" == "analysis" ]]
-          [[ "$share_safety_entitlement" == "analysis" ]]
+          [[ -z "$widget_safety_entitlement" ]]
+          [[ -z "$share_safety_entitlement" ]]
 
       - name: Generate export options
         shell: bash

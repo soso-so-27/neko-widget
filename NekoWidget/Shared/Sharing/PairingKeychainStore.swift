@@ -2,7 +2,12 @@ import Foundation
 import Security
 
 enum PairingKeychainStore {
-    private static let service = "jp.nekowidget.sharing.credentials.v1"
+    /// Room credentials are deliberately stored in the containing app's
+    /// default Keychain access group. An App Group is required for the
+    /// non-secret handoff files, but it must not also grant the Share
+    /// Extension access to the room key.
+    private static let service = "jp.nekowidget.sharing.credentials.v2.host"
+    private static let legacySharedService = "jp.nekowidget.sharing.credentials.v1"
 
     static func save(
         _ credential: PairingCredential,
@@ -15,11 +20,18 @@ enum PairingKeychainStore {
 
     static func saveWhileLifecycleLocked(_ credential: PairingCredential) throws {
         let credential = try credential.validated()
+        // Do not leave a second copy in the former App Group-backed service.
+        // We intentionally never migrate or load that copy: an existing v1
+        // state is reset by PairingInstallationGuard and must pair again.
+        try deleteLegacySharedCredential(account: credential.account)
         let data = try JSONEncoder().encode(credential)
         let query = itemQuery(account: credential.account)
         let attributes: [CFString: Any] = [
             kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            // Moment networking is host-foreground only. Keeping the room key
+            // unavailable while the device is locked is stricter than the old
+            // Widget-oriented AfterFirstUnlock policy.
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
 
         let status = SecItemAdd(
@@ -73,21 +85,24 @@ enum PairingKeychainStore {
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw PairingError.keychainUnavailable(status)
         }
+        try deleteLegacySharedCredential(account: account)
     }
 
-    /// Only credentials owned by this app's sharing service and App Group are
-    /// deleted. No broad Keychain query is ever issued.
+    /// Only credentials owned by this app's two exact sharing services are
+    /// deleted. No broad Keychain query is ever issued. The legacy query is
+    /// deletion-only; stale App Group credentials are never loaded or copied
+    /// into the host-only service.
     static func deleteAllSharingCredentials() throws {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
-            kSecAttrAccessGroup: SharedContainer.appGroupIdentifier,
             kSecAttrSynchronizable: kCFBooleanFalse as Any
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw PairingError.keychainUnavailable(status)
         }
+        try deleteAllLegacySharedCredentials()
     }
 
     private static func itemQuery(account: String) -> [CFString: Any] {
@@ -95,12 +110,41 @@ enum PairingKeychainStore {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
-            // Apple permits an existing App Group identifier to be used as a
-            // Keychain access group. This avoids a second provisioning
-            // capability and gives the app and Widget extension the same key.
+            kSecAttrSynchronizable: kCFBooleanFalse as Any
+        ]
+    }
+
+    private static func deleteLegacySharedCredential(account: String) throws {
+        var query = legacySharedQuery()
+        query[kSecAttrAccount] = account
+        try deleteLegacy(query)
+    }
+
+    private static func deleteAllLegacySharedCredentials() throws {
+        try deleteLegacy(legacySharedQuery())
+    }
+
+    private static func legacySharedQuery() -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: legacySharedService,
             kSecAttrAccessGroup: SharedContainer.appGroupIdentifier,
             kSecAttrSynchronizable: kCFBooleanFalse as Any
         ]
+    }
+
+    private static func deleteLegacy(_ query: [CFString: Any]) throws {
+        let status = SecItemDelete(query as CFDictionary)
+        // A profile that never granted the former group cannot see such an
+        // item, which is already the desired isolation boundary. Any other
+        // failure leaves lifecycle cleanup fail-closed instead of silently
+        // retaining an accessible legacy room credential.
+        switch status {
+        case errSecSuccess, errSecItemNotFound, errSecMissingEntitlement:
+            return
+        default:
+            throw PairingError.keychainUnavailable(status)
+        }
     }
 }
 

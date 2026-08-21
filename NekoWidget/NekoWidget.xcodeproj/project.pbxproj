@@ -74,10 +74,13 @@
 		100000000000000000000167 /* CatIdentityExperimentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000024E /* CatIdentityExperimentView.swift */; };
 		100000000000000000000168 /* MomentSharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A3 /* MomentSharingCore.swift */; };
 		100000000000000000000169 /* MomentSharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A4 /* MomentSharingStore.swift */; };
+		100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A5 /* MomentShareHandoffStore.swift */; };
+		100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A6 /* SharingAPIConfiguration.swift */; };
 		10000000000000000000016A /* MomentCanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */; };
 		10000000000000000000016B /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
 		10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000252 /* MomentSharingAPIClient.swift */; };
 		10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000253 /* MomentSharingCoordinator.swift */; };
+		100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000256 /* MomentShareHandoffProcessor.swift */; };
 		10000000000000000000016E /* MomentSharingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000254 /* MomentSharingViewModel.swift */; };
 		10000000000000000000016F /* FamilyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000255 /* FamilyWindowView.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
@@ -101,9 +104,6 @@
 		200000000000000000000005 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		200000000000000000000006 /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		200000000000000000000007 /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
-		200000000000000000000019 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
-		20000000000000000000001A /* PairingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A1 /* PairingKeychainStore.swift */; };
-		20000000000000000000001C /* DailySharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A2 /* DailySharingCore.swift */; };
 		200000000000000000000010 /* NekoWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000310 /* NekoWidget.swift */; };
 		200000000000000000000011 /* NekoWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000311 /* NekoWidgetBundle.swift */; };
 		200000000000000000000012 /* NekoWidgetEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000312 /* NekoWidgetEntry.swift */; };
@@ -135,23 +135,18 @@
 		600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */; };
 		700000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		700000000000000000000002 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
-		700000000000000000000003 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
-		700000000000000000000004 /* PairingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A1 /* PairingKeychainStore.swift */; };
 		700000000000000000000005 /* MomentSharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A3 /* MomentSharingCore.swift */; };
-		700000000000000000000006 /* MomentSharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A4 /* MomentSharingStore.swift */; };
-		700000000000000000000007 /* PairingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000021B /* PairingAPIClient.swift */; };
 		700000000000000000000008 /* MomentCanonicalPreviewBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000250 /* MomentCanonicalPreviewBuilder.swift */; };
-		700000000000000000000009 /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
-		70000000000000000000000A /* MomentSharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000252 /* MomentSharingAPIClient.swift */; };
-		70000000000000000000000B /* MomentShareExtensionSender.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000351 /* MomentShareExtensionSender.swift */; };
 		70000000000000000000000C /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000350 /* ShareViewController.swift */; };
 		70000000000000000000000D /* WidgetManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010A /* WidgetManifest.swift */; };
 		70000000000000000000000E /* WidgetRenderPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000110 /* WidgetRenderPlan.swift */; };
+		70000000000000000000000F /* MomentShareHandoffStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A5 /* MomentShareHandoffStore.swift */; };
+		700000000000000000000010 /* SharingAPIConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A6 /* SharingAPIConfiguration.swift */; };
+		700000000000000000000011 /* MomentShareIngressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000354 /* MomentShareIngressService.swift */; };
 		720000000000000000000001 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000504 /* ImageIO.framework */; };
 		720000000000000000000002 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000506 /* UIKit.framework */; };
 		720000000000000000000003 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000507 /* CoreGraphics.framework */; };
-		720000000000000000000004 /* SensitiveContentAnalysis.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000509 /* SensitiveContentAnalysis.framework */; };
-		730000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000205 /* PrivacyInfo.xcprivacy */; };
+		730000000000000000000002 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000355 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -218,6 +213,8 @@
 		F000000000000000000001A2 /* DailySharingCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailySharingCore.swift; sourceTree = "<group>"; };
 		F000000000000000000001A3 /* MomentSharingCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingCore.swift; sourceTree = "<group>"; };
 		F000000000000000000001A4 /* MomentSharingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingStore.swift; sourceTree = "<group>"; };
+		F000000000000000000001A5 /* MomentShareHandoffStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareHandoffStore.swift; sourceTree = "<group>"; };
+		F000000000000000000001A6 /* SharingAPIConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingAPIConfiguration.swift; sourceTree = "<group>"; };
 		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -283,6 +280,7 @@
 		F00000000000000000000253 /* MomentSharingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingCoordinator.swift; sourceTree = "<group>"; };
 		F00000000000000000000254 /* MomentSharingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000255 /* FamilyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyWindowView.swift; sourceTree = "<group>"; };
+		F00000000000000000000256 /* MomentShareHandoffProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareHandoffProcessor.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
@@ -295,9 +293,10 @@
 		F00000000000000000000317 /* ToggleWidgetLikeIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToggleWidgetLikeIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetConfigurationIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000350 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
-		F00000000000000000000351 /* MomentShareExtensionSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareExtensionSender.swift; sourceTree = "<group>"; };
 		F00000000000000000000352 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000353 /* NekoWidgetShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetShareExtension.entitlements; sourceTree = "<group>"; };
+		F00000000000000000000354 /* MomentShareIngressService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareIngressService.swift; sourceTree = "<group>"; };
+		F00000000000000000000355 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F00000000000000000000401 /* NekoWidget.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NekoWidget.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000402 /* NekoWidgetWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = NekoWidgetWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000403 /* NekoWidgetShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = NekoWidgetShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -358,7 +357,6 @@
 				720000000000000000000001 /* ImageIO.framework in Frameworks */,
 				720000000000000000000002 /* UIKit.framework in Frameworks */,
 				720000000000000000000003 /* CoreGraphics.framework in Frameworks */,
-				720000000000000000000004 /* SensitiveContentAnalysis.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -488,6 +486,8 @@
 				F000000000000000000001A2 /* DailySharingCore.swift */,
 				F000000000000000000001A3 /* MomentSharingCore.swift */,
 				F000000000000000000001A4 /* MomentSharingStore.swift */,
+				F000000000000000000001A5 /* MomentShareHandoffStore.swift */,
+				F000000000000000000001A6 /* SharingAPIConfiguration.swift */,
 			);
 			path = Sharing;
 			sourceTree = "<group>";
@@ -551,6 +551,7 @@
 				F00000000000000000000251 /* MomentSharePreparationService.swift */,
 				F00000000000000000000252 /* MomentSharingAPIClient.swift */,
 				F00000000000000000000253 /* MomentSharingCoordinator.swift */,
+				F00000000000000000000256 /* MomentShareHandoffProcessor.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -618,9 +619,10 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000350 /* ShareViewController.swift */,
-				F00000000000000000000351 /* MomentShareExtensionSender.swift */,
+				F00000000000000000000354 /* MomentShareIngressService.swift */,
 				F00000000000000000000352 /* Info.plist */,
 				F00000000000000000000353 /* NekoWidgetShareExtension.entitlements */,
+				F00000000000000000000355 /* PrivacyInfo.xcprivacy */,
 			);
 			path = NekoWidgetShareExtension;
 			sourceTree = "<group>";
@@ -799,7 +801,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				730000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */,
+				730000000000000000000002 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -879,10 +881,13 @@
 				100000000000000000000167 /* CatIdentityExperimentView.swift in Sources */,
 				100000000000000000000168 /* MomentSharingCore.swift in Sources */,
 				100000000000000000000169 /* MomentSharingStore.swift in Sources */,
+				100000000000000000000170 /* MomentShareHandoffStore.swift in Sources */,
+				100000000000000000000171 /* SharingAPIConfiguration.swift in Sources */,
 				10000000000000000000016A /* MomentCanonicalPreviewBuilder.swift in Sources */,
 				10000000000000000000016B /* MomentSharePreparationService.swift in Sources */,
 				10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */,
 				10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */,
+				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,
 				10000000000000000000016E /* MomentSharingViewModel.swift in Sources */,
 				10000000000000000000016F /* FamilyWindowView.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
@@ -911,9 +916,6 @@
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
 				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
-				200000000000000000000019 /* PairingCore.swift in Sources */,
-				20000000000000000000001A /* PairingKeychainStore.swift in Sources */,
-				20000000000000000000001C /* DailySharingCore.swift in Sources */,
 				200000000000000000000010 /* NekoWidget.swift in Sources */,
 				200000000000000000000011 /* NekoWidgetBundle.swift in Sources */,
 				200000000000000000000012 /* NekoWidgetEntry.swift in Sources */,
@@ -941,18 +943,14 @@
 			files = (
 				700000000000000000000001 /* SharedContainer.swift in Sources */,
 				700000000000000000000002 /* AtomicJSON.swift in Sources */,
-				700000000000000000000003 /* PairingCore.swift in Sources */,
-				700000000000000000000004 /* PairingKeychainStore.swift in Sources */,
 				700000000000000000000005 /* MomentSharingCore.swift in Sources */,
-				700000000000000000000006 /* MomentSharingStore.swift in Sources */,
-				700000000000000000000007 /* PairingAPIClient.swift in Sources */,
 				700000000000000000000008 /* MomentCanonicalPreviewBuilder.swift in Sources */,
-				700000000000000000000009 /* MomentSharePreparationService.swift in Sources */,
-				70000000000000000000000A /* MomentSharingAPIClient.swift in Sources */,
-				70000000000000000000000B /* MomentShareExtensionSender.swift in Sources */,
 				70000000000000000000000C /* ShareViewController.swift in Sources */,
 				70000000000000000000000D /* WidgetManifest.swift in Sources */,
 				70000000000000000000000E /* WidgetRenderPlan.swift in Sources */,
+				70000000000000000000000F /* MomentShareHandoffStore.swift in Sources */,
+				700000000000000000000010 /* SharingAPIConfiguration.swift in Sources */,
+				700000000000000000000011 /* MomentShareIngressService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

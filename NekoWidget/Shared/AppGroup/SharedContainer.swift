@@ -179,4 +179,29 @@ enum SharedContainer {
     static var momentSharingReceivedDirectoryURL: URL? {
         sharingCacheDirectoryURL?.appendingPathComponent("received-moments", isDirectory: true)
     }
+
+    /// Short-lived, capture-only handoff from the Share Extension to the host
+    /// app. This deliberately lives below `sharing/` so installation cleanup,
+    /// unlink, and block remove every admission and pending capture without
+    /// touching personal photos, likes, or Widget cache files.
+    static var momentShareHandoffDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "moment-handoff",
+            isDirectory: true
+        )
+    }
+
+    static var momentShareHandoffAdmissionsURL: URL? {
+        momentShareHandoffDirectoryURL?.appendingPathComponent(
+            "admissions.v1.plist",
+            isDirectory: false
+        )
+    }
+
+    static var momentShareHandoffCapturesDirectoryURL: URL? {
+        momentShareHandoffDirectoryURL?.appendingPathComponent(
+            "captures",
+            isDirectory: true
+        )
+    }
 }

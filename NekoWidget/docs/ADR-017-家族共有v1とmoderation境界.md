@@ -11,11 +11,13 @@
 レビュー表示であり、実送信ではない。旧ADR-009の日次20枚generationも本機能として
 有効化しない。
 
-Build 27候補では画面、暗号化、追記型relay、受信、通報、blockのsource基盤までを
-実装するが、実送信はまだ有効化しない。Share Extensionはhost appの通常containerに
-あるinstallation markerを読めないため、App Groupと共有Keychainだけで古い資格を
-信頼すると再install直後に旧spaceへ送れる。`SHARING_SHARE_EXTENSION_SEND_ENABLED`は
-App/Extensionとも`NO`へ固定し、archive validatorも`YES`を無条件に拒否する。
+Build 27候補では画面、install-bound handoff、暗号化、追記型relay、受信、通報、blockの
+source基盤までを実装するが、実送信はまだ有効化しない。Share Extensionはhost appの
+通常containerにあるinstallation markerを読めないため、App Groupと共有Keychainだけで
+古い資格を信頼すると再install直後に旧spaceへ送れる。このためExtensionは写真を短期の
+入力として置くだけにし、host appがbootstrapした後に安全確認・暗号化・送信する。
+`SHARING_SHARE_EXTENSION_SEND_ENABLED`はApp/Extensionとも`NO`へ固定し、archive
+validatorも`YES`を無条件に拒否する。
 
 家族共有の保存単位は、内容を後から置き換えない一つの`moment`とする。最初の製品UIは
 「2人・1つのまど・各1台」だけを扱うが、Serverと端末内stateは次を別の概念として持つ。
@@ -53,7 +55,7 @@ App/Extensionとも`NO`へ固定し、archive validatorも`YES`を無条件に�
 v1として実装するもの（候補buildでは実送信OFF）:
 
 - 既存の招待を使った2人の家族のまど
-- Share Extensionからの画像一枚の明示送信
+- Share Extensionで画像一枚を確認し、host appへ短期handoffする明示操作
 - 長辺最大2,048px、暗号文1MiB以下、metadata除去済みcanonical preview
 - 暗号化payload内の原本撮影日時または欠損状態
 - `reserve → upload → commit → receive → ACK`
@@ -77,8 +79,9 @@ v1として実装するもの（候補buildでは実送信OFF）:
 AppleのApp Review Guideline 1.2は、UGCに投稿前filter、通報、block、公開連絡先と
 適時対応を求める。家族だけの招待制でも省略しない。
 
-v1は画像だけを扱い、caption、動画、匿名探索、公開投稿を扱わない。送信前に端末上で
-`SensitiveContentAnalysis`を実行し、次をfail-closedにする。
+v1は画像だけを扱い、caption、動画、匿名探索、公開投稿を扱わない。Extensionは安全判定を
+通過したとは主張せず、host appがcurrent installationを確認した後、送信前に同じcanonical
+JPEGへ`SensitiveContentAnalysis`を実行する。次をfail-closedにする。
 
 1. `analysisPolicy == .disabled`、権限不足、分析error、取消では送信しない
 2. sensitive判定では送信せず、別写真を選ぶよう案内する
@@ -116,27 +119,30 @@ changes/download/sendと旧v1 APIはこの期間も拒否する。通報済み�
 切り離して7日保持し、report-only期限と通報content TTLより前にcleanupしない。
 
 一人で使うローカルのまどはこのServerを呼ばない。Share Extensionは原画像を恒久保存せず、
-保護・backup除外済みApp Group outboxへ必要最小限の一時copyを置く。成功、取消、期限切れ、
-共有解除では回収する。commit中は取消不可とし、応答喪失時は同じidempotency keyで配信状態が確定するまで保持する。
+metadata除去・長辺2,048px以下のcanonical JPEGだけを、保護・backup除外済みApp Group
+handoffへ置く。1件1ファイルのatomic commitとし、最大3件・合計3MiB・1時間で回収する。
+hostが発行する非秘密admissionは24時間、処理claimは5分で回収し、pairing binding変更、
+共有解除、再install cleanupではhandoff全体を破棄する。host outboxへ昇格した後は既存の
+commit規則を使い、commit中は取消不可、応答喪失時は同じidempotency keyで配信状態が
+確定するまで保持する。
 通報outboxは10件・10MiB、未commit 24時間を上限とし、commit曖昧状態は自動同期で収束させる。
 一時ファイルのmetadata確認はApp Group container内に限定し、Privacy manifestにFileTimestamp `C617.1`を申告する。
 
 Host app内の同期、通報、blockは、通信前に必ず`PairingInstallationGuard.bootstrap`を通し、
 通常container markerとApp Group stateとKeychain credentialを同じinstallationとして検証する。
-Share Extensionからの直接通信を解除する条件は、次のどちらかを実装し再install実機試験を通すこととする。
-
-1. Extensionは保護・backup除外・短期保持の入力だけを置き、host appが起動してinstallationを
-   検証した後に初めて暗号化・送信するhandoff
-2. App Attest等を使い、再install後には再利用できないinstall-bound capabilityをServerも検証する方式
-
-App Groupや共有Keychainだけのmarker、短TTLだけのtokenは、再installとの境界を証明しないため解除条件にしない。
+採用方式は前者のhost handoffである。Extension targetからPairing state、room key、Keychain
+store、network client、URLSession、SensitiveContentAnalysisを除外する。room credentialは
+host appのdefault Keychain access groupに`WhenUnlockedThisDeviceOnly`で保存し、旧App Group
+keychain serviceは削除専用として読み戻し・移行を行わない。これにより既存利用者は一度だけ
+再pairingが必要になるが、旧資格を新installへ持ち越さない。Extensionからのdirect network
+sendは今後も解除せず、複数端末を追加する場合はhost handoffまたはApp Attest等の別設計で行う。
 
 ## release境界
 
 コードと隔離stagingは、運用フラグOFFのまま実装・検証できる。次が揃うまでproduction、
 一般向けTestFlight、App Store buildで写真送信をONにしない。
 
-- App、Share ExtensionのSensitiveContentAnalysis/App Group/Keychain entitlementと署名検証
+- host AppのSensitiveContentAnalysis、App/Share ExtensionのApp Group、署名検証
 - 公開privacy policy、support URL、community standards、通報対応runbook
 - moderation公開鍵と担当者だけが扱う秘密鍵
 - Photos or Videos、User ID、Device ID、Product InteractionのPrivacy申告
@@ -147,6 +153,6 @@ App Groupや共有Keychainだけのmarker、短TTLだけのtokenは、再install
   17時間以内に空確認まで収束することのstaging負荷試験
 - 2台の実機でoffline、Extension終了、再起動、retry、鍵喪失を確認
 - app削除・再install後、host appの初回bootstrap前にExtension/foreground syncが旧資格を使えないこと
-- 上記install-bound handoffの採用と実装。完了までShare Extension direct send archive flagは常時`NO`
+- install-bound handoffの候補CI、再install実機試験。Share Extension direct send archive flagは常時`NO`
 
 Build 27の候補CI成功は、上記のproduction運用準備が完了したことを意味しない。

@@ -21,6 +21,9 @@ SHARING_API_BASE_URL =
 // Pairing can be exercised independently. One-photo moment upload/download
 // remains separately off until privacy, safety, staging, and device gates pass.
 SHARING_MEDIA_ENABLED = NO
+// The Share Extension may write one protected, short-lived canonical input.
+// Only the host app may validate the current installation, encrypt and send.
+SHARING_SHARE_EXTENSION_HANDOFF_ENABLED = NO
 // Direct Share Extension delivery cannot be enabled until the extension can
 // prove that the host app validated this installation after a reinstall.
 // Candidate/review builds keep the extension visible but fail closed here.

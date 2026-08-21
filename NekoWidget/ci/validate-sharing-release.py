@@ -270,18 +270,21 @@ def validate_share_extension_boundary(
     app_info: dict,
     share_info: dict,
     failures: list[str],
-) -> None:
+) -> tuple[bool, bool]:
     """Keep the embedded Share Extension reviewable but unable to reuse a
     stale App Group/Keychain credential after reinstall.
 
     The extension cannot read the host app's ordinary-container installation
     marker. Direct network delivery therefore remains an unconditional release
-    failure until an install-bound host handoff is implemented and this gate is
-    deliberately revised.
+    failure. The only supported path is a protected, short-lived handoff whose
+    host-side promotion is installation-bound.
     """
 
     app_direct = parsed_flag(
         app_info, "SharingShareExtensionSendEnabled", failures
+    )
+    app_handoff = parsed_flag(
+        app_info, "SharingShareExtensionHandoffEnabled", failures
     )
     share_failures: list[str] = []
     share_pairing = parsed_flag(
@@ -295,6 +298,9 @@ def validate_share_extension_boundary(
     )
     share_direct = parsed_flag(
         share_info, "SharingShareExtensionSendEnabled", share_failures
+    )
+    share_handoff = parsed_flag(
+        share_info, "SharingShareExtensionHandoffEnabled", share_failures
     )
     failures.extend(f"Share Extension: {value}" for value in share_failures)
 
@@ -312,8 +318,12 @@ def validate_share_extension_boundary(
         )
     if app_direct or share_direct:
         failures.append(
-            "Direct Share Extension delivery is blocked until install-bound host "
-            "authorization is implemented."
+            "Direct Share Extension delivery is permanently blocked; the extension "
+            "may only hand one protected input to the installation-bound host app."
+        )
+    if app_handoff != share_handoff:
+        failures.append(
+            "Share Extension SharingShareExtensionHandoffEnabled does not match the app."
         )
     for key in (
         "SharingAPIBaseURL",
@@ -322,10 +332,11 @@ def validate_share_extension_boundary(
         "SharingSupportURL",
         "SharingCommunityStandardsURL",
     ):
-        if str(share_info.get(key, "")).strip() != str(
-            app_info.get(key, "")
-        ).strip():
-            failures.append(f"Share Extension {key} does not match the app.")
+        if str(share_info.get(key, "")).strip():
+            failures.append(
+                f"Share Extension {key} must be absent; capture-only handoff has no network configuration."
+            )
+    return app_handoff, share_handoff
 
 
 def main() -> int:
@@ -333,6 +344,7 @@ def main() -> int:
     parser.add_argument("--info-plist", type=Path, required=True)
     parser.add_argument("--share-info-plist", type=Path, required=True)
     parser.add_argument("--privacy-manifest", type=Path, required=True)
+    parser.add_argument("--share-privacy-manifest", type=Path, required=True)
     parser.add_argument("--export-reviewed", default="")
     args = parser.parse_args()
 
@@ -340,6 +352,7 @@ def main() -> int:
         info = load_plist(args.info_plist)
         share_info = load_plist(args.share_info_plist)
         privacy = load_plist(args.privacy_manifest)
+        share_privacy = load_plist(args.share_privacy_manifest)
     except ValueError as error:
         print(f"sharing release preflight: FAIL: {error}", file=sys.stderr)
         return 1
@@ -350,7 +363,10 @@ def main() -> int:
     review_preview_enabled = parsed_flag(
         info, "SharingReviewPreviewEnabled", flag_failures
     )
-    validate_share_extension_boundary(info, share_info, flag_failures)
+    handoff_enabled, _ = validate_share_extension_boundary(
+        info, share_info, flag_failures
+    )
+    validate_privacy_manifest(share_privacy, set(), flag_failures)
     endpoint = str(info.get("SharingAPIBaseURL", "")).strip()
     if flag_failures:
         print("sharing release preflight: FAIL", file=sys.stderr)
@@ -360,9 +376,9 @@ def main() -> int:
 
     if review_preview_enabled:
         failures: list[str] = []
-        if pairing_enabled or media_enabled:
+        if pairing_enabled or media_enabled or handoff_enabled:
             failures.append(
-                "Sharing review preview requires pairing and media runtime flags OFF."
+                "Sharing review preview requires pairing, media, and handoff runtime flags OFF."
             )
         if endpoint:
             failures.append("Sharing review preview requires an empty API URL.")
@@ -381,6 +397,21 @@ def main() -> int:
     # Only the explicit all-off configuration is a no-collection build. A
     # missing endpoint must never turn an enabled pairing/media build into a
     # silent pass, and media cannot operate without the pairing identity/key.
+    if media_enabled and not pairing_enabled:
+        print("sharing release preflight: FAIL", file=sys.stderr)
+        print(
+            "- SharingMediaEnabled requires SharingFeatureEnabled.",
+            file=sys.stderr,
+        )
+        return 1
+    if handoff_enabled and (not pairing_enabled or not media_enabled):
+        print("sharing release preflight: FAIL", file=sys.stderr)
+        print(
+            "- SharingShareExtensionHandoffEnabled requires both SharingFeatureEnabled "
+            "and SharingMediaEnabled.",
+            file=sys.stderr,
+        )
+        return 1
     if not pairing_enabled and not media_enabled:
         failures: list[str] = []
         if endpoint:
@@ -393,10 +424,10 @@ def main() -> int:
             return 1
         print("sharing release preflight: PASS (sharing is disabled)")
         return 0
-    if media_enabled and not pairing_enabled:
+    if media_enabled and not handoff_enabled:
         print("sharing release preflight: FAIL", file=sys.stderr)
         print(
-            "- SharingMediaEnabled requires SharingFeatureEnabled.",
+            "- SharingMediaEnabled requires the installation-bound Share Extension handoff.",
             file=sys.stderr,
         )
         return 1
@@ -407,11 +438,6 @@ def main() -> int:
         args.export_reviewed,
         media_enabled,
     )
-    if media_enabled:
-        failures.append(
-            "Photo moment runtime is blocked until install-bound Share Extension "
-            "authorization or host handoff is implemented."
-        )
     if failures:
         print("sharing release preflight: FAIL", file=sys.stderr)
         for failure in failures:
