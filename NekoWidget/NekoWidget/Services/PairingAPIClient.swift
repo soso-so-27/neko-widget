@@ -4,10 +4,12 @@ import Foundation
 struct SharingAPIConfiguration: Equatable {
     let isEnabled: Bool
     let isMediaEnabled: Bool
+    let isReviewPreviewEnabled: Bool
     let baseURL: URL?
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
     var isMediaAvailable: Bool { isAvailable && isMediaEnabled }
+    var isReviewVisible: Bool { isAvailable || isReviewPreviewEnabled }
 
     static var current: Self {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -27,6 +29,14 @@ struct SharingAPIConfiguration: Equatable {
         } else {
             mediaEnabled = false
         }
+        let reviewPreviewEnabled: Bool
+        if let number = info["SharingReviewPreviewEnabled"] as? NSNumber {
+            reviewPreviewEnabled = number.boolValue
+        } else if let string = info["SharingReviewPreviewEnabled"] as? String {
+            reviewPreviewEnabled = ["1", "true", "yes"].contains(string.lowercased())
+        } else {
+            reviewPreviewEnabled = false
+        }
         let rawURL = (info["SharingAPIBaseURL"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let baseURL = URL(string: rawURL).flatMap { url -> URL? in
@@ -42,7 +52,12 @@ struct SharingAPIConfiguration: Equatable {
             }
             return url
         }
-        return Self(isEnabled: enabled, isMediaEnabled: mediaEnabled, baseURL: baseURL)
+        return Self(
+            isEnabled: enabled,
+            isMediaEnabled: mediaEnabled,
+            isReviewPreviewEnabled: reviewPreviewEnabled,
+            baseURL: baseURL
+        )
     }
 }
 

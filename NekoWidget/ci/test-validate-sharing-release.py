@@ -33,10 +33,16 @@ def privacy(*data_types: str) -> dict:
     }
 
 
-def info(pairing: object, media: object, endpoint: str = "") -> dict:
+def info(
+    pairing: object,
+    media: object,
+    endpoint: str = "",
+    review_preview: object = "NO",
+) -> dict:
     return {
         "SharingFeatureEnabled": pairing,
         "SharingMediaEnabled": media,
+        "SharingReviewPreviewEnabled": review_preview,
         "SharingAPIBaseURL": endpoint,
         "NSPhotoLibraryUsageDescription": (
             "招待した相手へ最大20枚の縮小画像だけを暗号化して送り、原本は送りません。"
@@ -83,6 +89,38 @@ class SharingReleasePreflightTests(unittest.TestCase):
 
     def test_all_off_rejects_an_overdeclared_collection(self) -> None:
         result = self.run_preflight(info("NO", "NO"), privacy(USER_ID), "NO")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not enabled", result.stderr)
+
+    def test_review_preview_is_visible_without_enabling_collection(self) -> None:
+        result = self.run_preflight(
+            info("NO", "NO", review_preview="YES"),
+            privacy(),
+            "NO",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("review preview visible", result.stdout)
+
+    def test_review_preview_rejects_runtime_or_endpoint(self) -> None:
+        runtime = self.run_preflight(
+            info("YES", "NO", ENDPOINT, review_preview="YES"),
+            privacy(USER_ID),
+        )
+        self.assertNotEqual(runtime.returncode, 0)
+        self.assertIn("runtime flags OFF", runtime.stderr)
+
+        endpoint = self.run_preflight(
+            info("NO", "NO", ENDPOINT, review_preview="YES"),
+            privacy(),
+        )
+        self.assertNotEqual(endpoint.returncode, 0)
+        self.assertIn("empty API URL", endpoint.stderr)
+
+    def test_review_preview_rejects_collected_data(self) -> None:
+        result = self.run_preflight(
+            info("NO", "NO", review_preview="YES"),
+            privacy(USER_ID),
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not enabled", result.stderr)
 

@@ -4,6 +4,8 @@ struct AlbumView: View {
     let sections: [CuratedAlbumSectionPresentation]
     let scan: ScanPresentation
     let profiles: [CatProfilePresentation]
+    let unassignedPhotos: [CatProfilePhotoPresentation]
+    let profileActions: CatProfilesViewActions
     @Binding var selectedScope: CatProfileScopePresentation
 
     var body: some View {
@@ -14,6 +16,9 @@ struct AlbumView: View {
                         profiles: profiles,
                         selection: $selectedScope
                     )
+                    if let selectedProfile {
+                        selectedProfileNotice(selectedProfile)
+                    }
                 }
                 if scan.isPreparingGroupedAlbums {
                     groupedAlbumPreparationBanner
@@ -65,6 +70,34 @@ struct AlbumView: View {
 
     private var cardColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
+    }
+
+    private var selectedProfile: CatProfilePresentation? {
+        guard case let .profile(identifier) = selectedScope else { return nil }
+        return profiles.first { $0.identifier == identifier }
+    }
+
+    private func selectedProfileNotice(_ profile: CatProfilePresentation) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("自動で個体を決めず、確認済みの\(profile.displayName) \(profile.confirmedPhotoCount.formatted())枚だけを表示しています。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            NavigationLink {
+                CatProfileDetailView(
+                    profile: profile,
+                    allProfiles: profiles,
+                    unassignedPhotos: unassignedPhotos,
+                    actions: profileActions
+                )
+            } label: {
+                Label("この子の写真を確認・追加", systemImage: "photo.badge.plus")
+                    .font(.headline)
+            }
+            .accessibilityIdentifier("album-profile-add-photos")
+        }
+        .padding(14)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var groupedAlbumPreparationBanner: some View {

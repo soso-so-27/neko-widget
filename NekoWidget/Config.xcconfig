@@ -20,6 +20,9 @@ SHARING_API_BASE_URL =
 // Pairing can be exercised independently. Daily media upload/download remains
 // separately off until Phase 2 privacy and device gates are complete.
 SHARING_MEDIA_ENABLED = NO
+// Shows the adopted ADR-015 screens for product review only. This flag must
+// never create a client, access sharing credentials, or send any data.
+SHARING_REVIEW_PREVIEW_ENABLED = YES
 
 // GitHub Actions injects the names extracted from the two distribution
 // provisioning profiles. Keep these empty for Xcode automatic signing.

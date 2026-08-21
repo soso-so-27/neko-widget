@@ -51,6 +51,8 @@
 	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>SharingMediaEnabled</key>
 	<string>$(SHARING_MEDIA_ENABLED)</string>
+	<key>SharingReviewPreviewEnabled</key>
+	<string>$(SHARING_REVIEW_PREVIEW_ENABLED)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

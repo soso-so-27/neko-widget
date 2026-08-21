@@ -136,7 +136,8 @@ enum CatProfilesPresentationVerifier {
 
         let everyone = value.timePolicy(for: .everyone)
         try require(everyone.grouping == .calendarYears, "everyone stopped using calendar years")
-        try require(!everyone.showsGrowthComparison, "everyone mixed two cats in growth")
+        try require(!everyone.showsGrowthComparison,
+                    "everyone must not mix different cats into one growth comparison")
 
         let mugi = value.timePolicy(for: .profile("mugi"))
         try require(mugi.grouping == .age(reference: birthday), "birthday did not produce age grouping")

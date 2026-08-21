@@ -81,6 +81,8 @@ struct MainTabView: View {
                     sections: curatedAlbumSections,
                     scan: scan,
                     profiles: catProfilesPresentation.profiles,
+                    unassignedPhotos: catProfilesPresentation.unassignedPhotos,
+                    profileActions: catProfilesActions,
                     selectedScope: $selectedAlbumScope
                 )
                     .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
@@ -95,13 +97,12 @@ struct MainTabView: View {
                     .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
-                Label {
-                    Text("これ好き")
-                } icon: {
-                    CatPawMark(isFilled: true)
-                        .frame(width: 22, height: 22)
-                }
+                // Tab bars on iOS 26 may discard a custom SwiftUI icon view.
+                // A standard symbol keeps the destination visible; the custom
+                // paw remains inside the feature's own screens.
+                Label("これ好き", systemImage: "pawprint.fill")
             }
+            .badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)
             .tag(AppTab.likes)
 
             NavigationStack {
@@ -205,10 +206,10 @@ struct MainTabView: View {
         switch route {
         case let .album(albumID):
             if let album = curatedAlbum(for: albumID) {
-                if albumID == .growth {
+                if albumID.isGrowthComparison {
                     GrowthAlbumDetailView(
                         album: album,
-                        lifeReference: scopedLifeReference,
+                        lifeReference: growthLifeReference(for: albumID),
                         albumOpened: albumOpened,
                         excludeFromCatCandidates: { identifiers in
                             Task { await excludeFromCatCandidates(identifiers) }
@@ -269,14 +270,50 @@ struct MainTabView: View {
     }
 
     private var curatedAlbumSections: [CuratedAlbumSectionPresentation] {
-        CuratedAlbumBuilder().sections(
+        let builder = CuratedAlbumBuilder()
+        let includesScopedGrowth = catProfilesPresentation.profiles.isEmpty
+            || catProfilesPresentation
+                .timePolicy(for: selectedAlbumScope)
+                .showsGrowthComparison
+        let baseSections = builder.sections(
             from: scopedCatPhotos,
             lifeReference: scopedLifeReference,
-            includesGrowth: catProfilesPresentation.profiles.isEmpty
-                || catProfilesPresentation
-                    .timePolicy(for: selectedAlbumScope)
-                    .showsGrowthComparison
+            includesGrowth: includesScopedGrowth
         )
+
+        guard selectedAlbumScope == .everyone,
+              !catProfilesPresentation.profiles.isEmpty else {
+            return baseSections
+        }
+
+        let profileGrowthAlbums = ProfileGrowthAlbumBuilder().albums(
+            from: catProfilesPresentation.profiles.map { profile in
+                ProfileGrowthAlbumSource(
+                    profileIdentifier: profile.identifier,
+                    displayName: profile.displayName,
+                    photos: profileAlbumPhotos[profile.identifier] ?? [],
+                    lifeReference: lifeReference(for: profile.identifier)
+                )
+            }
+        )
+        guard !profileGrowthAlbums.isEmpty else { return baseSections }
+
+        var sections = baseSections
+        if let timeIndex = sections.firstIndex(where: { $0.id == .time }) {
+            sections[timeIndex] = CuratedAlbumSectionPresentation(
+                id: .time,
+                albums: profileGrowthAlbums + sections[timeIndex].albums
+            )
+        } else {
+            sections.insert(
+                CuratedAlbumSectionPresentation(
+                    id: .time,
+                    albums: profileGrowthAlbums
+                ),
+                at: 0
+            )
+        }
+        return sections
     }
 
     private var scopedCatPhotos: [PhotoPresentation] {
@@ -295,14 +332,25 @@ struct MainTabView: View {
                 ? settings.catLifeReference
                 : nil
         }
+        return lifeReference(for: identifier)
+    }
+
+    private func lifeReference(for profileIdentifier: String) -> CatLifeReference? {
         guard let reference = catProfilesPresentation
-            .profile(identifier: identifier)?
+            .profile(identifier: profileIdentifier)?
             .lifeReference,
               let date = CatLifeDate(date: reference.date) else { return nil }
         return CatLifeReference(
             kind: reference.kind == .birthday ? .birthday : .adoptionDay,
             date: date
         )
+    }
+
+    private func growthLifeReference(for albumID: CuratedAlbumID) -> CatLifeReference? {
+        guard let profileIdentifier = albumID.growthProfileIdentifier else {
+            return scopedLifeReference
+        }
+        return lifeReference(for: profileIdentifier)
     }
 
     private var excludedCatCandidateIdentifiers: Set<String> {

@@ -90,10 +90,25 @@ struct PhotoAssetImageView: View {
 
             if let image = loader.image {
                 if loader.prefersAspectFit {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
+                    if showsFullImage {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .transition(.opacity)
+                    } else {
+                        ZStack {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .saturation(0.82)
+                                .opacity(0.52)
+                            Color.black.opacity(0.12)
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                        }
                         .transition(.opacity)
+                    }
                 } else {
                     Image(uiImage: image)
                         .resizable()
@@ -190,7 +205,8 @@ private final class PhotoAssetImageLoader: ObservableObject {
                 options.resizeMode = .exact
             } else {
                 // A wide union (often multiple cats) cannot fit the requested
-                // portrait/square crop. Show the full asset rather than cut one.
+                // crop. Keep the full asset and let the view fill the remaining
+                // space with an ambient copy of the same photo.
                 prefersAspectFit = true
                 requestedContentMode = .aspectFit
                 options.resizeMode = .fast
@@ -268,7 +284,11 @@ private final class PhotoAssetImageLoader: ObservableObject {
             dx: -horizontalMargin,
             dy: -verticalMargin
         ).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard paddedPhotoRect.width <= cropWidth,
+        guard !paddedPhotoRect.isNull,
+              !paddedPhotoRect.isEmpty,
+              paddedPhotoRect.midX.isFinite,
+              paddedPhotoRect.midY.isFinite,
+              paddedPhotoRect.width <= cropWidth,
               paddedPhotoRect.height <= cropHeight else {
             return nil
         }

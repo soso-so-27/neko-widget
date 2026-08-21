@@ -305,19 +305,24 @@ struct SettingsView: View {
                 Text("アプリとウィジェットのログをApp Group経由で統合表示します。写真自体やPhotoKitの識別子全文は記録しません。")
             }
 
-            if SharingAPIConfiguration.current.isAvailable {
+            if SharingAPIConfiguration.current.isReviewVisible {
                 Section {
                     NavigationLink {
-                        PairingView()
+                        if SharingAPIConfiguration.current.isAvailable {
+                            PairingView()
+                        } else {
+                            SharingReviewPreviewView()
+                        }
                     } label: {
                         Label("家族と共有", systemImage: "person.2.fill")
                     }
+                    .accessibilityIdentifier("settings-sharing-review")
                 } header: {
-                    Text("共有・開発中")
+                    Text("共有・レビュー")
                 } footer: {
-                    Text(SharingAPIConfiguration.current.isMediaAvailable
-                        ? "ペアリングと写真共有への同意後、その日の候補から最大20枚の縮小画像を1日1回同期します。"
-                        : "まず招待と端末間の鍵確認だけを試せます。写真同期はまだ行いません。")
+                    Text(SharingAPIConfiguration.current.isAvailable
+                        ? "共有サーバーへ接続された開発機能です。"
+                        : "画面レビュー用です。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。")
                 }
             }
 
@@ -440,6 +445,95 @@ struct SettingsView: View {
             return "確定結果に検出写真がないため、確認できる標本はありません。"
         }
         return "検証JSONと同じSHA-256順位です。機械判定値は目視を誘導しないよう隠し、人手ラベルは外部表へ記録します。"
+    }
+}
+
+/// Static product-review surface for ADR-015. It deliberately owns no model,
+/// credential store, URLSession, or persistence. Shipping this view does not
+/// enable pairing, upload, APNs, or Widget synchronization.
+private struct SharingReviewPreviewView: View {
+    var body: some View {
+        Form {
+            Section {
+                Label("画面レビュー用・サーバー未接続", systemImage: "eye")
+                    .foregroundStyle(.orange)
+                Text("この画面では招待、送信、同期、鍵の作成を行いません。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Label("家族の窓", systemImage: "rectangle.on.rectangle")
+                    .font(.headline)
+                LabeledContent("参加者", value: "あなた ＋ 招待した家族")
+                LabeledContent("無料版", value: "家族の窓 1つ")
+                Button("窓を作る（実装前）") {}
+                    .disabled(true)
+                Button("招待リンクで入る（実装前）") {}
+                    .disabled(true)
+            } header: {
+                Text("窓")
+            } footer: {
+                Text("1つのWidgetには1つの窓だけを表示し、別の窓の写真は混ぜません。")
+            }
+
+            Section {
+                Label("いま撮った写真", systemImage: "paperplane.fill")
+                    .font(.headline)
+                Text("標準カメラの共有シートから、選んだ1枚を家族の窓へ送ります。")
+                LabeledContent("無料の送信枠", value: "1日5枚")
+                Button("共有シートで送る（実装前）") {}
+                    .disabled(true)
+            } header: {
+                Text("いま送る")
+            }
+
+            Section {
+                Label("最初の写真", systemImage: "photo.stack")
+                    .font(.headline)
+                Text("窓を作るとき、候補を最大20枚見せて「これを送りますか」と一度だけ確認します。")
+                LabeledContent("毎日1枚を自動で送る", value: "既定 OFF")
+                Text("ONにした人だけ、過去写真を1日1枚送ります。設定からいつでも停止できます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("過去の写真")
+            }
+
+            Section {
+                Label("いま届いた", systemImage: "sparkles.rectangle.stack")
+                    .font(.headline)
+                Text("新しく届いた写真を2〜4時間、または反応するまで優先してWidgetへ表示します。")
+                LabeledContent("その後", value: "共有履歴へ")
+                LabeledContent("サーバー保持", value: "受領後7日／未受領30日")
+            } header: {
+                Text("届いた写真")
+            }
+
+            Section {
+                Label("E2E暗号化", systemImage: "lock.shield.fill")
+                Label("長辺2,048px・原本や位置情報は送らない", systemImage: "photo.badge.checkmark")
+                Label("撮影日時は暗号化した内容にだけ入れる", systemImage: "calendar.badge.clock")
+                Text("共有履歴はバックアップではありません。すべての参加端末が鍵を失うと、保持期間内でも復元できません。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("安全と保持")
+            }
+
+            Section {
+                Label("写真を通報", systemImage: "exclamationmark.bubble")
+                Label("相手をブロックして表示と取得を停止", systemImage: "person.crop.circle.badge.xmark")
+                Label("共有を解除", systemImage: "person.2.slash")
+            } header: {
+                Text("困ったとき")
+            } footer: {
+                Text("通報・ブロック・公開連絡先の運用を用意するまで、実際の共有は有効にしません。")
+            }
+        }
+        .navigationTitle("家族と共有")
+        .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("sharing-review-preview")
     }
 }
 

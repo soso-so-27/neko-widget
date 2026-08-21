@@ -72,6 +72,7 @@ enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
 
 enum CuratedAlbumID: Hashable, Identifiable {
     case growth
+    case profileGrowth(identifier: String, displayName: String)
     case kitten
     case age(Int)
     case adoptionStart
@@ -88,6 +89,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     var title: String {
         switch self {
         case .growth: "成長"
+        case let .profileGrowth(_, displayName): "\(displayName)の成長"
         case .kitten: "子猫のころ"
         case let .age(years): "\(years)歳のころ"
         case .adoptionStart: "お迎えしたころ"
@@ -104,6 +106,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     var logKey: String {
         switch self {
         case .growth: "growth"
+        case .profileGrowth(_, _): "profile_growth"
         case .kitten: "kitten"
         case let .age(years): "age_\(years)"
         case .adoptionStart: "adoption_start"
@@ -115,6 +118,20 @@ enum CuratedAlbumID: Hashable, Identifiable {
         case .outing: "outing"
         case .catDay: "cat_day"
         }
+    }
+
+    var isGrowthComparison: Bool {
+        switch self {
+        case .growth, .profileGrowth(_, _):
+            true
+        default:
+            false
+        }
+    }
+
+    var growthProfileIdentifier: String? {
+        guard case let .profileGrowth(identifier, _) = self else { return nil }
+        return identifier
     }
 }
 
@@ -132,6 +149,42 @@ struct CuratedAlbumSectionPresentation: Identifiable, Hashable {
     let albums: [CuratedAlbumPresentation]
 
     var title: String { id.title }
+}
+
+struct ProfileGrowthAlbumSource {
+    let profileIdentifier: String
+    let displayName: String
+    let photos: [PhotoPresentation]
+    let lifeReference: CatLifeReference?
+}
+
+/// Builds one comparison per explicitly assigned profile. Keeping this pure
+/// prevents a household timeline from alternating between different cats.
+struct ProfileGrowthAlbumBuilder {
+    private let timeZone: TimeZone
+
+    init(timeZone: TimeZone = .current) {
+        self.timeZone = timeZone
+    }
+
+    func albums(
+        from sources: [ProfileGrowthAlbumSource]
+    ) -> [CuratedAlbumPresentation] {
+        sources.compactMap { source in
+            let photos = GrowthAlbumSelector(timeZone: timeZone)
+                .select(from: source.photos, lifeReference: source.lifeReference)
+                .map(\.photo)
+            guard !photos.isEmpty else { return nil }
+            return CuratedAlbumPresentation(
+                id: .profileGrowth(
+                    identifier: source.profileIdentifier,
+                    displayName: source.displayName
+                ),
+                group: .time,
+                photos: photos
+            )
+        }
+    }
 }
 
 enum AlbumRoute: Hashable {

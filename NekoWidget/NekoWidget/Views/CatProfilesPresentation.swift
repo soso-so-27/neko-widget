@@ -255,9 +255,9 @@ struct CatProfilesPresentation: Equatable {
         availableScopes.contains(proposedScope) ? proposedScope : .everyone
     }
 
-    /// `everyone` remains calendar-based and intentionally has no mixed-cat
-    /// growth comparison. Age and years-together groupings live only inside an
-    /// individual cat profile.
+    /// `everyone` remains calendar-based. Growth comparisons belong to an
+    /// individual cat, so callers must build one profile-scoped comparison per
+    /// cat instead of mixing different cats into one household timeline.
     func timePolicy(
         for scope: CatProfileScopePresentation
     ) -> CatProfileTimePolicyPresentation {

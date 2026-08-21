@@ -3,6 +3,7 @@ import SwiftUI
 struct CatProfileDetailView: View {
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
+    let unassignedPhotos: [CatProfilePhotoPresentation]
     let actions: CatProfilesViewActions
 
     @State private var showsLifeReferenceEditor = false
@@ -46,6 +47,25 @@ struct CatProfileDetailView: View {
             }
 
             Section {
+                if !unassignedPhotos.isEmpty {
+                    NavigationLink {
+                        UnassignedCatPhotosView(
+                            photos: unassignedPhotos,
+                            profiles: allProfiles,
+                            actions: actions
+                        )
+                    } label: {
+                        Label {
+                            LabeledContent(
+                                "この子の写真を追加",
+                                value: "未判定 \(unassignedPhotos.count.formatted())枚"
+                            )
+                        } icon: {
+                            Image(systemName: "photo.badge.plus")
+                        }
+                    }
+                }
+
                 NavigationLink {
                     CatProfileConfirmedPhotosView(
                         profile: profile,
@@ -64,7 +84,7 @@ struct CatProfileDetailView: View {
                 }
                 .disabled(profile.confirmedPhotos.isEmpty)
             } footer: {
-                Text("写っている子は写真ごとに変更できます。2匹が一緒なら両方を選べます。")
+                Text("自動で個体を決めません。未判定から写真を選び、「写っている子を設定」でこの子を追加できます。2匹が一緒なら両方を選べます。")
             }
 
             Section {
@@ -121,7 +141,7 @@ struct CatProfileDetailView: View {
         case .birthday:
             return "このプロフィール内だけで「子猫のころ」「1歳のころ」のようにまとめます。"
         case .adoptionDay:
-            return "迎えた日はプロフィール情報として保存します。年齢アルバムは誕生日だけを基準にします。"
+            return "迎えた日を基準に「お迎えしたころ」「いっしょに暮らして1年」のようにまとめます。"
         }
     }
 }

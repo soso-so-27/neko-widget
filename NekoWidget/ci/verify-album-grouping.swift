@@ -101,11 +101,48 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "person-and-cat album title changed")
     try require(CuratedAlbumID.multipleCats.title == "猫たち",
                 "multiple-cat album made an exact-count claim")
+    let profileGrowth = CuratedAlbumID.profileGrowth(
+        identifier: "profile-a",
+        displayName: "むぎ"
+    )
+    try require(profileGrowth.title == "むぎの成長",
+                "profile growth must name the cat it belongs to")
+    try require(profileGrowth.logKey == "profile_growth",
+                "profile identifiers and names must not enter album logs")
+    try require(profileGrowth.isGrowthComparison,
+                "profile growth must use the comparison presentation")
     try require(
         allAlbums(sections).first { $0.id == .multipleCats }?.photos.map(\.id)
             == ["newest"],
         "a photo with three cats disappeared from the multiple-cat album"
     )
+}
+
+private func verifyProfileGrowthNeverMixesCats() throws {
+    let albums = ProfileGrowthAlbumBuilder(timeZone: utc).albums(from: [
+        ProfileGrowthAlbumSource(
+            profileIdentifier: "mugi",
+            displayName: "むぎ",
+            photos: [
+                photo("mugi-2023", date(2023, 4, 1)),
+                photo("mugi-2024", date(2024, 4, 1))
+            ],
+            lifeReference: nil
+        ),
+        ProfileGrowthAlbumSource(
+            profileIdentifier: "ame",
+            displayName: "あめ",
+            photos: [photo("ame-2024", date(2024, 5, 1))],
+            lifeReference: nil
+        )
+    ])
+    try require(albums.map(\.title) == ["むぎの成長", "あめの成長"],
+                "profile growth titles or order changed")
+    try require(albums.count == 2, "one profile growth album disappeared")
+    try require(albums[0].photos.map(\.id) == ["mugi-2023", "mugi-2024"],
+                "another cat leaked into Mugi's growth album")
+    try require(albums[1].photos.map(\.id) == ["ame-2024"],
+                "another cat leaked into Ame's growth album")
 }
 
 private func verifyKittenBoundaryAndAgeBuckets() throws {
@@ -870,6 +907,7 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
+        try verifyProfileGrowthNeverMixesCats()
         try verifyKittenBoundaryAndAgeBuckets()
         try verifyMultipleCatsAndCatDay()
         try verifyCloseUpDoesNotWaitAndLegacyPosturesDoNotLeak()

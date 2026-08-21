@@ -149,6 +149,11 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
 
+        guard app.tabBars.buttons["これ好き"].waitForExistence(timeout: 10) else {
+            fail("The liked-photos tab disappeared from the tab bar.", app: app)
+            return
+        }
+
         let settingsTab = firstExistingButton(
             in: app,
             identifiers: ["main-tab-settings"],

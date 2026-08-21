@@ -111,6 +111,7 @@ struct CatProfilesView: View {
                     CatProfileDetailView(
                         profile: profile,
                         allProfiles: presentation.profiles,
+                        unassignedPhotos: presentation.unassignedPhotos,
                         actions: actions
                     )
                 } label: {

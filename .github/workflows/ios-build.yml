@@ -236,10 +236,10 @@ jobs:
             echo "Photo-book export must not download iCloud photos" >&2
             exit 1
           fi
-          if grep -R -Eq '\.badge[[:space:]]*\(' NekoWidget --include='*.swift'; then
-            echo "Build 19 must not add a prompting badge" >&2
-            exit 1
-          fi
+          grep -Fq '.badge(likedPhotos.isEmpty ? 0 : likedPhotos.count)' \
+            NekoWidget/Views/MainTabView.swift
+          grep -Fq 'Label("これ好き", systemImage: "pawprint.fill")' \
+            NekoWidget/Views/MainTabView.swift
 
       - name: Verify cat candidate curation state and export privacy
         working-directory: NekoWidget

@@ -203,6 +203,9 @@ def main() -> int:
     flag_failures: list[str] = []
     pairing_enabled = parsed_flag(info, "SharingFeatureEnabled", flag_failures)
     media_enabled = parsed_flag(info, "SharingMediaEnabled", flag_failures)
+    review_preview_enabled = parsed_flag(
+        info, "SharingReviewPreviewEnabled", flag_failures
+    )
     endpoint = str(info.get("SharingAPIBaseURL", "")).strip()
     if flag_failures:
         print("sharing release preflight: FAIL", file=sys.stderr)
@@ -210,11 +213,33 @@ def main() -> int:
             print(f"- {failure}", file=sys.stderr)
         return 1
 
+    if review_preview_enabled:
+        failures: list[str] = []
+        if pairing_enabled or media_enabled:
+            failures.append(
+                "Sharing review preview requires pairing and media runtime flags OFF."
+            )
+        if endpoint:
+            failures.append("Sharing review preview requires an empty API URL.")
+        validate_privacy_manifest(privacy, set(), failures)
+        if failures:
+            print("sharing release preflight: FAIL", file=sys.stderr)
+            for failure in failures:
+                print(f"- {failure}", file=sys.stderr)
+            return 1
+        print(
+            "sharing release preflight: PASS "
+            "(review preview visible; runtime sharing is disabled)"
+        )
+        return 0
+
     # Only the explicit all-off configuration is a no-collection build. A
     # missing endpoint must never turn an enabled pairing/media build into a
     # silent pass, and media cannot operate without the pairing identity/key.
     if not pairing_enabled and not media_enabled:
         failures: list[str] = []
+        if endpoint:
+            failures.append("Disabled sharing requires an empty API URL.")
         validate_privacy_manifest(privacy, set(), failures)
         if failures:
             print("sharing release preflight: FAIL", file=sys.stderr)
