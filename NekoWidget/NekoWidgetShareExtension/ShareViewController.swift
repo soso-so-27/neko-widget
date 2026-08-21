@@ -151,10 +151,10 @@ final class ShareViewController: UIViewController {
                     switch sharingError {
                     case .notPaired:
                         statusLabel.text = "届け先を確認できません。アプリを開いて家族のまどを確認してください。"
-                        selectedAdmission = nil
+                        self.selectedAdmission = nil
                     case .outboxFull:
                         statusLabel.text = "送信準備中の写真が3枚あります。アプリを開いてから、もう一度試してください。"
-                        selectedAdmission = nil
+                        self.selectedAdmission = nil
                     case .stateUnavailable:
                         statusLabel.text = "この写真を一時保存できませんでした。空き容量を確認して、もう一度お試しください。"
                         continueButton.isEnabled = true
