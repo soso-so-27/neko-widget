@@ -83,6 +83,7 @@
 		100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000256 /* MomentShareHandoffProcessor.swift */; };
 		10000000000000000000016E /* MomentSharingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000254 /* MomentSharingViewModel.swift */; };
 		10000000000000000000016F /* FamilyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000255 /* FamilyWindowView.swift */; };
+		100000000000000000000173 /* MomentSharingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000257 /* MomentSharingPresentation.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
@@ -281,6 +282,7 @@
 		F00000000000000000000254 /* MomentSharingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000255 /* FamilyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyWindowView.swift; sourceTree = "<group>"; };
 		F00000000000000000000256 /* MomentShareHandoffProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareHandoffProcessor.swift; sourceTree = "<group>"; };
+		F00000000000000000000257 /* MomentSharingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingPresentation.swift; sourceTree = "<group>"; };
 		F00000000000000000000301 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000302 /* NekoWidgetWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000310 /* NekoWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidget.swift; sourceTree = "<group>"; };
@@ -593,6 +595,7 @@
 				F00000000000000000000248 /* CatSimilarityReviewCoordinatorView.swift */,
 				F0000000000000000000024E /* CatIdentityExperimentView.swift */,
 				F00000000000000000000255 /* FamilyWindowView.swift */,
+				F00000000000000000000257 /* MomentSharingPresentation.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -890,6 +893,7 @@
 				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,
 				10000000000000000000016E /* MomentSharingViewModel.swift in Sources */,
 				10000000000000000000016F /* FamilyWindowView.swift in Sources */,
+				100000000000000000000173 /* MomentSharingPresentation.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,
 				100000000000000000000132 /* LikedPhotosView.swift in Sources */,
 				100000000000000000000133 /* MainTabView.swift in Sources */,

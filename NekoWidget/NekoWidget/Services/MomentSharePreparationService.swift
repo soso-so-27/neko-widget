@@ -10,7 +10,7 @@ actor MomentModerationService {
 
     func requireSafeImage(at url: URL) async throws {
         guard analyzer.analysisPolicy != .disabled else {
-            throw MomentSharingError.moderationUnavailable
+            throw MomentSharingError.moderationDisabled
         }
         do {
             let analysis = try await analyzer.analyzeImage(at: url)

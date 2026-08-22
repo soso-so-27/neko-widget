@@ -12,6 +12,55 @@ enum MomentSharingProtocol {
     static let moderationVersion = 1
     static let acknowledgedRetentionSeconds: TimeInterval = 7 * 24 * 60 * 60
     static let unreceivedRetentionSeconds: TimeInterval = 30 * 24 * 60 * 60
+    static let reportContentRetentionSeconds: TimeInterval = 7 * 24 * 60 * 60
+    /// Must match the relay's MOMENT_UPLOAD_TTL_SECONDS. Relay wall-clock
+    /// values never become unbounded local-retention authority.
+    static let maximumUploadLeaseSeconds: TimeInterval = 60 * 60
+    static let maximumRelayClockSkewSeconds: TimeInterval = 5 * 60
+    /// Must match the relay's report-only window. A signed but malformed
+    /// deadline may shorten this safety window, never extend local retention
+    /// or authorization beyond one day plus explicit clock skew.
+    static let maximumReportOnlyWindowSeconds: TimeInterval = 24 * 60 * 60
+    /// Must match the relay's IDEMPOTENCY_TTL_SECONDS. A lost commit response
+    /// can only be reconciled while the relay retains that exact response.
+    static let commitReplayRetentionSeconds: TimeInterval = 2 * 24 * 60 * 60
+
+    static func validatedUploadExpiry(
+        _ expiresAt: Date,
+        receivedAt: Date
+    ) throws -> Date {
+        guard expiresAt > receivedAt.addingTimeInterval(-maximumRelayClockSkewSeconds),
+              expiresAt <= receivedAt.addingTimeInterval(
+                maximumUploadLeaseSeconds + maximumRelayClockSkewSeconds
+              )
+        else { throw MomentSharingError.invalidPayload }
+        return expiresAt
+    }
+
+    static func boundedReportOnlyUntil(
+        _ until: Date,
+        receivedAt: Date
+    ) throws -> Date {
+        guard until > receivedAt.addingTimeInterval(-maximumRelayClockSkewSeconds)
+        else { throw MomentSharingError.invalidPayload }
+        return min(
+            until,
+            receivedAt.addingTimeInterval(
+                maximumReportOnlyWindowSeconds + maximumRelayClockSkewSeconds
+            )
+        )
+    }
+
+    /// Treat the relay deadline as closed only after the explicit clock-skew
+    /// allowance. Keeping the local safety/reporting gate slightly longer can
+    /// never re-enable normal delivery: the durable handoff marker remains
+    /// fail-closed throughout this interval.
+    static func isReportOnlyWindowClosed(
+        until: Date,
+        now: Date = .now
+    ) -> Bool {
+        until.addingTimeInterval(maximumRelayClockSkewSeconds) <= now
+    }
 }
 
 enum MomentKind: String, Codable, CaseIterable, Sendable {
@@ -31,6 +80,7 @@ enum MomentSharingError: LocalizedError, Equatable {
     case featureDisabled
     case notPaired
     case consentRequired
+    case moderationDisabled
     case moderationUnavailable
     case sensitiveContent
     case invalidPayload
@@ -49,8 +99,10 @@ enum MomentSharingError: LocalizedError, Equatable {
             "先に家族のまどへ参加してください。"
         case .consentRequired:
             "家族のまどで写真共有の内容を確認してください。"
+        case .moderationDisabled:
+            "iPhoneの「センシティブな内容の警告」を利用できないため送信しません。設定を有効にしてからもう一度お試しください。"
         case .moderationUnavailable:
-            "iPhoneの「センセィティブな内容の警告」を利用できないため送信しません。設定を有効にしてからもう一度お試しください。"
+            "安全確認を完了できなかったため送信しません。時間をおいてもう一度お試しください。"
         case .sensitiveContent:
             "この写真は送信できません。別の写真を選んでください。"
         case .invalidPayload:

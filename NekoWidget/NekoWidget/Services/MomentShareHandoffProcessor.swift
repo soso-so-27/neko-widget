@@ -19,7 +19,98 @@ struct MomentShareHandoffProcessor: Sendable {
     func revokeAdmissions(
         lifecycleToken: SharingLifecycleGate.Token
     ) throws {
-        try MomentShareHandoffStore.revokeAdmissions(validating: lifecycleToken)
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            // Plaintext cleanup is the first half of cancellation. If the
+            // process stops here, the admission/capture still exists and a
+            // later retry may safely resume. Once the store purge commits, no
+            // cancelled analyzer input can remain.
+            try purgeModerationTemporaryFiles()
+            try MomentShareHandoffStore.revokeAdmissionsWhileLifecycleLocked()
+        }
+    }
+
+    @discardableResult
+    func discardCancellableCaptures(
+        destinationKey: String? = nil,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Int {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try purgeModerationTemporaryFiles()
+            return try MomentShareHandoffStore
+                .discardCancellableCapturesWhileLifecycleLocked(
+                    destinationKey: destinationKey
+                )
+        }
+    }
+
+    /// Permanently disables capture for the current pairing before persisting
+    /// the relay's report-only state. The marker, capture purge, moderation
+    /// temp purge, and local normal-outbox gate share one lifecycle flock; the
+    /// marker is intentionally removed only by full pairing cleanup.
+    func enterReportOnlyMode(
+        until: Date,
+        lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws {
+        let discarded = try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try establishReportOnlyHandoffGateWhileLifecycleLocked(
+                until: until,
+                now: now
+            )
+            return try MomentSharingStateStore
+                .enterReportOnlyModeWhileLifecycleLocked(until: until, now: now)
+        }
+        for item in discarded {
+            try? MomentSharingStateStore.removeCiphertext(for: item)
+        }
+    }
+
+    /// Durable fallback used when the cross-store state write cannot finish.
+    /// A successfully written marker is sufficient to keep the Extension
+    /// fail-closed until the next host sync resumes the state transition.
+    func establishReportOnlyHandoffGate(
+        until: Date,
+        lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try establishReportOnlyHandoffGateWhileLifecycleLocked(
+                until: until,
+                now: now
+            )
+        }
+    }
+
+    private func establishReportOnlyHandoffGateWhileLifecycleLocked(
+        until: Date,
+        now: Date
+    ) throws {
+        try MomentShareHandoffStore
+            .writeReportOnlyHandoffMarkerWhileLifecycleLocked(
+                until: until,
+                now: now
+            )
+        // The marker now prevents every Extension read/stage operation.
+        // Unlink host plaintext before capture/catalog removal becomes the
+        // local cancellation commit point.
+        try purgeModerationTemporaryFiles()
+        try MomentShareHandoffStore.revokeAdmissionsWhileLifecycleLocked()
+    }
+
+    /// Removes host-only plaintext copies used solely by an in-flight safety
+    /// analysis. Deleting the file path also makes a late analyzer result lose
+    /// its claim authority; the lifecycle/CAS checks still guard promotion.
+    func purgeModerationTemporaryFiles() throws {
+        let directory = Self.moderationTemporaryDirectory
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsSubdirectoryDescendants]
+        )
+        for file in files where file.lastPathComponent.hasPrefix(".handoff-") {
+            try FileManager.default.removeItem(at: file)
+        }
     }
 
     /// Publishes one current v1 destination and drains only captures admitted
@@ -36,7 +127,7 @@ struct MomentShareHandoffProcessor: Sendable {
               pairing.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
               pairing.mediaSharingConsentAcceptedAt != nil
         else {
-            try MomentShareHandoffStore.revokeAdmissions(validating: lifecycleToken)
+            try revokeAdmissions(lifecycleToken: lifecycleToken)
             throw MomentSharingError.consentRequired
         }
         guard let spaceID = pairing.spaceID,
@@ -48,11 +139,15 @@ struct MomentShareHandoffProcessor: Sendable {
               let roomKey = credential.roomKey,
               roomKey.count == 32
         else {
-            try MomentShareHandoffStore.revokeAdmissions(validating: lifecycleToken)
+            try revokeAdmissions(lifecycleToken: lifecycleToken)
             throw MomentSharingError.notPaired
         }
         if let reportOnlyUntil = try MomentSharingStateStore.load().reportOnlyUntil {
-            try MomentShareHandoffStore.revokeAdmissions(validating: lifecycleToken)
+            try enterReportOnlyMode(
+                until: reportOnlyUntil,
+                lifecycleToken: lifecycleToken,
+                now: now
+            )
             throw MomentSharingError.reportOnly(until: reportOnlyUntil)
         }
 
@@ -67,6 +162,7 @@ struct MomentShareHandoffProcessor: Sendable {
             validating: lifecycleToken,
             now: now
         )
+        try purgeOrphanedModerationTemporaryFiles(lifecycleToken: lifecycleToken)
         guard let admission = catalog.destinations.first(where: {
             $0.bindingSHA256 == binding
         }) else { throw MomentSharingError.stateUnavailable }
@@ -99,16 +195,6 @@ struct MomentShareHandoffProcessor: Sendable {
                     continue
                 }
 
-                let canonicalJPEG = try MomentShareHandoffStore.readCanonicalJPEG(
-                    claim,
-                    validating: lifecycleToken
-                )
-                try MomentCanonicalPreviewBuilder.validateReceived(
-                    canonicalJPEG,
-                    pixelWidth: claim.record.pixelWidth,
-                    pixelHeight: claim.record.pixelHeight,
-                    expectedPlaintextSHA256: claim.record.canonicalJPEGSHA256
-                )
                 guard claim.record.kind == .live,
                       claim.record.requiresHostModeration,
                       claim.record.requiredHostModerationVersion
@@ -118,12 +204,29 @@ struct MomentShareHandoffProcessor: Sendable {
                         == (claim.record.capturedAt == nil)
                 else { throw MomentSharingError.invalidPayload }
 
-                try await requireSafeCanonical(
-                    canonicalJPEG,
-                    captureID: claim.record.id
+                let moderationInput = try prepareModerationInput(
+                    claim,
+                    lifecycleToken: lifecycleToken
                 )
+                defer { try? FileManager.default.removeItem(at: moderationInput) }
+                try await moderation.requireSafeImage(at: moderationInput)
                 try Task.checkCancellation()
                 try SharingLifecycleGate.validate(lifecycleToken)
+                // Do not retain the JPEG in memory across the asynchronous
+                // analyzer. Re-read the exact current claim only after safety
+                // succeeds; a concurrent cancel then fails here before crypto.
+                let canonicalJPEG = try MomentShareHandoffStore.withCurrentClaim(
+                    claim,
+                    validating: lifecycleToken
+                ) { current in
+                    try MomentCanonicalPreviewBuilder.validateReceived(
+                        current.canonicalJPEG,
+                        pixelWidth: current.pixelWidth,
+                        pixelHeight: current.pixelHeight,
+                        expectedPlaintextSHA256: current.canonicalJPEGSHA256
+                    )
+                    return current.canonicalJPEG
+                }
 
                 let context = MomentRequestContext(
                     spaceID: spaceID,
@@ -164,26 +267,26 @@ struct MomentShareHandoffProcessor: Sendable {
             } catch let error as MomentSharingError {
                 switch error {
                 case .sensitiveContent, .invalidPayload, .payloadTooLarge:
-                    try discardIfStillAuthorized(
+                    try discardAndRecordOutcomeIfStillAuthorized(
                         claim,
+                        reason: Self.outcomeReason(for: error),
                         lifecycleToken: lifecycleToken
                     )
-                case .moderationUnavailable, .outboxFull:
+                case .moderationDisabled, .moderationUnavailable, .outboxFull:
                     try releaseIfStillAuthorized(
                         claim,
                         error: error,
                         lifecycleToken: lifecycleToken
                     )
                     return promotedCount
-                case .reportOnly:
-                    try? MomentShareHandoffStore.revokeAdmissions(
-                        validating: lifecycleToken
+                case let .reportOnly(until):
+                    try? enterReportOnlyMode(
+                        until: until,
+                        lifecycleToken: lifecycleToken
                     )
                     throw error
                 case .consentRequired, .notPaired:
-                    try? MomentShareHandoffStore.revokeAdmissions(
-                        validating: lifecycleToken
-                    )
+                    try? revokeAdmissions(lifecycleToken: lifecycleToken)
                     throw error
                 case .stateUnavailable:
                     // A cleanup/reinstall invalidates the token. Never turn a
@@ -193,9 +296,21 @@ struct MomentShareHandoffProcessor: Sendable {
                     } catch {
                         throw MomentSharingError.stateUnavailable
                     }
-                    try discardIfStillAuthorized(
+                    // A user may remove a still-local preparation while host
+                    // moderation is awaiting its result. Missing the exact CAS
+                    // claim proves that this async result has no authority to
+                    // promote; never recreate it or continue to the network.
+                    let claimIsCurrent = try MomentShareHandoffStore.isCurrentClaim(
                         claim,
-                        lifecycleToken: lifecycleToken
+                        validating: lifecycleToken
+                    )
+                    if !claimIsCurrent {
+                        continue
+                    }
+                    try MomentShareHandoffStore.discardCapture(
+                        claim,
+                        recording: .preparationFailed,
+                        validating: lifecycleToken
                     )
                 default:
                     try releaseIfStillAuthorized(
@@ -352,53 +467,90 @@ struct MomentShareHandoffProcessor: Sendable {
         else { throw MomentSharingError.notPaired }
     }
 
-    private func requireSafeCanonical(
-        _ jpeg: Data,
-        captureID: UUID
-    ) async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    private func prepareModerationInput(
+        _ claim: MomentPendingCaptureClaim,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> URL {
+        try MomentShareHandoffStore.withCurrentClaim(
+            claim,
+            validating: lifecycleToken
+        ) { current in
+            let jpeg = current.canonicalJPEG
+            try MomentCanonicalPreviewBuilder.validateReceived(
+                jpeg,
+                pixelWidth: current.pixelWidth,
+                pixelHeight: current.pixelHeight,
+                expectedPlaintextSHA256: current.canonicalJPEGSHA256
+            )
+            let directory = Self.moderationTemporaryDirectory
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try Self.enforceCompleteProtectionAndBackupExclusion(directory)
+            let url = directory.appendingPathComponent(
+                Self.moderationFileName(
+                    captureID: current.id,
+                    claimID: claim.claimID
+                ),
+                isDirectory: false
+            )
+            // The exact same claim cannot have two authorized processors. A
+            // surviving inode with this name is therefore residue from a killed
+            // process and must be removed before O_EXCL creates the new input.
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            try Self.writeCompleteProtected(jpeg, to: url)
+            return url
+        }
+    }
+
+    private static var moderationTemporaryDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(
             "NekoWidgetMomentHandoffModeration",
             isDirectory: true
         )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        try Self.enforceCompleteProtectionAndBackupExclusion(directory)
-        Self.pruneModerationResidue(in: directory)
-        let url = directory.appendingPathComponent(
-            ".handoff-\(captureID.uuidString.lowercased())-\(UUID().uuidString).jpg",
-            isDirectory: false
-        )
-        try Self.writeCompleteProtected(jpeg, to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
-        try await moderation.requireSafeImage(at: url)
     }
 
-    private static func pruneModerationResidue(in directory: URL, now: Date = .now) {
-        let cutoff = now.addingTimeInterval(-60 * 60)
-        let files = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-            options: [.skipsSubdirectoryDescendants]
-        )
-        for file in files ?? [] where file.lastPathComponent.hasPrefix(".handoff-") {
-            let values = try? file.resourceValues(
-                forKeys: [.contentModificationDateKey, .isRegularFileKey]
+    private func purgeOrphanedModerationTemporaryFiles(
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        try MomentShareHandoffStore.withActiveClaimIdentities(
+            validating: lifecycleToken
+        ) { activeClaims in
+            let retainedNames = Set(activeClaims.map {
+                Self.moderationFileName(captureID: $0.captureID, claimID: $0.claimID)
+            })
+            let directory = Self.moderationTemporaryDirectory
+            guard FileManager.default.fileExists(atPath: directory.path) else { return }
+            let files = try FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsSubdirectoryDescendants]
             )
-            if values?.isRegularFile == true,
-               let modifiedAt = values?.contentModificationDate,
-               modifiedAt < cutoff {
-                try? FileManager.default.removeItem(at: file)
+            for file in files where file.lastPathComponent.hasPrefix(".handoff-") {
+                guard !retainedNames.contains(file.lastPathComponent) else { continue }
+                let values = try? file.resourceValues(forKeys: [.isRegularFileKey])
+                if values?.isRegularFile == true {
+                    try FileManager.default.removeItem(at: file)
+                }
             }
         }
+    }
+
+    private static func moderationFileName(
+        captureID: UUID,
+        claimID: UUID
+    ) -> String {
+        ".handoff-\(captureID.uuidString.lowercased())__\(claimID.uuidString.lowercased()).jpg"
     }
 
     /// Moderation plaintext is needed only while the foreground host analyzes
     /// it. Create and verify the protected inode before writing any JPEG byte;
     /// `completeUntilFirstUserAuthentication` is intentionally insufficient
     /// for this temporary plaintext boundary.
-    private static func writeCompleteProtected(_ data: Data, to url: URL) throws {
+    static func writeCompleteProtected(_ data: Data, to url: URL) throws {
         let descriptor = Darwin.open(
             url.path,
             O_CREAT | O_EXCL | O_WRONLY,
@@ -425,7 +577,7 @@ struct MomentShareHandoffProcessor: Sendable {
         }
     }
 
-    private static func enforceCompleteProtectionAndBackupExclusion(
+    static func enforceCompleteProtectionAndBackupExclusion(
         _ url: URL
     ) throws {
 #if targetEnvironment(simulator)
@@ -480,8 +632,37 @@ struct MomentShareHandoffProcessor: Sendable {
         )
     }
 
+    /// The handoff and sharing ledgers are separate protected files, so there
+    /// is no cross-file transaction. Delete the canonical plaintext first,
+    /// then persist only the fixed reason under the same validated lifecycle
+    /// token. A crash in between may omit the notice, but can never preserve a
+    /// rejected sensitive image merely to guarantee presentation history.
+    private func discardAndRecordOutcomeIfStillAuthorized(
+        _ claim: MomentPendingCaptureClaim,
+        reason: MomentOutgoingOutcomeReason,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        try discardIfStillAuthorized(claim, lifecycleToken: lifecycleToken)
+        _ = try MomentSharingStateStore.recordOutgoingOutcome(
+            reason: reason,
+            validating: lifecycleToken
+        )
+    }
+
+    private static func outcomeReason(
+        for error: MomentSharingError
+    ) -> MomentOutgoingOutcomeReason {
+        switch error {
+        case .sensitiveContent: .sensitiveContent
+        case .payloadTooLarge: .photoTooLarge
+        case .invalidPayload: .invalidPhoto
+        default: .invalidPhoto
+        }
+    }
+
     private static func safeErrorCode(_ error: MomentSharingError) -> String {
         switch error {
+        case .moderationDisabled: "moderation-disabled"
         case .moderationUnavailable: "moderation-unavailable"
         case .outboxFull: "outbox-full"
         case .consentRequired: "consent-required"

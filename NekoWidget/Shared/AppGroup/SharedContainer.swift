@@ -191,9 +191,28 @@ enum SharedContainer {
         )
     }
 
+    /// A terminal, pairing-scoped fail-closed marker written before a
+    /// report-only transition removes handoff input. It deliberately lives
+    /// beside (not inside) `moment-handoff/`, so purging that directory cannot
+    /// accidentally re-enable the Share Extension. Full pairing cleanup
+    /// removes the enclosing `sharing/` subtree before a new pairing begins.
+    static var momentShareHandoffReportOnlyMarkerURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "moment-handoff-report-only.v1",
+            isDirectory: false
+        )
+    }
+
     static var momentShareHandoffAdmissionsURL: URL? {
         momentShareHandoffDirectoryURL?.appendingPathComponent(
             "admissions.v1.plist",
+            isDirectory: false
+        )
+    }
+
+    static var momentShareHandoffOutcomesURL: URL? {
+        momentShareHandoffDirectoryURL?.appendingPathComponent(
+            "outcomes.v1.plist",
             isDirectory: false
         )
     }

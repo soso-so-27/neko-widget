@@ -244,6 +244,11 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol {
             pairingState: pairingState,
             credential: credential
         )
+        let responseReceivedAt = Date()
+        let uploadExpiresAt = try MomentSharingProtocol.validatedUploadExpiry(
+            Date(timeIntervalSince1970: TimeInterval(response.moment.uploadExpiresAt)),
+            receivedAt: responseReceivedAt
+        )
         guard response.protocolVersion == MomentSharingProtocol.version,
               response.moment.clientMomentId == item.context.clientMomentID.uuidString.lowercased(),
               response.moment.spaceId == localSpaceID,
@@ -258,7 +263,7 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol {
         return MomentReservationResult(
             momentID: response.moment.id,
             clientMomentID: clientMomentID,
-            uploadExpiresAt: Date(timeIntervalSince1970: TimeInterval(response.moment.uploadExpiresAt))
+            uploadExpiresAt: uploadExpiresAt
         )
     }
 
@@ -649,11 +654,42 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol {
             guard (200...299).contains(http.statusCode) else {
                 let apiError = try? decoder.decode(MomentAPIErrorResponse.self, from: data)
                 if http.statusCode == 410,
-                   apiError?.error.code == "report_only",
-                   let timestamp = apiError?.error.reportOnlyUntil,
-                   timestamp > 0 {
+                   apiError?.error.code == "report_only" {
+                    guard let timestamp = apiError?.error.reportOnlyUntil,
+                          timestamp > 0
+                    else {
+                        // A report-only response without a usable bounded
+                        // deadline is still terminal. Never fall through to a
+                        // retryable media error that could leave Extension
+                        // admissions active.
+                        throw MomentSharingError.requestRejected(
+                            status: 410,
+                            code: "report_window_closed",
+                            message: "共有解除後の安全確認期間は終了しました。"
+                        )
+                    }
+                    let receivedAt = Date()
+                    let rawUntil = Date(
+                        timeIntervalSince1970: TimeInterval(timestamp)
+                    )
+                    let boundedUntil: Date
+                    do {
+                        boundedUntil = try MomentSharingProtocol.boundedReportOnlyUntil(
+                            rawUntil,
+                            receivedAt: receivedAt
+                        )
+                    } catch {
+                        // An already-closed or nonsensical safety window must
+                        // reset local sharing instead of being retried as a
+                        // normal media error.
+                        throw MomentSharingError.requestRejected(
+                            status: 410,
+                            code: "report_window_closed",
+                            message: "共有解除後の安全確認期間は終了しました。"
+                        )
+                    }
                     throw MomentSharingError.reportOnly(
-                        until: Date(timeIntervalSince1970: TimeInterval(timestamp))
+                        until: boundedUntil
                     )
                 }
                 throw MomentSharingError.requestRejected(
@@ -888,6 +924,26 @@ private struct MomentAPIErrorResponse: Decodable {
         let code: String?
         let message: String
         let reportOnlyUntil: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case code
+            case message
+            case reportOnlyUntil
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            code = try? container.decode(String.self, forKey: .code)
+            message = (try? container.decode(String.self, forKey: .message))
+                ?? "共有サーバーで処理を完了できませんでした。"
+            // Decode independently from the terminal code. A malformed or
+            // wrongly typed deadline must not erase `report_only` and turn it
+            // into an ordinary retryable media failure.
+            reportOnlyUntil = try? container.decode(
+                Int.self,
+                forKey: .reportOnlyUntil
+            )
+        }
     }
     let error: Detail
 }

@@ -42,6 +42,7 @@ export const MAXIMUM_MOMENT_CIPHERTEXT_BYTES = 1024 * 1024;
 export const MOMENT_DAILY_QUOTA = 5;
 export const MOMENT_RESERVATION_ATTEMPT_LIMIT = 3;
 export const MOMENT_UPLOAD_TTL_SECONDS = 60 * 60;
+export const MOMENT_REPORT_ONLY_TTL_SECONDS = 24 * 60 * 60;
 export const MOMENT_UNRECEIVED_TTL_SECONDS = 30 * 86_400;
 export const MOMENT_ACKNOWLEDGED_TTL_SECONDS = 7 * 86_400;
 export const REPORT_CONTENT_TTL_SECONDS = 7 * 86_400;
@@ -1840,7 +1841,7 @@ export async function blockParticipant(
           WHERE id = ? AND space_id = ? AND state IN ('pending', 'active')`,
       ).bind(
         member.now,
-        member.now + 86_400,
+        member.now + MOMENT_REPORT_ONLY_TTL_SECONDS,
         targetParticipantID,
         member.spaceId,
       ),
@@ -1849,7 +1850,11 @@ export async function blockParticipant(
             SET state = 'revoked', revoked_at = COALESCE(revoked_at, ?),
                 report_only_until = MAX(COALESCE(report_only_until, 0), ?)
           WHERE participant_id = ? AND state IN ('pending', 'active')`,
-      ).bind(member.now, member.now + 86_400, targetParticipantID),
+      ).bind(
+        member.now,
+        member.now + MOMENT_REPORT_ONLY_TTL_SECONDS,
+        targetParticipantID,
+      ),
       env.DB.prepare(
         `INSERT INTO moment_object_deletions(
            object_key, object_type, owner_id, state, not_before, attempts, created_at
