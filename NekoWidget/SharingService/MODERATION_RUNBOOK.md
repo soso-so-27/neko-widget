@@ -18,6 +18,9 @@
 ## 鍵の準備と保管
 
 Production鍵はこの変更では生成しない。導入時は次を別の承認済み作業として実施する。
+本人所有2台のsource staging用に限る鍵生成helperと、BitLocker／ACLを含む停止条件は
+[staging通報鍵のオフライン生成runbook](MODERATION_KEYGEN_RUNBOOK.md)を正本とする。
+このhelperをProduction鍵へ転用しない。
 
 1. Networkから切り離した暗号化端末または承認済みHSMでX25519鍵を生成する。
 2. Appへ入れるのは32-byte raw public keyと`moderation-v1`だけにする。秘密鍵をCloudflare、CI、

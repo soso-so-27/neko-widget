@@ -856,7 +856,7 @@ test("synthetic fixture constants stay aligned with Swift and Worker contracts",
     "POSIX artifact deletion must sync its parent before completion audit",
   );
   const ownerOnlyWriter = librarySource.match(
-    /export function writeOwnerOnlyFile\([\s\S]*?\n\}\n\nexport function reportReferenceSHA256/u,
+    /export function writeOwnerOnlyFile\([\s\S]*?\r?\n\}\r?\n\r?\nexport function reportReferenceSHA256/u,
   )?.[0] ?? "";
   assert.ok(
     (ownerOnlyWriter.match(/unlinkSync\(path\);\s*fsyncParentDirectory\(path\);/gu) ?? [])
@@ -874,7 +874,7 @@ test("synthetic fixture constants stay aligned with Swift and Worker contracts",
     "the durable deletion receipt must be written before plaintext",
   );
   const cleanupHelper = toolSource.match(
-    /function cleanupRestrictedReviewFiles\([\s\S]*?\n\}\n\nfunction decryptCommand/u,
+    /function cleanupRestrictedReviewFiles\([\s\S]*?\r?\n\}\r?\n\r?\nfunction decryptCommand/u,
   )?.[0] ?? "";
   assert.match(
     cleanupHelper,
