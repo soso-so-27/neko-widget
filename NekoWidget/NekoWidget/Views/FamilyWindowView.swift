@@ -7,6 +7,8 @@ struct FamilyWindowView: View {
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
     @State private var showsPendingCancelConfirmation = false
+    @State private var showsPreparationCancelConfirmation = false
+    @State private var showsTerminalResultDismissConfirmation = false
 
     var body: some View {
         Group {
@@ -62,16 +64,40 @@ struct FamilyWindowView: View {
             Text("今後の送受信を止め、端末内の共有鍵と届いた写真を削除します。")
         }
         .confirmationDialog(
-            "送信待ちをすべて取り消しますか？",
+            "この端末の暗号化済み送信待ちをすべて取り消しますか？",
             isPresented: $showsPendingCancelConfirmation,
             titleVisibility: .visible
         ) {
-            Button("送信待ちを取り消す", role: .destructive) {
+            Button("この端末の送信待ちをすべて取り消す", role: .destructive) {
                 Task { await model.discardPendingOutbox() }
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("送信前の暗号化済み写真をこの端末から削除します。配信を確認中の写真は、重複や誤表示を防ぐため残します。")
+            Text("この端末にある全てのまどの配信確定前の送信を停止し、暗号化済みの一時データを削除対象にします。サーバーに一時保存済みの暗号文は期限で削除されます。配信結果を確認中の写真は、重複を防ぐため残します。")
+        }
+        .confirmationDialog(
+            "この端末で準備中の写真をすべて取り消しますか？",
+            isPresented: $showsPreparationCancelConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("この端末の準備中をすべて取り消す", role: .destructive) {
+                Task { await model.discardPendingPreparations() }
+            }
+            Button("戻る", role: .cancel) {}
+        } message: {
+            Text("この端末にある全てのまどの準備中データを削除対象にします。すでに暗号化済みの送信待ちへ進んだ写真はこの操作の対象外で、送信状況に残ります。")
+        }
+        .confirmationDialog(
+            "送信結果の表示をすべて消しますか？",
+            isPresented: $showsTerminalResultDismissConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("送信結果の表示をすべて消す", role: .destructive) {
+                Task { await model.discardFailedOutbox() }
+            }
+            Button("戻る", role: .cancel) {}
+        } message: {
+            Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
         }
     }
 
@@ -85,11 +111,10 @@ struct FamilyWindowView: View {
                     howToSendCard
                 }
 
-                if model.pendingCount > 0 && !model.isReportOnly {
-                    pendingCard
-                }
-                if model.failedCount > 0 && !model.isReportOnly {
-                    failedCard
+                sharingManagementLink
+
+                if model.outgoingPresentation.hasActivity {
+                    outgoingStatusSection
                 }
                 if let message = model.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -183,6 +208,38 @@ struct FamilyWindowView: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 
+    private var sharingManagementLink: some View {
+        NavigationLink {
+            PairingView()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "person.2.fill")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 40, height: 40)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("共有の設定・解除")
+                        .font(.subheadline.weight(.semibold))
+                    Text("ペアリング、写真共有の同意、共有解除を確認")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .background(
+                Color(uiColor: .secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 16)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("family-window-sharing-settings")
+    }
+
     private var reportOnlyCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("家族のまどの共有は終了しました", systemImage: "hand.raised.fill")
@@ -217,49 +274,183 @@ struct FamilyWindowView: View {
         .accessibilityIdentifier("family-window-send-instructions")
     }
 
-    private var pendingCard: some View {
-        HStack(spacing: 12) {
-            ProgressView()
-            VStack(alignment: .leading, spacing: 2) {
-                Text("送信待ち \(model.pendingCount)枚")
-                    .font(.subheadline.weight(.semibold))
-                Text("通信できるときに同じ1枚を重複なく再試行します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var outgoingStatusSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("送信状況")
+                .font(.headline)
+
+            ForEach(model.outgoingPresentation.statuses) { status in
+                outgoingStatusCard(status)
             }
-            Spacer()
-            VStack(spacing: 8) {
-                Button("再試行") { Task { await model.synchronize() } }
-                Button("取り消す", role: .destructive) {
+
+            ForEach(model.outgoingPresentation.outcomes) { outcome in
+                outgoingOutcomeCard(outcome)
+            }
+
+            if model.outgoingPresentation.outcomeCount > 0 {
+                Button("送信しなかった履歴表示を消す") {
+                    Task { await model.clearOutgoingOutcomes() }
+                }
+                .font(.caption)
+                .disabled(model.isWorking)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            if model.outgoingPresentation.terminalDeliveryResultCount > 0 {
+                Button("送信結果の表示をすべて消す", role: .destructive) {
+                    showsTerminalResultDismissConfirmation = true
+                }
+                .font(.caption)
+                .disabled(model.isPerformingAction)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            if !model.isReportOnly,
+               model.outgoingPresentation.cancellablePreparationCount > 0 {
+                Button("端末内で準備中の写真を取り消す", role: .destructive) {
+                    showsPreparationCancelConfirmation = true
+                }
+                .disabled(model.isPerformingAction)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            if !model.isReportOnly,
+               model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 {
+                Button("暗号化済みの送信待ちを取り消す", role: .destructive) {
                     showsPendingCancelConfirmation = true
                 }
-                .disabled(model.cancellablePendingCount == 0)
+                .disabled(model.isPerformingAction)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .disabled(model.isWorking)
+
+            if let acceptance = model.outgoingPresentation.latestServerAcceptance {
+                latestServerAcceptanceCard(acceptance)
+            }
         }
-        .padding(14)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-outgoing-status")
     }
 
-    private var failedCard: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("送信されなかった写真 \(model.failedCount)枚")
+    private func outgoingStatusCard(
+        _ status: MomentOutgoingStatusPresentation
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            if status.kind == .preparing || status.kind == .sending
+                || status.kind == .confirming {
+                ProgressView()
+                    .frame(width: 22, height: 22)
+            } else {
+                Image(systemName: outgoingStatusIcon(status.kind))
+                    .foregroundStyle(outgoingStatusColor(status.kind))
+                    .frame(width: 22, height: 22)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(status.title)
                     .font(.subheadline.weight(.semibold))
-                Text("送信を完了できなかった写真です。当該データをこの端末から破棄できます。")
+                Text(status.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if status.destinationCount > 1 {
+                    Text("\(status.destinationCount)個のまどへの送信があります")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let retryAt = status.nextRetryAt {
+                    Text("再試行予定 \(retryAt.formatted(.dateTime.month().day().hour().minute()))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if let expiresAt = status.earliestExpiryAt {
+                    Text("端末内の一時データは、処理できない場合 \(expiresAt.formatted(.dateTime.month().day().hour().minute())) に削除されます")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer()
-            Button("破棄", role: .destructive) {
-                Task { await model.discardFailedOutbox() }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            outgoingStatusBackground(status.kind),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .accessibilityIdentifier("family-window-outgoing-\(status.kind.rawValue)")
+    }
+
+    private func latestServerAcceptanceCard(
+        _ acceptance: MomentLatestServerAcceptancePresentation
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(acceptance.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(acceptance.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(acceptance.acceptedAt.formatted(.dateTime.month().day().hour().minute()))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let expiresAt = acceptance.unreceivedExpiresAt {
+                    Text("未受取の暗号文は \(expiresAt.formatted(.dateTime.month().day().hour().minute())) に削除対象です")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
-                .disabled(model.isWorking)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-latest-server-acceptance")
+    }
+
+    private func outgoingOutcomeCard(
+        _ outcome: MomentOutgoingOutcomeGroupPresentation
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .foregroundStyle(.orange)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(outcome.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(outcome.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(outcome.latestCreatedAt.formatted(.dateTime.month().day().hour().minute()))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
         }
         .padding(14)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityIdentifier("family-window-outgoing-outcome-\(outcome.reason.rawValue)")
+    }
+
+    private func outgoingStatusIcon(_ kind: MomentOutgoingStatusKind) -> String {
+        switch kind {
+        case .safetyCheckWaiting: "shield.lefthalf.filled"
+        case .preparationRetryWaiting, .waiting: "clock.fill"
+        case .resultUnknown: "questionmark.diamond.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .preparing, .sending, .confirming: "arrow.triangle.2.circlepath"
+        }
+    }
+
+    private func outgoingStatusColor(_ kind: MomentOutgoingStatusKind) -> Color {
+        switch kind {
+        case .failed, .resultUnknown: .orange
+        case .safetyCheckWaiting, .preparing, .preparationRetryWaiting,
+             .waiting, .sending, .confirming:
+            .accentColor
+        }
+    }
+
+    private func outgoingStatusBackground(_ kind: MomentOutgoingStatusKind) -> Color {
+        kind == .failed || kind == .resultUnknown
+            ? Color.orange.opacity(0.1)
+            : Color(uiColor: .secondarySystemGroupedBackground)
     }
 
     private func momentCard(_ item: MomentInboxItem) -> some View {
@@ -276,15 +467,23 @@ struct FamilyWindowView: View {
                     Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let reportStatus = model.reportStatusText(item) {
+                        Text(reportStatus)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 Spacer()
                 Menu {
                     Button {
                         reportTarget = item
                     } label: {
-                        Label(model.hasReported(item) ? "通報済み" : "通報", systemImage: "exclamationmark.bubble")
+                        Label(
+                            model.reportActionTitle(item),
+                            systemImage: "exclamationmark.bubble"
+                        )
                     }
-                    .disabled(model.hasReported(item))
+                    .disabled(!model.canSubmitReport(item))
                     if !model.isReportOnly {
                         Button(role: .destructive) {
                             blockTarget = item
@@ -321,6 +520,11 @@ struct FamilyWindowView: View {
                         : "端末の安全確認を通せなかった受信です。内容を表示せずに通報またはブロックできます。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let reportStatus = model.reportStatusText(item) {
+                    Text(reportStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
             Spacer()
             Menu {
@@ -328,9 +532,12 @@ struct FamilyWindowView: View {
                     Button {
                         reportTarget = item
                     } label: {
-                        Label(model.hasReported(item) ? "通報済み" : "表示せずに通報", systemImage: "exclamationmark.bubble")
+                        Label(
+                            model.reportActionTitle(item, hidden: true),
+                            systemImage: "exclamationmark.bubble"
+                        )
                     }
-                    .disabled(model.hasReported(item))
+                    .disabled(!model.canSubmitReport(item))
                 }
                 if !model.isReportOnly {
                     Button(role: .destructive) {

@@ -9,6 +9,10 @@ enum MomentOutboxPhase: String, Codable, Sendable {
     /// ambiguous response without claiming that the photo was never sent.
     case committing
     case committed
+    /// The relay may have accepted commit, but this installation could not
+    /// reconcile the idempotent response before the relay's response-replay
+    /// window elapsed. This terminal state is not proof that delivery failed.
+    case deliveryResultUnknown
     case failed
 }
 
@@ -29,6 +33,14 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     var attemptCount: Int
     var nextRetryAt: Date? = nil
     var lastErrorCode: String? = nil
+    var commitStartedAt: Date? = nil
+    /// Relay acknowledgement metadata. These fields prove only that the relay
+    /// accepted the idempotent commit; they do not mean that a recipient has
+    /// downloaded, opened, or read the photograph. Legacy records decode all
+    /// three values as nil.
+    var committedAt: Date? = nil
+    var unreceivedExpiresAt: Date? = nil
+    var recipientCount: Int? = nil
     let createdAt: Date
     var updatedAt: Date
 
@@ -43,10 +55,48 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
               senderPolicyVersion >= 1,
               attemptCount >= 0,
               createdAt <= updatedAt,
+              commitStartedAt.map { $0 >= createdAt } ?? true,
+              commitStartedAt.map { $0 <= updatedAt } ?? true,
+              (phase != .committing && phase != .deliveryResultUnknown)
+                || commitStartedAt != nil,
+              (phase == .committing || phase == .committed
+                || phase == .deliveryResultUnknown || commitStartedAt == nil),
               serverMomentID.map(Self.isOpaqueIdentifier) ?? true,
-              phase == .prepared || phase == .failed || serverMomentID != nil
+              phase == .prepared || phase == .failed || serverMomentID != nil,
+              Self.hasValidCommitMetadata(
+                  phase: phase,
+                  commitStartedAt: commitStartedAt,
+                  committedAt: committedAt,
+                  unreceivedExpiresAt: unreceivedExpiresAt,
+                  recipientCount: recipientCount
+              )
         else { throw MomentSharingError.stateUnavailable }
         return self
+    }
+
+    private static func hasValidCommitMetadata(
+        phase: MomentOutboxPhase,
+        commitStartedAt: Date?,
+        committedAt: Date?,
+        unreceivedExpiresAt: Date?,
+        recipientCount: Int?
+    ) -> Bool {
+        let valuesAreAbsent = committedAt == nil
+            && unreceivedExpiresAt == nil
+            && recipientCount == nil
+        if phase != .committed { return valuesAreAbsent }
+        // Legacy committed records written before commitStartedAt and relay
+        // metadata were added remain readable. Every new commit first records
+        // commitStartedAt, so it must also persist the complete response tuple.
+        if valuesAreAbsent { return commitStartedAt == nil }
+        guard let committedAt,
+              let unreceivedExpiresAt,
+              let recipientCount,
+              commitStartedAt != nil
+        else { return false }
+        return committedAt > Date(timeIntervalSince1970: 0)
+            && unreceivedExpiresAt > committedAt
+            && recipientCount >= 1
     }
 
     private static func isOpaqueIdentifier(_ value: String) -> Bool {
@@ -57,6 +107,38 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
                 || ($0 >= 97 && $0 <= 122)
                 || $0 == 45 || $0 == 95
         }
+    }
+}
+
+/// Fixed, privacy-safe reasons for a local send preparation ending before any
+/// network request. Never add associated values or arbitrary diagnostic text:
+/// this ledger intentionally cannot contain image data, file paths, hashes,
+/// relay IDs, or family/participant identifiers.
+enum MomentOutgoingOutcomeReason: String, Codable, Sendable {
+    case sensitiveContent
+    case invalidPhoto
+    case photoTooLarge
+    case preparationExpired
+}
+
+struct MomentOutgoingOutcome: Codable, Equatable, Identifiable, Sendable {
+    static let schemaVersion = 1
+    static let maximumCount = 100
+    static let retentionSeconds: TimeInterval = 7 * 24 * 60 * 60
+
+    var schemaVersion: Int = Self.schemaVersion
+    let id: UUID
+    let reason: MomentOutgoingOutcomeReason
+    let createdAt: Date
+    let expiresAt: Date
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              createdAt > Date(timeIntervalSince1970: 0),
+              expiresAt > createdAt,
+              expiresAt.timeIntervalSince(createdAt) <= Self.retentionSeconds
+        else { throw MomentSharingError.stateUnavailable }
+        return self
     }
 }
 
@@ -73,6 +155,9 @@ enum MomentReportOutboxPhase: String, Codable, Sendable {
     case uploaded
     case committing
     case committed
+    /// Commit may have succeeded, but the relay's bounded report-content
+    /// reconciliation window elapsed before this installation confirmed it.
+    case deliveryResultUnknown
 }
 
 struct MomentReportOutboxItem: Codable, Equatable, Identifiable, Sendable {
@@ -89,6 +174,7 @@ struct MomentReportOutboxItem: Codable, Equatable, Identifiable, Sendable {
     let commitRequestID: UUID
     var phase: MomentReportOutboxPhase
     var serverReportID: String? = nil
+    var commitStartedAt: Date? = nil
     let createdAt: Date
     var updatedAt: Date
 
@@ -100,6 +186,11 @@ struct MomentReportOutboxItem: Codable, Equatable, Identifiable, Sendable {
               ciphertextSHA256.count == 32,
               moderationKeyID == "moderation-v1",
               createdAt <= updatedAt,
+              commitStartedAt.map { $0 >= createdAt && $0 <= updatedAt } ?? true,
+              (phase != .committing && phase != .deliveryResultUnknown)
+                || commitStartedAt != nil,
+              (phase == .committing || phase == .committed
+                || phase == .deliveryResultUnknown || commitStartedAt == nil),
               serverReportID.map(Self.isOpaqueIdentifier) ?? true,
               phase == .prepared || serverReportID != nil
         else { throw MomentSharingError.stateUnavailable }
@@ -161,7 +252,7 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct MomentSharingState: Codable, Equatable, Sendable {
-    static let schemaVersion = 3
+    static let schemaVersion = 5
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int
     var changeCursor: String?
@@ -169,6 +260,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
     var outbox: [MomentOutboxItem]
     var inbox: [MomentInboxItem]
     var reportOutbox: [MomentReportOutboxItem]
+    var outgoingOutcomes: [MomentOutgoingOutcome]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
@@ -178,6 +270,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         case outbox
         case inbox
         case reportOutbox
+        case outgoingOutcomes
     }
 
     init(
@@ -186,7 +279,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         reportOnlyUntil: Date? = nil,
         outbox: [MomentOutboxItem],
         inbox: [MomentInboxItem],
-        reportOutbox: [MomentReportOutboxItem]
+        reportOutbox: [MomentReportOutboxItem],
+        outgoingOutcomes: [MomentOutgoingOutcome] = []
     ) {
         self.storageRevision = storageRevision
         self.changeCursor = changeCursor
@@ -194,6 +288,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         self.outbox = outbox
         self.inbox = inbox
         self.reportOutbox = reportOutbox
+        self.outgoingOutcomes = outgoingOutcomes
     }
 
     init(from decoder: Decoder) throws {
@@ -206,11 +301,49 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         storageRevision = try container.decode(Int.self, forKey: .storageRevision)
         changeCursor = try container.decodeIfPresent(String.self, forKey: .changeCursor)
         reportOnlyUntil = try container.decodeIfPresent(Date.self, forKey: .reportOnlyUntil)
-        outbox = try container.decode([MomentOutboxItem].self, forKey: .outbox)
-        inbox = try container.decode([MomentInboxItem].self, forKey: .inbox)
-        reportOutbox = try container.decodeIfPresent(
+        var decodedOutbox = try container.decode(
+            [MomentOutboxItem].self,
+            forKey: .outbox
+        )
+        if decodedSchema < 4 {
+            for index in decodedOutbox.indices
+            where decodedOutbox[index].phase == .committing
+                && decodedOutbox[index].commitStartedAt == nil {
+                // Older schemas updated `updatedAt` on every retry. Freeze a
+                // one-time stable ambiguity anchor during migration, preferring
+                // the earlier bounded lease date when it is available.
+                decodedOutbox[index].commitStartedAt = max(
+                    decodedOutbox[index].createdAt,
+                    min(
+                        decodedOutbox[index].updatedAt,
+                        decodedOutbox[index].uploadExpiresAt
+                            ?? decodedOutbox[index].updatedAt
+                    )
+                )
+            }
+        }
+        var decodedReportOutbox = try container.decodeIfPresent(
             [MomentReportOutboxItem].self,
             forKey: .reportOutbox
+        ) ?? []
+        if decodedSchema < 5 {
+            for index in decodedReportOutbox.indices
+            where decodedReportOutbox[index].phase == .committing
+                && decodedReportOutbox[index].commitStartedAt == nil {
+                // Report retries did not change updatedAt in the older
+                // schemas, so it is a stable one-time ambiguity anchor.
+                decodedReportOutbox[index].commitStartedAt = max(
+                    decodedReportOutbox[index].createdAt,
+                    decodedReportOutbox[index].updatedAt
+                )
+            }
+        }
+        outbox = decodedOutbox
+        inbox = try container.decode([MomentInboxItem].self, forKey: .inbox)
+        reportOutbox = decodedReportOutbox
+        outgoingOutcomes = try container.decodeIfPresent(
+            [MomentOutgoingOutcome].self,
+            forKey: .outgoingOutcomes
         ) ?? []
     }
 
@@ -220,7 +353,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         reportOnlyUntil: nil,
         outbox: [],
         inbox: [],
-        reportOutbox: []
+        reportOutbox: [],
+        outgoingOutcomes: []
     )
 
     func validated() throws -> Self {
@@ -230,11 +364,14 @@ struct MomentSharingState: Codable, Equatable, Sendable {
               Set(outbox.map(\.id)).count == outbox.count,
               Set(inbox.map(\.id)).count == inbox.count,
               Set(reportOutbox.map(\.id)).count == reportOutbox.count,
-              Set(reportOutbox.map(\.momentID)).count == reportOutbox.count
+              Set(reportOutbox.map(\.momentID)).count == reportOutbox.count,
+              outgoingOutcomes.count <= MomentOutgoingOutcome.maximumCount,
+              Set(outgoingOutcomes.map(\.id)).count == outgoingOutcomes.count
         else { throw MomentSharingError.stateUnavailable }
         _ = try outbox.map { try $0.validated() }
         _ = try inbox.map { try $0.validated() }
         _ = try reportOutbox.map { try $0.validated() }
+        _ = try outgoingOutcomes.map { try $0.validated() }
         return self
     }
 }
@@ -242,6 +379,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
 enum MomentSharingStateStore {
     private static let localHistorySeconds: TimeInterval = 90 * 24 * 60 * 60
     private static let maximumPendingOutboxSeconds: TimeInterval = 7 * 24 * 60 * 60
+    private static let maximumCommitAmbiguitySeconds: TimeInterval =
+        MomentSharingProtocol.commitReplayRetentionSeconds
     private static let maximumPendingReportSeconds: TimeInterval = 24 * 60 * 60
     private static let maximumLocalHistoryCount = 500
     private static let maximumLocalHistoryBytes = 256 * 1_024 * 1_024
@@ -250,11 +389,40 @@ enum MomentSharingStateStore {
     private static let maximumPendingReportCount = 10
     private static let maximumPendingReportBytes = 10 * 1_024 * 1_024
     private static let completedOutboxMetadataSeconds: TimeInterval = 30 * 24 * 60 * 60
+    static let maximumTerminalOutboxMetadataCount = 100
     private static let reportedMetadataSeconds: TimeInterval = 90 * 24 * 60 * 60
 
     static func load() throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
             try loadWhileLocked()
+        }
+    }
+
+    /// Distinguishes durable schema/JSON corruption from a transient file I/O
+    /// failure. The coordinator may reset pairing only for bytes that were
+    /// read successfully but cannot become a validated sharing state; an I/O
+    /// error is rethrown so safety evidence is preserved for a later retry.
+    static func isPersistedStateDefinitelyCorrupt(
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Bool {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard !SharingLifecycleGate.isCleanupRequired,
+                  let url = SharedContainer.momentSharingStateURL
+            else { throw MomentSharingError.stateUnavailable }
+            guard FileManager.default.fileExists(atPath: url.path) else { return false }
+
+            // Keep the read outside the decode catch: permission/protection
+            // and other filesystem failures are transient, not proof that the
+            // user's retained evidence is malformed.
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            do {
+                _ = try decoder.decode(MomentSharingState.self, from: data).validated()
+                return false
+            } catch {
+                return true
+            }
         }
     }
 
@@ -269,10 +437,166 @@ enum MomentSharingStateStore {
             }
             var state = try loadWhileLocked()
             try operation(&state)
+            pruneOutgoingOutcomes(&state, now: .now)
             state.storageRevision += 1
             state = try state.validated()
             try writeWhileLocked(state)
             return state
+        }
+    }
+
+    /// Publishes one already-decrypted and locally moderated JPEG together
+    /// with its inbox row under the same installation lifecycle flock. A
+    /// terminal local state always wins over a late download, and pruning can
+    /// never observe the final file before its state publication finishes.
+    static func publishReceivedJPEG(
+        _ candidate: MomentInboxItem,
+        jpeg: Data,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentInboxItem {
+        let candidate = try candidate.validated()
+        guard candidate.state == .available || candidate.state == .blocked,
+              candidate.localJPEGFileName != nil
+        else { throw MomentSharingError.invalidPayload }
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard !SharingLifecycleGate.isCleanupRequired,
+                  let directory = SharedContainer.momentSharingReceivedDirectoryURL,
+                  let fileName = candidate.localJPEGFileName
+            else { throw MomentSharingError.stateUnavailable }
+            var state = try loadWhileLocked()
+            if let existing = state.inbox.first(where: { $0.id == candidate.id }) {
+                guard existing.senderParticipantID == candidate.senderParticipantID,
+                      existing.kind == candidate.kind,
+                      existing.keyEpoch == candidate.keyEpoch,
+                      existing.committedAt == candidate.committedAt
+                else { throw MomentSharingError.stateUnavailable }
+                // Revocation/block are monotonic safety states. An already
+                // acknowledged/available duplicate also needs no rewrite.
+                if existing.state == .revoked { return existing }
+                guard existing.capturedAt == candidate.capturedAt,
+                      existing.captureDateIsMissing == candidate.captureDateIsMissing
+                else { throw MomentSharingError.stateUnavailable }
+                if existing.state == .blocked || candidate.state == .available {
+                    return existing
+                }
+            }
+
+            let url = directory.appendingPathComponent(fileName, isDirectory: false)
+            try SharingSecureFile.write(jpeg, to: url)
+            do {
+                state.inbox.removeAll { $0.id == candidate.id }
+                state.inbox.append(candidate)
+                state.storageRevision += 1
+                try writeWhileLocked(try state.validated())
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+                throw error
+            }
+            return candidate
+        }
+    }
+
+    /// Applies a delivery revocation monotonically. A tombstone is written
+    /// even when the JPEG has not arrived, so an older in-flight download can
+    /// never recreate a visible item after this change is durable.
+    static func revokeInbox(
+        tombstone: MomentInboxItem,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        let tombstone = try tombstone.validated()
+        guard tombstone.state == .revoked,
+              tombstone.localJPEGFileName == nil
+        else { throw MomentSharingError.invalidPayload }
+        _ = try mutate(validating: lifecycleToken) { state in
+            if let index = state.inbox.firstIndex(where: { $0.id == tombstone.id }) {
+                guard state.inbox[index].senderParticipantID
+                        == tombstone.senderParticipantID,
+                      state.inbox[index].kind == tombstone.kind,
+                      state.inbox[index].keyEpoch == tombstone.keyEpoch,
+                      state.inbox[index].committedAt == tombstone.committedAt
+                else { throw MomentSharingError.stateUnavailable }
+                // A blocked item retains its hidden local report evidence.
+                if state.inbox[index].state != .blocked {
+                    state.inbox[index].state = .revoked
+                }
+            } else {
+                state.inbox.append(tombstone)
+            }
+        }
+    }
+
+    /// Opaque relay cursors are not orderable. Compare-and-swap prevents a
+    /// stale page from moving local progress backward if another coordinator
+    /// advanced it first.
+    @discardableResult
+    static func advanceChangeCursor(
+        expected: String?,
+        next: String?,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Bool {
+        var advanced = false
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard state.changeCursor == expected else { return }
+            state.changeCursor = next
+            advanced = true
+        }
+        return advanced
+    }
+
+    /// Records one terminal local preparation result. The random ledger ID is
+    /// intentionally unrelated to the handoff capture ID, so presentation
+    /// state cannot be joined back to an image or participant.
+    @discardableResult
+    static func recordOutgoingOutcome(
+        reason: MomentOutgoingOutcomeReason,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> MomentOutgoingOutcome {
+        return try withLifecycleLock(validating: lifecycleToken) {
+            try recordOutgoingOutcomeWhileLifecycleLocked(reason: reason, now: now)
+        }
+    }
+
+    /// For a handoff-store terminal cleanup that already owns the lifecycle
+    /// flock. Calling the ordinary API from that critical section deadlocks.
+    /// The caller must remove plaintext before invoking this method so a
+    /// partial cross-file failure always favors deletion over UI history.
+    @discardableResult
+    static func recordOutgoingOutcomeWhileLifecycleLocked(
+        reason: MomentOutgoingOutcomeReason,
+        now: Date = .now
+    ) throws -> MomentOutgoingOutcome {
+        let outcome = try MomentOutgoingOutcome(
+            id: UUID(),
+            reason: reason,
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(MomentOutgoingOutcome.retentionSeconds)
+        ).validated()
+        guard !SharingLifecycleGate.isCleanupRequired else {
+            throw MomentSharingError.stateUnavailable
+        }
+        var state = try loadWhileLocked()
+        state.outgoingOutcomes.append(outcome)
+        pruneOutgoingOutcomes(&state, now: now)
+        state.storageRevision += 1
+        try writeWhileLocked(try state.validated())
+        return outcome
+    }
+
+    static func dismissOutgoingOutcome(
+        id: UUID,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            state.outgoingOutcomes.removeAll { $0.id == id }
+        }
+    }
+
+    static func clearOutgoingOutcomes(
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            state.outgoingOutcomes.removeAll()
         }
     }
 
@@ -470,7 +794,10 @@ enum MomentSharingStateStore {
                 }
                 return
             }
-            let pendingReports = state.reportOutbox.filter { $0.phase != .committed }
+            let pendingReports = state.reportOutbox.filter {
+                $0.phase == .prepared || $0.phase == .reserved
+                    || $0.phase == .uploaded || $0.phase == .committing
+            }
             let pendingReportBytes = pendingReports.reduce(0) { partial, value in
                 partial + value.ciphertextSize
             }
@@ -523,6 +850,7 @@ enum MomentSharingStateStore {
             else { return }
             state.reportOutbox[index].phase = .prepared
             state.reportOutbox[index].serverReportID = nil
+            state.reportOutbox[index].commitStartedAt = nil
             state.reportOutbox[index].updatedAt = now
             recovered = true
         }
@@ -551,7 +879,10 @@ enum MomentSharingStateStore {
 
     /// A reservation is only an upload lease. If it expires, preserve the
     /// exact encrypted object and logical IDs, but discard the Server's old
-    /// moment ID so the next sync can reserve a fresh lease idempotently.
+    /// moment ID so the next sync can reserve a fresh lease idempotently. A
+    /// relay `reservation_expired` response after a commit attempt is a
+    /// definitive non-commit result because the relay checks idempotent commit
+    /// replay before it reports an expired lease.
     @discardableResult
     static func recoverExpiredReservation(
         itemID: UUID,
@@ -568,6 +899,7 @@ enum MomentSharingStateStore {
             state.outbox[index].phase = .prepared
             state.outbox[index].serverMomentID = nil
             state.outbox[index].uploadExpiresAt = nil
+            state.outbox[index].commitStartedAt = nil
             state.outbox[index].attemptCount += 1
             state.outbox[index].nextRetryAt = now.addingTimeInterval(30)
             state.outbox[index].lastErrorCode = "reservation-expired"
@@ -582,23 +914,52 @@ enum MomentSharingStateStore {
     /// drafts remain available, but unsent family ciphertext is discarded.
     static func enterReportOnlyMode(
         until: Date,
-        validating lifecycleToken: SharingLifecycleGate.Token
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
     ) throws {
-        var discarded: [MomentOutboxItem] = []
-        _ = try mutate(validating: lifecycleToken) { state in
-            state.reportOnlyUntil = max(state.reportOnlyUntil ?? until, until)
-            discarded = state.outbox.filter {
-                $0.phase == .prepared || $0.phase == .reserved
-                    || $0.phase == .uploaded || $0.phase == .failed
-            }
-            state.outbox.removeAll {
-                $0.phase == .prepared || $0.phase == .reserved
-                    || $0.phase == .uploaded || $0.phase == .failed
-            }
+        let discarded = try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try enterReportOnlyModeWhileLifecycleLocked(until: until, now: now)
         }
         for item in discarded {
             try? removeCiphertext(for: item)
         }
+    }
+
+    /// Caller already owns the validated lifecycle flock. This is paired with
+    /// the handoff report-only marker so the Extension stops before this state
+    /// write, while no nested flock acquisition can deadlock the transition.
+    static func enterReportOnlyModeWhileLifecycleLocked(
+        until: Date,
+        now: Date = .now
+    ) throws -> [MomentOutboxItem] {
+        guard !SharingLifecycleGate.isCleanupRequired else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let boundedUntil = try MomentSharingProtocol.boundedReportOnlyUntil(
+            until,
+            receivedAt: now
+        )
+        var state = try loadWhileLocked()
+        let localUpperBound = now.addingTimeInterval(
+            MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                + MomentSharingProtocol.maximumRelayClockSkewSeconds
+        )
+        state.reportOnlyUntil = min(
+            max(state.reportOnlyUntil ?? boundedUntil, boundedUntil),
+            localUpperBound
+        )
+        let discarded = state.outbox.filter {
+            $0.phase == .prepared || $0.phase == .reserved
+                || $0.phase == .uploaded || $0.phase == .failed
+        }
+        state.outbox.removeAll {
+            $0.phase == .prepared || $0.phase == .reserved
+                || $0.phase == .uploaded || $0.phase == .failed
+        }
+        pruneOutgoingOutcomes(&state, now: now)
+        state.storageRevision += 1
+        try writeWhileLocked(try state.validated())
+        return discarded
     }
 
     static func markOutboxFailed(
@@ -610,7 +971,9 @@ enum MomentSharingStateStore {
         var failedItem: MomentOutboxItem?
         _ = try mutate(validating: lifecycleToken) { state in
             guard let index = state.outbox.firstIndex(where: { $0.id == itemID }),
-                  state.outbox[index].phase != .committed
+                  state.outbox[index].phase != .committed,
+                  state.outbox[index].phase != .committing,
+                  state.outbox[index].phase != .deliveryResultUnknown
             else { return }
             state.outbox[index].phase = .failed
             state.outbox[index].nextRetryAt = nil
@@ -622,27 +985,44 @@ enum MomentSharingStateStore {
     }
 
     static func discardPendingOutbox(
+        destinationKey: String? = nil,
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws {
+        // Persist the non-sendable state first. If physical cleanup is
+        // interrupted, the orphan scan can retry it without resurrecting an
+        // uploaded item that the user already cancelled. The optional key is
+        // the relay space ID and prevents a future multi-window action from
+        // crossing its selected destination.
         var discarded: [MomentOutboxItem] = []
         _ = try mutate(validating: lifecycleToken) { state in
             discarded = state.outbox.filter {
-                $0.phase == .prepared || $0.phase == .reserved || $0.phase == .uploaded
+                (destinationKey == nil || $0.context.spaceID == destinationKey)
+                    && ($0.phase == .prepared || $0.phase == .reserved
+                        || $0.phase == .uploaded)
             }
             state.outbox.removeAll {
-                $0.phase == .prepared || $0.phase == .reserved || $0.phase == .uploaded
+                (destinationKey == nil || $0.context.spaceID == destinationKey)
+                    && ($0.phase == .prepared || $0.phase == .reserved
+                        || $0.phase == .uploaded)
             }
         }
         for item in discarded { try? removeCiphertext(for: item) }
     }
 
     static func discardFailedOutbox(
+        destinationKey: String? = nil,
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws {
         var discarded: [MomentOutboxItem] = []
         _ = try mutate(validating: lifecycleToken) { state in
-            discarded = state.outbox.filter { $0.phase == .failed }
-            state.outbox.removeAll { $0.phase == .failed }
+            discarded = state.outbox.filter {
+                (destinationKey == nil || $0.context.spaceID == destinationKey)
+                    && ($0.phase == .failed || $0.phase == .deliveryResultUnknown)
+            }
+            state.outbox.removeAll {
+                (destinationKey == nil || $0.context.spaceID == destinationKey)
+                    && ($0.phase == .failed || $0.phase == .deliveryResultUnknown)
+            }
         }
         for item in discarded {
             try? removeCiphertext(for: item)
@@ -663,11 +1043,27 @@ enum MomentSharingStateStore {
             let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
             let historyCutoff = now.addingTimeInterval(-localHistorySeconds)
             let pendingCutoff = now.addingTimeInterval(-maximumPendingOutboxSeconds)
+            let commitAmbiguityCutoff = now.addingTimeInterval(
+                -maximumCommitAmbiguitySeconds
+            )
             let pendingReportCutoff = now.addingTimeInterval(-maximumPendingReportSeconds)
             let outboxMetadataCutoff = now.addingTimeInterval(
                 -completedOutboxMetadataSeconds
             )
             let reportMetadataCutoff = now.addingTimeInterval(-reportedMetadataSeconds)
+            pruneOutgoingOutcomes(&state, now: now)
+            if let reportOnlyUntil = state.reportOnlyUntil {
+                let maximumUntil = now.addingTimeInterval(
+                    MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                        + MomentSharingProtocol.maximumRelayClockSkewSeconds
+                )
+                if reportOnlyUntil > maximumUntil {
+                    // One-time normalization of pre-boundary or corrupt local
+                    // state. Subsequent foregrounds cannot slide this fixed
+                    // deadline forward.
+                    state.reportOnlyUntil = maximumUntil
+                }
+            }
             var retainedCount = 0
             var retainedBytes = 0
             var retainedInbox: [MomentInboxItem] = []
@@ -716,24 +1112,79 @@ enum MomentSharingStateStore {
                 expiredPending.append(state.outbox[index])
             }
 
-            let removedOutbox = state.outbox.filter {
-                $0.phase == .committed && $0.updatedAt < outboxMetadataCutoff
+            var expiredCommitAmbiguities: [MomentOutboxItem] = []
+            for index in state.outbox.indices where
+                state.outbox[index].phase == .committing
+                    && boundedCommitReplayAnchor(state.outbox[index])
+                        < commitAmbiguityCutoff {
+                state.outbox[index].phase = .deliveryResultUnknown
+                state.outbox[index].nextRetryAt = nil
+                state.outbox[index].lastErrorCode = "commit-result-expired"
+                state.outbox[index].updatedAt = now
+                expiredCommitAmbiguities.append(state.outbox[index])
+            }
+
+            var expiredReportCommitAmbiguities: [MomentReportOutboxItem] = []
+            for index in state.reportOutbox.indices where
+                state.reportOutbox[index].phase == .committing
+                    && state.reportOutbox[index].commitStartedAt.map({ startedAt in
+                        // The first local commit attempt may not reach the
+                        // relay until the one-hour upload lease is nearly
+                        // exhausted. Keep the report through that latest
+                        // possible acceptance plus the relay's seven-day
+                        // report-content reconciliation window.
+                        startedAt.addingTimeInterval(
+                            MomentSharingProtocol.maximumUploadLeaseSeconds
+                                + MomentSharingProtocol.reportContentRetentionSeconds
+                                + (2 * MomentSharingProtocol.maximumRelayClockSkewSeconds)
+                        ) <= now
+                    }) == true {
+                state.reportOutbox[index].phase = .deliveryResultUnknown
+                state.reportOutbox[index].updatedAt = now
+                expiredReportCommitAmbiguities.append(state.reportOutbox[index])
+            }
+
+            var removedOutbox = state.outbox.filter {
+                ($0.phase == .committed || $0.phase == .failed
+                    || $0.phase == .deliveryResultUnknown)
+                    && $0.updatedAt < outboxMetadataCutoff
             }
             state.outbox.removeAll {
-                $0.phase == .committed && $0.updatedAt < outboxMetadataCutoff
+                ($0.phase == .committed || $0.phase == .failed
+                    || $0.phase == .deliveryResultUnknown)
+                    && $0.updatedAt < outboxMetadataCutoff
+            }
+            let terminalOutbox = state.outbox.filter {
+                $0.phase == .committed || $0.phase == .failed
+                    || $0.phase == .deliveryResultUnknown
+            }.sorted {
+                if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+                return $0.id.uuidString > $1.id.uuidString
+            }
+            if terminalOutbox.count > maximumTerminalOutboxMetadataCount {
+                let overflow = Array(
+                    terminalOutbox.dropFirst(maximumTerminalOutboxMetadataCount)
+                )
+                let overflowIDs = Set(overflow.map(\.id))
+                removedOutbox.append(contentsOf: overflow)
+                state.outbox.removeAll { overflowIDs.contains($0.id) }
             }
             let removedReports = state.reportOutbox.filter {
-                $0.phase == .committed && $0.updatedAt < reportMetadataCutoff
+                ($0.phase == .committed || $0.phase == .deliveryResultUnknown)
+                    && $0.updatedAt < reportMetadataCutoff
             }
             state.reportOutbox.removeAll {
-                $0.phase == .committed && $0.updatedAt < reportMetadataCutoff
+                ($0.phase == .committed || $0.phase == .deliveryResultUnknown)
+                    && $0.updatedAt < reportMetadataCutoff
             }
             let expiredPendingReports = state.reportOutbox.filter {
-                $0.phase != .committed && $0.phase != .committing
+                ($0.phase == .prepared || $0.phase == .reserved
+                    || $0.phase == .uploaded)
                     && $0.createdAt < pendingReportCutoff
             }
             state.reportOutbox.removeAll {
-                $0.phase != .committed && $0.phase != .committing
+                ($0.phase == .prepared || $0.phase == .reserved
+                    || $0.phase == .uploaded)
                     && $0.createdAt < pendingReportCutoff
             }
 
@@ -747,7 +1198,12 @@ enum MomentSharingStateStore {
                 let names = (try? FileManager.default.contentsOfDirectory(
                     atPath: receivedDirectory.path
                 )) ?? removedImageNames
-                for name in names where name.hasSuffix(".jpg") && !retainedNames.contains(name) {
+                // This directory is Moment-owned and every live file is
+                // represented by `retainedNames`. Remove crash leftovers from
+                // SharingSecureFile's pre-rename inode as well as malformed or
+                // foreign names; otherwise a final plaintext JPEG can outlive
+                // the 90-day cache policy when no later write occurs.
+                for name in names where !retainedNames.contains(name) {
                     try? FileManager.default.removeItem(
                         at: receivedDirectory.appendingPathComponent(name)
                     )
@@ -760,19 +1216,25 @@ enum MomentSharingStateStore {
                             || $0.phase == .uploaded || $0.phase == .committing
                     }.map(\.ciphertextFileName)
                         + state.reportOutbox.filter {
-                            $0.phase != .committed
+                            $0.phase == .prepared || $0.phase == .reserved
+                                || $0.phase == .uploaded || $0.phase == .committing
                         }.map(\.ciphertextFileName)
                 )
                 let names = (try? FileManager.default.contentsOfDirectory(
                     atPath: ciphertextDirectory.path
                 )) ?? (
-                    removedOutbox.map(\.ciphertextFileName)
+                        removedOutbox.map(\.ciphertextFileName)
                         + removedReports.map(\.ciphertextFileName)
                         + expiredPending.map(\.ciphertextFileName)
+                        + expiredCommitAmbiguities.map(\.ciphertextFileName)
+                        + expiredReportCommitAmbiguities.map(\.ciphertextFileName)
                         + expiredPendingReports.map(\.ciphertextFileName)
                 )
-                for name in names
-                where name.hasSuffix(".ciphertext") && !retainedNames.contains(name) {
+                // The ciphertext directory is likewise exclusive to this
+                // store. A `.sharing-secure-*` inode left before atomic rename
+                // has no state reference and must be bounded by this prune,
+                // not by the chance of a future write to the same directory.
+                for name in names where !retainedNames.contains(name) {
                     try? FileManager.default.removeItem(
                         at: ciphertextDirectory.appendingPathComponent(name)
                     )
@@ -791,6 +1253,41 @@ enum MomentSharingStateStore {
         } catch {
             throw MomentSharingError.stateUnavailable
         }
+    }
+
+    private static func pruneOutgoingOutcomes(
+        _ state: inout MomentSharingState,
+        now: Date
+    ) {
+        state.outgoingOutcomes.removeAll { $0.expiresAt <= now }
+        if state.outgoingOutcomes.count > MomentOutgoingOutcome.maximumCount {
+            state.outgoingOutcomes = Array(
+                state.outgoingOutcomes.sorted {
+                    if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                    return $0.id.uuidString > $1.id.uuidString
+                }.prefix(MomentOutgoingOutcome.maximumCount)
+            )
+        }
+    }
+
+    /// Server expiry dates are useful only within the signed protocol lease.
+    /// Bound even a malformed/corrupt persisted value by a local commit-time
+    /// anchor so ciphertext cannot be retained indefinitely by a far-future
+    /// relay timestamp. `updatedAt` is the legacy fallback because entering
+    /// `.committing` durably updated it before `commitStartedAt` existed.
+    private static func boundedCommitReplayAnchor(
+        _ item: MomentOutboxItem
+    ) -> Date {
+        let localCommitAt = item.commitStartedAt ?? item.updatedAt
+        let maximumLeaseAnchor = localCommitAt.addingTimeInterval(
+            MomentSharingProtocol.maximumUploadLeaseSeconds
+                + MomentSharingProtocol.maximumRelayClockSkewSeconds
+        )
+        let boundedRelayExpiry = min(
+            item.uploadExpiresAt ?? localCommitAt,
+            maximumLeaseAnchor
+        )
+        return max(localCommitAt, boundedRelayExpiry)
     }
 
     private static func writeWhileLocked(_ state: MomentSharingState) throws {

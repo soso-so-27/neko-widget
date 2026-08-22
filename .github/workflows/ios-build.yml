@@ -147,9 +147,18 @@ jobs:
             echo 'Share Extension must not use the retired daily-sharing protocol' >&2
             exit 1
           fi
+
           grep -Fq 'case committing' Shared/Sharing/MomentSharingStore.swift
           grep -Fq 'expected: .committing' NekoWidget/Services/MomentSharingCoordinator.swift
           grep -Fq 'MOMENT_RUNTIME_ENABLED": "NO"' SharingService/wrangler.example.jsonc
+          grep -Fq 'IDEMPOTENCY_TTL_SECONDS": "172800"' \
+            SharingService/wrangler.example.jsonc
+          grep -Fq 'const MOMENT_UPLOAD_TTL_SECONDS = 60 * 60' \
+            SharingService/src/moments.ts
+          grep -Fq 'const MOMENT_REPORT_ONLY_TTL_SECONDS = 24 * 60 * 60' \
+            SharingService/src/moments.ts
+          grep -Fq 'const REPORT_CONTENT_TTL_SECONDS = 7 * 86_400' \
+            SharingService/src/moments.ts
           grep -Fq 'moment_runtime_disabled' SharingService/src/index.ts
           grep -Fqx 'SHARING_SHARE_EXTENSION_HANDOFF_ENABLED = NO' Config.xcconfig
           grep -Fqx 'SHARING_SHARE_EXTENSION_SEND_ENABLED = NO' Config.xcconfig
@@ -277,6 +286,20 @@ jobs:
           if "kSecAttrAccessGroup" in keychain[active_query_start:active_query_end]:
               raise SystemExit("Active room credential must use the host default Keychain group")
           PY
+
+      - name: Verify one-photo sharing presentation states
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Views/MomentSharingPresentation.swift \
+            ci/verify-moment-sharing-presentation.swift \
+            -o "$RUNNER_TEMP/verify-moment-sharing-presentation"
+          "$RUNNER_TEMP/verify-moment-sharing-presentation"
+          grep -Fq 'MomentSharingPresentation.swift in Sources' \
+            NekoWidget.xcodeproj/project.pbxproj
 
       - name: Verify normalized bbox posture classification
         working-directory: NekoWidget

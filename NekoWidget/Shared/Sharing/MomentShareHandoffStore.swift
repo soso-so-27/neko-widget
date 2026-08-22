@@ -31,7 +31,9 @@ struct MomentShareDestinationAdmission: Codable, Equatable, Identifiable, Sendab
     }
 
     func isActive(at now: Date) -> Bool {
-        expiresAt > now
+        issuedAt <= now.addingTimeInterval(
+            MomentShareHandoffStore.maximumLocalClockSkew
+        ) && expiresAt > now
     }
 }
 
@@ -49,7 +51,19 @@ struct MomentShareAdmissionCatalog: Codable, Equatable, Sendable {
               Set(destinations.map(\.bindingSHA256)).count == destinations.count
         else { throw MomentSharingError.stateUnavailable }
         _ = try destinations.map { try $0.validated() }
+        guard destinations.allSatisfy({ destination in
+            destination.issuedAt <= updatedAt
+                && destination.expiresAt <= updatedAt.addingTimeInterval(
+                    MomentShareHandoffStore.admissionLifetime
+                )
+        }) else { throw MomentSharingError.stateUnavailable }
         return self
+    }
+
+    func isCurrent(at now: Date) -> Bool {
+        updatedAt <= now.addingTimeInterval(
+            MomentShareHandoffStore.maximumLocalClockSkew
+        )
     }
 }
 
@@ -130,6 +144,8 @@ struct MomentPendingCaptureRecord: Codable, Equatable, Identifiable, Sendable {
               senderPolicyAcceptedAt <= createdAt,
               createdAt > Date(timeIntervalSince1970: 0),
               expiresAt > createdAt,
+              expiresAt.timeIntervalSince(createdAt)
+                <= MomentShareHandoffStore.captureLifetime,
               updatedAt >= createdAt,
               updatedAt < expiresAt,
               (phase == .processing) == hasClaim,
@@ -158,6 +174,106 @@ struct MomentPendingCaptureRecord: Codable, Equatable, Identifiable, Sendable {
 struct MomentPendingCaptureClaim: Equatable, Sendable {
     let record: MomentPendingCaptureRecord
     let claimID: UUID
+}
+
+/// Image-free identity used only to keep a live host moderation temporary file
+/// while removing crash residue for claims that no longer exist.
+struct MomentPendingCaptureClaimIdentity: Hashable, Sendable {
+    let captureID: UUID
+    let claimID: UUID
+}
+
+private struct MomentShareHandoffReportOnlyMarker: Codable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let createdAt: Date
+    let until: Date
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              createdAt > Date(timeIntervalSince1970: 0),
+              until > createdAt.addingTimeInterval(
+                  -MomentSharingProtocol.maximumRelayClockSkewSeconds
+              ),
+              until <= createdAt.addingTimeInterval(
+                  MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                    + MomentSharingProtocol.maximumRelayClockSkewSeconds
+              )
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+}
+
+/// Read-only, sanitized host presentation state. Images, capture identifiers,
+/// Server identifiers and file paths never cross this boundary. The local
+/// admission UUID is exposed only as an opaque destination grouping key so a
+/// future multi-window UI can count and cancel without a global cross-window
+/// operation. Expiry/retry times are included because omitting them would make
+/// a deferred handoff look like active processing.
+struct MomentShareHandoffStatusSnapshot: Equatable, Sendable {
+    let destinationKey: String
+    let phase: MomentPendingCapturePhase
+    let lastErrorCode: String?
+    let updatedAt: Date
+    let expiresAt: Date
+    let nextRetryAt: Date?
+    /// A pending record can be removed without racing an active host claim.
+    /// Presentation remains read-only for now; this supports a future explicit
+    /// preparation-cancel operation without inferring safety from the phase.
+    let isCancellable: Bool
+}
+
+enum MomentShareHandoffTerminalOutcomeReason: String, Codable, Sendable {
+    case preparationExpired
+    case preparationFailed
+}
+
+/// Bounded, image-free history written after short-lived plaintext has been
+/// physically removed. It intentionally contains no capture/admission ID,
+/// image bytes, path, hash, or destination identity.
+struct MomentShareHandoffTerminalOutcomeSnapshot: Equatable, Sendable {
+    let reason: MomentShareHandoffTerminalOutcomeReason
+    let createdAt: Date
+    let expiresAt: Date
+}
+
+struct MomentShareHandoffPresentationSnapshot: Equatable, Sendable {
+    let statuses: [MomentShareHandoffStatusSnapshot]
+    let terminalOutcomes: [MomentShareHandoffTerminalOutcomeSnapshot]
+}
+
+private struct MomentShareHandoffTerminalOutcome: Codable, Equatable, Identifiable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let id: UUID
+    let reason: MomentShareHandoffTerminalOutcomeReason
+    let createdAt: Date
+    let expiresAt: Date
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              createdAt > Date(timeIntervalSince1970: 0),
+              expiresAt > createdAt,
+              expiresAt.timeIntervalSince(createdAt)
+                <= MomentShareHandoffStore.terminalOutcomeLifetime
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+}
+
+private struct MomentShareHandoffTerminalOutcomeCatalog: Codable, Equatable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    var outcomes: [MomentShareHandoffTerminalOutcome]
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              outcomes.count <= MomentShareHandoffStore.maximumTerminalOutcomeCount,
+              Set(outcomes.map(\.id)).count == outcomes.count
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try outcomes.map { try $0.validated() }
+        return self
+    }
 }
 
 /// Plain handoff input is more sensitive than the ordinary sharing metadata or
@@ -288,12 +404,16 @@ private enum MomentShareHandoffProtectedFile {
 enum MomentShareHandoffStore {
     static let admissionLifetime: TimeInterval = 24 * 60 * 60
     static let captureLifetime: TimeInterval = 60 * 60
+    static let maximumLocalClockSkew: TimeInterval = 5 * 60
     static let claimRecoveryInterval: TimeInterval = 5 * 60
     static let maximumAdmissionCount = 8
     static let maximumPendingCaptureCount = 3
     static let maximumPendingCaptureBytes = 3 * 1_024 * 1_024
+    static let terminalOutcomeLifetime: TimeInterval = 7 * 24 * 60 * 60
+    static let maximumTerminalOutcomeCount = 100
 
     private static let maximumAdmissionFileBytes = 64 * 1_024
+    private static let maximumOutcomeFileBytes = 128 * 1_024
     private static let maximumEncodedCaptureBytes =
         MomentSharingProtocol.maximumMediaCiphertextBytes + 96 * 1_024
     private static let captureFileSuffix = ".capture.v1.plist"
@@ -338,7 +458,8 @@ enum MomentShareHandoffStore {
     ) throws -> MomentShareAdmissionCatalog {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
             guard now > Date(timeIntervalSince1970: 0),
-                  inputs.count <= maximumAdmissionCount
+                  inputs.count <= maximumAdmissionCount,
+                  !isReportOnlyDisabledWhileLocked()
             else { throw MomentSharingError.invalidPayload }
 
             let validatedInputs = try inputs.map { input -> MomentShareAdmissionInput in
@@ -365,10 +486,17 @@ enum MomentShareHandoffStore {
 
             let existing: MomentShareAdmissionCatalog
             do {
-                existing = try loadCatalogWhileLocked() ?? MomentShareAdmissionCatalog(
-                    destinations: [],
-                    updatedAt: now
-                )
+                if let loaded = try loadCatalogWhileLocked() {
+                    guard loaded.isCurrent(at: now) else {
+                        throw MomentSharingError.stateUnavailable
+                    }
+                    existing = loaded
+                } else {
+                    existing = MomentShareAdmissionCatalog(
+                        destinations: [],
+                        updatedAt: now
+                    )
+                }
             } catch {
                 // This cache contains no irreplaceable user state. A malformed
                 // admission must never be treated as authority, and the host
@@ -407,7 +535,134 @@ enum MomentShareHandoffStore {
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            try purgeAllWhileLocked()
+            try revokeAdmissionsWhileLifecycleLocked()
+        }
+    }
+
+    /// Caller already owns the validated lifecycle flock. Host code uses this
+    /// only after deleting its moderation plaintext, so the durable admission
+    /// removal cannot commit while a cancelled analyzer input remains.
+    static func revokeAdmissionsWhileLifecycleLocked() throws {
+        try purgeAllWhileLocked()
+    }
+
+    /// Commits the fail-closed Extension boundary without purging captures.
+    /// The host processor uses this split primitive so it can unlink its own
+    /// moderation plaintext before making capture/catalog removal the final
+    /// cancellation commit point, all under the same lifecycle flock. Only a
+    /// full pairing cleanup removes this terminal marker.
+    static func writeReportOnlyHandoffMarkerWhileLifecycleLocked(
+        until: Date,
+        now: Date = .now
+    ) throws {
+        guard !SharingLifecycleGate.isCleanupRequired,
+              let markerURL = SharedContainer.momentShareHandoffReportOnlyMarkerURL
+        else { throw MomentSharingError.stateUnavailable }
+        let boundedUntil = try MomentSharingProtocol.boundedReportOnlyUntil(
+            until,
+            receivedAt: now
+        )
+
+        var fixedCreatedAt = now
+        var fixedUntil = boundedUntil
+        var recoveredFileAnchor: Date?
+        if FileManager.default.fileExists(atPath: markerURL.path) {
+            guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(markerURL)
+            else { throw MomentSharingError.stateUnavailable }
+            do {
+                let existing = try loadReportOnlyMarkerWhileLocked()
+                guard let existing,
+                      existing.createdAt <= now.addingTimeInterval(
+                          MomentSharingProtocol.maximumRelayClockSkewSeconds
+                      ),
+                      existing.until <= now.addingTimeInterval(
+                          MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                            + MomentSharingProtocol.maximumRelayClockSkewSeconds
+                      )
+                else { throw MomentSharingError.stateUnavailable }
+                // The first durable marker fixes the local report-only
+                // boundary. Foreground syncs must not replace its inode and
+                // slide the filesystem recovery anchor forward.
+                return
+            } catch {
+                guard let anchor = try reportOnlyMarkerRecoveryAnchorWhileLocked(
+                    now: now
+                ) else { throw MomentSharingError.stateUnavailable }
+                let recoveryLimit = anchor.addingTimeInterval(
+                    MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                )
+                guard !MomentSharingProtocol.isReportOnlyWindowClosed(
+                    until: recoveryLimit,
+                    now: now
+                ) else { throw MomentSharingError.stateUnavailable }
+                fixedCreatedAt = anchor
+                fixedUntil = min(boundedUntil, recoveryLimit)
+                recoveredFileAnchor = anchor
+            }
+        }
+        let marker = try MomentShareHandoffReportOnlyMarker(
+            createdAt: fixedCreatedAt,
+            until: fixedUntil
+        ).validated()
+        try SharingSecureFile.write(
+            try encode(marker),
+            to: markerURL
+        )
+        if let recoveredFileAnchor {
+            // Atomic replacement necessarily creates a new inode. Preserve a
+            // stable filesystem fallback across repeated payload corruption
+            // by restoring one trusted timestamp to the original anchor.
+            try FileManager.default.setAttributes(
+                [.modificationDate: recoveredFileAnchor],
+                ofItemAtPath: markerURL.path
+            )
+            let attributes = try FileManager.default.attributesOfItem(
+                atPath: markerURL.path
+            )
+            guard let restored = attributes[.modificationDate] as? Date,
+                  abs(restored.timeIntervalSince(recoveredFileAnchor)) <= 2
+            else { throw MomentSharingError.stateUnavailable }
+        }
+    }
+
+    /// Lets the host resume a marker-first report-only transition after a
+    /// process death between the marker and the sharing-state commit.
+    static func reportOnlyHandoffDeadline(
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> Date? {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let marker = try loadReportOnlyMarkerWhileLocked() else { return nil }
+            guard let markerURL = SharedContainer.momentShareHandoffReportOnlyMarkerURL,
+                  SharingSecureFile.hasRequiredProtectionAndBackupExclusion(markerURL),
+                  marker.createdAt <= now.addingTimeInterval(
+                      MomentSharingProtocol.maximumRelayClockSkewSeconds
+                  ),
+                  marker.until <= now.addingTimeInterval(
+                      MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                        + MomentSharingProtocol.maximumRelayClockSkewSeconds
+                  )
+            else { throw MomentSharingError.stateUnavailable }
+            return marker.until
+        }
+    }
+
+    /// Recovers a fixed, bounded deadline when the protected marker exists
+    /// but its payload cannot be decoded. The file timestamp is not treated as
+    /// relay authority: it may only shorten or recreate a local fail-closed
+    /// window of at most 24 hours. Callers prefer a valid sharing-state
+    /// deadline and use this anchor only after marker decoding failed.
+    static func reportOnlyHandoffRecoveryDeadline(
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> Date? {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let anchor = try reportOnlyMarkerRecoveryAnchorWhileLocked(
+                now: now
+            ) else { return nil }
+            return anchor.addingTimeInterval(
+                MomentSharingProtocol.maximumReportOnlyWindowSeconds
+            )
         }
     }
 
@@ -418,11 +673,16 @@ enum MomentShareHandoffStore {
             guard !SharingLifecycleGate.isCleanupRequired else {
                 throw MomentSharingError.stateUnavailable
             }
+            if isReportOnlyDisabledWhileLocked() {
+                try purgeAllWhileLocked()
+                return []
+            }
             // Opening the Share sheet is itself a cleanup opportunity. Do
             // not require another stage attempt or a host-app launch before
             // expired canonical plaintext is physically removed.
             try pruneCapturesWhileLocked(now: now)
-            guard let catalog = try loadCatalogWhileLocked() else { return [] }
+            guard let catalog = try loadCurrentCatalogWhileLocked(now: now)
+            else { return [] }
             return catalog.destinations
                 .filter { $0.isActive(at: now) }
                 .sorted { lhs, rhs in
@@ -432,6 +692,156 @@ enum MomentShareHandoffStore {
                     return lhs.displayName.localizedStandardCompare(rhs.displayName)
                         == .orderedAscending
                 }
+        }
+    }
+
+    /// Returns only fields needed by the host app. Sorting happens before
+    /// capture identifiers are stripped so simultaneous captures remain
+    /// stable; only the local opaque destination grouping key crosses into the
+    /// presentation policy.
+    static func presentationSnapshot(
+        now: Date = .now
+    ) throws -> MomentShareHandoffPresentationSnapshot {
+        try SharingLifecycleGate.withExclusive {
+            guard !SharingLifecycleGate.isCleanupRequired else {
+                throw MomentSharingError.stateUnavailable
+            }
+            if isReportOnlyDisabledWhileLocked() {
+                try purgeAllWhileLocked()
+                return MomentShareHandoffPresentationSnapshot(
+                    statuses: [],
+                    terminalOutcomes: []
+                )
+            }
+            let records = try pruneCapturesWhileLocked(now: now)
+            let statuses = records
+                .sorted {
+                    if $0.updatedAt != $1.updatedAt { return $0.updatedAt < $1.updatedAt }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                .map {
+                    MomentShareHandoffStatusSnapshot(
+                        destinationKey: $0.admissionID.uuidString.lowercased(),
+                        phase: $0.phase,
+                        lastErrorCode: $0.lastErrorCode,
+                        updatedAt: $0.updatedAt,
+                        expiresAt: $0.expiresAt,
+                        nextRetryAt: $0.nextRetryAt,
+                        isCancellable: true
+                    )
+                }
+            let terminalOutcomes = try loadTerminalOutcomesWhileLocked(now: now)
+                .sorted {
+                    if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                .map {
+                    MomentShareHandoffTerminalOutcomeSnapshot(
+                        reason: $0.reason,
+                        createdAt: $0.createdAt,
+                        expiresAt: $0.expiresAt
+                    )
+                }
+            return MomentShareHandoffPresentationSnapshot(
+                statuses: statuses,
+                terminalOutcomes: terminalOutcomes
+            )
+        }
+    }
+
+    /// Deletes every still-local plaintext preparation. A processing claim is
+    /// removed by the same CAS authority as a pending item; a late host result
+    /// can no longer promote because the claimed record no longer exists. An
+    /// optional opaque destination key keeps future multi-window cancellation
+    /// scoped; nil retains the explicit v1 "all local preparations" action.
+    @discardableResult
+    static func discardCancellableCaptures(
+        destinationKey: String? = nil,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Int {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try discardCancellableCapturesWhileLifecycleLocked(
+                destinationKey: destinationKey
+            )
+        }
+    }
+
+    /// Caller already owns the validated lifecycle flock.
+    @discardableResult
+    static func discardCancellableCapturesWhileLifecycleLocked(
+        destinationKey: String? = nil
+    ) throws -> Int {
+        let records = try loadCaptureRecordsWhileLocked().filter {
+            destinationKey == nil
+                || $0.admissionID.uuidString.lowercased() == destinationKey
+        }
+        for record in records {
+            try removeCaptureWhileLocked(id: record.id)
+        }
+        return records.count
+    }
+
+    static func clearTerminalOutcomes(
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let url = SharedContainer.momentShareHandoffOutcomesURL else {
+                throw MomentSharingError.stateUnavailable
+            }
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    static func isCurrentClaim(
+        _ claim: MomentPendingCaptureClaim,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> Bool {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try pruneCapturesWhileLocked(now: now)
+            guard let current = try loadCaptureWhileLocked(id: claim.record.id) else {
+                return false
+            }
+            return current.phase == .processing
+                && current.claimID == claim.claimID
+                && current.id == claim.record.id
+                && current.clientRequestID == claim.record.clientRequestID
+        }
+    }
+
+    static func activeClaimIdentities(
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> Set<MomentPendingCaptureClaimIdentity> {
+        try withActiveClaimIdentities(
+            validating: lifecycleToken,
+            now: now
+        ) { $0 }
+    }
+
+    /// Runs residue reconciliation while the same lifecycle flock protects
+    /// both the active-claim snapshot and any caller cleanup. Without this
+    /// boundary a second drain could create a valid moderation inode after
+    /// the snapshot and have it mistaken for an orphan.
+    static func withActiveClaimIdentities<T>(
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now,
+        _ operation: (Set<MomentPendingCaptureClaimIdentity>) throws -> T
+    ) throws -> T {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            let records = try pruneCapturesWhileLocked(now: now)
+            let identities = Set(records.compactMap { record in
+                guard record.phase == .processing,
+                      let claimID = record.claimID
+                else { return nil }
+                return MomentPendingCaptureClaimIdentity(
+                    captureID: record.id,
+                    claimID: claimID
+                )
+            })
+            return try operation(identities)
         }
     }
 
@@ -488,7 +898,8 @@ enum MomentShareHandoffStore {
                 throw MomentSharingError.stateUnavailable
             }
             try pruneCapturesWhileLocked(now: now)
-            guard let catalog = try loadCatalogWhileLocked(),
+            guard !isReportOnlyDisabledWhileLocked(),
+                  let catalog = try loadCurrentCatalogWhileLocked(now: now),
                   catalog.destinations.contains(where: {
                       $0.id == admissionID && $0.isActive(at: now)
                   })
@@ -563,16 +974,20 @@ enum MomentShareHandoffStore {
         }
     }
 
-    /// Re-reads the claimed record under the current installation token before
-    /// exposing local plaintext to the host moderation temporary file.
-    static func readCanonicalJPEG(
+    /// Runs one short synchronous host operation only while this exact claim
+    /// and installation token are still current. The host uses this to create
+    /// its moderation input before releasing the lifecycle flock; cancellation
+    /// or unlink therefore either removes an already-created temporary file or
+    /// wins first and prevents a stale task from creating one afterward.
+    static func withCurrentClaim<Result>(
         _ claim: MomentPendingCaptureClaim,
         validating lifecycleToken: SharingLifecycleGate.Token,
-        now: Date = .now
-    ) throws -> Data {
+        now: Date = .now,
+        operation: (MomentPendingCaptureRecord) throws -> Result
+    ) throws -> Result {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
             let current = try requireCurrentClaimWhileLocked(claim, now: now)
-            return current.canonicalJPEG
+            return try operation(current)
         }
     }
 
@@ -592,6 +1007,11 @@ enum MomentShareHandoffStore {
             )
             if current.expiresAt <= now || retryAt.map({ $0 >= current.expiresAt }) == true {
                 try removeCaptureWhileLocked(id: current.id)
+                try appendTerminalOutcomeWhileLocked(
+                    reason: .preparationExpired,
+                    createdAt: min(current.expiresAt, now),
+                    now: now
+                )
                 return
             }
             let safeError = errorCode.map { String($0.prefix(64)) }
@@ -649,6 +1069,31 @@ enum MomentShareHandoffStore {
         try completeCapture(claim, validating: lifecycleToken, now: now)
     }
 
+    /// Removes a still-authorized plaintext claim before recording a fixed,
+    /// image-free local result. A notice write may fail after deletion, but the
+    /// rejected preparation is never retained merely for presentation history.
+    static func discardCapture(
+        _ claim: MomentPendingCaptureClaim,
+        recording outcomeReason: MomentShareHandoffTerminalOutcomeReason,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            _ = try requireCurrentClaimWhileLocked(
+                claim,
+                now: now,
+                requiresActiveAdmission: false,
+                requiresUnexpiredCapture: false
+            )
+            try removeCaptureWhileLocked(id: claim.record.id)
+            try appendTerminalOutcomeWhileLocked(
+                reason: outcomeReason,
+                createdAt: now,
+                now: now
+            )
+        }
+    }
+
     static func prune(
         validating lifecycleToken: SharingLifecycleGate.Token,
         now: Date = .now
@@ -701,6 +1146,78 @@ enum MomentShareHandoffStore {
             throw MomentSharingError.stateUnavailable
         }
         try SharingSecureFile.write(encoded, to: url)
+    }
+
+    private static func loadTerminalOutcomesWhileLocked(
+        now: Date
+    ) throws -> [MomentShareHandoffTerminalOutcome] {
+        guard let url = SharedContainer.momentShareHandoffOutcomesURL else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        do {
+            let data = try boundedData(from: url, maximumBytes: maximumOutcomeFileBytes)
+            var catalog = try decode(
+                MomentShareHandoffTerminalOutcomeCatalog.self,
+                from: data
+            ).validated()
+            let original = catalog
+            catalog.outcomes.removeAll { $0.expiresAt <= now }
+            if catalog != original {
+                try writeTerminalOutcomesWhileLocked(catalog.outcomes)
+            }
+            return catalog.outcomes
+        } catch {
+            // Presentation history is replaceable and grants no authority. A
+            // malformed file must not block capture cleanup or sharing state.
+            try? FileManager.default.removeItem(at: url)
+            return []
+        }
+    }
+
+    private static func appendTerminalOutcomeWhileLocked(
+        reason: MomentShareHandoffTerminalOutcomeReason,
+        createdAt: Date,
+        now: Date
+    ) throws {
+        let expiresAt = createdAt.addingTimeInterval(terminalOutcomeLifetime)
+        // A device returning after the entire notice-retention window should
+        // delete stale plaintext without creating an already-expired row.
+        guard expiresAt > now else { return }
+        var outcomes = try loadTerminalOutcomesWhileLocked(now: now)
+        outcomes.append(try MomentShareHandoffTerminalOutcome(
+            id: UUID(),
+            reason: reason,
+            createdAt: createdAt,
+            expiresAt: expiresAt
+        ).validated())
+        outcomes = Array(outcomes.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }.prefix(maximumTerminalOutcomeCount))
+        try writeTerminalOutcomesWhileLocked(outcomes)
+    }
+
+    private static func writeTerminalOutcomesWhileLocked(
+        _ outcomes: [MomentShareHandoffTerminalOutcome]
+    ) throws {
+        guard let url = SharedContainer.momentShareHandoffOutcomesURL else {
+            throw MomentSharingError.stateUnavailable
+        }
+        if outcomes.isEmpty {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            return
+        }
+        let catalog = try MomentShareHandoffTerminalOutcomeCatalog(
+            outcomes: outcomes
+        ).validated()
+        let data = try encode(catalog)
+        guard data.count <= maximumOutcomeFileBytes else {
+            throw MomentSharingError.stateUnavailable
+        }
+        try MomentShareHandoffProtectedFile.write(data, to: url)
     }
 
     private static func loadCaptureRecordsWhileLocked() throws -> [MomentPendingCaptureRecord] {
@@ -779,10 +1296,28 @@ enum MomentShareHandoffStore {
         )
     }
 
-    private static func pruneCapturesWhileLocked(now: Date) throws {
+    @discardableResult
+    private static func pruneCapturesWhileLocked(
+        now: Date
+    ) throws -> [MomentPendingCaptureRecord] {
+        var retained: [MomentPendingCaptureRecord] = []
         for var record in try loadCaptureRecordsWhileLocked() {
+            if record.createdAt > now.addingTimeInterval(maximumLocalClockSkew) {
+                // A future local timestamp cannot become retention authority.
+                // This is replaceable derived input, so fail closed and remove
+                // it without manufacturing a misleading user outcome.
+                try removeCaptureWhileLocked(id: record.id)
+                continue
+            }
             if record.expiresAt <= now {
                 try removeCaptureWhileLocked(id: record.id)
+                // Deletion is deliberately first. A disk failure may omit the
+                // notice, but never keeps plaintext merely for UI history.
+                try? appendTerminalOutcomeWhileLocked(
+                    reason: .preparationExpired,
+                    createdAt: record.expiresAt,
+                    now: now
+                )
                 continue
             }
             if record.phase == .processing,
@@ -795,12 +1330,80 @@ enum MomentShareHandoffStore {
                 record.lastErrorCode = "claim-recovered"
                 try writeCaptureWhileLocked(record)
             }
+            retained.append(record)
         }
+        return retained
     }
 
     private static func hasActiveAdmissionWhileLocked(id: UUID, now: Date) throws -> Bool {
-        guard let catalog = try loadCatalogWhileLocked() else { return false }
+        guard !isReportOnlyDisabledWhileLocked(),
+              let catalog = try loadCurrentCatalogWhileLocked(now: now)
+        else { return false }
         return catalog.destinations.contains { $0.id == id && $0.isActive(at: now) }
+    }
+
+    private static func loadCurrentCatalogWhileLocked(
+        now: Date
+    ) throws -> MomentShareAdmissionCatalog? {
+        guard let catalog = try loadCatalogWhileLocked() else { return nil }
+        guard catalog.isCurrent(at: now) else {
+            try purgeAllWhileLocked()
+            return nil
+        }
+        return catalog
+    }
+
+    private static func isReportOnlyDisabledWhileLocked() -> Bool {
+        guard let markerURL = SharedContainer.momentShareHandoffReportOnlyMarkerURL
+        else { return true }
+        return FileManager.default.fileExists(atPath: markerURL.path)
+    }
+
+    private static func loadReportOnlyMarkerWhileLocked() throws
+        -> MomentShareHandoffReportOnlyMarker? {
+        guard let markerURL = SharedContainer.momentShareHandoffReportOnlyMarkerURL
+        else { throw MomentSharingError.stateUnavailable }
+        guard FileManager.default.fileExists(atPath: markerURL.path) else { return nil }
+        do {
+            let data = try boundedData(from: markerURL, maximumBytes: 4 * 1_024)
+            return try decode(
+                MomentShareHandoffReportOnlyMarker.self,
+                from: data
+            ).validated()
+        } catch let error as MomentSharingError {
+            throw error
+        } catch {
+            throw MomentSharingError.stateUnavailable
+        }
+    }
+
+    private static func reportOnlyMarkerRecoveryAnchorWhileLocked(
+        now: Date
+    ) throws -> Date? {
+        guard let markerURL = SharedContainer.momentShareHandoffReportOnlyMarkerURL
+        else { throw MomentSharingError.stateUnavailable }
+        guard FileManager.default.fileExists(atPath: markerURL.path) else { return nil }
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(markerURL)
+        else { throw MomentSharingError.stateUnavailable }
+
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: markerURL.path
+        )
+        let dates = [
+            attributes[.creationDate] as? Date,
+            attributes[.modificationDate] as? Date
+        ].compactMap { $0 }
+        let latestPermittedAnchor = now.addingTimeInterval(
+            MomentSharingProtocol.maximumRelayClockSkewSeconds
+        )
+        guard !dates.isEmpty,
+              dates.allSatisfy({
+                  $0 > Date(timeIntervalSince1970: 0)
+                    && $0 <= latestPermittedAnchor
+              }),
+              let anchor = dates.min()
+        else { throw MomentSharingError.stateUnavailable }
+        return anchor
     }
 
     private static func requireCurrentClaimWhileLocked(

@@ -271,11 +271,31 @@ enum PairingInstallationGuard {
     }
 
     private static func purgeSharedCache() throws {
-        guard let directory = SharedContainer.sharingCacheDirectoryURL,
-              FileManager.default.fileExists(atPath: directory.path)
-        else { return }
-        // This directory is deliberately narrower than the App Group root. It
-        // cannot remove the photo scan, personal likes, logs, or widget cache.
-        try FileManager.default.removeItem(at: directory)
+        var firstError: Error?
+        if let directory = SharedContainer.sharingCacheDirectoryURL,
+           FileManager.default.fileExists(atPath: directory.path) {
+            // This directory is deliberately narrower than the App Group root.
+            // It cannot remove the photo scan, likes, logs, or widget cache.
+            do {
+                try FileManager.default.removeItem(at: directory)
+            } catch {
+                firstError = error
+            }
+        }
+        for name in [
+            "NekoWidgetMomentHandoffModeration",
+            "NekoWidgetMomentInboundModeration"
+        ] {
+            let moderationDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent(name, isDirectory: true)
+            if FileManager.default.fileExists(atPath: moderationDirectory.path) {
+                do {
+                    try FileManager.default.removeItem(at: moderationDirectory)
+                } catch {
+                    if firstError == nil { firstError = error }
+                }
+            }
+        }
+        if let firstError { throw firstError }
     }
 }
