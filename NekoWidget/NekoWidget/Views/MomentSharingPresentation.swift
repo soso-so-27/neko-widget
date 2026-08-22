@@ -182,7 +182,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
             reasons.append("まだ配信完了ではありません。")
             return reasons.joined(separator: " ")
         case .confirming:
-            return "サーバーの配信受付を確認しています。受付が確定するまで取り消せず、相手の受取済みとも表示しません。"
+            return "サーバーの配信受付を確認しています。受付が確定するまでは取り消せません。相手の受取済みとも表示しません。"
         case .resultUnknown:
             return "サーバーが配信を受け付けた可能性がありますが、結果を確認できませんでした。相手に届かなかったとは断定できません。暗号化済みの一時データは今後送信せず、端末から削除対象にしました。"
         case .failed:
