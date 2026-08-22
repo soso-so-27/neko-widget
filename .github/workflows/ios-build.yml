@@ -44,6 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 ci/test-pairing-only-release-config.py
           python3 ci/test-validate-sharing-release.py
           python3 ci/test-validate-sharing-runtime-self-test.py
 

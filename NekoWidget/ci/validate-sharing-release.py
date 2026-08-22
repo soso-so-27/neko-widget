@@ -27,7 +27,30 @@ MEDIA_INTERACTION_COLLECTIONS = {
 }
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 PHOTO_DESCRIPTION_TERMS = ("選んだ1枚", "2,048", "位置情報", "暗号化", "原本")
-RESERVED_HOST_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
+RESERVED_HOST_SUFFIXES = (
+    ".example",
+    ".invalid",
+    ".local",
+    ".localhost",
+    ".test",
+    ".internal",
+    ".lan",
+    ".home.arpa",
+)
+APP_REQUIRED_API_REASONS = {
+    "NSPrivacyAccessedAPICategoryUserDefaults": "CA92.1",
+    "NSPrivacyAccessedAPICategorySystemBootTime": "35F9.1",
+    "NSPrivacyAccessedAPICategoryFileTimestamp": "C617.1",
+}
+SHARE_REQUIRED_API_REASONS = {
+    "NSPrivacyAccessedAPICategoryFileTimestamp": "C617.1",
+}
+EXPECTED_MODE_FLAGS = {
+    "disabled": (False, False, False, False, False),
+    "review-preview": (False, False, False, False, True),
+    "pairing-only": (True, False, False, False, False),
+    "media": (True, True, True, False, False),
+}
 
 
 def load_plist(path: Path) -> dict:
@@ -75,6 +98,7 @@ def parsed_flag(info: dict, key: str, failures: list[str]) -> bool:
 def validate_privacy_manifest(
     privacy: dict,
     expected_collections: set[str],
+    required_api_reasons: dict[str, str],
     failures: list[str],
 ) -> None:
     if privacy.get("NSPrivacyTracking") is not False:
@@ -88,15 +112,12 @@ def validate_privacy_manifest(
                 item.get("NSPrivacyAccessedAPIType"), str
             ):
                 accessed_by_type[item["NSPrivacyAccessedAPIType"]] = item
-    file_timestamp = accessed_by_type.get(
-        "NSPrivacyAccessedAPICategoryFileTimestamp"
-    )
-    if file_timestamp is None or "C617.1" not in file_timestamp.get(
-        "NSPrivacyAccessedAPITypeReasons", []
-    ):
-        failures.append(
-            "PrivacyInfo must declare FileTimestamp reason C617.1 for app-group metadata."
-        )
+    for api_type, reason in required_api_reasons.items():
+        item = accessed_by_type.get(api_type)
+        if item is None or reason not in item.get("NSPrivacyAccessedAPITypeReasons", []):
+            failures.append(
+                f"PrivacyInfo must declare {api_type} reason {reason}."
+            )
 
     values = privacy.get("NSPrivacyCollectedDataTypes")
     if not isinstance(values, list):
@@ -245,7 +266,12 @@ def validate_enabled_release(
     if media_enabled:
         required_collections.update(MEDIA_COLLECTIONS)
         required_collections.update(MEDIA_INTERACTION_COLLECTIONS)
-    validate_privacy_manifest(privacy, required_collections, failures)
+    validate_privacy_manifest(
+        privacy,
+        required_collections,
+        APP_REQUIRED_API_REASONS,
+        failures,
+    )
 
     if not truthy(export_reviewed):
         failures.append(
@@ -257,10 +283,10 @@ def validate_enabled_release(
     if not isinstance(encryption_value, bool):
         failures.append("ITSAppUsesNonExemptEncryption must be an explicit Boolean.")
     elif encryption_value:
-        declaration_code = info.get("AppEncryptionDeclarationCode")
+        declaration_code = info.get("ITSEncryptionExportComplianceCode")
         if not isinstance(declaration_code, str) or not declaration_code.strip():
             failures.append(
-                "A non-exempt encryption build requires AppEncryptionDeclarationCode."
+                "A non-exempt encryption build requires ITSEncryptionExportComplianceCode."
             )
 
     return failures
@@ -336,7 +362,77 @@ def validate_share_extension_boundary(
             failures.append(
                 f"Share Extension {key} must be absent; capture-only handoff has no network configuration."
             )
-    return app_handoff, share_handoff
+    return app_handoff, app_direct
+
+
+def validate_expected_mode(
+    expected_mode: str,
+    expected_api_origin: str,
+    app_info: dict,
+    share_info: dict,
+    pairing_enabled: bool,
+    media_enabled: bool,
+    handoff_enabled: bool,
+    direct_send_enabled: bool,
+    review_preview_enabled: bool,
+    failures: list[str],
+) -> None:
+    """Bind the requested workflow mode to the processed archive.
+
+    The marker and every runtime flag are checked after Xcode expansion so a
+    command-line override, stale xcconfig, or Share Extension mismatch fails
+    closed instead of silently changing the release scope.
+    """
+
+    app_mode = str(app_info.get("SharingReleaseMode", "")).strip()
+    share_mode = str(share_info.get("SharingReleaseMode", "")).strip()
+    if app_mode != expected_mode:
+        failures.append(
+            f"App SharingReleaseMode must be {expected_mode}, got {app_mode or 'empty'}."
+        )
+    if share_mode != expected_mode:
+        failures.append(
+            "Share Extension SharingReleaseMode must match the expected app mode "
+            f"{expected_mode}, got {share_mode or 'empty'}."
+        )
+    if share_mode != app_mode:
+        failures.append("App and Share Extension SharingReleaseMode do not match.")
+
+    archived_origin = str(app_info.get("SharingAPIBaseURL", "")).strip()
+    expected_origin = expected_api_origin.strip()
+    if archived_origin != expected_origin:
+        failures.append(
+            "Processed SharingAPIBaseURL does not exactly match the origin supplied "
+            "by the release workflow."
+        )
+
+    actual = (
+        pairing_enabled,
+        media_enabled,
+        handoff_enabled,
+        direct_send_enabled,
+        review_preview_enabled,
+    )
+    expected = EXPECTED_MODE_FLAGS[expected_mode]
+    if actual != expected:
+        names = (
+            "feature",
+            "media",
+            "handoff",
+            "direct-send",
+            "review-preview",
+        )
+        expected_text = ", ".join(
+            f"{name}={'YES' if value else 'NO'}"
+            for name, value in zip(names, expected, strict=True)
+        )
+        actual_text = ", ".join(
+            f"{name}={'YES' if value else 'NO'}"
+            for name, value in zip(names, actual, strict=True)
+        )
+        failures.append(
+            f"Expected {expected_mode} flags ({expected_text}); archive has {actual_text}."
+        )
 
 
 def main() -> int:
@@ -346,6 +442,17 @@ def main() -> int:
     parser.add_argument("--privacy-manifest", type=Path, required=True)
     parser.add_argument("--share-privacy-manifest", type=Path, required=True)
     parser.add_argument("--export-reviewed", default="")
+    parser.add_argument(
+        "--expected-mode",
+        choices=tuple(EXPECTED_MODE_FLAGS),
+        required=True,
+        help="Explicit release mode selected by the archive workflow.",
+    )
+    parser.add_argument(
+        "--expected-api-origin",
+        required=True,
+        help="Exact API origin supplied by the protected release environment.",
+    )
     args = parser.parse_args()
 
     try:
@@ -363,10 +470,27 @@ def main() -> int:
     review_preview_enabled = parsed_flag(
         info, "SharingReviewPreviewEnabled", flag_failures
     )
-    handoff_enabled, _ = validate_share_extension_boundary(
+    handoff_enabled, direct_send_enabled = validate_share_extension_boundary(
         info, share_info, flag_failures
     )
-    validate_privacy_manifest(share_privacy, set(), flag_failures)
+    validate_expected_mode(
+        args.expected_mode,
+        args.expected_api_origin,
+        info,
+        share_info,
+        pairing_enabled,
+        media_enabled,
+        handoff_enabled,
+        direct_send_enabled,
+        review_preview_enabled,
+        flag_failures,
+    )
+    validate_privacy_manifest(
+        share_privacy,
+        set(),
+        SHARE_REQUIRED_API_REASONS,
+        flag_failures,
+    )
     endpoint = str(info.get("SharingAPIBaseURL", "")).strip()
     if flag_failures:
         print("sharing release preflight: FAIL", file=sys.stderr)
@@ -382,7 +506,12 @@ def main() -> int:
             )
         if endpoint:
             failures.append("Sharing review preview requires an empty API URL.")
-        validate_privacy_manifest(privacy, set(), failures)
+        validate_privacy_manifest(
+            privacy,
+            set(),
+            APP_REQUIRED_API_REASONS,
+            failures,
+        )
         if failures:
             print("sharing release preflight: FAIL", file=sys.stderr)
             for failure in failures:
@@ -416,7 +545,12 @@ def main() -> int:
         failures: list[str] = []
         if endpoint:
             failures.append("Disabled sharing requires an empty API URL.")
-        validate_privacy_manifest(privacy, set(), failures)
+        validate_privacy_manifest(
+            privacy,
+            set(),
+            APP_REQUIRED_API_REASONS,
+            failures,
+        )
         if failures:
             print("sharing release preflight: FAIL", file=sys.stderr)
             for failure in failures:
@@ -444,7 +578,13 @@ def main() -> int:
             print(f"- {failure}", file=sys.stderr)
         return 1
 
-    print("sharing release preflight: PASS (sharing disclosure gates satisfied)")
+    if args.expected_mode == "pairing-only":
+        print(
+            "sharing release preflight: PASS "
+            "(pairing-only; photos disabled)"
+        )
+    else:
+        print("sharing release preflight: PASS (sharing disclosure gates satisfied)")
     return 0
 
 

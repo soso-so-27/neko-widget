@@ -11,6 +11,9 @@ struct PairingView: View {
 
     var body: some View {
         Form {
+            if !model.isMediaSyncEnabled {
+                pairingOnlyBuildSection
+            }
             privacySection
 
             if !model.isConfigured {
@@ -57,6 +60,18 @@ struct PairingView: View {
         }
     }
 
+    private var pairingOnlyBuildSection: some View {
+        Section {
+            Label("ペアリングのみ", systemImage: "key.horizontal")
+                .font(.headline)
+            Text("このBuildでは写真を保存・送信しません")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("このBuildの確認範囲")
+        }
+    }
+
     private var privacySection: some View {
         Section {
             if model.isMediaSyncEnabled {
@@ -64,8 +79,8 @@ struct PairingView: View {
                 Label("最大2,048pxへ縮小し、位置情報を除いて暗号化します", systemImage: "lock.shield")
                 Label("撮影日時は、分かる場合だけ暗号化した中に入ります", systemImage: "calendar.badge.clock")
             } else {
-                Label("このビルドでは共有鍵のペアリングだけを行います", systemImage: "key.horizontal")
-                Label("写真や縮小画像は送信しません", systemImage: "photo.badge.checkmark")
+                Label("共有鍵のペアリングだけを行います", systemImage: "key.horizontal")
+                Label("写真や縮小画像を保存・送信しません", systemImage: "photo.badge.checkmark")
             }
         } header: {
             Text("共有されるもの")

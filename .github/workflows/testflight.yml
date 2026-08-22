@@ -7,6 +7,14 @@ on:
         description: "CFBundleVersion。空欄ならこのworkflowのrun numberを使います"
         required: false
         type: string
+      release_mode:
+        description: "配布範囲。通常はreview-preview、Build 28の2台確認だけpairing-only"
+        required: true
+        default: review-preview
+        type: choice
+        options:
+          - review-preview
+          - pairing-only
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -49,6 +57,109 @@ jobs:
           test -d "$DEVELOPER_DIR"
           xcodebuild -version
           xcodebuild -showsdks
+
+      - name: Select fail-closed release mode
+        shell: bash
+        env:
+          SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
+          SHARING_STAGING_API_ORIGIN: ${{ vars.SHARING_STAGING_API_ORIGIN }}
+        run: |
+          set -euo pipefail
+          case "$SELECTED_RELEASE_MODE" in
+            review-preview)
+              release_xcconfig="Config.xcconfig"
+              release_origin=""
+              release_summary="review-preview/runtime disabled"
+              ;;
+            pairing-only)
+              release_xcconfig="Config.PairingOnly.xcconfig"
+              release_origin="${SHARING_STAGING_API_ORIGIN:-}"
+              release_summary="pairing-only/photos disabled"
+              if [[ -z "$release_origin" ]]; then
+                echo "The protected testflight Environment variable SHARING_STAGING_API_ORIGIN is required for pairing-only." >&2
+                exit 1
+              fi
+              python3 - "$release_origin" <<'PY'
+          import ipaddress
+          import socket
+          import sys
+          from urllib.parse import urlparse
+
+          supplied = sys.argv[1]
+          raw = supplied.strip()
+          if raw != supplied or any(ord(character) < 32 for character in raw):
+              raise SystemExit(
+                  "SHARING_STAGING_API_ORIGIN must not contain whitespace or control characters."
+              )
+          parsed = urlparse(raw)
+          host = (parsed.hostname or "").lower().rstrip(".")
+          reserved = (
+              ".example", ".invalid", ".local", ".localhost", ".test",
+              ".internal", ".lan", ".home.arpa",
+          )
+          try:
+              parsed.port
+          except ValueError:
+              raise SystemExit("SHARING_STAGING_API_ORIGIN contains an invalid port.")
+          try:
+              address = ipaddress.ip_address(host)
+          except ValueError:
+              address = None
+          if (
+              parsed.scheme != "https"
+              or not host
+              or "." not in host
+              or host == "localhost"
+              or host.endswith(reserved)
+              or address is not None
+              or parsed.username is not None
+              or parsed.password is not None
+              or parsed.path not in ("", "/")
+              or parsed.params
+              or parsed.query
+              or parsed.fragment
+              or "$" in raw
+              or "REPLACE" in raw.upper()
+          ):
+              raise SystemExit(
+                  "SHARING_STAGING_API_ORIGIN must be a non-placeholder public HTTPS origin."
+              )
+          try:
+              resolved = {
+                  item[4][0]
+                  for item in socket.getaddrinfo(
+                      host, parsed.port or 443, type=socket.SOCK_STREAM
+                  )
+              }
+          except socket.gaierror as error:
+              raise SystemExit(
+                  f"SHARING_STAGING_API_ORIGIN must resolve in public DNS: {error}"
+              ) from error
+          if not resolved or any(
+              not ipaddress.ip_address(value).is_global for value in resolved
+          ):
+              raise SystemExit(
+                  "SHARING_STAGING_API_ORIGIN must resolve only to public IP addresses."
+              )
+          PY
+              cp \
+                "$PROJECT_DIRECTORY/ci/PrivacyInfo.PairingOnly.xcprivacy" \
+                "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
+              ;;
+            *)
+              echo "Unknown release_mode: $SELECTED_RELEASE_MODE" >&2
+              exit 1
+              ;;
+          esac
+
+          test -f "$PROJECT_DIRECTORY/$release_xcconfig"
+          plutil -lint "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
+          {
+            echo "SHARING_EXPECTED_MODE=$SELECTED_RELEASE_MODE"
+            echo "RELEASE_XCCONFIG=$release_xcconfig"
+            echo "RELEASE_SHARING_API_ORIGIN=$release_origin"
+            echo "RELEASE_MODE_SUMMARY=$release_summary"
+          } >> "$GITHUB_ENV"
 
       - name: Validate required secrets
         shell: bash
@@ -421,6 +532,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
+            -xcconfig "$RELEASE_XCCONFIG" \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
             -configuration Release \
@@ -434,6 +546,7 @@ jobs:
             APP_PROVISIONING_PROFILE_SPECIFIER="$APP_PROFILE_SPECIFIER" \
             WIDGET_PROVISIONING_PROFILE_SPECIFIER="$WIDGET_PROFILE_SPECIFIER" \
             SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="$SHARE_PROFILE_SPECIFIER" \
+            SHARING_API_BASE_URL="$RELEASE_SHARING_API_ORIGIN" \
             CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \
             "OTHER_CODE_SIGN_FLAGS=--keychain $CI_KEYCHAIN_PATH" \
             archive
@@ -452,7 +565,9 @@ jobs:
             --share-info-plist "$share_path/Info.plist" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
             --share-privacy-manifest "$share_path/PrivacyInfo.xcprivacy" \
-            --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}"
+            --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}" \
+            --expected-mode "$SHARING_EXPECTED_MODE" \
+            --expected-api-origin "$RELEASE_SHARING_API_ORIGIN"
 
       - name: Verify archive signatures and App Group entitlements
         shell: bash
@@ -664,6 +779,7 @@ jobs:
         env:
           UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
           RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+          SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           {
             echo "## NekoWidget release workflow"
@@ -671,6 +787,8 @@ jobs:
             echo "- Upload requested: \`$UPLOAD_TO_TESTFLIGHT\`"
             echo "- Retain encrypted signed artifacts: \`$RETAIN_SIGNED_ARTIFACTS\`"
             echo "- Build number: \`${RELEASE_BUILD_NUMBER:-not resolved}\`"
+            echo "- Release mode: \`${SELECTED_RELEASE_MODE}\`"
+            echo "- Sharing scope: \`${RELEASE_MODE_SUMMARY:-not resolved}\`"
             if [[ "$UPLOAD_TO_TESTFLIGHT" == "true" ]]; then
               echo "- Intended result: signed archive, IPA export, validation, and TestFlight upload"
             else

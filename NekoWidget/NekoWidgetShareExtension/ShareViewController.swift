@@ -176,6 +176,16 @@ final class ShareViewController: UIViewController {
 
     @MainActor
     private func loadSelectedImage() async {
+        let configuration = SharingAPIConfiguration.current
+        if configuration.isEnabled && !configuration.isMediaEnabled {
+            titleLabel.text = "ペアリングのみ"
+            detailLabel.text = "このBuildでは写真を保存・送信しません。"
+            destinationLabel.text = "写真共有は無効です"
+            statusLabel.textColor = .secondaryLabel
+            statusLabel.text = "「ねこのまど」アプリで2台のペアリングを確認してください。"
+            return
+        }
+
         let provider: NSItemProvider
         do {
             provider = try selectedImageProvider()
@@ -204,7 +214,6 @@ final class ShareViewController: UIViewController {
             return
         }
 
-        let configuration = SharingAPIConfiguration.current
         guard configuration.isShareExtensionHandoffAvailable else {
             statusLabel.textColor = .systemOrange
             statusLabel.text = "このビルドでは画面だけ確認できます。写真は保存も送信もしません。"
