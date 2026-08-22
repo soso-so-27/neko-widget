@@ -955,10 +955,11 @@ actor SharingRuntimeSelfTestRunner {
             // The payload is intentionally malformed; existence remains the
             // Extension authority while the host uses the bounded anchor.
         }
+        let markerRecoveryNow = markerWriteFinishedAt.addingTimeInterval(1)
         let recoveredMarkerUntil = try MomentShareHandoffStore
             .reportOnlyHandoffRecoveryDeadline(
                 validating: token,
-                now: markerWriteFinishedAt.addingTimeInterval(1)
+                now: markerRecoveryNow
             )
         guard let recoveredMarkerUntil,
               recoveredMarkerUntil >= markerWriteStartedAt.addingTimeInterval(
@@ -969,9 +970,9 @@ actor SharingRuntimeSelfTestRunner {
               )
         else { throw MomentSharingError.stateUnavailable }
         try MomentShareHandoffProcessor().establishReportOnlyHandoffGate(
-            until: reportOnlyMarkerUntil,
+            until: recoveredMarkerUntil,
             lifecycleToken: token,
-            now: base.addingTimeInterval(2 * 60 * 60 + 11)
+            now: markerRecoveryNow
         )
         do {
             _ = try MomentShareHandoffStore.publishAdmissions(
