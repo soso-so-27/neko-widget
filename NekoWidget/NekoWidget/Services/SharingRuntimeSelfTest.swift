@@ -187,6 +187,24 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
         })
+        results.append(await runAsync("moment-install-bound-handoff") {
+            try await Self.testMomentInstallBoundHandoff()
+        })
+        results.append(run("moment-report-only-terminal-gate") {
+            try Self.testMomentReportOnlyTerminalGate()
+        })
+        results.append(run("moment-empty-cursor-normalization") {
+            try Self.testMomentEmptyCursorNormalization()
+        })
+        results.append(run("moment-expired-delivery-advances") {
+            try Self.testMomentExpiredDeliveryPolicy()
+        })
+        results.append(run("moment-outbox-bounds-and-expiry") {
+            try Self.testMomentOutboxBoundsAndExpiry()
+        })
+        results.append(run("moment-report-outbox-bounds-and-recovery") {
+            try Self.testMomentReportOutboxBoundsAndRecovery()
+        })
         results.append(run("normalizer-orientation-scale-parity") {
             try Self.testNormalizerParity()
         })
@@ -320,6 +338,650 @@ actor SharingRuntimeSelfTestRunner {
         }
     }
 
+    /// The Share Extension may only leave a bounded, short-lived canonical
+    /// input. A host-issued binding change and an installation reset must
+    /// remove it before any room credential or network client is involved.
+    private static func testMomentInstallBoundHandoff() async throws {
+        let initial = try PairingInstallationGuard.bootstrap()
+        _ = try PairingInstallationGuard.resetLocalSharing(
+            expectedState: initial.state,
+            lifecycleToken: initial.lifecycleToken,
+            message: nil
+        )
+        let bootstrap = try PairingInstallationGuard.bootstrap()
+        let token = bootstrap.lifecycleToken
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        let acceptedAt = base.addingTimeInterval(-1)
+        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+        let privateMetadataJPEG = try momentJPEGWithSyntheticPrivateMetadata(preview.jpeg)
+        guard MomentCanonicalPreviewBuilder.runtimeSelfTestStrippingPrivateMetadata(
+            from: privateMetadataJPEG
+        ) == preview.jpeg else { throw MomentSharingError.invalidPayload }
+        do {
+            try MomentCanonicalPreviewBuilder.validateReceived(
+                privateMetadataJPEG,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                expectedPlaintextSHA256: PairingCrypto.sha256(privateMetadataJPEG)
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard error == .invalidPayload else { throw error }
+        }
+
+        let firstCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: Data(repeating: 0x51, count: 32),
+                displayName: "家族のまど"
+            )],
+            validating: token,
+            now: base
+        )
+        guard let firstAdmission = firstCatalog.destinations.first else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        var staged: [MomentPendingCaptureRecord] = []
+        for offset in 0..<MomentShareHandoffStore.maximumPendingCaptureCount {
+            let record = try MomentShareHandoffStore.stageCapture(
+                admissionID: firstAdmission.id,
+                canonicalJPEG: preview.jpeg,
+                capturedAt: nil,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: acceptedAt,
+                now: base.addingTimeInterval(TimeInterval(offset))
+            )
+            guard MomentShareHandoffStore.captureHasRequiredProtection(record) else {
+                throw MomentSharingError.stateUnavailable
+            }
+            staged.append(record)
+        }
+        guard staged.count == MomentShareHandoffStore.maximumPendingCaptureCount else {
+            throw MomentSharingError.stateUnavailable
+        }
+        do {
+            _ = try MomentShareHandoffStore.stageCapture(
+                admissionID: firstAdmission.id,
+                canonicalJPEG: preview.jpeg,
+                capturedAt: nil,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: acceptedAt,
+                now: base.addingTimeInterval(4)
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard error == .outboxFull else { throw error }
+        }
+
+        // A different current installation/pairing binding keeps no capture
+        // admitted by the previous one.
+        let secondCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: Data(repeating: 0x52, count: 32),
+                displayName: "家族のまど"
+            )],
+            validating: token,
+            now: base.addingTimeInterval(10)
+        )
+        guard let secondAdmission = secondCatalog.destinations.first,
+              secondAdmission.id != firstAdmission.id,
+              try MomentShareHandoffStore.nextPendingCapture(
+                  admissionID: firstAdmission.id,
+                  validating: token,
+                  now: base.addingTimeInterval(10)
+              ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let pending = try MomentShareHandoffStore.stageCapture(
+            admissionID: secondAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(11)
+        )
+        guard let claim = try MomentShareHandoffStore.claimCapture(
+            pending,
+            validating: token,
+            now: base.addingTimeInterval(12)
+        ), try MomentShareHandoffStore.claimCapture(
+            pending,
+            validating: token,
+            now: base.addingTimeInterval(12)
+        ) == nil,
+        try MomentShareHandoffStore.nextPendingCapture(
+            admissionID: secondAdmission.id,
+            validating: token,
+            now: base.addingTimeInterval(13)
+        ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let recoveredAt = base.addingTimeInterval(
+            12 + MomentShareHandoffStore.claimRecoveryInterval
+        )
+        guard let recovered = try MomentShareHandoffStore.nextPendingCapture(
+            admissionID: secondAdmission.id,
+            validating: token,
+            now: recoveredAt
+        ), recovered.id == claim.record.id, recovered.phase == .pending else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        let expiredReadAt = base.addingTimeInterval(
+            MomentShareHandoffStore.captureLifetime + 12
+        )
+        _ = try MomentShareHandoffStore.activeAdmissions(now: expiredReadAt)
+        guard !MomentShareHandoffStore.captureExists(recovered) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard try MomentShareHandoffStore.nextPendingCapture(
+            admissionID: secondAdmission.id,
+            validating: token,
+            now: expiredReadAt
+        ) == nil else { throw MomentSharingError.stateUnavailable }
+
+        let reconcileRecord = try MomentShareHandoffStore.stageCapture(
+            admissionID: secondAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(2 * 60 * 60)
+        )
+        let spaceID = opaque(0x61)
+        let memberID = opaque(0x62)
+        let context = MomentRequestContext(
+            spaceID: spaceID,
+            senderParticipantID: memberID,
+            senderDeviceID: memberID,
+            clientRequestID: reconcileRecord.clientRequestID,
+            clientMomentID: reconcileRecord.id,
+            kind: .live,
+            keyEpoch: 1
+        )
+        let payload = try MomentCrypto.prepare(
+            canonicalJPEG: reconcileRecord.canonicalJPEG,
+            capturedAt: reconcileRecord.capturedAt,
+            pixelWidth: reconcileRecord.pixelWidth,
+            pixelHeight: reconcileRecord.pixelHeight,
+            context: context,
+            spaceGenerationKey: Data(repeating: 0x63, count: 32)
+        )
+        let durable = try MomentSharingStateStore.enqueue(
+            payload: payload,
+            senderPolicyVersion: reconcileRecord.senderPolicyVersion,
+            senderPolicyAcceptedAt: reconcileRecord.senderPolicyAcceptedAt,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60)
+        )
+        guard let reconcileClaim = try MomentShareHandoffStore.claimCapture(
+            reconcileRecord,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 1)
+        ) else { throw MomentSharingError.stateUnavailable }
+        let reconciled = try MomentShareHandoffStore.promoteCapture(
+            reconcileClaim,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 2)
+        ) { record in
+            guard let existing = try MomentSharingStateStore
+                .existingOutboxWhileLifecycleLocked(
+                    clientMomentID: record.id,
+                    clientRequestID: record.clientRequestID,
+                    spaceID: spaceID,
+                    senderParticipantID: memberID,
+                    senderDeviceID: memberID,
+                    kind: record.kind,
+                    keyEpoch: 1,
+                    senderPolicyVersion: record.senderPolicyVersion,
+                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
+                ) else { throw MomentSharingError.stateUnavailable }
+            return existing
+        }
+        guard reconciled.id == durable.id,
+              try MomentShareHandoffStore.nextPendingCapture(
+                  admissionID: secondAdmission.id,
+                  validating: token,
+                  now: base.addingTimeInterval(2 * 60 * 60 + 2)
+              ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let blockedRecord = try MomentShareHandoffStore.stageCapture(
+            admissionID: secondAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(2 * 60 * 60 + 3)
+        )
+        guard let blockedClaim = try MomentShareHandoffStore.claimCapture(
+            blockedRecord,
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 4)
+        ) else { throw MomentSharingError.stateUnavailable }
+        let reportOnlyUntil = base.addingTimeInterval(3 * 60 * 60)
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: reportOnlyUntil,
+            validating: token
+        )
+        do {
+            _ = try MomentShareHandoffStore.promoteCapture(
+                blockedClaim,
+                validating: token,
+                now: base.addingTimeInterval(2 * 60 * 60 + 6)
+            ) { record in
+                try MomentSharingStateStore.enqueueWhileLifecycleLocked(
+                    payload: try MomentCrypto.prepare(
+                        canonicalJPEG: record.canonicalJPEG,
+                        capturedAt: record.capturedAt,
+                        pixelWidth: record.pixelWidth,
+                        pixelHeight: record.pixelHeight,
+                        context: MomentRequestContext(
+                            spaceID: spaceID,
+                            senderParticipantID: memberID,
+                            senderDeviceID: memberID,
+                            clientRequestID: record.clientRequestID,
+                            clientMomentID: record.id,
+                            kind: record.kind,
+                            keyEpoch: 1
+                        ),
+                        spaceGenerationKey: Data(repeating: 0x63, count: 32)
+                    ),
+                    senderPolicyVersion: record.senderPolicyVersion,
+                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
+                )
+            }
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case let .reportOnly(until) = error,
+                  until == reportOnlyUntil
+            else { throw error }
+        }
+
+        // A rollback build with sharing disabled must still bootstrap the
+        // host installation boundary and physically remove any admission and
+        // staged canonical plaintext left by an earlier enabled build.
+        let disabledConfiguration = SharingAPIConfiguration(
+            isEnabled: false,
+            isMediaEnabled: false,
+            isShareExtensionHandoffEnabled: false,
+            isShareExtensionSendEnabled: false,
+            isReviewPreviewEnabled: true,
+            baseURL: nil,
+            moderationKeyID: nil,
+            moderationPublicKey: nil,
+            supportURL: nil,
+            communityStandardsURL: nil
+        )
+        let disabledCoordinator = MomentSharingCoordinator(
+            configuration: disabledConfiguration
+        )
+        await disabledCoordinator.synchronize(trigger: "runtime-disabled")
+        guard try MomentShareHandoffStore.activeAdmissions(
+            now: base.addingTimeInterval(2 * 60 * 60)
+        ).isEmpty,
+        SharedContainer.momentShareHandoffDirectoryURL.map({
+            !FileManager.default.fileExists(atPath: $0.path)
+        }) == true else { throw MomentSharingError.stateUnavailable }
+
+        // Recreate a local-only handoff to independently verify that the
+        // installation reset also removes the whole subtree.
+        let resetCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: Data(repeating: 0x53, count: 32),
+                displayName: "家族のまど"
+            )],
+            validating: token,
+            now: base.addingTimeInterval(2 * 60 * 60 + 7)
+        )
+        guard let resetAdmission = resetCatalog.destinations.first else {
+            throw MomentSharingError.stateUnavailable
+        }
+        _ = try MomentShareHandoffStore.stageCapture(
+            admissionID: resetAdmission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: acceptedAt,
+            now: base.addingTimeInterval(2 * 60 * 60 + 8)
+        )
+        _ = try PairingInstallationGuard.resetLocalSharing(
+            expectedState: bootstrap.state,
+            lifecycleToken: token,
+            message: nil
+        )
+        guard try MomentShareHandoffStore.activeAdmissions(
+            now: base.addingTimeInterval(2 * 60 * 60)
+        ).isEmpty,
+        SharedContainer.momentShareHandoffDirectoryURL.map({
+            !FileManager.default.fileExists(atPath: $0.path)
+        }) == true else { throw MomentSharingError.stateUnavailable }
+    }
+
+    /// A report-only transition must be enforced by the shared store itself.
+    /// The Share Extension and host app are separate processes, so a UI-only
+    /// check would allow older image preparation work to recreate a normal
+    /// outbox entry after a peer block/revocation was already persisted.
+    private static func testMomentReportOnlyTerminalGate() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let roomKey = Data(repeating: 0x31, count: 32)
+        let firstMomentID = UUID()
+        let firstPayload = try MomentCrypto.prepare(
+            canonicalJPEG: Data(repeating: 0x42, count: 512),
+            capturedAt: nil,
+            pixelWidth: 32,
+            pixelHeight: 16,
+            context: MomentRequestContext(
+                spaceID: "space_runtime_fixture",
+                senderParticipantID: "member_runtime_fixture",
+                senderDeviceID: "member_runtime_fixture",
+                clientRequestID: UUID(),
+                clientMomentID: firstMomentID,
+                kind: .live,
+                keyEpoch: 1
+            ),
+            spaceGenerationKey: roomKey
+        )
+        let first = try MomentSharingStateStore.enqueue(
+            payload: firstPayload,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            validating: lifecycleToken
+        )
+        guard let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let firstCiphertext = ciphertextDirectory.appendingPathComponent(
+            first.ciphertextFileName,
+            isDirectory: false
+        )
+        guard FileManager.default.fileExists(atPath: firstCiphertext.path) else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        let reportOnlyUntil = Date(timeIntervalSince1970: 1_900_000_000)
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: reportOnlyUntil,
+            validating: lifecycleToken
+        )
+        let terminal = try MomentSharingStateStore.load()
+        guard terminal.reportOnlyUntil == reportOnlyUntil,
+              terminal.outbox.isEmpty,
+              !FileManager.default.fileExists(atPath: firstCiphertext.path)
+        else { throw MomentSharingError.stateUnavailable }
+
+        let secondPayload = try MomentCrypto.prepare(
+            canonicalJPEG: Data(repeating: 0x43, count: 512),
+            capturedAt: nil,
+            pixelWidth: 32,
+            pixelHeight: 16,
+            context: MomentRequestContext(
+                spaceID: "space_runtime_fixture",
+                senderParticipantID: "member_runtime_fixture",
+                senderDeviceID: "member_runtime_fixture",
+                clientRequestID: UUID(),
+                clientMomentID: UUID(),
+                kind: .live,
+                keyEpoch: 1
+            ),
+            spaceGenerationKey: roomKey
+        )
+        do {
+            _ = try MomentSharingStateStore.enqueue(
+                payload: secondPayload,
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: Date(timeIntervalSince1970: 1_700_000_100),
+                validating: lifecycleToken
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case let .reportOnly(until) = error,
+                  until == reportOnlyUntil,
+                  try MomentSharingStateStore.load().outbox.isEmpty
+            else { throw MomentSharingError.stateUnavailable }
+        }
+    }
+
+    private static func testMomentEmptyCursorNormalization() throws {
+        guard try MomentChangeCursorPolicy.normalize("") == nil,
+              try MomentChangeCursorPolicy.normalize("0123456789abcdef0123456789abcdef")
+                == "0123456789abcdef0123456789abcdef"
+        else { throw MomentSharingError.stateUnavailable }
+        do {
+            _ = try MomentChangeCursorPolicy.normalize("not/a/cursor")
+            throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.invalidPayload {
+            // Expected: an invalid relay cursor must never be persisted.
+        }
+    }
+
+    private static func testMomentExpiredDeliveryPolicy() throws {
+        guard try MomentDeliveryActionPolicy.action(
+            changeType: .momentCommitted,
+            deliveryState: "pending"
+        ) == .download,
+        try MomentDeliveryActionPolicy.action(
+            changeType: .momentCommitted,
+            deliveryState: "expired"
+        ) == .revokeWithoutDownload,
+        try MomentDeliveryActionPolicy.action(
+            changeType: .deliveryRevoked,
+            deliveryState: "revoked"
+        ) == .revokeWithoutDownload
+        else { throw MomentSharingError.stateUnavailable }
+
+        let relayCommit = Date(timeIntervalSince1970: 1_700_000_060)
+        var skewedClockItem = try MomentInboxItem(
+            id: "moment_clock_skew_fixture",
+            senderParticipantID: "member_clock_skew_fixture",
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "moment_clock_skew_fixture.jpg",
+            capturedAt: nil,
+            captureDateIsMissing: true,
+            committedAt: relayCommit,
+            receivedAt: relayCommit.addingTimeInterval(-60),
+            state: .available,
+            accessExpiresAt: relayCommit.addingTimeInterval(3_600)
+        ).validated()
+        skewedClockItem.state = .revoked
+        _ = try skewedClockItem.validated()
+    }
+
+    private static func testMomentOutboxBoundsAndExpiry() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let roomKey = Data(repeating: 0x61, count: 32)
+        let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        func payload(index: Int) throws -> MomentPreparedPayload {
+            try MomentCrypto.prepare(
+                canonicalJPEG: Data(repeating: UInt8(0x30 + index), count: 512),
+                capturedAt: nil,
+                pixelWidth: 32,
+                pixelHeight: 16,
+                context: MomentRequestContext(
+                    spaceID: "space_outbox_fixture",
+                    senderParticipantID: "member_outbox_fixture",
+                    senderDeviceID: "member_outbox_fixture",
+                    clientRequestID: UUID(),
+                    clientMomentID: UUID(),
+                    kind: .live,
+                    keyEpoch: 1
+                ),
+                spaceGenerationKey: roomKey
+            )
+        }
+
+        for index in 0..<10 {
+            _ = try MomentSharingStateStore.enqueue(
+                payload: payload(index: index),
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+        }
+        do {
+            _ = try MomentSharingStateStore.enqueue(
+                payload: payload(index: 10),
+                senderPolicyVersion: 1,
+                senderPolicyAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.outboxFull {
+            // Expected: offline use cannot grow a hidden unbounded queue.
+        }
+
+        let ambiguous = try MomentSharingStateStore.load().outbox[0]
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == ambiguous.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.outbox[index].serverMomentID = "moment_commit_fixture"
+            state.outbox[index].phase = .committing
+        }
+        try MomentSharingStateStore.discardPendingOutbox(validating: lifecycleToken)
+        let afterDiscard = try MomentSharingStateStore.load().outbox
+        guard afterDiscard.count == 1,
+              afterDiscard[0].id == ambiguous.id,
+              afterDiscard[0].phase == .committing
+        else {
+            throw MomentSharingError.stateUnavailable
+        }
+        try MomentSharingStateStore.removeCiphertext(for: afterDiscard[0])
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.outbox.removeAll()
+        }
+
+        let expiring = try MomentSharingStateStore.enqueue(
+            payload: payload(index: 11),
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: baseDate,
+            validating: lifecycleToken,
+            now: baseDate
+        )
+        try MomentSharingStateStore.pruneLocalHistory(
+            now: baseDate.addingTimeInterval(7 * 24 * 60 * 60 + 1)
+        )
+        guard let expired = try MomentSharingStateStore.load().outbox.first,
+              expired.id == expiring.id,
+              expired.phase == .failed,
+              let directory = SharedContainer.momentSharingCiphertextDirectoryURL,
+              !FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent(expired.ciphertextFileName).path
+              )
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testMomentReportOutboxBoundsAndRecovery() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        func prepared(index: Int) -> MomentPreparedReport {
+            let ciphertext = Data(repeating: UInt8(0x70 + index), count: 128)
+            return MomentPreparedReport(
+                ciphertext: ciphertext,
+                ciphertextSHA256: PairingCrypto.sha256(ciphertext),
+                moderationKeyID: "moderation-v1"
+            )
+        }
+
+        var first: MomentReportOutboxItem?
+        for index in 0..<10 {
+            let item = try MomentSharingStateStore.enqueueReport(
+                momentID: "moment_report_fixture_\(index)",
+                reason: .privacy,
+                prepared: prepared(index: index),
+                reporterConsentAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+            if index == 0 { first = item }
+        }
+        do {
+            _ = try MomentSharingStateStore.enqueueReport(
+                momentID: "moment_report_fixture_10",
+                reason: .privacy,
+                prepared: prepared(index: 10),
+                reporterConsentAcceptedAt: baseDate,
+                validating: lifecycleToken,
+                now: baseDate
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.outboxFull {
+            // Expected: moderation copies are bounded independently too.
+        }
+
+        guard let first else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.reportOutbox.firstIndex(where: { $0.id == first.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.reportOutbox[index].serverReportID = "report_reservation_fixture"
+            state.reportOutbox[index].phase = .reserved
+        }
+        guard try MomentSharingStateStore.recoverExpiredReportReservation(
+            itemID: first.id,
+            validating: lifecycleToken,
+            now: baseDate.addingTimeInterval(60)
+        ),
+        let recovered = try MomentSharingStateStore.load().reportOutbox.first(where: {
+            $0.id == first.id
+        }),
+        recovered.phase == .prepared,
+        recovered.serverReportID == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.reportOutbox.firstIndex(where: { $0.id == first.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.reportOutbox[index].serverReportID = "report_commit_fixture"
+            state.reportOutbox[index].phase = .committing
+        }
+        try MomentSharingStateStore.pruneLocalHistory(
+            now: baseDate.addingTimeInterval(24 * 60 * 60 + 1)
+        )
+        let retained = try MomentSharingStateStore.load().reportOutbox
+        guard retained.count == 1,
+              retained[0].id == first.id,
+              retained[0].phase == .committing,
+              let directory = SharedContainer.momentSharingCiphertextDirectoryURL,
+              FileManager.default.fileExists(
+                  atPath: directory.appendingPathComponent(first.ciphertextFileName).path
+              )
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func clearMomentSharingFixture() throws {
+        try SharingLifecycleGate.withExclusive {
+            for url in [
+                SharedContainer.momentSharingStateURL,
+                SharedContainer.momentSharingCiphertextDirectoryURL,
+                SharedContainer.momentSharingReceivedDirectoryURL
+            ].compactMap({ $0 }) where FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
     private static func generatedImage(
         size: CGSize = CGSize(width: 96, height: 72)
     ) -> UIImage {
@@ -349,6 +1011,51 @@ actor SharingRuntimeSelfTestRunner {
             UIColor(red: 0.94, green: 0.86, blue: 0.18, alpha: 1).setFill()
             context.cgContext.fill(scaled(CGRect(x: 17, y: 49, width: 23, height: 13)))
         }
+    }
+
+    /// Adds fixed synthetic APPn/COM segments without using any device or photo
+    /// metadata. The Moment encoder must remove every segment byte-for-byte.
+    private static func momentJPEGWithSyntheticPrivateMetadata(_ jpeg: Data) throws -> Data {
+        guard jpeg.count >= 4,
+              jpeg[0] == 0xFF,
+              jpeg[1] == 0xD8,
+              jpeg[jpeg.count - 2] == 0xFF,
+              jpeg[jpeg.count - 1] == 0xD9
+        else {
+            throw MomentSharingError.invalidPayload
+        }
+        let segments = try momentSyntheticPrivateMetadataSegments()
+        var result = Data([0xFF, 0xD8])
+        // Exercise both the ordinary header and markers found after entropy
+        // data but before EOI. The latter prevents an SOS-to-EOF shortcut from
+        // silently accepting private metadata between scans.
+        result.append(segments)
+        result.append(contentsOf: jpeg.dropFirst(2).dropLast(2))
+        result.append(segments)
+        result.append(contentsOf: [0xFF, 0xD9])
+        return result
+    }
+
+    private static func momentSyntheticPrivateMetadataSegments() throws -> Data {
+        var result = Data()
+        for (marker, payload) in [
+            (UInt8(0xE0), Array("JFIF\u{0}runtime-private".utf8)),
+            (UInt8(0xE1), Array("Exif\u{0}\u{0}runtime".utf8)),
+            (UInt8(0xE3), Array("runtime-unknown-app".utf8)),
+            (UInt8(0xED), Array("Photoshop 3.0\u{0}runtime".utf8)),
+            (UInt8(0xFE), Array("runtime-comment".utf8))
+        ] {
+            let length = payload.count + 2
+            guard length <= Int(UInt16.max) else {
+                throw MomentSharingError.invalidPayload
+            }
+            result.append(0xFF)
+            result.append(marker)
+            result.append(UInt8((length >> 8) & 0xFF))
+            result.append(UInt8(length & 0xFF))
+            result.append(contentsOf: payload)
+        }
+        return result
     }
 
     private static func legacyNormalizedImage(_ image: UIImage) -> UIImage {

@@ -3,6 +3,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details?: Readonly<Record<string, string | number | boolean>>,
   ) {
     super(message);
   }
@@ -22,7 +23,7 @@ export function jsonResponse(value: unknown, status = 200): Response {
 export function errorResponse(error: unknown): Response {
   if (error instanceof ApiError) {
     return jsonResponse(
-      { error: { code: error.code, message: error.message } },
+      { error: { code: error.code, message: error.message, ...error.details } },
       error.status,
     );
   }

@@ -1,6 +1,6 @@
 # ねこのまど SharingService
 
-Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）とPhase 2（日次の暗号化canonical set同期）を実装しています。Productionへのdeploy、D1/R2の作成、secret設定は行っていません。
+Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）、旧Phase 2（日次canonical set）、Phase 3（追記型の「今の一枚」）を実装しています。Phase 2は互換用に残すだけで新製品UIからは呼ばず、Phase 3も運用フラグOFFです。Productionへのdeploy、D1/R2の作成、secret設定は行っていません。
 
 ## Phase 1で成立すること
 
@@ -18,6 +18,8 @@ Phase 1は写真、render plan、reactionを一切受け取りません。
 
 ## Phase 2で成立すること
 
+> 互換用の旧方式です。新しい「今の一枚」や過去写真の配送を、この日次20枚generationへ接続しません。
+
 - Pairing済みのactive memberは各自1つだけ、server-bound sourceを持てる。二人ともpublishでき、Widgetは同じsourceを明示選択して同じ日次20枚を巡回する。
 - ServerがspaceのUTC境界から`shareDayKey`を決め、`UNIQUE(source, day)`で1日1回のfreezeを守る。欠けた日のcatch-upはしない。
 - 1 generationは1〜20個のunique `mediaId`だけを持つ。重複slotと順番、render plan、pixel寸法、構図hashは暗号化manifestの中にだけ置く。
@@ -27,6 +29,17 @@ Phase 1は写真、render plan、reactionを一切受け取りません。
 - Upload/downloadはsigned member requestを通すWorker proxyだけ。R2 object key、public bucket URL、presigned URLをclientへ返さない。
 - APNs、device token、global installation IDを使わない。同期はapp/widget側の明示的なpollだけで行う。
 - Revoke/inactivityは最初にcredentialを無効化する。開始済みPUTの最大猶予後にexplicit object deletionとopaque space-prefixの複数回sweepを行い、R2が空になるまでD1 metadataを消さない。
+
+## Phase 3で成立すること
+
+- 一送信を、不変で追記型の`moment`（`live | memory | bootstrap`）として扱う。今回の製品UIは`live`だけを使う。
+- `space → participant → device`と、`moment → recipient delivery`を分離する。最初は2人・各1台でも、複数端末や3人以上で暗号文形式を変えない。
+- 一枚ごとに`reserve → private R2 upload → commit`し、commit時点のactive recipientをdeliveryへ固定する。受信はcursor差分、暗号文取得、端末内検証、ACKの順に行う。
+- 通常写真用`MEDIA`と、利用者が明示通報した暗号化copy用`MODERATION_MEDIA`を別の非公開bucketにする。Workerはどちらも復号できない。
+- 1 participantあたり1日5 moment。upload lease再予約は同じlogical moment・暗号文・送信枠を維持し、初回を含む3予約で停止する。
+- blockはdeliveryを相互に失効し、対象participantの通常APIを止める。対象側には既存受信の通報だけを24時間残し、通報証拠はcommit後7日で削除する。
+- ACK済み通常暗号文は7日、未受領は30日。期限・revoke後はAPI取得を先に止め、追跡delete queueとprefix sweepで物理削除を収束させる。
+- 家族3人以上、複数端末、memory、bootstrapは同じmodelで後続追加する。施設等から多数への一方向配信は別の脅威・費用モデルなので、このAPIへ混ぜない。
 
 ## API contract
 
@@ -60,6 +73,19 @@ Pairing成功responseの正本は[`pairing-api-v1-responses.json`](../ci/fixture
 | `GET` | `/v1/sharing/sources/{id}/current` | active member signed request | Current descriptorを読む。`If-None-Match`で`304`対応 |
 | `GET` | `/v1/sharing/generations/{id}/manifest` | active member signed request | Current encrypted manifestだけをproxyする |
 | `GET` | `/v1/sharing/generations/{id}/media/{mediaId}` | active member signed request | Current canonical ciphertextだけをproxyする |
+
+Phase 3の追加APIは次のとおりです。署名headerはv1と同じで、JSON bodyの`protocolVersion`は`2`です。
+
+| Method | Path | 用途 |
+|---|---|---|
+| `POST` | `/v2/moments/reservations` | 一枚のdescriptorと日次枠を確保する |
+| `PUT` | `/v2/moments/{id}/ciphertext` | 1MiB以下の不変な暗号文をprivate R2へ置く |
+| `POST` | `/v2/moments/{id}/commit` | recipient deliveryをsnapshotして公開する |
+| `GET` | `/v2/moments/changes[/{cursor}]` | recipient固有の追記・失効差分を読む |
+| `GET` | `/v2/moments/{id}/ciphertext` | senderまたは有効deliveryだけが暗号文を読む |
+| `POST` | `/v2/moments/{id}/ack` | 復号・端末内保存後の受領を記録する |
+| `POST` | `/v2/participants/{id}/block` | 双方向deliveryを止め、対象の通常accessを失効する |
+| `POST/PUT/POST` | `/v2/reports/...` | 通報copyを予約・upload・commitする |
 
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 
@@ -176,6 +202,6 @@ npm run dev
 
 ## Productionへ進める前のgate
 
-[`wrangler.example.jsonc`](wrangler.example.jsonc)をcopyし、D1/R2 identifierとaccount固有rate-limit namespaceを設定します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
+[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0003`を適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで`YES`へ変更します。OFFでも通報・block・cleanupは維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
 
-R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Canonical ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、R2 public access無効、Cron、削除backlogの最古時刻をreviewします。
+両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、2本のCron、削除backlogの最古時刻をreviewします。

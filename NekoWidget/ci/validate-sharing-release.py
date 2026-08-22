@@ -9,8 +9,11 @@ build settings that may have been overridden by xcodebuild.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import ipaddress
 import plistlib
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -18,8 +21,12 @@ from urllib.parse import urlparse
 
 PAIRING_COLLECTIONS = {"NSPrivacyCollectedDataTypeUserID"}
 MEDIA_COLLECTIONS = {"NSPrivacyCollectedDataTypePhotosorVideos"}
+MEDIA_INTERACTION_COLLECTIONS = {
+    "NSPrivacyCollectedDataTypeDeviceID",
+    "NSPrivacyCollectedDataTypeProductInteraction",
+}
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
-PHOTO_DESCRIPTION_TERMS = ("招待", "最大20枚", "縮小", "暗号化", "原本")
+PHOTO_DESCRIPTION_TERMS = ("選んだ1枚", "2,048", "位置情報", "暗号化", "原本")
 RESERVED_HOST_SUFFIXES = (".example", ".invalid", ".local", ".localhost", ".test")
 
 
@@ -72,6 +79,24 @@ def validate_privacy_manifest(
 ) -> None:
     if privacy.get("NSPrivacyTracking") is not False:
         failures.append("PrivacyInfo must declare NSPrivacyTracking=false.")
+
+    accessed_values = privacy.get("NSPrivacyAccessedAPITypes")
+    accessed_by_type: dict[str, dict] = {}
+    if isinstance(accessed_values, list):
+        for item in accessed_values:
+            if isinstance(item, dict) and isinstance(
+                item.get("NSPrivacyAccessedAPIType"), str
+            ):
+                accessed_by_type[item["NSPrivacyAccessedAPIType"]] = item
+    file_timestamp = accessed_by_type.get(
+        "NSPrivacyAccessedAPICategoryFileTimestamp"
+    )
+    if file_timestamp is None or "C617.1" not in file_timestamp.get(
+        "NSPrivacyAccessedAPITypeReasons", []
+    ):
+        failures.append(
+            "PrivacyInfo must declare FileTimestamp reason C617.1 for app-group metadata."
+        )
 
     values = privacy.get("NSPrivacyCollectedDataTypes")
     if not isinstance(values, list):
@@ -131,9 +156,9 @@ def validate_enabled_release(
         address = ipaddress.ip_address(hostname)
     except ValueError:
         address = None
-    if address is not None and not address.is_global:
-        failures.append("SharingAPIBaseURL must not use a private or local IP address.")
-    if address is None and "." not in hostname:
+    if address is not None:
+        failures.append("SharingAPIBaseURL must use a public DNS hostname, not an IP literal.")
+    if "." not in hostname:
         failures.append("SharingAPIBaseURL must use a public fully-qualified hostname.")
     if (
         parsed_endpoint.username is not None
@@ -162,9 +187,64 @@ def validate_enabled_release(
                     f"sharing (missing: {', '.join(missing_terms)})."
                 )
 
+        moderation_key_id = str(info.get("SharingModerationKeyID", "")).strip()
+        if moderation_key_id != "moderation-v1":
+            failures.append("SharingModerationKeyID must be moderation-v1.")
+        moderation_public_key = str(
+            info.get("SharingModerationPublicKey", "")
+        ).strip()
+        try:
+            if re.fullmatch(r"[A-Za-z0-9_-]{43}", moderation_public_key) is None:
+                raise ValueError("non-canonical base64url")
+            decoded_moderation_key = base64.b64decode(
+                moderation_public_key.replace("-", "+").replace("_", "/") + "=",
+                validate=True,
+            )
+            canonical_key = base64.urlsafe_b64encode(decoded_moderation_key).decode(
+                "ascii"
+            ).rstrip("=")
+            if canonical_key != moderation_public_key:
+                raise ValueError("non-canonical base64url")
+        except (ValueError, binascii.Error):
+            decoded_moderation_key = b""
+        if len(decoded_moderation_key) != 32:
+            failures.append(
+                "SharingModerationPublicKey must be a 32-byte base64url public key."
+            )
+
+        for key in ("SharingSupportURL", "SharingCommunityStandardsURL"):
+            raw_url = str(info.get(key, "")).strip()
+            parsed_url = urlparse(raw_url)
+            url_host = (parsed_url.hostname or "").lower().rstrip(".")
+            try:
+                parsed_url.port
+            except ValueError:
+                url_host = ""
+            try:
+                address = ipaddress.ip_address(url_host)
+            except ValueError:
+                address = None
+            if (
+                parsed_url.scheme != "https"
+                or not url_host
+                or url_host == "localhost"
+                or url_host.endswith(RESERVED_HOST_SUFFIXES)
+                or address is not None
+                or "." not in url_host
+                or parsed_url.username is not None
+                or parsed_url.password is not None
+                or parsed_url.params
+                or parsed_url.query
+                or parsed_url.fragment
+                or "$" in raw_url
+                or "REPLACE" in raw_url.upper()
+            ):
+                failures.append(f"{key} must be a public HTTPS URL.")
+
     required_collections = set(PAIRING_COLLECTIONS)
     if media_enabled:
         required_collections.update(MEDIA_COLLECTIONS)
+        required_collections.update(MEDIA_INTERACTION_COLLECTIONS)
     validate_privacy_manifest(privacy, required_collections, failures)
 
     if not truthy(export_reviewed):
@@ -186,16 +266,93 @@ def validate_enabled_release(
     return failures
 
 
+def validate_share_extension_boundary(
+    app_info: dict,
+    share_info: dict,
+    failures: list[str],
+) -> tuple[bool, bool]:
+    """Keep the embedded Share Extension reviewable but unable to reuse a
+    stale App Group/Keychain credential after reinstall.
+
+    The extension cannot read the host app's ordinary-container installation
+    marker. Direct network delivery therefore remains an unconditional release
+    failure. The only supported path is a protected, short-lived handoff whose
+    host-side promotion is installation-bound.
+    """
+
+    app_direct = parsed_flag(
+        app_info, "SharingShareExtensionSendEnabled", failures
+    )
+    app_handoff = parsed_flag(
+        app_info, "SharingShareExtensionHandoffEnabled", failures
+    )
+    share_failures: list[str] = []
+    share_pairing = parsed_flag(
+        share_info, "SharingFeatureEnabled", share_failures
+    )
+    share_media = parsed_flag(
+        share_info, "SharingMediaEnabled", share_failures
+    )
+    share_preview = parsed_flag(
+        share_info, "SharingReviewPreviewEnabled", share_failures
+    )
+    share_direct = parsed_flag(
+        share_info, "SharingShareExtensionSendEnabled", share_failures
+    )
+    share_handoff = parsed_flag(
+        share_info, "SharingShareExtensionHandoffEnabled", share_failures
+    )
+    failures.extend(f"Share Extension: {value}" for value in share_failures)
+
+    app_pairing = truthy(app_info.get("SharingFeatureEnabled"))
+    app_media = truthy(app_info.get("SharingMediaEnabled"))
+    if share_pairing != app_pairing:
+        failures.append("Share Extension SharingFeatureEnabled does not match the app.")
+    if share_media != app_media:
+        failures.append("Share Extension SharingMediaEnabled does not match the app.")
+    if share_preview:
+        failures.append("Share Extension must not enable the static review preview.")
+    if app_direct != share_direct:
+        failures.append(
+            "Share Extension SharingShareExtensionSendEnabled does not match the app."
+        )
+    if app_direct or share_direct:
+        failures.append(
+            "Direct Share Extension delivery is permanently blocked; the extension "
+            "may only hand one protected input to the installation-bound host app."
+        )
+    if app_handoff != share_handoff:
+        failures.append(
+            "Share Extension SharingShareExtensionHandoffEnabled does not match the app."
+        )
+    for key in (
+        "SharingAPIBaseURL",
+        "SharingModerationKeyID",
+        "SharingModerationPublicKey",
+        "SharingSupportURL",
+        "SharingCommunityStandardsURL",
+    ):
+        if str(share_info.get(key, "")).strip():
+            failures.append(
+                f"Share Extension {key} must be absent; capture-only handoff has no network configuration."
+            )
+    return app_handoff, share_handoff
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--info-plist", type=Path, required=True)
+    parser.add_argument("--share-info-plist", type=Path, required=True)
     parser.add_argument("--privacy-manifest", type=Path, required=True)
+    parser.add_argument("--share-privacy-manifest", type=Path, required=True)
     parser.add_argument("--export-reviewed", default="")
     args = parser.parse_args()
 
     try:
         info = load_plist(args.info_plist)
+        share_info = load_plist(args.share_info_plist)
         privacy = load_plist(args.privacy_manifest)
+        share_privacy = load_plist(args.share_privacy_manifest)
     except ValueError as error:
         print(f"sharing release preflight: FAIL: {error}", file=sys.stderr)
         return 1
@@ -206,6 +363,10 @@ def main() -> int:
     review_preview_enabled = parsed_flag(
         info, "SharingReviewPreviewEnabled", flag_failures
     )
+    handoff_enabled, _ = validate_share_extension_boundary(
+        info, share_info, flag_failures
+    )
+    validate_privacy_manifest(share_privacy, set(), flag_failures)
     endpoint = str(info.get("SharingAPIBaseURL", "")).strip()
     if flag_failures:
         print("sharing release preflight: FAIL", file=sys.stderr)
@@ -215,9 +376,9 @@ def main() -> int:
 
     if review_preview_enabled:
         failures: list[str] = []
-        if pairing_enabled or media_enabled:
+        if pairing_enabled or media_enabled or handoff_enabled:
             failures.append(
-                "Sharing review preview requires pairing and media runtime flags OFF."
+                "Sharing review preview requires pairing, media, and handoff runtime flags OFF."
             )
         if endpoint:
             failures.append("Sharing review preview requires an empty API URL.")
@@ -236,6 +397,21 @@ def main() -> int:
     # Only the explicit all-off configuration is a no-collection build. A
     # missing endpoint must never turn an enabled pairing/media build into a
     # silent pass, and media cannot operate without the pairing identity/key.
+    if media_enabled and not pairing_enabled:
+        print("sharing release preflight: FAIL", file=sys.stderr)
+        print(
+            "- SharingMediaEnabled requires SharingFeatureEnabled.",
+            file=sys.stderr,
+        )
+        return 1
+    if handoff_enabled and (not pairing_enabled or not media_enabled):
+        print("sharing release preflight: FAIL", file=sys.stderr)
+        print(
+            "- SharingShareExtensionHandoffEnabled requires both SharingFeatureEnabled "
+            "and SharingMediaEnabled.",
+            file=sys.stderr,
+        )
+        return 1
     if not pairing_enabled and not media_enabled:
         failures: list[str] = []
         if endpoint:
@@ -248,10 +424,10 @@ def main() -> int:
             return 1
         print("sharing release preflight: PASS (sharing is disabled)")
         return 0
-    if media_enabled and not pairing_enabled:
+    if media_enabled and not handoff_enabled:
         print("sharing release preflight: FAIL", file=sys.stderr)
         print(
-            "- SharingMediaEnabled requires SharingFeatureEnabled.",
+            "- SharingMediaEnabled requires the installation-bound Share Extension handoff.",
             file=sys.stderr,
         )
         return 1

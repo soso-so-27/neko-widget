@@ -42,7 +42,7 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>選別した猫の写真を「うちの子」アルバムへ追加するため、写真ライブラリへの追加を許可してください。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>あなたの写真から猫が主役の写真を端末内で見つけ、選んだ通常アルバムを猫プロフィールに表示し、「うちの子」アルバムを作成・更新するため、写真ライブラリの読み書きを許可してください。</string>
+	<string>猫の写真を端末内で見つけて整理し、あなたが共有シートで選んだ1枚だけを最大2,048pxへ縮小して位置情報を除き、家族へ暗号化して届けるため、写真ライブラリへのアクセスを許可してください。原本を自動送信することはありません。</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>SharingAPIBaseURL</key>
@@ -51,8 +51,20 @@
 	<string>$(SHARING_FEATURE_ENABLED)</string>
 	<key>SharingMediaEnabled</key>
 	<string>$(SHARING_MEDIA_ENABLED)</string>
+	<key>SharingShareExtensionHandoffEnabled</key>
+	<string>$(SHARING_SHARE_EXTENSION_HANDOFF_ENABLED)</string>
+	<key>SharingShareExtensionSendEnabled</key>
+	<string>$(SHARING_SHARE_EXTENSION_SEND_ENABLED)</string>
 	<key>SharingReviewPreviewEnabled</key>
 	<string>$(SHARING_REVIEW_PREVIEW_ENABLED)</string>
+	<key>SharingModerationKeyID</key>
+	<string>$(SHARING_MODERATION_KEY_ID)</string>
+	<key>SharingModerationPublicKey</key>
+	<string>$(SHARING_MODERATION_PUBLIC_KEY)</string>
+	<key>SharingSupportURL</key>
+	<string>$(SHARING_SUPPORT_URL)</string>
+	<key>SharingCommunityStandardsURL</key>
+	<string>$(SHARING_COMMUNITY_STANDARDS_URL)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

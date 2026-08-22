@@ -238,7 +238,9 @@ struct SettingsView: View {
             if SharingAPIConfiguration.current.isReviewVisible {
                 Section {
                     NavigationLink {
-                        if SharingAPIConfiguration.current.isAvailable {
+                        if SharingAPIConfiguration.current.isMediaAvailable {
+                            FamilyWindowView()
+                        } else if SharingAPIConfiguration.current.isAvailable {
                             PairingView()
                         } else {
                             SharingReviewPreviewView()
@@ -250,9 +252,7 @@ struct SettingsView: View {
                 } header: {
                     Text("家族のまど")
                 } footer: {
-                    Text(SharingAPIConfiguration.current.isAvailable
-                        ? "招待した家族と、同じまどをホーム画面に置けます。"
-                        : "将来の体験を確認する静的レビューです。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。")
+                    Text(sharingSettingsFooter)
                 }
             }
 
@@ -304,6 +304,17 @@ struct SettingsView: View {
             ActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
         }
+    }
+
+    private var sharingSettingsFooter: String {
+        let configuration = SharingAPIConfiguration.current
+        if configuration.isMediaAvailable {
+            return "共有シートで選んだ1枚を、招待した家族のまどへ届けます。"
+        }
+        if configuration.isAvailable {
+            return "このビルドでは共有鍵のペアリングだけを確認でき、写真は送信しません。"
+        }
+        return "将来の体験を確認する静的レビューです。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。"
     }
 
     private var advancedDiagnosticsView: some View {
@@ -609,10 +620,10 @@ struct SharingReviewPreviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("静的プレビュー・サーバー未接続", systemImage: "eye")
+                    Label("プレビュー・送信されません", systemImage: "eye")
                         .font(.headline)
                         .foregroundStyle(.orange)
-                    Text("ここでは招待、送信、同期、鍵の作成を行いません。将来の画面と流れだけを確認できます。")
+                    Text("ここでは招待、送信、同期、鍵の作成を行いません。「今の一枚」の実際の画面構成と流れを安全に確認できます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -640,20 +651,21 @@ struct SharingReviewPreviewView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                reviewSection("いまの一枚を届ける", systemImage: "paperplane.fill") {
+                reviewSection("今の一枚を届ける", systemImage: "paperplane.fill") {
                     Text("猫を待たせないため、アプリ内カメラではなく標準カメラと写真アプリから届けます。")
                         .font(.subheadline)
 
                     flowStep(1, title: "標準カメラで撮る", detail: "または写真アプリで1枚を選ぶ")
                     flowStep(2, title: "共有ボタンを押す", detail: "共有先から「ねこのまど」を選ぶ")
-                    flowStep(3, title: "届け先を確認する", detail: "家族のまどへ、その1枚だけを届ける")
+                    flowStep(3, title: "写真と届け先を確認する", detail: "この端末へ短時間だけ一時保存する。まだ送信されない")
+                    flowStep(4, title: "「ねこのまど」を開く", detail: "現在のまどを確認し、安全確認・暗号化をして届ける")
 
                     Label("無料の送信枠は1日5枚", systemImage: "paperplane.circle")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
-                reviewSection("最初の思い出を選ぶ", systemImage: "photo.stack") {
+                reviewSection("今後の追加候補・まだ使えません", systemImage: "photo.stack") {
                     Text("まどを作るときは候補を最大20枚並べ、送る写真を一度確認します。確認せずに過去写真を送りません。")
                         .font(.subheadline)
                     Text("最初の20枚は、1つのまどにつき最初の1回だけです。")
@@ -663,6 +675,13 @@ struct SharingReviewPreviewView: View {
                     Toggle("毎日1枚、思い出を届ける", isOn: .constant(false))
                         .disabled(true)
                     Text("既定はOFF。自分でONにした場合だけ、過去写真から1日1枚を届けます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Label("届いた一枚をウィジェットへ一時的に優先表示", systemImage: "rectangle.on.rectangle")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Label("自分が送った写真も残す送受信履歴", systemImage: "clock.arrow.2.circlepath")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -681,7 +700,7 @@ struct SharingReviewPreviewView: View {
                         VStack(alignment: .leading, spacing: 5) {
                             Label("いま届いた・家族から", systemImage: "sparkles")
                                 .font(.subheadline.weight(.semibold))
-                            Text("新しい一枚をウィジェットへ優先表示")
+                            Text("新しい一枚を家族のまどで先頭表示")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -689,9 +708,8 @@ struct SharingReviewPreviewView: View {
 
                     Divider()
 
-                    Label("2〜4時間、または反応するまで優先", systemImage: "clock")
-                    Label("その後は「まどの履歴」で見返す", systemImage: "clock.arrow.circlepath")
-                    Text("最近届いた写真と、自分が送った写真を同じ履歴で確認できます。")
+                    Label("受け取った写真は「まどの履歴」で見返す", systemImage: "clock.arrow.circlepath")
+                    Text("この段階の履歴は、家族から受け取った写真だけです。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -742,7 +760,7 @@ struct SharingReviewPreviewView: View {
                 Label("家族のまど", systemImage: "rectangle.on.rectangle")
                     .font(.headline)
                 Spacer()
-                Text("3人")
+                Text("2人")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -761,16 +779,12 @@ struct SharingReviewPreviewView: View {
                 }
 
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "rectangle.on.rectangle.angled")
+                Image(systemName: "photo.on.rectangle.angled")
                     .foregroundStyle(Color.accentColor)
-                Text("1つのウィジェットには1つのまどを表示します。別のまどの写真は混ざりません。")
+                Text("受け取った一枚は、まずこの「家族のまど」の先頭に表示します。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-
-            Button("このまどをホーム画面に置く") {}
-                .buttonStyle(.bordered)
-                .disabled(true)
         }
         .padding(16)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
