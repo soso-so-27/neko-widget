@@ -307,34 +307,36 @@ enum MomentSharingPresentationPolicy {
             groups[kind] = accumulator
         }
 
-        let statuses = MomentOutgoingStatusKind.allCases.compactMap { kind in
-            guard let value = groups[kind],
-                  value.count > 0,
-                  let latestUpdatedAt = value.latestUpdatedAt
-            else { return nil }
-            return MomentOutgoingStatusPresentation(
-                kind: kind,
-                count: value.count,
-                destinationCount: value.destinationKeys.count,
-                processingCount: value.processingCount,
-                retryDeferredCount: value.retryDeferredCount,
-                cancellableCount: value.cancellableCount,
-                latestUpdatedAt: latestUpdatedAt,
-                earliestExpiryAt: value.earliestExpiryAt,
-                nextRetryAt: value.nextRetryAt,
-                requiresSensitiveContentWarning:
-                    value.errorCodes.contains("moderation-disabled"),
-                isServerRuntimeUnavailable: value.errorCodes.contains(where: {
-                    $0.hasSuffix("moment_runtime_disabled")
-                }),
-                isOutboxCapacityBlocked: value.errorCodes.contains("outbox-full"),
-                hasOtherRetryReason: value.errorCodes.contains(where: {
-                    $0 != "moderation-disabled"
-                        && $0 != "outbox-full"
-                        && !$0.hasSuffix("moment_runtime_disabled")
-                })
-            )
-        }
+        let statuses: [MomentOutgoingStatusPresentation] =
+            MomentOutgoingStatusKind.allCases.compactMap {
+                kind -> MomentOutgoingStatusPresentation? in
+                guard let value = groups[kind],
+                      value.count > 0,
+                      let latestUpdatedAt = value.latestUpdatedAt
+                else { return nil }
+                return MomentOutgoingStatusPresentation(
+                    kind: kind,
+                    count: value.count,
+                    destinationCount: value.destinationKeys.count,
+                    processingCount: value.processingCount,
+                    retryDeferredCount: value.retryDeferredCount,
+                    cancellableCount: value.cancellableCount,
+                    latestUpdatedAt: latestUpdatedAt,
+                    earliestExpiryAt: value.earliestExpiryAt,
+                    nextRetryAt: value.nextRetryAt,
+                    requiresSensitiveContentWarning:
+                        value.errorCodes.contains("moderation-disabled"),
+                    isServerRuntimeUnavailable: value.errorCodes.contains(where: {
+                        $0.hasSuffix("moment_runtime_disabled")
+                    }),
+                    isOutboxCapacityBlocked: value.errorCodes.contains("outbox-full"),
+                    hasOtherRetryReason: value.errorCodes.contains(where: {
+                        $0 != "moderation-disabled"
+                            && $0 != "outbox-full"
+                            && !$0.hasSuffix("moment_runtime_disabled")
+                    })
+                )
+            }
 
         let outcomeGroups = Dictionary(
             grouping: outcomes.filter { $0.expiresAt > now },
