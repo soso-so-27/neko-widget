@@ -1034,40 +1034,45 @@ enum MomentSharingStateStore {
     /// local cache policy, not a promise that the relay retains photographs.
     static func pruneLocalHistory(now: Date = .now) throws {
         try SharingLifecycleGate.withExclusive {
-            guard !SharingLifecycleGate.isCleanupRequired else {
-                throw MomentSharingError.stateUnavailable
-            }
-            var state = try loadWhileLocked()
-            let original = state
-            let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL
-            let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
-            let historyCutoff = now.addingTimeInterval(-localHistorySeconds)
-            let pendingCutoff = now.addingTimeInterval(-maximumPendingOutboxSeconds)
-            let commitAmbiguityCutoff = now.addingTimeInterval(
-                -maximumCommitAmbiguitySeconds
+            try pruneLocalHistoryWhileLocked(now: now)
+        }
+    }
+
+    private static func pruneLocalHistoryWhileLocked(now: Date) throws {
+        guard !SharingLifecycleGate.isCleanupRequired else {
+            throw MomentSharingError.stateUnavailable
+        }
+        var state = try loadWhileLocked()
+        let original = state
+        let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL
+        let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
+        let historyCutoff = now.addingTimeInterval(-localHistorySeconds)
+        let pendingCutoff = now.addingTimeInterval(-maximumPendingOutboxSeconds)
+        let commitAmbiguityCutoff = now.addingTimeInterval(
+            -maximumCommitAmbiguitySeconds
+        )
+        let pendingReportCutoff = now.addingTimeInterval(-maximumPendingReportSeconds)
+        let outboxMetadataCutoff = now.addingTimeInterval(
+            -completedOutboxMetadataSeconds
+        )
+        let reportMetadataCutoff = now.addingTimeInterval(-reportedMetadataSeconds)
+        pruneOutgoingOutcomes(&state, now: now)
+        if let reportOnlyUntil = state.reportOnlyUntil {
+            let maximumUntil = now.addingTimeInterval(
+                MomentSharingProtocol.maximumReportOnlyWindowSeconds
+                    + MomentSharingProtocol.maximumRelayClockSkewSeconds
             )
-            let pendingReportCutoff = now.addingTimeInterval(-maximumPendingReportSeconds)
-            let outboxMetadataCutoff = now.addingTimeInterval(
-                -completedOutboxMetadataSeconds
-            )
-            let reportMetadataCutoff = now.addingTimeInterval(-reportedMetadataSeconds)
-            pruneOutgoingOutcomes(&state, now: now)
-            if let reportOnlyUntil = state.reportOnlyUntil {
-                let maximumUntil = now.addingTimeInterval(
-                    MomentSharingProtocol.maximumReportOnlyWindowSeconds
-                        + MomentSharingProtocol.maximumRelayClockSkewSeconds
-                )
-                if reportOnlyUntil > maximumUntil {
-                    // One-time normalization of pre-boundary or corrupt local
-                    // state. Subsequent foregrounds cannot slide this fixed
-                    // deadline forward.
-                    state.reportOnlyUntil = maximumUntil
-                }
+            if reportOnlyUntil > maximumUntil {
+                // One-time normalization of pre-boundary or corrupt local
+                // state. Subsequent foregrounds cannot slide this fixed
+                // deadline forward.
+                state.reportOnlyUntil = maximumUntil
             }
-            var retainedCount = 0
-            var retainedBytes = 0
-            var retainedInbox: [MomentInboxItem] = []
-            var removedImageNames: [String] = []
+        }
+        var retainedCount = 0
+        var retainedBytes = 0
+        var retainedInbox: [MomentInboxItem] = []
+        var removedImageNames: [String] = []
 
             for item in state.inbox.sorted(by: {
                 if $0.receivedAt != $1.receivedAt { return $0.receivedAt > $1.receivedAt }
@@ -1240,7 +1245,6 @@ enum MomentSharingStateStore {
                     )
                 }
             }
-        }
     }
 
     private static func loadWhileLocked() throws -> MomentSharingState {
