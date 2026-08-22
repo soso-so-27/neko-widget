@@ -10,3 +10,4 @@ coverage/
 dist/
 *.log
 wrangler.staging.jsonc
+wrangler.media-staging-on.jsonc

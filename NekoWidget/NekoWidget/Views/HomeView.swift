@@ -71,7 +71,9 @@ struct HomeView: View {
             Label("うちの子を探すには写真へのアクセスが必要です", systemImage: "photo.on.rectangle.angled")
                 .font(.headline)
 
-            Text("写真は端末の外に出さず、変更や削除もしません。あとからここで許可できます。")
+            Text(OnboardingPresentationCopy.homePermissionBody(
+                isMediaAvailable: SharingAPIConfiguration.current.isMediaAvailable
+            ))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 

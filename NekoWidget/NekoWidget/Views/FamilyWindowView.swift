@@ -45,7 +45,7 @@ struct FamilyWindowView: View {
             reportButton("その他", reason: .other)
             Button("キャンセル", role: .cancel) { reportTarget = nil }
         } message: {
-            Text("確認用に、この写真の暗号化したコピーを運営へ7日間だけ送ります。家族のまどの暗号鍵は送りません。")
+            Text("確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。家族のまどの暗号鍵は送りません。")
         }
         .alert(
             "この相手をブロックしますか？",
@@ -560,6 +560,9 @@ struct FamilyWindowView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("安全とプライバシー")
                 .font(.headline)
+            if let url = SharingAPIConfiguration.current.privacyURL {
+                Link("プライバシーポリシー", destination: url)
+            }
             if let url = SharingAPIConfiguration.current.communityStandardsURL {
                 Link("コミュニティ基準", destination: url)
             }

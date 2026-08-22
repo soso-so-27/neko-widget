@@ -1,6 +1,6 @@
 # Cloudflare隔離staging手順
 
-この手順は「今の一枚」のCloudflare実環境検証を、productionと共有しないWorker、D1、R2、rate-limit namespaceで始めるためのものです。この段階では通常moment runtimeと旧日次共有runtimeを有効にしません。`wrangler.staging.template.jsonc`とpreflightは`MOMENT_RUNTIME_ENABLED = NO`、`LEGACY_SHARING_RUNTIME_ENABLED = NO`以外を拒否します。
+この手順は「今の一枚」のCloudflare実環境検証を、productionと共有しないWorker、D1、R2、rate-limit namespaceで始めるためのものです。この段階では通常moment runtimeと旧日次共有runtimeを有効にしません。追跡対象の`wrangler.staging.template.jsonc`と通常preflightは`MOMENT_RUNTIME_ENABLED = NO`、`LEGACY_SHARING_RUNTIME_ENABLED = NO`以外を拒否します。section 7のmedia専用preflightだけが、同じOFF設定から派生したignored ON候補をdry-run用に検証します。
 
 この手順が作成する外部resourceはstaging専用です。
 
@@ -148,9 +148,44 @@ curl.exe -i "$env:NEKO_STAGING_API_ORIGIN/v1/sharing/sources"
 
 Cloudflare dashboardで2本のCronが登録済みであり、両R2 bucketが引き続き非公開であることも確認します。`/health`はD1/R2/Cronの健全性を証明しないため、これだけでruntimeをONにしません。
 
+## 7. 写真runtimeの短時間テスト設定を準備する（deployしない）
+
+この節は、通常写真を2台だけで検証するためのON候補と、即時rollback用のOFF候補を同じresource設定から生成します。生成だけではCloudflareへ何も送信しません。tracked templateは引き続き`MOMENT_RUNTIME_ENABLED = NO`を正本とし、ON候補はignored fileへだけ派生させます。旧日次共有runtimeは常に`NO`です。
+
+先に次の外部条件をすべて満たしている必要があります。
+
+- 公開済みのprivacy、community standards、supportのHTTPS URLをApp内から確認できる
+- media-staging用Privacy manifestとApp Store ConnectのApp Privacy回答が一致する
+- 通報専用公開鍵をreleaseへ設定し、秘密鍵はGitHub、Cloudflare、repo外の安全な保管先にある
+- synthetic通報をoperator toolで取得・検証・復号・削除できる
+- 同じcommitのmedia-staging TestFlight Buildを本人所有の2台だけへ配布している
+- 通常R2と通報R2が非公開で、対応担当者、48時間以内の初回確認、kill switch手順が決まっている
+
+section 3と同じ4つの環境変数を設定したPowerShell processで、OFFとONを別々に生成します。既存fileを上書きしないため、再生成が必要なら対象がこのdirectory内のignored configであることを確認してから手動で削除します。
+
+```powershell
+npm run staging:config:render
+npm run media-staging:config:render
+npm run staging:config:check
+npm run media-staging:config:check
+git check-ignore -v wrangler.staging.jsonc
+git check-ignore -v wrangler.media-staging-on.jsonc
+```
+
+`media-staging:config:check`は、両configが同じWorker、D1、非公開R2、rate limit、Cronを使い、差が`MOMENT_RUNTIME_ENABLED`の`NO`と`YES`だけであることを確認します。IDやresource名が一つでも違えば停止します。
+
+明示的に許可されたテスト窓の前でも、ON候補はdry-runまでに留めます。
+
+```powershell
+$mediaBundle = Join-Path $env:TEMP ("neko-sharing-media-staging-" + [guid]::NewGuid())
+npx --no-install wrangler deploy --dry-run --config wrangler.media-staging-on.jsonc --outdir $mediaBundle --autoconfig=false --experimental-provision=false --experimental-auto-create=false
+```
+
+実際のON deploy、2台受入、OFF rollbackは別の明示承認を得て、一つの短時間テスト窓として連続実施します。テスト完了・失敗・中断のいずれでも、review済みの`wrangler.staging.jsonc`をdeployして通常moment runtimeを`NO`へ戻し、`/v2/moments/changes`が`503 moment_runtime_disabled`、旧runtimeも`503 legacy_sharing_runtime_disabled`であることを確認します。Dashboardの手動var編集を正本にしません。
+
 ## 停止条件
 
-この手順では`MOMENT_RUNTIME_ENABLED`と`LEGACY_SHARING_RUNTIME_ENABLED`を`YES`へ変更しません。通常momentを有効にするには、moderation鍵と復号手段、公開support/community standards/privacy、対応runbook、staging client release gate、二端末試験票を別の変更で揃えます。旧日次共有runtimeはstagingでも有効化しません。
+この手順単体では`MOMENT_RUNTIME_ENABLED=YES`を実deployせず、section 7のignored候補もdry-runまでに留めます。通常momentの短時間ONは、列挙した外部gateを満たした後に別の明示承認でだけ行います。`LEGACY_SHARING_RUNTIME_ENABLED`はstagingでも常に`NO`です。
 
 生成config、migration対象、Worker名、bucket公開状態の一つでも不明な場合はdeployしません。D1/R2/Workerを削除する操作はこの手順に含めません。
 

@@ -213,6 +213,14 @@ struct PairingView: View {
 
     private var consentSection: some View {
         Section {
+            if model.isMediaSyncEnabled,
+               let url = SharingAPIConfiguration.current.privacyURL {
+                Link("プライバシーポリシーを確認", destination: url)
+            }
+            if model.isMediaSyncEnabled,
+               let url = SharingAPIConfiguration.current.communityStandardsURL {
+                Link("コミュニティ基準を確認", destination: url)
+            }
             Toggle(isOn: $hasAcceptedPairingTerms) {
                 Text("共有の内容と限界を確認しました")
             }
@@ -227,6 +235,12 @@ struct PairingView: View {
 
     private var mediaConsentRenewalSection: some View {
         Section {
+            if let url = SharingAPIConfiguration.current.privacyURL {
+                Link("プライバシーポリシーを確認", destination: url)
+            }
+            if let url = SharingAPIConfiguration.current.communityStandardsURL {
+                Link("コミュニティ基準を確認", destination: url)
+            }
             Toggle(isOn: $hasAcceptedPairingTerms) {
                 Text("写真共有の内容と限界を確認しました")
             }

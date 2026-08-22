@@ -4,15 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "npm run typecheck && npm run check:staging-config && npm test",
+    "check": "npm run typecheck && npm run check:staging-config && npm run check:moderation-tool && npm test",
     "check:staging-config": "node --test scripts/staging-config.node-tests.mjs",
+    "check:moderation-tool": "node --test test/moderation-report-tool.node-tests.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "wrangler dev --config wrangler.jsonc",
     "db:migrate:local": "wrangler d1 migrations apply neko-window-sharing-local --local --config wrangler.jsonc",
     "staging:config:render": "node scripts/render-staging-config.mjs",
-    "staging:config:check": "node scripts/check-staging-config.mjs"
+    "staging:config:check": "node scripts/check-staging-config.mjs",
+    "media-staging:config:render": "node scripts/render-media-staging-config.mjs",
+    "media-staging:config:check": "node scripts/check-media-staging-config.mjs",
+    "moderation:tool": "node scripts/moderation-report-tool.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.21.3",
