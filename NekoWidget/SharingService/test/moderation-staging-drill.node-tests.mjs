@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -372,7 +373,12 @@ test("existing public-file validator shares restricted-root and single-link poli
     if (!existsSync(path)) mkdirSync(path);
   }
   try {
-    const validated = validateExistingRestrictedFile(item.publicPath, {
+    // GitHub's Windows runner exposes RUNNER_TEMP through a path alias. The
+    // operational validator intentionally rejects that spelling, so exercise
+    // the nominal contract with the handle-resolved canonical path while the
+    // separate alias fixtures continue to assert fail-closed behavior.
+    const canonicalPublicPath = realpathSync.native(item.publicPath);
+    const validated = validateExistingRestrictedFile(canonicalPublicPath, {
       expectedFilename: MODERATION_PUBLIC_FILENAME,
       expectedBytes: 43,
       currentDirectory,
@@ -381,9 +387,9 @@ test("existing public-file validator shares restricted-root and single-link poli
       userProfile,
       environment: {},
     });
-    assert.equal(validated.path, item.publicPath);
+    assert.equal(validated.path, canonicalPublicPath);
     assert.throws(
-      () => validateExistingRestrictedFile(item.publicPath, {
+      () => validateExistingRestrictedFile(canonicalPublicPath, {
         expectedFilename: MODERATION_PUBLIC_FILENAME,
         expectedBytes: 43,
         currentDirectory: item.root,
