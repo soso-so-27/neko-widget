@@ -1215,26 +1215,34 @@ enum MomentSharingStateStore {
                 }
             }
             if let ciphertextDirectory {
-                let retainedNames = Set(
-                    state.outbox.filter {
-                        $0.phase == .prepared || $0.phase == .reserved
-                            || $0.phase == .uploaded || $0.phase == .committing
-                    }.map(\.ciphertextFileName)
-                        + state.reportOutbox.filter {
-                            $0.phase == .prepared || $0.phase == .reserved
-                                || $0.phase == .uploaded || $0.phase == .committing
-                        }.map(\.ciphertextFileName)
+                var retainedNames = Set<String>()
+                for item in state.outbox where
+                    item.phase == .prepared || item.phase == .reserved
+                        || item.phase == .uploaded || item.phase == .committing {
+                    retainedNames.insert(item.ciphertextFileName)
+                }
+                for item in state.reportOutbox where
+                    item.phase == .prepared || item.phase == .reserved
+                        || item.phase == .uploaded || item.phase == .committing {
+                    retainedNames.insert(item.ciphertextFileName)
+                }
+
+                var fallbackNames: [String] = []
+                fallbackNames.append(contentsOf: removedOutbox.map(\.ciphertextFileName))
+                fallbackNames.append(contentsOf: removedReports.map(\.ciphertextFileName))
+                fallbackNames.append(contentsOf: expiredPending.map(\.ciphertextFileName))
+                fallbackNames.append(
+                    contentsOf: expiredCommitAmbiguities.map(\.ciphertextFileName)
+                )
+                fallbackNames.append(
+                    contentsOf: expiredReportCommitAmbiguities.map(\.ciphertextFileName)
+                )
+                fallbackNames.append(
+                    contentsOf: expiredPendingReports.map(\.ciphertextFileName)
                 )
                 let names = (try? FileManager.default.contentsOfDirectory(
                     atPath: ciphertextDirectory.path
-                )) ?? (
-                        removedOutbox.map(\.ciphertextFileName)
-                        + removedReports.map(\.ciphertextFileName)
-                        + expiredPending.map(\.ciphertextFileName)
-                        + expiredCommitAmbiguities.map(\.ciphertextFileName)
-                        + expiredReportCommitAmbiguities.map(\.ciphertextFileName)
-                        + expiredPendingReports.map(\.ciphertextFileName)
-                )
+                )) ?? fallbackNames
                 // The ciphertext directory is likewise exclusive to this
                 // store. A `.sharing-secure-*` inode left before atomic rename
                 // has no state reference and must be bounded by this prune,
