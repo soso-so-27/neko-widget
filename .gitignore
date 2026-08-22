@@ -28,6 +28,8 @@ AuthKey_*.p8
 *.pfx
 *.key
 *.pem
+moderation-v1.private.raw
+moderation-v1.public.base64url
 *.provisionprofile
 
 # macOS / Windows

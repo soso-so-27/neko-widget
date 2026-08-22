@@ -29,6 +29,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  moderation-keygen-windows-policy:
+    name: Windows moderation key policy fixtures
+    runs-on: windows-2022
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Parse and exercise Windows path, volume, and ACL policy
+        working-directory: NekoWidget/SharingService
+        shell: powershell
+        run: |
+          $files = @(
+            "scripts/moderation-staging-keygen-windows.ps1",
+            "scripts/moderation-staging-keygen-windows-security.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path -LiteralPath $file).Path,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -ne 0) { throw "PowerShell parse failed" }
+          }
+          $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          $result = & $windowsPowerShell `
+            -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File .\scripts\moderation-staging-keygen-windows-security.ps1 `
+            -PolicySelfTest
+          if ($LASTEXITCODE -ne 0 -or
+              $result -ne "NEKO_MODERATION_KEYGEN_WINDOWS_POLICY_SELFTEST_V1") {
+            throw "Windows policy self-test failed"
+          }
+          npm run check:moderation-keygen
+
   check:
     name: Typecheck, test, and bundle Worker
     runs-on: ubuntu-24.04
@@ -57,10 +102,10 @@ jobs:
         shell: bash
         run: npm run typecheck
 
-      - name: Run Worker, D1, staging, and moderation tests
+      - name: Run Worker, D1, staging, moderation, and key ceremony tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm run check:staging-config && npm run check:moderation-tool && npm test
+        run: npm run check:staging-config && npm run check:moderation-tool && npm run check:moderation-keygen && npm test
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService
