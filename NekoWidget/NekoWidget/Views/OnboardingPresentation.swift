@@ -44,8 +44,9 @@ enum WidgetInstallationState: Equatable, Sendable {
     }
 }
 
-/// Exact copy from `docs/オンボーディング原稿.md`. Keeping it outside the
-/// SwiftUI view makes wording independently verifiable.
+/// Base copy from `docs/オンボーディング原稿.md`, plus the release-mode
+/// privacy variant. Keeping it outside the SwiftUI view makes both modes
+/// independently verifiable.
 enum OnboardingPresentationCopy {
     static let purposeBodyLines = [
         "うちの子の写真は、",
@@ -62,11 +63,27 @@ enum OnboardingPresentationCopy {
         "うちの子を探すために、",
         "写真を読ませてください。"
     ]
-    static let permissionPrivacyLines = [
-        "・写真は端末の外に出ません",
-        "・解析はすべてこの端末の中で行います",
-        "・写真を消したり変更したりしません"
-    ]
+    static func permissionPrivacyLines(isMediaAvailable: Bool) -> [String] {
+        if isMediaAvailable {
+            return [
+                "・解析はすべてこの端末の中で行います",
+                "・写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります",
+                "・原本の自動送信・削除・変更はしません"
+            ]
+        }
+        return [
+            "・写真は端末の外に出ません",
+            "・解析はすべてこの端末の中で行います",
+            "・写真を消したり変更したりしません"
+        ]
+    }
+
+    static func homePermissionBody(isMediaAvailable: Bool) -> String {
+        if isMediaAvailable {
+            return "解析はこの端末内で行います。写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります。原本の自動送信・削除・変更はしません。あとからここで許可できます。"
+        }
+        return "写真は端末の外に出さず、変更や削除もしません。あとからここで許可できます。"
+    }
     static let permissionLimitedAccessNote = "「すべての写真」がおすすめです。「選択した写真のみ」でも動きます。"
     static let permissionAction = "写真へのアクセスを許可"
     static let permissionSkipAction = "あとで（スキップ）"

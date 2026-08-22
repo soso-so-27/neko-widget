@@ -50,7 +50,17 @@ function requireExactObject(actual, expected, label) {
   );
 }
 
-export function validateStagingConfig(config) {
+function reviewedMomentRuntime(options) {
+  const expectedMomentRuntime = options?.expectedMomentRuntime ?? "NO";
+  requireCondition(
+    expectedMomentRuntime === "NO" || expectedMomentRuntime === "YES",
+    "The expected moment runtime must be exactly NO or YES.",
+  );
+  return expectedMomentRuntime;
+}
+
+export function validateStagingConfig(config, options = {}) {
+  const expectedMomentRuntime = reviewedMomentRuntime(options);
   requireCondition(isRecord(config), "The staging Wrangler configuration must be an object.");
   requireCondition(config.name === expectedWorkerName, "The staging Worker name is not isolated.");
   requireCondition(config.main === "src/index.ts", "The staging Worker entry point changed.");
@@ -75,7 +85,7 @@ export function validateStagingConfig(config) {
     config.vars,
     {
       ENVIRONMENT: "staging",
-      MOMENT_RUNTIME_ENABLED: "NO",
+      MOMENT_RUNTIME_ENABLED: expectedMomentRuntime,
       LEGACY_SHARING_RUNTIME_ENABLED: "NO",
       INVITATION_TTL_SECONDS: "86400",
       CHALLENGE_TTL_SECONDS: "300",
@@ -151,7 +161,8 @@ export function validateStagingConfig(config) {
   return config;
 }
 
-export function renderStagingConfig(template, environment) {
+export function renderStagingConfig(template, environment, options = {}) {
+  const expectedMomentRuntime = reviewedMomentRuntime(options);
   let rendered = template;
   for (const [placeholder, variableName] of replacements) {
     const value = environment[variableName];
@@ -164,6 +175,11 @@ export function renderStagingConfig(template, environment) {
     rendered = rendered.replace(placeholder, value);
   }
   const config = JSON.parse(rendered);
-  validateStagingConfig(config);
+  requireCondition(
+    config?.vars?.MOMENT_RUNTIME_ENABLED === "NO",
+    "The tracked staging template must keep the moment runtime locked OFF.",
+  );
+  config.vars.MOMENT_RUNTIME_ENABLED = expectedMomentRuntime;
+  validateStagingConfig(config, { expectedMomentRuntime });
   return `${JSON.stringify(config, null, 2)}\n`;
 }

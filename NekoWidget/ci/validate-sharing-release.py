@@ -49,8 +49,29 @@ EXPECTED_MODE_FLAGS = {
     "disabled": (False, False, False, False, False),
     "review-preview": (False, False, False, False, True),
     "pairing-only": (True, False, False, False, False),
-    "media": (True, True, True, False, False),
+    "media-staging": (True, True, True, False, False),
 }
+
+# X25519 small-order Montgomery u-coordinates, normalized by clearing the
+# unused high bit as required by RFC 7748. Keep the release gate aligned with
+# the blocklist used by libsodium's reviewed X25519 implementation.
+X25519_SMALL_ORDER_PUBLIC_KEYS = {
+    bytes.fromhex("00" * 32),
+    bytes.fromhex("01" + ("00" * 31)),
+    bytes.fromhex("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"),
+    bytes.fromhex("5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"),
+    bytes.fromhex("ec" + ("ff" * 30) + "7f"),
+    bytes.fromhex("ed" + ("ff" * 30) + "7f"),
+    bytes.fromhex("ee" + ("ff" * 30) + "7f"),
+}
+
+
+def is_x25519_small_order_public_key(value: bytes) -> bool:
+    if len(value) != 32:
+        return True
+    normalized = bytearray(value)
+    normalized[31] &= 0x7F
+    return bytes(normalized) in X25519_SMALL_ORDER_PUBLIC_KEYS
 
 
 def load_plist(path: Path) -> dict:
@@ -103,6 +124,10 @@ def validate_privacy_manifest(
 ) -> None:
     if privacy.get("NSPrivacyTracking") is not False:
         failures.append("PrivacyInfo must declare NSPrivacyTracking=false.")
+    if privacy.get("NSPrivacyTrackingDomains") != []:
+        failures.append(
+            "PrivacyInfo must declare an empty NSPrivacyTrackingDomains array."
+        )
 
     accessed_values = privacy.get("NSPrivacyAccessedAPITypes")
     accessed_by_type: dict[str, dict] = {}
@@ -162,16 +187,28 @@ def validate_enabled_release(
 ) -> list[str]:
     failures: list[str] = []
 
-    endpoint = str(info.get("SharingAPIBaseURL", "")).strip()
+    raw_endpoint = str(info.get("SharingAPIBaseURL", ""))
+    endpoint = raw_endpoint.strip()
+    if raw_endpoint != endpoint or any(
+        ord(character) < 32 for character in endpoint
+    ):
+        failures.append(
+            "SharingAPIBaseURL must not contain whitespace or control characters."
+        )
     parsed_endpoint = urlparse(endpoint)
     if parsed_endpoint.scheme != "https" or not parsed_endpoint.hostname:
         failures.append("SharingAPIBaseURL must be a non-placeholder HTTPS URL.")
-    hostname = (parsed_endpoint.hostname or "").lower().rstrip(".")
+    raw_hostname = (parsed_endpoint.hostname or "").lower()
+    hostname = raw_hostname.rstrip(".")
     try:
         parsed_endpoint.port
     except ValueError:
         failures.append("SharingAPIBaseURL contains an invalid port.")
-    if hostname == "localhost" or hostname.endswith(RESERVED_HOST_SUFFIXES):
+    if (
+        raw_hostname.endswith(".")
+        or hostname == "localhost"
+        or hostname.endswith(RESERVED_HOST_SUFFIXES)
+    ):
         failures.append("SharingAPIBaseURL uses a reserved placeholder hostname.")
     try:
         address = ipaddress.ip_address(hostname)
@@ -208,12 +245,18 @@ def validate_enabled_release(
                     f"sharing (missing: {', '.join(missing_terms)})."
                 )
 
-        moderation_key_id = str(info.get("SharingModerationKeyID", "")).strip()
+        raw_moderation_key_id = str(info.get("SharingModerationKeyID", ""))
+        moderation_key_id = raw_moderation_key_id.strip()
+        if raw_moderation_key_id != moderation_key_id:
+            failures.append("SharingModerationKeyID must not contain surrounding whitespace.")
         if moderation_key_id != "moderation-v1":
             failures.append("SharingModerationKeyID must be moderation-v1.")
-        moderation_public_key = str(
-            info.get("SharingModerationPublicKey", "")
-        ).strip()
+        raw_moderation_public_key = str(info.get("SharingModerationPublicKey", ""))
+        moderation_public_key = raw_moderation_public_key.strip()
+        if raw_moderation_public_key != moderation_public_key:
+            failures.append(
+                "SharingModerationPublicKey must not contain surrounding whitespace."
+            )
         try:
             if re.fullmatch(r"[A-Za-z0-9_-]{43}", moderation_public_key) is None:
                 raise ValueError("non-canonical base64url")
@@ -232,11 +275,21 @@ def validate_enabled_release(
             failures.append(
                 "SharingModerationPublicKey must be a 32-byte base64url public key."
             )
+        elif is_x25519_small_order_public_key(decoded_moderation_key):
+            failures.append(
+                "SharingModerationPublicKey must not be a small-order X25519 point."
+            )
 
-        for key in ("SharingSupportURL", "SharingCommunityStandardsURL"):
-            raw_url = str(info.get(key, "")).strip()
+        for key in (
+            "SharingPrivacyURL",
+            "SharingSupportURL",
+            "SharingCommunityStandardsURL",
+        ):
+            supplied_url = str(info.get(key, ""))
+            raw_url = supplied_url.strip()
             parsed_url = urlparse(raw_url)
-            url_host = (parsed_url.hostname or "").lower().rstrip(".")
+            raw_url_host = (parsed_url.hostname or "").lower()
+            url_host = raw_url_host.rstrip(".")
             try:
                 parsed_url.port
             except ValueError:
@@ -248,6 +301,7 @@ def validate_enabled_release(
             if (
                 parsed_url.scheme != "https"
                 or not url_host
+                or raw_url_host.endswith(".")
                 or url_host == "localhost"
                 or url_host.endswith(RESERVED_HOST_SUFFIXES)
                 or address is not None
@@ -257,6 +311,8 @@ def validate_enabled_release(
                 or parsed_url.params
                 or parsed_url.query
                 or parsed_url.fragment
+                or raw_url != supplied_url
+                or any(ord(character) < 32 for character in raw_url)
                 or "$" in raw_url
                 or "REPLACE" in raw_url.upper()
             ):
@@ -355,6 +411,7 @@ def validate_share_extension_boundary(
         "SharingAPIBaseURL",
         "SharingModerationKeyID",
         "SharingModerationPublicKey",
+        "SharingPrivacyURL",
         "SharingSupportURL",
         "SharingCommunityStandardsURL",
     ):
@@ -368,6 +425,11 @@ def validate_share_extension_boundary(
 def validate_expected_mode(
     expected_mode: str,
     expected_api_origin: str,
+    expected_moderation_key_id: str,
+    expected_moderation_public_key: str,
+    expected_privacy_url: str,
+    expected_support_url: str,
+    expected_community_standards_url: str,
     app_info: dict,
     share_info: dict,
     pairing_enabled: bool,
@@ -384,8 +446,10 @@ def validate_expected_mode(
     closed instead of silently changing the release scope.
     """
 
-    app_mode = str(app_info.get("SharingReleaseMode", "")).strip()
-    share_mode = str(share_info.get("SharingReleaseMode", "")).strip()
+    app_mode_value = app_info.get("SharingReleaseMode", "")
+    share_mode_value = share_info.get("SharingReleaseMode", "")
+    app_mode = app_mode_value if isinstance(app_mode_value, str) else ""
+    share_mode = share_mode_value if isinstance(share_mode_value, str) else ""
     if app_mode != expected_mode:
         failures.append(
             f"App SharingReleaseMode must be {expected_mode}, got {app_mode or 'empty'}."
@@ -398,13 +462,28 @@ def validate_expected_mode(
     if share_mode != app_mode:
         failures.append("App and Share Extension SharingReleaseMode do not match.")
 
-    archived_origin = str(app_info.get("SharingAPIBaseURL", "")).strip()
-    expected_origin = expected_api_origin.strip()
-    if archived_origin != expected_origin:
+    archived_origin = str(app_info.get("SharingAPIBaseURL", ""))
+    if archived_origin != expected_api_origin:
         failures.append(
             "Processed SharingAPIBaseURL does not exactly match the origin supplied "
             "by the release workflow."
         )
+
+    if expected_mode == "media-staging":
+        expected_configuration = {
+            "SharingModerationKeyID": expected_moderation_key_id,
+            "SharingModerationPublicKey": expected_moderation_public_key,
+            "SharingPrivacyURL": expected_privacy_url,
+            "SharingSupportURL": expected_support_url,
+            "SharingCommunityStandardsURL": expected_community_standards_url,
+        }
+        for key, expected_value in expected_configuration.items():
+            archived_value = app_info.get(key)
+            if not isinstance(archived_value, str) or archived_value != expected_value:
+                failures.append(
+                    f"Processed {key} does not exactly match the value supplied "
+                    "by the protected release environment."
+                )
 
     actual = (
         pairing_enabled,
@@ -453,6 +532,11 @@ def main() -> int:
         required=True,
         help="Exact API origin supplied by the protected release environment.",
     )
+    parser.add_argument("--expected-moderation-key-id", default="")
+    parser.add_argument("--expected-moderation-public-key", default="")
+    parser.add_argument("--expected-privacy-url", default="")
+    parser.add_argument("--expected-support-url", default="")
+    parser.add_argument("--expected-community-standards-url", default="")
     args = parser.parse_args()
 
     try:
@@ -476,6 +560,11 @@ def main() -> int:
     validate_expected_mode(
         args.expected_mode,
         args.expected_api_origin,
+        args.expected_moderation_key_id,
+        args.expected_moderation_public_key,
+        args.expected_privacy_url,
+        args.expected_support_url,
+        args.expected_community_standards_url,
         info,
         share_info,
         pairing_enabled,
@@ -582,6 +671,11 @@ def main() -> int:
         print(
             "sharing release preflight: PASS "
             "(pairing-only; photos disabled)"
+        )
+    elif args.expected_mode == "media-staging":
+        print(
+            "sharing release preflight: PASS "
+            "(media-staging; two-device one-photo sharing enabled)"
         )
     else:
         print("sharing release preflight: PASS (sharing disclosure gates satisfied)")

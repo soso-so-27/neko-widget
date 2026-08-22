@@ -17,9 +17,9 @@ CURRENT_PROJECT_VERSION = 1
 // Sharing is opt-in per build. Release/TestFlight stays off until the
 // privacy, moderation, and export-compliance gates are completed.
 // This is the shipping default and the Build 27 review-preview boundary.
-// Config.PairingOnly.xcconfig records the pairing-only policy. The release
-// workflow applies its values as explicit xcodebuild overrides so the
-// target-specific provisioning-profile mappings below remain intact.
+// Config.PairingOnly.xcconfig and Config.MediaStaging.xcconfig record the
+// explicit test policies. The release workflow applies their values as
+// xcodebuild overrides so target-specific provisioning mappings remain intact.
 SHARING_RELEASE_MODE = review-preview
 SHARING_FEATURE_ENABLED = NO
 SHARING_API_BASE_URL =
@@ -41,6 +41,7 @@ SHARING_REVIEW_PREVIEW_ENABLED = YES
 // received moment; the Worker cannot decrypt it.
 SHARING_MODERATION_KEY_ID =
 SHARING_MODERATION_PUBLIC_KEY =
+SHARING_PRIVACY_URL =
 SHARING_SUPPORT_URL =
 SHARING_COMMUNITY_STANDARDS_URL =
 

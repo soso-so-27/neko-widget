@@ -1,0 +1,71 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f7f5f1;
+  --surface: #ffffff;
+  --text: #202124;
+  --muted: #62656a;
+  --accent: #0878b9;
+  --border: #ddd8d0;
+  --notice: #fff4dd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151617;
+    --surface: #202123;
+    --text: #f2f2f2;
+    --muted: #b6b8bc;
+    --accent: #51b9f3;
+    --border: #3a3c40;
+    --notice: #352b1a;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  font-size: 17px;
+  line-height: 1.75;
+}
+a { color: var(--accent); }
+a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+header, main, footer { width: min(760px, calc(100% - 32px)); margin-inline: auto; }
+header { padding: 28px 0 16px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+main {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: clamp(22px, 5vw, 44px);
+}
+footer { color: var(--muted); padding: 24px 0 44px; font-size: 0.9rem; }
+h1 { line-height: 1.25; font-size: clamp(1.8rem, 7vw, 2.6rem); margin: 0 0 12px; }
+h2 { line-height: 1.4; margin-top: 2.1em; font-size: 1.35rem; }
+h3 { line-height: 1.45; margin-top: 1.6em; font-size: 1.08rem; }
+p, li { max-width: 68ch; }
+ul, ol { padding-left: 1.4em; }
+.eyebrow, .updated { color: var(--muted); font-size: 0.92rem; }
+.notice {
+  background: var(--notice);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+.cards { display: grid; gap: 14px; margin-top: 24px; }
+.card { border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+.card h2 { margin: 0 0 6px; font-size: 1.15rem; }
+table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+th, td { border-bottom: 1px solid var(--border); padding: 12px 8px; text-align: left; vertical-align: top; }
+th { width: 29%; }
+code { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  header, main, footer { width: min(100% - 20px, 760px); }
+  main { border-radius: 14px; padding: 20px 18px; }
+  table, tbody, tr, th, td { display: block; }
+  th { width: auto; border-bottom: 0; padding-bottom: 0; }
+  td { padding-top: 2px; }
+}

@@ -268,7 +268,9 @@ private struct OnboardingPhotoPermissionPage: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(
-                        Array(OnboardingPresentationCopy.permissionPrivacyLines.enumerated()),
+                        Array(OnboardingPresentationCopy.permissionPrivacyLines(
+                            isMediaAvailable: SharingAPIConfiguration.current.isMediaAvailable
+                        ).enumerated()),
                         id: \.offset
                     ) { _, line in
                         Text(line)

@@ -57,10 +57,10 @@ jobs:
         shell: bash
         run: npm run typecheck
 
-      - name: Run Worker and D1 integration tests
+      - name: Run Worker, D1, staging, and moderation tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm run check:staging-config && npm test
+        run: npm run check:staging-config && npm run check:moderation-tool && npm test
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService

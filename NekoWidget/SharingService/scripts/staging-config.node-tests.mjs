@@ -33,6 +33,38 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(new Set(config.ratelimits.map((value) => value.namespace_id)).size, 3);
 });
 
+test("derives the media test-window config by changing only the moment runtime", () => {
+  const offConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
+  const onConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+  }));
+  assert.equal(onConfig.vars.MOMENT_RUNTIME_ENABLED, "YES");
+  assert.equal(onConfig.vars.LEGACY_SHARING_RUNTIME_ENABLED, "NO");
+  onConfig.vars.MOMENT_RUNTIME_ENABLED = "NO";
+  assert.deepEqual(onConfig, offConfig);
+});
+
+test("requires an explicit media policy when validating the moment runtime on", () => {
+  const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+  }));
+  assert.throws(() => validateStagingConfig(config), /reviewed staging policy/u);
+  assert.doesNotThrow(() => validateStagingConfig(config, {
+    expectedMomentRuntime: "YES",
+  }));
+});
+
+test("never permits the legacy sharing runtime in a media test window", () => {
+  const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+  }));
+  config.vars.LEGACY_SHARING_RUNTIME_ENABLED = "YES";
+  assert.throws(
+    () => validateStagingConfig(config, { expectedMomentRuntime: "YES" }),
+    /reviewed staging policy/u,
+  );
+});
+
 test("rejects custom Worker limits that would require a paid plan", () => {
   const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
   config.limits = { cpu_ms: 30000, subrequests: 1200 };
@@ -74,6 +106,7 @@ test("requires every account-specific identifier at render time", () => {
 test("keeps the generated staging config out of git", async () => {
   const ignore = await readFile(join(projectDirectory, ".gitignore"), "utf8");
   assert.match(ignore, /^wrangler\.staging\.jsonc$/mu);
+  assert.match(ignore, /^wrangler\.media-staging-on\.jsonc$/mu);
   const repositoryIgnore = await readFile(join(projectDirectory, "..", "..", ".gitignore"), "utf8");
   assert.match(repositoryIgnore, /^\.wrangler\/$/mu);
 });

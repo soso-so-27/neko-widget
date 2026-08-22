@@ -13,14 +13,42 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     let baseURL: URL?
     let moderationKeyID: String?
     let moderationPublicKey: Data?
+    let privacyURL: URL?
     let supportURL: URL?
     let communityStandardsURL: URL?
+
+    init(
+        isEnabled: Bool,
+        isMediaEnabled: Bool,
+        isShareExtensionHandoffEnabled: Bool,
+        isShareExtensionSendEnabled: Bool,
+        isReviewPreviewEnabled: Bool,
+        baseURL: URL?,
+        moderationKeyID: String?,
+        moderationPublicKey: Data?,
+        supportURL: URL?,
+        communityStandardsURL: URL?,
+        privacyURL: URL? = nil
+    ) {
+        self.isEnabled = isEnabled
+        self.isMediaEnabled = isMediaEnabled
+        self.isShareExtensionHandoffEnabled = isShareExtensionHandoffEnabled
+        self.isShareExtensionSendEnabled = isShareExtensionSendEnabled
+        self.isReviewPreviewEnabled = isReviewPreviewEnabled
+        self.baseURL = baseURL
+        self.moderationKeyID = moderationKeyID
+        self.moderationPublicKey = moderationPublicKey
+        self.privacyURL = privacyURL
+        self.supportURL = supportURL
+        self.communityStandardsURL = communityStandardsURL
+    }
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
 
     var hasOperationalSafetyConfiguration: Bool {
         moderationKeyID == "moderation-v1"
             && moderationPublicKey?.count == 32
+            && privacyURL != nil
             && supportURL != nil
             && communityStandardsURL != nil
     }
@@ -59,6 +87,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         let moderationPublicKey = nonemptyString(
             info["SharingModerationPublicKey"] as? String
         ).flatMap(decodeCanonicalBase64URL)
+        let privacyURL = httpsRootURL(info["SharingPrivacyURL"] as? String)
         let supportURL = httpsRootURL(info["SharingSupportURL"] as? String)
         let communityStandardsURL = httpsRootURL(
             info["SharingCommunityStandardsURL"] as? String
@@ -73,7 +102,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             moderationKeyID: moderationKeyID,
             moderationPublicKey: moderationPublicKey,
             supportURL: supportURL,
-            communityStandardsURL: communityStandardsURL
+            communityStandardsURL: communityStandardsURL,
+            privacyURL: privacyURL
         )
     }
 
@@ -110,8 +140,41 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        return canonical == value ? data : nil
+        guard canonical == value,
+              !hasSmallOrderX25519PublicKey(data)
+        else { return nil }
+        return data
     }
+
+    /// RFC 7748 ignores the high bit of an X25519 u-coordinate. Normalize it
+    /// before comparing the seven small-order encodings rejected by the
+    /// reviewed libsodium X25519 implementation.
+    private static func hasSmallOrderX25519PublicKey(_ data: Data) -> Bool {
+        guard data.count == 32 else { return true }
+        var normalized = [UInt8](data)
+        normalized[31] &= 0x7f
+        return x25519SmallOrderPublicKeys.contains(Data(normalized))
+    }
+
+    private static let x25519SmallOrderPublicKeys: Set<Data> = [
+        Data(repeating: 0x00, count: 32),
+        Data([0x01] + [UInt8](repeating: 0x00, count: 31)),
+        Data([
+            0xe0, 0xeb, 0x7a, 0x7c, 0x3b, 0x41, 0xb8, 0xae,
+            0x16, 0x56, 0xe3, 0xfa, 0xf1, 0x9f, 0xc4, 0x6a,
+            0xda, 0x09, 0x8d, 0xeb, 0x9c, 0x32, 0xb1, 0xfd,
+            0x86, 0x62, 0x05, 0x16, 0x5f, 0x49, 0xb8, 0x00,
+        ]),
+        Data([
+            0x5f, 0x9c, 0x95, 0xbc, 0xa3, 0x50, 0x8c, 0x24,
+            0xb1, 0xd0, 0xb1, 0x55, 0x9c, 0x83, 0xef, 0x5b,
+            0x04, 0x44, 0x5c, 0xc4, 0x58, 0x1c, 0x8e, 0x86,
+            0xd8, 0x22, 0x4e, 0xdd, 0xd0, 0x9f, 0x11, 0x57,
+        ]),
+        Data([0xec] + [UInt8](repeating: 0xff, count: 30) + [0x7f]),
+        Data([0xed] + [UInt8](repeating: 0xff, count: 30) + [0x7f]),
+        Data([0xee] + [UInt8](repeating: 0xff, count: 30) + [0x7f]),
+    ]
 
     private static func httpsRootURL(_ value: String?) -> URL? {
         guard let raw = nonemptyString(value),

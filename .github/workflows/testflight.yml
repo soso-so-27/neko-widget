@@ -8,13 +8,14 @@ on:
         required: false
         type: string
       release_mode:
-        description: "配布範囲。通常はreview-preview、Build 28の2台確認だけpairing-only"
+        description: "配布範囲。通常はreview-preview、Build 28はpairing-only、次の2台写真確認だけmedia-staging"
         required: true
         default: review-preview
         type: choice
         options:
           - review-preview
           - pairing-only
+          - media-staging
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -63,8 +64,18 @@ jobs:
         env:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
           SHARING_STAGING_API_ORIGIN: ${{ vars.SHARING_STAGING_API_ORIGIN }}
+          SHARING_STAGING_MODERATION_KEY_ID: ${{ vars.SHARING_STAGING_MODERATION_KEY_ID }}
+          SHARING_STAGING_MODERATION_PUBLIC_KEY: ${{ vars.SHARING_STAGING_MODERATION_PUBLIC_KEY }}
+          SHARING_STAGING_PRIVACY_URL: ${{ vars.SHARING_STAGING_PRIVACY_URL }}
+          SHARING_STAGING_SUPPORT_URL: ${{ vars.SHARING_STAGING_SUPPORT_URL }}
+          SHARING_STAGING_COMMUNITY_STANDARDS_URL: ${{ vars.SHARING_STAGING_COMMUNITY_STANDARDS_URL }}
         run: |
           set -euo pipefail
+          release_moderation_key_id=""
+          release_moderation_public_key=""
+          release_privacy_url=""
+          release_support_url=""
+          release_community_standards_url=""
           case "$SELECTED_RELEASE_MODE" in
             review-preview)
               release_origin=""
@@ -87,71 +98,25 @@ jobs:
                 echo "The protected testflight Environment variable SHARING_STAGING_API_ORIGIN is required for pairing-only." >&2
                 exit 1
               fi
-              python3 - "$release_origin" <<'PY'
-          import ipaddress
-          import socket
-          import sys
-          from urllib.parse import urlparse
-
-          supplied = sys.argv[1]
-          raw = supplied.strip()
-          if raw != supplied or any(ord(character) < 32 for character in raw):
-              raise SystemExit(
-                  "SHARING_STAGING_API_ORIGIN must not contain whitespace or control characters."
-              )
-          parsed = urlparse(raw)
-          host = (parsed.hostname or "").lower().rstrip(".")
-          reserved = (
-              ".example", ".invalid", ".local", ".localhost", ".test",
-              ".internal", ".lan", ".home.arpa",
-          )
-          try:
-              parsed.port
-          except ValueError:
-              raise SystemExit("SHARING_STAGING_API_ORIGIN contains an invalid port.")
-          try:
-              address = ipaddress.ip_address(host)
-          except ValueError:
-              address = None
-          if (
-              parsed.scheme != "https"
-              or not host
-              or "." not in host
-              or host == "localhost"
-              or host.endswith(reserved)
-              or address is not None
-              or parsed.username is not None
-              or parsed.password is not None
-              or parsed.path not in ("", "/")
-              or parsed.params
-              or parsed.query
-              or parsed.fragment
-              or "$" in raw
-              or "REPLACE" in raw.upper()
-          ):
-              raise SystemExit(
-                  "SHARING_STAGING_API_ORIGIN must be a non-placeholder public HTTPS origin."
-              )
-          try:
-              resolved = {
-                  item[4][0]
-                  for item in socket.getaddrinfo(
-                      host, parsed.port or 443, type=socket.SOCK_STREAM
-                  )
-              }
-          except socket.gaierror as error:
-              raise SystemExit(
-                  f"SHARING_STAGING_API_ORIGIN must resolve in public DNS: {error}"
-              ) from error
-          if not resolved or any(
-              not ipaddress.ip_address(value).is_global for value in resolved
-          ):
-              raise SystemExit(
-                  "SHARING_STAGING_API_ORIGIN must resolve only to public IP addresses."
-              )
-          PY
               cp \
                 "$PROJECT_DIRECTORY/ci/PrivacyInfo.PairingOnly.xcprivacy" \
+                "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
+              ;;
+            media-staging)
+              release_origin="${SHARING_STAGING_API_ORIGIN:-}"
+              release_moderation_key_id="${SHARING_STAGING_MODERATION_KEY_ID:-}"
+              release_moderation_public_key="${SHARING_STAGING_MODERATION_PUBLIC_KEY:-}"
+              release_privacy_url="${SHARING_STAGING_PRIVACY_URL:-}"
+              release_support_url="${SHARING_STAGING_SUPPORT_URL:-}"
+              release_community_standards_url="${SHARING_STAGING_COMMUNITY_STANDARDS_URL:-}"
+              release_summary="media-staging/two-device one-photo sharing"
+              release_feature="YES"
+              release_media="YES"
+              release_handoff="YES"
+              release_direct_send="NO"
+              release_review_preview="NO"
+              cp \
+                "$PROJECT_DIRECTORY/ci/PrivacyInfo.MediaStaging.xcprivacy" \
                 "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
               ;;
             *)
@@ -159,6 +124,160 @@ jobs:
               exit 1
               ;;
           esac
+
+          python3 - \
+            "$SELECTED_RELEASE_MODE" \
+            "$release_origin" \
+            "$release_moderation_key_id" \
+            "$release_moderation_public_key" \
+            "$release_privacy_url" \
+            "$release_support_url" \
+            "$release_community_standards_url" <<'PY'
+          import base64
+          import binascii
+          import ipaddress
+          import re
+          import socket
+          import sys
+          from urllib.parse import urlparse
+
+          (
+              mode,
+              origin,
+              moderation_key_id,
+              moderation_public_key,
+              privacy_url,
+              support_url,
+              community_url,
+          ) = sys.argv[1:]
+
+          reserved = (
+              ".example", ".invalid", ".local", ".localhost", ".test",
+              ".internal", ".lan", ".home.arpa",
+          )
+
+          def public_https(value: str, label: str, *, origin_only: bool) -> tuple[str, int]:
+              raw = value.strip()
+              if raw != value or any(ord(character) < 32 for character in raw):
+                  raise SystemExit(f"{label} must not contain surrounding whitespace or control characters.")
+              parsed = urlparse(raw)
+              raw_host = (parsed.hostname or "").lower()
+              host = raw_host.rstrip(".")
+              try:
+                  port = parsed.port
+              except ValueError as error:
+                  raise SystemExit(f"{label} contains an invalid port.") from error
+              try:
+                  address = ipaddress.ip_address(host)
+              except ValueError:
+                  address = None
+              if (
+                  parsed.scheme != "https"
+                  or not host
+                  or raw_host.endswith(".")
+                  or "." not in host
+                  or host == "localhost"
+                  or host.endswith(reserved)
+                  or address is not None
+                  or parsed.username is not None
+                  or parsed.password is not None
+                  or (origin_only and parsed.path not in ("", "/"))
+                  or parsed.params
+                  or parsed.query
+                  or parsed.fragment
+                  or "$" in raw
+                  or "REPLACE" in raw.upper()
+              ):
+                  kind = "origin" if origin_only else "URL"
+                  raise SystemExit(f"{label} must be a non-placeholder public HTTPS {kind}.")
+              return host, port or 443
+
+          def require_public_dns(host: str, port: int, label: str) -> None:
+              try:
+                  resolved = {
+                      item[4][0]
+                      for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+                  }
+              except socket.gaierror as error:
+                  raise SystemExit(f"{label} must resolve in public DNS: {error}") from error
+              if not resolved or any(
+                  not ipaddress.ip_address(value).is_global for value in resolved
+              ):
+                  raise SystemExit(f"{label} must resolve only to public IP addresses.")
+
+          if mode not in {"review-preview", "pairing-only", "media-staging"}:
+              raise SystemExit(f"Unknown release mode: {mode}")
+
+          if mode == "review-preview":
+              if any((origin, moderation_key_id, moderation_public_key, privacy_url, support_url, community_url)):
+                  raise SystemExit("review-preview must not receive sharing runtime configuration.")
+          else:
+              if not origin:
+                  raise SystemExit("SHARING_STAGING_API_ORIGIN is required for enabled sharing modes.")
+              host, port = public_https(
+                  origin, "SHARING_STAGING_API_ORIGIN", origin_only=True
+              )
+              require_public_dns(host, port, "SHARING_STAGING_API_ORIGIN")
+
+          safety_values = (
+              moderation_key_id,
+              moderation_public_key,
+              privacy_url,
+              support_url,
+              community_url,
+          )
+          if mode == "pairing-only" and any(safety_values):
+              raise SystemExit("pairing-only must not receive media safety configuration.")
+
+          if mode == "media-staging":
+              if moderation_key_id != "moderation-v1":
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_KEY_ID must be exactly moderation-v1."
+                  )
+              try:
+                  if re.fullmatch(r"[A-Za-z0-9_-]{43}", moderation_public_key) is None:
+                      raise ValueError("non-canonical base64url")
+                  decoded_key = base64.b64decode(
+                      moderation_public_key.replace("-", "+").replace("_", "/") + "=",
+                      validate=True,
+                  )
+                  canonical_key = base64.urlsafe_b64encode(decoded_key).decode("ascii").rstrip("=")
+                  if canonical_key != moderation_public_key:
+                      raise ValueError("non-canonical base64url")
+              except (ValueError, binascii.Error) as error:
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_PUBLIC_KEY must be a canonical 32-byte base64url key."
+                  ) from error
+              if len(decoded_key) != 32:
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_PUBLIC_KEY must be a canonical 32-byte base64url key."
+                  )
+              normalized_key = bytearray(decoded_key)
+              normalized_key[31] &= 0x7f
+              small_order_keys = {
+                  bytes.fromhex("00" * 32),
+                  bytes.fromhex("01" + ("00" * 31)),
+                  bytes.fromhex("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"),
+                  bytes.fromhex("5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"),
+                  bytes.fromhex("ec" + ("ff" * 30) + "7f"),
+                  bytes.fromhex("ed" + ("ff" * 30) + "7f"),
+                  bytes.fromhex("ee" + ("ff" * 30) + "7f"),
+              }
+              if bytes(normalized_key) in small_order_keys:
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_PUBLIC_KEY must not be a small-order X25519 point."
+                  )
+              for policy_url, label in (
+                  (privacy_url, "SHARING_STAGING_PRIVACY_URL"),
+                  (support_url, "SHARING_STAGING_SUPPORT_URL"),
+                  (
+                      community_url,
+                      "SHARING_STAGING_COMMUNITY_STANDARDS_URL",
+                  ),
+              ):
+                  host, port = public_https(policy_url, label, origin_only=False)
+                  require_public_dns(host, port, label)
+          PY
 
           plutil -lint "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
           {
@@ -170,6 +289,11 @@ jobs:
             echo "RELEASE_SHARING_DIRECT_SEND_ENABLED=$release_direct_send"
             echo "RELEASE_SHARING_REVIEW_PREVIEW_ENABLED=$release_review_preview"
             echo "RELEASE_SHARING_API_ORIGIN=$release_origin"
+            echo "RELEASE_SHARING_MODERATION_KEY_ID=$release_moderation_key_id"
+            echo "RELEASE_SHARING_MODERATION_PUBLIC_KEY=$release_moderation_public_key"
+            echo "RELEASE_SHARING_PRIVACY_URL=$release_privacy_url"
+            echo "RELEASE_SHARING_SUPPORT_URL=$release_support_url"
+            echo "RELEASE_SHARING_COMMUNITY_STANDARDS_URL=$release_community_standards_url"
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
@@ -564,6 +688,11 @@ jobs:
             SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED" \
             SHARING_REVIEW_PREVIEW_ENABLED="$RELEASE_SHARING_REVIEW_PREVIEW_ENABLED" \
             SHARING_API_BASE_URL="$RELEASE_SHARING_API_ORIGIN" \
+            SHARING_MODERATION_KEY_ID="$RELEASE_SHARING_MODERATION_KEY_ID" \
+            SHARING_MODERATION_PUBLIC_KEY="$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
+            SHARING_PRIVACY_URL="$RELEASE_SHARING_PRIVACY_URL" \
+            SHARING_SUPPORT_URL="$RELEASE_SHARING_SUPPORT_URL" \
+            SHARING_COMMUNITY_STANDARDS_URL="$RELEASE_SHARING_COMMUNITY_STANDARDS_URL" \
             CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \
             "OTHER_CODE_SIGN_FLAGS=--keychain $CI_KEYCHAIN_PATH" \
             archive
@@ -584,7 +713,12 @@ jobs:
             --share-privacy-manifest "$share_path/PrivacyInfo.xcprivacy" \
             --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}" \
             --expected-mode "$SHARING_EXPECTED_MODE" \
-            --expected-api-origin "$RELEASE_SHARING_API_ORIGIN"
+            --expected-api-origin "$RELEASE_SHARING_API_ORIGIN" \
+            --expected-moderation-key-id "$RELEASE_SHARING_MODERATION_KEY_ID" \
+            --expected-moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
+            --expected-privacy-url "$RELEASE_SHARING_PRIVACY_URL" \
+            --expected-support-url "$RELEASE_SHARING_SUPPORT_URL" \
+            --expected-community-standards-url "$RELEASE_SHARING_COMMUNITY_STANDARDS_URL"
 
       - name: Verify archive signatures and App Group entitlements
         shell: bash

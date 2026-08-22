@@ -58,12 +58,27 @@ enum OnboardingPresentationVerifier {
             "Photos permission request changed"
         )
         try require(
-            OnboardingPresentationCopy.permissionPrivacyLines == [
+            OnboardingPresentationCopy.permissionPrivacyLines(isMediaAvailable: false) == [
                 "・写真は端末の外に出ません",
                 "・解析はすべてこの端末の中で行います",
                 "・写真を消したり変更したりしません"
             ],
             "Photos permission privacy promise changed"
+        )
+        try require(
+            OnboardingPresentationCopy.permissionPrivacyLines(isMediaAvailable: true) == [
+                "・解析はすべてこの端末の中で行います",
+                "・写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります",
+                "・原本の自動送信・削除・変更はしません"
+            ],
+            "media-enabled Photos permission privacy promise changed"
+        )
+        try require(
+            OnboardingPresentationCopy.homePermissionBody(isMediaAvailable: false)
+                == "写真は端末の外に出さず、変更や削除もしません。あとからここで許可できます。"
+                && OnboardingPresentationCopy.homePermissionBody(isMediaAvailable: true)
+                == "解析はこの端末内で行います。写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります。原本の自動送信・削除・変更はしません。あとからここで許可できます。",
+            "Home Photos permission privacy promise changed"
         )
         try require(
             OnboardingPresentationCopy.permissionLimitedAccessNote
