@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   moderation-keygen-windows-policy:
-    name: Windows moderation key policy fixtures
+    name: Windows moderation key and drill policy fixtures
     runs-on: windows-2022
     timeout-minutes: 10
 
@@ -51,7 +51,9 @@ jobs:
         run: |
           $files = @(
             "scripts/moderation-staging-keygen-windows.ps1",
-            "scripts/moderation-staging-keygen-windows-security.ps1"
+            "scripts/moderation-staging-keygen-windows-security.ps1",
+            "scripts/moderation-staging-drill-windows.ps1",
+            "scripts/moderation-staging-drill-review-windows.ps1"
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -73,6 +75,7 @@ jobs:
             throw "Windows policy self-test failed"
           }
           npm run check:moderation-keygen
+          npm run check:moderation-drill
 
   check:
     name: Typecheck, test, and bundle Worker
@@ -105,7 +108,7 @@ jobs:
       - name: Run Worker, D1, staging, moderation, and key ceremony tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm run check:staging-config && npm run check:moderation-tool && npm run check:moderation-keygen && npm test
+        run: npm run check:staging-config && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService

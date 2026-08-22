@@ -1,9 +1,23 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("PrepareDirectory", "VerifyDirectory", "HardenFiles")]
+    [ValidateSet(
+        "PrepareDirectory",
+        "VerifyDirectory",
+        "HardenFiles",
+        "ValidateKeyDirectory",
+        "PrepareDrillDirectory",
+        "VerifyDrillDirectory",
+        "HardenDrillFiles",
+        "ValidateDrillForReview",
+        "HardenDrillReviewFiles",
+        "ValidateDrillForDelete",
+        "ValidateDrillAfterDelete"
+    )]
     [string]$Mode,
 
     [string]$OutputDirectory,
+
+    [string]$DisjointDirectory,
 
     [switch]$ConfirmLocalEncryptedNoSync,
 
@@ -15,6 +29,98 @@ Set-StrictMode -Version Latest
 
 function Stop-SecurityCheck([string]$Message) {
     throw "Windows staging key security check refused: $Message"
+}
+
+function Test-Administrator {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Initialize-FileIdentityHelper {
+    if ("NekoWidget.Win32FileIdentity" -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace NekoWidget {
+    public static class Win32FileIdentity {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BY_HANDLE_FILE_INFORMATION {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(
+            string name, uint access, uint share, IntPtr security,
+            uint creation, uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle handle, out BY_HANDLE_FILE_INFORMATION information);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandle(
+            SafeFileHandle handle, System.Text.StringBuilder path,
+            uint pathLength, uint flags);
+
+        public static string Inspect(string path, bool directory) {
+            const uint ShareAll = 0x00000001 | 0x00000002 | 0x00000004;
+            const uint OpenExisting = 3;
+            const uint BackupSemantics = 0x02000000;
+            using (SafeFileHandle handle = CreateFile(
+                path, 0, ShareAll, IntPtr.Zero, OpenExisting,
+                directory ? BackupSemantics : 0, IntPtr.Zero)) {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                BY_HANDLE_FILE_INFORMATION info;
+                if (!GetFileInformationByHandle(handle, out info))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                var buffer = new System.Text.StringBuilder(32768);
+                uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+                if (length == 0 || length >= buffer.Capacity)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                string finalPath = buffer.ToString();
+                if (finalPath.StartsWith(@"\\?\", StringComparison.Ordinal))
+                    finalPath = finalPath.Substring(4);
+                return finalPath + "\n" + info.NumberOfLinks.ToString();
+            }
+        }
+    }
+}
+'@
+}
+
+function Get-CanonicalSingleLinkPath([string]$LiteralPath, [bool]$Directory) {
+    try {
+        Initialize-FileIdentityHelper
+        $parts = [NekoWidget.Win32FileIdentity]::Inspect($LiteralPath, $Directory).Split("`n")
+        if ($parts.Count -ne 2 -or [uint32]$parts[1] -ne 1) { return $null }
+        return $parts[0].TrimEnd('\')
+    } catch {
+        return $null
+    }
+}
+
+function Test-CanonicalSingleLinkPath([string]$LiteralPath, [bool]$Directory) {
+    try {
+        $final = Get-CanonicalSingleLinkPath -LiteralPath $LiteralPath -Directory $Directory
+        if ([string]::IsNullOrWhiteSpace($final)) { return $false }
+        $full = [System.IO.Path]::GetFullPath($LiteralPath).TrimEnd('\')
+        return $full.Equals($final, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
 }
 
 function Test-FullyQualifiedLocalPath([string]$Value) {
@@ -225,6 +331,91 @@ function Test-KnownProviderPath([string]$FullOutput) {
     return $FullOutput -match '(?i)\\(?:OneDrive(?:\s*-\s*[^\\]+)?|Dropbox|iCloud(?: Drive)?|Google Drive|Box(?: Sync)?|pCloud|Nextcloud)(?:\\|$)'
 }
 
+function Test-PathWithin([string]$Candidate, [string]$Root) {
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
+    try {
+        $candidateFull = [System.IO.Path]::GetFullPath($Candidate).TrimEnd('\')
+        $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+        return $candidateFull.Equals($rootFull, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $candidateFull.StartsWith($rootFull + "\", [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $true
+    }
+}
+
+function Test-DisjointOperationalDirectories(
+    [string]$ExistingDirectory,
+    [string]$ProspectiveDirectory
+) {
+    try {
+        if (-not (Test-FullyQualifiedLocalPath -Value $ExistingDirectory) -or
+            -not (Test-FullyQualifiedLocalPath -Value $ProspectiveDirectory)) {
+            return $false
+        }
+        $keyCanonical = Get-CanonicalSingleLinkPath `
+            -LiteralPath $ExistingDirectory `
+            -Directory $true
+        $outputFull = [System.IO.Path]::GetFullPath($ProspectiveDirectory)
+        $outputParent = [System.IO.Path]::GetDirectoryName($outputFull)
+        $parentCanonical = Get-CanonicalSingleLinkPath `
+            -LiteralPath $outputParent `
+            -Directory $true
+        if ([string]::IsNullOrWhiteSpace($keyCanonical) -or
+            [string]::IsNullOrWhiteSpace($parentCanonical)) {
+            return $false
+        }
+        $prospectiveCanonical = Join-Path `
+            $parentCanonical `
+            ([System.IO.Path]::GetFileName($outputFull.TrimEnd('\')))
+        return -not (Test-PathWithin -Candidate $prospectiveCanonical -Root $keyCanonical) -and
+            -not (Test-PathWithin -Candidate $keyCanonical -Root $prospectiveCanonical)
+    } catch {
+        return $false
+    }
+}
+
+function Test-RestrictedOperationalPath([string]$FullOutput) {
+    $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\.."))
+    $roots = @(
+        (Get-Location).Path,
+        $repositoryRoot,
+        [System.IO.Path]::GetTempPath(),
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    )
+    foreach ($root in $roots) {
+        if (Test-PathWithin -Candidate $FullOutput -Root $root) { return $true }
+    }
+    return $false
+}
+
+function Test-ExactFixedFiles(
+    [string]$LiteralDirectory,
+    [hashtable]$Contract,
+    [System.Security.Principal.SecurityIdentifier]$CurrentUserSid,
+    [bool]$Harden
+) {
+    $items = @(Get-ChildItem -LiteralPath $LiteralDirectory -Force)
+    if ($items.Count -ne $Contract.Count) { return $false }
+    foreach ($item in $items) {
+        if ($Contract.Keys -cnotcontains $item.Name -or $item.PSIsContainer -or
+            (Test-ForbiddenFileAttributes -Attributes $item.Attributes) -or
+            -not (Test-CanonicalSingleLinkPath -LiteralPath $item.FullName -Directory $false)) {
+            return $false
+        }
+        $bounds = $Contract[$item.Name]
+        if ($item.Length -lt $bounds[0] -or $item.Length -gt $bounds[1]) { return $false }
+        if ($Harden) {
+            Set-ExactAcl -LiteralPath $item.FullName -CurrentUserSid $CurrentUserSid -Directory $false
+        } elseif (-not (Test-ExactAcl `
+            -LiteralPath $item.FullName `
+            -CurrentUserSid $CurrentUserSid `
+            -Directory $false)) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Invoke-PolicySelfTest {
     if (-not (Test-FullyQualifiedLocalPath -Value "C:\safe\keys") -or
         (Test-FullyQualifiedLocalPath -Value "C:relative") -or
@@ -265,6 +456,26 @@ function Invoke-PolicySelfTest {
     $publicFile = Join-Path $testDirectory "moderation-v1.public.base64url"
     try {
         [void][System.IO.Directory]::CreateDirectory($testDirectory)
+        if (-not (Test-CanonicalSingleLinkPath -LiteralPath $testDirectory -Directory $true)) {
+            throw "directory identity fixture failed"
+        }
+        $childCandidate = Join-Path $testDirectory "drill-child"
+        $siblingCandidate = Join-Path `
+            ([System.IO.Path]::GetDirectoryName($testDirectory)) `
+            ("neko-drill-sibling-" + [guid]::NewGuid().ToString("N"))
+        if ((Test-DisjointOperationalDirectories `
+                -ExistingDirectory $testDirectory `
+                -ProspectiveDirectory $testDirectory) -or
+            (Test-DisjointOperationalDirectories `
+                -ExistingDirectory $testDirectory `
+                -ProspectiveDirectory $childCandidate) -or
+            -not (Test-DisjointOperationalDirectories `
+                -ExistingDirectory $testDirectory `
+                -ProspectiveDirectory $siblingCandidate) -or
+            (Test-Path -LiteralPath $childCandidate) -or
+            (Test-Path -LiteralPath $siblingCandidate)) {
+            throw "key/drill directory disjointness fixture failed"
+        }
         $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
         Set-ExactAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid -Directory $true
         $exactDirectorySecurity = [System.IO.Directory]::GetAccessControl($testDirectory)
@@ -277,6 +488,10 @@ function Invoke-PolicySelfTest {
         }
         [System.IO.File]::WriteAllBytes($privateFile, [byte[]]::new(32))
         [System.IO.File]::WriteAllBytes($publicFile, [byte[]]::new(43))
+        if (-not (Test-CanonicalSingleLinkPath -LiteralPath $privateFile -Directory $false) -or
+            -not (Test-CanonicalSingleLinkPath -LiteralPath $publicFile -Directory $false)) {
+            throw "file identity fixture failed"
+        }
         Set-ExactAcl -LiteralPath $privateFile -CurrentUserSid $currentSid -Directory $false
         Set-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false
         if (-not (Test-ExactAcl -LiteralPath $privateFile -CurrentUserSid $currentSid -Directory $false) -or
@@ -415,12 +630,18 @@ try {
     if (-not (Test-FullyQualifiedLocalPath -Value $OutputDirectory)) {
         Stop-SecurityCheck "an absolute local drive path is required"
     }
+    if (-not (Test-Administrator)) {
+        Stop-SecurityCheck "an elevated Windows administrator session is required"
+    }
     $fullOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
     if ($fullOutput -notmatch '^[A-Za-z]:\\' -or $fullOutput.Substring(3).Contains(":")) {
         Stop-SecurityCheck "UNC, device, extended, and alternate-stream paths are not allowed"
     }
     if (Test-KnownProviderPath -FullOutput $fullOutput) {
         Stop-SecurityCheck "known cloud-sync roots are not allowed"
+    }
+    if (Test-RestrictedOperationalPath -FullOutput $fullOutput) {
+        Stop-SecurityCheck "repository, working, temporary, and user-profile roots are not allowed"
     }
 
     $parent = [System.IO.Path]::GetDirectoryName($fullOutput)
@@ -447,44 +668,98 @@ try {
         Stop-SecurityCheck "an output ancestor permits untrusted path-component replacement"
     }
 
-    if ($Mode -eq "PrepareDirectory") {
+    if ($Mode -eq "PrepareDrillDirectory" -and
+        ([string]::IsNullOrWhiteSpace($DisjointDirectory) -or
+         -not (Test-CanonicalSingleLinkPath -LiteralPath $DisjointDirectory -Directory $true) -or
+         -not (Test-DisjointOperationalDirectories `
+            -ExistingDirectory $DisjointDirectory `
+            -ProspectiveDirectory $fullOutput))) {
+        Stop-SecurityCheck "the key and drill directories must be canonically disjoint before creation"
+    }
+
+    if ($Mode -eq "PrepareDirectory" -or $Mode -eq "PrepareDrillDirectory") {
         if (Test-Path -LiteralPath $fullOutput) {
             Stop-SecurityCheck "the output directory must not already exist"
         }
         [void][System.IO.Directory]::CreateDirectory($fullOutput)
         Set-ExactAcl -LiteralPath $fullOutput -CurrentUserSid $currentSid -Directory $true
         $prepared = Get-Item -LiteralPath $fullOutput -Force
-        if (Test-ForbiddenFileAttributes -Attributes $prepared.Attributes) {
-            Stop-SecurityCheck "the prepared output directory is offline"
+        if ((Test-ForbiddenFileAttributes -Attributes $prepared.Attributes) -or
+            -not (Test-CanonicalSingleLinkPath -LiteralPath $fullOutput -Directory $true)) {
+            Stop-SecurityCheck "the prepared output directory identity is invalid"
         }
     } else {
         $directory = Get-Item -LiteralPath $fullOutput -Force
         if (-not $directory.PSIsContainer -or
             (Test-ForbiddenFileAttributes -Attributes $directory.Attributes) -or
+            -not (Test-CanonicalSingleLinkPath -LiteralPath $fullOutput -Directory $true) -or
             -not (Test-ExactAcl -LiteralPath $fullOutput -CurrentUserSid $currentSid -Directory $true)) {
             Stop-SecurityCheck "the prepared output directory is not exact and restricted"
         }
     }
 
-    if ($Mode -eq "PrepareDirectory" -or $Mode -eq "VerifyDirectory") {
+    $keyContract = @{
+        "moderation-v1.private.raw" = @(32L, 32L)
+        "moderation-v1.public.base64url" = @(43L, 43L)
+    }
+    $drillContract = @{
+        "synthetic-export.json" = @(1L, 16384L)
+        "synthetic-report.ciphertext" = @(29L, 1048576L)
+    }
+    $reviewContract = @{
+        "synthetic-export.json" = @(1L, 16384L)
+        "synthetic-report.ciphertext" = @(29L, 1048576L)
+        "synthetic-review.jpg" = @(1L, 950244L)
+        "synthetic-review.jpg.receipt" = @(107L, 107L)
+        "synthetic-audit.jsonl" = @(1L, 4194304L)
+    }
+    $postDeleteContract = @{
+        "synthetic-export.json" = @(1L, 16384L)
+        "synthetic-audit.jsonl" = @(1L, 4194304L)
+    }
+
+    if ($Mode -eq "PrepareDirectory" -or $Mode -eq "VerifyDirectory" -or
+        $Mode -eq "PrepareDrillDirectory" -or $Mode -eq "VerifyDrillDirectory") {
         if (@(Get-ChildItem -LiteralPath $fullOutput -Force).Count -ne 0) {
             Stop-SecurityCheck "the prepared output directory is not empty"
         }
+    } elseif ($Mode -eq "HardenFiles") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $keyContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed key file set could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateKeyDirectory") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $keyContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the existing fixed key file set is not exact and restricted"
+        }
+    } elseif ($Mode -eq "HardenDrillFiles") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $drillContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed drill bundle could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateDrillForReview") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $drillContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the fixed drill bundle is not exact and restricted"
+        }
+    } elseif ($Mode -eq "HardenDrillReviewFiles") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $reviewContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed drill review artifacts could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateDrillForDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $reviewContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the fixed drill review artifacts are not exact and restricted"
+        }
+    } elseif ($Mode -eq "ValidateDrillAfterDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $postDeleteContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "plaintext, receipt, or ciphertext remains after the drill deletion boundary"
+        }
     } else {
-        $expected = @{
-            "moderation-v1.private.raw" = 32
-            "moderation-v1.public.base64url" = 43
-        }
-        $items = @(Get-ChildItem -LiteralPath $fullOutput -Force)
-        if ($items.Count -ne 2) { Stop-SecurityCheck "the fixed key file set is incomplete" }
-        foreach ($item in $items) {
-            if (-not $expected.ContainsKey($item.Name) -or $item.PSIsContainer -or
-                (Test-ForbiddenFileAttributes -Attributes $item.Attributes) -or
-                $item.Length -ne $expected[$item.Name]) {
-                Stop-SecurityCheck "a fixed key file is invalid"
-            }
-            Set-ExactAcl -LiteralPath $item.FullName -CurrentUserSid $currentSid -Directory $false
-        }
+        Stop-SecurityCheck "the requested security mode is unsupported"
     }
 
     Write-Output "NEKO_MODERATION_KEYGEN_WINDOWS_$($Mode.ToUpperInvariant())_V1"

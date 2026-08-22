@@ -20,6 +20,9 @@
 Production鍵はこの変更では生成しない。導入時は次を別の承認済み作業として実施する。
 本人所有2台のsource staging用に限る鍵生成helperと、BitLocker／ACLを含む停止条件は
 [staging通報鍵のオフライン生成runbook](MODERATION_KEYGEN_RUNBOOK.md)を正本とする。
+生成したstaging鍵pairの最初の実使用は
+[staging通報鍵の合成復号・削除drill](MODERATION_STAGING_DRILL_RUNBOOK.md)に限定し、
+そのdrillが完了するまで写真runtimeとTestFlight media uploadをOFFに保つ。
 このhelperをProduction鍵へ転用しない。
 
 1. Networkから切り離した暗号化端末または承認済みHSMでX25519鍵を生成する。

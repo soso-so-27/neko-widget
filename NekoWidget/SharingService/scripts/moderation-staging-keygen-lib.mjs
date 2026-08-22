@@ -373,6 +373,98 @@ export function validateNewOutputDirectory(
   return Object.freeze({ path: canonicalTarget, prepared: false });
 }
 
+/**
+ * Validate one existing, fixed-name staging artifact without reading it.
+ *
+ * This deliberately shares the key-ceremony path policy so a later staging
+ * drill cannot re-introduce aliases, repository/profile/sync roots, linked
+ * ancestors, or hard-linked files after key generation has completed.
+ */
+export function validateExistingRestrictedFile(
+  value,
+  {
+    expectedFilename,
+    expectedBytes,
+    platform = process.platform,
+    currentDirectory = process.cwd(),
+    repositoryRoot = REPOSITORY_ROOT,
+    temporaryDirectory = tmpdir(),
+    userProfile = homedir(),
+    environment = process.env,
+    canonicalizePath = realpathSync.native,
+  } = {},
+) {
+  if (typeof expectedFilename !== "string" || expectedFilename.length === 0
+      || basename(expectedFilename) !== expectedFilename
+      || !Number.isSafeInteger(expectedBytes) || expectedBytes < 1) {
+    fail("the fixed existing-file contract is invalid");
+  }
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")
+      || !isAbsolute(value) || basename(value) !== expectedFilename) {
+    fail("the fixed existing file path is invalid");
+  }
+  if (platform === "win32") rejectWindowsNamespace(value);
+  const absolute = resolve(value);
+  const components = absolute.slice(parse(absolute).root.length).split(/[\\/]+/u);
+  if (platform === "win32"
+      && components.some((component) => /[ .]$/u.test(component))) {
+    fail("Windows path components must not end with a dot or space");
+  }
+  if (components.some((component) => PROVIDER_COMPONENT.test(component))) {
+    fail("known cloud-provider directories are not allowed");
+  }
+
+  const providerRoots = providerEnvironmentRoots(environment);
+  const restrictedRoots = [
+    { description: "current working directory", value: currentDirectory },
+    { description: "repository root", value: repositoryRoot },
+    { description: "temporary directory", value: temporaryDirectory },
+    { description: "user profile", value: userProfile },
+    ...providerRoots.map(({ name: providerName, value: providerPath }) => ({
+      description: `${providerName} provider root`,
+      value: providerPath,
+    })),
+  ];
+  if (restrictedRoots.some(({ value: root }) => pathIsWithin(absolute, root, platform))) {
+    fail("the existing file is inside a repository, working, temporary, profile, or sync root");
+  }
+
+  assertNoLinkedAncestor(dirname(absolute));
+  const canonicalRestrictedRoots = restrictedRoots.map(({ description, value: root }) => (
+    canonicalizePolicyRoot(root, { platform, description, canonicalizePath })
+  ));
+  let canonical;
+  try {
+    canonical = canonicalizePath(absolute);
+  } catch {
+    fail("the existing file could not be resolved safely");
+  }
+  if (typeof canonical !== "string" || !isAbsolute(canonical)) {
+    fail("the existing file could not be resolved safely");
+  }
+  if (platform === "win32") rejectWindowsNamespace(canonical);
+  if (comparisonPath(absolute, platform) !== comparisonPath(canonical, platform)) {
+    fail("Windows path aliases and short-name spellings are not allowed");
+  }
+  if (canonicalRestrictedRoots.some((root) => pathIsWithin(canonical, root, platform))
+      || hasRepositoryMarker(dirname(canonical))) {
+    fail("the canonical existing file is inside a restricted or repository root");
+  }
+
+  const entry = existingEntry(canonical, "existing restricted file");
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1n
+      || entry.size !== BigInt(expectedBytes)) {
+    fail("the existing restricted file is not an exact single-link regular file");
+  }
+  return Object.freeze({
+    path: canonical,
+    directory: dirname(canonical),
+    device: entry.dev,
+    inode: entry.ino,
+    bytes: expectedBytes,
+  });
+}
+
 function noFollowFlag() {
   return fsConstants.O_NOFOLLOW ?? 0;
 }
@@ -613,7 +705,7 @@ export function createKeyFilesInValidatedDirectory(
   }
 }
 
-function windowsPowerShellExecutable() {
+export function windowsPowerShellExecutable() {
   const systemRoot = process.env.SystemRoot;
   if (typeof systemRoot !== "string"
       || !/^[A-Za-z]:[\\/][^\0]*$/u.test(systemRoot)
@@ -639,7 +731,7 @@ function windowsPowerShellExecutable() {
   return executable;
 }
 
-function runWindowsSecurityPhase(mode, outputDirectory) {
+export function runWindowsSecurityPhase(mode, outputDirectory) {
   const securityScript = fileURLToPath(
     new URL("./moderation-staging-keygen-windows-security.ps1", import.meta.url),
   );

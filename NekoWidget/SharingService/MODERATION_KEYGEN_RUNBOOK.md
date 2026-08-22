@@ -108,7 +108,8 @@ zero-length placeholder、public-only、またはpartial directoryが残った�
 3. 封印・暗号化backup、二人承認、復元訓練、rotation／廃棄台帳は別の承認済み作業で用意する。
 4. Public fileの43文字だけを`SHARING_STAGING_MODERATION_PUBLIC_KEY`へ登録する作業は、対象Environmentと
    `main`保護ruleを再確認した別の明示承認で行う。
-5. 合成通報の復号・削除drillが成功するまで写真runtimeやTestFlight uploadを有効にしない。
+5. [staging通報鍵の合成復号・削除drill](MODERATION_STAGING_DRILL_RUNBOOK.md)が成功するまで
+   写真runtimeやTestFlight uploadを有効にしない。
 
 CIの`check:moderation-keygen`は固定の合成鍵と使い捨てtest directoryだけを使います。Random X25519 pairの
 試験はmemory内の導出一致だけで、鍵fileを永続化しません。CIがgreenでも実鍵生成、BitLocker、backup、
