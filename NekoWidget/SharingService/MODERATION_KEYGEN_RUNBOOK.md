@@ -1,7 +1,8 @@
 # staging通報鍵のオフライン生成runbook
 
 このrunbookは、本人所有2台だけの`media-staging`で使うX25519通報鍵を、同期対象外の
-暗号化local volumeへ一度だけ生成するためのものです。Production鍵の生成手順ではありません。
+BitLockerで完全暗号化されたWindows local NTFS volumeへ一度だけ生成するためのものです。
+実運用helperはWindows専用であり、Production鍵の生成手順ではありません。
 この手順はCloudflare deploy、GitHub Environment変更、TestFlight署名／upload、runtime flag変更を
 一切行いません。`MOMENT_RUNTIME_ENABLED`と`LEGACY_SHARING_RUNTIME_ENABLED`は`NO`のままです。
 
@@ -10,7 +11,7 @@
 次の全てを人が確認できない場合は実行しません。
 
 - Node.js 22以上を使う。
-- WindowsではBitLocker画面が「暗号化中」ではなく「BitLockerが有効です」になっている。
+- WindowsのBitLocker画面が「暗号化中」ではなく「BitLockerが有効です」になっている。
 - 出力先は固定local NTFS volume上で、OneDrive、Dropbox、iCloud、Google Drive、Boxなどの
   同期、backup、snapshot、検索indexの対象外である。
 - 出力先はrepository、worktree、現在の作業directory、`TEMP`、ユーザープロファイルの外にある。
@@ -43,12 +44,18 @@ Windows wrapperは鍵生成前に次をfail closedで確認します。
 
 - 絶対local drive pathであり、UNC、device、extended path、ADS、symlink、junction、reparse、
   offline pathではない。
+- Current directory、repository、`TEMP`、profile、存在するprovider環境変数rootと出力親を
+  `realpathSync.native`で解決してから比較し、8.3 short nameやjunction／symlink alias、解決不能な
+  provider rootをfail closedにする。
 - Volumeが`Fixed`かつ`NTFS`である。
 - `Get-BitLockerVolume`が`FullyEncrypted`、Protection `On`、100%、`Unlocked`を返す。
 - 既知cloud-sync rootではなく、担当者がcustom sync／backup／snapshot対象外と明示確認した。
 - 新規directoryの継承を切り、現在のuser、`SYSTEM`、Builtin AdministratorsだけへFull Controlを許可し、
   ownerとACLをSIDで再読して一致を証明できる。
-- 親directoryを変更できる未知principalがなく、生成中に鍵directoryを差し替えられない。
+- 親だけでなくdrive rootまでの全ancestorでownerが現在user、`SYSTEM`、Builtin Administrators、
+  TrustedInstallerのいずれかであり、未知principalがpath componentを`DELETE`、`WRITE_DAC`、
+  `WRITE_OWNER`できず、その親で`DELETE_CHILD`できない。上位ancestorの作成専用ACEは許容するが、
+  直近親では出力directoryの先取りを防ぐため`CreateDirectories`、`CreateFiles`、`Write`も拒否する。
 
 Wrapperは静的PowerShell/.NET APIと引数配列だけを使い、command文字列を組み立てて
 `Invoke-Expression`や`cmd /c`へ渡しません。BitLocker cmdletの不足、権限不足、読取不能、想定外の
@@ -56,17 +63,11 @@ Wrapperは静的PowerShell/.NET APIと引数配列だけを使い、command文�
 Node helperも同じ静的security scriptを鍵生成直前に独立して再実行し、書込後は両fileの継承を切って
 exact ACLを再検証してから成功にします。環境変数や追加CLI markerをpreflightの証明として信頼しません。
 
-## POSIXの暗号化offline volume
+## 非Windowsでは実行しない
 
-暗号化済みでmountされ、同期／snapshot対象外と確認したlocal volumeだけで実行します。
-
-```sh
-node scripts/generate-moderation-staging-key.mjs \
-  --output-dir /secure/neko-widget-moderation-staging-20260822 \
-  --confirm-local-encrypted-nosync
-```
-
-Directoryはmode `0700`、両fileは`0600`で新規作成し、permissionとfile identityを再確認します。
+POSIX向けの実運用ceremonyはありません。Node helperを直接実行しても、directory準備や鍵生成より前に
+fail closedします。Linux CIで動くlow-level file testは固定の合成鍵と使い捨てdirectoryだけを使う
+unit testであり、POSIXで実鍵を生成できるという運用保証ではありません。
 
 ## 固定出力と検証境界
 
@@ -78,7 +79,7 @@ Directoryはmode `0700`、両fileは`0600`で新規作成し、permissionとfile
 | `moderation-v1.private.raw` | X25519 raw private key、exact 32 bytes |
 | `moderation-v1.public.base64url` | X25519 raw public keyのcanonical base64url、exact 43 ASCII bytes、改行なし |
 
-HelperはNode/OpenSSLの`generateKeyPairSync('x25519')`で生成し、PKCS8 prefix
+Windows wrapperから呼ばれたhelperはNode/OpenSSLの`generateKeyPairSync('x25519')`で生成し、PKCS8 prefix
 `302e020100300506032b656e04220420`とSPKI prefix `302a300506032b656e032100`をexact検査します。
 Raw privateからpublicを再導出し、生成public、file readbackの3者が一致するまで成功にしません。
 両filenameを`O_EXCL`で空予約してから鍵を生成し、publicをfsyncした後、privateを最後に書いてfsyncします。

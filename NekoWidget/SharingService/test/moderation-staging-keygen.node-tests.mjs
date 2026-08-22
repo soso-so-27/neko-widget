@@ -28,6 +28,7 @@ import {
   extractRawX25519PrivateKey,
   extractRawX25519PublicKey,
   generateRawX25519KeyPair,
+  generateStagingModerationKeyFiles,
   pathIsWithin,
   requireNode22,
   validateNewOutputDirectory,
@@ -60,7 +61,7 @@ function fixturePair() {
 }
 
 function permissivePolicy(parent) {
-  return {
+  const policy = {
     platform: process.platform,
     currentDirectory: join(parent, "not-cwd"),
     repositoryRoot: join(parent, "not-repository"),
@@ -68,12 +69,42 @@ function permissivePolicy(parent) {
     userProfile: join(parent, "not-profile"),
     environment: {},
   };
+  for (const root of [
+    policy.currentDirectory,
+    policy.repositoryRoot,
+    policy.temporaryDirectory,
+    policy.userProfile,
+  ]) {
+    mkdirSync(root, { recursive: true });
+  }
+  return policy;
 }
 
 test("requires Node.js 22 before key generation", () => {
   assert.throws(() => requireNode22("21.99.0"), /Node\.js 22/u);
   assert.throws(() => requireNode22("invalid"), /Node\.js 22/u);
   assert.doesNotThrow(() => requireNode22("22.0.0"));
+});
+
+test("operational top-level generation fails closed on non-Windows", (context) => {
+  if (process.platform === "win32") {
+    context.skip("the non-Windows gate is exercised on the Linux CI runner");
+    return;
+  }
+  const parent = disposableDirectory();
+  const output = join(parent, "keys");
+  try {
+    assert.throws(
+      () => generateStagingModerationKeyFiles({
+        outputDirectory: output,
+        confirmLocalEncryptedNoSync: true,
+      }),
+      /supported only on Windows/u,
+    );
+    assert.equal(existsSync(output), false);
+  } finally {
+    cleanup(parent);
+  }
 });
 
 test("accepts only the exact explicit CLI contract", () => {
@@ -188,6 +219,87 @@ test("rejects profile, temp, repository, working, sync, and provider paths", () 
   }
 });
 
+test("canonicalizes policy roots before containment checks", (context) => {
+  const parent = disposableDirectory();
+  try {
+    const restricted = join(parent, "canonical-restricted-root");
+    const alias = join(parent, "restricted-root-alias");
+    mkdirSync(restricted);
+    try {
+      symlinkSync(restricted, alias, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      context.skip("directory aliases are unavailable on this filesystem");
+      return;
+    }
+
+    for (const rootName of [
+      "currentDirectory",
+      "repositoryRoot",
+      "temporaryDirectory",
+      "userProfile",
+    ]) {
+      assert.throws(
+        () => validateNewOutputDirectory(join(restricted, `${rootName}-keys`), {
+          ...permissivePolicy(parent),
+          [rootName]: alias,
+        }),
+        /canonical output path is inside a restricted or sync root/u,
+        rootName,
+      );
+    }
+
+    assert.throws(
+      () => validateNewOutputDirectory(join(restricted, "provider-keys"), {
+        ...permissivePolicy(parent),
+        environment: { OneDrive: alias },
+      }),
+      /canonical output path is inside a restricted or sync root/u,
+    );
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test("canonical provider checks cover an injected Windows 8.3 alias fixture", () => {
+  const parent = disposableDirectory();
+  try {
+    const canonicalProvider = join(parent, "canonical-provider-root");
+    const shortAlias = join(parent, "CANONI~1");
+    mkdirSync(canonicalProvider);
+    const policy = permissivePolicy(parent);
+    const canonicalizePath = (value) => (
+      resolve(value) === resolve(shortAlias)
+        ? realpathSync.native(canonicalProvider)
+        : realpathSync.native(value)
+    );
+    assert.throws(
+      () => validateNewOutputDirectory(join(canonicalProvider, "keys"), {
+        ...policy,
+        environment: { OneDrive: shortAlias },
+        canonicalizePath,
+      }),
+      /canonical output path is inside a restricted or sync root/u,
+    );
+  } finally {
+    cleanup(parent);
+  }
+});
+
+test("refuses an unresolvable configured provider root", () => {
+  const parent = disposableDirectory();
+  try {
+    assert.throws(
+      () => validateNewOutputDirectory(join(parent, "keys"), {
+        ...permissivePolicy(parent),
+        environment: { OneDrive: join(parent, "missing-provider-root") },
+      }),
+      /OneDrive provider root could not be resolved safely/u,
+    );
+  } finally {
+    cleanup(parent);
+  }
+});
+
 test("path containment uses component boundaries", () => {
   const root = resolve("root-boundary");
   assert.equal(pathIsWithin(join(root, "child"), root), true);
@@ -241,6 +353,20 @@ test("rejects Windows namespace, ADS, and reserved-device paths", (context) => {
     assert.throws(
       () => validateNewOutputDirectory(join(parent, "NUL.txt"), policy),
       /reserved device/u,
+    );
+    assert.throws(
+      () => validateNewOutputDirectory(join(parent, "keys"), {
+        ...policy,
+        environment: { OneDrive: "\\\\server\\share\\sync" },
+      }),
+      /network, device, and extended/u,
+    );
+    assert.throws(
+      () => validateNewOutputDirectory(join(parent, "keys"), {
+        ...policy,
+        environment: { OneDrive: `${parent}:sync` },
+      }),
+      /alternate data stream/u,
     );
   } finally {
     cleanup(parent);
@@ -371,7 +497,13 @@ test("implementation keeps the ceremony static and staging-only", () => {
   assert.match(windowsSecurity, /FileSystem -eq "NTFS"/u);
   assert.match(windowsSecurity, /S-1-5-18/u);
   assert.match(windowsSecurity, /S-1-5-32-544/u);
-  assert.match(windowsSecurity, /Test-SafeParentAcl/u);
+  assert.match(windowsSecurity, /Test-SafeAncestorChain/u);
+  const topLevel = library.slice(library.indexOf("export function generateStagingModerationKeyFiles"));
+  assert.ok(
+    topLevel.indexOf('process.platform !== "win32"')
+      < topLevel.indexOf("validateNewOutputDirectory(outputDirectory"),
+    "the non-Windows operational gate must precede output preparation and key generation",
+  );
   assert.doesNotMatch(
     `${wrapper}\n${windowsSecurity}`,
     /Invoke-Expression|Start-Process|cmd(?:\.exe)?\s+\/c/iu,

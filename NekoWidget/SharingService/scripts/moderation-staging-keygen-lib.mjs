@@ -195,8 +195,8 @@ function providerEnvironmentRoots(environment) {
     "BoxDrive",
   ];
   return names
-    .map((name) => environment[name])
-    .filter((value) => typeof value === "string" && value.length > 0);
+    .map((name) => ({ name, value: environment[name] }))
+    .filter(({ value }) => typeof value === "string" && value.length > 0);
 }
 
 function rejectWindowsNamespace(value) {
@@ -214,6 +214,32 @@ function rejectWindowsNamespace(value) {
     component.replace(/[ .]+$/u, ""),
   ))) {
     fail("Windows reserved device names are not allowed");
+  }
+}
+
+function canonicalizePolicyRoot(
+  value,
+  {
+    platform,
+    description,
+    canonicalizePath,
+  },
+) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")
+      || !isAbsolute(value)) {
+    fail(`${description} is not a valid absolute path`);
+  }
+  if (platform === "win32") rejectWindowsNamespace(value);
+  try {
+    const canonical = canonicalizePath(resolve(value));
+    if (typeof canonical !== "string" || !isAbsolute(canonical)) {
+      fail(`${description} could not be resolved safely`);
+    }
+    if (platform === "win32") rejectWindowsNamespace(canonical);
+    return canonical;
+  } catch (error) {
+    if (error instanceof ModerationKeygenError) throw error;
+    fail(`${description} could not be resolved safely`);
   }
 }
 
@@ -262,6 +288,7 @@ export function validateNewOutputDirectory(
     userProfile = homedir(),
     environment = process.env,
     allowPreparedWindowsDirectory = false,
+    canonicalizePath = realpathSync.native,
   } = {},
 ) {
   if (typeof value !== "string" || value.length === 0 || value.includes("\0")
@@ -284,26 +311,40 @@ export function validateNewOutputDirectory(
     fail("known cloud-provider directories are not allowed");
   }
 
-  const refusedRoots = [
-    currentDirectory,
-    repositoryRoot,
-    temporaryDirectory,
-    userProfile,
-    ...providerEnvironmentRoots(environment),
+  const providerRoots = providerEnvironmentRoots(environment);
+  const restrictedRoots = [
+    { description: "current working directory", value: currentDirectory },
+    { description: "repository root", value: repositoryRoot },
+    { description: "temporary directory", value: temporaryDirectory },
+    { description: "user profile", value: userProfile },
+    ...providerRoots.map(({ name: providerName, value: providerPath }) => ({
+      description: `${providerName} provider root`,
+      value: providerPath,
+    })),
   ];
-  if (refusedRoots.some((root) => pathIsWithin(absolute, root, platform))) {
+  if (restrictedRoots.some(({ value: root }) => pathIsWithin(absolute, root, platform))) {
     fail("the output directory is inside a repository, working, temporary, profile, or sync root");
   }
 
+  const canonicalRestrictedRoots = restrictedRoots.map(({ description, value: root }) => (
+    canonicalizePolicyRoot(root, { platform, description, canonicalizePath })
+  ));
+
   const parent = dirname(absolute);
   assertNoLinkedAncestor(parent);
-  const canonicalParent = realpathSync.native(parent);
+  const canonicalParent = canonicalizePolicyRoot(parent, {
+    platform,
+    description: "output directory parent",
+    canonicalizePath,
+  });
   const canonicalTarget = join(canonicalParent, name);
   const canonicalComponents = canonicalTarget
     .slice(parse(canonicalTarget).root.length)
     .split(/[\\/]+/u);
   if (canonicalComponents.some((component) => PROVIDER_COMPONENT.test(component))
-      || refusedRoots.some((root) => pathIsWithin(canonicalTarget, root, platform))) {
+      || canonicalRestrictedRoots.some(
+        (root) => pathIsWithin(canonicalTarget, root, platform),
+      )) {
     fail("the canonical output path is inside a restricted or sync root");
   }
   if (platform === "win32"
@@ -639,19 +680,17 @@ export function generateStagingModerationKeyFiles({
   confirmLocalEncryptedNoSync,
 } = {}) {
   requireNode22();
+  if (process.platform !== "win32") {
+    fail("operational moderation staging key generation is supported only on Windows");
+  }
   if (confirmLocalEncryptedNoSync !== true) {
     fail("explicit local encrypted no-sync confirmation is required");
   }
-  const windowsWrapperPrepared = process.platform === "win32";
   const validated = validateNewOutputDirectory(outputDirectory, {
-    allowPreparedWindowsDirectory: windowsWrapperPrepared,
+    allowPreparedWindowsDirectory: true,
   });
-  if (process.platform === "win32") {
-    runWindowsSecurityPhase("VerifyDirectory", validated.path);
-  }
+  runWindowsSecurityPhase("VerifyDirectory", validated.path);
   return createKeyFilesInValidatedDirectory(validated, {
-    postWriteVerifier: process.platform === "win32"
-      ? ({ directory }) => runWindowsSecurityPhase("HardenFiles", directory)
-      : () => {},
+    postWriteVerifier: ({ directory }) => runWindowsSecurityPhase("HardenFiles", directory),
   });
 }

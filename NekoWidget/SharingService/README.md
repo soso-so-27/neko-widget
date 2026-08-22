@@ -205,7 +205,7 @@ npm run dev
 暗号化された写真通報を担当者が確認・判断・削除する手順と、現時点で残る鍵／export APIの
 blockerは[`MODERATION_RUNBOOK.md`](MODERATION_RUNBOOK.md)を参照してください。Runbookと
 offline toolの存在だけではProduction gateを満たしません。
-本人所有2台だけのstaging通報鍵を、暗号化済みoffline volumeへ生成する停止条件と固定helperは
+本人所有2台だけのstaging通報鍵を、BitLockerで完全暗号化されたWindows local NTFS volumeへ生成する停止条件と固定helperは
 [`MODERATION_KEYGEN_RUNBOOK.md`](MODERATION_KEYGEN_RUNBOOK.md)を参照してください。実鍵生成、
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 

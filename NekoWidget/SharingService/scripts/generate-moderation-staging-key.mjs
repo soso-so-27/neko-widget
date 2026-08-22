@@ -15,9 +15,7 @@ function usage() {
     "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-keygen-windows.ps1 \\",
     "    -OutputDirectory <absolute-new-directory> -ConfirmLocalEncryptedNoSync",
     "",
-    "POSIX encrypted offline volume:",
-    "  node scripts/generate-moderation-staging-key.mjs \\",
-    "    --output-dir <absolute-new-directory> --confirm-local-encrypted-nosync",
+    "Operational key generation is Windows-only; do not invoke this Node helper directly.",
   ].join("\n");
 }
 

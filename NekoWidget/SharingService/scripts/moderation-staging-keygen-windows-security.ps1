@@ -136,32 +136,75 @@ function Set-ExactAcl(
     }
 }
 
-function Test-SafeParentAcl(
-    [string]$LiteralPath,
+function Get-TrustedPathSidValues(
     [System.Security.Principal.SecurityIdentifier]$CurrentUserSid
 ) {
-    $security = [System.IO.Directory]::GetAccessControl($LiteralPath)
-    $allowed = Get-AllowedSidValues -CurrentUserSid $CurrentUserSid
+    return @(
+        $CurrentUserSid.Value,
+        "S-1-5-18",
+        "S-1-5-32-544",
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+    )
+}
+
+function Test-SafeDirectorySecurity(
+    [System.Security.AccessControl.DirectorySecurity]$Security,
+    [System.Security.Principal.SecurityIdentifier]$CurrentUserSid,
+    [bool]$CheckProspectiveChildInheritance
+) {
+    $trusted = Get-TrustedPathSidValues -CurrentUserSid $CurrentUserSid
+    $security = $Security
     $owner = $security.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
-    if ($allowed -notcontains $owner) { return $false }
-    $writeLike = [System.Security.AccessControl.FileSystemRights]::Write -bor
-        [System.Security.AccessControl.FileSystemRights]::Modify -bor
-        [System.Security.AccessControl.FileSystemRights]::Delete -bor
-        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+    if ($trusted -notcontains $owner) { return $false }
+    $componentReplacement = [System.Security.AccessControl.FileSystemRights]::Delete -bor
         [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
         [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    $deleteChild = [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    $replacementRights = $componentReplacement -bor $deleteChild
+    $writeIntoDirectory = [System.Security.AccessControl.FileSystemRights]::Write
     $rules = @($security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
     foreach ($rule in $rules) {
-        $appliesToParent = ($rule.PropagationFlags -band
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+            $trusted -contains $rule.IdentityReference.Value) {
+            continue
+        }
+        $appliesToThisDirectory = ($rule.PropagationFlags -band
             [System.Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
-        $appliesToNewDirectory = ($rule.InheritanceFlags -band
-            [System.Security.AccessControl.InheritanceFlags]::ContainerInherit) -ne 0
-        if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
-            $allowed -notcontains $rule.IdentityReference.Value -and
-            ($rule.FileSystemRights -band $writeLike) -ne 0 -and
-            ($appliesToParent -or $appliesToNewDirectory)) {
+        $appliesToProspectiveChild = $CheckProspectiveChildInheritance -and
+            (($rule.InheritanceFlags -band
+             [System.Security.AccessControl.InheritanceFlags]::ContainerInherit) -ne 0)
+        if (($appliesToThisDirectory -and
+             ($rule.FileSystemRights -band $replacementRights) -ne 0) -or
+            ($CheckProspectiveChildInheritance -and $appliesToThisDirectory -and
+             ($rule.FileSystemRights -band $writeIntoDirectory) -ne 0) -or
+            ($appliesToProspectiveChild -and
+             ($rule.FileSystemRights -band
+              ($replacementRights -bor $writeIntoDirectory)) -ne 0)) {
             return $false
         }
+    }
+    return $true
+}
+
+function Test-SafeAncestorChain(
+    [string]$LiteralParent,
+    [System.Security.Principal.SecurityIdentifier]$CurrentUserSid
+) {
+    $cursor = [System.IO.DirectoryInfo]::new($LiteralParent)
+    $immediateParent = $true
+    while ($null -ne $cursor) {
+        if (Test-ForbiddenFileAttributes -Attributes $cursor.Attributes) {
+            return $false
+        }
+        $security = [System.IO.Directory]::GetAccessControl($cursor.FullName)
+        if (-not (Test-SafeDirectorySecurity `
+            -Security $security `
+            -CurrentUserSid $CurrentUserSid `
+            -CheckProspectiveChildInheritance $immediateParent)) {
+            return $false
+        }
+        $immediateParent = $false
+        $cursor = $cursor.Parent
     }
     return $true
 }
@@ -224,8 +267,12 @@ function Invoke-PolicySelfTest {
         [void][System.IO.Directory]::CreateDirectory($testDirectory)
         $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
         Set-ExactAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid -Directory $true
+        $exactDirectorySecurity = [System.IO.Directory]::GetAccessControl($testDirectory)
         if (-not (Test-ExactAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid -Directory $true) -or
-            -not (Test-SafeParentAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid)) {
+            -not (Test-SafeDirectorySecurity `
+                -Security $exactDirectorySecurity `
+                -CurrentUserSid $currentSid `
+                -CheckProspectiveChildInheritance $true)) {
             throw "directory ACL round-trip failed"
         }
         [System.IO.File]::WriteAllBytes($privateFile, [byte[]]::new(32))
@@ -236,34 +283,106 @@ function Invoke-PolicySelfTest {
             -not (Test-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false)) {
             throw "file ACL round-trip failed"
         }
-        $inheritableUnsafe = [System.IO.Directory]::GetAccessControl($testDirectory)
         $everyone = New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")
+        foreach ($dangerousRight in @(
+            [System.Security.AccessControl.FileSystemRights]::Delete,
+            [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
+            [System.Security.AccessControl.FileSystemRights]::TakeOwnership,
+            [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+        )) {
+            $unsafe = [System.IO.Directory]::GetAccessControl($testDirectory)
+            $unsafeRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $everyone,
+                $dangerousRight,
+                [System.Security.AccessControl.InheritanceFlags]::None,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow
+            )
+            [void]$unsafe.AddAccessRule($unsafeRule)
+            if (Test-SafeDirectorySecurity `
+                -Security $unsafe `
+                -CurrentUserSid $currentSid `
+                -CheckProspectiveChildInheritance $false) {
+                throw "unsafe component replacement ACL fixture was accepted"
+            }
+        }
+
+        $inheritableUnsafe = [System.IO.Directory]::GetAccessControl($testDirectory)
         $inheritableUnsafeRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             $everyone,
-            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.FileSystemRights]::Delete,
             [System.Security.AccessControl.InheritanceFlags]::ContainerInherit,
             [System.Security.AccessControl.PropagationFlags]::InheritOnly,
             [System.Security.AccessControl.AccessControlType]::Allow
         )
         [void]$inheritableUnsafe.AddAccessRule($inheritableUnsafeRule)
-        [System.IO.Directory]::SetAccessControl($testDirectory, $inheritableUnsafe)
-        if (Test-SafeParentAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid) {
-            throw "unsafe inheritable parent ACL fixture was accepted"
+        if ((Test-SafeDirectorySecurity `
+                -Security $inheritableUnsafe `
+                -CurrentUserSid $currentSid `
+                -CheckProspectiveChildInheritance $true) -or
+            -not (Test-SafeDirectorySecurity `
+                -Security $inheritableUnsafe `
+                -CurrentUserSid $currentSid `
+                -CheckProspectiveChildInheritance $false)) {
+            throw "prospective child inheritance ACL fixture failed"
         }
 
-        Set-ExactAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid -Directory $true
-        $unsafe = [System.IO.Directory]::GetAccessControl($testDirectory)
-        $unsafeRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            $everyone,
-            [System.Security.AccessControl.FileSystemRights]::FullControl,
-            [System.Security.AccessControl.InheritanceFlags]::None,
-            [System.Security.AccessControl.PropagationFlags]::None,
-            [System.Security.AccessControl.AccessControlType]::Allow
+        foreach ($creationRight in @(
+            [System.Security.AccessControl.FileSystemRights]::CreateDirectories,
+            [System.Security.AccessControl.FileSystemRights]::CreateFiles,
+            [System.Security.AccessControl.FileSystemRights]::Write
+        )) {
+            foreach ($inheritanceFixture in @($false, $true)) {
+                $creation = [System.IO.Directory]::GetAccessControl($testDirectory)
+                $inheritance = if ($inheritanceFixture) {
+                    [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
+                } else {
+                    [System.Security.AccessControl.InheritanceFlags]::None
+                }
+                $propagation = if ($inheritanceFixture) {
+                    [System.Security.AccessControl.PropagationFlags]::InheritOnly
+                } else {
+                    [System.Security.AccessControl.PropagationFlags]::None
+                }
+                $creationRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                    $everyone,
+                    $creationRight,
+                    $inheritance,
+                    $propagation,
+                    [System.Security.AccessControl.AccessControlType]::Allow
+                )
+                [void]$creation.AddAccessRule($creationRule)
+                if ((Test-SafeDirectorySecurity `
+                        -Security $creation `
+                        -CurrentUserSid $currentSid `
+                        -CheckProspectiveChildInheritance $true) -or
+                    -not (Test-SafeDirectorySecurity `
+                        -Security $creation `
+                        -CurrentUserSid $currentSid `
+                        -CheckProspectiveChildInheritance $false)) {
+                    throw "immediate-parent creation race ACL fixture failed"
+                }
+            }
+        }
+
+        $untrustedOwner = New-Object System.Security.AccessControl.DirectorySecurity
+        $untrustedOwner.SetOwner($everyone)
+        if (Test-SafeDirectorySecurity `
+            -Security $untrustedOwner `
+            -CurrentUserSid $currentSid `
+            -CheckProspectiveChildInheritance $false) {
+            throw "untrusted owner fixture was accepted"
+        }
+        $trustedInstaller = New-Object System.Security.Principal.SecurityIdentifier(
+            "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
         )
-        [void]$unsafe.AddAccessRule($unsafeRule)
-        [System.IO.Directory]::SetAccessControl($testDirectory, $unsafe)
-        if (Test-SafeParentAcl -LiteralPath $testDirectory -CurrentUserSid $currentSid) {
-            throw "unsafe parent ACL fixture was accepted"
+        $trustedOwner = New-Object System.Security.AccessControl.DirectorySecurity
+        $trustedOwner.SetOwner($trustedInstaller)
+        if (-not (Test-SafeDirectorySecurity `
+            -Security $trustedOwner `
+            -CurrentUserSid $currentSid `
+            -CheckProspectiveChildInheritance $false)) {
+            throw "trusted owner fixture was rejected"
         }
     } finally {
         foreach ($file in @($privateFile, $publicFile)) {
@@ -324,8 +443,8 @@ try {
     }
 
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-    if (-not (Test-SafeParentAcl -LiteralPath $parent -CurrentUserSid $currentSid)) {
-        Stop-SecurityCheck "the output parent permits an untrusted principal to replace children"
+    if (-not (Test-SafeAncestorChain -LiteralParent $parent -CurrentUserSid $currentSid)) {
+        Stop-SecurityCheck "an output ancestor permits untrusted path-component replacement"
     }
 
     if ($Mode -eq "PrepareDirectory") {
