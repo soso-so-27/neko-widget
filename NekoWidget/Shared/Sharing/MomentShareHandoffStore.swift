@@ -832,15 +832,18 @@ enum MomentShareHandoffStore {
     ) throws -> T {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
             let records = try pruneCapturesWhileLocked(now: now)
-            let identities = Set(records.compactMap { record in
-                guard record.phase == .processing,
-                      let claimID = record.claimID
-                else { return nil }
-                return MomentPendingCaptureClaimIdentity(
-                    captureID: record.id,
-                    claimID: claimID
-                )
-            })
+            let identities: Set<MomentPendingCaptureClaimIdentity> = Set(
+                records.compactMap {
+                    record -> MomentPendingCaptureClaimIdentity? in
+                    guard record.phase == .processing,
+                          let claimID = record.claimID
+                    else { return nil }
+                    return MomentPendingCaptureClaimIdentity(
+                        captureID: record.id,
+                        claimID: claimID
+                    )
+                }
+            )
             return try operation(identities)
         }
     }
