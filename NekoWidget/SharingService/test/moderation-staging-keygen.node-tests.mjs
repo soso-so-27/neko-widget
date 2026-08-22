@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -44,7 +45,7 @@ const FIXTURE_PRIVATE = Buffer.from(
 );
 
 function disposableDirectory() {
-  return mkdtempSync(join(tmpdir(), "neko-keygen-test-"));
+  return realpathSync.native(mkdtempSync(join(tmpdir(), "neko-keygen-test-")));
 }
 
 function cleanup(path) {
