@@ -67,14 +67,22 @@ jobs:
           set -euo pipefail
           case "$SELECTED_RELEASE_MODE" in
             review-preview)
-              release_xcconfig="Config.xcconfig"
               release_origin=""
               release_summary="review-preview/runtime disabled"
+              release_feature="NO"
+              release_media="NO"
+              release_handoff="NO"
+              release_direct_send="NO"
+              release_review_preview="YES"
               ;;
             pairing-only)
-              release_xcconfig="Config.PairingOnly.xcconfig"
               release_origin="${SHARING_STAGING_API_ORIGIN:-}"
               release_summary="pairing-only/photos disabled"
+              release_feature="YES"
+              release_media="NO"
+              release_handoff="NO"
+              release_direct_send="NO"
+              release_review_preview="NO"
               if [[ -z "$release_origin" ]]; then
                 echo "The protected testflight Environment variable SHARING_STAGING_API_ORIGIN is required for pairing-only." >&2
                 exit 1
@@ -152,11 +160,15 @@ jobs:
               ;;
           esac
 
-          test -f "$PROJECT_DIRECTORY/$release_xcconfig"
           plutil -lint "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
           {
             echo "SHARING_EXPECTED_MODE=$SELECTED_RELEASE_MODE"
-            echo "RELEASE_XCCONFIG=$release_xcconfig"
+            echo "RELEASE_SHARING_RELEASE_MODE=$SELECTED_RELEASE_MODE"
+            echo "RELEASE_SHARING_FEATURE_ENABLED=$release_feature"
+            echo "RELEASE_SHARING_MEDIA_ENABLED=$release_media"
+            echo "RELEASE_SHARING_HANDOFF_ENABLED=$release_handoff"
+            echo "RELEASE_SHARING_DIRECT_SEND_ENABLED=$release_direct_send"
+            echo "RELEASE_SHARING_REVIEW_PREVIEW_ENABLED=$release_review_preview"
             echo "RELEASE_SHARING_API_ORIGIN=$release_origin"
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
@@ -532,7 +544,6 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -xcconfig "$RELEASE_XCCONFIG" \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
             -configuration Release \
@@ -546,6 +557,12 @@ jobs:
             APP_PROVISIONING_PROFILE_SPECIFIER="$APP_PROFILE_SPECIFIER" \
             WIDGET_PROVISIONING_PROFILE_SPECIFIER="$WIDGET_PROFILE_SPECIFIER" \
             SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="$SHARE_PROFILE_SPECIFIER" \
+            SHARING_RELEASE_MODE="$RELEASE_SHARING_RELEASE_MODE" \
+            SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
+            SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
+            SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED" \
+            SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED" \
+            SHARING_REVIEW_PREVIEW_ENABLED="$RELEASE_SHARING_REVIEW_PREVIEW_ENABLED" \
             SHARING_API_BASE_URL="$RELEASE_SHARING_API_ORIGIN" \
             CURRENT_PROJECT_VERSION="$RELEASE_BUILD_NUMBER" \
             "OTHER_CODE_SIGN_FLAGS=--keychain $CI_KEYCHAIN_PATH" \
