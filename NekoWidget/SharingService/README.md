@@ -207,6 +207,8 @@ blockerは[`MODERATION_RUNBOOK.md`](MODERATION_RUNBOOK.md)を参照してくだ�
 offline toolの存在だけではProduction gateを満たしません。
 本人所有2台だけのstaging通報鍵を、BitLockerで完全暗号化されたWindows local NTFS volumeへ生成する停止条件と固定helperは
 [`MODERATION_KEYGEN_RUNBOOK.md`](MODERATION_KEYGEN_RUNBOOK.md)を参照してください。実鍵生成、
+公開鍵だけを使う合成bundle生成とhuman review後のdescriptor-bound削除は
+[`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)を参照してください。
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 
 [`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0003`を適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで`YES`へ変更します。OFFでも通報・block・cleanupは維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。

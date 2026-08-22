@@ -157,7 +157,8 @@ Cloudflare dashboardで2本のCronが登録済みであり、両R2 bucketが引�
 - 公開済みのprivacy、community standards、supportのHTTPS URLをApp内から確認できる
 - media-staging用Privacy manifestとApp Store ConnectのApp Privacy回答が一致する
 - 通報専用公開鍵をreleaseへ設定し、秘密鍵はGitHub、Cloudflare、repo外の安全な保管先にある
-- synthetic通報をoperator toolで取得・検証・復号・削除できる
+- [`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)のoffline合成通報を
+  operator toolで生成・検証・復号・human view・descriptor-bound削除し、exact audit遷移を確認済み
 - 同じcommitのmedia-staging TestFlight Buildを本人所有の2台だけへ配布している
 - 通常R2と通報R2が非公開で、対応担当者、48時間以内の初回確認、kill switch手順が決まっている
 
