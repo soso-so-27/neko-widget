@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import apiFixture from "../../ci/fixtures/sharing-api-v1-responses.json";
 import { base64urlEncode, sha256Base64url } from "../src/encoding";
 import type { Env } from "../src/env";
+import { route } from "../src/index";
 import { signedRequestTranscript } from "../src/protocol";
 import {
   CLEANUP_DAILY_FREEZE_CHUNK_SIZE,
@@ -65,6 +66,65 @@ interface PrepareResponse {
 }
 
 const testEnv = env as unknown as Env;
+
+describe("legacy sharing runtime kill switch", () => {
+  const legacyRoutes = [
+    ["POST", "/v1/sharing/generations/reserve"],
+    ["POST", "/v1/sharing/generations/generation/descriptors"],
+    ["PUT", "/v1/sharing/generations/generation/media/media"],
+    ["POST", "/v1/sharing/generations/generation/prepare"],
+    ["PUT", "/v1/sharing/generations/generation/prepares/attempt/manifest"],
+    ["POST", "/v1/sharing/generations/generation/commit"],
+    ["GET", "/v1/sharing/sources"],
+    ["GET", "/v1/sharing/sources/source/current"],
+    ["GET", "/v1/sharing/generations/generation/manifest"],
+    ["GET", "/v1/sharing/generations/generation/media/media"],
+    ["GET", "/v1/sharing/generations/generation"],
+    ["GET", "/v1/sharing"],
+    ["GET", "/v1/sharing/future-transport"],
+  ] as const;
+
+  it("fails closed for all legacy sharing namespaces unless the exact flag is enabled", async () => {
+    for (const value of [undefined, "NO", "true", "yes"]) {
+      const disabledEnv = {
+        ...env,
+        LEGACY_SHARING_RUNTIME_ENABLED: value,
+      } as Env;
+      for (const [method, path] of legacyRoutes) {
+        await expect(
+          route(new Request(`https://sharing.invalid${path}`, { method }), disabledEnv),
+        ).rejects.toMatchObject({
+          status: 503,
+          code: "legacy_sharing_runtime_disabled",
+        });
+      }
+    }
+  });
+
+  it("does not match adjacent namespaces and permits the namespace only with exact YES", async () => {
+    const disabledEnv = {
+      ...env,
+      LEGACY_SHARING_RUNTIME_ENABLED: "NO",
+    } as Env;
+    await expect(
+      route(new Request("https://sharing.invalid/v1/sharingevil"), disabledEnv),
+    ).rejects.toMatchObject({ status: 404, code: "not_found" });
+
+    const enabledEnv = {
+      ...env,
+      LEGACY_SHARING_RUNTIME_ENABLED: "YES",
+    } as Env;
+    await expect(
+      route(new Request("https://sharing.invalid/v1/sharing/future-transport"), enabledEnv),
+    ).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(
+      route(new Request("https://sharing.invalid/v1/pairing/status"), disabledEnv),
+    ).rejects.not.toMatchObject({ code: "legacy_sharing_runtime_disabled" });
+    await expect(
+      route(new Request("https://sharing.invalid/v2/reports/reservations", { method: "POST" }), disabledEnv),
+    ).rejects.not.toMatchObject({ code: "legacy_sharing_runtime_disabled" });
+  });
+});
 
 function bytes(value: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(value.length);

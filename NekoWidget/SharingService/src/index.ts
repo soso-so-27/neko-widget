@@ -1,5 +1,9 @@
 import { ApiError, errorResponse, jsonResponse } from "./errors";
-import { momentRuntimeEnabled, type Env } from "./env";
+import {
+  legacySharingRuntimeEnabled,
+  momentRuntimeEnabled,
+  type Env,
+} from "./env";
 import {
   approveEnrollment,
   cancelEnrollment,
@@ -47,6 +51,15 @@ export async function route(request: Request, env: Env): Promise<Response> {
 
   if (request.method === "GET" && pathname === "/health") {
     return jsonResponse({ status: "ok", protocolVersion: 1 });
+  }
+  if (pathname === "/v1/sharing" || pathname.startsWith("/v1/sharing/")) {
+    if (!legacySharingRuntimeEnabled(env)) {
+      throw new ApiError(
+        503,
+        "legacy_sharing_runtime_disabled",
+        "Legacy daily sharing is unavailable.",
+      );
+    }
   }
   if (request.method === "POST" && pathname === "/v1/spaces") {
     return createSpace(request, env);

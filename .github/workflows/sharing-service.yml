@@ -9,6 +9,7 @@ on:
       - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
+      - ".gitattributes"
   pull_request:
     paths:
       - "NekoWidget/SharingService/**"
@@ -17,6 +18,7 @@ on:
       - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
+      - ".gitattributes"
   workflow_dispatch:
 
 permissions:
@@ -58,7 +60,7 @@ jobs:
       - name: Run Worker and D1 integration tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm test
+        run: npm run check:staging-config && npm test
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService
