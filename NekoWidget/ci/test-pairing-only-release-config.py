@@ -101,10 +101,14 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
             "default: review-preview",
             "- pairing-only",
             "${{ vars.SHARING_STAGING_API_ORIGIN }}",
-            'release_xcconfig="Config.PairingOnly.xcconfig"',
             'release_origin="${SHARING_STAGING_API_ORIGIN:-}"',
             "PrivacyInfo.PairingOnly.xcprivacy",
-            '-xcconfig "$RELEASE_XCCONFIG"',
+            'SHARING_RELEASE_MODE="$RELEASE_SHARING_RELEASE_MODE"',
+            'SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED"',
+            'SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED"',
+            'SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED"',
+            'SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED"',
+            'SHARING_REVIEW_PREVIEW_ENABLED="$RELEASE_SHARING_REVIEW_PREVIEW_ENABLED"',
             'SHARING_API_BASE_URL="$RELEASE_SHARING_API_ORIGIN"',
             '--expected-mode "$SHARING_EXPECTED_MODE"',
             '--expected-api-origin "$RELEASE_SHARING_API_ORIGIN"',
@@ -113,6 +117,45 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
         for fragment in required_fragments:
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, workflow)
+        self.assertNotIn('-xcconfig "$RELEASE_XCCONFIG"', workflow)
+        self.assertNotIn("RELEASE_XCCONFIG", workflow)
+
+        review_block = workflow.split("review-preview)", 1)[1].split(";;", 1)[0]
+        pairing_block = workflow.split("pairing-only)", 1)[1].split(";;", 1)[0]
+
+        def release_values(block: str) -> dict[str, str]:
+            return dict(
+                re.findall(
+                    r'^\s+(release_[a-z_]+)="([^"]*)"$',
+                    block,
+                    flags=re.MULTILINE,
+                )
+            )
+
+        self.assertEqual(
+            release_values(review_block),
+            {
+                "release_origin": "",
+                "release_summary": "review-preview/runtime disabled",
+                "release_feature": "NO",
+                "release_media": "NO",
+                "release_handoff": "NO",
+                "release_direct_send": "NO",
+                "release_review_preview": "YES",
+            },
+        )
+        self.assertEqual(
+            release_values(pairing_block),
+            {
+                "release_origin": "${SHARING_STAGING_API_ORIGIN:-}",
+                "release_summary": "pairing-only/photos disabled",
+                "release_feature": "YES",
+                "release_media": "NO",
+                "release_handoff": "NO",
+                "release_direct_send": "NO",
+                "release_review_preview": "NO",
+            },
+        )
 
     def test_app_share_info_carry_the_same_processed_mode_marker(self) -> None:
         for relative in ("NekoWidget/Info.plist", "NekoWidgetShareExtension/Info.plist"):

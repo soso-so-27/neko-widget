@@ -96,7 +96,7 @@ Windowsでは秘密値をconsoleやtext fileへ出さず、[Apple Developer署�
 
 ### Build 28の2台ペアリング確認
 
-Build 28だけは`release_mode = pairing-only`、`build_number = 28`を明示する。このmodeは専用`Config.PairingOnly.xcconfig`を選び、featureだけを`YES`、media、Share Extension handoff、direct-send、review-previewをすべて`NO`へ固定する。Appのprivacy manifestはlinked User ID／trackingなし／App Functionalityだけへ一時overlayし、Share Extensionの収集dataは空のままにする。archive検査のsummaryが`pairing-only/photos disabled`でなければ配布しない。
+Build 28だけは`release_mode = pairing-only`、`build_number = 28`を明示する。このmodeは`Config.PairingOnly.xcconfig`と同じpolicyをworkflowが個別のxcodebuild overrideとして渡し、featureだけを`YES`、media、Share Extension handoff、direct-send、review-previewをすべて`NO`へ固定する。外部`-xcconfig`は使わず、App／Widget／Share Extensionごとの配布プロファイル指定を維持する。Appのprivacy manifestはlinked User ID／trackingなし／App Functionalityだけへ一時overlayし、Share Extensionの収集dataは空のままにする。archive検査のsummaryが`pairing-only/photos disabled`でなければ配布しない。
 
 TestFlight自体は1つのbuildを端末台数で強制制限できないため、Build 28は2台を使う内部testerだけへ割り当て、他のtester groupへ追加しない。2台で「まどを作る → 招待コードを渡す → 12語を照合 → 承認 → ペアリング済み → 設定から解除」を確認する。このBuildでは写真を保存・送信しないため、共有シートからのhandoff、写真の送受信、R2 object作成は合格条件に含めず、発生した場合は失敗とする。
 
