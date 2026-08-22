@@ -43,3 +43,6 @@ Packages/
 # Python CI helpers
 __pycache__/
 *.py[cod]
+
+# Wrangler local auth/account cache (never commit)
+.wrangler/

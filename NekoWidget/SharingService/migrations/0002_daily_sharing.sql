@@ -1,5 +1,8 @@
 PRAGMA foreign_keys = ON;
 
+-- Keep this migration LF-only; Wrangler remote trigger parsing rejects CRLF.
+-- Keep every conditional expression parenthesized; remote trigger parsing can misread bare forms.
+
 -- Phase 2 arms object deletion before the first R2 write. Rebuild the Phase 1
 -- job table so an active space can carry an inert deletion gate.
 DROP TRIGGER revocations_disable_space;
@@ -63,7 +66,7 @@ CREATE INDEX sharing_sources_cleanup
 CREATE TRIGGER sharing_sources_require_active_member
 BEFORE INSERT ON sharing_sources
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM members AS m
           JOIN spaces AS s ON s.id = m.space_id
@@ -71,7 +74,7 @@ BEGIN
            AND m.space_id = NEW.space_id
            AND m.state = 'active'
            AND s.state = 'active'
-    ) THEN RAISE(ABORT, 'publisher must be an active member') END;
+    ) THEN RAISE(ABORT, 'publisher must be an active member') END);
 END;
 
 CREATE TABLE sharing_daily_freezes (
@@ -139,7 +142,7 @@ CREATE INDEX sharing_generations_terminal_cleanup
 CREATE TRIGGER sharing_generations_require_live_source
 BEFORE INSERT ON sharing_generations
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_sources AS src
           JOIN members AS m ON m.id = src.publisher_member_id
@@ -161,7 +164,7 @@ BEGIN
                 AND freeze.share_day_key = NEW.share_day_key
                 AND freeze.generation_id = NEW.id
            )
-    ) THEN RAISE(ABORT, 'generation requires a live armed source') END;
+    ) THEN RAISE(ABORT, 'generation requires a live armed source') END);
 END;
 
 CREATE TABLE sharing_generation_media (
@@ -188,14 +191,14 @@ CREATE INDEX sharing_generation_media_state
 CREATE TRIGGER sharing_media_capacity_and_state
 BEFORE INSERT ON sharing_generation_media
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1 FROM sharing_generations
          WHERE id = NEW.generation_id AND state = 'reserved'
-    ) THEN RAISE(ABORT, 'media requires reserved generation') END;
-    SELECT CASE WHEN (
+    ) THEN RAISE(ABORT, 'media requires reserved generation') END);
+    SELECT (CASE WHEN (
         SELECT COUNT(*) FROM sharing_generation_media
          WHERE generation_id = NEW.generation_id
-    ) >= 20 THEN RAISE(ABORT, 'generation media capacity exceeded') END;
+    ) >= 20 THEN RAISE(ABORT, 'generation media capacity exceeded') END);
 END;
 
 CREATE TRIGGER sharing_media_descriptors_are_immutable
@@ -229,7 +232,7 @@ CREATE TABLE sharing_descriptor_events (
 CREATE TRIGGER sharing_descriptors_require_reserved_generation
 BEFORE INSERT ON sharing_descriptor_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_generations AS g
           JOIN sharing_sources AS src ON src.id = g.source_id
@@ -244,7 +247,7 @@ BEGIN
            AND s.state = 'active'
            AND (SELECT COUNT(*) FROM sharing_generation_media AS gm
                  WHERE gm.generation_id = g.id AND gm.state = 'reserved') = g.item_count
-    ) THEN RAISE(ABORT, 'invalid descriptor transition') END;
+    ) THEN RAISE(ABORT, 'invalid descriptor transition') END);
 END;
 
 CREATE TRIGGER sharing_descriptors_mark_generation
@@ -271,7 +274,7 @@ CREATE TABLE sharing_media_verification_events (
 CREATE TRIGGER sharing_media_verification_requires_live_upload
 BEFORE INSERT ON sharing_media_verification_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_generation_media AS gm
           JOIN sharing_generations AS g ON g.id = gm.generation_id
@@ -293,7 +296,7 @@ BEGIN
            AND s.state = 'active'
            AND deletion.state = 'armed'
            AND deletion.requires_object_deletion = 1
-    ) THEN RAISE(ABORT, 'invalid media verification transition') END;
+    ) THEN RAISE(ABORT, 'invalid media verification transition') END);
 END;
 
 CREATE TRIGGER sharing_media_verification_marks_object
@@ -348,7 +351,7 @@ CREATE TABLE sharing_prepare_events (
 CREATE TRIGGER sharing_prepare_requires_complete_latest_generation
 BEFORE INSERT ON sharing_prepare_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_generations AS g
           JOIN sharing_sources AS src ON src.id = g.source_id
@@ -372,7 +375,7 @@ BEGIN
            )
            AND (SELECT COUNT(*) FROM sharing_generation_media AS gm
                  WHERE gm.generation_id = g.id AND gm.state = 'verified') = g.item_count
-    ) THEN RAISE(ABORT, 'invalid prepare transition') END;
+    ) THEN RAISE(ABORT, 'invalid prepare transition') END);
 END;
 
 CREATE TRIGGER sharing_prepare_replaces_expired_attempt
@@ -413,7 +416,7 @@ CREATE TABLE sharing_manifest_verification_events (
 CREATE TRIGGER sharing_manifest_verification_requires_latest_attempt
 BEFORE INSERT ON sharing_manifest_verification_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_generations AS g
           JOIN sharing_sources AS src ON src.id = g.source_id
@@ -435,7 +438,7 @@ BEGIN
            AND s.state = 'active'
            AND deletion.state = 'armed'
            AND deletion.requires_object_deletion = 1
-    ) THEN RAISE(ABORT, 'invalid manifest verification transition') END;
+    ) THEN RAISE(ABORT, 'invalid manifest verification transition') END);
 END;
 
 CREATE TRIGGER sharing_manifest_verification_marks_object
@@ -465,7 +468,7 @@ CREATE TABLE sharing_commit_events (
 CREATE TRIGGER sharing_commit_requires_latest_verified_attempt
 BEFORE INSERT ON sharing_commit_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_generations AS g
           JOIN sharing_sources AS src ON src.id = g.source_id
@@ -492,7 +495,7 @@ BEGIN
            AND s.state = 'active'
            AND (SELECT COUNT(*) FROM sharing_generation_media AS gm
                  WHERE gm.generation_id = g.id AND gm.state = 'verified') = g.item_count
-    ) THEN RAISE(ABORT, 'invalid commit transition') END;
+    ) THEN RAISE(ABORT, 'invalid commit transition') END);
 END;
 
 CREATE TRIGGER sharing_commit_switches_current
@@ -526,11 +529,11 @@ BEGIN
     UPDATE sharing_sources
        SET current_revision = NEW.reserved_revision,
            last_committed_share_day_key = NEW.server_share_day_key,
-           cleanup_blocked = CASE
+           cleanup_blocked = (CASE
              WHEN EXISTS (
                SELECT 1 FROM sharing_currents
                 WHERE source_id = sharing_sources.id
-             ) THEN 1 ELSE cleanup_blocked END,
+             ) THEN 1 ELSE cleanup_blocked END),
            updated_at = NEW.created_at
      WHERE id = (SELECT source_id FROM sharing_generations WHERE id = NEW.generation_id);
 
@@ -559,7 +562,7 @@ CREATE TABLE sharing_close_events (
 CREATE TRIGGER sharing_close_requires_expired_live_generation
 BEFORE INSERT ON sharing_close_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
           FROM sharing_generations AS g
          WHERE g.id = NEW.generation_id
@@ -575,7 +578,7 @@ BEGIN
                 SELECT 1 FROM sharing_currents WHERE generation_id = g.id
               ))
            )
-    ) THEN RAISE(ABORT, 'invalid generation close transition') END;
+    ) THEN RAISE(ABORT, 'invalid generation close transition') END);
 END;
 
 CREATE TRIGGER sharing_close_disables_upload_then_queues_objects
@@ -639,9 +642,9 @@ BEGIN
     VALUES (
         NEW.space_id,
         'pending',
-        CASE WHEN EXISTS (
+        (CASE WHEN EXISTS (
           SELECT 1 FROM sharing_storage_scopes WHERE space_id = NEW.space_id
-        ) THEN 1 ELSE 0 END,
+        ) THEN 1 ELSE 0 END),
         NEW.created_at, NULL, NULL, NULL, 0
     )
     ON CONFLICT(space_id) DO UPDATE SET

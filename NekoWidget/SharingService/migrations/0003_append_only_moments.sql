@@ -1,5 +1,8 @@
 PRAGMA foreign_keys = ON;
 
+-- Keep this migration LF-only; Wrangler remote trigger parsing rejects CRLF.
+-- Keep every conditional expression parenthesized; remote trigger parsing can misread bare forms.
+
 -- ADR-015 uses append-only moments. These tables deliberately do not reuse
 -- the Phase 2 daily generation/current tables from ADR-009.
 
@@ -368,7 +371,7 @@ CREATE INDEX moment_object_deletions_pending
 CREATE TRIGGER moments_require_live_sender_and_quota
 BEFORE INSERT ON moments
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moment_spaces AS ms
         JOIN moment_participants AS p ON p.space_id = ms.space_id
@@ -380,13 +383,13 @@ BEGIN
          AND p.state = 'active'
          AND d.id = NEW.sender_device_id
          AND d.state = 'active'
-    ) THEN RAISE(ABORT, 'moment sender is not active') END;
-    SELECT CASE WHEN NEW.kind <> 'bootstrap' AND NEW.quota_counted = 1 AND COALESCE((
+    ) THEN RAISE(ABORT, 'moment sender is not active') END);
+    SELECT (CASE WHEN NEW.kind <> 'bootstrap' AND NEW.quota_counted = 1 AND COALESCE((
       SELECT reserved_count + committed_count
         FROM moment_daily_usage
        WHERE participant_id = NEW.sender_participant_id
          AND day_key = NEW.quota_day_key
-    ), 0) >= 5 THEN RAISE(ABORT, 'moment daily quota exceeded') END;
+    ), 0) >= 5 THEN RAISE(ABORT, 'moment daily quota exceeded') END);
 END;
 
 CREATE TRIGGER moments_hold_daily_quota
@@ -430,7 +433,7 @@ END;
 CREATE TRIGGER moment_commit_events_validate
 BEFORE INSERT ON moment_commit_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moments AS moment
         JOIN moment_spaces AS space ON space.space_id = moment.space_id
@@ -448,14 +451,14 @@ BEGIN
          AND space.membership_revision = NEW.expected_membership_revision
          AND sender.state = 'active'
          AND device.state = 'active'
-    ) THEN RAISE(ABORT, 'moment cannot be committed') END;
+    ) THEN RAISE(ABORT, 'moment cannot be committed') END);
 END;
 
 CREATE TRIGGER moments_require_active_upload
 BEFORE UPDATE OF state ON moments
 WHEN OLD.state = 'reserved' AND NEW.state = 'uploaded'
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moment_spaces AS space
         JOIN moment_participants AS sender
@@ -464,7 +467,7 @@ BEGIN
           ON device.id = OLD.sender_device_id
        WHERE space.space_id = OLD.space_id AND space.state = 'active'
          AND sender.state = 'active' AND device.state = 'active'
-    ) THEN RAISE(ABORT, 'moment upload sender is not active') END;
+    ) THEN RAISE(ABORT, 'moment upload sender is not active') END);
 END;
 
 CREATE TRIGGER moment_commit_events_apply
@@ -524,7 +527,7 @@ END;
 CREATE TRIGGER moment_deliveries_validate_insert
 BEFORE INSERT ON moment_deliveries
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moments AS m
         JOIN moment_participants AS recipient
@@ -549,7 +552,7 @@ BEGIN
                  AND b.blocked_participant_id = m.sender_participant_id)
               )
          )
-    ) THEN RAISE(ABORT, 'moment recipient is not eligible') END;
+    ) THEN RAISE(ABORT, 'moment recipient is not eligible') END);
 END;
 
 CREATE TRIGGER moment_deliveries_validate_state_transition
@@ -566,7 +569,7 @@ END;
 CREATE TRIGGER moment_ack_events_validate
 BEFORE INSERT ON moment_ack_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moment_deliveries AS delivery
         JOIN moments AS m ON m.id = delivery.moment_id
@@ -590,7 +593,7 @@ BEGIN
                  AND b.blocked_participant_id = m.sender_participant_id)
               )
          )
-    ) THEN RAISE(ABORT, 'delivery cannot be acknowledged') END;
+    ) THEN RAISE(ABORT, 'delivery cannot be acknowledged') END);
 END;
 
 CREATE TRIGGER moment_ack_events_apply
@@ -608,7 +611,7 @@ END;
 CREATE TRIGGER moment_reports_require_authorized_reporter
 BEFORE INSERT ON moment_reports
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moments AS m
         JOIN moment_participants AS reporter
@@ -638,12 +641,12 @@ BEGIN
             WHERE delivery.moment_id = m.id
               AND delivery.recipient_participant_id = reporter.id
          )
-    ) THEN RAISE(ABORT, 'reporter is not authorized') END;
-    SELECT CASE WHEN COALESCE((
+    ) THEN RAISE(ABORT, 'reporter is not authorized') END);
+    SELECT (CASE WHEN COALESCE((
       SELECT attempt_count FROM moment_report_daily_usage
        WHERE participant_id = NEW.reporter_participant_id
          AND day_key = NEW.quota_day_key
-    ), 0) >= 10 THEN RAISE(ABORT, 'report daily quota exceeded') END;
+    ), 0) >= 10 THEN RAISE(ABORT, 'report daily quota exceeded') END);
 END;
 
 CREATE TRIGGER moment_reports_hold_daily_quota
@@ -686,7 +689,7 @@ CREATE TRIGGER moment_reports_require_active_upload
 BEFORE UPDATE OF state ON moment_reports
 WHEN OLD.state = 'reserved' AND NEW.state = 'uploaded'
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moment_spaces AS space
         JOIN moment_participants AS reporter
@@ -704,13 +707,13 @@ BEGIN
            OR (device.state IN ('revoked', 'expired')
                AND device.report_only_until > COALESCE(NEW.uploaded_at, 0))
          )
-    ) THEN RAISE(ABORT, 'report upload reporter is not active') END;
+    ) THEN RAISE(ABORT, 'report upload reporter is not active') END);
 END;
 
 CREATE TRIGGER moment_report_commit_events_validate
 BEFORE INSERT ON moment_report_commit_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moment_reports AS report
         JOIN moment_participants AS reporter
@@ -731,7 +734,7 @@ BEGIN
            OR (device.state IN ('revoked', 'expired')
                AND device.report_only_until > NEW.committed_at)
          )
-    ) THEN RAISE(ABORT, 'report cannot be committed') END;
+    ) THEN RAISE(ABORT, 'report cannot be committed') END);
 END;
 
 CREATE TRIGGER moment_report_commit_events_apply
@@ -769,7 +772,7 @@ END;
 CREATE TRIGGER moment_blocks_validate_insert
 BEFORE INSERT ON moment_blocks
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
       SELECT 1
         FROM moment_spaces AS space
         JOIN moment_participants AS blocker
@@ -781,7 +784,7 @@ BEGIN
          AND space.current_key_epoch + 1 = NEW.created_key_epoch
          AND blocker.space_id = space.space_id AND blocker.state = 'active'
          AND blocked.space_id = space.space_id AND blocked.state = 'active'
-    ) THEN RAISE(ABORT, 'block participants are not eligible') END;
+    ) THEN RAISE(ABORT, 'block participants are not eligible') END);
 END;
 
 CREATE TRIGGER moment_blocks_rotate_space
@@ -808,10 +811,10 @@ INSERT INTO moment_participants(
   report_only_until
 )
 SELECT id, space_id, id,
-       CASE role WHEN 'owner' THEN 'owner' ELSE 'member' END,
+       (CASE role WHEN 'owner' THEN 'owner' ELSE 'member' END),
        state, created_at, activated_at, revoked_at,
-       CASE WHEN state IN ('revoked', 'expired') AND revoked_at IS NOT NULL
-            THEN revoked_at + 86400 ELSE NULL END
+       (CASE WHEN state IN ('revoked', 'expired') AND revoked_at IS NOT NULL
+            THEN revoked_at + 86400 ELSE NULL END)
   FROM members;
 
 INSERT INTO moment_devices(
@@ -820,8 +823,8 @@ INSERT INTO moment_devices(
 )
 SELECT id, id, id, agreement_public_key, signing_public_key,
        state, created_at, activated_at, revoked_at,
-       CASE WHEN state IN ('revoked', 'expired') AND revoked_at IS NOT NULL
-            THEN revoked_at + 86400 ELSE NULL END
+       (CASE WHEN state IN ('revoked', 'expired') AND revoked_at IS NOT NULL
+            THEN revoked_at + 86400 ELSE NULL END)
   FROM members;
 
 CREATE TRIGGER moment_bridge_space_insert
@@ -892,10 +895,10 @@ BEGIN
       report_only_until
     ) VALUES (
       NEW.id, NEW.space_id, NEW.id,
-      CASE NEW.role WHEN 'owner' THEN 'owner' ELSE 'member' END,
+       (CASE NEW.role WHEN 'owner' THEN 'owner' ELSE 'member' END),
       NEW.state, NEW.created_at, NEW.activated_at, NEW.revoked_at,
-      CASE WHEN NEW.state IN ('revoked', 'expired') AND NEW.revoked_at IS NOT NULL
-           THEN NEW.revoked_at + 86400 ELSE NULL END
+       (CASE WHEN NEW.state IN ('revoked', 'expired') AND NEW.revoked_at IS NOT NULL
+            THEN NEW.revoked_at + 86400 ELSE NULL END)
     );
     INSERT INTO moment_devices(
       id, participant_id, legacy_member_id, agreement_public_key, signing_public_key,
@@ -903,8 +906,8 @@ BEGIN
     ) VALUES (
       NEW.id, NEW.id, NEW.id, NEW.agreement_public_key, NEW.signing_public_key,
       NEW.state, NEW.created_at, NEW.activated_at, NEW.revoked_at,
-      CASE WHEN NEW.state IN ('revoked', 'expired') AND NEW.revoked_at IS NOT NULL
-           THEN NEW.revoked_at + 86400 ELSE NULL END
+       (CASE WHEN NEW.state IN ('revoked', 'expired') AND NEW.revoked_at IS NOT NULL
+            THEN NEW.revoked_at + 86400 ELSE NULL END)
     );
 END;
 
@@ -915,18 +918,18 @@ BEGIN
        SET state = NEW.state,
            activated_at = NEW.activated_at,
            revoked_at = NEW.revoked_at,
-           report_only_until = CASE
+           report_only_until = (CASE
              WHEN NEW.state IN ('revoked', 'expired')
              THEN MAX(COALESCE(report_only_until, 0), COALESCE(NEW.revoked_at, NEW.created_at) + 86400)
-             ELSE NULL END
+              ELSE NULL END)
      WHERE legacy_member_id = NEW.id;
     UPDATE moment_devices
        SET state = NEW.state,
            activated_at = NEW.activated_at,
            revoked_at = NEW.revoked_at,
-           report_only_until = CASE
+           report_only_until = (CASE
              WHEN NEW.state IN ('revoked', 'expired')
              THEN MAX(COALESCE(report_only_until, 0), COALESCE(NEW.revoked_at, NEW.created_at) + 86400)
-             ELSE NULL END
+              ELSE NULL END)
      WHERE legacy_member_id = NEW.id;
 END;

@@ -1,5 +1,8 @@
 PRAGMA foreign_keys = ON;
 
+-- Keep this migration LF-only; Wrangler remote trigger parsing rejects CRLF.
+-- Keep every conditional expression parenthesized; remote trigger parsing can misread bare forms.
+
 CREATE TABLE spaces (
     id TEXT PRIMARY KEY,
     creation_request_id TEXT NOT NULL UNIQUE,
@@ -87,7 +90,7 @@ CREATE INDEX live_invitation_challenges_expiry
 CREATE TRIGGER challenges_require_live_invitation_and_capacity
 BEFORE INSERT ON invitation_challenges
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
         FROM invitations AS i
         JOIN spaces AS s ON s.id = i.space_id
@@ -97,14 +100,14 @@ BEGIN
           AND i.expires_at > NEW.created_at
           AND NEW.expires_at <= i.expires_at
           AND s.state = 'active'
-    ) THEN RAISE(ABORT, 'invalid challenge transition') END;
-    SELECT CASE WHEN (
+    ) THEN RAISE(ABORT, 'invalid challenge transition') END);
+    SELECT (CASE WHEN (
         SELECT COUNT(*)
         FROM invitation_challenges AS c
         WHERE c.invitation_id = NEW.invitation_id
           AND c.consumed_at IS NULL
           AND c.expires_at > NEW.created_at
-    ) >= 8 THEN RAISE(ABORT, 'challenge capacity exceeded') END;
+    ) >= 8 THEN RAISE(ABORT, 'challenge capacity exceeded') END);
 END;
 
 CREATE TABLE enrollments (
@@ -137,7 +140,7 @@ CREATE INDEX live_enrollments_expiry
 CREATE TRIGGER enrollments_require_live_invitation
 BEFORE INSERT ON enrollments
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
         FROM invitations AS i
         JOIN invitation_challenges AS c ON c.invitation_id = i.id
@@ -156,7 +159,7 @@ BEGIN
           AND m.role = 'invitee'
           AND m.state = 'pending'
           AND s.state = 'active'
-    ) THEN RAISE(ABORT, 'invalid enrollment transition') END;
+    ) THEN RAISE(ABORT, 'invalid enrollment transition') END);
 END;
 
 CREATE TRIGGER enrollments_consume_invitation
@@ -191,7 +194,7 @@ CREATE TABLE approval_events (
 CREATE TRIGGER approvals_require_owner_and_pending
 BEFORE INSERT ON approval_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
         FROM enrollments AS e
         JOIN members AS owner ON owner.id = NEW.approver_member_id
@@ -206,7 +209,7 @@ BEGIN
           AND s.state = 'active'
           AND NEW.key_envelope IS NOT NULL
           AND NEW.approval_signature IS NOT NULL
-    ) THEN RAISE(ABORT, 'invalid approval transition') END;
+    ) THEN RAISE(ABORT, 'invalid approval transition') END);
 END;
 
 CREATE TRIGGER approvals_mark_enrollment
@@ -229,7 +232,7 @@ CREATE TABLE completion_events (
 CREATE TRIGGER completions_require_approved_invitee
 BEFORE INSERT ON completion_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
         FROM enrollments AS e
         JOIN members AS invitee ON invitee.id = NEW.member_id
@@ -244,7 +247,7 @@ BEGIN
           AND invitee.state = 'pending'
           AND a.key_envelope IS NOT NULL
           AND s.state = 'active'
-    ) THEN RAISE(ABORT, 'invalid completion transition') END;
+    ) THEN RAISE(ABORT, 'invalid completion transition') END);
 END;
 
 CREATE TRIGGER completions_activate_member
@@ -276,7 +279,7 @@ CREATE TABLE cancellation_events (
 CREATE TRIGGER cancellations_require_pending_invitee
 BEFORE INSERT ON cancellation_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
         FROM enrollments AS e
         JOIN members AS invitee ON invitee.id = NEW.member_id
@@ -287,7 +290,7 @@ BEGIN
           AND invitee.role = 'invitee'
           AND invitee.state = 'pending'
           AND s.state = 'active'
-    ) THEN RAISE(ABORT, 'invalid cancellation transition') END;
+    ) THEN RAISE(ABORT, 'invalid cancellation transition') END);
 END;
 
 CREATE TRIGGER cancellations_revoke_enrollment
@@ -330,7 +333,7 @@ CREATE INDEX space_deletion_jobs_pending
 CREATE TRIGGER revocations_require_live_member
 BEFORE INSERT ON revocation_events
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (
+    SELECT (CASE WHEN NOT EXISTS (
         SELECT 1
         FROM spaces AS s
         JOIN members AS m ON m.space_id = s.id
@@ -338,7 +341,7 @@ BEGIN
           AND s.state = 'active'
           AND m.id = NEW.actor_member_id
           AND m.state = 'active'
-    ) THEN RAISE(ABORT, 'invalid revocation transition') END;
+    ) THEN RAISE(ABORT, 'invalid revocation transition') END);
 END;
 
 CREATE TRIGGER revocations_disable_space

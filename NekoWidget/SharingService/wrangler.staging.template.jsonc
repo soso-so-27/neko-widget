@@ -1,16 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "neko-window-sharing",
+  "name": "neko-window-sharing-staging",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-17",
-  "workers_dev": false,
+  "workers_dev": true,
+  "preview_urls": false,
   "observability": {
     "enabled": false,
     "logs": { "enabled": false }
   },
-  "limits": { "cpu_ms": 30000, "subrequests": 1200 },
   "vars": {
-    "ENVIRONMENT": "production",
+    "ENVIRONMENT": "staging",
     "MOMENT_RUNTIME_ENABLED": "NO",
     "LEGACY_SHARING_RUNTIME_ENABLED": "NO",
     "INVITATION_TTL_SECONDS": "86400",
@@ -28,35 +28,35 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "replace-with-d1-name",
-      "database_id": "11111111-1111-4111-8111-111111111111",
+      "database_name": "neko-window-sharing-staging",
+      "database_id": "__NEKO_STAGING_D1_DATABASE_ID__",
       "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "MEDIA",
-      "bucket_name": "replace-with-private-r2-bucket"
+      "bucket_name": "neko-window-sharing-staging-media-private"
     },
     {
       "binding": "MODERATION_MEDIA",
-      "bucket_name": "replace-with-private-moderation-r2-bucket"
+      "bucket_name": "neko-window-sharing-staging-moderation-private"
     }
   ],
   "ratelimits": [
     {
       "name": "CREATE_RATE_LIMITER",
-      "namespace_id": "100001",
+      "namespace_id": "__NEKO_STAGING_CREATE_RATE_LIMIT_NAMESPACE_ID__",
       "simple": { "limit": 5, "period": 60 }
     },
     {
       "name": "INVITE_RATE_LIMITER",
-      "namespace_id": "100002",
+      "namespace_id": "__NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID__",
       "simple": { "limit": 10, "period": 60 }
     },
     {
       "name": "MEMBER_RATE_LIMITER",
-      "namespace_id": "100003",
+      "namespace_id": "__NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID__",
       "simple": { "limit": 120, "period": 60 }
     }
   ]
