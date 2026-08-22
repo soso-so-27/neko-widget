@@ -49,6 +49,19 @@ def privacy(*data_types: str) -> dict:
     }
 
 
+def share_privacy() -> dict:
+    return {
+        "NSPrivacyTracking": False,
+        "NSPrivacyAccessedAPITypes": [
+            {
+                "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+                "NSPrivacyAccessedAPITypeReasons": ["C617.1"],
+            }
+        ],
+        "NSPrivacyCollectedDataTypes": [],
+    }
+
+
 def info(
     pairing: object,
     media: object,
@@ -56,10 +69,21 @@ def info(
     review_preview: object = "NO",
     share_extension_send: object = "NO",
     share_extension_handoff: object | None = None,
+    release_mode: str | None = None,
 ) -> dict:
     if share_extension_handoff is None:
         share_extension_handoff = media
+    if release_mode is None:
+        if review_preview in (True, "YES", "yes", "true", "1", 1):
+            release_mode = "review-preview"
+        elif media in (True, "YES", "yes", "true", "1", 1):
+            release_mode = "media"
+        elif pairing in (True, "YES", "yes", "true", "1", 1):
+            release_mode = "pairing-only"
+        else:
+            release_mode = "disabled"
     return {
+        "SharingReleaseMode": release_mode,
         "SharingFeatureEnabled": pairing,
         "SharingMediaEnabled": media,
         "SharingShareExtensionSendEnabled": share_extension_send,
@@ -100,6 +124,8 @@ class SharingReleasePreflightTests(unittest.TestCase):
         export_reviewed: str = "YES",
         share_info_value: dict | None = None,
         share_privacy_value: dict | None = None,
+        expected_mode: str | None = None,
+        expected_api_origin: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -117,7 +143,15 @@ class SharingReleasePreflightTests(unittest.TestCase):
             with privacy_path.open("wb") as stream:
                 plistlib.dump(privacy_value, stream)
             with share_privacy_path.open("wb") as stream:
-                plistlib.dump(share_privacy_value or privacy(), stream)
+                plistlib.dump(
+                    share_privacy()
+                    if share_privacy_value is None
+                    else share_privacy_value,
+                    stream,
+                )
+            selected_mode = expected_mode or str(
+                info_value.get("SharingReleaseMode", "")
+            )
             return subprocess.run(
                 [
                     sys.executable,
@@ -132,6 +166,14 @@ class SharingReleasePreflightTests(unittest.TestCase):
                     str(share_privacy_path),
                     "--export-reviewed",
                     export_reviewed,
+                    "--expected-mode",
+                    selected_mode,
+                    "--expected-api-origin",
+                    (
+                        str(info_value.get("SharingAPIBaseURL", ""))
+                        if expected_api_origin is None
+                        else expected_api_origin
+                    ),
                 ],
                 check=False,
                 capture_output=True,
@@ -163,7 +205,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             privacy(USER_ID),
         )
         self.assertNotEqual(runtime.returncode, 0)
-        self.assertIn("runtime flags OFF", runtime.stderr)
+        self.assertIn("Expected review-preview flags", runtime.stderr)
 
         endpoint = self.run_preflight(
             info("NO", "NO", ENDPOINT, review_preview="YES"),
@@ -191,7 +233,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires SharingFeatureEnabled", result.stderr)
+        self.assertIn("Expected media flags", result.stderr)
 
     def test_pairing_only_requires_user_id_but_not_photos(self) -> None:
         result = self.run_preflight(
@@ -199,6 +241,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             privacy(USER_ID),
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pairing-only; photos disabled", result.stdout)
 
         overdeclared = self.run_preflight(
             info(True, False, ENDPOINT),
@@ -206,6 +249,119 @@ class SharingReleasePreflightTests(unittest.TestCase):
         )
         self.assertNotEqual(overdeclared.returncode, 0)
         self.assertIn("not enabled", overdeclared.stderr)
+
+    def test_pairing_only_rejects_every_photo_path_flag(self) -> None:
+        cases = {
+            "media": info(
+                "YES",
+                "YES",
+                ENDPOINT,
+                share_extension_handoff="NO",
+                release_mode="pairing-only",
+            ),
+            "handoff": info(
+                "YES",
+                "NO",
+                ENDPOINT,
+                share_extension_handoff="YES",
+                release_mode="pairing-only",
+            ),
+            "direct-send": info(
+                "YES",
+                "NO",
+                ENDPOINT,
+                share_extension_send="YES",
+                share_extension_handoff="NO",
+                release_mode="pairing-only",
+            ),
+            "review-preview": info(
+                "YES",
+                "NO",
+                ENDPOINT,
+                review_preview="YES",
+                share_extension_handoff="NO",
+                release_mode="pairing-only",
+            ),
+        }
+        for name, app in cases.items():
+            with self.subTest(name=name):
+                result = self.run_preflight(
+                    app,
+                    privacy(USER_ID),
+                    expected_mode="pairing-only",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Expected pairing-only flags", result.stderr)
+
+    def test_expected_mode_must_match_processed_app_and_share(self) -> None:
+        app = info("YES", "NO", ENDPOINT)
+        result = self.run_preflight(
+            app,
+            privacy(USER_ID),
+            expected_mode="review-preview",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SharingReleaseMode must be review-preview", result.stderr)
+
+        share = share_info_from(app)
+        share["SharingReleaseMode"] = "review-preview"
+        result = self.run_preflight(
+            app,
+            privacy(USER_ID),
+            share_info_value=share,
+            expected_mode="pairing-only",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("App and Share Extension SharingReleaseMode do not match", result.stderr)
+
+    def test_processed_origin_must_match_release_environment(self) -> None:
+        result = self.run_preflight(
+            info("YES", "NO", ENDPOINT),
+            privacy(USER_ID),
+            expected_api_origin="https://other.example.org",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not exactly match", result.stderr)
+
+    def test_pairing_manifest_preserves_required_api_reasons(self) -> None:
+        for api_type in (
+            "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPICategoryFileTimestamp",
+        ):
+            with self.subTest(api_type=api_type):
+                manifest = privacy(USER_ID)
+                manifest["NSPrivacyAccessedAPITypes"] = [
+                    item
+                    for item in manifest["NSPrivacyAccessedAPITypes"]
+                    if item.get("NSPrivacyAccessedAPIType") != api_type
+                ]
+                result = self.run_preflight(
+                    info("YES", "NO", ENDPOINT),
+                    manifest,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(api_type, result.stderr)
+
+    def test_pairing_share_manifest_must_collect_nothing(self) -> None:
+        result = self.run_preflight(
+            info("YES", "NO", ENDPOINT),
+            privacy(USER_ID),
+            share_privacy_value=privacy(USER_ID),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not enabled", result.stderr)
+
+    def test_non_exempt_encryption_uses_the_official_compliance_key(self) -> None:
+        app = info("YES", "NO", ENDPOINT)
+        app["ITSAppUsesNonExemptEncryption"] = True
+        result = self.run_preflight(app, privacy(USER_ID))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ITSEncryptionExportComplianceCode", result.stderr)
+
+        app["ITSEncryptionExportComplianceCode"] = "test-compliance-code"
+        result = self.run_preflight(app, privacy(USER_ID))
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_media_requires_photos_and_specific_usage_copy(self) -> None:
         result = self.run_preflight(
@@ -300,12 +456,12 @@ class SharingReleasePreflightTests(unittest.TestCase):
             privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires the installation-bound", result.stderr)
+        self.assertIn("Expected media flags", result.stderr)
 
         app = info("NO", "NO", share_extension_handoff="YES")
         result = self.run_preflight(app, privacy(), "NO")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires both", result.stderr)
+        self.assertIn("Expected disabled flags", result.stderr)
 
         app = info("NO", "NO")
         share = share_info_from(app)
@@ -336,6 +492,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         for endpoint in (
             "https://sharing.example",
             "https://sharing.local",
+            "https://sharing.internal",
             "https://internal-api",
             "https://127.0.0.1",
             "https://8.8.8.8",

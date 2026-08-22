@@ -312,7 +312,7 @@ struct SettingsView: View {
             return "共有シートで選んだ1枚を、招待した家族のまどへ届けます。"
         }
         if configuration.isAvailable {
-            return "このビルドでは共有鍵のペアリングだけを確認でき、写真は送信しません。"
+            return "ペアリングのみ。このBuildでは写真を保存・送信しません。"
         }
         return "将来の体験を確認する静的レビューです。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。"
     }

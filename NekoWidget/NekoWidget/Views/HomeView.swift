@@ -143,7 +143,7 @@ struct HomeView: View {
                                 .foregroundStyle(.primary)
                             if !SharingAPIConfiguration.current.isMediaAvailable {
                                 Text(SharingAPIConfiguration.current.isAvailable
-                                    ? "準備中"
+                                    ? "ペアリングのみ"
                                     : "プレビュー")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.tint)
@@ -171,9 +171,7 @@ struct HomeView: View {
                 Divider()
 
                 Label(
-                    SharingAPIConfiguration.current.isMediaAvailable
-                        ? "今の一枚は、写真アプリで1枚を選び、アプリを開いて届けます"
-                        : "今後は、写真アプリの共有から1枚を届けます",
+                    familyWindowScopeDescription,
                     systemImage: "square.and.arrow.up"
                 )
                 .font(.footnote.weight(.medium))
@@ -205,6 +203,17 @@ struct HomeView: View {
         if configuration.isMediaAvailable { return "家族から届いた一枚を見る" }
         if configuration.isAvailable { return "写真共有前のペアリングを確認する" }
         return "今後追加する体験を先に確認できます"
+    }
+
+    private var familyWindowScopeDescription: String {
+        let configuration = SharingAPIConfiguration.current
+        if configuration.isMediaAvailable {
+            return "今の一枚は、写真アプリで1枚を選び、アプリを開いて届けます"
+        }
+        if configuration.isAvailable {
+            return "このBuildでは写真を保存・送信しません"
+        }
+        return "今後は、写真アプリの共有から1枚を届けます"
     }
 
     private var familyWindowAccessibilityHint: String {

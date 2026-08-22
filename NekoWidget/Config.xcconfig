@@ -16,6 +16,9 @@ CURRENT_PROJECT_VERSION = 1
 
 // Sharing is opt-in per build. Release/TestFlight stays off until the
 // privacy, moderation, and export-compliance gates are completed.
+// This is the shipping default and the Build 27 review-preview boundary.
+// Pairing-only archives must select Config.PairingOnly.xcconfig explicitly.
+SHARING_RELEASE_MODE = review-preview
 SHARING_FEATURE_ENABLED = NO
 SHARING_API_BASE_URL =
 // Pairing can be exercised independently. One-photo moment upload/download

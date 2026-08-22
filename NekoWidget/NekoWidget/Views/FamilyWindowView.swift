@@ -138,6 +138,14 @@ struct FamilyWindowView: View {
         .refreshable { await model.synchronize() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    PairingView()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("ペアリング設定と共有解除")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task { await model.synchronize() }
                 } label: {
