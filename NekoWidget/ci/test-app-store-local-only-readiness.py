@@ -1257,8 +1257,23 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         upload_index = release_workflow.index("Validate and upload IPA to TestFlight")
         writer_index = release_workflow.index("Write local-only signed release evidence")
         final_bundle_index = release_workflow.index("Upload local-only signed release evidence")
+        failure_archive_index = release_workflow.index(
+            "Preserve encrypted local-only archive after failure"
+        )
         self.assertLess(upload_index, writer_index)
         self.assertLess(writer_index, final_bundle_index)
+        self.assertLess(final_bundle_index, failure_archive_index)
+        self.assertIn(
+            "if: ${{ failure() && inputs.retain_signed_artifacts && "
+            "inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}",
+            release_workflow,
+        )
+        self.assertIn(
+            "nekowidget-failed-local-only-signed-artifacts-${{ github.run_id }}-"
+            "${{ github.run_attempt }}",
+            release_workflow,
+        )
+        self.assertIn("if-no-files-found: warn", release_workflow)
         writer = WRITER.read_text(encoding="utf-8")
         self.assertIn('os.environ.get("GITHUB_EVENT_PATH")', writer)
         self.assertIn('"GITHUB_REF": "refs/heads/main"', writer)

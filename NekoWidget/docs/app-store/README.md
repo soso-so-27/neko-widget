@@ -188,13 +188,19 @@ workflowはTestFlight upload成功後に、最終証拠を一つのActions artif
 - `NekoWidget-processed-app-info.plist`: archive内Appの処理済みInfo.plist
 - `NekoWidget-signed-artifacts.tar.gz.enc`: 同じrunで生成した暗号化済み署名archive／IPA
 
-`retain_signed_artifacts=true`のartifact matrixは次で固定する。
+成功runでの`retain_signed_artifacts=true`のartifact matrixは次で固定する。
 
 | release mode | TestFlight upload | 生成するartifact | local-only提出証拠 |
 | --- | --- | --- | --- |
 | `disabled` | `true` | `nekowidget-local-only-release-evidence-<run>-<attempt>`だけ（上記3 member） | 候補。残りの全gateも必要 |
 | `disabled` | `false` | 従来の`nekowidget-signed-artifacts-<run>-<attempt>`だけ | 不可。Build dry-runの保管専用 |
 | `disabled`以外 | `true`または`false` | 従来の`nekowidget-signed-artifacts-<run>-<attempt>`だけ | 不可。別release境界 |
+
+`disabled`かつTestFlight uploadありのrunがupload、evidence writer、またはevidence artifact保存で失敗した
+場合は、復旧調査用として暗号化済みarchiveを
+`nekowidget-failed-local-only-signed-artifacts-<run>-<attempt>`へ保存するよう試みる。署名archive生成前の
+失敗ではfileが存在しないためwarningだけを残す。このfallback artifactは成功したTestFlight uploadと固定3
+memberの証拠bundleを示さず、validatorも最終提出証拠として受け付けない。
 
 `retain_signed_artifacts=false`かつuploadなしではartifactを保存しない。TestFlight uploadを選んで
 `retain_signed_artifacts=false`にしたrunは、対応archiveを保存できないためworkflowが拒否する。
