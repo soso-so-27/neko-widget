@@ -13,6 +13,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  public-policy-site:
+    name: Verify deployed public policy pages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NEKO_PUBLIC_POLICY_SITE_BASE: https://soso-so-27.github.io/neko-widget/
+      NEKO_PUBLIC_POLICY_REVISION: "2026-08-24"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
+      - name: Check the read-only public policy boundary
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-public-policy-site.mjs
+
   public-runtime-boundary:
     name: Verify moment and window-name ON, legacy OFF
     runs-on: ubuntu-24.04
