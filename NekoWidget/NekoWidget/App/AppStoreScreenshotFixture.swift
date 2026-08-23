@@ -466,7 +466,7 @@ struct AppStoreScreenshotFixtureRootView: View {
 @MainActor
 struct AppStoreScreenshotWidgetSeedRootView: View {
     @State private var isReady = false
-    @State private var errorMessage: String?
+    @State private var didFail = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -475,8 +475,8 @@ struct AppStoreScreenshotWidgetSeedRootView: View {
                     .accessibilityIdentifier(
                         AppStoreScreenshotFixture.widgetReadyAccessibilityIdentifier
                     )
-            } else if let errorMessage {
-                Text("Widget preview failed: \(errorMessage)")
+            } else if didFail {
+                Text("Widget preview failed")
                     .accessibilityIdentifier("app-store-widget-screenshot-fixture-failed")
             } else {
                 ProgressView("Widget preview preparing")
@@ -487,7 +487,7 @@ struct AppStoreScreenshotWidgetSeedRootView: View {
                 try AppStoreScreenshotFixture.installWidgetPreviewFixture()
                 isReady = true
             } catch {
-                errorMessage = String(describing: error)
+                didFail = true
             }
         }
     }
