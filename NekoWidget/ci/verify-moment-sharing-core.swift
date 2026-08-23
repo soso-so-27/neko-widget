@@ -107,10 +107,20 @@ require(
     fixturePrivateKey.publicKey.rawRepresentation == expectedFixturePublicKey,
     "Swift Ed25519 public key diverged from the shared fixture"
 )
-let fixtureSignature = try fixturePrivateKey.signature(for: fixtureTranscript)
 require(
-    fixtureSignature == expectedFixtureSignature,
-    "Swift Ed25519 signature diverged from the shared fixture"
+    fixturePrivateKey.publicKey.isValidSignature(
+        expectedFixtureSignature,
+        for: fixtureTranscript
+    ),
+    "Swift rejected the shared fixed Ed25519 signature"
+)
+let generatedFixtureSignature = try fixturePrivateKey.signature(for: fixtureTranscript)
+require(
+    fixturePrivateKey.publicKey.isValidSignature(
+        generatedFixtureSignature,
+        for: fixtureTranscript
+    ),
+    "Swift generated an invalid Ed25519 signature"
 )
 let payload = try MomentCrypto.prepare(
     canonicalJPEG: jpeg,
