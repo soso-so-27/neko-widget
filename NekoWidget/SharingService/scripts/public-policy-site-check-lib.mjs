@@ -4,6 +4,39 @@ import { isIP } from "node:net";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const SHARING_BETA_BOUNDARY_PHRASE = "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。";
+const PHOTO_ALBUM_DISCLOSURE_PHRASES = Object.freeze([
+  "写真アプリに「うちの子」アルバムを作成・更新",
+  "元写真のアルバム所属を追加・解除",
+  "このアルバム連携では元写真を複製、書き出し、アップロードせず",
+  "写真アプリとiCloud写真の同期はAppleと利用者の設定によります",
+  "「うちの子」アルバムの構成がほかのApple端末へ同期されることがあります",
+]);
+const LOCAL_ONLY_DELETION_PHRASES = Object.freeze([
+  "アプリを削除しても、「うちの子」アルバムやその構成が写真アプリに残ることがあります",
+  "アプリとWidgetの専用領域にあるデータはiOSにより削除されます",
+]);
+const USER_INITIATED_EXPORT_PHRASES = Object.freeze([
+  "本アプリが写真やデータを自動で開発者のサーバーへアップロードすることはありません",
+  "PDF、検証JSON、診断ログの書き出しを明示的に選ぶと、iOSの共有シートが開きます",
+  "共有先のサービスとポリシーが適用されます",
+  "写真PDFには利用者が選んだ写真が含まれます",
+  "識別子や診断情報が含まれる場合があります",
+  "内容と共有先を確認してから共有してください",
+]);
+const LOCAL_ONLY_SUBMISSION_BLOCKER_PHRASES = Object.freeze([
+  "非公開で連絡できるプライバシー問い合わせ窓口は現在未掲載です",
+  "App Storeで一般提供する前に、このページへ有効な非公開窓口を掲載する必要があります",
+  "一般公開の提出準備は完了していません",
+]);
+const LOCAL_ONLY_FORBIDDEN_POLICY_PHRASES = Object.freeze([
+  "写真アプリやiCloudへ独自に保存することもありません",
+  "写真アプリやiCloudへ独自に保存することはありません",
+  "写真アプリやiCloudへ独自に保存しません",
+  "共有・招待・送信・受信はなく",
+  "選んだ写真、縮小画像、Widget表示用の派生画像を外部へ送信しません",
+  "写真、縮小画像、判定結果、Widget表示用画像などの派生画像を、開発者やその他の外部サーバーへ送信しません",
+  "技術的な問い合わせとプライバシーに関する連絡方法は",
+]);
 
 const SHARING_BETA_PAGES = Object.freeze([
   Object.freeze({
@@ -27,6 +60,7 @@ const SHARING_BETA_PAGES = Object.freeze([
     visibleRevision: true,
     requiredPhrases: Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
+      ...PHOTO_ALBUM_DISCLOSURE_PHRASES,
       "エンドツーエンド暗号化",
       "通報専用公開鍵",
       "ACK後7日",
@@ -72,9 +106,14 @@ const LOCAL_ONLY_COMMON_PHRASES = Object.freeze([
   "現在の共有ベータ版とは別の仕様",
   "この完全ローカル版では",
   "写真の読み込み、解析、猫判定、一覧、Widget用画像の処理は端末内だけ",
-  "共有・招待・送信・受信はなく",
+  "ほかの利用者とのネットワーク写真共有・招待・自動送信・受信機能はなく",
   "アプリから開発者のサーバーへ通信しません",
   "公開フィード、検索、フォローもありません",
+  "開発者の解析サービスへ自動接続せず、広告やトラッキングを行いません",
+  ...PHOTO_ALBUM_DISCLOSURE_PHRASES,
+  ...LOCAL_ONLY_DELETION_PHRASES,
+  ...USER_INITIATED_EXPORT_PHRASES,
+  ...LOCAL_ONLY_SUBMISSION_BLOCKER_PHRASES,
 ]);
 
 const LOCAL_ONLY_PAGES = Object.freeze([
@@ -85,8 +124,8 @@ const LOCAL_ONLY_PAGES = Object.freeze([
     visibleRevision: true,
     requiredPhrases: Object.freeze([
       ...LOCAL_ONLY_COMMON_PHRASES,
-      "写真アプリやiCloudへ独自に保存することもありません",
     ]),
+    forbiddenPhrases: LOCAL_ONLY_FORBIDDEN_POLICY_PHRASES,
   }),
   Object.freeze({
     name: "privacy",
@@ -96,13 +135,12 @@ const LOCAL_ONLY_PAGES = Object.freeze([
     requiredPhrases: Object.freeze([
       ...LOCAL_ONLY_COMMON_PHRASES,
       "開発者によるデータ収集を行いません",
-      "派生画像を、開発者やその他の外部サーバーへ送信しません",
-      "写真アプリやiCloudへ独自に保存することはありません",
       "CloudKitやアプリ独自のiCloudコンテナも使用しません",
       "共有相手、招待、送信待ち、受信履歴、サーバー上の写真は作成しません",
       "開発者の共有サーバーや解析サービスへ自動接続しません",
-      "広告、トラッキング、データ販売、生成AIの学習にも利用しません",
+      "データ販売、生成AIの学習にも利用しません",
     ]),
+    forbiddenPhrases: LOCAL_ONLY_FORBIDDEN_POLICY_PHRASES,
   }),
   Object.freeze({
     name: "support",
@@ -116,8 +154,8 @@ const LOCAL_ONLY_PAGES = Object.freeze([
       "Build番号",
       "公開してよい情報だけ",
       "緊急通報先ではありません",
-      "写真アプリやiCloudへ独自に保存しません",
     ]),
+    forbiddenPhrases: LOCAL_ONLY_FORBIDDEN_POLICY_PHRASES,
   }),
 ]);
 
@@ -521,6 +559,11 @@ async function fetchPolicyPage({
     for (const phrase of page.requiredPhrases) {
       if (!text.includes(phrase)) {
         throw new Error(`${page.name} is missing required policy content: ${phrase}`);
+      }
+    }
+    for (const phrase of page.forbiddenPhrases ?? []) {
+      if (text.includes(phrase)) {
+        throw new Error(`${page.name} contains forbidden policy content: ${phrase}`);
       }
     }
     validateLinks({

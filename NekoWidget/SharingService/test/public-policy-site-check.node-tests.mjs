@@ -42,6 +42,7 @@ function pageHtml(profileCase, page, overrides = {}) {
   ];
   const phrases = overrides.phrases ?? page.requiredPhrases;
   const extraHead = overrides.extraHead ?? "";
+  const extraBody = overrides.extraBody ?? "";
   const visibleRevision = page.visibleRevision
     ? "<p>最終更新日：2026年8月24日</p>"
     : "";
@@ -54,6 +55,7 @@ ${extraHead}
 <h1>${h1}</h1>
 ${visibleRevision}
 ${phrases.map((phrase) => `<p>${phrase}</p>`).join("\n")}
+${extraBody}
 ${links.map((href) => `<a href="${href}">link</a>`).join("\n")}
 </body></html>`;
 }
@@ -459,6 +461,57 @@ test("requires profile-specific safety content", async () => {
     ]])),
     /privacy is missing required policy content: 開発者によるデータ収集を行いません/u,
   );
+});
+
+test("requires the PhotoAlbumService disclosure in sharing and local-only policy", async () => {
+  const albumPhrase = "写真アプリに「うちの子」アルバムを作成・更新";
+  for (const [profileCase, page] of [
+    [sharingBeta, sharingBeta.definition.pages[1]],
+    [localOnly, localOnly.definition.pages[0]],
+  ]) {
+    await assert.rejects(
+      check(profileCase, new Map([[
+        page.name,
+        pageHtml(profileCase, page, {
+          phrases: page.requiredPhrases.filter((phrase) => phrase !== albumPhrase),
+        }),
+      ]])),
+      new RegExp(`${page.name} is missing required policy content`, "u"),
+    );
+  }
+});
+
+test("rejects false local-only persistence, export, and contact claims", async () => {
+  const page = localOnly.definition.pages[0];
+  for (const phrase of page.forbiddenPhrases) {
+    await assert.rejects(
+      check(localOnly, new Map([[
+        page.name,
+        pageHtml(localOnly, page, { extraBody: `<p>${phrase}</p>` }),
+      ]])),
+      new RegExp(`${page.name} contains forbidden policy content`, "u"),
+    );
+  }
+});
+
+test("requires explicit export risk and submission blocker copy on every local-only page", async () => {
+  const required = [
+    "写真PDFには利用者が選んだ写真が含まれます",
+    "非公開で連絡できるプライバシー問い合わせ窓口は現在未掲載です",
+  ];
+  for (const page of localOnly.definition.pages) {
+    for (const phrase of required) {
+      await assert.rejects(
+        check(localOnly, new Map([[
+          page.name,
+          pageHtml(localOnly, page, {
+            phrases: page.requiredPhrases.filter((value) => value !== phrase),
+          }),
+        ]])),
+        new RegExp(`${page.name} is missing required policy content`, "u"),
+      );
+    }
+  }
 });
 
 test("requires the internal TestFlight boundary on every sharing-beta page", async () => {
