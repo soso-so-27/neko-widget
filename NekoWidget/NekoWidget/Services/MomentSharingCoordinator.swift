@@ -25,6 +25,11 @@ private final class MomentProcessSynchronizationGate: @unchecked Sendable {
 
 private let momentProcessSynchronizationGate = MomentProcessSynchronizationGate()
 
+enum MomentSynchronizationNotice: Equatable, Sendable {
+    case inboundModerationDisabled
+    case inboundModerationUnavailable
+}
+
 actor MomentSharingCoordinator {
     private struct Authorization: Sendable {
         let state: PairingState
@@ -33,13 +38,14 @@ actor MomentSharingCoordinator {
     }
 
     private let configuration: SharingAPIConfiguration
-    private let moderation: MomentModerationService
+    private let moderation: any MomentModerating
     private let handoffProcessor: MomentShareHandoffProcessor
     private var isSynchronizing = false
+    private var latestSynchronizationNotice: MomentSynchronizationNotice?
 
     init(
         configuration: SharingAPIConfiguration = .current,
-        moderation: MomentModerationService = MomentModerationService()
+        moderation: any MomentModerating = MomentModerationService()
     ) {
         self.configuration = configuration
         self.moderation = moderation
@@ -49,6 +55,7 @@ actor MomentSharingCoordinator {
     func synchronize(trigger: String) async {
         guard !isSynchronizing else { return }
         guard momentProcessSynchronizationGate.tryAcquire() else { return }
+        latestSynchronizationNotice = nil
         defer { momentProcessSynchronizationGate.release() }
         isSynchronizing = true
         defer { isSynchronizing = false }
@@ -206,6 +213,7 @@ actor MomentSharingCoordinator {
                 ]
             )
         } catch {
+            latestSynchronizationNotice = Self.synchronizationNotice(for: error)
             if let authorization,
                let momentError = error as? MomentSharingError,
                case let .reportOnly(until) = momentError {
@@ -229,6 +237,10 @@ actor MomentSharingCoordinator {
                 metadata: ["trigger": String(trigger.prefix(32))]
             )
         }
+    }
+
+    func synchronizationNotice() -> MomentSynchronizationNotice? {
+        latestSynchronizationNotice
     }
 
     func report(
@@ -871,7 +883,7 @@ actor MomentSharingCoordinator {
     }
 
     private func receiveChanges(
-        api: URLSessionMomentSharingAPIClient,
+        api: any MomentSharingAPIClientProtocol,
         pairing: PairingState,
         credential: PairingCredential,
         lifecycleToken: SharingLifecycleGate.Token
@@ -1003,6 +1015,24 @@ actor MomentSharingCoordinator {
         return receivedCount
     }
 
+#if DEBUG
+    /// Generated-data simulator coverage for the download → moderation → ACK
+    /// → cursor boundary. Release builds keep the receive primitive private.
+    func runtimeTestReceiveChanges(
+        api: any MomentSharingAPIClientProtocol,
+        pairing: PairingState,
+        credential: PairingCredential,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) async throws -> Int {
+        try await receiveChanges(
+            api: api,
+            pairing: pairing,
+            credential: credential,
+            lifecycleToken: lifecycleToken
+        )
+    }
+#endif
+
     private func storeReceived(
         change: MomentChange,
         jpeg: Data,
@@ -1015,18 +1045,28 @@ actor MomentSharingCoordinator {
             validating: lifecycleToken
         )
         defer { try? FileManager.default.removeItem(at: moderationInput) }
-        let state: MomentInboxState
+        let moderationError: MomentSharingError?
         do {
             try await moderation.requireSafeImage(at: moderationInput)
-            state = .available
+            moderationError = nil
+        } catch let error as MomentSharingError {
+            do {
+                try SharingLifecycleGate.validate(lifecycleToken)
+            } catch {
+                throw MomentSharingError.stateUnavailable
+            }
+            moderationError = error
         } catch {
             do {
                 try SharingLifecycleGate.validate(lifecycleToken)
             } catch {
                 throw MomentSharingError.stateUnavailable
             }
-            state = .blocked
+            moderationError = .moderationUnavailable
         }
+        let state = try MomentInboundModerationPolicy.inboxState(
+            after: moderationError
+        )
 
         let item = try MomentInboxItem(
             id: change.momentID,
@@ -1212,6 +1252,20 @@ actor MomentSharingCoordinator {
             }
         }
         return "unknown"
+    }
+
+    private nonisolated static func synchronizationNotice(
+        for error: Error
+    ) -> MomentSynchronizationNotice? {
+        guard let momentError = error as? MomentSharingError else { return nil }
+        switch momentError {
+        case .moderationDisabled:
+            return .inboundModerationDisabled
+        case .moderationUnavailable:
+            return .inboundModerationUnavailable
+        default:
+            return nil
+        }
     }
 
     private nonisolated static func requiresLocalRevocationReset(_ error: Error) -> Bool {

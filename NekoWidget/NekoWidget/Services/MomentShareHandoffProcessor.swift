@@ -10,9 +10,9 @@ struct MomentShareHandoffProcessor: Sendable {
     private static let senderPolicyVersion = 1
     private static let retryDelay: TimeInterval = 5 * 60
 
-    private let moderation: MomentModerationService
+    private let moderation: any MomentModerating
 
-    init(moderation: MomentModerationService = MomentModerationService()) {
+    init(moderation: any MomentModerating = MomentModerationService()) {
         self.moderation = moderation
     }
 

@@ -76,7 +76,7 @@ enum MomentReportReason: String, Codable, CaseIterable, Sendable {
     case other
 }
 
-enum MomentSharingError: LocalizedError, Equatable {
+enum MomentSharingError: LocalizedError, Equatable, Sendable {
     case featureDisabled
     case notPaired
     case consentRequired
