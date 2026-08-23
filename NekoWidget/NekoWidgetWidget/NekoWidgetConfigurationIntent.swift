@@ -21,7 +21,7 @@ struct WidgetPhotoSource: AppEntity {
     static var familyWindow: WidgetPhotoSource {
         WidgetPhotoSource(
             id: familyWindowID,
-            name: WidgetManifestReader.familyWindowDisplayName(),
+            name: SharedContainer.familyWidgetWindowDisplayName(),
             detail: "招待した相手から届いた最新の一枚"
         )
     }

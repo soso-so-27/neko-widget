@@ -88,6 +88,21 @@ enum SharedContainer {
         )
     }
 
+    /// Shared by the app target and Widget extension because the App Intent
+    /// entity is compiled into both. The manifest is presentation-only; a
+    /// missing, old, or malformed value always resolves to the neutral name.
+    static func familyWidgetWindowDisplayName() -> String {
+        guard let url = familyWidgetManifestURL,
+              let data = try? Data(contentsOf: url, options: .mappedIfSafe)
+        else { return PrivateWindowDisplayName.fallback }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let manifest = try? decoder.decode(FamilyWidgetManifest.self, from: data),
+              manifest.schemaVersion == FamilyWidgetManifest.schemaVersion
+        else { return PrivateWindowDisplayName.fallback }
+        return PrivateWindowDisplayName.resolved(manifest.windowDisplayName)
+    }
+
     static var familyWidgetCacheHistoryURL: URL? {
         sharingCacheDirectoryURL?.appendingPathComponent(
             "family-widget-cache-history.v1.json",

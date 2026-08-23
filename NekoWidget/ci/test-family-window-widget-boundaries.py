@@ -195,6 +195,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('static let familyWindowID = "family-window"', configuration)
         self.assertIn('static let personalLibraryID = "personal-library"', configuration)
         self.assertIn('name: "このiPhoneの写真"', configuration)
+        self.assertIn("SharedContainer.familyWidgetWindowDisplayName()", configuration)
+        self.assertNotIn("WidgetManifestReader", configuration)
 
         processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
         self.assertIn("PrivateWindowPresentationStore.resolvedDisplayName", processor)
