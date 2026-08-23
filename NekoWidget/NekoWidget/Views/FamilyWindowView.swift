@@ -593,7 +593,7 @@ struct FamilyWindowView: View {
     }
 }
 
-private struct MomentLocalImageView: View {
+struct MomentLocalImageView: View {
     let url: URL
     @State private var image: UIImage?
 

@@ -20,6 +20,13 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let now = Date()
         let variant = imageVariant(for: context.family)
         let source = configuration.photoSource ?? .personalLibrary
+        if source.id == WidgetPhotoSource.familyWindowID {
+            return familySnapshot(
+                now: now,
+                variant: variant,
+                preview: context.isPreview
+            )
+        }
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
         let item = normalizedSchedule(
@@ -64,6 +71,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             imageVariant: variant,
             photoSourceIdentifier: source.id,
             usesFamilySpecificImage: item.cacheFilenames != nil,
+            familyMomentIsFresh: false,
             isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
             isLikeInteractionEnabled: likeState.isInteractionReady
         )
@@ -76,6 +84,13 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let now = Date()
         let variant = imageVariant(for: context.family)
         let source = configuration.photoSource ?? .personalLibrary
+        if source.id == WidgetPhotoSource.familyWindowID {
+            return familyTimeline(
+                now: now,
+                variant: variant,
+                preview: context.isPreview
+            )
+        }
         let items = sortedItems(availableItems(for: source, variant: variant))
         let likeState = readLikeState()
 
@@ -124,6 +139,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 imageVariant: variant,
                 photoSourceIdentifier: source.id,
                 usesFamilySpecificImage: item.cacheFilenames != nil,
+                familyMomentIsFresh: false,
                 isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
                 isLikeInteractionEnabled: likeState.isInteractionReady
             )
@@ -153,6 +169,87 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             ]
         )
         return Timeline(entries: entries, policy: .after(reloadDate))
+    }
+
+    private func familySnapshot(
+        now: Date,
+        variant: WidgetImageVariant,
+        preview: Bool
+    ) -> NekoWidgetEntry {
+        guard let item = WidgetManifestReader.familyItem(for: variant) else {
+            SharedLog.widget.warning(
+                "timeline",
+                "Family snapshot requested without a safe cache item",
+                metadata: ["preview": "\(preview)"]
+            )
+            return .empty(
+                at: now,
+                imageVariant: variant,
+                photoSourceIdentifier: WidgetPhotoSource.familyWindowID
+            )
+        }
+        return familyEntry(item: item, date: now, variant: variant, now: now)
+    }
+
+    private func familyTimeline(
+        now: Date,
+        variant: WidgetImageVariant,
+        preview: Bool
+    ) -> Timeline<NekoWidgetEntry> {
+        guard let item = WidgetManifestReader.familyItem(for: variant) else {
+            SharedLog.widget.warning(
+                "timeline",
+                "Family timeline requested without a safe cache item",
+                metadata: ["preview": "\(preview)"]
+            )
+            return Timeline(
+                entries: [
+                    .empty(
+                        at: now,
+                        imageVariant: variant,
+                        photoSourceIdentifier: WidgetPhotoSource.familyWindowID
+                    )
+                ],
+                policy: .never
+            )
+        }
+
+        var entries = [familyEntry(item: item, date: now, variant: variant, now: now)]
+        if now >= item.receivedAt, now < item.freshUntil {
+            entries.append(
+                familyEntry(
+                    item: item,
+                    date: item.freshUntil,
+                    variant: variant,
+                    now: item.freshUntil
+                )
+            )
+        }
+        SharedLog.widget.info(
+            "timeline",
+            "Family timeline prepared",
+            metadata: ["entries": "\(entries.count)", "preview": "\(preview)"]
+        )
+        return Timeline(entries: entries, policy: .never)
+    }
+
+    private func familyEntry(
+        item: FamilyWidgetManifestItem,
+        date: Date,
+        variant: WidgetImageVariant,
+        now: Date
+    ) -> NekoWidgetEntry {
+        NekoWidgetEntry(
+            date: date,
+            localIdentifier: nil,
+            cacheFilename: item.cacheFilenames.filename(for: variant),
+            imageVariant: variant,
+            photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+            usesFamilySpecificImage: true,
+            familyMomentIsFresh: now >= item.receivedAt && now < item.freshUntil,
+            isLiked: false,
+            isLikeInteractionEnabled: false
+        )
     }
 
     private func availableItems(

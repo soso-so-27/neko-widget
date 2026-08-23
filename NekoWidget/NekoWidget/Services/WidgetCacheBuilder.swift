@@ -1,7 +1,9 @@
 import CryptoKit
 import CoreImage
 import Foundation
+import ImageIO
 import UIKit
+import UniformTypeIdentifiers
 
 struct WidgetCacheBuildResult: Sendable {
     var manifest: WidgetManifest
@@ -19,6 +21,24 @@ private struct WidgetCacheHistory: Codable, Sendable {
     static let empty = WidgetCacheHistory(generations: [])
 }
 
+private struct FamilyWidgetCacheGeneration: Codable, Equatable, Sendable {
+    var sourceDigest: String
+    var cacheFilenames: WidgetCacheFilenames
+    var generatedAt: Date
+}
+
+private struct FamilyWidgetCacheHistory: Codable, Sendable {
+    var generations: [FamilyWidgetCacheGeneration]
+
+    static let empty = FamilyWidgetCacheHistory(generations: [])
+}
+
+private struct FamilyWidgetSourceSnapshot: Sendable {
+    var item: MomentInboxItem
+    var data: Data
+    var sourceDigest: String
+}
+
 actor WidgetCacheBuilder {
     private static let historyFilename = "widget-cache-history.json"
     /// The migration-safe maximum is 380 distinct files: new manifest 60,
@@ -27,6 +47,7 @@ actor WidgetCacheBuilder {
     /// Round to 400; the bounded provider writes at most 2 files per family lease.
     private static let maximumGenerationCount = 8
     private static let maximumCachedFileCount = 400
+    private static let maximumFamilyGenerationCount = 4
     /// PhotoKit returns an aspect-fit local derivative. 2048px keeps a normal
     /// 16:9 source above the 1100px Large short side while bounding app-side
     /// source decode memory to roughly 16 MiB. Network behavior stays unchanged.
@@ -435,6 +456,168 @@ actor WidgetCacheBuilder {
         )
     }
 
+    /// Publishes only one locally moderated family photo into a namespace that
+    /// personal Widget cleanup never reads or removes. The lifecycle token is
+    /// checked both before decoding and at the final JPEG+manifest commit.
+    func buildFamilyWindow(
+        from item: MomentInboxItem?,
+        freshUntil: Date?,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> FamilyWidgetManifest {
+        guard let item, let freshUntil else {
+            return try clearFamilyWindow(
+                validating: lifecycleToken,
+                generatedAt: now
+            )
+        }
+        guard let manifestURL = SharedContainer.familyWidgetManifestURL,
+              let cacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL,
+              let historyURL = SharedContainer.familyWidgetCacheHistoryURL
+        else {
+            throw NekoWidgetError.appGroupUnavailable(SharedContainer.appGroupIdentifier)
+        }
+
+        let source: FamilyWidgetSourceSnapshot
+        do {
+            source = try MomentSharingStateStore.withStateWhileLifecycleLocked(
+                validating: lifecycleToken
+            ) { state in
+                try Self.familySourceSnapshot(for: item, in: state)
+            }
+        } catch {
+            return try clearFamilyWindow(
+                validating: lifecycleToken,
+                generatedAt: now
+            )
+        }
+        let filenames = Self.familyCacheFilenames(sourceDigest: source.sourceDigest)
+        if let active = try? AtomicJSON.read(FamilyWidgetManifest.self, from: manifestURL),
+           active.schemaVersion == FamilyWidgetManifest.schemaVersion,
+           active.item?.sourceDigest == source.sourceDigest,
+           active.item?.receivedAt == source.item.receivedAt,
+           active.item?.freshUntil == freshUntil,
+           active.item?.cacheFilenames == filenames,
+           Self.hasCompleteFamilyWidgetFiles(
+                filenames,
+                cacheDirectory: cacheDirectory
+           ) {
+            let remainsSafe = try MomentSharingStateStore.withStateWhileLifecycleLocked(
+                validating: lifecycleToken
+            ) { state in
+                (try? Self.familySourceSnapshot(for: item, in: state))?.sourceDigest
+                    == source.sourceDigest
+            }
+            if remainsSafe { return active }
+        }
+
+        let renderedFiles: [(variant: WidgetImageVariant, data: Data)] = try autoreleasepool {
+            guard let image = UIImage(data: source.data),
+                  Self.isCanonicalFamilyJPEG(source.data)
+            else { throw MomentSharingError.invalidPayload }
+            let normalized = WidgetSourceImageNormalizer.normalizedUIImage(image)
+            let sourcePixelSize = WidgetSourcePixelSize(
+                width: normalized.cgImage?.width
+                    ?? max(1, Int(normalized.size.width.rounded())),
+                height: normalized.cgImage?.height
+                    ?? max(1, Int(normalized.size.height.rounded()))
+            )
+            guard sourcePixelSize.isValid,
+                  sourcePixelSize.width <= MomentSharingProtocol.maximumCanonicalPixelDimension,
+                  sourcePixelSize.height <= MomentSharingProtocol.maximumCanonicalPixelDimension
+            else { throw MomentSharingError.invalidPayload }
+            let renderPlans = WidgetRenderPlanner.plans(
+                visionBoundingBox: nil,
+                sourcePixelSize: sourcePixelSize
+            )
+            let ciContext = Self.makeCIContext()
+            return try Self.RenderSpec.all.map { spec in
+                guard let output = Self.widgetJPEG(
+                    normalizedImage: normalized,
+                    renderPlan: renderPlans.plan(for: spec.variant),
+                    catBoundingBox: nil,
+                    spec: spec,
+                    ciContext: ciContext
+                ) else { throw MomentSharingError.invalidPayload }
+                return (variant: spec.variant, data: output.data)
+            }
+        }
+
+        return try MomentSharingStateStore.withStateWhileLifecycleLocked(
+            validating: lifecycleToken
+        ) { state in
+            guard let current = try? Self.familySourceSnapshot(for: item, in: state),
+                  current.sourceDigest == source.sourceDigest,
+                  Data(SHA256.hash(data: current.data))
+                    == Data(SHA256.hash(data: source.data))
+            else {
+                return try Self.clearFamilyWindowWhileLifecycleLocked(
+                    manifestURL: manifestURL,
+                    cacheDirectory: cacheDirectory,
+                    historyURL: historyURL,
+                    generatedAt: now
+                )
+            }
+
+            for file in renderedFiles {
+                let filename = filenames.filename(for: file.variant)
+                try SharingSecureFile.write(
+                    file.data,
+                    to: cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+                )
+            }
+            guard Self.hasCompleteFamilyWidgetFiles(
+                filenames,
+                cacheDirectory: cacheDirectory
+            ) else { throw MomentSharingError.stateUnavailable }
+
+            let manifest = FamilyWidgetManifest(
+                item: FamilyWidgetManifestItem(
+                    sourceDigest: source.sourceDigest,
+                    cacheFilenames: filenames,
+                    receivedAt: source.item.receivedAt,
+                    freshUntil: freshUntil
+                ),
+                generatedAt: now
+            )
+            try Self.writeSharingJSON(manifest, to: manifestURL)
+            try Self.updateFamilyHistoryAndRemoveStaleFiles(
+                manifest: manifest,
+                state: state,
+                historyURL: historyURL,
+                cacheDirectory: cacheDirectory,
+                now: now
+            )
+            SharedLog.app.info(
+                "family-widget-cache",
+                "Family Widget cache published",
+                metadata: ["files": "\(renderedFiles.count)"]
+            )
+            return manifest
+        }
+    }
+
+    @discardableResult
+    func clearFamilyWindow(
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        generatedAt: Date = .now
+    ) throws -> FamilyWidgetManifest {
+        guard let manifestURL = SharedContainer.familyWidgetManifestURL,
+              let cacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL,
+              let historyURL = SharedContainer.familyWidgetCacheHistoryURL
+        else {
+            throw NekoWidgetError.appGroupUnavailable(SharedContainer.appGroupIdentifier)
+        }
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try Self.clearFamilyWindowWhileLifecycleLocked(
+                manifestURL: manifestURL,
+                cacheDirectory: cacheDirectory,
+                historyURL: historyURL,
+                generatedAt: generatedAt
+            )
+        }
+    }
+
     func clear() throws {
         guard let containerURL = SharedContainer.containerURL,
               let cacheDirectory = SharedContainer.widgetCacheDirectoryURL,
@@ -462,6 +645,165 @@ actor WidgetCacheBuilder {
             try? FileManager.default.removeItem(at: url)
         }
         SharedLog.app.info("widget-cache", "Widget cache and manifest cleared")
+    }
+
+    private static func familySourceSnapshot(
+        for expected: MomentInboxItem,
+        in state: MomentSharingState
+    ) throws -> FamilyWidgetSourceSnapshot {
+        guard let current = state.inbox.first(where: { $0.id == expected.id }),
+              current.state == .available || current.state == .acknowledged,
+              current.senderParticipantID == expected.senderParticipantID,
+              current.committedAt == expected.committedAt,
+              current.receivedAt == expected.receivedAt,
+              let filename = current.localJPEGFileName,
+              filename == "\(current.id).jpg",
+              filename == (filename as NSString).lastPathComponent,
+              let directory = SharedContainer.momentSharingReceivedDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let url = directory.appendingPathComponent(filename, isDirectory: false)
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard !data.isEmpty,
+              data.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28,
+              isCanonicalFamilyJPEG(data)
+        else { throw MomentSharingError.invalidPayload }
+        return FamilyWidgetSourceSnapshot(
+            item: current,
+            data: data,
+            sourceDigest: familySourceDigest(for: current)
+        )
+    }
+
+    private static func familySourceDigest(for item: MomentInboxItem) -> String {
+        let identity = [
+            "family-widget-v1",
+            item.id,
+            String(item.committedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
+            String(item.receivedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16)
+        ].joined(separator: "|")
+        return SHA256.hash(data: Data(identity.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func familyCacheFilenames(
+        sourceDigest: String
+    ) -> WidgetCacheFilenames {
+        WidgetCacheFilenames(
+            small: "family-small-\(sourceDigest).jpg",
+            medium: "family-medium-\(sourceDigest).jpg",
+            large: "family-large-\(sourceDigest).jpg"
+        )
+    }
+
+    private static func isCanonicalFamilyJPEG(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ),
+        CGImageSourceGetCount(source) == 1,
+        CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+            as? [CFString: Any],
+        let width = properties[kCGImagePropertyPixelWidth] as? Int,
+        let height = properties[kCGImagePropertyPixelHeight] as? Int,
+        (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(width),
+        (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(height)
+        else { return false }
+        return true
+    }
+
+    private static func hasCompleteFamilyWidgetFiles(
+        _ filenames: WidgetCacheFilenames,
+        cacheDirectory: URL
+    ) -> Bool {
+        RenderSpec.all.allSatisfy { spec in
+            let filename = filenames.filename(for: spec.variant)
+            guard filename == (filename as NSString).lastPathComponent,
+                  filename.lowercased().hasSuffix(".jpg")
+            else { return false }
+            let url = cacheDirectory.appendingPathComponent(filename, isDirectory: false)
+            guard let count = byteCount(of: url) else { return false }
+            return count > 0 && count <= spec.maximumJPEGByteCount
+        }
+    }
+
+    private static func clearFamilyWindowWhileLifecycleLocked(
+        manifestURL: URL,
+        cacheDirectory: URL,
+        historyURL: URL,
+        generatedAt: Date
+    ) throws -> FamilyWidgetManifest {
+        let manifest = FamilyWidgetManifest(item: nil, generatedAt: generatedAt)
+        try writeSharingJSON(manifest, to: manifestURL)
+        try? FileManager.default.removeItem(at: historyURL)
+        if FileManager.default.fileExists(atPath: cacheDirectory.path) {
+            try FileManager.default.removeItem(at: cacheDirectory)
+        }
+        SharedLog.app.info("family-widget-cache", "Family Widget cache cleared")
+        return manifest
+    }
+
+    private static func updateFamilyHistoryAndRemoveStaleFiles(
+        manifest: FamilyWidgetManifest,
+        state: MomentSharingState,
+        historyURL: URL,
+        cacheDirectory: URL,
+        now: Date
+    ) throws {
+        guard let item = manifest.item else { return }
+        let oldHistory = (try? AtomicJSON.read(
+            FamilyWidgetCacheHistory.self,
+            from: historyURL
+        )) ?? .empty
+        let safeDigests = Set(state.inbox.compactMap { candidate -> String? in
+            guard candidate.state == .available || candidate.state == .acknowledged,
+                  let filename = candidate.localJPEGFileName,
+                  filename == "\(candidate.id).jpg",
+                  let directory = SharedContainer.momentSharingReceivedDirectoryURL,
+                  FileManager.default.fileExists(
+                    atPath: directory.appendingPathComponent(filename).path
+                  )
+            else { return nil }
+            return familySourceDigest(for: candidate)
+        })
+        let newest = FamilyWidgetCacheGeneration(
+            sourceDigest: item.sourceDigest,
+            cacheFilenames: item.cacheFilenames,
+            generatedAt: manifest.generatedAt
+        )
+        let cutoff = now.addingTimeInterval(-12 * 60 * 60)
+        let generations = ([newest] + oldHistory.generations)
+            .filter { $0.generatedAt >= cutoff && safeDigests.contains($0.sourceDigest) }
+            .reduce(into: [FamilyWidgetCacheGeneration]()) { result, candidate in
+                guard !result.contains(where: { $0.sourceDigest == candidate.sourceDigest }),
+                      result.count < maximumFamilyGenerationCount
+                else { return }
+                result.append(candidate)
+            }
+        try writeSharingJSON(
+            FamilyWidgetCacheHistory(generations: generations),
+            to: historyURL
+        )
+        let retained = Set(generations.flatMap { $0.cacheFilenames.all })
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: cacheDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for url in contents where !retained.contains(url.lastPathComponent) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func writeSharingJSON<Value: Encodable>(
+        _ value: Value,
+        to url: URL
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        try SharingSecureFile.write(try encoder.encode(value), to: url)
     }
 
     private func updateHistoryAndRemoveStaleFiles(

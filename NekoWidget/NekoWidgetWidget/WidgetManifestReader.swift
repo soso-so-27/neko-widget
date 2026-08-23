@@ -48,6 +48,47 @@ enum WidgetManifestReader {
         return cacheURL(for: filename, in: cacheDirectoryURL)
     }
 
+    static func familyItem(for variant: WidgetImageVariant) -> FamilyWidgetManifestItem? {
+        guard let manifestURL = SharedContainer.familyWidgetManifestURL,
+              let cacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL,
+              let manifest = readFamilyManifest(from: manifestURL),
+              manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
+              let item = manifest.item,
+              item.sourceDigest.utf8.count == 64,
+              item.sourceDigest.utf8.allSatisfy({
+                ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+              }),
+              item.freshUntil > item.receivedAt,
+              item.freshUntil.timeIntervalSince(item.receivedAt) <= 2 * 60 * 60 + 1
+        else { return nil }
+        let filename = item.cacheFilenames.filename(for: variant)
+        guard let fileURL = cacheURL(for: filename, in: cacheDirectory),
+              FileManager.default.fileExists(atPath: fileURL.path),
+              let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
+              let size = values.fileSize,
+              size > 0,
+              size <= variant.maximumJPEGByteCount
+        else { return nil }
+        return item
+    }
+
+    static func cacheURL(
+        for filename: String,
+        photoSourceIdentifier: String
+    ) -> URL? {
+        switch photoSourceIdentifier {
+        case WidgetPhotoSource.personalLibraryID:
+            return cacheURL(for: filename)
+        case WidgetPhotoSource.familyWindowID:
+            guard let directory = SharedContainer.familyWidgetCacheDirectoryURL else {
+                return nil
+            }
+            return cacheURL(for: filename, in: directory)
+        default:
+            return nil
+        }
+    }
+
     private static func readManifest(from containerURL: URL) -> WidgetManifest? {
         let manifestURL = containerURL
             .appendingPathComponent(manifestFilename, isDirectory: false)
@@ -71,6 +112,26 @@ enum WidgetManifestReader {
                     "code": "\(value.code)",
                     "domain": value.domain
                 ]
+            )
+            return nil
+        }
+    }
+
+    private static func readFamilyManifest(from url: URL) -> FamilyWidgetManifest? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            SharedLog.widget.warning("manifest", "Family Widget manifest is unavailable")
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            return try decoder.decode(FamilyWidgetManifest.self, from: data)
+        } catch {
+            let value = error as NSError
+            SharedLog.widget.error(
+                "manifest",
+                "Family Widget manifest decode failed",
+                metadata: ["code": "\(value.code)", "domain": value.domain]
             )
             return nil
         }

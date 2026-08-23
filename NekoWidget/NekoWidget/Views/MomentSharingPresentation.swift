@@ -1,5 +1,77 @@
 import Foundation
 
+enum MomentFamilyWindowItemState: Equatable, Sendable {
+    case available
+    case acknowledged
+    case blocked
+    case revoked
+}
+
+/// Persistence-independent input for the Home/Widget selection boundary.
+/// The caller supplies a URL only after validating the canonical filename,
+/// JPEG metadata, and local file existence.
+struct MomentFamilyWindowPresentationInput: Equatable, Sendable {
+    let stableID: String
+    let state: MomentFamilyWindowItemState
+    let imageURL: URL?
+    let committedAt: Date
+    let receivedAt: Date
+}
+
+struct MomentFamilyWindowPresentation: Equatable, Sendable {
+    let latestStableID: String?
+    let latestImageURL: URL?
+    let latestReceivedAt: Date?
+    let priorityUntil: Date?
+    let safeCount: Int
+    let isPriority: Bool
+
+    static let empty = Self(
+        latestStableID: nil,
+        latestImageURL: nil,
+        latestReceivedAt: nil,
+        priorityUntil: nil,
+        safeCount: 0,
+        isPriority: false
+    )
+}
+
+/// One selection rule feeds both the top-level Window and the family Widget.
+/// Hidden states and unreadable files are excluded before ordering or counts,
+/// so neither surface can reveal that an unsafe photo existed.
+enum MomentFamilyWindowPresentationPolicy {
+    static let priorityDuration: TimeInterval = 2 * 60 * 60
+
+    static func make(
+        inputs: [MomentFamilyWindowPresentationInput],
+        now: Date
+    ) -> MomentFamilyWindowPresentation {
+        let displayable = inputs.filter {
+            ($0.state == .available || $0.state == .acknowledged)
+                && $0.imageURL != nil
+        }.sorted {
+            if $0.committedAt != $1.committedAt {
+                return $0.committedAt > $1.committedAt
+            }
+            return $0.stableID < $1.stableID
+        }
+        guard let latest = displayable.first,
+              let latestImageURL = latest.imageURL
+        else { return .empty }
+
+        let age = now.timeIntervalSince(latest.receivedAt)
+        let priorityUntil = latest.receivedAt.addingTimeInterval(priorityDuration)
+        return MomentFamilyWindowPresentation(
+            latestStableID: latest.stableID,
+            latestImageURL: latestImageURL,
+            latestReceivedAt: latest.receivedAt,
+            priorityUntil: priorityUntil,
+            safeCount: displayable.count,
+            isPriority: age >= 0 && now < priorityUntil
+        )
+    }
+}
+
 /// Sanitized, persistence-independent input describing one Share Extension
 /// handoff. It intentionally contains no image, path, admission identifier, or
 /// Server identifier.

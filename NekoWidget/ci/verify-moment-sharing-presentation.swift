@@ -9,6 +9,9 @@ enum MomentSharingPresentationVerifier {
         try verifiesMultipleDestinationsRemainGrouped()
         try verifiesTerminalPreparationOutcomes()
         try verifiesLatestServerAcceptanceDeterministically()
+        try verifiesFamilyWindowSafetyAndOrdering()
+        try verifiesFamilyWindowFreshnessBoundary()
+        try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
         print("Moment sharing presentation verifier passed")
     }
 
@@ -309,6 +312,124 @@ enum MomentSharingPresentationVerifier {
             "terminal outcome did not state that no send occurred and bytes were removed"
         )
         try require(presentation.hasActivity, "terminal outcomes were hidden")
+    }
+
+    private static func verifiesFamilyWindowSafetyAndOrdering() throws {
+        let now = date(10_000)
+        let visibleURL = URL(fileURLWithPath: "/safe/latest.jpg")
+        let olderURL = URL(fileURLWithPath: "/safe/older.jpg")
+        let presentation = MomentFamilyWindowPresentationPolicy.make(
+            inputs: [
+                familyInput(
+                    id: "blocked-newest",
+                    state: .blocked,
+                    url: URL(fileURLWithPath: "/hidden/blocked.jpg"),
+                    committedAt: 9_999,
+                    receivedAt: 9_999
+                ),
+                familyInput(
+                    id: "revoked-newer",
+                    state: .revoked,
+                    url: URL(fileURLWithPath: "/hidden/revoked.jpg"),
+                    committedAt: 9_998,
+                    receivedAt: 9_998
+                ),
+                familyInput(
+                    id: "missing-file",
+                    state: .available,
+                    url: nil,
+                    committedAt: 9_997,
+                    receivedAt: 9_997
+                ),
+                familyInput(
+                    id: "b-latest-safe",
+                    state: .acknowledged,
+                    url: visibleURL,
+                    committedAt: 9_996,
+                    receivedAt: 9_996
+                ),
+                familyInput(
+                    id: "a-tie-wins",
+                    state: .available,
+                    url: olderURL,
+                    committedAt: 9_996,
+                    receivedAt: 9_990
+                )
+            ],
+            now: now
+        )
+        try require(
+            presentation.latestStableID == "a-tie-wins",
+            "family latest ordering did not use stable ID as its tie-breaker"
+        )
+        try require(
+            presentation.latestImageURL == olderURL,
+            "hidden or missing family media became the visible image"
+        )
+        try require(
+            presentation.safeCount == 2,
+            "hidden or missing family media leaked into the visible count"
+        )
+    }
+
+    private static func verifiesFamilyWindowFreshnessBoundary() throws {
+        let receivedAt: TimeInterval = 20_000
+        let input = familyInput(
+            id: "safe",
+            state: .available,
+            url: URL(fileURLWithPath: "/safe/photo.jpg"),
+            committedAt: receivedAt,
+            receivedAt: receivedAt
+        )
+        let duration = MomentFamilyWindowPresentationPolicy.priorityDuration
+        let before = MomentFamilyWindowPresentationPolicy.make(
+            inputs: [input],
+            now: date(receivedAt + duration - 1)
+        )
+        let boundary = MomentFamilyWindowPresentationPolicy.make(
+            inputs: [input],
+            now: date(receivedAt + duration)
+        )
+        let future = MomentFamilyWindowPresentationPolicy.make(
+            inputs: [input],
+            now: date(receivedAt - 1)
+        )
+        try require(before.isPriority, "family photo lost priority before two hours")
+        try require(!boundary.isPriority, "two-hour boundary remained priority")
+        try require(!future.isPriority, "future receive time became priority")
+        try require(
+            boundary.safeCount == 1 && boundary.latestImageURL == input.imageURL,
+            "two-hour expiry incorrectly removed family history"
+        )
+    }
+
+    private static func verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier() throws {
+        guard let url = DeepLink.familyWindow(),
+              url.absoluteString == "nekowidget://family-window",
+              let parsed = DeepLink(url: url),
+              parsed.destination == .familyWindow,
+              parsed.shownAt == nil
+        else { throw VerificationError("family Widget deep link was not stable") }
+        try require(
+            DeepLink(url: URL(string: "nekowidget://family-window?id=photo")!) == nil,
+            "family Widget deep link accepted a photo identifier"
+        )
+    }
+
+    private static func familyInput(
+        id: String,
+        state: MomentFamilyWindowItemState,
+        url: URL?,
+        committedAt: TimeInterval,
+        receivedAt: TimeInterval
+    ) -> MomentFamilyWindowPresentationInput {
+        MomentFamilyWindowPresentationInput(
+            stableID: id,
+            state: state,
+            imageURL: url,
+            committedAt: date(committedAt),
+            receivedAt: date(receivedAt)
+        )
     }
 
     private static func delivery(

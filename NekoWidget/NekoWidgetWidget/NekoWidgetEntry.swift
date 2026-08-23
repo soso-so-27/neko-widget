@@ -11,6 +11,7 @@ struct NekoWidgetEntry: TimelineEntry {
     let imageVariant: WidgetImageVariant?
     let photoSourceIdentifier: String
     let usesFamilySpecificImage: Bool
+    let familyMomentIsFresh: Bool
     let isLiked: Bool
     let isLikeInteractionEnabled: Bool
 
@@ -26,12 +27,16 @@ struct NekoWidgetEntry: TimelineEntry {
             imageVariant: imageVariant,
             photoSourceIdentifier: photoSourceIdentifier,
             usesFamilySpecificImage: false,
+            familyMomentIsFresh: false,
             isLiked: false,
             isLikeInteractionEnabled: false
         )
     }
 
     var photoURL: URL? {
+        if photoSourceIdentifier == WidgetPhotoSource.familyWindowID {
+            return DeepLink.familyWindow()
+        }
         guard let localIdentifier else { return nil }
         return DeepLink.photo(localIdentifier: localIdentifier, shownAt: date)
     }

@@ -1,11 +1,16 @@
+import ImageIO
 import Photos
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 import WidgetKit
 
 extension Notification.Name {
     static let sharingMediaSyncRequested = Notification.Name(
         "jp.nekowidget.sharing.media-sync-requested"
+    )
+    static let momentSharingPresentationNeedsRefresh = Notification.Name(
+        "jp.nekowidget.sharing.presentation-needs-refresh"
     )
 }
 
@@ -55,6 +60,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var unavailableProfilePhotoAlbumIdentifiers = Set<String>()
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
+    @Published var isFamilyWindowPresented = false
+    @Published private(set) var familyWindowPresentation: MomentFamilyWindowPresentation = .empty
 
     var isLimitedAccess: Bool { authorizationStatus == .limited }
     /// One already-curated value for a SwiftUI presentation pass. Large
@@ -218,6 +225,8 @@ final class AppViewModel: ObservableObject {
     private var successfulImageLoadCount = 0
     private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
     private var sharingSyncObserver: NSObjectProtocol?
+    private var momentPresentationRefreshObserver: NSObjectProtocol?
+    private var familyWindowRefreshSequence = 0
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
@@ -284,19 +293,32 @@ final class AppViewModel: ObservableObject {
                 "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
             ]
         )
-        let coordinator = momentSharingCoordinator
         sharingSyncObserver = NotificationCenter.default.addObserver(
             forName: .sharingMediaSyncRequested,
             object: nil,
             queue: .main
-        ) { _ in
-            Task { await coordinator.synchronize(trigger: "pairing-or-consent") }
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.synchronizeMomentSharing(trigger: "pairing-or-consent")
+            }
+        }
+        momentPresentationRefreshObserver = NotificationCenter.default.addObserver(
+            forName: .momentSharingPresentationNeedsRefresh,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshFamilyWindowOutputs(trigger: "local-state-change")
+            }
         }
     }
 
     deinit {
         if let sharingSyncObserver {
             NotificationCenter.default.removeObserver(sharingSyncObserver)
+        }
+        if let momentPresentationRefreshObserver {
+            NotificationCenter.default.removeObserver(momentPresentationRefreshObserver)
         }
     }
 
@@ -309,8 +331,8 @@ final class AppViewModel: ObservableObject {
         // The Share Extension promises that a queued explicit send resumes
         // when the app opens. Keep that lifecycle independent from scanner,
         // curation and cat-identity storage health.
-        Task { [momentSharingCoordinator] in
-            await momentSharingCoordinator.synchronize(trigger: "launch")
+        Task { @MainActor [weak self] in
+            await self?.synchronizeMomentSharing(trigger: "launch")
         }
 
         guard await loadCatCandidateCuration() else {
@@ -445,8 +467,8 @@ final class AppViewModel: ObservableObject {
     /// Any background execution is best effort and is never required for data
     /// correctness or promised to the user.
     func syncOnActive() async {
-        Task { [momentSharingCoordinator] in
-            await momentSharingCoordinator.synchronize(trigger: "foreground")
+        Task { @MainActor [weak self] in
+            await self?.synchronizeMomentSharing(trigger: "foreground")
         }
         guard catIdentityLoadState == .ready else {
             logCandidateAuthorityUnavailable(operation: "sync_on_active")
@@ -1569,6 +1591,142 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func synchronizeMomentSharing(trigger: String) async {
+        await momentSharingCoordinator.synchronize(trigger: trigger)
+        await refreshFamilyWindowOutputs(trigger: trigger)
+    }
+
+    func refreshFamilyWindowOutputs(trigger: String) async {
+        familyWindowRefreshSequence += 1
+        let refreshSequence = familyWindowRefreshSequence
+        var lifecycleToken: SharingLifecycleGate.Token?
+        do {
+            let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
+            lifecycleToken = bootstrap.lifecycleToken
+            guard refreshSequence == familyWindowRefreshSequence else { return }
+            let configuration = SharingAPIConfiguration.current
+            guard configuration.isMediaAvailable,
+                  bootstrap.state.phase == .paired,
+                  bootstrap.state.mediaSharingConsentVersion
+                    == PairingMediaSharingConsent.currentVersion,
+                  bootstrap.state.mediaSharingConsentAcceptedAt != nil
+            else {
+                familyWindowPresentation = .empty
+                _ = try await widgetCacheBuilder.clearFamilyWindow(
+                    validating: bootstrap.lifecycleToken
+                )
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+                return
+            }
+
+            let stateAndInputs = try await Task.detached(priority: .utility) {
+                let state = try MomentSharingStateStore.load(
+                    validating: bootstrap.lifecycleToken
+                )
+                return (state, Self.familyWindowInputs(from: state))
+            }.value
+            guard refreshSequence == familyWindowRefreshSequence else { return }
+            let presentation = MomentFamilyWindowPresentationPolicy.make(
+                inputs: stateAndInputs.1,
+                now: .now
+            )
+            familyWindowPresentation = presentation
+            let latestItem = presentation.latestStableID.flatMap { stableID in
+                stateAndInputs.0.inbox.first(where: { $0.id == stableID })
+            }
+            let familyManifest = try await widgetCacheBuilder.buildFamilyWindow(
+                from: latestItem,
+                freshUntil: presentation.priorityUntil,
+                validating: bootstrap.lifecycleToken
+            )
+            guard refreshSequence == familyWindowRefreshSequence else { return }
+            if familyManifest.item == nil {
+                familyWindowPresentation = .empty
+            }
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            SharedLog.app.debug(
+                "family-window",
+                "Family presentation refreshed",
+                metadata: [
+                    "displayable": "\(familyWindowPresentation.safeCount)",
+                    "priority": "\(familyWindowPresentation.isPriority)",
+                    "trigger": String(trigger.prefix(32))
+                ]
+            )
+        } catch {
+            guard refreshSequence == familyWindowRefreshSequence else { return }
+            familyWindowPresentation = .empty
+            if let lifecycleToken {
+                _ = try? await widgetCacheBuilder.clearFamilyWindow(
+                    validating: lifecycleToken
+                )
+                WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            }
+            Self.logError(
+                error,
+                category: "family-window",
+                operation: "refresh_presentation"
+            )
+        }
+    }
+
+    private nonisolated static func familyWindowInputs(
+        from state: MomentSharingState
+    ) -> [MomentFamilyWindowPresentationInput] {
+        state.inbox.map { item in
+            let presentationState: MomentFamilyWindowItemState
+            switch item.state {
+            case .available: presentationState = .available
+            case .acknowledged: presentationState = .acknowledged
+            case .blocked: presentationState = .blocked
+            case .revoked: presentationState = .revoked
+            }
+            return MomentFamilyWindowPresentationInput(
+                stableID: item.id,
+                state: presentationState,
+                imageURL: validatedReceivedMomentImageURL(for: item),
+                committedAt: item.committedAt,
+                receivedAt: item.receivedAt
+            )
+        }
+    }
+
+    private nonisolated static func validatedReceivedMomentImageURL(
+        for item: MomentInboxItem
+    ) -> URL? {
+        guard item.state == .available || item.state == .acknowledged,
+              let filename = item.localJPEGFileName,
+              filename == "\(item.id).jpg",
+              filename == (filename as NSString).lastPathComponent,
+              let directory = SharedContainer.momentSharingReceivedDirectoryURL
+        else { return nil }
+        let url = directory.appendingPathComponent(filename, isDirectory: false)
+        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedURL = url.resolvingSymlinksInPath().standardizedFileURL
+        guard resolvedURL.deletingLastPathComponent() == resolvedDirectory,
+              let values = try? resolvedURL.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey]
+              ),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize > 0,
+              fileSize <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28,
+              let source = CGImageSourceCreateWithURL(
+                resolvedURL as CFURL,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+              ),
+              CGImageSourceGetCount(source) == 1,
+              CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(width),
+              (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(height)
+        else { return nil }
+        return resolvedURL
+    }
+
     func handleURL(_ url: URL) {
         guard let link = DeepLink(url: url) else {
             SharedLog.app.warning(
@@ -1588,6 +1746,10 @@ final class AppViewModel: ObservableObject {
                 localIdentifier: localIdentifier,
                 shownAt: link.shownAt
             )
+        case .familyWindow:
+            isFamilyWindowPresented = true
+            SharedLog.app.info("deeplink", "Opened family window from Widget")
+            return
         }
         guard let readyRoute = candidatePhotoRouteGate.receive(
             route,
