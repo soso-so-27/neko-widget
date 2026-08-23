@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,8 @@ def _read_json(path: Path) -> Any:
 
 
 def _bounded_integer(value: str, minimum: int, maximum: int) -> bool:
+    if re.fullmatch(r"[+-]?[0-9]+", value) is None:
+        return False
     try:
         number = int(value)
     except ValueError:

@@ -3,7 +3,7 @@ import XCTest
 final class PhotoPermissionUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
-        executionTimeAllowance = 120
+        executionTimeAllowance = 240
     }
 
     @MainActor

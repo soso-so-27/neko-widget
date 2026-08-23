@@ -954,7 +954,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         self.assertEqual(1, workflow.count(test_call))
         self.assertLess(
             workflow.index(test_call),
-            workflow.index("- name: Build app and widget for iOS Simulator"),
+            workflow.index("- name: Build disabled app and extensions for iOS Simulator"),
         )
 
 

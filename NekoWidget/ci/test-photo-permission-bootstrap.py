@@ -134,6 +134,14 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
         (self.log_directory / "app.jsonl").write_text(
             "malformed unrecognized stream\n", encoding="utf-8"
         )
+        for name in (
+            "app-1_0-22259-4d2db22bf65d.jsonl",
+            "app-１０-22259-4d2db22bf65d.jsonl",
+            "app-10-+2_2-4d2db22bf65d.jsonl",
+        ):
+            (self.log_directory / name).write_text(
+                "malformed non-Swift integer stream\n", encoding="utf-8"
+            )
         self.validate()
 
         self.app_log_path().unlink()
@@ -168,6 +176,7 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
         )
         harness = (CI_DIRECTORY / "run-simulator-smoke.sh").read_text(encoding="utf-8")
         self.assertIn("permissionAlert.waitForExistence(timeout: 60)", ui_test)
+        self.assertIn("executionTimeAllowance = 240", ui_test)
         self.assertIn("Allow Full Access", ui_test)
         self.assertIn("フルアクセスを許可", ui_test)
         self.assertIn("-parallel-testing-enabled NO", harness)
