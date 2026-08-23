@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -704,12 +704,15 @@ jobs:
         run: |
           set -euo pipefail
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
+          widget_path="$app_path/PlugIns/NekoWidgetWidgetExtension.appex"
           share_path="$app_path/PlugIns/NekoWidgetShareExtension.appex"
+          test -f "$widget_path/PrivacyInfo.xcprivacy"
           test -f "$share_path/PrivacyInfo.xcprivacy"
           python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
             --info-plist "$app_path/Info.plist" \
             --share-info-plist "$share_path/Info.plist" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
+            --widget-privacy-manifest "$widget_path/PrivacyInfo.xcprivacy" \
             --share-privacy-manifest "$share_path/PrivacyInfo.xcprivacy" \
             --export-reviewed "${SHARING_EXPORT_REVIEWED:-NO}" \
             --expected-mode "$SHARING_EXPECTED_MODE" \
@@ -878,7 +881,7 @@ jobs:
 
       - name: Upload encrypted signed app and symbols
         if: ${{ inputs.retain_signed_artifacts }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -985,7 +988,7 @@ jobs:
 
       - name: Upload release diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-release-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

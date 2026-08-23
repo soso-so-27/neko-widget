@@ -70,6 +70,20 @@ def share_privacy() -> dict:
     }
 
 
+def widget_privacy() -> dict:
+    return {
+        "NSPrivacyTracking": False,
+        "NSPrivacyTrackingDomains": [],
+        "NSPrivacyAccessedAPITypes": [
+            {
+                "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+                "NSPrivacyAccessedAPITypeReasons": ["C617.1"],
+            }
+        ],
+        "NSPrivacyCollectedDataTypes": [],
+    }
+
+
 def info(
     pairing: object,
     media: object,
@@ -133,6 +147,9 @@ class SharingReleasePreflightTests(unittest.TestCase):
         privacy_value: dict,
         export_reviewed: str = "YES",
         share_info_value: dict | None = None,
+        widget_privacy_value: dict | None = None,
+        widget_privacy_exists: bool = True,
+        widget_privacy_bytes: bytes | None = None,
         share_privacy_value: dict | None = None,
         expected_mode: str | None = None,
         expected_api_origin: str | None = None,
@@ -147,6 +164,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             info_path = root / "Info.plist"
             share_info_path = root / "ShareInfo.plist"
             privacy_path = root / "PrivacyInfo.xcprivacy"
+            widget_privacy_path = root / "WidgetPrivacyInfo.xcprivacy"
             share_privacy_path = root / "SharePrivacyInfo.xcprivacy"
             with info_path.open("wb") as stream:
                 plistlib.dump(info_value, stream)
@@ -157,6 +175,16 @@ class SharingReleasePreflightTests(unittest.TestCase):
                 )
             with privacy_path.open("wb") as stream:
                 plistlib.dump(privacy_value, stream)
+            if widget_privacy_bytes is not None:
+                widget_privacy_path.write_bytes(widget_privacy_bytes)
+            elif widget_privacy_exists:
+                with widget_privacy_path.open("wb") as stream:
+                    plistlib.dump(
+                        widget_privacy()
+                        if widget_privacy_value is None
+                        else widget_privacy_value,
+                        stream,
+                    )
             with share_privacy_path.open("wb") as stream:
                 plistlib.dump(
                     share_privacy()
@@ -186,6 +214,8 @@ class SharingReleasePreflightTests(unittest.TestCase):
                     str(share_info_path),
                     "--privacy-manifest",
                     str(privacy_path),
+                    "--widget-privacy-manifest",
+                    str(widget_privacy_path),
                     "--share-privacy-manifest",
                     str(share_privacy_path),
                     "--export-reviewed",
@@ -225,6 +255,64 @@ class SharingReleasePreflightTests(unittest.TestCase):
         result = self.run_preflight(info("NO", "NO"), privacy(), "NO")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("sharing is disabled", result.stdout)
+
+    def test_widget_privacy_manifest_is_required(self) -> None:
+        result = self.run_preflight(
+            info("NO", "NO"),
+            privacy(),
+            "NO",
+            widget_privacy_exists=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Could not read plist", result.stderr)
+
+    def test_widget_privacy_manifest_must_be_valid_plist(self) -> None:
+        result = self.run_preflight(
+            info("NO", "NO"),
+            privacy(),
+            "NO",
+            widget_privacy_bytes=b"not a plist",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Could not read plist", result.stderr)
+
+    def test_widget_privacy_manifest_requires_file_timestamp_reason(self) -> None:
+        manifest = widget_privacy()
+        manifest["NSPrivacyAccessedAPITypes"] = []
+        result = self.run_preflight(
+            info("NO", "NO"),
+            privacy(),
+            "NO",
+            widget_privacy_value=manifest,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FileTimestamp", result.stderr)
+
+    def test_widget_privacy_manifest_rejects_collection(self) -> None:
+        manifest = widget_privacy()
+        manifest["NSPrivacyCollectedDataTypes"] = privacy(USER_ID)[
+            "NSPrivacyCollectedDataTypes"
+        ]
+        result = self.run_preflight(
+            info("NO", "NO"),
+            privacy(),
+            "NO",
+            widget_privacy_value=manifest,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not enabled", result.stderr)
+
+    def test_widget_privacy_manifest_rejects_tracking(self) -> None:
+        manifest = widget_privacy()
+        manifest["NSPrivacyTracking"] = True
+        result = self.run_preflight(
+            info("NO", "NO"),
+            privacy(),
+            "NO",
+            widget_privacy_value=manifest,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NSPrivacyTracking=false", result.stderr)
 
     def test_all_off_rejects_an_overdeclared_collection(self) -> None:
         result = self.run_preflight(info("NO", "NO"), privacy(USER_ID), "NO")

@@ -2,7 +2,7 @@
 
 この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
 
-Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、履歴、ホーム、Widgetの受入まで完了しました。2026-08-23現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視と緊急OFF](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
+Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、履歴、ホーム、Widgetの受入、Build 34で名前付きのまどと1枚共有の本人2台受入まで完了しました。Build 35は共有UXと期限付きの「思い出に残す」を追加する内部候補です。2026-08-24現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視と緊急OFF](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
 
 ## release modeの固定値
 

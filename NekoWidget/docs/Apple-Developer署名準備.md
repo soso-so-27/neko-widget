@@ -419,7 +419,7 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 
 2026年4月28日以降のApple要件に合わせ、workflowはXcode 26.3とiOS 26 SDKを持つrunnerを明示している。minimum deployment targetのiOS 17.1はそのまま維持できる。
 
-アプリの現在の暗号関連処理はWidget cache名を作るSHA-256 hashだけで、独自暗号、VPN、暗号通信実装、外部暗号ライブラリはない。この確認に基づき、App本体のInfo.plistへ`ITSAppUsesNonExemptEncryption = false`を設定している。将来、通信機能や暗号処理を追加した場合は、次のupload前にこの宣言と輸出コンプライアンス回答を再評価する。
+アプリはWidget cache名のSHA-256に加え、共有写真とまど名のためにCryptoKitのX25519、Ed25519、HKDF、ChaChaPolyを使用する。独自暗号実装や外部暗号ライブラリは含めず、暗号処理はApple OSが提供するAPIだけに限定している。[Appleの書類区分](https://developer.apple.com/help/app-store-connect/reference/export-compliance-documentation-for-encryption/)は「AppleのOS内の暗号化だけを使用する場合はApp Store Connectへの書類不要」としており、現行`ITSAppUsesNonExemptEncryption = false`はこの免除を前提とする。ただし[輸出コンプライアンスの判定責任](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance)は配布者にあるため、外部TestFlightまたはApp Store提出前にAccount HolderがApp Store Connectの質問へ現行実装どおり回答し、その結果と配布地域をrelease記録へ残す。実装、依存関係、配布地域が変わった場合は次のupload前に再判定する。
 
 ## 9. 秘密素材の扱い
 
@@ -429,7 +429,7 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 - 秘密鍵のパスフレーズ、P12 password、Keychain passwordは使い回さない。
 - Key ID、Team ID、Bundle IDは秘密ではないが、秘密鍵と一緒に公開しない。
 - P8、P12、または`AppleDistribution.private.pem`が漏れた疑いがあれば、該当API Keyまたは証明書を直ちにrevokeし、profileとSecretsを再作成する。
-- App Group capabilityやcertificateを変更したら、2つのprofileを再生成する。
+- App Group capabilityやcertificateを変更したら、App、Widget、Share Extensionの3つのprofileを再生成する。
 - `retain_signed_artifacts = true`では署名済みIPA、xcarchive、dSYMを暗号化してartifactへ出す。artifactと復号パスワードを同じ場所に保管しない。
 
 ## 10. 承認後チェックリスト
