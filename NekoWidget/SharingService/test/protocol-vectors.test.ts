@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import fixture from "../../ci/fixtures/pairing-protocol-v1.json";
 import sharingFixture from "../../ci/fixtures/sharing-protocol-v1.json";
 import windowNameFixture from "../../ci/fixtures/window-name-protocol-v1.json";
-import { base64urlDecode, base64urlEncode, sha256, sha256Base64url } from "../src/encoding";
+import {
+  base64urlDecode,
+  base64urlEncode,
+  sha256,
+  sha256Base64url,
+  verifyEd25519,
+} from "../src/encoding";
 import {
   enrollmentTranscript,
   encodeCanonicalFields,
@@ -74,6 +80,11 @@ describe("private window-name protocol v1 golden vector", () => {
     const canonical = encodeCanonicalFields(record.fields);
     expect(base64urlEncode(canonical)).toBe(record.expected.canonicalBase64URL);
     expect(await sha256Base64url(canonical)).toBe(record.expected.sha256);
+    expect(await verifyEd25519(
+      record.expected.signingPublicKey,
+      record.expected.signature,
+      canonical,
+    )).toBe(true);
   });
 });
 

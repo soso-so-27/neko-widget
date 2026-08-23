@@ -8,15 +8,20 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var configurationMessage: String?
     @Published private(set) var windowDisplayName = PrivateWindowDisplayName.fallback
+    @Published private(set) var isSynchronizingWindowName = false
+    @Published private(set) var windowNameStatusMessage: String?
+    @Published private(set) var windowNameStatusIsError = false
     @Published var enteredInvitationCode = ""
     @Published var hasConfirmedPhrase = false
 
     private let configuration: SharingAPIConfiguration
+    private let windowNameCoordinator: MomentSharingCoordinator
     private var api: (any PairingAPIClientProtocol)?
     private var didBootstrap = false
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
+        windowNameCoordinator = MomentSharingCoordinator(configuration: configuration)
         if configuration.isAvailable {
             do {
                 api = try URLSessionPairingAPIClient(configuration: configuration)
@@ -91,11 +96,12 @@ final class PairingViewModel: ObservableObject {
     /// CAS revision remain untouched, so a label edit cannot interrupt a
     /// concurrent approval, refresh, consent, or cancellation operation.
     @discardableResult
-    func updateWindowDisplayName(_ rawValue: String) -> Bool {
+    func updateWindowDisplayName(_ rawValue: String) async -> Bool {
         guard canEditWindowDisplayName else {
             configurationMessage = "まどの名前は、まどを作った人が変更できます。"
             return false
         }
+        guard !isSynchronizingWindowName, !isWorking else { return false }
         let operation: PairingOperation
         do { operation = try beginOperation() }
         catch {
@@ -110,10 +116,49 @@ final class PairingViewModel: ObservableObject {
             )
             windowDisplayName = saved.displayName
             configurationMessage = nil
-            NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+            windowNameStatusIsError = false
+            windowNameStatusMessage = operation.expectedState.phase == .paired
+                ? "このiPhoneに保存しました。相手へ共有しています…"
+                : "このiPhoneに保存しました。ペアリング完了後に相手へ共有します。"
+            NotificationCenter.default.post(
+                name: .momentSharingPresentationNeedsRefresh,
+                object: nil
+            )
+            guard operation.expectedState.phase == .paired else { return true }
+
+            isSynchronizingWindowName = true
+            defer { isSynchronizingWindowName = false }
+            do {
+                try await windowNameCoordinator.synchronizeWindowNameForUser(
+                    trigger: "explicit-window-name-save"
+                )
+                windowNameStatusIsError = false
+                windowNameStatusMessage = "相手のiPhoneへ反映できる状態です。"
+            } catch {
+                // Refresh from disk because a terminal authenticated response
+                // may have revoked and purged the pairing while this call was
+                // awaiting the relay.
+                reloadWindowDisplayName()
+                windowNameStatusIsError = true
+                if state?.phase == .paired {
+                    // The local edit is durable when only the relay is
+                    // unavailable. Keep this copy free of internal details.
+                    windowNameStatusMessage =
+                        "このiPhoneには保存しましたが、相手への共有を完了できませんでした。もう一度お試しください。"
+                } else {
+                    windowNameStatusMessage =
+                        "共有が解除されたため保存内容を消去しました。もう一度ペアリングしてください。"
+                }
+                SharedLog.app.warning(
+                    "window-name-sync",
+                    "Explicit private window name synchronization failed"
+                )
+            }
             return true
         } catch {
             configurationMessage = error.localizedDescription
+            windowNameStatusIsError = true
+            windowNameStatusMessage = "まどの名前を保存できませんでした。"
             SharedLog.app.error(
                 "window-presentation",
                 "Private window display name could not be saved",

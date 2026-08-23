@@ -26,6 +26,9 @@ private struct WindowNameProtocolFixture: Decodable {
         struct Expected: Decodable {
             let canonicalBase64URL: String
             let sha256: String
+            let signingPrivateKey: String
+            let signingPublicKey: String
+            let signature: String
         }
 
         let fields: [String]
@@ -86,6 +89,28 @@ require(
     Data(SHA256.hash(data: fixtureTranscript)).base64URLEncodedString()
         == fixtureRecord.expected.sha256,
     "Swift window-name signature transcript hash diverged from the shared fixture"
+)
+guard let fixturePrivateKeyData = Data(
+    base64URLString: fixtureRecord.expected.signingPrivateKey
+),
+      let expectedFixturePublicKey = Data(
+          base64URLString: fixtureRecord.expected.signingPublicKey
+      ),
+      let expectedFixtureSignature = Data(
+          base64URLString: fixtureRecord.expected.signature
+      )
+else { fatalError("window-name signature fixture is not canonical base64url") }
+let fixturePrivateKey = try Curve25519.Signing.PrivateKey(
+    rawRepresentation: fixturePrivateKeyData
+)
+require(
+    fixturePrivateKey.publicKey.rawRepresentation == expectedFixturePublicKey,
+    "Swift Ed25519 public key diverged from the shared fixture"
+)
+let fixtureSignature = try fixturePrivateKey.signature(for: fixtureTranscript)
+require(
+    fixtureSignature == expectedFixtureSignature,
+    "Swift Ed25519 signature diverged from the shared fixture"
 )
 let payload = try MomentCrypto.prepare(
     canonicalJPEG: jpeg,

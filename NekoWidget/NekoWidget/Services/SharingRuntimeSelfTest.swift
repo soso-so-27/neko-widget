@@ -273,6 +273,33 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
     }
 }
 
+private actor RuntimeWindowNameAPI: PrivateWindowNameAPIClientProtocol {
+    private var getCount = 0
+    private var putCount = 0
+
+    func currentWindowName(
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> PrivateWindowNameRelayValue? {
+        getCount += 1
+        return nil
+    }
+
+    func putWindowName(
+        _ payload: PrivateWindowNamePreparedPayload,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> PrivateWindowNameRelayValue {
+        putCount += 1
+        throw MomentSharingError.invalidPayload
+    }
+
+    func runtimeCounts() -> (gets: Int, puts: Int) {
+        (getCount, putCount)
+    }
+}
+
 private actor RuntimeMomentProcessQueueProbe {
     private struct RunWaiter {
         let expectedCount: Int
@@ -458,8 +485,8 @@ actor SharingRuntimeSelfTestRunner {
             results.append(await runAsync("lease-heartbeat") {
                 try await Self.finishLeaseChecks(&value)
             })
-            results.append(run("peer-revoke-terminal-purge") {
-                try Self.testTerminalPurge(value)
+            results.append(await runAsync("peer-revoke-terminal-purge") {
+                try await Self.testTerminalPurge(value)
             })
             fixture = value
         } else {
@@ -3740,7 +3767,7 @@ actor SharingRuntimeSelfTestRunner {
         replacement.release()
     }
 
-    private static func testTerminalPurge(_ fixture: StoreFixture) throws {
+    private static func testTerminalPurge(_ fixture: StoreFixture) async throws {
         let snapshot = try PairingStateStore.beginOperation()
         guard let unpaired = snapshot.state,
               unpaired.phase == .unpaired,
@@ -3876,11 +3903,112 @@ actor SharingRuntimeSelfTestRunner {
             pairing: paired,
             validating: snapshot.lifecycleToken
         )
+        let firstPendingFile = try Data(contentsOf: windowNameSyncURL)
+        let independentlyPreparedRetry = try PrivateWindowNameCrypto.prepare(
+            displayName: secondWindowName.displayName,
+            context: synchronizedName.context,
+            roomKey: roomKey,
+            ownerSigningPrivateKey: keychainProbe.signingPrivateKey
+        )
+        let replacementRetryID = UUID()
+        let exactRetry = try PrivateWindowNameSyncStore.stagePending(
+            independentlyPreparedRetry,
+            clientRequestID: replacementRetryID,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        let retriedPendingFile = try Data(contentsOf: windowNameSyncURL)
         guard stagedName.payload == synchronizedName,
               stagedName.clientRequestID == retryID,
               reloadedPending?.payload == synchronizedName,
               reloadedPending?.clientRequestID == retryID,
-              FileManager.default.fileExists(atPath: windowNameSyncURL.path),
+              independentlyPreparedRetry != synchronizedName,
+              replacementRetryID != retryID,
+              exactRetry.payload == synchronizedName,
+              exactRetry.clientRequestID == retryID,
+              retriedPendingFile == firstPendingFile,
+              FileManager.default.fileExists(atPath: windowNameSyncURL.path)
+        else { throw PairingError.stateUnavailable }
+
+        // Build 33 persisted no transcript-encoding marker. Reproduce that
+        // exact JSON shape, prove it is never exposed for verbatim retry, then
+        // migrate only the ambiguous envelope while retaining the rollback
+        // floor before a corrected payload receives a fresh idempotency key.
+        guard var legacyPendingState = try PrivateWindowNameSyncStore.load(
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        ) else { throw PairingError.stateUnavailable }
+        let legacyAcceptedHash = Data(repeating: 0x6A, count: 32)
+        legacyPendingState.acceptedOwnerRevision = firstWindowName.storageRevision
+        legacyPendingState.acceptedCiphertextSHA256 = legacyAcceptedHash
+        legacyPendingState.pendingTranscriptEncodingVersion = nil
+        let legacyEncoder = JSONEncoder()
+        legacyEncoder.dateEncodingStrategy = .iso8601
+        legacyEncoder.outputFormatting = [
+            .prettyPrinted,
+            .sortedKeys,
+            .withoutEscapingSlashes
+        ]
+        let legacyPendingData = try legacyEncoder.encode(legacyPendingState.validated())
+        guard legacyPendingData.range(
+            of: Data("pendingTranscriptEncodingVersion".utf8)
+        ) == nil else { throw PairingError.stateUnavailable }
+        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
+            try SharingSecureFile.write(legacyPendingData, to: windowNameSyncURL)
+        }
+        guard try PrivateWindowNameSyncStore.pending(
+            ownerRevision: secondWindowName.storageRevision,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        ) == nil,
+              let legacyBeforeMigration = try PrivateWindowNameSyncStore.load(
+                  pairing: paired,
+                  validating: snapshot.lifecycleToken
+              )
+        else { throw PairingError.stateUnavailable }
+
+        let migrationDate = Date(timeIntervalSince1970: 1_780_000_000)
+        guard try PrivateWindowNameSyncStore.discardLegacyPendingAfterAuthoritativeRead(
+            pairing: paired,
+            validating: snapshot.lifecycleToken,
+            now: migrationDate
+        ),
+              let migratedLegacyState = try PrivateWindowNameSyncStore.load(
+                  pairing: paired,
+                  validating: snapshot.lifecycleToken
+              ),
+              migratedLegacyState.storageRevision
+                == legacyBeforeMigration.storageRevision + 1,
+              migratedLegacyState.acceptedOwnerRevision
+                == firstWindowName.storageRevision,
+              migratedLegacyState.acceptedCiphertextSHA256 == legacyAcceptedHash,
+              migratedLegacyState.pendingPayload == nil,
+              migratedLegacyState.pendingClientRequestID == nil,
+              migratedLegacyState.pendingTranscriptEncodingVersion == nil,
+              !(try PrivateWindowNameSyncStore
+                  .discardLegacyPendingAfterAuthoritativeRead(
+                      pairing: paired,
+                      validating: snapshot.lifecycleToken,
+                      now: migrationDate
+                  ))
+        else { throw PairingError.stateUnavailable }
+
+        let correctedRetryID = UUID()
+        let correctedPending = try PrivateWindowNameSyncStore.stagePending(
+            synchronizedName,
+            clientRequestID: correctedRetryID,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        guard correctedRetryID != retryID,
+              correctedPending.payload == synchronizedName,
+              correctedPending.clientRequestID == correctedRetryID,
+              let correctedState = try PrivateWindowNameSyncStore.load(
+                  pairing: paired,
+                  validating: snapshot.lifecycleToken
+              ),
+              correctedState.pendingTranscriptEncodingVersion
+                == PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion,
               try PrivateWindowNameSyncStore.recordAccepted(
                 synchronizedName,
                 pairing: paired,
@@ -3929,6 +4057,31 @@ actor SharingRuntimeSelfTestRunner {
         }
         guard (try PairingStateStore.load())?.storageRevision
                 == pairingRevisionBeforeRename
+        else { throw PairingError.stateUnavailable }
+
+        let reportOnlyUntil = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 60 * 60
+        )
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: reportOnlyUntil,
+            validating: snapshot.lifecycleToken,
+            now: .now
+        )
+        let reportOnlyAPI = RuntimeWindowNameAPI()
+        let nameCoordinator = MomentSharingCoordinator()
+        do {
+            try await nameCoordinator.runtimeSynchronizeWindowName(
+                api: reportOnlyAPI
+            )
+            throw PairingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case let .reportOnly(until) = error,
+                  until == reportOnlyUntil
+            else { throw error }
+        }
+        let reportOnlyCounts = await reportOnlyAPI.runtimeCounts()
+        guard reportOnlyCounts.gets == 0,
+              reportOnlyCounts.puts == 0
         else { throw PairingError.stateUnavailable }
 
         var wrongWindowIdentity = paired

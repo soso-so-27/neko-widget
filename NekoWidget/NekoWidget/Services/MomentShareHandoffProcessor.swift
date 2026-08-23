@@ -345,6 +345,48 @@ struct MomentShareHandoffProcessor: Sendable {
         return promotedCount
     }
 
+    /// Republishes only the sanitized destination label consumed by the Share
+    /// Extension. A rename must not drain a staged photo or start relay I/O.
+    /// Existing bindings retain their admission IDs, so pending captures stay
+    /// attached to the same locally authorized destination.
+    func refreshAdmissionLabel(
+        pairing: PairingState,
+        credential: PairingCredential,
+        lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws {
+        guard pairing.phase == .paired,
+              pairing.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
+              pairing.mediaSharingConsentAcceptedAt != nil,
+              let spaceID = pairing.spaceID,
+              let participantID = pairing.participantID,
+              pairing.credentialAccount == credential.account,
+              pairing.installationMarker == credential.installationMarker,
+              participantID == credential.participantIDString,
+              credential.roomKey?.count == 32,
+              try MomentSharingStateStore.load().reportOnlyUntil == nil
+        else { return }
+
+        try SharingLifecycleGate.validate(lifecycleToken)
+        let binding = try MomentShareHandoffStore.makeBindingSHA256(
+            installationMarker: pairing.installationMarker,
+            spaceID: spaceID,
+            participantID: participantID
+        )
+        let displayName = PrivateWindowPresentationStore.resolvedDisplayName(
+            pairing: pairing,
+            validating: lifecycleToken
+        )
+        _ = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: binding,
+                displayName: displayName
+            )],
+            validating: lifecycleToken,
+            now: now
+        )
+    }
+
     private func reconcileOrPromote(
         claim: MomentPendingCaptureClaim,
         payload: MomentPreparedPayload?,

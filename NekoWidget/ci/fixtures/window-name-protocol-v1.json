@@ -17,7 +17,10 @@
     "ciphertextSHA256": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
     "expected": {
       "canonicalBase64URL": "ABZOVzIuV0lORE9XLU5BTUUtUkVDT1JEAAExAA1zcGFjZV9maXh0dXJlAAxtZW1iZXJfb3duZXIAATcAATEAK0FBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDg",
-      "sha256": "_q6zOqnojpwSYNF9Z659G3KaZ4I_aKEVODOo_2NNg1o"
+      "sha256": "_q6zOqnojpwSYNF9Z659G3KaZ4I_aKEVODOo_2NNg1o",
+      "signingPrivateKey": "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
+      "signingPublicKey": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+      "signature": "z2CdVr7TEdr-LPNCfXcqpE0wwDvE5wHPW8pNnaQoUxlxY6Sn9Tep5T_Yf4xJQTXytnE2GBrE7as8zZt5jOIHCw"
     }
   }
 }
