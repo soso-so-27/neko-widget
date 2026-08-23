@@ -53,6 +53,7 @@ jobs:
           python3 ci/test-validate-sharing-release.py
           python3 ci/test-validate-sharing-runtime-self-test.py
           python3 ci/test-public-policy-site.py
+          python3 ci/test-export-temp-file-lifecycle.py
 
       - name: Verify Swift pairing protocol vectors
         working-directory: NekoWidget

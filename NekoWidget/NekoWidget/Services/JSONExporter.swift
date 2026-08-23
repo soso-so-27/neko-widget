@@ -6,6 +6,7 @@ struct JSONExporter {
         _ snapshot: LibrarySnapshot,
         curation: CatCandidateCurationState = .empty
     ) throws -> URL {
+        TemporaryExportFileLifecycle.removeManagedFiles(kinds: [.verificationJSON])
         let exportedAt = Date.now
         let likeMeasurement = try SharedLikeStore.measurementSnapshot()
         let formatter = DateFormatter()
@@ -14,16 +15,21 @@ struct JSONExporter {
         let filename = "neko-widget-\(formatter.string(from: exportedAt)).json"
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(filename, isDirectory: false)
-        try AtomicJSON.write(
-            VerificationExportPayload(
-                snapshot: snapshot,
-                exportedAt: exportedAt,
-                likeMeasurement: likeMeasurement,
-                curation: curation
-            ),
-            to: url
-        )
-        return url
+        do {
+            try AtomicJSON.write(
+                VerificationExportPayload(
+                    snapshot: snapshot,
+                    exportedAt: exportedAt,
+                    likeMeasurement: likeMeasurement,
+                    curation: curation
+                ),
+                to: url
+            )
+            return url
+        } catch {
+            TemporaryExportFileLifecycle.removeManagedFile(at: url)
+            throw error
+        }
     }
 }
 

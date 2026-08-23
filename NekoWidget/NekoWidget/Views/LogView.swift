@@ -75,10 +75,11 @@ struct LogView: View {
         .refreshable {
             await viewModel.refresh()
         }
-        .sheet(item: $exportFile) { file in
+        .sheet(item: $exportFile, onDismiss: cleanupDiagnosticExport) { file in
             LogActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
         }
+        .onDisappear(perform: cleanupDiagnosticExport)
         .confirmationDialog(
             "Appとウィジェットのログをすべて削除しますか？",
             isPresented: $showsClearConfirmation,
@@ -152,6 +153,7 @@ struct LogView: View {
 
             Button {
                 Task {
+                    cleanupDiagnosticExport()
                     if let url = await viewModel.makeExportFile() {
                         exportFile = LogExportFile(url: url)
                     }
@@ -183,6 +185,11 @@ struct LogView: View {
             return "ログはまだありません。\nアプリのスキャンやウィジェット表示後に更新してください。"
         }
         return viewModel.formattedText
+    }
+
+    private func cleanupDiagnosticExport() {
+        TemporaryExportFileLifecycle.removeManagedFile(at: exportFile?.url)
+        exportFile = nil
     }
 }
 

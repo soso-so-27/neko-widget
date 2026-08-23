@@ -303,10 +303,11 @@ struct SettingsView: View {
         .onChange(of: draft.catLifeReference) { _, newValue in
             scheduleLifeReferenceSave(newValue)
         }
-        .sheet(item: $exportedFile) { file in
+        .sheet(item: $exportedFile, onDismiss: cleanupVerificationExport) { file in
             ActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
         }
+        .onDisappear(perform: cleanupVerificationExport)
     }
 
     private var sharingSettingsFooter: String {
@@ -415,6 +416,7 @@ struct SettingsView: View {
                 Button {
                     Task {
                         isExporting = true
+                        cleanupVerificationExport()
                         if let url = await exportJSON() {
                             exportedFile = ExportedFile(url: url)
                         }
@@ -537,6 +539,11 @@ struct SettingsView: View {
             return "確定結果に検出写真がないため、確認できる標本はありません。"
         }
         return "検証JSONと同じSHA-256順位です。機械判定値は目視を誘導しないよう隠し、人手ラベルは外部表へ記録します。"
+    }
+
+    private func cleanupVerificationExport() {
+        TemporaryExportFileLifecycle.removeManagedFile(at: exportedFile?.url)
+        exportedFile = nil
     }
 }
 
