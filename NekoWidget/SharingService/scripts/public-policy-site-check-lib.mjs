@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+const SHARING_BETA_BOUNDARY_PHRASE = "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。";
 
 const SHARING_BETA_PAGES = Object.freeze([
   Object.freeze({
@@ -11,6 +12,7 @@ const SHARING_BETA_PAGES = Object.freeze([
     h1: "名前を付けたまどへ、一枚ずつ",
     visibleRevision: false,
     requiredPhrases: Object.freeze([
+      SHARING_BETA_BOUNDARY_PHRASE,
       "名前を付けた1つの非公開なまど",
       "信頼できる招待相手1人",
       "2人・各1台",
@@ -24,6 +26,7 @@ const SHARING_BETA_PAGES = Object.freeze([
     h1: "プライバシーポリシー",
     visibleRevision: true,
     requiredPhrases: Object.freeze([
+      SHARING_BETA_BOUNDARY_PHRASE,
       "エンドツーエンド暗号化",
       "通報専用公開鍵",
       "ACK後7日",
@@ -39,6 +42,7 @@ const SHARING_BETA_PAGES = Object.freeze([
     h1: "コミュニティ基準",
     visibleRevision: true,
     requiredPhrases: Object.freeze([
+      SHARING_BETA_BOUNDARY_PHRASE,
       "通報",
       "ブロック",
       "48時間以内",
@@ -52,6 +56,7 @@ const SHARING_BETA_PAGES = Object.freeze([
     h1: "サポート",
     visibleRevision: true,
     requiredPhrases: Object.freeze([
+      SHARING_BETA_BOUNDARY_PHRASE,
       "GitHub Issues",
       "TestFlight",
       "招待コード",

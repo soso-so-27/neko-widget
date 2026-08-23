@@ -461,6 +461,21 @@ test("requires profile-specific safety content", async () => {
   );
 });
 
+test("requires the internal TestFlight boundary on every sharing-beta page", async () => {
+  const boundary = "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。";
+  for (const page of sharingBeta.definition.pages) {
+    await assert.rejects(
+      check(sharingBeta, new Map([[
+        page.name,
+        pageHtml(sharingBeta, page, {
+          phrases: page.requiredPhrases.filter((phrase) => phrase !== boundary),
+        }),
+      ]])),
+      new RegExp(`${page.name} is missing required policy content`, "u"),
+    );
+  }
+});
+
 test("rejects unresolved, escaping, credentialed, and non-HTTPS links", async () => {
   const page = sharingBeta.definition.pages[3];
   for (const unsafe of [

@@ -1,11 +1,14 @@
 import html.parser
 import pathlib
+import subprocess
+import textwrap
 import unittest
 import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SITE = ROOT / "docs"
+TESTFLIGHT_WORKFLOW = ROOT / ".github" / "workflows" / "testflight.yml"
 PAGES = (
     SITE / "index.html",
     SITE / "privacy" / "index.html",
@@ -105,6 +108,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
     def test_private_window_capability_boundary_is_consistent(self):
         required = (
+            "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。",
             "名前を付けた1つの非公開なまど",
             "信頼できる招待相手1人",
             "2人・各1台",
@@ -125,6 +129,10 @@ class PublicPolicySiteTests(unittest.TestCase):
                 self.assertIn(phrase, text, page)
             for phrase in legacy_family_copy:
                 self.assertNotIn(phrase, text, page)
+
+        privacy = "".join(self.parsed(PAGES[1]).text)
+        self.assertIn("写真共有が有効な内部TestFlight共有ベータでは", privacy)
+        self.assertNotIn("写真共有が有効な現行版では", privacy)
 
     def test_keep_memory_is_a_bounded_local_bookmark(self):
         for page in (PAGES[1], PAGES[3]):
@@ -238,6 +246,74 @@ class PublicPolicySiteTests(unittest.TestCase):
             "緊急通報先ではありません",
         ):
             self.assertIn(phrase, support)
+
+    def test_testflight_checks_the_exact_policy_profile_before_signing(self):
+        workflow = TESTFLIGHT_WORKFLOW.read_text(encoding="utf-8")
+        selector_name = "- name: Select fail-closed release mode"
+        setup_name = "- name: Set up Node.js for public policy gate"
+        gate_name = "- name: Validate public policy for selected release mode"
+        signing_name = "- name: Install distribution certificate and provisioning profiles"
+        self.assertLess(workflow.index(selector_name), workflow.index(setup_name))
+        self.assertLess(workflow.index(setup_name), workflow.index(gate_name))
+        self.assertLess(workflow.index(gate_name), workflow.index(signing_name))
+
+        selector = workflow.split(selector_name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn('echo "Unknown release_mode: $SELECTED_RELEASE_MODE"', selector)
+        self.assertIn("exit 1", selector)
+
+        setup = workflow.split(setup_name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn(
+            "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444",
+            setup,
+        )
+        self.assertIn('node-version: "22"', setup)
+
+        gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertEqual(gate.count('policy_revision="2026-08-24"'), 1)
+        disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
+        self.assertIn('policy_profile="local-only"', disabled)
+        self.assertIn(
+            'policy_site_base="https://soso-so-27.github.io/neko-widget/app/"',
+            disabled,
+        )
+        media = gate.split("media-staging)", 1)[1].split(";;", 1)[0]
+        self.assertIn('policy_profile="sharing-beta"', media)
+        self.assertIn(
+            'policy_site_base="https://soso-so-27.github.io/neko-widget/"',
+            media,
+        )
+        skipped = gate.split("review-preview|pairing-only)", 1)[1].split(";;", 1)[0]
+        self.assertIn(
+            "SKIP public policy gate: release_mode=$SELECTED_RELEASE_MODE does not use a public policy profile.",
+            skipped,
+        )
+        self.assertIn("exit 0", skipped)
+        for fragment in (
+            'node "$PROJECT_DIRECTORY/SharingService/scripts/check-public-policy-site.mjs"',
+            '--profile "$policy_profile"',
+            '--site-base "$policy_site_base"',
+            '--expected-revision "$policy_revision"',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, gate)
+        for forbidden in ("wrangler", "emergency-off", "curl -x", "cloudflare"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, gate.lower())
+
+        shell_source = (
+            textwrap.dedent(gate.split("run: |", 1)[1]).lstrip().replace("\r", "")
+        )
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=shell_source.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            syntax.returncode,
+            0,
+            syntax.stderr.decode("utf-8", errors="replace"),
+        )
 
 
 if __name__ == "__main__":
