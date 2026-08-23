@@ -157,6 +157,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("sharingCacheDirectoryURL", presentation_url)
         self.assertIn("window-presentation.v1.json", presentation_url)
+        self.assertIn("window-name-sync.v1.json", presentation_url)
 
         models = source("Shared/Models/WidgetManifest.swift")
         self.assertIn('static let fallback = "ふたりのまど"', models)
@@ -175,6 +176,56 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("pairingBindingSHA256", local_presentation)
         self.assertIn("SharingLifecycleGate.withValidatedToken", local_presentation)
         self.assertNotIn("PairingStateStore.save(", local_presentation)
+
+        sync_state = section(
+            store,
+            "struct PrivateWindowNameSyncState",
+            "private static func writeWhileLifecycleLocked(_ value: PrivateWindowNameSyncState)",
+        )
+        self.assertIn("acceptedOwnerRevision", sync_state)
+        self.assertIn("acceptedCiphertextSHA256", sync_state)
+        self.assertIn("pendingPayload", sync_state)
+        self.assertIn("pendingClientRequestID", sync_state)
+        self.assertNotIn("displayName", sync_state)
+        self.assertNotIn("PairingStateStore.save(", sync_state)
+
+        moment_core = source("Shared/Sharing/MomentSharingCore.swift")
+        moment_kind = section(moment_core, "enum MomentKind", "enum MomentReportReason")
+        self.assertNotIn("window", moment_kind.lower())
+        name_crypto = section(
+            moment_core,
+            "enum PrivateWindowNameCrypto",
+            "enum MomentKind",
+        )
+        self.assertIn("jp.nekowidget.private-window-name.v1", name_crypto)
+        self.assertIn("ownerMemberID", name_crypto)
+        self.assertNotIn("ownerParticipantID", name_crypto)
+        self.assertNotIn("PairingCredential", name_crypto)
+        self.assertNotIn("PairingCrypto", name_crypto)
+        self.assertIn("ownerSigningPrivateKey", name_crypto)
+        self.assertIn("ownerSignature", name_crypto)
+        self.assertIn("ChaChaPoly.open", name_crypto)
+
+        api_client = source("NekoWidget/Services/MomentSharingAPIClient.swift")
+        self.assertIn('path: "/v2/window-name"', api_client)
+        self.assertNotIn('case window', moment_kind)
+
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        best_effort = section(
+            coordinator,
+            "private func synchronizeWindowNameBestEffort(",
+            "private func synchronizeWindowName(",
+        )
+        self.assertIn("return false", best_effort)
+        normal_sync = section(
+            coordinator,
+            "let sent = try await sendOutbox(",
+            'SharedLog.app.info(\n                "moment-sharing"',
+        )
+        self.assertLess(
+            normal_sync.index("let received = try await receiveChanges("),
+            normal_sync.index("synchronizeWindowNameBestEffort("),
+        )
 
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
         publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
@@ -237,6 +288,19 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
 
         pairing_view_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        pairing_view = source("NekoWidget/Views/PairingView.swift")
+        family_view = source("NekoWidget/Views/FamilyWindowView.swift")
+        sharing_view_model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        self.assertIn(".momentSharingPresentationNeedsRefresh", family_view)
+        self.assertIn("model.reloadWindowDisplayName()", family_view)
+        self.assertIn("func reloadWindowDisplayName()", sharing_view_model)
+        self.assertIn("guard let pairing = snapshot.state", sharing_view_model)
+        save_name = section(
+            pairing_view,
+            "private func saveWindowNameIfPossible()",
+            "private var utcBoundaryMinute",
+        )
+        self.assertIn("guard model.canEditWindowDisplayName", save_name)
         reset = section(
             pairing_view_model,
             "private func resetLocalPairing(",
@@ -246,6 +310,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "NotificationCenter.default.post(name: .sharingMediaSyncRequested",
             reset,
         )
+
+        runtime_self_test = source("NekoWidget/Services/SharingRuntimeSelfTest.swift")
+        self.assertIn("Models a GET/PUT response resuming after unlink", runtime_self_test)
 
     def test_sharing_surfaces_do_not_assume_a_family_relationship(self) -> None:
         surfaces = [

@@ -2,6 +2,7 @@ import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {
   legacySharingRuntimeEnabled,
   momentRuntimeEnabled,
+  windowNameRuntimeEnabled,
   type Env,
 } from "./env";
 import {
@@ -43,6 +44,7 @@ import {
   uploadManifest,
   uploadMedia,
 } from "./sharing";
+import { getWindowName, putWindowName } from "./window-name";
 
 export async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -105,6 +107,19 @@ export async function route(request: Request, env: Env): Promise<Response> {
   }
   if (request.method === "POST" && pathname === "/v2/moments/reservations") {
     return reserveMoment(request, env);
+  }
+  if (pathname === "/v2/window-name" && !windowNameRuntimeEnabled(env)) {
+    throw new ApiError(
+      503,
+      "window_name_runtime_disabled",
+      "Private window name sync is temporarily unavailable.",
+    );
+  }
+  if (request.method === "GET" && pathname === "/v2/window-name") {
+    return getWindowName(request, env);
+  }
+  if (request.method === "PUT" && pathname === "/v2/window-name") {
+    return putWindowName(request, env);
   }
   if (request.method === "GET" && pathname === "/v2/moments/changes") {
     return getMomentChanges(request, env);

@@ -31,6 +31,13 @@ struct FamilyWindowView: View {
         .onReceive(NotificationCenter.default.publisher(for: .sharingMediaSyncRequested)) { _ in
             Task { await model.bootstrap() }
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .momentSharingPresentationNeedsRefresh
+            )
+        ) { _ in
+            model.reloadWindowDisplayName()
+        }
         .confirmationDialog(
             "この写真を通報しますか？",
             isPresented: Binding(

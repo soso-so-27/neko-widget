@@ -17,6 +17,12 @@ const EXPECTATIONS = Object.freeze({
       errorCode: "invalid_authentication",
     }),
     Object.freeze({
+      name: "window-name",
+      path: "/v2/window-name",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
       name: "legacy",
       path: "/v1/sharing/sources",
       status: 503,
@@ -35,6 +41,12 @@ const EXPECTATIONS = Object.freeze({
       path: "/v2/moments/changes",
       status: 503,
       errorCode: "moment_runtime_disabled",
+    }),
+    Object.freeze({
+      name: "window-name",
+      path: "/v2/window-name",
+      status: 503,
+      errorCode: "window_name_runtime_disabled",
     }),
     Object.freeze({
       name: "legacy",

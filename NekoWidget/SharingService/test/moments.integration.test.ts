@@ -11,7 +11,7 @@ import {
   MOMENT_RESERVATION_ATTEMPT_LIMIT,
   runMomentCleanup,
 } from "../src/moments";
-import { signedRequestTranscript } from "../src/protocol";
+import { encodeCanonicalFields, signedRequestTranscript } from "../src/protocol";
 import { runScheduledCleanup } from "../src/scheduled";
 
 interface KeyPair {
@@ -35,6 +35,26 @@ describe("moment runtime kill switch", () => {
         status: 503,
         code: "moment_runtime_disabled",
       });
+    }
+  });
+
+  it("fails closed for window-name routes under their independent exact flag", async () => {
+    for (const value of [undefined, "NO", "true", "yes"]) {
+      for (const method of ["GET", "PUT"]) {
+        const disabledEnv = {
+          ...env,
+          WINDOW_NAME_RUNTIME_ENABLED: value,
+        } as Env;
+        await expect(
+          route(
+            new Request("https://sharing.invalid/v2/window-name", { method }),
+            disabledEnv,
+          ),
+        ).rejects.toMatchObject({
+          status: 503,
+          code: "window_name_runtime_disabled",
+        });
+      }
     }
   });
 });
@@ -72,6 +92,18 @@ interface CommitResponse {
   moment: { id: string; state: string; committedAt: number; unreceivedExpiresAt: number };
   recipientCount: number;
   changeCursor: string;
+}
+
+interface WindowNameResponse {
+  protocolVersion: number;
+  windowName: null | {
+    ownerMemberId: string;
+    clientRevision: number;
+    keyEpoch: number;
+    ciphertext: string;
+    ciphertextSHA256: string;
+    ownerSignature: string;
+  };
 }
 
 const testEnv = env as unknown as Env;
@@ -275,6 +307,393 @@ async function publish(
     ciphertext,
   };
 }
+
+async function windowNameBody(
+  space: TestSpace,
+  clientRevision: number,
+  ciphertext = crypto.getRandomValues(new Uint8Array(96)),
+  overrides: { clientRequestId?: string; keyEpoch?: number } = {},
+): Promise<Record<string, unknown>> {
+  const clientRequestId = overrides.clientRequestId
+    ?? crypto.randomUUID().toLowerCase();
+  const keyEpoch = overrides.keyEpoch ?? 1;
+  const ciphertextSHA256 = await sha256Base64url(ciphertext);
+  const ownerSignature = await sign(space.owner.keys, encodeCanonicalFields([
+    "NW2.WINDOW-NAME-RECORD",
+    "1",
+    space.id,
+    space.owner.id,
+    String(clientRevision),
+    String(keyEpoch),
+    ciphertextSHA256,
+  ]));
+  return {
+    protocolVersion: 2,
+    clientRequestId,
+    clientRevision,
+    keyEpoch,
+    ciphertext: base64urlEncode(ciphertext),
+    ciphertextSHA256,
+    ownerSignature,
+  };
+}
+
+async function remapOwnerToDistinctMomentParticipant(space: TestSpace): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const participantID = randomValue(16);
+  await testEnv.DB.batch([
+    testEnv.DB.prepare(
+      "DELETE FROM moment_devices WHERE legacy_member_id = ?",
+    ).bind(space.owner.id),
+    testEnv.DB.prepare(
+      "DELETE FROM moment_participants WHERE legacy_member_id = ?",
+    ).bind(space.owner.id),
+    testEnv.DB.prepare(
+      `INSERT INTO moment_participants(
+         id, space_id, legacy_member_id, role, state, created_at, activated_at
+       ) VALUES (?, ?, ?, 'owner', 'active', ?, ?)`,
+    ).bind(participantID, space.id, space.owner.id, now, now),
+    testEnv.DB.prepare(
+      `INSERT INTO moment_devices(
+         id, participant_id, legacy_member_id, agreement_public_key,
+         signing_public_key, state, created_at, activated_at
+       ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
+    ).bind(
+      randomValue(16),
+      participantID,
+      space.owner.id,
+      randomValue(32),
+      randomValue(32),
+      now,
+      now,
+    ),
+  ]);
+  return participantID;
+}
+
+describe("encrypted private window name", () => {
+  it("lets the owner publish opaque ciphertext and both active participants read it", async () => {
+    const space = await seedActiveSpace();
+    const momentParticipantID = await remapOwnerToDistinctMomentParticipant(space);
+    expect(momentParticipantID).not.toBe(space.owner.id);
+    const empty = await signedFetch("/v2/window-name", "GET", space.invitee);
+    expect(empty.status).toBe(200);
+    expect(await empty.json<WindowNameResponse>()).toEqual({
+      protocolVersion: 2,
+      windowName: null,
+    });
+
+    const body = await windowNameBody(space, 0);
+    const put = await signedFetch("/v2/window-name", "PUT", space.owner, body);
+    expect(put.status).toBe(200);
+    const published = await put.json<WindowNameResponse>();
+    expect(Object.keys(published).sort()).toEqual(["protocolVersion", "windowName"]);
+    expect(Object.keys(published.windowName ?? {}).sort()).toEqual([
+      "ciphertext",
+      "ciphertextSHA256",
+      "clientRevision",
+      "keyEpoch",
+      "ownerMemberId",
+      "ownerSignature",
+    ]);
+    expect(published.windowName).toEqual({
+      ownerMemberId: space.owner.id,
+      clientRevision: body.clientRevision,
+      keyEpoch: body.keyEpoch,
+      ciphertext: body.ciphertext,
+      ciphertextSHA256: body.ciphertextSHA256,
+      ownerSignature: body.ownerSignature,
+    });
+
+    const inviteeGet = await signedFetch("/v2/window-name", "GET", space.invitee);
+    expect(inviteeGet.status).toBe(200);
+    expect(await inviteeGet.json<WindowNameResponse>()).toEqual(published);
+
+    const deniedPut = await signedFetch("/v2/window-name", "PUT", space.invitee, body);
+    expect(deniedPut.status).toBe(403);
+    expect((await deniedPut.json<{ error: { code: string } }>()).error.code)
+      .toBe("owner_required");
+
+    const columns = await testEnv.DB.prepare("PRAGMA table_info(moment_window_names)")
+      .all<{ name: string }>();
+    expect(columns.results.map((column) => column.name)).not.toContain("name");
+    expect(columns.results.map((column) => column.name)).not.toContain("plaintext");
+  });
+
+  it("enforces exact-request idempotency and monotonic revision conflicts", async () => {
+    const space = await seedActiveSpace();
+    const clientRequestId = crypto.randomUUID().toLowerCase();
+    const ciphertext = crypto.getRandomValues(new Uint8Array(80));
+    const revisionTwo = await windowNameBody(
+      space,
+      2,
+      ciphertext,
+      { clientRequestId },
+    );
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      revisionTwo,
+    )).status).toBe(200);
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      revisionTwo,
+    )).status).toBe(200);
+
+    const differentExactKey = await windowNameBody(
+      space,
+      3,
+      crypto.getRandomValues(new Uint8Array(80)),
+      { clientRequestId },
+    );
+    const exactKeyConflict = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      differentExactKey,
+    );
+    expect(exactKeyConflict.status).toBe(409);
+    expect((await exactKeyConflict.json<{ error: { code: string } }>()).error.code)
+      .toBe("idempotency_conflict");
+
+    const stale = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(space, 1),
+    );
+    expect(stale.status).toBe(409);
+    expect((await stale.json<{ error: { code: string } }>()).error.code)
+      .toBe("stale_window_name_revision");
+
+    const equalSame = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(space, 2, ciphertext),
+    );
+    expect(equalSame.status).toBe(200);
+
+    const equalDifferent = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(space, 2),
+    );
+    expect(equalDifferent.status).toBe(409);
+    expect((await equalDifferent.json<{ error: { code: string } }>()).error.code)
+      .toBe("window_name_revision_conflict");
+
+    const current = await signedFetch("/v2/window-name", "GET", space.owner);
+    expect((await current.json<WindowNameResponse>()).windowName?.ciphertext)
+      .toBe(revisionTwo.ciphertext);
+  });
+
+  it("commits only one of two concurrent ciphertexts for the same revision", async () => {
+    const space = await seedActiveSpace();
+    const first = await windowNameBody(space, 1);
+    const second = await windowNameBody(space, 1);
+    const responses = await Promise.all([
+      signedFetch("/v2/window-name", "PUT", space.owner, first),
+      signedFetch("/v2/window-name", "PUT", space.owner, second),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const rejected = responses.find((response) => response.status === 409);
+    expect(rejected).toBeDefined();
+    expect((await rejected!.json<{ error: { code: string } }>()).error.code)
+      .toBe("window_name_revision_conflict");
+
+    const current = await signedFetch("/v2/window-name", "GET", space.owner);
+    const committed = (await current.json<WindowNameResponse>()).windowName;
+    expect([first.ciphertext, second.ciphertext]).toContain(committed?.ciphertext);
+  });
+
+  it("rejects malformed, unverified, non-current, and oversized envelopes", async () => {
+    const space = await seedActiveSpace();
+    const valid = await windowNameBody(space, 0);
+
+    const unexpectedPlaintextField = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      { ...valid, plaintextName: "not-accepted" },
+    );
+    expect(unexpectedPlaintextField.status).toBe(400);
+
+    const malformed = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      { ...valid, ciphertext: "AA==" },
+    );
+    expect(malformed.status).toBe(400);
+
+    const oversized = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(
+        space,
+        0,
+        crypto.getRandomValues(new Uint8Array(513)),
+      ),
+    );
+    expect(oversized.status).toBe(400);
+    expect((await oversized.json<{ error: { code: string } }>()).error.code)
+      .toBe("invalid_ciphertext_length");
+
+    const hashMismatch = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      { ...valid, ciphertextSHA256: randomValue(32) },
+    );
+    expect(hashMismatch.status).toBe(400);
+    expect((await hashMismatch.json<{ error: { code: string } }>()).error.code)
+      .toBe("ciphertext_hash_mismatch");
+
+    const invalidSignature = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      { ...valid, ownerSignature: randomValue(64) },
+    );
+    expect(invalidSignature.status).toBe(401);
+    expect((await invalidSignature.json<{ error: { code: string } }>()).error.code)
+      .toBe("invalid_owner_signature");
+
+    const staleEpoch = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(space, 0, undefined, { keyEpoch: 2 }),
+    );
+    expect(staleEpoch.status).toBe(409);
+    expect((await staleEpoch.json<{ error: { code: string } }>()).error.code)
+      .toBe("key_epoch_required");
+    expect((await signedFetch(
+      "/v2/window-name",
+      "GET",
+      space.owner,
+    ).then((response) => response.json<WindowNameResponse>())).windowName).toBeNull();
+  });
+
+  it("deletes the envelope and denies access after a block or space revoke", async () => {
+    const space = await seedActiveSpace();
+    const originalBody = await windowNameBody(space, 0);
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      originalBody,
+    )).status).toBe(200);
+
+    const block = await signedFetch(
+      `/v2/participants/${space.invitee.id}/block`,
+      "POST",
+      space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() },
+    );
+    expect(block.status).toBe(200);
+    expect(await testEnv.DB.prepare(
+      "SELECT space_id FROM moment_window_names WHERE space_id = ?",
+    ).bind(space.id).first()).toBeNull();
+    expect((await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM idempotency_records
+        WHERE space_id = ? AND operation = 'put-window-name'`,
+    ).bind(space.id).first<{ count: number }>())?.count).toBe(0);
+    expect((await signedFetch("/v2/window-name", "GET", space.invitee)).status)
+      .toBe(410);
+    expect((await signedFetch("/v2/window-name", "GET", space.owner)).status)
+      .toBe(410);
+    const deletedReplay = await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      originalBody,
+    );
+    expect(deletedReplay.status).toBe(410);
+    expect((await deletedReplay.json<{ error: { code: string } }>()).error.code)
+      .toBe("window_name_blocked");
+
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(space, 1, undefined, { keyEpoch: 2 }),
+    )).status).toBe(410);
+
+    const revokedSpace = await seedActiveSpace();
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      revokedSpace.owner,
+      await windowNameBody(revokedSpace, 0),
+    )).status).toBe(200);
+    const revoke = await signedFetch(
+      "/v1/pairing/revoke",
+      "POST",
+      revokedSpace.owner,
+      { protocolVersion: 1, clientRequestId: crypto.randomUUID().toLowerCase() },
+    );
+    expect(revoke.status).toBe(202);
+    expect(await testEnv.DB.prepare(
+      "SELECT space_id FROM moment_window_names WHERE space_id = ?",
+    ).bind(revokedSpace.id).first()).toBeNull();
+    expect((await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM idempotency_records
+        WHERE space_id = ? AND operation = 'put-window-name'`,
+    ).bind(revokedSpace.id).first<{ count: number }>())?.count).toBe(0);
+    expect((await signedFetch("/v2/window-name", "GET", revokedSpace.owner)).status)
+      .toBe(410);
+
+    const cleanupSpace = await seedActiveSpace();
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      cleanupSpace.owner,
+      await windowNameBody(cleanupSpace, 0),
+    )).status).toBe(200);
+    await testEnv.DB.prepare(
+      "DELETE FROM moment_spaces WHERE space_id = ?",
+    ).bind(cleanupSpace.id).run();
+    expect(await testEnv.DB.prepare(
+      "SELECT space_id FROM moment_window_names WHERE space_id = ?",
+    ).bind(cleanupSpace.id).first()).toBeNull();
+    expect((await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM idempotency_records
+        WHERE space_id = ? AND operation = 'put-window-name'`,
+    ).bind(cleanupSpace.id).first<{ count: number }>())?.count).toBe(0);
+  });
+
+  it("does not alter existing moment reservation, delivery, or ciphertext access", async () => {
+    const space = await seedActiveSpace();
+    expect((await signedFetch(
+      "/v2/window-name",
+      "PUT",
+      space.owner,
+      await windowNameBody(space, 0),
+    )).status).toBe(200);
+    const published = await publish(space.owner);
+    const changes = await signedFetch("/v2/moments/changes", "GET", space.invitee);
+    expect(changes.status).toBe(200);
+    expect((await changes.json<{ changes: unknown[] }>()).changes).toHaveLength(1);
+    const download = await signedFetch(
+      `/v2/moments/${published.reservation.moment.id}/ciphertext`,
+      "GET",
+      space.invitee,
+    );
+    expect(download.status).toBe(200);
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(published.ciphertext);
+    expect((await testEnv.DB.prepare(
+      "SELECT state FROM moments WHERE id = ?",
+    ).bind(published.reservation.moment.id).first<{ state: string }>())?.state)
+      .toBe("committed");
+  });
+});
 
 describe("append-only encrypted moments", () => {
   it("reserves, immutably uploads, snapshots recipients, changes, downloads and ACKs", async () => {

@@ -126,6 +126,8 @@ jobs:
           xcrun swiftc \
             -parse-as-library \
             Shared/Sharing/PairingCore.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            Shared/Models/WidgetManifest.swift \
             Shared/Sharing/MomentSharingCore.swift \
             ci/verify-moment-sharing-core.swift \
             -o "$RUNNER_TEMP/verify-moment-sharing-core"

@@ -40,6 +40,29 @@ struct MomentChangesResult: Sendable {
     let nextCursor: String?
 }
 
+struct PrivateWindowNameRelayValue: Equatable, Sendable {
+    let ownerMemberID: String
+    let ownerRevision: Int
+    let keyEpoch: Int
+    let ciphertext: Data
+    let ciphertextSHA256: Data
+    let ownerSignature: Data
+
+    func preparedPayload(spaceID: String) throws -> PrivateWindowNamePreparedPayload {
+        try PrivateWindowNamePreparedPayload(
+            context: PrivateWindowNameCiphertextContext(
+                spaceID: spaceID,
+                ownerMemberID: ownerMemberID,
+                ownerRevision: ownerRevision,
+                keyEpoch: keyEpoch
+            ),
+            ciphertext: ciphertext,
+            ciphertextSHA256: ciphertextSHA256,
+            ownerSignature: ownerSignature
+        ).validated()
+    }
+}
+
 enum MomentDeliveryAction: Sendable {
     case download
     case revokeWithoutDownload
@@ -195,14 +218,32 @@ protocol MomentSharingAPIClientProtocol: Sendable {
     ) async throws -> MomentReportCommitResult
 }
 
-actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol {
+protocol PrivateWindowNameAPIClientProtocol: Sendable {
+    func currentWindowName(
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> PrivateWindowNameRelayValue?
+
+    func putWindowName(
+        _ payload: PrivateWindowNamePreparedPayload,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> PrivateWindowNameRelayValue
+}
+
+actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
+    PrivateWindowNameAPIClientProtocol {
     private let baseURL: URL
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
     init(configuration: SharingAPIConfiguration = .current) throws {
-        guard configuration.isMediaAvailable, let baseURL = configuration.baseURL else {
+        // Window-name synchronization remains available when the independent
+        // photo runtime is paused. Individual media entry points are still
+        // only called by the media-gated coordinator path.
+        guard configuration.isAvailable, let baseURL = configuration.baseURL else {
             throw MomentSharingError.featureDisabled
         }
         self.baseURL = baseURL
@@ -214,6 +255,92 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
+    }
+
+    func currentWindowName(
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> PrivateWindowNameRelayValue? {
+        let response: WindowNameResponse = try await send(
+            path: "/v2/window-name",
+            method: "GET",
+            body: Data(),
+            contentType: nil,
+            maximumResponseBytes: 4_096,
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentSharingProtocol.version else {
+            throw MomentSharingError.invalidPayload
+        }
+        guard let value = response.windowName else { return nil }
+        return try validatedWindowName(value, pairingState: pairingState)
+    }
+
+    func putWindowName(
+        _ payload: PrivateWindowNamePreparedPayload,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> PrivateWindowNameRelayValue {
+        let payload = try payload.validated()
+        let response: WindowNameResponse = try await sendJSON(
+            path: "/v2/window-name",
+            method: "PUT",
+            body: WindowNamePutRequest(
+                protocolVersion: MomentSharingProtocol.version,
+                clientRequestId: clientRequestID.uuidString.lowercased(),
+                clientRevision: payload.context.ownerRevision,
+                keyEpoch: payload.context.keyEpoch,
+                ciphertext: payload.ciphertext.base64URLEncodedString(),
+                ciphertextSHA256: payload.ciphertextSHA256.base64URLEncodedString(),
+                ownerSignature: payload.ownerSignature.base64URLEncodedString()
+            ),
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentSharingProtocol.version,
+              let value = response.windowName
+        else { throw MomentSharingError.invalidPayload }
+        let validated = try validatedWindowName(value, pairingState: pairingState)
+        guard validated.ownerMemberID == payload.context.ownerMemberID,
+              validated.ownerRevision == payload.context.ownerRevision,
+              validated.keyEpoch == payload.context.keyEpoch,
+              validated.ciphertext == payload.ciphertext,
+              validated.ciphertextSHA256 == payload.ciphertextSHA256,
+              validated.ownerSignature == payload.ownerSignature
+        else { throw MomentSharingError.invalidPayload }
+        return validated
+    }
+
+    private func validatedWindowName(
+        _ value: WindowNameResponse.Value,
+        pairingState: PairingState
+    ) throws -> PrivateWindowNameRelayValue {
+        guard let expectedOwnerID = pairingState.role == .inviter
+                ? pairingState.memberID
+                : pairingState.peerMemberID,
+              value.ownerMemberId == expectedOwnerID,
+              PairingValidation.isOpaqueIdentifier(value.ownerMemberId),
+              value.clientRevision >= 0,
+              value.keyEpoch == 1,
+              let ciphertext = Data(base64URLString: value.ciphertext),
+              let hash = Data(base64URLString: value.ciphertextSHA256),
+              let signature = Data(base64URLString: value.ownerSignature),
+              hash.count == 32,
+              signature.count == 64,
+              (29...PrivateWindowNameSyncProtocol.maximumCiphertextBytes)
+                .contains(ciphertext.count),
+              PairingCrypto.sha256(ciphertext) == hash
+        else { throw MomentSharingError.invalidPayload }
+        return PrivateWindowNameRelayValue(
+            ownerMemberID: value.ownerMemberId,
+            ownerRevision: value.clientRevision,
+            keyEpoch: value.keyEpoch,
+            ciphertext: ciphertext,
+            ciphertextSHA256: hash,
+            ownerSignature: signature
+        )
     }
 
     func reserve(
@@ -804,6 +931,30 @@ private struct UploadResponse: Decodable {
 private struct OperationRequest: Encodable {
     let protocolVersion: Int
     let clientRequestId: String
+}
+
+private struct WindowNamePutRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let clientRevision: Int
+    let keyEpoch: Int
+    let ciphertext: String
+    let ciphertextSHA256: String
+    let ownerSignature: String
+}
+
+private struct WindowNameResponse: Decodable {
+    struct Value: Decodable {
+        let ownerMemberId: String
+        let clientRevision: Int
+        let keyEpoch: Int
+        let ciphertext: String
+        let ciphertextSHA256: String
+        let ownerSignature: String
+    }
+
+    let protocolVersion: Int
+    let windowName: Value?
 }
 
 private struct CommitResponse: Decodable {

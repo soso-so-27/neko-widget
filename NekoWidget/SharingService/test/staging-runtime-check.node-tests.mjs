@@ -15,7 +15,19 @@ function jsonResponse(status, body, headers = {}) {
   });
 }
 
-function runtimeFetch({ momentStatus, momentCode, legacyStatus = 503, legacyCode = "legacy_sharing_runtime_disabled" }) {
+function runtimeFetch({
+  momentStatus,
+  momentCode,
+  windowNameStatus,
+  windowNameCode,
+  legacyStatus = 503,
+  legacyCode = "legacy_sharing_runtime_disabled",
+}) {
+  const resolvedWindowNameStatus = windowNameStatus ?? momentStatus;
+  const resolvedWindowNameCode = windowNameCode
+    ?? (momentCode === "moment_runtime_disabled"
+      ? "window_name_runtime_disabled"
+      : momentCode);
   return async (url, options) => {
     assert.equal(options.redirect, "manual");
     assert.equal(options.method, "GET");
@@ -24,6 +36,10 @@ function runtimeFetch({ momentStatus, momentCode, legacyStatus = 503, legacyCode
         return jsonResponse(200, { status: "ok", protocolVersion: 1 });
       case "/v2/moments/changes":
         return jsonResponse(momentStatus, { error: { code: momentCode, message: "expected test response" } });
+      case "/v2/window-name":
+        return jsonResponse(resolvedWindowNameStatus, {
+          error: { code: resolvedWindowNameCode, message: "expected test response" },
+        });
       case "/v1/sharing/sources":
         return jsonResponse(legacyStatus, { error: { code: legacyCode, message: "expected test response" } });
       default:
@@ -41,6 +57,7 @@ test("accepts the expected ON runtime boundary", async () => {
   assert.deepEqual(result.checks.map(({ name, status }) => ({ name, status })), [
     { name: "health", status: 200 },
     { name: "moment", status: 401 },
+    { name: "window-name", status: 401 },
     { name: "legacy", status: 503 },
   ]);
 });
@@ -58,7 +75,12 @@ test("rejects a moment state mismatch", async () => {
     checkStagingRuntime({
       origin,
       expected: "on",
-      fetchImpl: runtimeFetch({ momentStatus: 503, momentCode: "moment_runtime_disabled" }),
+      fetchImpl: runtimeFetch({
+        momentStatus: 503,
+        momentCode: "moment_runtime_disabled",
+        windowNameStatus: 401,
+        windowNameCode: "invalid_authentication",
+      }),
     }),
     /moment returned HTTP 503; expected 401/u,
   );
@@ -69,9 +91,30 @@ test("rejects a same-status response with the wrong error code", async () => {
     checkStagingRuntime({
       origin,
       expected: "on",
-      fetchImpl: runtimeFetch({ momentStatus: 401, momentCode: "unexpected_code" }),
+      fetchImpl: runtimeFetch({
+        momentStatus: 401,
+        momentCode: "unexpected_code",
+        windowNameStatus: 401,
+        windowNameCode: "invalid_authentication",
+      }),
     }),
     /moment returned an unexpected error code/u,
+  );
+});
+
+test("rejects a private window-name state mismatch", async () => {
+  await assert.rejects(
+    checkStagingRuntime({
+      origin,
+      expected: "on",
+      fetchImpl: runtimeFetch({
+        momentStatus: 401,
+        momentCode: "invalid_authentication",
+        windowNameStatus: 503,
+        windowNameCode: "window_name_runtime_disabled",
+      }),
+    }),
+    /window-name returned HTTP 503; expected 401/u,
   );
 });
 

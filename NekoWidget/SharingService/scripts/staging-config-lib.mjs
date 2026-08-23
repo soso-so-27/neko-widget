@@ -86,6 +86,7 @@ export function validateStagingConfig(config, options = {}) {
     {
       ENVIRONMENT: "staging",
       MOMENT_RUNTIME_ENABLED: expectedMomentRuntime,
+      WINDOW_NAME_RUNTIME_ENABLED: expectedMomentRuntime,
       LEGACY_SHARING_RUNTIME_ENABLED: "NO",
       INVITATION_TTL_SECONDS: "86400",
       CHALLENGE_TTL_SECONDS: "300",
@@ -179,7 +180,12 @@ export function renderStagingConfig(template, environment, options = {}) {
     config?.vars?.MOMENT_RUNTIME_ENABLED === "NO",
     "The tracked staging template must keep the moment runtime locked OFF.",
   );
+  requireCondition(
+    config?.vars?.WINDOW_NAME_RUNTIME_ENABLED === "NO",
+    "The tracked staging template must keep the window-name runtime locked OFF.",
+  );
   config.vars.MOMENT_RUNTIME_ENABLED = expectedMomentRuntime;
+  config.vars.WINDOW_NAME_RUNTIME_ENABLED = expectedMomentRuntime;
   validateStagingConfig(config, { expectedMomentRuntime });
   return `${JSON.stringify(config, null, 2)}\n`;
 }

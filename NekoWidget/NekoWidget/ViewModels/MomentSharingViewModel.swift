@@ -213,6 +213,23 @@ final class MomentSharingViewModel: ObservableObject {
         return nil
     }
 
+    func reloadWindowDisplayName() {
+        do {
+            let snapshot = try PairingStateStore.beginOperation()
+            guard let pairing = snapshot.state else {
+                windowDisplayName = PrivateWindowDisplayName.fallback
+                return
+            }
+            windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+                pairing: pairing,
+                validating: snapshot.lifecycleToken
+            )
+        } catch {
+            // Keep the last authenticated value until the ordinary bootstrap
+            // or synchronization path can establish a fresh lifecycle.
+        }
+    }
+
     private func reload() throws {
         let pairingSnapshot = try PairingStateStore.beginOperation()
         let nextPairingState = pairingSnapshot.state

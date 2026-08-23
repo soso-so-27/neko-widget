@@ -163,6 +163,9 @@ actor MomentSharingCoordinator {
                     metadata: ["trigger": String(trigger.prefix(32))]
                 )
             }
+            if configuration.isAvailable {
+                await synchronizeWindowNameWithoutMedia(trigger: trigger)
+            }
             return
         }
 
@@ -284,6 +287,14 @@ actor MomentSharingCoordinator {
                 credential: loadedAuthorization.credential,
                 lifecycleToken: loadedAuthorization.lifecycleToken
             )
+            // Keep presentation metadata behind the photo pipeline. A stalled
+            // or unavailable name endpoint must not delay delivery, ACKs, or
+            // the photo change cursor.
+            let windowNameChanged = await synchronizeWindowNameBestEffort(
+                api: api,
+                authorization: loadedAuthorization,
+                trigger: trigger
+            )
             SharedLog.app.info(
                 "moment-sharing",
                 "Moment synchronization completed",
@@ -291,7 +302,8 @@ actor MomentSharingCoordinator {
                     "trigger": String(trigger.prefix(32)),
                     "handedOff": "\(handedOff)",
                     "sent": "\(sent)",
-                    "received": "\(received)"
+                    "received": "\(received)",
+                    "windowNameChanged": "\(windowNameChanged)"
                 ]
             )
         } catch {
@@ -791,6 +803,217 @@ actor MomentSharingCoordinator {
             credential: credential,
             lifecycleToken: bootstrap.lifecycleToken
         )
+    }
+
+    private func synchronizeWindowNameWithoutMedia(trigger: String) async {
+        var authorization: Authorization?
+        do {
+            let loaded = try loadAuthorization()
+            authorization = loaded
+            let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+            let changed = try await synchronizeWindowName(
+                api: api,
+                authorization: loaded
+            )
+            if changed {
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .momentSharingPresentationNeedsRefresh,
+                        object: nil
+                    )
+                }
+            }
+        } catch let error as MomentSharingError where error == .notPaired {
+            return
+        } catch {
+            if let authorization, Self.requiresLocalRevocationReset(error) {
+                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
+                    expectedState: authorization.state,
+                    lifecycleToken: authorization.lifecycleToken
+                )
+            }
+            SharedLog.app.warning(
+                "window-name-sync",
+                "Encrypted window name synchronization deferred",
+                metadata: ["trigger": String(trigger.prefix(32))]
+            )
+        }
+    }
+
+    /// Name sync is deliberately best effort in the media path. A corrupt,
+    /// unavailable, or not-yet-deployed name endpoint must never prevent photo
+    /// upload, download, safety analysis, acknowledgement, or cursor progress.
+    private func synchronizeWindowNameBestEffort(
+        api: any PrivateWindowNameAPIClientProtocol,
+        authorization: Authorization,
+        trigger: String
+    ) async -> Bool {
+        do {
+            let changed = try await synchronizeWindowName(
+                api: api,
+                authorization: authorization
+            )
+            if changed {
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .momentSharingPresentationNeedsRefresh,
+                        object: nil
+                    )
+                }
+            }
+            return changed
+        } catch let error where Self.requiresLocalRevocationReset(error) {
+            try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
+                expectedState: authorization.state,
+                lifecycleToken: authorization.lifecycleToken
+            )
+            return false
+        } catch {
+            SharedLog.app.warning(
+                "window-name-sync",
+                "Encrypted window name synchronization deferred",
+                metadata: ["trigger": String(trigger.prefix(32))]
+            )
+            return false
+        }
+    }
+
+    private func synchronizeWindowName(
+        api: any PrivateWindowNameAPIClientProtocol,
+        authorization: Authorization
+    ) async throws -> Bool {
+        let pairing = authorization.state
+        let credential = authorization.credential
+        let lifecycleToken = authorization.lifecycleToken
+        try SharingLifecycleGate.validate(lifecycleToken)
+        guard pairing.phase == .paired,
+              let role = pairing.role,
+              let spaceID = pairing.spaceID,
+              let ownerMemberID = role == .inviter
+                ? pairing.memberID
+                : pairing.peerMemberID,
+              let roomKey = credential.roomKey,
+              roomKey.count == 32
+        else { throw MomentSharingError.notPaired }
+
+        let ownerSigningPublicKey: Data
+        if role == .inviter {
+            ownerSigningPublicKey = try PairingCrypto.signingPublicKey(for: credential)
+        } else {
+            guard let encoded = pairing.peerSigningPublicKey,
+                  let decoded = Data(base64URLString: encoded),
+                  decoded.count == 32
+            else { throw MomentSharingError.invalidPayload }
+            ownerSigningPublicKey = decoded
+        }
+
+        let remote = try await api.currentWindowName(
+            pairingState: pairing,
+            credential: credential
+        )
+        try SharingLifecycleGate.validate(lifecycleToken)
+        var changed = false
+        if let remote {
+            let payload = try remote.preparedPayload(spaceID: spaceID)
+            let displayName = try PrivateWindowNameCrypto.open(
+                payload,
+                roomKey: roomKey,
+                ownerSigningPublicKey: ownerSigningPublicKey
+            )
+            if try PrivateWindowNameSyncStore.recordAccepted(
+                payload,
+                pairing: pairing,
+                validating: lifecycleToken
+            ) {
+                let before = PrivateWindowPresentationStore.resolvedDisplayName(
+                    pairing: pairing,
+                    validating: lifecycleToken
+                )
+                let applied = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
+                    displayName: displayName,
+                    ownerRevision: payload.context.ownerRevision,
+                    pairing: pairing,
+                    validating: lifecycleToken
+                )
+                changed = applied.displayName != before
+            }
+        }
+
+        guard role == .inviter else { return changed }
+        let local = try PrivateWindowPresentationStore.load(
+            pairing: pairing,
+            validating: lifecycleToken
+        )
+        let localRevision = local?.storageRevision ?? 0
+        let localDisplayName = local?.displayName ?? PrivateWindowDisplayName.fallback
+        if let remote, remote.ownerRevision >= localRevision { return changed }
+        if remote == nil,
+           let floor = try PrivateWindowNameSyncStore.load(
+            pairing: pairing,
+            validating: lifecycleToken
+           )?.acceptedOwnerRevision,
+           floor >= localRevision {
+            // A previously accepted record disappearing is a rollback, not an
+            // invitation to recreate an older local value.
+            throw MomentSharingError.invalidPayload
+        }
+
+        let staged: (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID)
+        if let existing = try PrivateWindowNameSyncStore.pending(
+            ownerRevision: localRevision,
+            pairing: pairing,
+            validating: lifecycleToken
+        ) {
+            staged = existing
+        } else {
+            let prepared = try PrivateWindowNameCrypto.prepare(
+                displayName: localDisplayName,
+                context: PrivateWindowNameCiphertextContext(
+                    spaceID: spaceID,
+                    ownerMemberID: ownerMemberID,
+                    ownerRevision: localRevision,
+                    keyEpoch: 1
+                ),
+                roomKey: roomKey,
+                ownerSigningPrivateKey: credential.signingPrivateKey
+            )
+            staged = try PrivateWindowNameSyncStore.stagePending(
+                prepared,
+                clientRequestID: UUID(),
+                pairing: pairing,
+                validating: lifecycleToken
+            )
+        }
+        try SharingLifecycleGate.validate(lifecycleToken)
+        let committed = try await api.putWindowName(
+            staged.payload,
+            clientRequestID: staged.clientRequestID,
+            pairingState: pairing,
+            credential: credential
+        )
+        try SharingLifecycleGate.validate(lifecycleToken)
+        let committedPayload = try committed.preparedPayload(spaceID: spaceID)
+        let committedName = try PrivateWindowNameCrypto.open(
+            committedPayload,
+            roomKey: roomKey,
+            ownerSigningPublicKey: ownerSigningPublicKey
+        )
+        guard try PrivateWindowNameSyncStore.recordAccepted(
+            committedPayload,
+            pairing: pairing,
+            validating: lifecycleToken
+        ) else { return changed }
+        let before = PrivateWindowPresentationStore.resolvedDisplayName(
+            pairing: pairing,
+            validating: lifecycleToken
+        )
+        let applied = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
+            displayName: committedName,
+            ownerRevision: committedPayload.context.ownerRevision,
+            pairing: pairing,
+            validating: lifecycleToken
+        )
+        return changed || applied.displayName != before
     }
 
     private func sendOutbox(
