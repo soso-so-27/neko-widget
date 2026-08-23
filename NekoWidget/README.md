@@ -1,10 +1,10 @@
 # ねこのまど v1
 
-端末の写真ライブラリをオンデバイスで調べ、猫が主役の写真を選別するiOS 17.1以上向けSwiftUIアプリです。選別結果は「うちの子」アルバムと、Small / Medium / LargeのWidgetKitウィジェットへ渡します。「これ好き」の記録はApp Group内へ永続化します。
+端末の写真ライブラリをオンデバイスで調べ、猫が主役の写真を選別するiOS 17.1以上向けSwiftUIアプリです。選別結果は「うちの子」アルバムと、Small / Medium / LargeのWidgetKitウィジェットへ渡します。「これ好き」の記録はApp Group内へ永続化します。本人所有2台の内部TestFlightでは、名前付きの非公開なまど1つ・2人に限定したE2E暗号化の一枚共有も検証しています。
 
 ## 現在の引き継ぎ状態
 
-> Build 19では、検出の面積条件をWidget選定へ移し、ローカル512px回収とno-cat限定2048px再試行を追加する。旧898枚の確定猫は再解析せず移行し、新しい検出増分は実機で別途目視確認する。共有配送の現行判断は[ADR-015](docs/ADR-015-共有の配送設計.md)で、まだ実装していない。
+> 2026-08-24現在、Build 34までを本人所有2台の内部TestFlightで確認済みです。名前付きの非公開なまど、作成者から相手への暗号化された名前同期、明示した一枚の送受信、受信履歴、共有Widget、安全確認での非表示、通報・block・共有解除を実装しています。Build 35候補はペアリング画面の次の操作と手動確認結果を明確にし、受信写真へ共有履歴内だけの「思い出に残す」を追加します。一般向けTestFlight、App Store審査提出、一般公開は行っていません。
 
 ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。iPhoneではBuild 7までの技術検証に加え、Build 8のMedium / Large表示不具合まで確認し、8,861枚の確定スキャンとdetected無作為100枚のレビューを完了しました。レビューは`reviewNo 74`だけを製品候補から除外し、99 / 100を採用しました。scannerはBuild 10でも変更しないため、このPrecision標本は再利用します。Build 7の1週間計測はLike表示不具合で中断し、その再計測案も「結果が製品判断を変えない」として2026-08-17に撤回しました。新しいbaselineから再開する予定はなく、特定端末へ別buildを入れない制約もありません。Build 8では高解像度20件TimelineによりMedium / Largeがplaceholder相当になる不具合を確認し、Build 9でTimelineを最大2件へ制限、Build 10で写真ブラウザの標準ページングを修復しました。3サイズ、like／unlike即時反映、写真ブラウザの操作感は通常の機能ゲートとして実機確認します。Build 10の写真ブラウザが固まる場合は、待たずに遅延pagingを含む開発branchのbuildを同じ端末へ入れて確認します。実施順は[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)、Like修復は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、Timeline修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)、アルバム／共有は[ADR-009](docs/ADR-009-ローカルアルバムと招待制共有.md)、898件の遅延pagingは[ADR-010](docs/ADR-010-大規模写真ブラウザの遅延ページング.md)、うちの子の選別と将来の個体推定は[ADR-011](docs/ADR-011-うちの子の選別と将来の個体推定.md)、多頭プロフィールと安全な移行は[ADR-012](docs/ADR-012-多頭identity基盤と安全な移行.md)、関節点を使わないbbox姿勢アルバムは[ADR-013](docs/ADR-013-bbox姿勢アルバム.md)、確認回数を減らすFeaturePrintグループは[ADR-014](docs/ADR-014-FeaturePrint確認グループ.md)で管理します。
 
@@ -12,7 +12,7 @@
 
 写真シャッフルには、指定時点のアルバム内容がスナップショットとして取り込まれます。アルバムへ後から追加した写真は自動反映されないことを実機スパイクで確認済みです。判断の記録は[ADR-001](docs/ADR-001-写真シャッフルのアルバム追従.md)にあります。アルバム生成は維持し、ウィジェットを主要な継続表示先とします。
 
-WidgetはAppleの壁紙と美しさで競わず、写真をタップして「これ好き」へ進む導線を担います。Build 5の常設ぼかしは実機で没入感不足と判定し、現行は検出済み猫union＋8%余白を守るfamily別full-bleedです。Small / Largeの収容不能時だけ既存ぼかしへfallbackし、Mediumはbbox上側を焦点にします。Build 8では実ピクセル相当の`500×500 / 1050×500 / 1050×1100`へ上げ、約20pxでも猫と分かる独自`CatPawMark`へ置き換えました。Build 9ではこの画質を保ち、20件のmanifestから時刻基準で最大2件だけをTimelineへ渡します。Build 10は写真ブラウザの標準ページングだけを修復し、Widgetの構図や選別を変えません。Subject Lifting、新しい背景ぼかし、Mediumの2枚化、saliency、顔・構図理解、新しい選別軸は実装しません。招待制共有は[ADR-009](docs/ADR-009-ローカルアルバムと招待制共有.md)に従ってローカルアルバムの後に別段階で実装します。履歴は[ADR-003](docs/ADR-003-Widget表示品質のBuild5範囲.md)、表示判断は[ADR-005](docs/ADR-005-Widget猫優先full-bleed.md)と[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、resource修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)にあります。
+WidgetはAppleの壁紙と美しさで競わず、写真をタップして「これ好き」へ進む導線を担います。Build 5の常設ぼかしは実機で没入感不足と判定し、現行は検出済み猫union＋8%余白を守るfamily別full-bleedです。Small / Largeの収容不能時だけ既存ぼかしへfallbackし、Mediumはbbox上側を焦点にします。Build 8では実ピクセル相当の`500×500 / 1050×500 / 1050×1100`へ上げ、約20pxでも猫と分かる独自`CatPawMark`へ置き換えました。Build 9ではこの画質を保ち、20件のmanifestから時刻基準で最大2件だけをTimelineへ渡します。Build 10は写真ブラウザの標準ページングだけを修復し、Widgetの構図や選別を変えません。Subject Lifting、新しい背景ぼかし、Mediumの2枚化、saliency、顔・構図理解、新しい選別軸は実装しません。招待制共有は[ADR-009](docs/ADR-009-ローカルアルバムと招待制共有.md)と[ADR-017](docs/ADR-017-家族共有v1とmoderation境界.md)、名前付きのまどは[ADR-018](docs/ADR-018-名前付きの非公開なまど.md)の段階1〜3まで実装しています。複数まど、3人以上、1人の複数端末は未実装です。履歴は[ADR-003](docs/ADR-003-Widget表示品質のBuild5範囲.md)、表示判断は[ADR-005](docs/ADR-005-Widget猫優先full-bleed.md)と[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、resource修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)にあります。
 
 Build 5とBuild 6は技術検証専用です。Build 6では3サイズの右下へ輪郭／塗りつぶしの肉球ボタンを追加し、アプリを開かずに好き／解除をApp Groupへ記録します。Widget専用App IntentはSiriやショートカットへ公開しません。Build 7でfull-bleedとランダム100枚を確認し、同buildで始めた1週間計測はアプリ側の表示通知不具合により中断しました。再計測案は2026-08-17に撤回済みです。Build 8では共有Likeストアの即時反映を修復しましたが、Medium / Largeの表示ゲートが失敗しました。Build 9で最大2件Timelineを導入し、Build 10で写真ブラウザの標準ページングを修復しました。Build 10上の3サイズ表示、押下／解除のアプリ即時反映、写真ブラウザの初期表示とスワイプは、計測開始条件ではなく通常の機能確認として実施します。肉球と過去の計測境界は[ADR-004](docs/ADR-004-Widget肉球ボタンとBuild6計測.md)、Like修復は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、Timeline修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)にあります。
 
@@ -49,7 +49,7 @@ push / pull requestでは`iOS build check`を実行します。最初のジョ�
 
 TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使います。通常の`release_mode`は`review-preview`です。Build 28の2台ペアリング確認だけ`pairing-only`を明示し、GitHubの`testflight` Environmentにあるstaging originを注入します。このmodeでは写真のmedia／handoff／direct-sendをすべて無効にし、archiveのprivacy manifestとprocessed Info.plistを検査します。最初は`upload_to_testflight = false`で署名archiveとIPA exportだけを検証し、成功後にtrueへ切り替えてApp Store Connectでの検証とアップロードを行います。実uploadでは`retain_signed_artifacts = true`とし、一致するIPA、xcarchive、dSYMを暗号化artifactで回収します。
 
-2台の1枚共有には、別の`media-staging`を明示します。このmodeはfeature／media／host handoffだけをONにし、direct-sendとreview-previewをOFFに固定し、保護EnvironmentのAPI origin、moderation public key、privacy／support／community URLをarchiveの実値と比較します。2026-08-23現在、Build 31を本人所有2台だけの内部TestFlightへ配布し、通常momentを個人利用向けに継続ON、旧共有をOFFで維持しています。一般向けTestFlight、App Store審査提出、公開は行っていません。受入記録とrelease停止条件は[2台メディアstaging・TestFlight準備](docs/Media-Staging-TestFlight手順.md)、日次監視と緊急OFFは[本人2台用・写真共有staging運用](SharingService/PERSONAL_STAGING_OPERATIONS.md)を正本とします。
+2台の1枚共有には、別の`media-staging`を明示します。このmodeはfeature／media／host handoffだけをONにし、direct-sendとreview-previewをOFFに固定し、保護EnvironmentのAPI origin、moderation public key、privacy／support／community URLをarchiveの実値と比較します。2026-08-24現在、Build 34を本人所有2台だけの内部TestFlightへ配布し、通常momentと暗号化まど名同期を個人利用向けに継続ON、旧共有をOFFで維持しています。Build 35は候補段階で、TestFlightへは未配布です。一般向けTestFlight、App Store審査提出、公開は行っていません。受入記録とrelease停止条件は[2台メディアstaging・TestFlight準備](docs/Media-Staging-TestFlight手順.md)、日次監視と緊急OFFは[本人2台用・写真共有staging運用](SharingService/PERSONAL_STAGING_OPERATIONS.md)を正本とします。
 
 ### Simulatorスケールテスト
 

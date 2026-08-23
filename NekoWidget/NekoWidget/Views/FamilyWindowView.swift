@@ -38,6 +38,13 @@ struct FamilyWindowView: View {
         ) { _ in
             model.reloadWindowDisplayName()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .momentSharingContentNeedsReload
+            )
+        ) { _ in
+            model.reloadContentFromDisk()
+        }
         .confirmationDialog(
             "この写真を通報しますか？",
             isPresented: Binding(
@@ -115,6 +122,7 @@ struct FamilyWindowView: View {
                     reportOnlyCard
                 } else {
                     statusCard
+                    manualRefreshResult
                     howToSendCard
                 }
 
@@ -140,7 +148,7 @@ struct FamilyWindowView: View {
                     ContentUnavailableView(
                         "届いた写真はまだありません",
                         systemImage: "photo.on.rectangle.angled",
-                        description: Text("招待した相手が共有シートから届けた写真が、ここに追加されます。")
+                        description: Text("このまどにつながっている相手が共有シートから届けた写真が、ここに追加されます。")
                     )
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
@@ -189,7 +197,30 @@ struct FamilyWindowView: View {
                 }
                 .disabled(model.isWorking)
                 .accessibilityLabel("\(model.windowDisplayName)を更新")
+                .accessibilityHint("新しい写真を今すぐ確認します")
             }
+        }
+    }
+
+    @ViewBuilder
+    private var manualRefreshResult: some View {
+        if let message = model.manualRefreshMessage {
+            let didFail = model.manualRefreshSucceeded == false
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: didFail ? "exclamationmark.triangle" : "checkmark.circle")
+                    .foregroundStyle(didFail ? Color.orange : Color.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(message)
+                        .font(.footnote)
+                    if let completedAt = model.manualRefreshCompletedAt {
+                        Text(completedAt.formatted(.dateTime.hour().minute()))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+            .accessibilityIdentifier("family-window-manual-refresh-result")
         }
     }
 
@@ -229,7 +260,7 @@ struct FamilyWindowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("共有の設定・解除")
                         .font(.subheadline.weight(.semibold))
-                    Text("招待相手、写真共有の同意、共有解除を確認")
+                    Text("つながっている相手、写真共有の同意、共有解除を確認")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -506,6 +537,30 @@ struct FamilyWindowView: View {
                 .accessibilityLabel("写真の安全メニュー")
             }
             .padding(13)
+
+            if !model.isReportOnly {
+                Divider()
+                    .padding(.horizontal, 13)
+                Button {
+                    Task { await model.toggleSavedMemory(item) }
+                } label: {
+                    Label(
+                        model.isSavedMemory(item) ? "思い出に残しました（外す）" : "思い出に残す",
+                        systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(13)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isPerformingAction)
+                .accessibilityIdentifier("family-window-save-memory")
+            } else if model.isSavedMemory(item) {
+                Label("思い出に残しています", systemImage: "bookmark.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(13)
+            }
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
         .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -578,6 +633,9 @@ struct FamilyWindowView: View {
                 Link("問題を問い合わせる", destination: url)
             }
             Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。端末内の履歴は90日・最大500枚・256MBまで保持します。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("「思い出に残す」は、このiPhoneのまど内で履歴を優先して残す印です。最大90日で、写真アプリやiCloudには追加されず、共有解除・ブロック・再インストールで消えます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

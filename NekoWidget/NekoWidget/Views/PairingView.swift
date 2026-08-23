@@ -9,17 +9,13 @@ struct PairingView: View {
     @State private var showsCancelConfirmation = false
     @State private var showsCopyConfirmation = false
     @State private var windowDisplayNameDraft = PrivateWindowDisplayName.fallback
+    @State private var setupPath: SetupPath?
 
     var body: some View {
         Form {
             if !model.isMediaSyncEnabled {
                 pairingOnlyBuildSection
             }
-            privacySection
-            if model.isMediaSyncEnabled {
-                safetyCheckSettingSection
-            }
-
             if !model.isConfigured {
                 Section {
                     ContentUnavailableView(
@@ -39,7 +35,19 @@ struct PairingView: View {
                 }
             }
 
-            if let message = model.state?.lastError ?? model.configurationMessage,
+            privacySection
+            if model.isMediaSyncEnabled {
+                safetyCheckSettingSection
+            }
+
+            if let message = model.operationCompletionMessage {
+                Section {
+                    Label(message, systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+            }
+
+            if let message = model.userFacingStatusMessage,
                model.isConfigured || model.state?.lastError != nil {
                 Section("確認してください") {
                     Label(message, systemImage: "exclamationmark.triangle")
@@ -55,6 +63,15 @@ struct PairingView: View {
         }
         .onChange(of: model.windowDisplayName) { _, value in
             windowDisplayNameDraft = value
+        }
+        .onChange(of: setupPath) { _, _ in
+            hasAcceptedPairingTerms = false
+        }
+        .onChange(of: model.state?.phase) { previousPhase, currentPhase in
+            if currentPhase == .unpaired, previousPhase != .unpaired {
+                setupPath = nil
+                hasAcceptedPairingTerms = false
+            }
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -126,13 +143,22 @@ struct PairingView: View {
 
     @ViewBuilder
     private func pairingContent(_ state: PairingState) -> some View {
-        windowNameSection(state)
+        guidanceSection(state)
+        if state.phase != .unpaired {
+            windowNameSection(state)
+        }
 
         switch state.phase {
         case .unpaired:
-            consentSection
-            createSection
-            joinSection
+            setupChoiceSection
+            if setupPath == .create {
+                windowNameSection(state)
+                consentSection
+                createSection
+            } else if setupPath == .join {
+                consentSection
+                joinSection
+            }
         case .creatingInvitation:
             progressSection("招待を作成しています…")
             retrySection("招待作成を再試行") {
@@ -150,7 +176,7 @@ struct PairingView: View {
             }
         case .pendingApproval:
             phraseSection(state, title: "相手の承認を待っています")
-            refreshSection
+            refreshSection(state)
             cancelSection
         case .approvalRequired:
             phraseSection(state, title: "確認フレーズを照合")
@@ -166,7 +192,7 @@ struct PairingView: View {
             cancelSection
         case .awaitingCompletion:
             progressSection("相手の端末で完了するのを待っています")
-            refreshSection
+            refreshSection(state)
             cancelSection
         case .paired:
             Section {
@@ -184,7 +210,8 @@ struct PairingView: View {
             if model.isMediaSyncEnabled && !model.hasCurrentMediaSharingConsent {
                 mediaConsentRenewalSection
             }
-            refreshSection
+            refreshSection(state)
+            deviceChangeSection
             pairedCancelSection
         case .failed:
             Section {
@@ -193,6 +220,50 @@ struct PairingView: View {
             if state.memberID != nil {
                 cancelSection
             }
+        }
+    }
+
+    private func guidanceSection(_ state: PairingState) -> some View {
+        let guidance = PairingGuidancePresentation.make(
+            phase: state.phase,
+            role: state.role
+        )
+        return Section {
+            Label(guidance.roleTitle, systemImage: "person.crop.circle.badge.checkmark")
+                .font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(guidance.nextActionTitle)
+                    .font(.headline)
+                Text(guidance.nextActionDetail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("次にすること")
+        }
+    }
+
+    private var setupChoiceSection: some View {
+        Section {
+            Button {
+                setupPath = .create
+            } label: {
+                Label("新しいまどを作る", systemImage: "rectangle.badge.plus")
+                    .font(.headline)
+            }
+            .accessibilityHint("このiPhoneが、まどの名前と招待を管理します")
+
+            Button {
+                setupPath = .join
+            } label: {
+                Label("招待されたまどに参加", systemImage: "person.badge.plus")
+                    .font(.headline)
+            }
+            .accessibilityHint("相手から届いたNW1.で始まるコードを使います")
+        } header: {
+            Text("どちらをしますか？")
+        } footer: {
+            Text("1つの非公開なまどに、相手1人とつながります。家族に限らず、信頼できる相手を招待できます。")
         }
     }
 
@@ -256,6 +327,7 @@ struct PairingView: View {
                 Task {
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
+                        hasAcceptedPairingTerms = false
                     }
                     await model.createInvitation(
                         dailyBoundaryMinuteUTC: utcBoundaryMinute
@@ -263,11 +335,11 @@ struct PairingView: View {
                     await saveWindowNameIfPossible()
                 }
             } label: {
-                Label("招待コードを作る", systemImage: "person.badge.plus")
+                Label("この名前でまどを作る", systemImage: "person.badge.plus")
             }
             .disabled(model.isWorking || !hasAcceptedPairingTerms)
         } header: {
-            Text("招待する")
+            Text("新しいまどを作る")
         } footer: {
             Text("非公開のまどを1つ作り、信頼できる相手を1人招待します。家族に限らず、公開フィードや検索にも表示されません。")
         }
@@ -289,6 +361,7 @@ struct PairingView: View {
                 Task {
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
+                        hasAcceptedPairingTerms = false
                     }
                     await model.joinInvitation()
                     await saveWindowNameIfPossible()
@@ -302,7 +375,7 @@ struct PairingView: View {
                     || model.enteredInvitationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             )
         } header: {
-            Text("招待された")
+            Text("招待されたまどに参加")
         }
     }
 
@@ -385,10 +458,17 @@ struct PairingView: View {
                 )
             }
 
-            Button("参加状況を更新") {
+            Button(
+                PairingGuidancePresentation.make(
+                    phase: state.phase,
+                    role: state.role
+                ).refreshButtonTitle ?? "相手が参加したか確認"
+            ) {
                 Task { await model.refresh() }
             }
             .disabled(model.isWorking)
+
+            manualCheckResult
         } header: {
             Text("招待コード")
         } footer: {
@@ -411,12 +491,35 @@ struct PairingView: View {
         }
     }
 
-    private var refreshSection: some View {
-        Section {
-            Button("状態を更新") {
+    private func refreshSection(_ state: PairingState) -> some View {
+        let title = PairingGuidancePresentation.make(
+            phase: state.phase,
+            role: state.role
+        ).refreshButtonTitle ?? "接続状態を確認"
+        return Section {
+            Button(title) {
                 Task { await model.refresh() }
             }
             .disabled(model.isWorking)
+            manualCheckResult
+        }
+    }
+
+    @ViewBuilder
+    private var manualCheckResult: some View {
+        if let message = model.manualCheckMessage {
+            let didFail = model.manualCheckSucceeded == false
+            Label(
+                message,
+                systemImage: didFail ? "exclamationmark.triangle" : "checkmark.circle"
+            )
+                .font(.footnote)
+                .foregroundStyle(didFail ? Color.orange : Color.secondary)
+            if let completedAt = model.manualCheckCompletedAt {
+                Text(completedAt.formatted(.dateTime.hour().minute()))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -437,8 +540,19 @@ struct PairingView: View {
             .disabled(model.isWorking)
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "解除すると相手からのアクセスを直ちに停止し、サーバー上の共有データ削除を開始します。この開発段階では削除完了の進捗表示はまだありません。相手が端末外へ保存・スクリーンショットしたコピーは回収できません。"
+                ? "解除をサーバーで確認してから、このiPhoneの共有鍵・届いた写真・まど内の思い出の印を削除します。通信に失敗した場合は削除せず再試行できます。相手が端末外へ保存・スクリーンショットしたコピーは回収できません。"
                 : "現在は写真同期前のため、共有鍵とペアリング情報だけを解除します。写真同期を追加する段階では、サーバー上の縮小画像を削除する進捗表示もここへ追加します。")
+        }
+    }
+
+    private var deviceChangeSection: some View {
+        Section {
+            Label("共有鍵は新しいiPhoneへ引き継ぎません", systemImage: "iphone.gen3")
+            Text("旧iPhoneで共有を解除してから、新しいiPhoneを招待してください。旧iPhoneを操作できない場合は、つながっている相手のiPhoneで共有を解除し、新しい招待コードを作ります。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("機種変更・再インストール")
         }
     }
 
@@ -517,5 +631,10 @@ struct PairingView: View {
             second: 0,
             of: .now
         ) ?? .now
+    }
+
+    private enum SetupPath {
+        case create
+        case join
     }
 }

@@ -10,6 +10,9 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var isPerformingAction = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var windowDisplayName = PrivateWindowDisplayName.fallback
+    @Published private(set) var manualRefreshMessage: String?
+    @Published private(set) var manualRefreshCompletedAt: Date?
+    @Published private(set) var manualRefreshSucceeded: Bool?
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -43,6 +46,9 @@ final class MomentSharingViewModel: ObservableObject {
                 return $0.id < $1.id
             }
     }
+    var savedMemoryIDs: Set<String> {
+        Set(sharingState.savedMemories.map(\.momentID))
+    }
 
     func bootstrap() async {
         do {
@@ -50,21 +56,26 @@ final class MomentSharingViewModel: ObservableObject {
             try reload()
             errorMessage = nil
             if isPaired {
-                await synchronize()
+                await synchronize(isManual: false)
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
         }
     }
 
-    func synchronize() async {
+    func synchronize(isManual: Bool = true) async {
         guard !isSynchronizing, !isPerformingAction else { return }
+        if isManual {
+            manualRefreshMessage = nil
+            manualRefreshCompletedAt = nil
+            manualRefreshSucceeded = nil
+        }
         isSynchronizing = true
         defer { isSynchronizing = false }
         // Capture the Share Extension handoff before the coordinator promotes
         // it, so the UI can truthfully show the local preparation boundary.
         do { try reload() }
-        catch { errorMessage = error.localizedDescription }
+        catch { errorMessage = Self.userFacingMessage(for: error) }
         // The coordinator crosses several durable boundaries while awaiting
         // moderation and network responses. Poll a bounded, sanitized snapshot
         // off the MainActor so those phases are visible without repeatedly
@@ -86,8 +97,22 @@ final class MomentSharingViewModel: ObservableObject {
                 for: synchronizationNotice,
                 windowDisplayName: windowDisplayName
             )
+            if isManual {
+                manualRefreshCompletedAt = .now
+                manualRefreshSucceeded = errorMessage == nil
+                manualRefreshMessage = errorMessage == nil
+                    ? "確認処理が終わりました。表示が変わらない場合は、現在このiPhoneで表示できる新しい写真はありません。"
+                    : "確認処理が終わりました。画面の案内を確認してください。"
+            }
         }
-        catch { errorMessage = error.localizedDescription }
+        catch {
+            errorMessage = Self.userFacingMessage(for: error)
+            if isManual {
+                manualRefreshCompletedAt = .now
+                manualRefreshSucceeded = false
+                manualRefreshMessage = "確認を完了できませんでした。接続を確認して、もう一度お試しください。"
+            }
+        }
     }
 
     func report(
@@ -106,7 +131,7 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
         }
     }
 
@@ -119,7 +144,36 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
+        }
+    }
+
+    func isSavedMemory(_ item: MomentInboxItem) -> Bool {
+        savedMemoryIDs.contains(item.id)
+    }
+
+    func toggleSavedMemory(_ item: MomentInboxItem) async {
+        guard !isWorking, !isReportOnly,
+              item.state == .available || item.state == .acknowledged
+        else { return }
+        isPerformingAction = true
+        defer { isPerformingAction = false }
+        do {
+            let bootstrap = try PairingInstallationGuard.bootstrap()
+            try MomentSharingStateStore.setSavedMemory(
+                momentID: item.id,
+                isSaved: !isSavedMemory(item),
+                validating: bootstrap.lifecycleToken
+            )
+            errorMessage = nil
+            try reload()
+        } catch {
+            errorMessage = "この写真の保存状態を変更できませんでした。時間をおいて、もう一度お試しください。"
+            SharedLog.app.warning(
+                "saved-moment",
+                "Received moment bookmark could not be changed",
+                metadata: ["reason": error.localizedDescription]
+            )
         }
     }
 
@@ -132,7 +186,7 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
         }
     }
 
@@ -145,7 +199,7 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
         }
     }
 
@@ -158,7 +212,7 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
         }
     }
 
@@ -171,7 +225,7 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = Self.userFacingMessage(for: error)
         }
     }
 
@@ -230,7 +284,15 @@ final class MomentSharingViewModel: ObservableObject {
         }
     }
 
-    private func reload() throws {
+    func reloadContentFromDisk() {
+        do {
+            try reload(notifyPresentationChange: false)
+        } catch {
+            errorMessage = Self.userFacingMessage(for: error)
+        }
+    }
+
+    private func reload(notifyPresentationChange: Bool = true) throws {
         let pairingSnapshot = try PairingStateStore.beginOperation()
         let nextPairingState = pairingSnapshot.state
         let handoffSnapshot = configuration.isShareExtensionHandoffAvailable
@@ -253,10 +315,12 @@ final class MomentSharingViewModel: ObservableObject {
             sharingState: nextSharingState,
             now: .now
         )
-        NotificationCenter.default.post(
-            name: .momentSharingPresentationNeedsRefresh,
-            object: nil
-        )
+        if notifyPresentationChange {
+            NotificationCenter.default.post(
+                name: .momentSharingPresentationNeedsRefresh,
+                object: nil
+            )
+        }
     }
 
     private func refreshOutgoingPresentation() async {
@@ -354,6 +418,19 @@ final class MomentSharingViewModel: ObservableObject {
         case nil:
             return nil
         }
+    }
+
+    private nonisolated static func userFacingMessage(for error: Error) -> String {
+        if let momentError = error as? MomentSharingError {
+            return momentError.localizedDescription
+        }
+        if let pairingError = error as? PairingError {
+            return pairingError.localizedDescription
+        }
+        if error is URLError {
+            return "通信を完了できませんでした。接続を確認すると自動で再試行します。"
+        }
+        return "写真共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
     }
 
     private nonisolated static func presentationPhase(

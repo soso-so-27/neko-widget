@@ -308,6 +308,13 @@ jobs:
           "$RUNNER_TEMP/verify-moment-sharing-presentation"
           xcrun --sdk macosx swiftc \
             -parse-as-library \
+            Shared/Sharing/PairingCore.swift \
+            NekoWidget/Views/PairingPresentation.swift \
+            ci/verify-pairing-presentation.swift \
+            -o "$RUNNER_TEMP/verify-pairing-presentation"
+          "$RUNNER_TEMP/verify-pairing-presentation"
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
             Shared/Models/WidgetManifest.swift \
             Shared/Models/WidgetRenderPlan.swift \
             ci/verify-private-window-display-name.swift \
