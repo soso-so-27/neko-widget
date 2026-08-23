@@ -318,6 +318,42 @@ jobs:
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
+      - name: Set up Node.js for public policy gate
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
+      - name: Validate public policy for selected release mode
+        shell: bash
+        env:
+          SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          set -euo pipefail
+          policy_revision="2026-08-24"
+          case "$SELECTED_RELEASE_MODE" in
+            disabled)
+              policy_profile="local-only"
+              policy_site_base="https://soso-so-27.github.io/neko-widget/app/"
+              ;;
+            media-staging)
+              policy_profile="sharing-beta"
+              policy_site_base="https://soso-so-27.github.io/neko-widget/"
+              ;;
+            review-preview|pairing-only)
+              echo "SKIP public policy gate: release_mode=$SELECTED_RELEASE_MODE does not use a public policy profile."
+              exit 0
+              ;;
+            *)
+              echo "Unknown release_mode at public policy gate: $SELECTED_RELEASE_MODE" >&2
+              exit 1
+              ;;
+          esac
+
+          node "$PROJECT_DIRECTORY/SharingService/scripts/check-public-policy-site.mjs" \
+            --profile "$policy_profile" \
+            --site-base "$policy_site_base" \
+            --expected-revision "$policy_revision"
+
       - name: Validate required secrets
         shell: bash
         env:

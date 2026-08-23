@@ -1,17 +1,33 @@
 import html.parser
 import pathlib
+import subprocess
+import textwrap
 import unittest
 import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SITE = ROOT / "docs"
+TESTFLIGHT_WORKFLOW = ROOT / ".github" / "workflows" / "testflight.yml"
+PHOTO_ALBUM_SERVICE = ROOT / "NekoWidget" / "NekoWidget" / "Services" / "PhotoAlbumService.swift"
+SETTINGS_VIEW = ROOT / "NekoWidget" / "NekoWidget" / "Views" / "SettingsView.swift"
+INFO_PLIST = ROOT / "NekoWidget" / "NekoWidget" / "Info.plist"
+LIKED_PHOTOS_VIEW = ROOT / "NekoWidget" / "NekoWidget" / "Views" / "LikedPhotosView.swift"
+LOG_VIEW = ROOT / "NekoWidget" / "NekoWidget" / "Views" / "LogView.swift"
+PHOTO_BOOK_EXPORTER = ROOT / "NekoWidget" / "NekoWidget" / "Services" / "PhotoBookPDFExporter.swift"
+JSON_EXPORTER = ROOT / "NekoWidget" / "NekoWidget" / "Services" / "JSONExporter.swift"
 PAGES = (
     SITE / "index.html",
     SITE / "privacy" / "index.html",
     SITE / "community" / "index.html",
     SITE / "support" / "index.html",
 )
+LOCAL_ONLY_PAGES = (
+    SITE / "app" / "index.html",
+    SITE / "app" / "privacy" / "index.html",
+    SITE / "app" / "support" / "index.html",
+)
+ALL_PAGES = PAGES + LOCAL_ONLY_PAGES
 
 
 class PageParser(html.parser.HTMLParser):
@@ -45,7 +61,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         return parser
 
     def test_expected_pages_and_mobile_metadata_exist(self):
-        for page in PAGES:
+        for page in ALL_PAGES:
             self.assertTrue(page.is_file(), page)
             source = page.read_text(encoding="utf-8")
             self.assertIn('lang="ja"', source)
@@ -53,7 +69,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertIn("ねこのまど", source)
 
     def test_internal_links_resolve(self):
-        for page in PAGES:
+        for page in ALL_PAGES:
             for href in self.parsed(page).links:
                 parsed = urllib.parse.urlparse(href)
                 if parsed.scheme or href.startswith("#"):
@@ -64,7 +80,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 self.assertTrue(target.is_file(), f"{page}: {href} -> {target}")
 
     def test_external_links_are_https(self):
-        for page in PAGES:
+        for page in ALL_PAGES:
             for href in self.parsed(page).links:
                 parsed = urllib.parse.urlparse(href)
                 if parsed.scheme:
@@ -99,6 +115,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
     def test_private_window_capability_boundary_is_consistent(self):
         required = (
+            "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。",
             "名前を付けた1つの非公開なまど",
             "信頼できる招待相手1人",
             "2人・各1台",
@@ -119,6 +136,18 @@ class PublicPolicySiteTests(unittest.TestCase):
                 self.assertIn(phrase, text, page)
             for phrase in legacy_family_copy:
                 self.assertNotIn(phrase, text, page)
+
+        privacy = "".join(self.parsed(PAGES[1]).text)
+        self.assertIn("写真共有が有効な内部TestFlight共有ベータでは", privacy)
+        self.assertNotIn("写真共有が有効な現行版では", privacy)
+        for phrase in (
+            "写真アプリに「うちの子」アルバムを作成・更新",
+            "元写真のアルバム所属を追加・解除",
+            "このアルバム連携では元写真を複製、書き出し、アップロードせず",
+            "写真アプリとiCloud写真の同期はAppleと利用者の設定によります",
+            "「うちの子」アルバムの構成がほかのApple端末へ同期されることがあります",
+        ):
+            self.assertIn(phrase, privacy)
 
     def test_keep_memory_is_a_bounded_local_bookmark(self):
         for page in (PAGES[1], PAGES[3]):
@@ -161,7 +190,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertIn(phrase, support)
 
     def test_no_placeholder_or_personal_email_is_published(self):
-        sources = "\n".join(page.read_text(encoding="utf-8") for page in PAGES)
+        sources = "\n".join(page.read_text(encoding="utf-8") for page in ALL_PAGES)
         lowered = sources.lower()
         for forbidden in (
             "todo",
@@ -173,6 +202,199 @@ class PublicPolicySiteTests(unittest.TestCase):
             "gmail.com",
         ):
             self.assertNotIn(forbidden, lowered)
+
+    def test_local_only_pages_link_to_each_other(self):
+        expected = {page.resolve() for page in LOCAL_ONLY_PAGES}
+        for page in LOCAL_ONLY_PAGES:
+            linked: set[pathlib.Path] = set()
+            for href in self.parsed(page).links:
+                parsed = urllib.parse.urlparse(href)
+                if parsed.scheme or href.startswith("#"):
+                    continue
+                target = (page.parent / parsed.path).resolve()
+                if parsed.path.endswith("/") or target.is_dir():
+                    target /= "index.html"
+                linked.add(target)
+            self.assertTrue(expected.issubset(linked), f"{page}: missing {expected - linked}")
+
+    def test_local_only_revision_is_visible_and_fixed(self):
+        for page in LOCAL_ONLY_PAGES:
+            parser = self.parsed(page)
+            self.assertEqual("2026-08-24", parser.meta.get("neko-policy-revision"), page)
+            self.assertIn("最終更新日：2026年8月24日", "".join(parser.text), page)
+
+    def test_local_only_capability_boundary_is_consistent(self):
+        required = (
+            "完全ローカル版",
+            "現在の共有ベータ版とは別の仕様",
+            "この完全ローカル版では",
+            "写真の読み込み、解析、猫判定、一覧、Widget用画像の処理は端末内だけ",
+            "ほかの利用者とのネットワーク写真共有・招待・自動送信・受信機能はなく",
+            "アプリから開発者のサーバーへ通信しません",
+            "公開フィード、検索、フォローもありません",
+            "開発者の解析サービスへ自動接続せず、広告やトラッキングを行いません",
+            "写真アプリに「うちの子」アルバムを作成・更新",
+            "元写真のアルバム所属を追加・解除",
+            "このアルバム連携では元写真を複製、書き出し、アップロードせず",
+            "写真アプリとiCloud写真の同期はAppleと利用者の設定によります",
+            "「うちの子」アルバムの構成がほかのApple端末へ同期されることがあります",
+            "アプリを削除しても、「うちの子」アルバムやその構成が写真アプリに残ることがあります",
+            "アプリとWidgetの専用領域にあるデータはiOSにより削除されます",
+            "本アプリが写真やデータを自動で開発者のサーバーへアップロードすることはありません",
+            "PDF、検証JSON、診断ログの書き出しを明示的に選ぶと、iOSの共有シートが開きます",
+            "共有先のサービスとポリシーが適用されます",
+            "写真PDFには利用者が選んだ写真が含まれます",
+            "識別子や診断情報が含まれる場合があります",
+            "内容と共有先を確認してから共有してください",
+            "非公開で連絡できるプライバシー問い合わせ窓口は現在未掲載です",
+            "App Storeで一般提供する前に、このページへ有効な非公開窓口を掲載する必要があります",
+            "一般公開の提出準備は完了していません",
+        )
+        for page in LOCAL_ONLY_PAGES:
+            text = "".join(self.parsed(page).text)
+            for phrase in required:
+                self.assertIn(phrase, text, f"{page}: {phrase}")
+
+    def test_local_only_privacy_facts_are_explicit(self):
+        privacy = "".join(self.parsed(LOCAL_ONLY_PAGES[1]).text)
+        for phrase in (
+            "開発者によるデータ収集を行いません",
+            "CloudKitやアプリ独自のiCloudコンテナも使用しません",
+            "共有相手、招待、送信待ち、受信履歴、サーバー上の写真は作成しません",
+            "開発者の共有サーバーや解析サービスへ自動接続しません",
+            "データ販売、生成AIの学習にも利用しません",
+        ):
+            self.assertIn(phrase, privacy)
+
+    def test_local_only_false_policy_claims_are_absent(self):
+        forbidden = (
+            "写真アプリやiCloudへ独自に保存することもありません",
+            "写真アプリやiCloudへ独自に保存することはありません",
+            "写真アプリやiCloudへ独自に保存しません",
+            "共有・招待・送信・受信はなく",
+            "選んだ写真、縮小画像、Widget表示用の派生画像を外部へ送信しません",
+            "写真、縮小画像、判定結果、Widget表示用画像などの派生画像を、開発者やその他の外部サーバーへ送信しません",
+            "技術的な問い合わせとプライバシーに関する連絡方法は",
+        )
+        for page in LOCAL_ONLY_PAGES:
+            text = "".join(self.parsed(page).text)
+            for phrase in forbidden:
+                self.assertNotIn(phrase, text, f"{page}: {phrase}")
+
+    def test_photo_album_disclosure_stays_aligned_with_implementation(self):
+        service = PHOTO_ALBUM_SERVICE.read_text(encoding="utf-8")
+        settings = SETTINGS_VIEW.read_text(encoding="utf-8")
+        info = INFO_PLIST.read_text(encoding="utf-8")
+        for phrase in (
+            "PHAssetCollectionChangeRequest.creationRequestForAssetCollection",
+            "request.addAssets(desiredAssets)",
+            "request.addAssets(additions)",
+            "request.removeAssets(removals)",
+        ):
+            self.assertIn(phrase, service)
+        self.assertNotIn("PHAssetCreationRequest", service)
+        self.assertIn(
+            "写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。",
+            settings,
+        )
+        self.assertIn("NSPhotoLibraryAddUsageDescription", info)
+        self.assertIn("「うちの子」アルバムへ追加", info)
+
+    def test_explicit_export_disclosure_stays_aligned_with_implementation(self):
+        liked_photos = LIKED_PHOTOS_VIEW.read_text(encoding="utf-8")
+        settings = SETTINGS_VIEW.read_text(encoding="utf-8")
+        log_view = LOG_VIEW.read_text(encoding="utf-8")
+        photo_book = PHOTO_BOOK_EXPORTER.read_text(encoding="utf-8")
+        json_exporter = JSON_EXPORTER.read_text(encoding="utf-8")
+        self.assertIn("explicitly selected", photo_book)
+        self.assertIn("image.draw", photo_book)
+        self.assertIn("UIActivityViewController", liked_photos)
+        self.assertIn("検証データをJSONで書き出す", settings)
+        self.assertIn("UIActivityViewController", settings)
+        self.assertIn("Diagnostic log export failed", log_view)
+        self.assertIn("UIActivityViewController", log_view)
+        self.assertIn("container.encode(snapshot.assets", json_exporter)
+        self.assertIn("albumLocalIdentifier", json_exporter)
+
+    def test_local_only_support_reuses_existing_public_routes(self):
+        support = "".join(self.parsed(LOCAL_ONLY_PAGES[2]).text)
+        for phrase in (
+            "TestFlight",
+            "GitHub Issues",
+            "Build番号",
+            "公開してよい情報だけ",
+            "緊急通報先ではありません",
+            "GitHub Issuesは、個人情報を含まない技術的な問い合わせだけ",
+        ):
+            self.assertIn(phrase, support)
+
+    def test_testflight_checks_the_exact_policy_profile_before_signing(self):
+        workflow = TESTFLIGHT_WORKFLOW.read_text(encoding="utf-8")
+        selector_name = "- name: Select fail-closed release mode"
+        setup_name = "- name: Set up Node.js for public policy gate"
+        gate_name = "- name: Validate public policy for selected release mode"
+        signing_name = "- name: Install distribution certificate and provisioning profiles"
+        self.assertLess(workflow.index(selector_name), workflow.index(setup_name))
+        self.assertLess(workflow.index(setup_name), workflow.index(gate_name))
+        self.assertLess(workflow.index(gate_name), workflow.index(signing_name))
+
+        selector = workflow.split(selector_name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn('echo "Unknown release_mode: $SELECTED_RELEASE_MODE"', selector)
+        self.assertIn("exit 1", selector)
+
+        setup = workflow.split(setup_name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn(
+            "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444",
+            setup,
+        )
+        self.assertIn('node-version: "22"', setup)
+
+        gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
+        self.assertEqual(gate.count('policy_revision="2026-08-24"'), 1)
+        disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
+        self.assertIn('policy_profile="local-only"', disabled)
+        self.assertIn(
+            'policy_site_base="https://soso-so-27.github.io/neko-widget/app/"',
+            disabled,
+        )
+        media = gate.split("media-staging)", 1)[1].split(";;", 1)[0]
+        self.assertIn('policy_profile="sharing-beta"', media)
+        self.assertIn(
+            'policy_site_base="https://soso-so-27.github.io/neko-widget/"',
+            media,
+        )
+        skipped = gate.split("review-preview|pairing-only)", 1)[1].split(";;", 1)[0]
+        self.assertIn(
+            "SKIP public policy gate: release_mode=$SELECTED_RELEASE_MODE does not use a public policy profile.",
+            skipped,
+        )
+        self.assertIn("exit 0", skipped)
+        for fragment in (
+            'node "$PROJECT_DIRECTORY/SharingService/scripts/check-public-policy-site.mjs"',
+            '--profile "$policy_profile"',
+            '--site-base "$policy_site_base"',
+            '--expected-revision "$policy_revision"',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, gate)
+        for forbidden in ("wrangler", "emergency-off", "curl -x", "cloudflare"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, gate.lower())
+
+        shell_source = (
+            textwrap.dedent(gate.split("run: |", 1)[1]).lstrip().replace("\r", "")
+        )
+        syntax = subprocess.run(
+            ["bash", "-n"],
+            input=shell_source.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(
+            syntax.returncode,
+            0,
+            syntax.stderr.decode("utf-8", errors="replace"),
+        )
 
 
 if __name__ == "__main__":
