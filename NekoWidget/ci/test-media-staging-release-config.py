@@ -145,6 +145,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             'release_handoff="YES"',
             'release_direct_send="NO"',
             'release_review_preview="NO"',
+            'release_photo_usage_description="$media_photo_usage_description"',
             "PrivacyInfo.MediaStaging.xcprivacy",
         )
         for fragment in expected_fragments:
@@ -157,7 +158,10 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             'SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED"',
             'SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED"',
             'SHARING_PRIVACY_URL="$RELEASE_SHARING_PRIVACY_URL"',
+            'PHOTO_LIBRARY_USAGE_DESCRIPTION="$RELEASE_PHOTO_LIBRARY_USAGE_DESCRIPTION"',
+            'SHARE_EXTENSION_INFOPLIST_FILE="$RELEASE_SHARE_EXTENSION_INFOPLIST_FILE"',
             '--expected-mode "$SHARING_EXPECTED_MODE"',
+            '--expected-photo-library-usage-description "$RELEASE_PHOTO_LIBRARY_USAGE_DESCRIPTION"',
             '--expected-moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY"',
             '--expected-privacy-url "$RELEASE_SHARING_PRIVACY_URL"',
             '--expected-support-url "$RELEASE_SHARING_SUPPORT_URL"',

@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   build-without-signing:
-    name: Build app and widget without signing
+    name: Build disabled app and extensions without signing
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -47,6 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 ci/test-disabled-release-config.py
+          python3 ci/test-disabled-release-build-settings.py
           python3 ci/test-pairing-only-release-config.py
           python3 ci/test-media-staging-release-config.py
           python3 ci/test-validate-sharing-release.py
@@ -739,7 +740,7 @@ jobs:
               print(f"{name}: {width}x{height}")
           PY
 
-      - name: Build app and widget for iOS Simulator
+      - name: Resolve fail-closed ordinary Release settings
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -747,7 +748,24 @@ jobs:
           xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
-            -configuration Debug \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -showBuildSettings \
+            -json \
+            > "$RUNNER_TEMP/NekoWidgetReleaseBuildSettings.json"
+          python3 ci/validate-disabled-release-build-settings.py \
+            "$RUNNER_TEMP/NekoWidgetReleaseBuildSettings.json"
+
+      - name: Build disabled app and extensions for iOS Simulator
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Release \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \

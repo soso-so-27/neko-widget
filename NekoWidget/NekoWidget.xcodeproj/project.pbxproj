@@ -193,6 +193,7 @@
 
 /* Begin PBXFileReference section */
 		F00000000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		F00000000000000000000002 /* Config.Disabled.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.Disabled.xcconfig; sourceTree = "<group>"; };
 		F00000000000000000000101 /* SharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContainer.swift; sourceTree = "<group>"; };
 		F00000000000000000000102 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		F00000000000000000000103 /* AssetRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetRecord.swift; sourceTree = "<group>"; };
@@ -300,6 +301,7 @@
 		F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetConfigurationIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000350 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F00000000000000000000352 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000356 /* Info.Disabled.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.Disabled.plist; sourceTree = "<group>"; };
 		F00000000000000000000353 /* NekoWidgetShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetShareExtension.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000354 /* MomentShareIngressService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareIngressService.swift; sourceTree = "<group>"; };
 		F00000000000000000000355 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -373,6 +375,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000001 /* Config.xcconfig */,
+				F00000000000000000000002 /* Config.Disabled.xcconfig */,
 				B00000000000000000000001 /* Shared */,
 				C00000000000000000000001 /* NekoWidget */,
 				D00000000000000000000001 /* NekoWidgetWidget */,
@@ -630,6 +633,7 @@
 				F00000000000000000000350 /* ShareViewController.swift */,
 				F00000000000000000000354 /* MomentShareIngressService.swift */,
 				F00000000000000000000352 /* Info.plist */,
+				F00000000000000000000356 /* Info.Disabled.plist */,
 				F00000000000000000000353 /* NekoWidgetShareExtension.entitlements */,
 				F00000000000000000000355 /* PrivacyInfo.xcprivacy */,
 			);
@@ -1049,7 +1053,7 @@
 		};
 		A00000000000000000000051 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -1127,7 +1131,7 @@
 		};
 		A00000000000000000000053 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
@@ -1182,7 +1186,7 @@
 		};
 		A00000000000000000000055 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NekoWidgetWidget/NekoWidgetWidget.entitlements;
@@ -1254,7 +1258,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(inherited)";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist;
+				INFOPLIST_FILE = "$(SHARE_EXTENSION_INFOPLIST_FILE)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1274,14 +1278,14 @@
 		};
 		A00000000000000000000059 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(inherited)";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist;
+				INFOPLIST_FILE = "$(SHARE_EXTENSION_INFOPLIST_FILE)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

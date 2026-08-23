@@ -46,6 +46,12 @@ SHARING_PRIVACY_URL =
 SHARING_SUPPORT_URL =
 SHARING_COMMUNITY_STANDARDS_URL =
 
+// Purpose-string and Share Extension plist defaults for non-Release local
+// development. Release configurations use Config.Disabled.xcconfig, while the
+// protected TestFlight workflow supplies explicit per-mode overrides.
+PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は端末内で行います。
+SHARE_EXTENSION_INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist
+
 // GitHub Actions injects the names extracted from the three distribution
 // provisioning profiles. Keep these empty for Xcode automatic signing.
 APP_PROVISIONING_PROFILE_SPECIFIER =

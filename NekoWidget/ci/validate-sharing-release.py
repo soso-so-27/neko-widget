@@ -27,6 +27,17 @@ MEDIA_INTERACTION_COLLECTIONS = {
 }
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 PHOTO_DESCRIPTION_TERMS = ("選んだ1枚", "2,048", "位置情報", "暗号化", "原本")
+LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
+LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
+    "共有",
+    "招待",
+    "相手",
+    "受信",
+    "履歴",
+    "送信",
+    "届け",
+    "サーバー",
+)
 RESERVED_HOST_SUFFIXES = (
     ".example",
     ".invalid",
@@ -356,8 +367,11 @@ def validate_share_extension_boundary(
     share_info: dict,
     failures: list[str],
 ) -> tuple[bool, bool]:
-    """Keep the embedded Share Extension reviewable but unable to reuse a
-    stale App Group/Keychain credential after reinstall.
+    """Keep enabled-mode Share Extension capture-only and installation-bound.
+
+    The disabled archive separately uses a FALSEPREDICATE activation rule and
+    an early runtime refusal, so this boundary is defense in depth for every
+    mode where the extension is intentionally visible.
 
     The extension cannot read the host app's ordinary-container installation
     marker. Direct network delivery therefore remains an unconditional release
@@ -433,6 +447,7 @@ def validate_expected_mode(
     expected_privacy_url: str,
     expected_support_url: str,
     expected_community_standards_url: str,
+    expected_photo_library_usage_description: str,
     app_info: dict,
     share_info: dict,
     widget_info: dict,
@@ -498,6 +513,41 @@ def validate_expected_mode(
                 "by the protected release environment."
             )
 
+    archived_photo_description = app_info.get("NSPhotoLibraryUsageDescription")
+    if (
+        not isinstance(archived_photo_description, str)
+        or archived_photo_description != expected_photo_library_usage_description
+    ):
+        failures.append(
+            "Processed NSPhotoLibraryUsageDescription does not exactly match the "
+            "value supplied by the protected release workflow."
+        )
+    if expected_mode != "media-staging" and isinstance(
+        archived_photo_description, str
+    ):
+        missing_terms = [
+            term
+            for term in LOCAL_PHOTO_DESCRIPTION_TERMS
+            if term not in archived_photo_description
+        ]
+        forbidden_terms = [
+            term
+            for term in LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS
+            if term in archived_photo_description
+        ]
+        if missing_terms:
+            failures.append(
+                "Local-only NSPhotoLibraryUsageDescription does not explain the "
+                "on-device cat/album/Widget purpose "
+                f"(missing: {', '.join(missing_terms)})."
+            )
+        if forbidden_terms:
+            failures.append(
+                "Local-only NSPhotoLibraryUsageDescription misleadingly describes "
+                "a sharing path "
+                f"(found: {', '.join(forbidden_terms)})."
+            )
+
     actual = (
         pairing_enabled,
         media_enabled,
@@ -542,21 +592,19 @@ def validate_expected_mode(
         if isinstance(attributes, dict)
         else None
     )
-    activation_count = (
-        activation_rule.get("NSExtensionActivationSupportsImageWithMaxCount")
-        if isinstance(activation_rule, dict)
-        else None
-    )
-    expected_activation_count = 0 if expected_mode == "disabled" else 1
-    if (
-        isinstance(activation_count, bool)
-        or not isinstance(activation_count, int)
-        or activation_count != expected_activation_count
-    ):
-        failures.append(
-            "Share Extension image activation count must be "
-            f"{expected_activation_count} for {expected_mode}."
-        )
+    if expected_mode == "disabled":
+        if activation_rule != "FALSEPREDICATE":
+            failures.append(
+                "Disabled Share Extension activation rule must be FALSEPREDICATE."
+            )
+    else:
+        if activation_rule != {
+            "NSExtensionActivationSupportsImageWithMaxCount": 1
+        }:
+            failures.append(
+                "Share Extension activation rule must accept exactly one image for "
+                f"{expected_mode}."
+            )
 
 
 def main() -> int:
@@ -584,6 +632,11 @@ def main() -> int:
     parser.add_argument("--expected-privacy-url", default="")
     parser.add_argument("--expected-support-url", default="")
     parser.add_argument("--expected-community-standards-url", default="")
+    parser.add_argument(
+        "--expected-photo-library-usage-description",
+        required=True,
+        help="Exact photo permission purpose string selected by the release workflow.",
+    )
     args = parser.parse_args()
 
     try:
@@ -614,6 +667,7 @@ def main() -> int:
         args.expected_privacy_url,
         args.expected_support_url,
         args.expected_community_standards_url,
+        args.expected_photo_library_usage_description,
         info,
         share_info,
         widget_info,

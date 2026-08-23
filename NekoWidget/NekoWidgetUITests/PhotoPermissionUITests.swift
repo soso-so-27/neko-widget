@@ -180,6 +180,17 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
 
+        if ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1" {
+            XCTAssertFalse(
+                app.buttons["window-family-window-review"].exists,
+                "The disabled build exposed the pairing/sharing card."
+            )
+            XCTAssertFalse(
+                app.buttons["window-latest-family-photo"].exists,
+                "The disabled build exposed stale received-photo UI."
+            )
+        }
+
         let settingsButton = firstExistingButton(
             in: app,
             identifiers: ["window-settings-button"],
@@ -199,6 +210,12 @@ final class PhotoPermissionUITests: XCTestCase {
                 app: app
             )
             return
+        }
+        if ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1" {
+            XCTAssertFalse(
+                app.descendants(matching: .any)["settings-sharing-review"].exists,
+                "The disabled build exposed sharing settings."
+            )
         }
         settingsWidgetGuide.tap()
 

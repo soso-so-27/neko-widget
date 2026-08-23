@@ -9,6 +9,7 @@ SHARING_RUNTIME_VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-t
 SHARING_RUNTIME_REPORT_FILENAME="sharing-runtime-self-test.json"
 SHARING_RUNTIME_PROGRESS_FILENAME="sharing-runtime-self-test-progress.json"
 SHARING_RUNTIME_RENDERER_VERSION="cat-aware-full-bleed-v6"
+LOCAL_PHOTO_LIBRARY_USAGE_DESCRIPTION='猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は端末内で行います。'
 SIMULATOR_TEST_MODE="${SIMULATOR_TEST_MODE:-smoke}"
 case "$SIMULATOR_TEST_MODE" in
     smoke)
@@ -844,10 +845,13 @@ xcrun simctl status_bar "$SIMULATOR_UDID" override \
     --time 09:41 --batteryLevel 100 --batteryState charged || true
 
 cd "$PROJECT_DIRECTORY"
+# Keep DEBUG-only deterministic fixtures available while overlaying the exact
+# ordinary Release boundary onto the app, Widget, and Share Extension.
 xcodebuild \
     -project NekoWidget.xcodeproj \
     -scheme NekoWidget \
     -configuration Debug \
+    -xcconfig "$PROJECT_DIRECTORY/Config.Disabled.xcconfig" \
     -sdk iphonesimulator \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
     -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
@@ -860,10 +864,25 @@ xcodebuild \
 
 APP_PATH="$DERIVED_DATA_DIRECTORY/Build/Products/Debug-iphonesimulator/NekoWidget.app"
 EXTENSION_PATH="$APP_PATH/PlugIns/NekoWidgetWidgetExtension.appex"
-if [[ ! -d "$APP_PATH" || ! -d "$EXTENSION_PATH" ]]; then
-    echo "The built app or embedded Widget extension was not found." >&2
+SHARE_EXTENSION_PATH="$APP_PATH/PlugIns/NekoWidgetShareExtension.appex"
+if [[ ! -d "$APP_PATH" || ! -d "$EXTENSION_PATH" \
+    || ! -d "$SHARE_EXTENSION_PATH" ]]; then
+    echo "The built app or an embedded extension was not found." >&2
     exit 1
 fi
+
+python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
+    --info-plist "$APP_PATH/Info.plist" \
+    --share-info-plist "$SHARE_EXTENSION_PATH/Info.plist" \
+    --widget-info-plist "$EXTENSION_PATH/Info.plist" \
+    --privacy-manifest "$APP_PATH/PrivacyInfo.xcprivacy" \
+    --widget-privacy-manifest "$EXTENSION_PATH/PrivacyInfo.xcprivacy" \
+    --share-privacy-manifest "$SHARE_EXTENSION_PATH/PrivacyInfo.xcprivacy" \
+    --export-reviewed NO \
+    --expected-mode disabled \
+    --expected-api-origin '' \
+    --expected-photo-library-usage-description \
+        "$LOCAL_PHOTO_LIBRARY_USAGE_DESCRIPTION"
 
 APP_BUNDLE_ID="$(
     /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist"
@@ -880,6 +899,7 @@ printf 'App bundle: %s\nWidget bundle: %s\nApp Group: %s\n' \
 
 codesign --verify --deep --strict "$APP_PATH"
 codesign --verify --strict "$EXTENSION_PATH"
+codesign --verify --strict "$SHARE_EXTENSION_PATH"
 codesign --display \
     --entitlements "$ARTIFACT_DIRECTORY/app-codesign-entitlements.plist" \
     --xml "$APP_PATH" \
@@ -967,10 +987,11 @@ xcrun simctl help privacy > "$ARTIFACT_DIRECTORY/simctl-privacy-help.txt" 2>&1
 # Exercise the production permission button and expected system dialog through
 # Apple's UI-testing APIs instead. Parallel testing must stay disabled so the
 # authorization remains on this exact Simulator rather than a cloned device.
-xcodebuild \
+NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     -project NekoWidget.xcodeproj \
     -scheme NekoWidget \
     -configuration Debug \
+    -xcconfig "$PROJECT_DIRECTORY/Config.Disabled.xcconfig" \
     -sdk iphonesimulator \
     -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
     -derivedDataPath "$DERIVED_DATA_DIRECTORY" \

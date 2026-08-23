@@ -12,8 +12,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parent
 DISABLED_CONFIG = ROOT / "Config.Disabled.xcconfig"
+BASE_CONFIG = ROOT / "Config.xcconfig"
+PROJECT = ROOT / "NekoWidget.xcodeproj" / "project.pbxproj"
 WORKFLOW = REPOSITORY / ".github" / "workflows" / "testflight.yml"
 IOS_BUILD = REPOSITORY / ".github" / "workflows" / "ios-build.yml"
+LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
+LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
+    "共有",
+    "招待",
+    "相手",
+    "受信",
+    "履歴",
+    "送信",
+    "届け",
+    "サーバー",
+)
 
 
 def assignments(path: Path) -> dict[str, str]:
@@ -57,6 +70,39 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         self.assertNotIn("https://", source)
         self.assertNotIn("workers.dev", source)
 
+        description = values["PHOTO_LIBRARY_USAGE_DESCRIPTION"]
+        for term in LOCAL_PHOTO_DESCRIPTION_TERMS:
+            self.assertIn(term, description)
+        for term in LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS:
+            self.assertNotIn(term, description)
+        self.assertEqual(
+            values["SHARE_EXTENSION_INFOPLIST_FILE"],
+            "NekoWidgetShareExtension/Info.Disabled.plist",
+        )
+
+    def test_every_shipped_release_target_uses_the_disabled_overlay(self) -> None:
+        project = PROJECT.read_text(encoding="utf-8")
+        disabled_reference = (
+            "baseConfigurationReference = F00000000000000000000002 "
+            "/* Config.Disabled.xcconfig */;"
+        )
+        for identifier in (
+            "A00000000000000000000051",  # project
+            "A00000000000000000000053",  # app
+            "A00000000000000000000055",  # Widget
+            "A00000000000000000000059",  # Share Extension
+        ):
+            with self.subTest(identifier=identifier):
+                block = project.split(f"{identifier} /* Release */", 1)[1].split(
+                    "\n\t\t};", 1
+                )[0]
+                self.assertIn(disabled_reference, block)
+        self.assertEqual(project.count(disabled_reference), 4)
+        self.assertIn(
+            'INFOPLIST_FILE = "$(SHARE_EXTENSION_INFOPLIST_FILE)";',
+            project,
+        )
+
     def test_workflow_defaults_to_disabled_and_removes_share_activation(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("default: disabled", workflow)
@@ -69,14 +115,24 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             'release_handoff="NO"',
             'release_direct_send="NO"',
             'release_review_preview="NO"',
-            'share_activation_count="0"',
+            'release_share_info_plist="NekoWidgetShareExtension/Info.Disabled.plist"',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, disabled)
+        media = workflow.split("media-staging)", 1)[1].split(";;", 1)[0]
         self.assertIn(
-            "NSExtensionActivationSupportsImageWithMaxCount $share_activation_count",
+            'release_photo_usage_description="$media_photo_usage_description"',
+            media,
+        )
+        self.assertIn(
+            'PHOTO_LIBRARY_USAGE_DESCRIPTION="$RELEASE_PHOTO_LIBRARY_USAGE_DESCRIPTION"',
             workflow,
         )
+        self.assertIn(
+            'SHARE_EXTENSION_INFOPLIST_FILE="$RELEASE_SHARE_EXTENSION_INFOPLIST_FILE"',
+            workflow,
+        )
+        self.assertIn("--expected-photo-library-usage-description", workflow)
         self.assertIn('--widget-info-plist "$widget_path/Info.plist"', workflow)
 
     def test_disabled_uses_the_noncollecting_privacy_manifest(self) -> None:
@@ -91,11 +147,46 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             "NekoWidget/Info.plist",
             "NekoWidgetWidget/Info.plist",
             "NekoWidgetShareExtension/Info.plist",
+            "NekoWidgetShareExtension/Info.Disabled.plist",
         ):
             with self.subTest(relative=relative):
                 source = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn("<key>SharingReleaseMode</key>", source)
                 self.assertIn("<string>$(SHARING_RELEASE_MODE)</string>", source)
+
+    def test_disabled_permission_copy_and_share_activation_are_truthful(self) -> None:
+        app_info = (ROOT / "NekoWidget/Info.plist").read_text(encoding="utf-8")
+        self.assertIn("$(PHOTO_LIBRARY_USAGE_DESCRIPTION)", app_info)
+        self.assertNotIn("写真共有が有効なBuild", app_info)
+
+        base_values = assignments(BASE_CONFIG)
+        disabled_values = assignments(DISABLED_CONFIG)
+        self.assertEqual(
+            disabled_values["PHOTO_LIBRARY_USAGE_DESCRIPTION"],
+            base_values["PHOTO_LIBRARY_USAGE_DESCRIPTION"],
+        )
+
+        with (ROOT / "NekoWidgetShareExtension/Info.plist").open("rb") as handle:
+            enabled_share = plistlib.load(handle)
+        with (ROOT / "NekoWidgetShareExtension/Info.Disabled.plist").open(
+            "rb"
+        ) as handle:
+            disabled_share = plistlib.load(handle)
+        enabled_rule = enabled_share["NSExtension"]["NSExtensionAttributes"][
+            "NSExtensionActivationRule"
+        ]
+        disabled_rule = disabled_share["NSExtension"]["NSExtensionAttributes"][
+            "NSExtensionActivationRule"
+        ]
+        self.assertEqual(
+            enabled_rule["NSExtensionActivationSupportsImageWithMaxCount"], 1
+        )
+        self.assertEqual(disabled_rule, "FALSEPREDICATE")
+        enabled_without_extension = dict(enabled_share)
+        disabled_without_extension = dict(disabled_share)
+        enabled_without_extension.pop("NSExtension")
+        disabled_without_extension.pop("NSExtension")
+        self.assertEqual(enabled_without_extension, disabled_without_extension)
 
     def test_disabled_runtime_closes_nonstandard_entry_points(self) -> None:
         app_model = (ROOT / "NekoWidget/ViewModels/AppViewModel.swift").read_text(
@@ -129,6 +220,28 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             share.index("selectedImageProvider()"),
         )
 
+        home = (ROOT / "NekoWidget/Views/HomeView.swift").read_text(
+            encoding="utf-8"
+        )
+        body = home.split("var body: some View", 1)[1].split(
+            "private var emptyState", 1
+        )[0]
+        self.assertLess(
+            body.index("if SharingAPIConfiguration.current.isReviewVisible"),
+            body.index("familyWindowCard"),
+        )
+
+        pairing = (ROOT / "NekoWidget/ViewModels/PairingViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        initializer = pairing.split("init(configuration:", 1)[1].split(
+            "var isConfigured", 1
+        )[0]
+        self.assertLess(
+            initializer.index("if configuration.isAvailable"),
+            initializer.index("URLSessionPairingAPIClient"),
+        )
+
     def test_stale_family_widget_and_polling_fail_closed(self) -> None:
         timeline = (
             ROOT / "NekoWidgetWidget/NekoWidgetTimelineProvider.swift"
@@ -153,10 +266,26 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         )
 
     def test_ios_ci_runs_the_disabled_boundary_test(self) -> None:
-        self.assertIn(
-            "python3 ci/test-disabled-release-config.py",
-            IOS_BUILD.read_text(encoding="utf-8"),
+        ios_build = IOS_BUILD.read_text(encoding="utf-8")
+        self.assertIn("python3 ci/test-disabled-release-config.py", ios_build)
+        self.assertIn("python3 ci/test-disabled-release-build-settings.py", ios_build)
+        self.assertIn("validate-disabled-release-build-settings.py", ios_build)
+        self.assertIn("-configuration Release", ios_build)
+        smoke = (ROOT / "ci/run-simulator-smoke.sh").read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            smoke.count('-xcconfig "$PROJECT_DIRECTORY/Config.Disabled.xcconfig"'),
+            2,
         )
+        self.assertIn("NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild", smoke)
+        ui_test = (ROOT / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(
+            encoding="utf-8"
+        )
+        for identifier in (
+            "window-family-window-review",
+            "window-latest-family-photo",
+            "settings-sharing-review",
+        ):
+            self.assertIn(identifier, ui_test)
 
 
 if __name__ == "__main__":

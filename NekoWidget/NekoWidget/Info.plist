@@ -42,7 +42,7 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>選別した猫の写真を「うちの子」アルバムへ追加するため、写真ライブラリへの追加を許可してください。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>猫の写真を端末内で見つけて整理するため、写真ライブラリへのアクセスを許可してください。写真共有が有効なBuildでは、共有シートで選んだ1枚だけを最大2,048pxへ縮小し、位置情報を除いて名前付きの非公開なまどの信頼できる相手へ暗号化して届けます。原本を自動送信することはありません。受信と共有履歴内の「思い出に残す」には写真アクセスを使わず、受信写真を写真アプリやiCloudへ保存しません。</string>
+	<string>$(PHOTO_LIBRARY_USAGE_DESCRIPTION)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>SharingAPIBaseURL</key>
