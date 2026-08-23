@@ -265,6 +265,88 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             poll_task,
         )
 
+    def test_foreground_sync_purges_an_upgraded_disabled_installation(self) -> None:
+        configuration = (
+            ROOT / "Shared/Sharing/SharingAPIConfiguration.swift"
+        ).read_text(encoding="utf-8")
+        purge_property = configuration.split(
+            "var requiresLocalSharingPurge: Bool", 1
+        )[1].split("var isDisabledRelease", 1)[0]
+        self.assertIn("isDisabledRelease", purge_property)
+        self.assertNotIn("!isAvailable", purge_property)
+
+        coordinator = (
+            ROOT / "NekoWidget/Services/MomentSharingCoordinator.swift"
+        ).read_text(encoding="utf-8")
+        synchronization = coordinator.split(
+            "private func performSynchronization(trigger: String) async", 1
+        )[1].split("private func loadAuthorization", 1)[0]
+        full_purge = synchronization.split(
+            "if configuration.requiresLocalSharingPurge", 1
+        )[1].split("// Disabling media/handoff", 1)[0]
+        self.assertIn(
+            "resetLocalSharingForDisabledConfigurationAsync()",
+            full_purge,
+        )
+        self.assertIn("return", full_purge)
+        self.assertNotIn("makeNetworkClient()", full_purge)
+        self.assertLess(
+            synchronization.index("if configuration.requiresLocalSharingPurge"),
+            synchronization.index("guard configuration.isMediaAvailable else"),
+        )
+
+        guard_source = (
+            ROOT / "NekoWidget/Services/PairingInstallationGuard.swift"
+        ).read_text(encoding="utf-8")
+        disabled_reset = guard_source.split(
+            "static func resetLocalSharingForDisabledConfiguration()", 1
+        )[1].split("private static func bootstrapWhileLocked", 1)[0]
+        self.assertIn("SharingLifecycleGate.withExclusive", disabled_reset)
+        self.assertIn("performCleanupWhileLocked", disabled_reset)
+
+        cleanup = guard_source.split(
+            "private static func performCleanupWhileLocked", 1
+        )[1].split("private static func markerURL", 1)[0]
+        cleanup_order = [
+            cleanup.index("markCleanupRequired()"),
+            cleanup.index("bumpEpochWhileLocked()"),
+            cleanup.index("deleteAllSharingCredentials()"),
+            cleanup.index("purgeSharedCache()"),
+            cleanup.index("saveWhileLifecycleLocked(reset)"),
+            cleanup.index("clearCleanupRequired()"),
+        ]
+        self.assertEqual(cleanup_order, sorted(cleanup_order))
+
+        cache_purge = guard_source.split("private static func purgeSharedCache()", 1)[1]
+        self.assertIn("SharedContainer.sharingCacheDirectoryURL", cache_purge)
+        self.assertNotIn("SharedContainer.containerURL", cache_purge)
+
+        app_model = (ROOT / "NekoWidget/ViewModels/AppViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        start = app_model.split("func start() async", 1)[1].split(
+            "func requestAccess() async", 1
+        )[0]
+        foreground = app_model.split("func syncOnActive() async", 1)[1].split(
+            "func handleURL", 1
+        )[0]
+        self.assertIn('synchronizeMomentSharing(trigger: "launch")', start)
+        self.assertIn('synchronizeMomentSharing(trigger: "foreground")', foreground)
+
+        runtime = (
+            ROOT / "NekoWidget/Services/SharingRuntimeSelfTest.swift"
+        ).read_text(encoding="utf-8")
+        disabled_upgrade = runtime.split(
+            "private static func testDisabledUpgradePurge()", 1
+        )[1].split("private static func testMomentReportOnlyTerminalGate", 1)[0]
+        self.assertIn("runtime-pairing-only-unavailable", disabled_upgrade)
+        self.assertIn('releaseMode: "pairing-only"', disabled_upgrade)
+        self.assertIn("runtime-review-preview-preserve", disabled_upgrade)
+        self.assertIn('releaseMode: "review-preview"', disabled_upgrade)
+        self.assertIn('baseURL: URL(string: "https://unexpected.invalid")!', disabled_upgrade)
+        self.assertIn('releaseMode: "disabled"', disabled_upgrade)
+        self.assertIn("firstNetworkConstructionCount == 0", disabled_upgrade)
+
     def test_ios_ci_runs_the_disabled_boundary_test(self) -> None:
         ios_build = IOS_BUILD.read_text(encoding="utf-8")
         self.assertIn("python3 ci/test-disabled-release-config.py", ios_build)

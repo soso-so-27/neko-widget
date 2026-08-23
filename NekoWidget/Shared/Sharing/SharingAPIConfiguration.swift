@@ -74,6 +74,15 @@ struct SharingAPIConfiguration: Equatable, Sendable {
 
     var isReviewVisible: Bool { isAvailable || isReviewPreviewEnabled }
 
+    /// The exact local-only release selection must not retain authorization or
+    /// media from an earlier sharing-enabled build. Do not derive this
+    /// destructive boundary from URL validity: a temporarily malformed
+    /// pairing-only candidate must preserve its room, while a disabled archive
+    /// with accidentally injected network values must still purge locally.
+    var requiresLocalSharingPurge: Bool {
+        isDisabledRelease
+    }
+
     /// Exact local-only release marker. The archive validator binds this mode
     /// to an all-off flag tuple; the runtime marker additionally lets the Share
     /// Extension refuse an unexpected launch before it reads an image provider.

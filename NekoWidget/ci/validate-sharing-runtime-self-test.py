@@ -14,6 +14,7 @@ REQUIRED_CASES = {
     "canonical-local-only-privacy-budget",
     "daily-store-cas-highwater-anchor",
     "day-boundary-convergence",
+    "disabled-upgrade-purge",
     "lease-heartbeat",
     "legacy-widget-cache-migration",
     "moment-report-only-terminal-gate",

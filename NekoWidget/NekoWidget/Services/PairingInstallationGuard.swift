@@ -27,6 +27,34 @@ enum PairingInstallationGuard {
         }.value
     }
 
+    /// A build whose selected configuration is fully disabled has no authority
+    /// to retain an earlier room. Unlike a user-requested unlink, this reset
+    /// deliberately has no expected-state CAS: stale paired state, orphaned
+    /// Keychain items and an interrupted prior cleanup must all converge to the
+    /// same unpaired installation before any relay client can be constructed.
+    @discardableResult
+    static func resetLocalSharingForDisabledConfiguration() throws -> PairingState {
+        try SharingLifecycleGate.withExclusive {
+            // Local-only cleanup does not need to preserve room identity. Do
+            // not let an unavailable or malformed ordinary-container marker
+            // prevent the App Group tombstone from being published first. A
+            // later enabled build treats a missing/mismatched marker as another
+            // reason to clean before it can reuse any sharing capability.
+            let existingMarker = try? readLocalMarker()
+            let marker = existingMarker ?? UUID().uuidString
+            if existingMarker == nil {
+                try? writeLocalMarker(marker)
+            }
+            return try performCleanupWhileLocked(marker: marker, message: nil)
+        }
+    }
+
+    static func resetLocalSharingForDisabledConfigurationAsync() async throws {
+        try await Task.detached(priority: .userInitiated) {
+            _ = try resetLocalSharingForDisabledConfiguration()
+        }.value
+    }
+
     private static func bootstrapWhileLocked() throws -> BootstrapResult {
         if SharingLifecycleGate.isCleanupRequired {
             let marker = try readLocalMarker() ?? UUID().uuidString
