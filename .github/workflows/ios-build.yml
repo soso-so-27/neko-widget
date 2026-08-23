@@ -748,17 +748,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild \
-            -project NekoWidget.xcodeproj \
-            -scheme NekoWidget \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -showBuildSettings \
-            -json \
-            > "$RUNNER_TEMP/NekoWidgetReleaseBuildSettings.json"
+          settings_paths=()
+          for target in \
+            NekoWidget \
+            NekoWidgetWidgetExtension \
+            NekoWidgetShareExtension; do
+            output="$RUNNER_TEMP/${target}ReleaseBuildSettings.json"
+            xcodebuild \
+              -project NekoWidget.xcodeproj \
+              -target "$target" \
+              -configuration Release \
+              -sdk iphonesimulator \
+              -showBuildSettings \
+              -json \
+              > "$output"
+            settings_paths+=("$output")
+          done
           python3 ci/validate-disabled-release-build-settings.py \
-            "$RUNNER_TEMP/NekoWidgetReleaseBuildSettings.json"
+            "${settings_paths[@]}"
 
       - name: Build disabled app and extensions for iOS Simulator
         working-directory: NekoWidget

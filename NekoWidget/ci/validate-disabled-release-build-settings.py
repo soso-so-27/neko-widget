@@ -126,13 +126,27 @@ def validate(payload: object) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("settings_json", type=Path)
+    parser.add_argument("settings_json", type=Path, nargs="+")
     args = parser.parse_args()
-    try:
-        payload = json.loads(args.settings_json.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        print(f"disabled Release settings: FAIL: {error}", file=sys.stderr)
-        return 1
+
+    payload: list[object] = []
+    for path in args.settings_json:
+        try:
+            resolved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            print(
+                f"disabled Release settings: FAIL: {path.name}: {error}",
+                file=sys.stderr,
+            )
+            return 1
+        if not isinstance(resolved, list):
+            print(
+                "disabled Release settings: FAIL: "
+                f"{path.name}: xcodebuild output is not an array.",
+                file=sys.stderr,
+            )
+            return 1
+        payload.extend(resolved)
 
     failures = validate(payload)
     if failures:

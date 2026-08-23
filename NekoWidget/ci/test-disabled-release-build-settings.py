@@ -71,6 +71,24 @@ class DisabledReleaseBuildSettingsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("all off", result.stdout)
 
+    def test_cli_combines_one_resolved_file_per_shipped_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for index, entry in enumerate(fixture()):
+                path = Path(directory) / f"target-{index}.json"
+                path.write_text(
+                    json.dumps([entry], ensure_ascii=False), encoding="utf-8"
+                )
+                paths.append(str(path))
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), *paths],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("all off", result.stdout)
+
     def test_each_sharing_flag_fails_open_detection(self) -> None:
         for key in (
             "SHARING_RELEASE_MODE",
@@ -111,6 +129,21 @@ class DisabledReleaseBuildSettingsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing target NekoWidgetShareExtension", result.stderr)
         self.assertIn("contains sharing terms", result.stderr)
+
+    def test_ci_resolves_each_shipped_target_explicitly(self) -> None:
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ios-build.yml").read_text(
+            encoding="utf-8"
+        )
+        start = workflow.index("- name: Resolve fail-closed ordinary Release settings")
+        end = workflow.index(
+            "- name: Build disabled app and extensions for iOS Simulator", start
+        )
+        step = workflow[start:end]
+        for target in TARGETS:
+            self.assertIn(target, step)
+        self.assertIn('settings_paths+=("$output")', step)
+        self.assertIn('"${settings_paths[@]}"', step)
+        self.assertNotIn("-scheme NekoWidget", step)
 
 
 if __name__ == "__main__":
