@@ -16,6 +16,11 @@ BASE_CONFIG = ROOT / "Config.xcconfig"
 PROJECT = ROOT / "NekoWidget.xcodeproj" / "project.pbxproj"
 WORKFLOW = REPOSITORY / ".github" / "workflows" / "testflight.yml"
 IOS_BUILD = REPOSITORY / ".github" / "workflows" / "ios-build.yml"
+SIMULATOR_SMOKE = ROOT / "ci" / "run-simulator-smoke.sh"
+APP_PRIVACY_XCCONFIG = "https:/$()/soso-so-27.github.io/neko-widget/app/privacy/"
+APP_SUPPORT_XCCONFIG = "https:/$()/soso-so-27.github.io/neko-widget/app/support/"
+APP_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/app/privacy/"
+APP_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/app/support/"
 LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
 LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "共有",
@@ -67,7 +72,11 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         ):
             with self.subTest(key=key):
                 self.assertEqual(values[key], "")
-        self.assertNotIn("https://", source)
+        self.assertEqual(values["APP_PRIVACY_URL"], APP_PRIVACY_XCCONFIG)
+        self.assertEqual(values["APP_SUPPORT_URL"], APP_SUPPORT_XCCONFIG)
+        base_values = assignments(BASE_CONFIG)
+        self.assertEqual(base_values["APP_PRIVACY_URL"], "")
+        self.assertEqual(base_values["APP_SUPPORT_URL"], "")
         self.assertNotIn("workers.dev", source)
 
         description = values["PHOTO_LIBRARY_USAGE_DESCRIPTION"]
@@ -110,6 +119,8 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         disabled = workflow.split("disabled)", 1)[1].split(";;", 1)[0]
         for fragment in (
             'release_origin=""',
+            'release_app_privacy_url="https://soso-so-27.github.io/neko-widget/app/privacy/"',
+            'release_app_support_url="https://soso-so-27.github.io/neko-widget/app/support/"',
             'release_feature="NO"',
             'release_media="NO"',
             'release_handoff="NO"',
@@ -124,6 +135,8 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             'release_photo_usage_description="$media_photo_usage_description"',
             media,
         )
+        self.assertIn('release_app_privacy_url="$release_privacy_url"', media)
+        self.assertIn('release_app_support_url="$release_support_url"', media)
         self.assertIn(
             'PHOTO_LIBRARY_USAGE_DESCRIPTION="$RELEASE_PHOTO_LIBRARY_USAGE_DESCRIPTION"',
             workflow,
@@ -133,7 +146,17 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("--expected-photo-library-usage-description", workflow)
+        self.assertIn('APP_PRIVACY_URL="$RELEASE_APP_PRIVACY_URL"', workflow)
+        self.assertIn('APP_SUPPORT_URL="$RELEASE_APP_SUPPORT_URL"', workflow)
+        self.assertIn("--expected-app-privacy-url", workflow)
+        self.assertIn("--expected-app-support-url", workflow)
         self.assertIn('--widget-info-plist "$widget_path/Info.plist"', workflow)
+
+        simulator_smoke = SIMULATOR_SMOKE.read_text(encoding="utf-8")
+        self.assertIn("--expected-app-privacy-url", simulator_smoke)
+        self.assertIn(f"'{APP_PRIVACY_URL}'", simulator_smoke)
+        self.assertIn("--expected-app-support-url", simulator_smoke)
+        self.assertIn(f"'{APP_SUPPORT_URL}'", simulator_smoke)
 
     def test_disabled_uses_the_noncollecting_privacy_manifest(self) -> None:
         with (ROOT / "NekoWidget" / "PrivacyInfo.xcprivacy").open("rb") as handle:
@@ -157,6 +180,10 @@ class DisabledReleaseConfigTests(unittest.TestCase):
     def test_disabled_permission_copy_and_share_activation_are_truthful(self) -> None:
         app_info = (ROOT / "NekoWidget/Info.plist").read_text(encoding="utf-8")
         self.assertIn("$(PHOTO_LIBRARY_USAGE_DESCRIPTION)", app_info)
+        self.assertIn("<key>AppPrivacyURL</key>", app_info)
+        self.assertIn("$(APP_PRIVACY_URL)", app_info)
+        self.assertIn("<key>AppSupportURL</key>", app_info)
+        self.assertIn("$(APP_SUPPORT_URL)", app_info)
         self.assertNotIn("写真共有が有効なBuild", app_info)
 
         base_values = assignments(BASE_CONFIG)
@@ -187,6 +214,21 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         enabled_without_extension.pop("NSExtension")
         disabled_without_extension.pop("NSExtension")
         self.assertEqual(enabled_without_extension, disabled_without_extension)
+
+    def test_disabled_settings_exposes_general_policy_links(self) -> None:
+        settings = (ROOT / "NekoWidget/Views/SettingsView.swift").read_text(
+            encoding="utf-8"
+        )
+        configuration = (
+            ROOT / "Shared/Sharing/SharingAPIConfiguration.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn("struct AppPublicLinksConfiguration", configuration)
+        self.assertIn('info["AppPrivacyURL"]', configuration)
+        self.assertIn('info["AppSupportURL"]', configuration)
+        self.assertIn("AppPublicLinksConfiguration.current.privacyURL", settings)
+        self.assertIn("AppPublicLinksConfiguration.current.supportURL", settings)
+        self.assertIn('"settings-privacy-policy"', settings)
+        self.assertIn('"settings-support-page"', settings)
 
     def test_disabled_runtime_closes_nonstandard_entry_points(self) -> None:
         app_model = (ROOT / "NekoWidget/ViewModels/AppViewModel.swift").read_text(

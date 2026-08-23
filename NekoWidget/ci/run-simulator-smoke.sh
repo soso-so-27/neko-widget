@@ -882,6 +882,10 @@ python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
     --export-reviewed NO \
     --expected-mode disabled \
     --expected-api-origin '' \
+    --expected-app-privacy-url \
+        'https://soso-so-27.github.io/neko-widget/app/privacy/' \
+    --expected-app-support-url \
+        'https://soso-so-27.github.io/neko-widget/app/support/' \
     --expected-photo-library-usage-description \
         "$LOCAL_PHOTO_LIBRARY_USAGE_DESCRIPTION"
 

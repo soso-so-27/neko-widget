@@ -21,6 +21,8 @@ TARGETS = {
     "NekoWidgetWidgetExtension": "NekoWidgetWidget/Info.plist",
     "NekoWidgetShareExtension": "NekoWidgetShareExtension/Info.Disabled.plist",
 }
+APP_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/app/privacy/"
+APP_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/app/support/"
 
 
 def fixture() -> list[dict]:
@@ -48,6 +50,8 @@ def fixture() -> list[dict]:
                     "SHARING_PRIVACY_URL": "",
                     "SHARING_SUPPORT_URL": "",
                     "SHARING_COMMUNITY_STANDARDS_URL": "",
+                    "APP_PRIVACY_URL": APP_PRIVACY_URL,
+                    "APP_SUPPORT_URL": APP_SUPPORT_URL,
                 },
             }
         )
@@ -119,6 +123,15 @@ class DisabledReleaseBuildSettingsTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("empty SHARING_API_BASE_URL", result.stderr)
         self.assertIn("Info.Disabled.plist", result.stderr)
+
+    def test_general_app_policy_urls_are_required_exactly(self) -> None:
+        for key in ("APP_PRIVACY_URL", "APP_SUPPORT_URL"):
+            with self.subTest(key=key):
+                value = fixture()
+                value[0]["buildSettings"][key] = ""
+                result = self.run_validator(value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(key, result.stderr)
 
     def test_duplicate_target_fails_closed(self) -> None:
         value = fixture()

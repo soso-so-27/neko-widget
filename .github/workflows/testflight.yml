@@ -74,6 +74,8 @@ jobs:
           set -euo pipefail
           release_moderation_key_id=""
           release_moderation_public_key=""
+          release_app_privacy_url=""
+          release_app_support_url=""
           release_privacy_url=""
           release_support_url=""
           release_community_standards_url=""
@@ -84,6 +86,8 @@ jobs:
           case "$SELECTED_RELEASE_MODE" in
             disabled)
               release_origin=""
+              release_app_privacy_url="https://soso-so-27.github.io/neko-widget/app/privacy/"
+              release_app_support_url="https://soso-so-27.github.io/neko-widget/app/support/"
               release_summary="disabled/local-only App Store release"
               release_feature="NO"
               release_media="NO"
@@ -124,6 +128,8 @@ jobs:
               release_privacy_url="${SHARING_STAGING_PRIVACY_URL:-}"
               release_support_url="${SHARING_STAGING_SUPPORT_URL:-}"
               release_community_standards_url="${SHARING_STAGING_COMMUNITY_STANDARDS_URL:-}"
+              release_app_privacy_url="$release_privacy_url"
+              release_app_support_url="$release_support_url"
               release_summary="media-staging/two-device one-photo sharing"
               release_feature="YES"
               release_media="YES"
@@ -163,6 +169,8 @@ jobs:
           python3 - \
             "$SELECTED_RELEASE_MODE" \
             "$release_origin" \
+            "$release_app_privacy_url" \
+            "$release_app_support_url" \
             "$release_moderation_key_id" \
             "$release_moderation_public_key" \
             "$release_privacy_url" \
@@ -179,6 +187,8 @@ jobs:
           (
               mode,
               origin,
+              app_privacy_url,
+              app_support_url,
               moderation_key_id,
               moderation_public_key,
               privacy_url,
@@ -242,6 +252,27 @@ jobs:
 
           if mode not in {"disabled", "review-preview", "pairing-only", "media-staging"}:
               raise SystemExit(f"Unknown release mode: {mode}")
+
+          if mode == "disabled":
+              expected_app_privacy_url = "https://soso-so-27.github.io/neko-widget/app/privacy/"
+              expected_app_support_url = "https://soso-so-27.github.io/neko-widget/app/support/"
+          elif mode == "media-staging":
+              expected_app_privacy_url = privacy_url
+              expected_app_support_url = support_url
+          else:
+              expected_app_privacy_url = ""
+              expected_app_support_url = ""
+          if app_privacy_url != expected_app_privacy_url:
+              raise SystemExit(f"{mode} selected an unexpected general app privacy URL.")
+          if app_support_url != expected_app_support_url:
+              raise SystemExit(f"{mode} selected an unexpected general app support URL.")
+          for app_policy_url, label in (
+              (app_privacy_url, "APP_PRIVACY_URL"),
+              (app_support_url, "APP_SUPPORT_URL"),
+          ):
+              if app_policy_url:
+                  host, port = public_https(app_policy_url, label, origin_only=False)
+                  require_public_dns(host, port, label)
 
           if mode in {"disabled", "review-preview"}:
               if any((origin, moderation_key_id, moderation_public_key, privacy_url, support_url, community_url)):
@@ -326,6 +357,8 @@ jobs:
             echo "RELEASE_SHARING_API_ORIGIN=$release_origin"
             echo "RELEASE_SHARING_MODERATION_KEY_ID=$release_moderation_key_id"
             echo "RELEASE_SHARING_MODERATION_PUBLIC_KEY=$release_moderation_public_key"
+            echo "RELEASE_APP_PRIVACY_URL=$release_app_privacy_url"
+            echo "RELEASE_APP_SUPPORT_URL=$release_app_support_url"
             echo "RELEASE_SHARING_PRIVACY_URL=$release_privacy_url"
             echo "RELEASE_SHARING_SUPPORT_URL=$release_support_url"
             echo "RELEASE_SHARING_COMMUNITY_STANDARDS_URL=$release_community_standards_url"
@@ -763,6 +796,8 @@ jobs:
             SHARING_API_BASE_URL="$RELEASE_SHARING_API_ORIGIN" \
             SHARING_MODERATION_KEY_ID="$RELEASE_SHARING_MODERATION_KEY_ID" \
             SHARING_MODERATION_PUBLIC_KEY="$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
+            APP_PRIVACY_URL="$RELEASE_APP_PRIVACY_URL" \
+            APP_SUPPORT_URL="$RELEASE_APP_SUPPORT_URL" \
             SHARING_PRIVACY_URL="$RELEASE_SHARING_PRIVACY_URL" \
             SHARING_SUPPORT_URL="$RELEASE_SHARING_SUPPORT_URL" \
             SHARING_COMMUNITY_STANDARDS_URL="$RELEASE_SHARING_COMMUNITY_STANDARDS_URL" \
@@ -795,6 +830,8 @@ jobs:
             --expected-api-origin "$RELEASE_SHARING_API_ORIGIN" \
             --expected-moderation-key-id "$RELEASE_SHARING_MODERATION_KEY_ID" \
             --expected-moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
+            --expected-app-privacy-url "$RELEASE_APP_PRIVACY_URL" \
+            --expected-app-support-url "$RELEASE_APP_SUPPORT_URL" \
             --expected-privacy-url "$RELEASE_SHARING_PRIVACY_URL" \
             --expected-support-url "$RELEASE_SHARING_SUPPORT_URL" \
             --expected-community-standards-url "$RELEASE_SHARING_COMMUNITY_STANDARDS_URL" \

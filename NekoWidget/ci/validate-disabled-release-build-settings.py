@@ -30,6 +30,10 @@ EMPTY_NETWORK_SETTINGS = (
     "SHARING_SUPPORT_URL",
     "SHARING_COMMUNITY_STANDARDS_URL",
 )
+APP_POLICY_SETTINGS = {
+    "APP_PRIVACY_URL": "https://soso-so-27.github.io/neko-widget/app/privacy/",
+    "APP_SUPPORT_URL": "https://soso-so-27.github.io/neko-widget/app/support/",
+}
 LOCAL_PHOTO_DESCRIPTION_TERMS = ("猫", "端末内", "アルバム", "ウィジェット")
 LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "共有",
@@ -83,6 +87,9 @@ def validate(payload: object) -> list[str]:
         for key in EMPTY_NETWORK_SETTINGS:
             if str(settings.get(key, "")).strip():
                 failures.append(f"{target} must resolve an empty {key}.")
+        for key, expected in APP_POLICY_SETTINGS.items():
+            if settings.get(key) != expected:
+                failures.append(f"{target} must resolve {key}={expected}.")
 
         actual_info_plist = normalized_path(settings.get("INFOPLIST_FILE"))
         if actual_info_plist != expected_info_plist:

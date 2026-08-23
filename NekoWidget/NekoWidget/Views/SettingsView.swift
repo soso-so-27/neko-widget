@@ -267,11 +267,23 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 LabeledContent("対応OS", value: "iOS 17.1以上")
+                if let url = AppPublicLinksConfiguration.current.privacyURL {
+                    Link(destination: url) {
+                        Label("プライバシーポリシー", systemImage: "hand.raised.fill")
+                    }
+                    .accessibilityIdentifier("settings-privacy-policy")
+                }
             } header: {
                 Text("プライバシーとアプリ情報")
             }
 
             Section {
+                if let url = AppPublicLinksConfiguration.current.supportURL {
+                    Link(destination: url) {
+                        Label("サポートページ", systemImage: "questionmark.circle")
+                    }
+                    .accessibilityIdentifier("settings-support-page")
+                }
                 NavigationLink {
                     advancedDiagnosticsView
                 } label: {

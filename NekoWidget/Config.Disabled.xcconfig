@@ -17,6 +17,11 @@ SHARING_PRIVACY_URL =
 SHARING_SUPPORT_URL =
 SHARING_COMMUNITY_STANDARDS_URL =
 
+// Xcconfig treats a literal // as a comment. $() expands to an empty value so
+// the resolved build setting contains the intended public HTTPS URL.
+APP_PRIVACY_URL = https:/$()/soso-so-27.github.io/neko-widget/app/privacy/
+APP_SUPPORT_URL = https:/$()/soso-so-27.github.io/neko-widget/app/support/
+
 // An ordinary Release/Archive must remain truthful and must not advertise the
 // Share Extension. Media-staging can override both values only in the guarded
 // release workflow, where the processed archive is validated again.

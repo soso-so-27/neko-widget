@@ -38,6 +38,12 @@ LOCAL_PHOTO_DESCRIPTION_FORBIDDEN_TERMS = (
     "届け",
     "サーバー",
 )
+LOCAL_APP_PRIVACY_URL = (
+    "https://soso-so-27.github.io/neko-widget/app/privacy/"
+)
+LOCAL_APP_SUPPORT_URL = (
+    "https://soso-so-27.github.io/neko-widget/app/support/"
+)
 RESERVED_HOST_SUFFIXES = (
     ".example",
     ".invalid",
@@ -107,6 +113,38 @@ def truthy(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes"}
     return False
+
+
+def is_public_https_policy_url(value: str) -> bool:
+    if value != value.strip() or any(ord(character) < 32 for character in value):
+        return False
+    parsed = urlparse(value)
+    raw_host = (parsed.hostname or "").lower()
+    host = raw_host.rstrip(".")
+    try:
+        parsed.port
+    except ValueError:
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    return (
+        parsed.scheme == "https"
+        and bool(host)
+        and not raw_host.endswith(".")
+        and "." in host
+        and host != "localhost"
+        and not host.endswith(RESERVED_HOST_SUFFIXES)
+        and address is None
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+        and "$" not in value
+        and "REPLACE" not in value.upper()
+    )
 
 
 def parsed_flag(info: dict, key: str, failures: list[str]) -> bool:
@@ -425,6 +463,8 @@ def validate_share_extension_boundary(
             "Share Extension SharingShareExtensionHandoffEnabled does not match the app."
         )
     for key in (
+        "AppPrivacyURL",
+        "AppSupportURL",
         "SharingAPIBaseURL",
         "SharingModerationKeyID",
         "SharingModerationPublicKey",
@@ -444,6 +484,8 @@ def validate_expected_mode(
     expected_api_origin: str,
     expected_moderation_key_id: str,
     expected_moderation_public_key: str,
+    expected_app_privacy_url: str,
+    expected_app_support_url: str,
     expected_privacy_url: str,
     expected_support_url: str,
     expected_community_standards_url: str,
@@ -480,6 +522,46 @@ def validate_expected_mode(
         )
     if share_mode != app_mode:
         failures.append("App and Share Extension SharingReleaseMode do not match.")
+
+    if expected_mode == "disabled":
+        required_app_privacy_url = LOCAL_APP_PRIVACY_URL
+        required_app_support_url = LOCAL_APP_SUPPORT_URL
+    elif expected_mode == "media-staging":
+        required_app_privacy_url = expected_privacy_url
+        required_app_support_url = expected_support_url
+    else:
+        required_app_privacy_url = ""
+        required_app_support_url = ""
+    if expected_app_privacy_url != required_app_privacy_url:
+        if expected_mode == "media-staging":
+            failures.append(
+                "media-staging AppPrivacyURL must exactly match SharingPrivacyURL."
+            )
+        else:
+            failures.append(
+                f"{expected_mode} selected an unexpected general app privacy URL."
+            )
+    if expected_app_support_url != required_app_support_url:
+        if expected_mode == "media-staging":
+            failures.append(
+                "media-staging AppSupportURL must exactly match SharingSupportURL."
+            )
+        else:
+            failures.append(
+                f"{expected_mode} selected an unexpected general app support URL."
+            )
+    app_policy_configuration = {
+        "AppPrivacyURL": expected_app_privacy_url,
+        "AppSupportURL": expected_app_support_url,
+    }
+    for key, expected_value in app_policy_configuration.items():
+        archived_value = app_info.get(key)
+        if not isinstance(archived_value, str) or archived_value != expected_value:
+            failures.append(
+                f"Processed {key} does not exactly match the selected general app policy URL."
+            )
+        if expected_value and not is_public_https_policy_url(expected_value):
+            failures.append(f"{key} must be a public HTTPS URL.")
 
     widget_mode_value = widget_info.get("SharingReleaseMode", "")
     widget_mode = widget_mode_value if isinstance(widget_mode_value, str) else ""
@@ -629,6 +711,8 @@ def main() -> int:
     )
     parser.add_argument("--expected-moderation-key-id", default="")
     parser.add_argument("--expected-moderation-public-key", default="")
+    parser.add_argument("--expected-app-privacy-url", default="")
+    parser.add_argument("--expected-app-support-url", default="")
     parser.add_argument("--expected-privacy-url", default="")
     parser.add_argument("--expected-support-url", default="")
     parser.add_argument("--expected-community-standards-url", default="")
@@ -664,6 +748,8 @@ def main() -> int:
         args.expected_api_origin,
         args.expected_moderation_key_id,
         args.expected_moderation_public_key,
+        args.expected_app_privacy_url,
+        args.expected_app_support_url,
         args.expected_privacy_url,
         args.expected_support_url,
         args.expected_community_standards_url,

@@ -157,12 +157,16 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             'SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED"',
             'SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED"',
             'SHARING_SHARE_EXTENSION_SEND_ENABLED="$RELEASE_SHARING_DIRECT_SEND_ENABLED"',
+            'APP_PRIVACY_URL="$RELEASE_APP_PRIVACY_URL"',
+            'APP_SUPPORT_URL="$RELEASE_APP_SUPPORT_URL"',
             'SHARING_PRIVACY_URL="$RELEASE_SHARING_PRIVACY_URL"',
             'PHOTO_LIBRARY_USAGE_DESCRIPTION="$RELEASE_PHOTO_LIBRARY_USAGE_DESCRIPTION"',
             'SHARE_EXTENSION_INFOPLIST_FILE="$RELEASE_SHARE_EXTENSION_INFOPLIST_FILE"',
             '--expected-mode "$SHARING_EXPECTED_MODE"',
             '--expected-photo-library-usage-description "$RELEASE_PHOTO_LIBRARY_USAGE_DESCRIPTION"',
             '--expected-moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY"',
+            '--expected-app-privacy-url "$RELEASE_APP_PRIVACY_URL"',
+            '--expected-app-support-url "$RELEASE_APP_SUPPORT_URL"',
             '--expected-privacy-url "$RELEASE_SHARING_PRIVACY_URL"',
             '--expected-support-url "$RELEASE_SHARING_SUPPORT_URL"',
             '--expected-community-standards-url "$RELEASE_SHARING_COMMUNITY_STANDARDS_URL"',
@@ -201,6 +205,8 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         valid_arguments = [
             "media-staging",
             "https://sharing.nekonomado.jp",
+            "https://nekonomado.jp/privacy",
+            "https://nekonomado.jp/support",
             "moderation-v1",
             "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
             "https://nekonomado.jp/privacy",
@@ -216,7 +222,8 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         self.assertEqual(valid.returncode, 0, valid.stderr)
 
         missing_privacy = list(valid_arguments)
-        missing_privacy[4] = ""
+        missing_privacy[2] = ""
+        missing_privacy[6] = ""
         invalid = subprocess.run(
             [sys.executable, "-c", public_dns_stub + embedded, *missing_privacy],
             text=True,
@@ -227,7 +234,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         self.assertIn("SHARING_STAGING_PRIVACY_URL", invalid.stderr)
 
         small_order_key = list(valid_arguments)
-        small_order_key[3] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        small_order_key[5] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         invalid = subprocess.run(
             [sys.executable, "-c", public_dns_stub + embedded, *small_order_key],
             text=True,
