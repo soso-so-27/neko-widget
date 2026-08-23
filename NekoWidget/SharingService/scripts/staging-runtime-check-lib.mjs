@@ -29,6 +29,32 @@ const EXPECTATIONS = Object.freeze({
       errorCode: "legacy_sharing_runtime_disabled",
     }),
   ]),
+  "moment-on-window-name-off": Object.freeze([
+    Object.freeze({
+      name: "health",
+      path: "/health",
+      status: 200,
+      body: Object.freeze({ status: "ok", protocolVersion: 1 }),
+    }),
+    Object.freeze({
+      name: "moment",
+      path: "/v2/moments/changes",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
+      name: "window-name",
+      path: "/v2/window-name",
+      status: 503,
+      errorCode: "window_name_runtime_disabled",
+    }),
+    Object.freeze({
+      name: "legacy",
+      path: "/v1/sharing/sources",
+      status: 503,
+      errorCode: "legacy_sharing_runtime_disabled",
+    }),
+  ]),
   off: Object.freeze([
     Object.freeze({
       name: "health",
@@ -184,7 +210,9 @@ export async function checkStagingRuntime({
   const normalizedOrigin = normalizePublicHttpsOrigin(origin);
   const expectations = EXPECTATIONS[expected];
   if (expectations === undefined) {
-    throw new Error("expected runtime state must be 'on' or 'off'");
+    throw new Error(
+      "expected runtime state must be 'on', 'moment-on-window-name-off', or 'off'",
+    );
   }
   if (typeof fetchImpl !== "function") {
     throw new Error("fetch implementation is unavailable");

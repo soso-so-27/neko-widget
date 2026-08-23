@@ -16,11 +16,15 @@
 
 schedule失敗を見落とさないよう、repository ownerはGitHub Actionsの失敗通知を有効にし、週1回は`Personal sharing staging monitor`の直近runが緑であることを確認します。監視を置くだけで無人対応になるわけではありません。
 
+### Build 33の一時封じ込め
+
+2026-08-23にBuild 33のまど名署名形式の不一致を確認したため、写真配送を維持したまま`WINDOW_NAME_RUNTIME_ENABLED=NO`へ一時的に切り替えています。Build 34の修正を本人所有2台で受け入れるまでは、schedule監視も`moment-on-window-name-off`を正本とします。この状態では未認証の`/v2/window-name`だけが`503 window_name_runtime_disabled`、通常momentは`401 invalid_authentication`です。Build 34受入後に名前runtimeを再開するときは、監視と本節も同じreview済み変更で通常の`on`境界へ戻します。
+
 手元で現在の境界を確認する場合は次を実行します。
 
 ```powershell
 $env:NEKO_STAGING_API_ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
-npm run staging:runtime:check -- --expected on
+npm run staging:runtime:check -- --expected moment-on-window-name-off
 ```
 
 この確認はWorkerのroutingとruntime switch、未認証時のauthentication境界を検査します。D1への実読み書き、R2、Cron、受信端末の同期、Appleのbackground実行までは証明しません。Cloudflare dashboardでは週1回を目安に、D1/R2使用量、2本のCron、error/exception、R2のPublic Development URL無効とCustom Domains空を確認します。請求上限や予算通知はCloudflare側の別設定です。
