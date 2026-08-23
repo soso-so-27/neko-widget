@@ -12,6 +12,12 @@ PAGES = (
     SITE / "community" / "index.html",
     SITE / "support" / "index.html",
 )
+LOCAL_ONLY_PAGES = (
+    SITE / "app" / "index.html",
+    SITE / "app" / "privacy" / "index.html",
+    SITE / "app" / "support" / "index.html",
+)
+ALL_PAGES = PAGES + LOCAL_ONLY_PAGES
 
 
 class PageParser(html.parser.HTMLParser):
@@ -45,7 +51,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         return parser
 
     def test_expected_pages_and_mobile_metadata_exist(self):
-        for page in PAGES:
+        for page in ALL_PAGES:
             self.assertTrue(page.is_file(), page)
             source = page.read_text(encoding="utf-8")
             self.assertIn('lang="ja"', source)
@@ -53,7 +59,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertIn("ねこのまど", source)
 
     def test_internal_links_resolve(self):
-        for page in PAGES:
+        for page in ALL_PAGES:
             for href in self.parsed(page).links:
                 parsed = urllib.parse.urlparse(href)
                 if parsed.scheme or href.startswith("#"):
@@ -64,7 +70,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 self.assertTrue(target.is_file(), f"{page}: {href} -> {target}")
 
     def test_external_links_are_https(self):
-        for page in PAGES:
+        for page in ALL_PAGES:
             for href in self.parsed(page).links:
                 parsed = urllib.parse.urlparse(href)
                 if parsed.scheme:
@@ -161,7 +167,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertIn(phrase, support)
 
     def test_no_placeholder_or_personal_email_is_published(self):
-        sources = "\n".join(page.read_text(encoding="utf-8") for page in PAGES)
+        sources = "\n".join(page.read_text(encoding="utf-8") for page in ALL_PAGES)
         lowered = sources.lower()
         for forbidden in (
             "todo",
@@ -173,6 +179,65 @@ class PublicPolicySiteTests(unittest.TestCase):
             "gmail.com",
         ):
             self.assertNotIn(forbidden, lowered)
+
+    def test_local_only_pages_link_to_each_other(self):
+        expected = {page.resolve() for page in LOCAL_ONLY_PAGES}
+        for page in LOCAL_ONLY_PAGES:
+            linked: set[pathlib.Path] = set()
+            for href in self.parsed(page).links:
+                parsed = urllib.parse.urlparse(href)
+                if parsed.scheme or href.startswith("#"):
+                    continue
+                target = (page.parent / parsed.path).resolve()
+                if parsed.path.endswith("/") or target.is_dir():
+                    target /= "index.html"
+                linked.add(target)
+            self.assertTrue(expected.issubset(linked), f"{page}: missing {expected - linked}")
+
+    def test_local_only_revision_is_visible_and_fixed(self):
+        for page in LOCAL_ONLY_PAGES:
+            parser = self.parsed(page)
+            self.assertEqual("2026-08-24", parser.meta.get("neko-policy-revision"), page)
+            self.assertIn("最終更新日：2026年8月24日", "".join(parser.text), page)
+
+    def test_local_only_capability_boundary_is_consistent(self):
+        required = (
+            "完全ローカル版",
+            "現在の共有ベータ版とは別の仕様",
+            "この完全ローカル版では",
+            "写真の読み込み、解析、猫判定、一覧、Widget用画像の処理は端末内だけ",
+            "共有・招待・送信・受信はなく",
+            "アプリから開発者のサーバーへ通信しません",
+            "公開フィード、検索、フォローもありません",
+        )
+        for page in LOCAL_ONLY_PAGES:
+            text = "".join(self.parsed(page).text)
+            for phrase in required:
+                self.assertIn(phrase, text, f"{page}: {phrase}")
+
+    def test_local_only_privacy_facts_are_explicit(self):
+        privacy = "".join(self.parsed(LOCAL_ONLY_PAGES[1]).text)
+        for phrase in (
+            "開発者によるデータ収集を行いません",
+            "派生画像を、開発者やその他の外部サーバーへ送信しません",
+            "写真アプリやiCloudへ独自に保存することはありません",
+            "CloudKitやアプリ独自のiCloudコンテナも使用しません",
+            "共有相手、招待、送信待ち、受信履歴、サーバー上の写真は作成しません",
+            "開発者の共有サーバーや解析サービスへ自動接続しません",
+            "広告、トラッキング、データ販売、生成AIの学習にも利用しません",
+        ):
+            self.assertIn(phrase, privacy)
+
+    def test_local_only_support_reuses_existing_public_routes(self):
+        support = "".join(self.parsed(LOCAL_ONLY_PAGES[2]).text)
+        for phrase in (
+            "TestFlight",
+            "GitHub Issues",
+            "Build番号",
+            "公開してよい情報だけ",
+            "緊急通報先ではありません",
+        ):
+            self.assertIn(phrase, support)
 
 
 if __name__ == "__main__":
