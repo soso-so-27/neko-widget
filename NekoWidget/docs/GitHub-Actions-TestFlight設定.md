@@ -108,7 +108,7 @@ Build 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`から作成した�
 - main CI [run 32652404425](https://github.com/soso-so-27/neko-widget/actions/runs/32652404425)が成功
 - 署名dry run [run 32652415564](https://github.com/soso-so-27/neko-widget/actions/runs/32652415564)が成功
 - 内部TestFlight upload [run 32653493665](https://github.com/soso-so-27/neko-widget/actions/runs/32653493665)でvalidate／uploadが成功
-- 暗号化された署名artifactはdownload・復号し、privateな保管場所へbackup済み
+- 暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivateな保管場所へbackup済み
 
 Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認である。外部groupへの追加、TestFlight App Review、App Store審査提出は行っていない。PR22の`disabled` modeはmain `cd5c13e`へ統合済みだが、同commitを使うBuild 36のmain CIと署名dry runはまだ完了していない。
 

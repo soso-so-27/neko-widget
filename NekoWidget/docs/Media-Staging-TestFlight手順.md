@@ -131,7 +131,7 @@ Build 31で完了したのは本人2台の内部受入であり、一般公開�
 - main CI [run 32652404425](https://github.com/soso-so-27/neko-widget/actions/runs/32652404425)が成功
 - 同じsourceの署名dry run [run 32652415564](https://github.com/soso-so-27/neko-widget/actions/runs/32652415564)でarchive、署名検査、IPA exportが成功
 - 内部TestFlight upload [run 32653493665](https://github.com/soso-so-27/neko-widget/actions/runs/32653493665)でApp Store Connectのvalidateとuploadが成功
-- 暗号化されたIPA、xcarchive、dSYM artifactをdownload・復号し、privateな保管場所へbackup済み
+- 暗号化されたIPA、xcarchive、dSYM artifactをdownloadし、復号せず暗号化されたままprivateな保管場所へbackup済み
 
 workflow成功が示すのはAppleへのupload受付までである。Apple側の処理完了、Build 35の一覧表示、輸出コンプライアンス状態、内部groupへの割当、本人2台へのinstallと受入はまだ確認していない。外部TestFlight groupへの追加、TestFlight App Review、App Store審査提出は行っていない。
 

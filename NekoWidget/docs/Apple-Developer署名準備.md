@@ -468,7 +468,7 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 - [x] Build 35のbuild numberを確認
 - [x] artifact暗号化passwordを別保管し、`retain_signed_artifacts = true`にする
 - [x] Build 35を`upload_to_testflight = true`でvalidate／upload
-- [x] Build 35の暗号化artifactをdownload・復号し、xcarchive／dSYMをprivate保管
+- [x] Build 35の暗号化artifactをdownloadし、復号せず暗号化されたままprivate保管
 - [ ] App Store Connectの処理完了と輸出コンプライアンス状態を確認
 - [ ] Build 35を内部TestFlight groupへ割り当て、tester端末で受入
 
