@@ -48,3 +48,6 @@ __pycache__/
 
 # Wrangler local auth/account cache (never commit)
 .wrangler/
+
+# App Store owner-only release inputs (never commit contact or legal answers)
+NekoWidget/docs/app-store/local-only-owner-input.json
