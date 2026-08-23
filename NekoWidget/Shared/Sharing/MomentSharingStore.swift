@@ -398,6 +398,26 @@ enum MomentSharingStateStore {
         }
     }
 
+    static func load(
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentSharingState {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try loadWhileLocked()
+        }
+    }
+
+    /// Executes one short family-output transaction against the exact state
+    /// protected by the installation epoch. The operation must not await or
+    /// reacquire `SharingLifecycleGate`.
+    static func withStateWhileLifecycleLocked<Value>(
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        _ operation: (MomentSharingState) throws -> Value
+    ) throws -> Value {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try operation(try loadWhileLocked())
+        }
+    }
+
     /// Distinguishes durable schema/JSON corruption from a transient file I/O
     /// failure. The coordinator may reset pairing only for bytes that were
     /// read successfully but cannot become a validated sharing state; an I/O

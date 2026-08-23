@@ -225,6 +225,10 @@ final class MomentSharingViewModel: ObservableObject {
             sharingState: nextSharingState,
             now: .now
         )
+        NotificationCenter.default.post(
+            name: .momentSharingPresentationNeedsRefresh,
+            object: nil
+        )
     }
 
     private func refreshOutgoingPresentation() async {

@@ -13,6 +13,7 @@ struct NekoWidgetView: View {
                 let variant = entry.imageVariant,
                 let image = WidgetCacheImageLoader.image(
                     cacheFilename: cacheFilename,
+                    photoSourceIdentifier: entry.photoSourceIdentifier,
                     maximumPixelSize: maximumPixelSize(for: variant)
                 )
             {
@@ -41,7 +42,11 @@ struct NekoWidgetView: View {
                         }
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
-                    .accessibilityLabel("うちの子の写真")
+                    .accessibilityLabel(
+                        entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                            ? "家族から届いた写真"
+                            : "うちの子の写真"
+                    )
                 }
             } else {
                 emptyState
@@ -49,6 +54,9 @@ struct NekoWidgetView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             likeButton
+        }
+        .overlay(alignment: .topLeading) {
+            familySourceLabel
         }
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
@@ -59,6 +67,7 @@ struct NekoWidgetView: View {
     @ViewBuilder
     private var likeButton: some View {
         if let localIdentifier = entry.localIdentifier,
+           entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
            entry.isLikeInteractionEnabled {
             Button(
                 intent: ToggleWidgetLikeIntent(
@@ -82,6 +91,23 @@ struct NekoWidgetView: View {
             .accessibilityLabel(entry.isLiked ? "好きを解除" : "これ好き")
             .accessibilityHint("アプリを開かずに、この写真の好き状態を切り替えます")
             .padding(pawButtonInset)
+        }
+    }
+
+    @ViewBuilder
+    private var familySourceLabel: some View {
+        if entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID,
+           entry.cacheFilename != nil {
+            Text(entry.familyMomentIsFresh
+                ? "いま届いた・家族から"
+                : "家族から届いた一枚")
+                .font(.caption2.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.black.opacity(0.50), in: Capsule())
+                .padding(family == .systemSmall ? 8 : 10)
+                .accessibilityHidden(true)
         }
     }
 
@@ -122,17 +148,23 @@ struct NekoWidgetView: View {
                 )
                 .foregroundStyle(.orange)
 
-            Text("猫の写真を追加")
+            Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                ? "家族の写真はまだありません"
+                : "猫の写真を追加")
                 .font(family == .systemSmall ? .headline : .title3.weight(.semibold))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white)
 
             if family == .systemSmall {
-                Text("アプリでスキャン")
+                Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                    ? "アプリで更新"
+                    : "アプリでスキャン")
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
             } else {
-                Text("アプリで写真へのアクセスを確認し、スキャンしてください")
+                Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                    ? "アプリで家族のまどを開いて更新してください"
+                    : "アプリで写真へのアクセスを確認し、スキャンしてください")
                     .font(.caption)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.72))

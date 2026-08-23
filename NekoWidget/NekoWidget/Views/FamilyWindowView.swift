@@ -593,7 +593,7 @@ struct FamilyWindowView: View {
     }
 }
 
-private struct MomentLocalImageView: View {
+struct MomentLocalImageView: View {
     let url: URL
     @State private var image: UIImage?
 
@@ -609,7 +609,12 @@ private struct MomentLocalImageView: View {
             }
         }
         .task(id: url) {
+            // A safety-state change can replace the latest URL with an older
+            // safe photo. Never retain the previous pixels while the new file
+            // is loading or if its decode fails.
+            image = nil
             if let cached = MomentLocalImageCache.shared.image(for: url) {
+                guard !Task.isCancelled else { return }
                 image = cached
                 return
             }

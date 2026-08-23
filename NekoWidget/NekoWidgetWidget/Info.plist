@@ -22,6 +22,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>SharingFeatureEnabled</key>
+	<string>$(SHARING_FEATURE_ENABLED)</string>
+	<key>SharingMediaEnabled</key>
+	<string>$(SHARING_MEDIA_ENABLED)</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>

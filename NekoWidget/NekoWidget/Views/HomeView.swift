@@ -7,6 +7,8 @@ struct HomeView: View {
     let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
     let shouldOfferWidgetPlacementGuide: Bool
+    let familyWindowPresentation: MomentFamilyWindowPresentation
+    @Binding var showsFamilyWindow: Bool
     let requestPhotoAccess: () -> Void
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
@@ -14,11 +16,15 @@ struct HomeView: View {
     let toggleLike: (String) -> Void
     let rescan: () -> Void
 
-    @State private var showsFamilyWindow = false
+    @State private var familyPriorityExpired = false
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
+                if familyPhotoHasPriority {
+                    familyMomentCard
+                }
+
                 if hasPhotoAccess {
                     todayPhoto
                 } else {
@@ -34,7 +40,13 @@ struct HomeView: View {
                 }
 
                 if SharingAPIConfiguration.current.isReviewVisible {
-                    familyWindowCard
+                    if canShowFamilyMoment {
+                        if !familyPhotoHasPriority {
+                            familyMomentCard
+                        }
+                    } else {
+                        familyWindowCard
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -63,6 +75,20 @@ struct HomeView: View {
                     }
             }
             .presentationDragIndicator(.visible)
+        }
+        .task(id: familyWindowPresentation.priorityUntil) {
+            familyPriorityExpired = false
+            guard familyWindowPresentation.isPriority,
+                  let priorityUntil = familyWindowPresentation.priorityUntil
+            else { return }
+            let remaining = priorityUntil.timeIntervalSinceNow
+            guard remaining > 0 else {
+                familyPriorityExpired = true
+                return
+            }
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            familyPriorityExpired = true
         }
     }
 
@@ -187,6 +213,88 @@ struct HomeView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("window-family-window-review")
         .accessibilityHint(familyWindowAccessibilityHint)
+    }
+
+    private var familyMomentCard: some View {
+        Button {
+            showsFamilyWindow = true
+        } label: {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label(
+                        familyPhotoHasPriority
+                            ? "いま届いた・家族から"
+                            : "家族から届いた一枚",
+                        systemImage: "person.2.fill"
+                    )
+                    .font(.title3.bold())
+                    .foregroundStyle(.primary)
+
+                    Spacer(minLength: 4)
+
+                    if familyWindowPresentation.safeCount > 1 {
+                        Text("ほか \(familyWindowPresentation.safeCount - 1)枚")
+                            .font(.caption.bold())
+                            .foregroundStyle(.tint)
+                    }
+                }
+
+                if let url = familyWindowPresentation.latestImageURL {
+                    ZStack(alignment: .bottomLeading) {
+                        MomentLocalImageView(url: url)
+                            .frame(maxWidth: .infinity)
+                            .aspectRatio(1, contentMode: .fit)
+                            .clipped()
+
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.62)],
+                            startPoint: .center,
+                            endPoint: .bottom
+                        )
+                        .allowsHitTesting(false)
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "rectangle.on.rectangle.angled")
+                            Text("家族のまどをひらく")
+                        }
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.black.opacity(0.42), in: Capsule())
+                        .padding(14)
+                    }
+                    .aspectRatio(1, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                }
+
+                if let receivedAt = familyWindowPresentation.latestReceivedAt {
+                    Text("届いた日 \(receivedAt.formatted(.dateTime.month().day().hour().minute()))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 24)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("window-latest-family-photo")
+        .accessibilityHint("家族から届いた写真の履歴を開きます")
+    }
+
+    private var familyPhotoHasPriority: Bool {
+        canShowFamilyMoment
+            && familyWindowPresentation.isPriority
+            && !familyPriorityExpired
+    }
+
+    private var canShowFamilyMoment: Bool {
+        SharingAPIConfiguration.current.isMediaAvailable
+            && familyWindowPresentation.latestImageURL != nil
     }
 
     @ViewBuilder

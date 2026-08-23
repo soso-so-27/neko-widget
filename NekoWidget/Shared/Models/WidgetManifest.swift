@@ -118,6 +118,29 @@ struct WidgetManifest: Codable, Equatable, Sendable {
     static let empty = WidgetManifest(items: [], generatedAt: .distantPast)
 }
 
+/// One privacy-minimized family Widget publication. It intentionally stores no
+/// moment, participant, room, or PhotoKit identifier. `sourceDigest` exists
+/// only to make cache generations stable and is never routed out of the App
+/// Group container.
+struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
+    var sourceDigest: String
+    var cacheFilenames: WidgetCacheFilenames
+    var receivedAt: Date
+    var freshUntil: Date
+}
+
+/// Family output has a separate schema and file from the personal manifest so
+/// an older extension can never interpret a received family photo as a local
+/// PhotoKit asset.
+struct FamilyWidgetManifest: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    var item: FamilyWidgetManifestItem?
+    var generatedAt: Date
+
+    static let empty = FamilyWidgetManifest(item: nil, generatedAt: .distantPast)
+}
+
 /// Each widget family records the filenames referenced by the timeline it
 /// handed to WidgetKit. The app retains those leased files even when rebuilds
 /// are coalesced and the manifest on disk has already advanced.

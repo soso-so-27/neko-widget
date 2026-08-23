@@ -12,13 +12,20 @@ enum WidgetCacheImageLoader {
     /// bounded future entries while accepting a timeline. ImageIO also caps the
     /// decoded dimensions defensively if a malformed or stale cache file is larger
     /// than the family-specific JPEG output expected from the app.
-    static func image(cacheFilename: String, maximumPixelSize: Int) -> UIImage? {
+    static func image(
+        cacheFilename: String,
+        photoSourceIdentifier: String,
+        maximumPixelSize: Int
+    ) -> UIImage? {
         let requestedMaximumPixelSize = min(
             absoluteMaximumPixelSize,
             max(1, maximumPixelSize)
         )
         let fileHash = SharedLog.shortHash(cacheFilename)
-        guard let fileURL = WidgetManifestReader.cacheURL(for: cacheFilename) else {
+        guard let fileURL = WidgetManifestReader.cacheURL(
+            for: cacheFilename,
+            photoSourceIdentifier: photoSourceIdentifier
+        ) else {
             SharedLog.widget.error(
                 "image",
                 "Rejected widget cache filename",

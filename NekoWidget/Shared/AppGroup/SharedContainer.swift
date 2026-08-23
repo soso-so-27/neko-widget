@@ -78,6 +78,30 @@ enum SharedContainer {
         containerURL?.appendingPathComponent("widget-cache", isDirectory: true)
     }
 
+    /// A family photo is never mixed into the personal PhotoKit manifest.
+    /// Keeping this below `sharing/` also makes unlink/reinstall cleanup remove
+    /// the family Widget output together with every other sharing artifact.
+    static var familyWidgetManifestURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "family-widget-manifest.v1.json",
+            isDirectory: false
+        )
+    }
+
+    static var familyWidgetCacheHistoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "family-widget-cache-history.v1.json",
+            isDirectory: false
+        )
+    }
+
+    static var familyWidgetCacheDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "family-widget-cache",
+            isDirectory: true
+        )
+    }
+
     static var logsDirectoryURL: URL? {
         containerURL?.appendingPathComponent("diagnostic-logs", isDirectory: true)
     }

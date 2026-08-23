@@ -3,6 +3,7 @@ import Foundation
 struct DeepLink: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case photo(localIdentifier: String)
+        case familyWindow
     }
 
     private static let scheme = "nekowidget"
@@ -30,6 +31,11 @@ struct DeepLink: Equatable, Sendable {
             }
             components.queryItems = queryItems
             return components.url
+        case .familyWindow:
+            var components = URLComponents()
+            components.scheme = Self.scheme
+            components.host = "family-window"
+            return components.url
         }
     }
 
@@ -40,10 +46,24 @@ struct DeepLink: Equatable, Sendable {
         ).url
     }
 
+    static func familyWindow() -> URL? {
+        DeepLink(destination: .familyWindow).url
+    }
+
     init?(url: URL) {
         guard url.scheme?.lowercased() == Self.scheme,
-              url.host?.lowercased() == "photo",
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let host = url.host?.lowercased(),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        if host == "family-window" {
+            guard components.path.isEmpty,
+                  components.queryItems?.isEmpty ?? true,
+                  components.fragment == nil
+            else { return nil }
+            self.init(destination: .familyWindow)
+            return
+        }
+        guard host == "photo",
               let identifier = components.queryItems?.first(where: { $0.name == "id" })?.value,
               !identifier.isEmpty else {
             return nil

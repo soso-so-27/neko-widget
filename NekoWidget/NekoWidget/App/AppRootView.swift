@@ -205,8 +205,10 @@ struct AppRootView: View {
             shouldOfferWidgetPlacementGuide: widgetInstallationChecker
                 .shouldOfferPlacementGuide,
             widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
+            familyWindowPresentation: viewModel.familyWindowPresentation,
             deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
             deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
+            deepLinkedFamilyWindowIsPresented: $viewModel.isFamilyWindowPresented,
             chooseMorePhotos: presentLimitedLibraryPicker,
             requestPhotoAccess: requestOrOpenPhotoAccess,
             showWidgetPlacementGuide: {

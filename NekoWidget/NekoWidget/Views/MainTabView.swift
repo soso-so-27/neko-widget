@@ -21,8 +21,10 @@ struct MainTabView: View {
     let isScanning: Bool
     let shouldOfferWidgetPlacementGuide: Bool
     let widgetIntervalMinutes: Int
+    let familyWindowPresentation: MomentFamilyWindowPresentation
     @Binding var deepLinkedPhotoIdentifier: String?
     @Binding var deepLinkedPhotoShownAt: Date?
+    @Binding var deepLinkedFamilyWindowIsPresented: Bool
 
     let chooseMorePhotos: () -> Void
     let requestPhotoAccess: () -> Void
@@ -59,6 +61,8 @@ struct MainTabView: View {
                     hasPhotoAccess: hasPhotoAccess,
                     isLimitedAccess: isLimitedAccess,
                     shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
+                    familyWindowPresentation: familyWindowPresentation,
+                    showsFamilyWindow: $deepLinkedFamilyWindowIsPresented,
                     requestPhotoAccess: requestPhotoAccess,
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
@@ -129,6 +133,12 @@ struct MainTabView: View {
             homePath = [identifier]
             deepLinkedPhotoIdentifier = nil
             deepLinkedPhotoShownAt = nil
+        }
+        .onChange(of: deepLinkedFamilyWindowIsPresented, initial: true) { _, isPresented in
+            guard isPresented else { return }
+            showsSettings = false
+            selectedTab = .window
+            homePath.removeAll()
         }
         .onChange(of: homePath) { _, path in
             guard path.isEmpty else { return }

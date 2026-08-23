@@ -1,4 +1,5 @@
 import AppIntents
+import Foundation
 
 /// A stable, per-widget photo-source identifier.
 ///
@@ -16,11 +17,35 @@ struct WidgetPhotoSource: AppEntity {
         name: "うちの子",
         detail: "自分のカメラロール"
     )
+    static let familyWindowID = "family-window"
+    static let familyWindow = WidgetPhotoSource(
+        id: familyWindowID,
+        name: "家族のまど",
+        detail: "家族から届いた最新の一枚"
+    )
 
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.
     static var availableSources: [WidgetPhotoSource] {
-        [.personalLibrary]
+        var sources: [WidgetPhotoSource] = [.personalLibrary]
+        if familyWindowSourceIsEnabled {
+            sources.append(.familyWindow)
+        }
+        return sources
+    }
+
+    private static var familyWindowSourceIsEnabled: Bool {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return explicitFlag(info["SharingFeatureEnabled"])
+            && explicitFlag(info["SharingMediaEnabled"])
+    }
+
+    private static func explicitFlag(_ value: Any?) -> Bool {
+        if let number = value as? NSNumber { return number.boolValue }
+        if let string = value as? String {
+            return ["1", "true", "yes"].contains(string.lowercased())
+        }
+        return false
     }
 
     let id: String
