@@ -81,11 +81,11 @@ struct CatSimilarityReviewView: View {
         switch reason {
         case .noProfiles:
             stateCard(
-                title: "先にうちの子を登録してください",
+                title: "先にねこのプロフィールを作ってください",
                 systemImage: "cat.fill",
-                description: "うちの子の名前を登録すると、似た写真をまとめて確認できます。代表写真はあとからでも選べます。"
+                description: "ねこの名前を登録すると、似た写真をまとめて確認できます。代表写真はあとからでも選べます。"
             ) {
-                Button("うちの子を追加") {
+                Button("プロフィールを追加") {
                     actions.openProfileSetup()
                 }
                 .buttonStyle(.borderedProminent)
@@ -359,7 +359,7 @@ struct CatSimilarityReviewView: View {
             }
 
             if presentation.profilesForCurrentQuestion.isEmpty {
-                Text("確認先のプロフィールがありません。設定からうちの子を追加してください。")
+                Text("確認先のプロフィールがありません。設定からねこのプロフィールを追加してください。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

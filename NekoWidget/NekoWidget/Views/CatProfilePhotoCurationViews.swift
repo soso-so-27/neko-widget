@@ -442,11 +442,11 @@ struct CatProfileConfirmedPhotosView: View {
             Text("\(profile.displayName)への所属だけを外します。他の子や「みんな」には残ります。")
         }
         .confirmationDialog(
-            "うちの子ではない写真ですか？",
+            "表示候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("うちの子ではない", role: .destructive) {
+            Button("表示候補から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -480,7 +480,7 @@ struct CatProfileConfirmedPhotosView: View {
                     Button("\(profile.displayName)ではない") {
                         showsRemoveConfirmation = true
                     }
-                    Button("うちの子ではない", role: .destructive) {
+                    Button("表示候補から外す", role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     }
                 } label: {
@@ -531,11 +531,11 @@ struct UnassignedCatPhotosView: View {
             )
         }
         .confirmationDialog(
-            "うちの子ではない写真ですか？",
+            "表示候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("うちの子ではない", role: .destructive) {
+            Button("表示候補から外す", role: .destructive) {
                 let identifiers = Array(selection)
                 selection.removeAll()
                 Task { await actions.excludeFromHousehold(identifiers) }
@@ -567,7 +567,7 @@ struct UnassignedCatPhotosView: View {
             Button(role: .destructive) {
                 showsGlobalExclusionConfirmation = true
             } label: {
-                Label("うちの子ではない", systemImage: "eye.slash")
+                Label("表示候補から外す", systemImage: "eye.slash")
             }
         }
         .padding(12)
@@ -645,7 +645,7 @@ struct CatPhotoAssignmentSheet: View {
                     Button(role: .destructive) {
                         showsGlobalExclusionConfirmation = true
                     } label: {
-                        Label("うちの子ではない", systemImage: "eye.slash")
+                        Label("表示候補から外す", systemImage: "eye.slash")
                     }
                 } header: {
                     Text("全体から外す")
@@ -673,11 +673,11 @@ struct CatPhotoAssignmentSheet: View {
             }
         }
         .confirmationDialog(
-            "うちの子ではない写真ですか？",
+            "表示候補から外しますか？",
             isPresented: $showsGlobalExclusionConfirmation,
             titleVisibility: .visible
         ) {
-            Button("うちの子ではない", role: .destructive) {
+            Button("表示候補から外す", role: .destructive) {
                 Task {
                     await excludeFromHousehold(photoIdentifiers)
                     dismiss()

@@ -14,7 +14,7 @@ struct WidgetPhotoSource: AppEntity {
     static let personalLibraryID = "personal-library"
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
-        name: "このiPhoneの写真",
+        name: "このiPhoneの猫写真",
         detail: "このiPhoneで見つけた猫写真"
     )
     static let familyWindowID = "family-window"
@@ -22,7 +22,7 @@ struct WidgetPhotoSource: AppEntity {
         WidgetPhotoSource(
             id: familyWindowID,
             name: SharedContainer.familyWidgetWindowDisplayName(),
-            detail: "招待した相手から届いた最新の一枚"
+            detail: "このまどに届いた最新の一枚"
         )
     }
 

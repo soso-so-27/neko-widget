@@ -36,7 +36,7 @@ enum OnboardingPresentationVerifier {
     private static func verifiesApprovedJapaneseCopy() throws {
         try require(
             OnboardingPresentationCopy.purposeBodyLines == [
-                "うちの子の写真は、",
+                "猫の写真は、",
                 "撮るだけ撮って",
                 "見ていないことが多い。",
                 "このアプリは、その中から",
@@ -52,7 +52,7 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.permissionTitleLines == [
-                "うちの子を探すために、",
+                "このiPhoneの猫写真を探すために、",
                 "写真を読ませてください。"
             ],
             "Photos permission request changed"
@@ -94,7 +94,7 @@ enum OnboardingPresentationVerifier {
             "Photos permission stopped offering the approved skip action"
         )
         try require(
-            OnboardingPresentationCopy.scanTitle == "うちの子を探しています",
+            OnboardingPresentationCopy.scanTitle == "このiPhoneの猫写真を探しています",
             "scan title changed"
         )
         try require(
@@ -107,8 +107,8 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.resultLeadLines == [
-                "あなたのカメラロールに",
-                "うちの子の写真は"
+                "このiPhoneで見つけた",
+                "猫写真は"
             ],
             "scan-result lead changed"
         )
@@ -121,7 +121,7 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.widgetTitleLines == [
                 "ホーム画面に、",
-                "うちの子の窓をひとつ。"
+                "猫写真のまどをひとつ。"
             ],
             "Widget guide promise changed"
         )

@@ -49,7 +49,7 @@ enum WidgetInstallationState: Equatable, Sendable {
 /// independently verifiable.
 enum OnboardingPresentationCopy {
     static let purposeBodyLines = [
-        "うちの子の写真は、",
+        "猫の写真は、",
         "撮るだけ撮って",
         "見ていないことが多い。",
         "このアプリは、その中から",
@@ -60,7 +60,7 @@ enum OnboardingPresentationCopy {
     static let purposeAction = "はじめる"
 
     static let permissionTitleLines = [
-        "うちの子を探すために、",
+        "このiPhoneの猫写真を探すために、",
         "写真を読ませてください。"
     ]
     static func permissionPrivacyLines(isMediaAvailable: Bool) -> [String] {
@@ -88,15 +88,15 @@ enum OnboardingPresentationCopy {
     static let permissionAction = "写真へのアクセスを許可"
     static let permissionSkipAction = "あとで（スキップ）"
 
-    static let scanTitle = "うちの子を探しています"
+    static let scanTitle = "このiPhoneの猫写真を探しています"
     static let scanBodyLines = [
         "新しい写真から先に見ています。",
         "全部の集計は、",
         "次にひらいたときに続きます。"
     ]
     static let resultLeadLines = [
-        "あなたのカメラロールに",
-        "うちの子の写真は"
+        "このiPhoneで見つけた",
+        "猫写真は"
     ]
     static let resultCountSuffix = "枚"
     static let resultClosing = "ありました"
@@ -104,7 +104,7 @@ enum OnboardingPresentationCopy {
 
     static let widgetTitleLines = [
         "ホーム画面に、",
-        "うちの子の窓をひとつ。"
+        "猫写真のまどをひとつ。"
     ]
     static let widgetAction = "わかった"
     static let widgetLaterAction = "あとで見る（設定からいつでも開けます）"

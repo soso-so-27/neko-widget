@@ -53,7 +53,7 @@ struct PhotoPermissionView: View {
         switch status {
         case .denied: "写真へのアクセスが必要です"
         case .restricted: "写真へのアクセスが制限されています"
-        default: "うちの子を見つけよう"
+        default: "このiPhoneの猫写真を見つけよう"
         }
     }
 

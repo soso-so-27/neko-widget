@@ -278,7 +278,7 @@ struct CuratedAlbumDetailView: View {
                     Button(role: .destructive) {
                         requestExclusion(Array(selectedIdentifiers))
                     } label: {
-                        Label("うちの子ではない", systemImage: "eye.slash")
+                        Label("表示候補から外す", systemImage: "eye.slash")
                     }
                     .disabled(selectedIdentifiers.isEmpty)
                 }
@@ -295,7 +295,7 @@ struct CuratedAlbumDetailView: View {
             }
         }
         .confirmationDialog(
-            "「うちの子ではない」にしますか？",
+            "表示候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
@@ -374,7 +374,7 @@ struct CuratedAlbumDetailView: View {
                 Button {
                     requestExclusion([photo.localIdentifier])
                 } label: {
-                    Label("うちの子ではない", systemImage: "cat.circle")
+                    Label("表示候補から外す", systemImage: "cat.circle")
                 }
             }
         }
@@ -959,14 +959,14 @@ struct PhotoBrowserView: View {
                         Button {
                             restoreCatCandidates([selectedPhotoIdentifier])
                         } label: {
-                            Label("うちの子候補に戻す", systemImage: "arrow.uturn.backward.circle")
+                            Label("表示候補に戻す", systemImage: "arrow.uturn.backward.circle")
                         }
                     } else {
                         Button {
                             pendingExclusionIdentifier = selectedPhotoIdentifier
                             showsExclusionConfirmation = true
                         } label: {
-                            Label("うちの子ではない", systemImage: "cat.circle")
+                            Label("表示候補から外す", systemImage: "cat.circle")
                         }
                     }
                 } label: {
@@ -975,7 +975,7 @@ struct PhotoBrowserView: View {
             }
         }
         .confirmationDialog(
-            "「うちの子ではない」にしますか？",
+            "表示候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {

@@ -141,9 +141,9 @@ struct SettingsView: View {
                     )
                 } label: {
                     LabeledContent(
-                        "うちの子",
+                        "ねこのプロフィール",
                         value: catProfilesPresentation.profiles.isEmpty
-                            ? "みんな"
+                            ? "未登録"
                             : "\(catProfilesPresentation.profiles.count.formatted())匹"
                     )
                 }
@@ -173,7 +173,7 @@ struct SettingsView: View {
                         }
                     }
                 } header: {
-                    Text("うちの子の時間")
+                    Text("ねこの年齢")
                 } footer: {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("誕生日を入力すると「子猫のころ」「1歳のころ」のように分かれます。迎えた日はプロフィール情報として保存し、年齢アルバムの基準には使いません。")
@@ -220,7 +220,7 @@ struct SettingsView: View {
             } header: {
                 Text("写真の整理")
             } footer: {
-                Text("「うちの子ではない」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
+                Text("「表示候補から外す」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
             }
 
             Section {

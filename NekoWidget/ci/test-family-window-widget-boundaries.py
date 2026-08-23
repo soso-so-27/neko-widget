@@ -245,7 +245,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("entry.windowDisplayName", widget_view)
         self.assertIn('static let familyWindowID = "family-window"', configuration)
         self.assertIn('static let personalLibraryID = "personal-library"', configuration)
-        self.assertIn('name: "このiPhoneの写真"', configuration)
+        self.assertIn('name: "このiPhoneの猫写真"', configuration)
         self.assertIn("SharedContainer.familyWidgetWindowDisplayName()", configuration)
         self.assertNotIn("WidgetManifestReader", configuration)
 
@@ -377,6 +377,75 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             value = source(relative)
             self.assertNotIn("家族のまど", value, relative)
             self.assertNotIn("家族から", value, relative)
+
+    def test_window_and_cat_copy_name_the_actual_destination_or_object(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        widget = source("NekoWidgetWidget/NekoWidgetView.swift")
+        widget_configuration = source(
+            "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
+        )
+        self.assertIn('"\\(privateWindowDisplayName)に届いた一枚"', home)
+        self.assertNotIn('"\\(privateWindowDisplayName)から届いた一枚"', home)
+        self.assertIn('"\\(entry.windowDisplayName)に届いた一枚"', widget)
+        self.assertIn('"\\(entry.windowDisplayName)に届いた写真"', widget)
+        self.assertNotIn('"\\(entry.windowDisplayName)から届いた', widget)
+        self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
+        self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
+        self.assertIn('detail: "このiPhoneで見つけた猫写真"', widget_configuration)
+        self.assertNotIn('name: "このiPhoneの写真"', widget_configuration)
+
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        profiles = source("NekoWidget/Views/CatProfilesView.swift")
+        onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
+        permission = source("NekoWidget/Views/PhotoPermissionView.swift")
+        scan = source("NekoWidget/Views/ScanStatusView.swift")
+        self.assertIn('"ねこのプロフィール"', settings)
+        self.assertIn('.navigationTitle("ねこのプロフィール")', profiles)
+        self.assertIn('"このiPhoneの猫写真を探すために、"', onboarding)
+        self.assertIn('"このiPhoneの猫写真を見つけよう"', permission)
+        self.assertIn('"このiPhoneの猫写真を探しています"', scan)
+
+        surfaces_without_legacy_album_copy = [
+            "NekoWidget/Views/CatCandidateCurationView.swift",
+            "NekoWidget/Views/CatProfilePhotoCurationViews.swift",
+            "NekoWidget/Views/CatProfilesView.swift",
+            "NekoWidget/Views/CatSimilarityReviewView.swift",
+            "NekoWidget/Views/GrowthAlbumView.swift",
+            "NekoWidget/Views/LikedPhotosView.swift",
+            "NekoWidget/Views/OnboardingPresentation.swift",
+            "NekoWidget/Views/PhotoPermissionView.swift",
+            "NekoWidget/Views/ScanStatusView.swift",
+            "NekoWidget/Views/WidgetPlacementGuideView.swift",
+            "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift",
+            "NekoWidgetWidget/NekoWidgetView.swift",
+        ]
+        for relative in surfaces_without_legacy_album_copy:
+            self.assertNotIn("うちの子", source(relative), relative)
+
+        self.assertEqual(
+            home.count("うちの子"),
+            home.count('写真アプリの「うちの子」アルバム'),
+        )
+        self.assertEqual(
+            settings.count("うちの子"),
+            settings.count('写真アプリの「うちの子」'),
+        )
+
+    def test_multi_window_is_documented_but_remains_out_of_scope(self) -> None:
+        adr = source("docs/ADR-018-名前付きの非公開なまど.md")
+        for required_boundary in [
+            "`WindowID`",
+            "`WindowCatalog`",
+            "`WindowContext`",
+            "per-window隔離",
+            "Widget cache",
+            "Share Extension",
+            "deep link",
+        ]:
+            self.assertIn(required_boundary, adr)
+        self.assertIn("段階4の実装契約（未実装）", adr)
+        self.assertIn("複数まど、3人以上、1人の複数端末、APNs", adr)
+        self.assertIn("名前付きの非公開なまど1つ", adr)
 
     def test_pairing_starts_with_one_explicit_role_path(self) -> None:
         pairing = source("NekoWidget/Views/PairingView.swift")

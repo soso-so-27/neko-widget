@@ -78,7 +78,7 @@ struct CatProfilesView: View {
             unassignedSection
             legacyExclusionSection
         }
-        .navigationTitle("うちの子")
+        .navigationTitle("ねこのプロフィール")
         .sheet(isPresented: $showsAddProfile) {
             AddCatProfileView(
                 referenceCandidates: presentation.unassignedPhotos.filter {
@@ -190,7 +190,7 @@ struct CatProfilesView: View {
             } header: {
                 Text("単頭設定からの引き継ぎ")
             } footer: {
-                Text("以前の「この子じゃない」は単頭向けでした。もう一匹のうちの子を除外していないか確認できます。")
+                Text("以前の「この子じゃない」は単頭向けでした。別の猫の写真まで除外していないか確認できます。")
             }
         }
     }
