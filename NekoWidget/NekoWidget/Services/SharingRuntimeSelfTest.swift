@@ -419,6 +419,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(await runAsync("moment-install-bound-handoff") {
             try await Self.testMomentInstallBoundHandoff()
         })
+        results.append(await runAsync("disabled-upgrade-purge") {
+            try await Self.testDisabledUpgradePurge()
+        })
         results.append(run("moment-report-only-terminal-gate") {
             try Self.testMomentReportOnlyTerminalGate()
         })
@@ -457,6 +460,9 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(run("canonical-local-only-privacy-budget") {
             try Self.testCanonicalPrivacyAndBudget()
+        })
+        results.append(run("diagnostic-persistence-privacy") {
+            try Self.testDiagnosticPersistencePrivacy()
         })
         results.append(run("day-boundary-convergence") {
             try Self.testDayBoundaryConvergence()
@@ -554,6 +560,31 @@ actor SharingRuntimeSelfTestRunner {
             Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
         }
+    }
+
+    private static func testDiagnosticPersistencePrivacy() throws {
+        let legacyPayload =
+            "https://example.invalid/private/var/mobile/secret?token=SUPERSECRET\nsecond-line"
+        var snapshot = LibrarySnapshot.empty
+        snapshot.scanState.lastError = legacyPayload
+        let url = try JSONExporter().export(snapshot)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let data = try Data(contentsOf: url)
+        let text = String(decoding: data, as: UTF8.self)
+        for forbidden in [
+            "SUPERSECRET",
+            "example.invalid",
+            "/private/var/",
+            "second-line",
+        ] where text.contains(forbidden) {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let scanState = root["scanState"] as? [String: Any],
+              scanState["lastError"] as? String
+                == DiagnosticLogPrivacy.persistedScanFailureCopy
+        else { throw MomentSharingError.stateUnavailable }
     }
 
     private static func writeProgress(caseID: String, phase: String) {
@@ -1195,24 +1226,25 @@ actor SharingRuntimeSelfTestRunner {
               longInactivePresentation.terminalOutcomes.isEmpty
         else { throw MomentSharingError.stateUnavailable }
 
-        // A rollback build with sharing disabled must still bootstrap the
-        // host installation boundary and physically remove any admission and
-        // staged canonical plaintext left by an earlier enabled build.
-        let disabledConfiguration = SharingAPIConfiguration(
-            isEnabled: false,
+        // Pairing-only keeps its room authorization while physically removing
+        // any admission and staged canonical plaintext from a media build.
+        // The fully-disabled upgrade boundary is exercised separately with a
+        // real paired credential and complete sharing cache below.
+        let pairingOnlyConfiguration = SharingAPIConfiguration(
+            isEnabled: true,
             isMediaEnabled: false,
             isShareExtensionHandoffEnabled: false,
             isShareExtensionSendEnabled: false,
             isReviewPreviewEnabled: false,
-            baseURL: nil,
+            baseURL: URL(string: "https://example.com")!,
             moderationKeyID: nil,
             moderationPublicKey: nil,
             supportURL: nil,
             communityStandardsURL: nil,
-            releaseMode: "disabled"
+            releaseMode: "pairing-only"
         )
-        let disabledCoordinator = MomentSharingCoordinator(
-            configuration: disabledConfiguration
+        let pairingOnlyCoordinator = MomentSharingCoordinator(
+            configuration: pairingOnlyConfiguration
         )
         let moderationDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -1243,7 +1275,7 @@ actor SharingRuntimeSelfTestRunner {
                 isDirectory: false
             )
         try Data([0x54]).write(to: inboundRollbackResidue)
-        await disabledCoordinator.synchronize(trigger: "runtime-disabled")
+        await pairingOnlyCoordinator.synchronize(trigger: "runtime-pairing-only")
         guard try MomentShareHandoffStore.activeAdmissions(
             now: base.addingTimeInterval(2 * 60 * 60)
         ).isEmpty,
@@ -1379,6 +1411,489 @@ actor SharingRuntimeSelfTestRunner {
         SharedContainer.momentShareHandoffReportOnlyMarkerURL.map({
             !FileManager.default.fileExists(atPath: $0.path)
         }) == true
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    /// Installing a fully-disabled build over a previously paired media build
+    /// must revoke the entire local room before any relay client exists. The
+    /// fixture includes every user-visible sharing class plus a cleanup marker
+    /// left by an interrupted attempt; a second pass proves convergence.
+    private static func testDisabledUpgradePurge() async throws {
+        let initial = try PairingInstallationGuard.bootstrap()
+        _ = try PairingInstallationGuard.resetLocalSharing(
+            expectedState: initial.state,
+            lifecycleToken: initial.lifecycleToken,
+            message: nil
+        )
+        let bootstrap = try PairingInstallationGuard.bootstrap()
+        let lifecycleToken = bootstrap.lifecycleToken
+        let unpaired = bootstrap.state
+        guard unpaired.phase == .unpaired,
+              let root = SharedContainer.containerURL,
+              let personalWidgetDirectory = SharedContainer.widgetCacheDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+
+        let personalSentinels = [
+            root.appendingPathComponent(
+                ".runtime-disabled-upgrade-photo-scan",
+                isDirectory: false
+            ),
+            root.appendingPathComponent(
+                ".runtime-disabled-upgrade-likes",
+                isDirectory: false
+            ),
+            personalWidgetDirectory.appendingPathComponent(
+                ".runtime-disabled-upgrade-personal-widget",
+                isDirectory: false
+            )
+        ]
+        let personalSentinelData = Data("personal-local-state".utf8)
+        try FileManager.default.createDirectory(
+            at: personalWidgetDirectory,
+            withIntermediateDirectories: true
+        )
+        for url in personalSentinels {
+            try SharingSecureFile.write(personalSentinelData, to: url)
+        }
+        defer {
+            for url in personalSentinels {
+                try? FileManager.default.removeItem(at: url)
+            }
+            try? PairingInstallationGuard
+                .resetLocalSharingForDisabledConfiguration()
+        }
+
+        let credential = PairingCrypto.makeCredential(
+            installationMarker: unpaired.installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        let peerCredential = PairingCrypto.makeCredential(
+            installationMarker: unpaired.installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: false
+        )
+        let orphanCredential = PairingCrypto.makeCredential(
+            installationMarker: unpaired.installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        let localMember = PairingMemberIdentity(
+            memberID: opaque(0x81),
+            participantID: credential.participantIDString,
+            agreementPublicKey: try PairingCrypto.agreementPublicKey(for: credential)
+                .base64URLEncodedString(),
+            signingPublicKey: try PairingCrypto.signingPublicKey(for: credential)
+                .base64URLEncodedString()
+        )
+        let peerMember = PairingMemberIdentity(
+            memberID: opaque(0x82),
+            participantID: peerCredential.participantIDString,
+            agreementPublicKey: try PairingCrypto.agreementPublicKey(for: peerCredential)
+                .base64URLEncodedString(),
+            signingPublicKey: try PairingCrypto.signingPublicKey(for: peerCredential)
+                .base64URLEncodedString()
+        )
+        let spaceID = opaque(0x83)
+        let invitationID = opaque(0x84)
+        let enrollmentID = opaque(0x85)
+        let transcript = PairingVerificationTranscript(
+            spaceID: spaceID,
+            invitationID: invitationID,
+            enrollmentID: enrollmentID,
+            dailyBoundaryMinuteUTC: 240,
+            inviter: localMember,
+            invitee: peerMember
+        )
+        let transcriptData = try transcript.canonicalData()
+        let transcriptHash = PairingCrypto.sha256(transcriptData)
+
+        var creating = unpaired
+        creating.phase = .creatingInvitation
+        creating.role = .inviter
+        creating.credentialAccount = credential.account
+        creating.participantID = credential.participantIDString
+        creating.pendingClientRequestID = UUID().uuidString.lowercased()
+        creating.pendingOperation = "create"
+        creating.lastUpdatedAt = .now
+        creating = try PairingStateStore.saveInitialCredentialAndState(
+            credential: credential,
+            state: creating,
+            expected: unpaired,
+            lifecycleToken: lifecycleToken
+        )
+        var paired = creating
+        paired.phase = .paired
+        paired.spaceID = spaceID
+        paired.memberID = localMember.memberID
+        paired.invitationID = invitationID
+        paired.enrollmentID = enrollmentID
+        paired.peerMemberID = peerMember.memberID
+        paired.peerParticipantID = peerMember.participantID
+        paired.peerAgreementPublicKey = peerMember.agreementPublicKey
+        paired.peerSigningPublicKey = peerMember.signingPublicKey
+        paired.transcript = transcriptData.base64URLEncodedString()
+        paired.transcriptHash = transcriptHash.base64URLEncodedString()
+        paired.verificationPhrase = PairingCrypto.verificationPhrase(for: transcriptHash)
+        paired.dailyBoundaryMinuteUTC = 240
+        paired.pendingClientRequestID = nil
+        paired.pendingOperation = nil
+        paired.mediaSharingConsentVersion = PairingMediaSharingConsent.currentVersion
+        paired.mediaSharingConsentAcceptedAt = .now
+        paired.lastUpdatedAt = .now
+        paired = try PairingStateStore.save(
+            paired,
+            expected: creating,
+            lifecycleToken: lifecycleToken
+        )
+        // A crash before state publication can leave more than the one account
+        // referenced by PairingState. The disabled purge must delete the exact
+        // sharing service wholesale, not only the currently bound account.
+        try PairingKeychainStore.save(
+            orphanCredential,
+            lifecycleToken: lifecycleToken
+        )
+
+        _ = try PrivateWindowPresentationStore.save(
+            displayName: "以前のまど",
+            pairing: paired,
+            validating: lifecycleToken
+        )
+        guard let familyWidgetManifestURL = SharedContainer.familyWidgetManifestURL else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard let windowNameSyncURL = SharedContainer.privateWindowNameSyncStateURL,
+              let familyWidgetHistoryURL = SharedContainer.familyWidgetCacheHistoryURL,
+              let familyWidgetCacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        try SharingSecureFile.write(
+            Data("stale-family-widget".utf8),
+            to: familyWidgetManifestURL
+        )
+        try SharingSecureFile.write(
+            Data("stale-window-name-sync".utf8),
+            to: windowNameSyncURL
+        )
+        try SharingSecureFile.write(
+            Data("stale-family-history".utf8),
+            to: familyWidgetHistoryURL
+        )
+        try FileManager.default.createDirectory(
+            at: familyWidgetCacheDirectory,
+            withIntermediateDirectories: true
+        )
+        let familyWidgetJPEGURL = familyWidgetCacheDirectory.appendingPathComponent(
+            "stale-family-widget.jpg",
+            isDirectory: false
+        )
+        try SharingSecureFile.write(
+            Data(repeating: 0x93, count: 64),
+            to: familyWidgetJPEGURL
+        )
+
+        // Availability is not a destructive policy boundary. A pairing-only
+        // candidate with a missing/invalid relay URL must fail closed for
+        // networking without erasing an already-authorized room.
+        let unavailablePairingOnlyConfiguration = SharingAPIConfiguration(
+            isEnabled: true,
+            isMediaEnabled: false,
+            isShareExtensionHandoffEnabled: false,
+            isShareExtensionSendEnabled: false,
+            isReviewPreviewEnabled: false,
+            baseURL: nil,
+            moderationKeyID: nil,
+            moderationPublicKey: nil,
+            supportURL: nil,
+            communityStandardsURL: nil,
+            releaseMode: "pairing-only"
+        )
+        let unavailablePairingOnlyCoordinator = MomentSharingCoordinator(
+            configuration: unavailablePairingOnlyConfiguration
+        )
+        guard !unavailablePairingOnlyConfiguration.isAvailable,
+              !unavailablePairingOnlyConfiguration.requiresLocalSharingPurge
+        else { throw MomentSharingError.stateUnavailable }
+        await unavailablePairingOnlyCoordinator.synchronize(
+            trigger: "runtime-pairing-only-unavailable"
+        )
+        let pairingOnlyNetworkConstructionCount = await unavailablePairingOnlyCoordinator
+            .runtimeNetworkClientConstructions()
+        guard (try PairingStateStore.load())?.phase == .paired,
+              try PairingKeychainStore.load(
+                  account: credential.account,
+                  installationMarker: paired.installationMarker
+              ) == credential,
+              try PairingKeychainStore.load(
+                  account: orphanCredential.account,
+                  installationMarker: paired.installationMarker
+              ) == orphanCredential,
+              pairingOnlyNetworkConstructionCount == 0,
+              FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
+              FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path)
+        else { throw MomentSharingError.stateUnavailable }
+
+        let reviewPreviewConfiguration = SharingAPIConfiguration(
+            isEnabled: false,
+            isMediaEnabled: false,
+            isShareExtensionHandoffEnabled: false,
+            isShareExtensionSendEnabled: false,
+            isReviewPreviewEnabled: true,
+            baseURL: nil,
+            moderationKeyID: nil,
+            moderationPublicKey: nil,
+            supportURL: nil,
+            communityStandardsURL: nil,
+            releaseMode: "review-preview"
+        )
+        let reviewPreviewCoordinator = MomentSharingCoordinator(
+            configuration: reviewPreviewConfiguration
+        )
+        guard !reviewPreviewConfiguration.isAvailable,
+              !reviewPreviewConfiguration.requiresLocalSharingPurge
+        else { throw MomentSharingError.stateUnavailable }
+        await reviewPreviewCoordinator.synchronize(
+            trigger: "runtime-review-preview-preserve"
+        )
+        let reviewPreviewNetworkConstructionCount = await reviewPreviewCoordinator
+            .runtimeNetworkClientConstructions()
+        guard (try PairingStateStore.load())?.phase == .paired,
+              try PairingKeychainStore.load(
+                  account: credential.account,
+                  installationMarker: paired.installationMarker
+              ) == credential,
+              reviewPreviewNetworkConstructionCount == 0,
+              FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
+              FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path)
+        else { throw MomentSharingError.stateUnavailable }
+
+        let base = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+        let binding = try MomentShareHandoffStore.makeBindingSHA256(
+            installationMarker: paired.installationMarker,
+            spaceID: spaceID,
+            participantID: credential.participantIDString
+        )
+        let catalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: binding,
+                displayName: "以前のまど"
+            )],
+            validating: lifecycleToken,
+            now: base
+        )
+        guard let admission = catalog.destinations.first else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let pendingCapture = try MomentShareHandoffStore.stageCapture(
+            admissionID: admission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: base,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: base,
+            now: base.addingTimeInterval(1)
+        )
+
+        guard let roomKey = credential.roomKey else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let prepared = try MomentCrypto.prepare(
+            canonicalJPEG: preview.jpeg,
+            capturedAt: base,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            context: MomentRequestContext(
+                spaceID: spaceID,
+                senderParticipantID: localMember.participantID,
+                senderDeviceID: localMember.participantID,
+                clientRequestID: UUID(),
+                clientMomentID: UUID(),
+                kind: .live,
+                keyEpoch: 1
+            ),
+            spaceGenerationKey: roomKey
+        )
+        let outboxItem = try MomentSharingStateStore.enqueue(
+            payload: prepared,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: base,
+            validating: lifecycleToken,
+            now: base
+        )
+        guard let ciphertextDirectory = SharedContainer.momentSharingCiphertextDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let ciphertextURL = ciphertextDirectory.appendingPathComponent(
+            outboxItem.ciphertextFileName,
+            isDirectory: false
+        )
+
+        let receivedMomentID = opaque(0x86)
+        let receivedItem = try MomentInboxItem(
+            id: receivedMomentID,
+            senderParticipantID: peerMember.participantID,
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "\(receivedMomentID).jpg",
+            capturedAt: base,
+            captureDateIsMissing: false,
+            committedAt: base,
+            receivedAt: base,
+            state: .available,
+            accessExpiresAt: base.addingTimeInterval(30 * 24 * 60 * 60)
+        ).validated()
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            receivedItem,
+            jpeg: preview.jpeg,
+            validating: lifecycleToken
+        )
+        guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        guard let receivedFileName = receivedItem.localJPEGFileName else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let receivedURL = receivedDirectory.appendingPathComponent(
+            receivedFileName,
+            isDirectory: false
+        )
+        let reportCiphertext = Data(repeating: 0x91, count: 128)
+        _ = try MomentSharingStateStore.enqueueReport(
+            momentID: receivedMomentID,
+            reason: .privacy,
+            prepared: MomentPreparedReport(
+                ciphertext: reportCiphertext,
+                ciphertextSHA256: PairingCrypto.sha256(reportCiphertext),
+                moderationKeyID: "moderation-v1"
+            ),
+            reporterConsentAcceptedAt: base,
+            validating: lifecycleToken,
+            now: base
+        )
+
+        let moderationDirectories = [
+            "NekoWidgetMomentHandoffModeration",
+            "NekoWidgetMomentInboundModeration"
+        ].map {
+            FileManager.default.temporaryDirectory.appendingPathComponent(
+                $0,
+                isDirectory: true
+            )
+        }
+        for directory in moderationDirectories {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try Data([0x92]).write(
+                to: directory.appendingPathComponent(
+                    ".disabled-upgrade-residue",
+                    isDirectory: false
+                )
+            )
+        }
+
+        let seededState = try MomentSharingStateStore.load()
+        guard (try PairingStateStore.load())?.phase == .paired,
+              try PairingKeychainStore.load(
+                  account: credential.account,
+                  installationMarker: paired.installationMarker
+              ) == credential,
+              try PairingKeychainStore.load(
+                  account: orphanCredential.account,
+                  installationMarker: paired.installationMarker
+              ) == orphanCredential,
+              seededState.inbox.contains(where: { $0.id == receivedMomentID }),
+              seededState.outbox.contains(where: { $0.id == outboxItem.id }),
+              seededState.reportOutbox.contains(where: { $0.momentID == receivedMomentID }),
+              MomentShareHandoffStore.captureExists(pendingCapture),
+              FileManager.default.fileExists(atPath: ciphertextURL.path),
+              FileManager.default.fileExists(atPath: receivedURL.path),
+              FileManager.default.fileExists(atPath: familyWidgetManifestURL.path),
+              FileManager.default.fileExists(atPath: windowNameSyncURL.path),
+              FileManager.default.fileExists(atPath: familyWidgetHistoryURL.path),
+              FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path),
+              personalSentinels.allSatisfy({
+                  (try? Data(contentsOf: $0)) == personalSentinelData
+              })
+        else { throw MomentSharingError.stateUnavailable }
+
+        // Model a killed cleanup after its fail-closed marker became durable.
+        try SharingLifecycleGate.withExclusive {
+            try SharingLifecycleGate.markCleanupRequired()
+        }
+        let disabledConfiguration = SharingAPIConfiguration(
+            // The disabled marker remains authoritative even if an archive was
+            // accidentally injected with otherwise-enabled network values.
+            isEnabled: true,
+            isMediaEnabled: true,
+            isShareExtensionHandoffEnabled: true,
+            isShareExtensionSendEnabled: false,
+            isReviewPreviewEnabled: false,
+            baseURL: URL(string: "https://unexpected.invalid")!,
+            moderationKeyID: nil,
+            moderationPublicKey: nil,
+            supportURL: nil,
+            communityStandardsURL: nil,
+            releaseMode: "disabled"
+        )
+        guard disabledConfiguration.isAvailable,
+              disabledConfiguration.requiresLocalSharingPurge
+        else { throw MomentSharingError.stateUnavailable }
+        let coordinator = MomentSharingCoordinator(configuration: disabledConfiguration)
+        await coordinator.synchronize(trigger: "runtime-disabled-upgrade")
+        let firstNetworkConstructionCount = await coordinator
+            .runtimeNetworkClientConstructions()
+
+        guard let reset = try PairingStateStore.load(),
+              reset.phase == .unpaired,
+              reset.credentialAccount == nil,
+              !SharingLifecycleGate.isCleanupRequired,
+              firstNetworkConstructionCount == 0,
+              SharedContainer.momentSharingStateURL.map({
+                  !FileManager.default.fileExists(atPath: $0.path)
+              }) == true,
+              SharedContainer.momentShareHandoffDirectoryURL.map({
+                  !FileManager.default.fileExists(atPath: $0.path)
+              }) == true,
+              SharedContainer.privateWindowPresentationURL.map({
+                  !FileManager.default.fileExists(atPath: $0.path)
+              }) == true,
+              SharedContainer.familyWidgetManifestURL.map({
+                  !FileManager.default.fileExists(atPath: $0.path)
+              }) == true,
+              !FileManager.default.fileExists(atPath: windowNameSyncURL.path),
+              !FileManager.default.fileExists(atPath: familyWidgetHistoryURL.path),
+              !FileManager.default.fileExists(atPath: familyWidgetJPEGURL.path),
+              !FileManager.default.fileExists(atPath: ciphertextURL.path),
+              !FileManager.default.fileExists(atPath: receivedURL.path),
+              moderationDirectories.allSatisfy({
+                  !FileManager.default.fileExists(atPath: $0.path)
+              }),
+              personalSentinels.allSatisfy({
+                  (try? Data(contentsOf: $0)) == personalSentinelData
+              })
+        else { throw MomentSharingError.stateUnavailable }
+        for removedCredential in [credential, orphanCredential] {
+            do {
+                _ = try PairingKeychainStore.load(
+                    account: removedCredential.account,
+                    installationMarker: paired.installationMarker
+                )
+                throw MomentSharingError.stateUnavailable
+            } catch PairingError.malformedCredential {
+                // Expected: no bound or orphan room capability survives.
+            }
+        }
+
+        await coordinator.synchronize(trigger: "runtime-disabled-idempotent")
+        let secondNetworkConstructionCount = await coordinator
+            .runtimeNetworkClientConstructions()
+        guard (try PairingStateStore.load())?.phase == .unpaired,
+              !SharingLifecycleGate.isCleanupRequired,
+              secondNetworkConstructionCount == 0,
+              personalSentinels.allSatisfy({
+                  (try? Data(contentsOf: $0)) == personalSentinelData
+              })
         else { throw MomentSharingError.stateUnavailable }
     }
 
@@ -2214,7 +2729,7 @@ actor SharingRuntimeSelfTestRunner {
                     senderPolicyVersion: 1,
                     senderPolicyAcceptedAt: createdAt,
                     attemptCount: 1,
-                    lastErrorCode: "fixture-failed",
+                    lastErrorCode: "state-unavailable",
                     createdAt: createdAt,
                     updatedAt: createdAt
                 ).validated())
@@ -4115,6 +4630,52 @@ actor SharingRuntimeSelfTestRunner {
             expected: creating,
             lifecycleToken: snapshot.lifecycleToken
         )
+
+        // A normal read may hide legacy diagnostic text in memory, but it must
+        // never rewrite the full PairingState without the lifecycle flock. A
+        // locked operation performs the physical scrub without changing the
+        // authorization identity or its CAS revision.
+        guard let pairingStateURL = SharedContainer.pairingStateURL else {
+            throw PairingError.stateUnavailable
+        }
+        let legacyPairingError =
+            "https://example.invalid/private/var/mobile/pairing?token=SUPERSECRET\nsecond-line"
+        var legacyPairing = paired
+        legacyPairing.lastError = legacyPairingError
+        let legacyPairingEncoder = JSONEncoder()
+        legacyPairingEncoder.dateEncodingStrategy = .iso8601
+        legacyPairingEncoder.outputFormatting = [
+            .prettyPrinted,
+            .sortedKeys,
+            .withoutEscapingSlashes,
+        ]
+        let legacyPairingData = try legacyPairingEncoder.encode(legacyPairing.validated())
+        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
+            try SharingSecureFile.write(legacyPairingData, to: pairingStateURL)
+        }
+        guard String(decoding: legacyPairingData, as: UTF8.self).contains("SUPERSECRET"),
+              let readOnlyPairing = try PairingStateStore.load(),
+              readOnlyPairing.lastError == DiagnosticLogPrivacy.persistedPairingFailureCopy,
+              try Data(contentsOf: pairingStateURL) == legacyPairingData
+        else { throw PairingError.stateUnavailable }
+
+        let lockedMigration = try PairingStateStore.beginOperation()
+        guard lockedMigration.lifecycleToken == snapshot.lifecycleToken,
+              let migratedPairing = lockedMigration.state,
+              migratedPairing.lastError == DiagnosticLogPrivacy.persistedPairingFailureCopy,
+              migratedPairing.storageRevision == paired.storageRevision
+        else { throw PairingError.stateUnavailable }
+        let migratedPairingData = try Data(contentsOf: pairingStateURL)
+        let migratedPairingText = String(decoding: migratedPairingData, as: UTF8.self)
+        for forbidden in [
+            "SUPERSECRET",
+            "example.invalid",
+            "/private/var/",
+            "second-line",
+        ] where migratedPairingText.contains(forbidden) {
+            throw PairingError.stateUnavailable
+        }
+        paired = migratedPairing
 
         let pairingRevisionBeforeRename = paired.storageRevision
         let firstWindowName = try PrivateWindowPresentationStore.save(

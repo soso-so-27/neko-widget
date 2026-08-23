@@ -80,7 +80,7 @@ final class PairingViewModel: ObservableObject {
         do {
             let result = try await PairingInstallationGuard.bootstrapAsync()
             if result.invalidatedPreviousInstallation {
-                configurationMessage = PairingError.installationChanged.localizedDescription
+                configurationMessage = Self.message(for: .installationChanged)
             }
             let operation = try beginOperation()
             let current = operation.expectedState
@@ -177,7 +177,7 @@ final class PairingViewModel: ObservableObject {
             SharedLog.app.error(
                 "window-presentation",
                 "Private window display name could not be saved",
-                metadata: ["reason": error.localizedDescription]
+                metadata: SharedLog.errorMetadata(error, category: .pairing)
             )
             return false
         }
@@ -199,7 +199,7 @@ final class PairingViewModel: ObservableObject {
     func createInvitation(dailyBoundaryMinuteUTC: Int) async {
         clearTransientOperationFeedback()
         guard let api else {
-            configurationMessage = PairingError.apiNotConfigured.localizedDescription
+            configurationMessage = Self.message(for: .apiNotConfigured)
             return
         }
         let operation: PairingOperation
@@ -301,7 +301,7 @@ final class PairingViewModel: ObservableObject {
     func joinInvitation() async {
         clearTransientOperationFeedback()
         guard let api else {
-            configurationMessage = PairingError.apiNotConfigured.localizedDescription
+            configurationMessage = Self.message(for: .apiNotConfigured)
             return
         }
         let operation: PairingOperation
@@ -441,7 +441,7 @@ final class PairingViewModel: ObservableObject {
                 do {
                     try await resetLocalPairing(
                         operation: operation,
-                        message: pairingError.localizedDescription
+                        message: Self.message(for: pairingError)
                     )
                 } catch {
                     record(error, operation: operation)
@@ -562,7 +562,7 @@ final class PairingViewModel: ObservableObject {
                 do {
                     let message = Self.isInvalidAuthentication(pairingError)
                         ? "共有の有効期限が切れました。もう一度招待してください。"
-                        : pairingError.localizedDescription
+                        : Self.message(for: pairingError)
                     try await resetLocalPairing(operation: operation, message: message)
                 } catch {
                     record(error, operation: operation)
@@ -1131,8 +1131,8 @@ final class PairingViewModel: ObservableObject {
             // this narrow cleanup on the next bootstrap/refresh.
             SharedLog.app.error(
                 "pairing",
-                "Could not scrub consumed invitation secret",
-                metadata: ["reason": error.localizedDescription]
+                "Could not remove consumed invitation material",
+                metadata: SharedLog.errorMetadata(error, category: .pairing)
             )
         }
     }
@@ -1184,17 +1184,22 @@ final class PairingViewModel: ObservableObject {
         SharedLog.app.error(
             "pairing",
             "Pairing operation failed",
-            metadata: ["reason": error.localizedDescription]
+            metadata: SharedLog.errorMetadata(error, category: .pairing)
         )
     }
 
     private static func userFacingMessage(for error: Error) -> String {
         if let pairingError = error as? PairingError {
-            return pairingError.localizedDescription
+            return message(for: pairingError)
         }
         if error is URLError {
             return "通信を完了できませんでした。接続を確認して、もう一度お試しください。"
         }
         return "共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
+    }
+
+    private static func message(for error: PairingError) -> String {
+        error.errorDescription
+            ?? "共有の処理を完了できませんでした。状態を確認して、もう一度お試しください。"
     }
 }

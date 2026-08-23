@@ -264,7 +264,7 @@ final class AppViewModel: ObservableObject {
             SharedLog.app.info("storage", "Shared snapshot store initialized")
         } catch {
             store = nil
-            storeInitializationError = error.localizedDescription
+            storeInitializationError = Self.userFacingMessage(for: error)
             Self.logError(error, category: "storage", operation: "initialize_store")
         }
 
@@ -274,7 +274,7 @@ final class AppViewModel: ObservableObject {
             SharedLog.app.info("curation", "Cat candidate curation store initialized")
         } catch {
             curationStore = nil
-            curationStoreInitializationError = error.localizedDescription
+            curationStoreInitializationError = Self.userFacingMessage(for: error)
             Self.logError(error, category: "curation", operation: "initialize_store")
         }
 
@@ -284,7 +284,7 @@ final class AppViewModel: ObservableObject {
             SharedLog.app.info("cat-identity", "Cat household identity store initialized")
         } catch {
             identityStore = nil
-            identityStoreInitializationError = error.localizedDescription
+            identityStoreInitializationError = Self.userFacingMessage(for: error)
             Self.logError(error, category: "cat-identity", operation: "initialize_store")
         }
 
@@ -421,7 +421,7 @@ final class AppViewModel: ObservableObject {
         authorizationStatus = authorizationService.status
         SharedLog.app.info(
             "permission",
-            "Photo authorization checked",
+            "Photo permission checked",
             metadata: ["status": Self.authorizationName(authorizationStatus)]
         )
         guard canReadPhotos else {
@@ -445,11 +445,11 @@ final class AppViewModel: ObservableObject {
             return
         }
         errorMessage = nil
-        SharedLog.app.info("permission", "Photo authorization request started")
+        SharedLog.app.info("permission", "Photo permission request started")
         authorizationStatus = await authorizationService.requestAuthorization()
         SharedLog.app.info(
             "permission",
-            "Photo authorization request finished",
+            "Photo permission request finished",
             metadata: ["status": Self.authorizationName(authorizationStatus)]
         )
         guard canReadPhotos else {
@@ -1841,7 +1841,7 @@ final class AppViewModel: ObservableObject {
         SharedLog.app.info(
             "deeplink",
             "Discarded deferred Widget photo",
-            metadata: ["reason": reason]
+            metadata: ["routeOutcome": reason]
         )
     }
 
@@ -1902,20 +1902,28 @@ final class AppViewModel: ObservableObject {
             || successfulImageLoadCount <= 3
             || successfulImageLoadCount.isMultiple(of: 25)
         if shouldLog {
-            SharedLog.app.log(
-                image == nil ? .warning : .debug,
-                "image",
-                image == nil ? "Photo image load failed" : "Photo image loaded (sampled)",
-                metadata: [
-                    "asset": SharedLog.shortHash(localIdentifier),
-                    "decodedBytesEstimate": "\(width * height * 4)",
-                    "durationMs": String(format: "%.1f", elapsedMilliseconds),
-                    "networkAllowed": "true",
-                    "outputPixels": "\(width)x\(height)",
-                    "requestedPixels": "\(Int(targetSize.width))x\(Int(targetSize.height))",
-                    "successOrdinal": "\(successfulImageLoadCount)"
-                ]
-            )
+            let metadata = [
+                "asset": SharedLog.shortHash(localIdentifier),
+                "decodedBytesEstimate": "\(width * height * 4)",
+                "durationMs": String(format: "%.1f", elapsedMilliseconds),
+                "networkAllowed": "true",
+                "outputPixels": "\(width)x\(height)",
+                "requestedPixels": "\(Int(targetSize.width))x\(Int(targetSize.height))",
+                "successOrdinal": "\(successfulImageLoadCount)"
+            ]
+            if image == nil {
+                SharedLog.app.warning(
+                    "image",
+                    "Photo image load failed",
+                    metadata: metadata
+                )
+            } else {
+                SharedLog.app.debug(
+                    "image",
+                    "Photo image loaded (sampled)",
+                    metadata: metadata
+                )
+            }
         }
         return image
     }
@@ -2303,9 +2311,9 @@ final class AppViewModel: ObservableObject {
             photoSourceStatus = .unavailable
             var failed = latestScanProgressState(generation: generation)
             failed.phase = .failed
-            failed.lastError = CatCandidateCurationError
-                .selectedSourceUnavailable
-                .localizedDescription
+            failed.lastError = Self.userFacingMessage(
+                for: CatCandidateCurationError.selectedSourceUnavailable
+            )
             publishTerminalScanProgress(
                 failed,
                 generation: generation,
@@ -2321,7 +2329,7 @@ final class AppViewModel: ObservableObject {
             guard generation == scanGeneration else { return }
             var failed = latestScanProgressState(generation: generation)
             failed.phase = .failed
-            failed.lastError = error.localizedDescription
+            failed.lastError = Self.userFacingMessage(for: error)
             publishTerminalScanProgress(
                 failed,
                 generation: generation,
@@ -2853,7 +2861,9 @@ final class AppViewModel: ObservableObject {
         let selected = albumSelector.select(from: candidateSnapshot(snapshot))
         guard !selected.isEmpty else {
             await performClearManagedAlbum(reportErrors: false)
-            albumStatus = .failed(message: NekoWidgetError.noCatPhotos.localizedDescription)
+            albumStatus = .failed(
+                message: Self.userFacingMessage(for: NekoWidgetError.noCatPhotos)
+            )
             if reportErrors { setError(NekoWidgetError.noCatPhotos) }
             return
         }
@@ -2884,7 +2894,7 @@ final class AppViewModel: ObservableObject {
                 metadata: ["photoCount": "\(selected.count)"]
             )
         } catch {
-            albumStatus = .failed(message: error.localizedDescription)
+            albumStatus = .failed(message: Self.userFacingMessage(for: error))
             Self.logError(error, category: "album", operation: "synchronize_album")
             if reportErrors { setError(error) }
         }
@@ -2967,7 +2977,7 @@ final class AppViewModel: ObservableObject {
             )
             albumStatus = .ready(photoCount: 0, updatedAt: .now)
         } catch {
-            albumStatus = .failed(message: error.localizedDescription)
+            albumStatus = .failed(message: Self.userFacingMessage(for: error))
             Self.logError(error, category: "album", operation: "clear_album")
             if reportErrors { setError(error) }
         }
@@ -3029,8 +3039,51 @@ final class AppViewModel: ObservableObject {
     }
 
     private func setError(_ error: Error) {
-        errorMessage = error.localizedDescription
+        errorMessage = Self.userFacingMessage(for: error)
         Self.logError(error, category: "error", operation: "present_to_user")
+    }
+
+    private static func userFacingMessage(for error: Error) -> String {
+        if let value = error as? NekoWidgetError {
+            switch value {
+            case .appGroupUnavailable:
+                return "アプリの保存領域を利用できません。アプリを更新して、もう一度お試しください。"
+            case .photoAccessDenied:
+                return "写真へのアクセスが許可されていません。iPhoneの設定を確認してください。"
+            case .albumCreationFailed:
+                return "写真アルバムを更新できませんでした。写真へのアクセスと空き容量を確認してください。"
+            case .noCatPhotos:
+                return "表示できる猫の写真がまだありません。"
+            case .exportFailed:
+                return "データを書き出せませんでした。空き容量を確認して、もう一度お試しください。"
+            }
+        }
+        if let value = error as? CatCandidateCurationError {
+            return value.errorDescription
+                ?? "写真の対象設定を確認できませんでした。設定を開き直してください。"
+        }
+        if let value = error as? CatProfilePhotoAlbumError {
+            return value.errorDescription
+                ?? "選択した写真アルバムを利用できません。写真へのアクセス範囲を確認してください。"
+        }
+        if let value = error as? CatHouseholdIdentityStoreError {
+            return value.errorDescription
+                ?? "猫プロフィールを安全に読み書きできませんでした。もう一度お試しください。"
+        }
+        if let value = error as? SharedLikeStoreError {
+            switch value {
+            case .appGroupUnavailable:
+                return "「これ好き」の保存領域を利用できません。アプリを更新して、もう一度お試しください。"
+            case .lockOpenFailed, .lockFailed:
+                return "「これ好き」を安全に保存できませんでした。少し待って、もう一度お試しください。"
+            case .measurementNotInitialized:
+                return "アプリを一度開き直してから、もう一度お試しください。"
+            }
+        }
+        if error is URLError {
+            return "通信を完了できませんでした。接続を確認して、もう一度お試しください。"
+        }
+        return "処理を完了できませんでした。写真へのアクセスとiPhoneの空き容量を確認して、もう一度お試しください。"
     }
 
     private func logCandidateAuthorityUnavailable(operation: String) {
@@ -3057,16 +3110,14 @@ final class AppViewModel: ObservableObject {
         category: String,
         operation: String
     ) {
-        let value = error as NSError
         SharedLog.app.error(
             category,
             "Operation failed",
-            metadata: [
-                "code": "\(value.code)",
-                "domain": value.domain,
-                "operation": operation,
-                "reason": error.localizedDescription
-            ]
+            metadata: SharedLog.errorMetadata(
+                error,
+                category: .appOperation,
+                additional: ["operation": operation]
+            )
         )
     }
 

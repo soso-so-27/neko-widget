@@ -741,7 +741,12 @@ struct LikedPhotosView: View {
             } catch is CancellationError {
                 return
             } catch {
-                photoBookErrorMessage = error.localizedDescription
+                if let exportError = error as? PhotoBookPDFExportError {
+                    photoBookErrorMessage = exportError.errorDescription
+                        ?? "写真PDFを作成できませんでした。写真へのアクセスを確認して、もう一度お試しください。"
+                } else {
+                    photoBookErrorMessage = "写真PDFを作成できませんでした。写真へのアクセスとiPhoneの空き容量を確認して、もう一度お試しください。"
+                }
             }
         }
     }

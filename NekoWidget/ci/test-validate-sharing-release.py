@@ -24,6 +24,17 @@ MODERATION_PUBLIC_KEY = "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo"
 PRIVACY_URL = "https://nekonomado.jp/privacy"
 SUPPORT_URL = "https://nekonomado.jp/support"
 COMMUNITY_URL = "https://nekonomado.jp/community"
+LOCAL_APP_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/app/privacy/"
+LOCAL_APP_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/app/support/"
+LOCAL_PHOTO_DESCRIPTION = (
+    "猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、"
+    "写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は"
+    "端末内で行います。"
+)
+MEDIA_PHOTO_DESCRIPTION = (
+    "共有シートで選んだ1枚を最大2,048pxへ縮小し、位置情報を除いて"
+    "暗号化して送り、原本は自動送信しません。"
+)
 
 
 def privacy(*data_types: str) -> dict:
@@ -105,7 +116,18 @@ def info(
         else:
             release_mode = "disabled"
     has_media_safety_configuration = release_mode == "media-staging"
+    if release_mode == "disabled":
+        app_privacy_url = LOCAL_APP_PRIVACY_URL
+        app_support_url = LOCAL_APP_SUPPORT_URL
+    elif release_mode == "media-staging":
+        app_privacy_url = PRIVACY_URL
+        app_support_url = SUPPORT_URL
+    else:
+        app_privacy_url = ""
+        app_support_url = ""
     return {
+        "AppPrivacyURL": app_privacy_url,
+        "AppSupportURL": app_support_url,
         "SharingReleaseMode": release_mode,
         "SharingFeatureEnabled": pairing,
         "SharingMediaEnabled": media,
@@ -114,8 +136,9 @@ def info(
         "SharingReviewPreviewEnabled": review_preview,
         "SharingAPIBaseURL": endpoint,
         "NSPhotoLibraryUsageDescription": (
-            "共有シートで選んだ1枚を最大2,048pxへ縮小し、位置情報を除いて"
-            "暗号化して送り、原本は自動送信しません。"
+            MEDIA_PHOTO_DESCRIPTION
+            if release_mode == "media-staging"
+            else LOCAL_PHOTO_DESCRIPTION
         ),
         "SharingModerationKeyID": (
             MODERATION_KEY_ID if has_media_safety_configuration else ""
@@ -136,6 +159,8 @@ def share_info_from(app_info: dict) -> dict:
     value = dict(app_info)
     value["SharingReviewPreviewEnabled"] = False
     for key in (
+        "AppPrivacyURL",
+        "AppSupportURL",
         "SharingAPIBaseURL",
         "SharingModerationKeyID",
         "SharingModerationPublicKey",
@@ -144,12 +169,16 @@ def share_info_from(app_info: dict) -> dict:
         "SharingCommunityStandardsURL",
     ):
         value.pop(key, None)
-    activation_count = 0 if app_info.get("SharingReleaseMode") == "disabled" else 1
+    activation_rule: object
+    if app_info.get("SharingReleaseMode") == "disabled":
+        activation_rule = "FALSEPREDICATE"
+    else:
+        activation_rule = {
+            "NSExtensionActivationSupportsImageWithMaxCount": 1,
+        }
     value["NSExtension"] = {
         "NSExtensionAttributes": {
-            "NSExtensionActivationRule": {
-                "NSExtensionActivationSupportsImageWithMaxCount": activation_count,
-            }
+            "NSExtensionActivationRule": activation_rule,
         }
     }
     return value
@@ -179,9 +208,12 @@ class SharingReleasePreflightTests(unittest.TestCase):
         expected_api_origin: str | None = None,
         expected_moderation_key_id: str | None = None,
         expected_moderation_public_key: str | None = None,
+        expected_app_privacy_url: str | None = None,
+        expected_app_support_url: str | None = None,
         expected_privacy_url: str | None = None,
         expected_support_url: str | None = None,
         expected_community_url: str | None = None,
+        expected_photo_description: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -269,6 +301,18 @@ class SharingReleasePreflightTests(unittest.TestCase):
                         "SharingModerationPublicKey",
                         expected_moderation_public_key,
                     ),
+                    "--expected-app-privacy-url",
+                    (
+                        str(info_value.get("AppPrivacyURL", ""))
+                        if expected_app_privacy_url is None
+                        else expected_app_privacy_url
+                    ),
+                    "--expected-app-support-url",
+                    (
+                        str(info_value.get("AppSupportURL", ""))
+                        if expected_app_support_url is None
+                        else expected_app_support_url
+                    ),
                     "--expected-privacy-url",
                     expected_value("SharingPrivacyURL", expected_privacy_url),
                     "--expected-support-url",
@@ -276,6 +320,12 @@ class SharingReleasePreflightTests(unittest.TestCase):
                     "--expected-community-standards-url",
                     expected_value(
                         "SharingCommunityStandardsURL", expected_community_url
+                    ),
+                    "--expected-photo-library-usage-description",
+                    (
+                        str(info_value.get("NSPhotoLibraryUsageDescription", ""))
+                        if expected_photo_description is None
+                        else expected_photo_description
                     ),
                 ],
                 check=False,
@@ -332,6 +382,35 @@ class SharingReleasePreflightTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("does not exactly match", result.stderr)
 
+    def test_disabled_requires_exact_general_app_policy_links(self) -> None:
+        for key, expected in (
+            ("AppPrivacyURL", LOCAL_APP_PRIVACY_URL),
+            ("AppSupportURL", LOCAL_APP_SUPPORT_URL),
+        ):
+            with self.subTest(key=key, case="missing"):
+                app = info("NO", "NO")
+                app[key] = ""
+                result = self.run_preflight(app, privacy(), "NO")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unexpected general app", result.stderr)
+
+            with self.subTest(key=key, case="archive-mismatch"):
+                app = info("NO", "NO")
+                app[key] = "https://attacker.invalid/policy"
+                result = self.run_preflight(
+                    app,
+                    privacy(),
+                    "NO",
+                    expected_app_privacy_url=(
+                        expected if key == "AppPrivacyURL" else LOCAL_APP_PRIVACY_URL
+                    ),
+                    expected_app_support_url=(
+                        expected if key == "AppSupportURL" else LOCAL_APP_SUPPORT_URL
+                    ),
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Processed {key}", result.stderr)
+
     def test_widget_mode_and_flags_must_match_the_archive_mode(self) -> None:
         app = info("NO", "NO")
         cases = (
@@ -355,7 +434,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         disabled_share = share_info_from(disabled)
         disabled_share["NSExtension"]["NSExtensionAttributes"][
             "NSExtensionActivationRule"
-        ]["NSExtensionActivationSupportsImageWithMaxCount"] = 1
+        ] = {"NSExtensionActivationSupportsImageWithMaxCount": 0}
         result = self.run_preflight(
             disabled,
             privacy(),
@@ -363,7 +442,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             share_info_value=disabled_share,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("activation count must be 0", result.stderr)
+        self.assertIn("must be FALSEPREDICATE", result.stderr)
 
         media = info("YES", "YES", ENDPOINT, release_mode="media-staging")
         media_share = share_info_from(media)
@@ -376,7 +455,31 @@ class SharingReleasePreflightTests(unittest.TestCase):
             share_info_value=media_share,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("activation count must be 1", result.stderr)
+        self.assertIn("accept exactly one image", result.stderr)
+
+    def test_disabled_photo_description_is_exact_and_local_only(self) -> None:
+        result = self.run_preflight(
+            info("NO", "NO"),
+            privacy(),
+            "NO",
+            expected_photo_description=LOCAL_PHOTO_DESCRIPTION + "変更",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not exactly match", result.stderr)
+
+        app = info("NO", "NO")
+        app["NSPhotoLibraryUsageDescription"] = (
+            LOCAL_PHOTO_DESCRIPTION + " 写真共有の履歴を表示します。"
+        )
+        result = self.run_preflight(app, privacy(), "NO")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("misleadingly describes a sharing path", result.stderr)
+
+        app = info("NO", "NO")
+        app["NSPhotoLibraryUsageDescription"] = "猫の写真を端末内で解析します。"
+        result = self.run_preflight(app, privacy(), "NO")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing: アルバム, ウィジェット", result.stderr)
 
     def test_widget_privacy_manifest_is_required(self) -> None:
         result = self.run_preflight(
@@ -772,6 +875,12 @@ class SharingReleasePreflightTests(unittest.TestCase):
         result = self.run_preflight(app, privacy(), "NO", share)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SharingAPIBaseURL must be absent", result.stderr)
+
+        share = share_info_from(app)
+        share["AppPrivacyURL"] = LOCAL_APP_PRIVACY_URL
+        result = self.run_preflight(app, privacy(), "NO", share)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AppPrivacyURL must be absent", result.stderr)
 
     def test_media_requires_installation_bound_handoff(self) -> None:
         app = info(

@@ -3,7 +3,7 @@ import XCTest
 final class PhotoPermissionUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
-        executionTimeAllowance = 120
+        executionTimeAllowance = 240
     }
 
     @MainActor
@@ -49,7 +49,10 @@ final class PhotoPermissionUITests: XCTestCase {
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let permissionAlert = springboard.alerts.firstMatch
-        guard permissionAlert.waitForExistence(timeout: 15) else {
+        // Hosted Simulators can display the Photos prompt well after PhotoKit
+        // has submitted the TCC request. Keep this fail-closed, but allow the
+        // observed SpringBoard/accessibility propagation delay.
+        guard permissionAlert.waitForExistence(timeout: 60) else {
             addDiagnosticAttachment(
                 name: "Missing Photos permission alert",
                 contents: springboard.debugDescription
@@ -180,6 +183,17 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
 
+        if ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1" {
+            XCTAssertFalse(
+                app.buttons["window-family-window-review"].exists,
+                "The disabled build exposed the pairing/sharing card."
+            )
+            XCTAssertFalse(
+                app.buttons["window-latest-family-photo"].exists,
+                "The disabled build exposed stale received-photo UI."
+            )
+        }
+
         let settingsButton = firstExistingButton(
             in: app,
             identifiers: ["window-settings-button"],
@@ -199,6 +213,12 @@ final class PhotoPermissionUITests: XCTestCase {
                 app: app
             )
             return
+        }
+        if ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1" {
+            XCTAssertFalse(
+                app.descendants(matching: .any)["settings-sharing-review"].exists,
+                "The disabled build exposed sharing settings."
+            )
         }
         settingsWidgetGuide.tap()
 

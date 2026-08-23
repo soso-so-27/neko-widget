@@ -54,6 +54,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
               moderationVersion == MomentSharingProtocol.moderationVersion,
               senderPolicyVersion >= 1,
               attemptCount >= 0,
+              lastErrorCode == DiagnosticLogPrivacy.normalizedMomentOutboxErrorCode(
+                lastErrorCode
+              ),
               createdAt <= updatedAt,
               commitStartedAt.map { $0 >= createdAt } ?? true,
               commitStartedAt.map { $0 <= updatedAt } ?? true,
@@ -140,6 +143,7 @@ struct MomentOutgoingOutcome: Codable, Equatable, Identifiable, Sendable {
         else { throw MomentSharingError.stateUnavailable }
         return self
     }
+
 }
 
 enum MomentInboxState: String, Codable, Sendable {
@@ -424,6 +428,21 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         _ = try outgoingOutcomes.map { try $0.validated() }
         return self
     }
+
+    @discardableResult
+    mutating func normalizePersistedDiagnosticErrors() -> Bool {
+        var didChange = false
+        for index in outbox.indices {
+            let normalized = DiagnosticLogPrivacy.normalizedMomentOutboxErrorCode(
+                outbox[index].lastErrorCode
+            )
+            if outbox[index].lastErrorCode != normalized {
+                outbox[index].lastErrorCode = normalized
+                didChange = true
+            }
+        }
+        return didChange
+    }
 }
 
 enum MomentSharingStateStore {
@@ -488,7 +507,9 @@ enum MomentSharingStateStore {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             do {
-                _ = try decoder.decode(MomentSharingState.self, from: data).validated()
+                var state = try decoder.decode(MomentSharingState.self, from: data)
+                state.normalizePersistedDiagnosticErrors()
+                _ = try state.validated()
                 return false
             } catch {
                 return true
@@ -1094,7 +1115,8 @@ enum MomentSharingStateStore {
             else { return }
             state.outbox[index].phase = .failed
             state.outbox[index].nextRetryAt = nil
-            state.outbox[index].lastErrorCode = String(code.prefix(64))
+            state.outbox[index].lastErrorCode =
+                DiagnosticLogPrivacy.normalizedMomentOutboxErrorCode(code)
             state.outbox[index].updatedAt = now
             failedItem = state.outbox[index]
         }
@@ -1414,7 +1436,11 @@ enum MomentSharingStateStore {
         }
         guard FileManager.default.fileExists(atPath: url.path) else { return .empty }
         do {
-            return try AtomicJSON.read(MomentSharingState.self, from: url).validated()
+            var state = try AtomicJSON.read(MomentSharingState.self, from: url)
+            let didNormalize = state.normalizePersistedDiagnosticErrors()
+            state = try state.validated()
+            if didNormalize { try writeWhileLocked(state) }
+            return state
         } catch {
             throw MomentSharingError.stateUnavailable
         }
@@ -1459,10 +1485,12 @@ enum MomentSharingStateStore {
         guard let url = SharedContainer.momentSharingStateURL else {
             throw MomentSharingError.stateUnavailable
         }
+        var state = state
+        state.normalizePersistedDiagnosticErrors()
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        try SharingSecureFile.write(try encoder.encode(state), to: url)
+        try SharingSecureFile.write(try encoder.encode(try state.validated()), to: url)
     }
 
     private static func withLifecycleLock<Value>(

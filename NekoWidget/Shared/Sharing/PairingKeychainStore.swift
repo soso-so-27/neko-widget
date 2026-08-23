@@ -158,7 +158,7 @@ enum PairingStateStore {
     /// must never pair a freshly issued token with an older in-memory state.
     static func beginOperation() throws -> OperationSnapshot {
         try SharingLifecycleGate.withExclusive {
-            let state = try load()
+            let state = try loadWhileLifecycleLockedMigratingDiagnostics()
             if state?.phase == .unpaired, state?.credentialAccount == nil {
                 // Recover a crash/write-failure orphan before a same-process
                 // retry. This cleanup is serialized with the initial atomic
@@ -171,13 +171,45 @@ enum PairingStateStore {
     }
 
     static func load() throws -> PairingState? {
+        return try decodedStateWithNormalizedDiagnostics().state
+    }
+
+    private static func decodedStateWithNormalizedDiagnostics() throws -> (
+        state: PairingState?,
+        didNormalize: Bool
+    ) {
         guard let url = SharedContainer.pairingStateURL else {
             throw PairingError.stateUnavailable
         }
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        var value = try AtomicJSON.read(PairingState.self, from: url).validated()
-        if value.storageRevision == nil { value.storageRevision = 0 }
-        return value
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return (nil, false)
+        }
+        var value = try AtomicJSON.read(PairingState.self, from: url)
+        var didNormalize = false
+        if value.storageRevision == nil {
+            value.storageRevision = 0
+            didNormalize = true
+        }
+        let normalizedLastError = DiagnosticLogPrivacy.normalizedPairingLastError(
+            value.lastError
+        )
+        if value.lastError != normalizedLastError {
+            value.lastError = normalizedLastError
+            didNormalize = true
+        }
+        value = try value.validated()
+        return (value, didNormalize)
+    }
+
+    /// Physical cleanup is allowed only while the caller owns the pairing
+    /// lifecycle flock. Ordinary read APIs normalize in memory so they cannot
+    /// overwrite a newer authorization state with a stale decoded snapshot.
+    private static func loadWhileLifecycleLockedMigratingDiagnostics() throws -> PairingState? {
+        let result = try decodedStateWithNormalizedDiagnostics()
+        if result.didNormalize, let state = result.state {
+            try saveWhileLifecycleLocked(state)
+        }
+        return result.state
     }
 
     @discardableResult
@@ -221,7 +253,7 @@ enum PairingStateStore {
         _ state: PairingState,
         expected: PairingState
     ) throws -> PairingState {
-        let current = try load()
+        let current = try loadWhileLifecycleLockedMigratingDiagnostics()
         guard current == expected,
               let expectedStorageRevision = expected.storageRevision,
               state.storageRevision == expectedStorageRevision
@@ -242,6 +274,10 @@ enum PairingStateStore {
         guard let url = SharedContainer.pairingStateURL else {
             throw PairingError.stateUnavailable
         }
+        var state = state
+        state.lastError = DiagnosticLogPrivacy.normalizedPairingLastError(
+            state.lastError
+        )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

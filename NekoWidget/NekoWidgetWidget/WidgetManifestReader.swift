@@ -110,15 +110,14 @@ enum WidgetManifestReader {
         do {
             return try decoder.decode(WidgetManifest.self, from: data)
         } catch {
-            let value = error as NSError
             SharedLog.widget.error(
                 "manifest",
                 "Widget manifest decode failed",
-                metadata: [
-                    "bytes": "\(data.count)",
-                    "code": "\(value.code)",
-                    "domain": value.domain
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .widgetManifest,
+                    additional: ["bytes": "\(data.count)"]
+                )
             )
             return nil
         }
@@ -134,11 +133,10 @@ enum WidgetManifestReader {
         do {
             return try decoder.decode(FamilyWidgetManifest.self, from: data)
         } catch {
-            let value = error as NSError
             SharedLog.widget.error(
                 "manifest",
                 "Family Widget manifest decode failed",
-                metadata: ["code": "\(value.code)", "domain": value.domain]
+                metadata: SharedLog.errorMetadata(error, category: .widgetManifest)
             )
             return nil
         }

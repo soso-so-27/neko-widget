@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 struct NekoWidgetApp: App {
     init() {
+        // A share sheet cannot survive a process relaunch. Remove only export
+        // files with this app's exact prefixes before any new export is made.
+        TemporaryExportFileLifecycle.removeManagedFiles()
 #if DEBUG
         if ProcessInfo.processInfo.environment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] == "1" {
             let defaults = UserDefaults.standard

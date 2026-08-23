@@ -132,6 +132,9 @@ actor MomentSharingCoordinator {
     private let moderation: any MomentModerating
     private let handoffProcessor: MomentShareHandoffProcessor
     private var latestSynchronizationNotice: MomentSynchronizationNotice?
+#if DEBUG
+    private var runtimeNetworkClientConstructionCount = 0
+#endif
 
     init(
         configuration: SharingAPIConfiguration = .current,
@@ -140,6 +143,13 @@ actor MomentSharingCoordinator {
         self.configuration = configuration
         self.moderation = moderation
         handoffProcessor = MomentShareHandoffProcessor(moderation: moderation)
+    }
+
+    private func makeNetworkClient() throws -> URLSessionMomentSharingAPIClient {
+#if DEBUG
+        runtimeNetworkClientConstructionCount += 1
+#endif
+        return try URLSessionMomentSharingAPIClient(configuration: configuration)
     }
 
     func synchronize(trigger: String) async {
@@ -201,7 +211,7 @@ actor MomentSharingCoordinator {
                     )
                 }
             }
-            let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+            let api = try makeNetworkClient()
             _ = try await synchronizeWindowName(
                 api: api,
                 authorization: loaded
@@ -231,6 +241,25 @@ actor MomentSharingCoordinator {
 
     private func performSynchronization(trigger: String) async {
         latestSynchronizationNotice = nil
+
+        // A local-only build must erase every capability and sharing artifact
+        // inherited from an earlier enabled build. The reset writes its durable
+        // cleanup tombstone before deleting credentials/cache and clears it only
+        // after an unpaired state is committed. Any failure therefore remains
+        // fail-closed here and is retried by the next launch/foreground sync.
+        if configuration.requiresLocalSharingPurge {
+            do {
+                try await PairingInstallationGuard
+                    .resetLocalSharingForDisabledConfigurationAsync()
+            } catch {
+                SharedLog.app.warning(
+                    "moment-sharing",
+                    "Disabled sharing purge deferred",
+                    metadata: ["trigger": String(trigger.prefix(32))]
+                )
+            }
+            return
+        }
 
         // Disabling media/handoff must also revoke any previously published
         // Share Extension admission and physically remove staged plaintext.
@@ -321,7 +350,7 @@ actor MomentSharingCoordinator {
                 )
                 return
             }
-            let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+            let api = try makeNetworkClient()
             if let reportOnlyUntil = localSharingState.reportOnlyUntil {
                 if !MomentSharingProtocol.isReportOnlyWindowClosed(
                     until: reportOnlyUntil
@@ -495,7 +524,7 @@ actor MomentSharingCoordinator {
         guard let reporterParticipantID = authorization.state.memberID,
               inboxItem.senderParticipantID != reporterParticipantID
         else { throw MomentSharingError.invalidPayload }
-        let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+        let api = try makeNetworkClient()
         try SharingLifecycleGate.validate(authorization.lifecycleToken)
 
         var item: MomentReportOutboxItem
@@ -791,7 +820,7 @@ actor MomentSharingCoordinator {
         let state = authorization.state
         guard state.memberID != participantID
         else { throw MomentSharingError.notPaired }
-        let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+        let api = try makeNetworkClient()
         try SharingLifecycleGate.validate(authorization.lifecycleToken)
         do {
             _ = try await api.block(
@@ -900,7 +929,7 @@ actor MomentSharingCoordinator {
         do {
             let loaded = try loadAuthorization()
             authorization = loaded
-            let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+            let api = try makeNetworkClient()
             let changed = try await synchronizeWindowName(
                 api: api,
                 authorization: loaded
@@ -1489,6 +1518,10 @@ actor MomentSharingCoordinator {
     }
 
 #if DEBUG
+    func runtimeNetworkClientConstructions() -> Int {
+        runtimeNetworkClientConstructionCount
+    }
+
     /// Exercises the same process-wide serial queue without touching
     /// pairing, network, Keychain, or photo state.
     func runtimeTestJoinProcessSynchronization(
@@ -1744,8 +1777,15 @@ actor MomentSharingCoordinator {
             case .stateUnavailable: return "state-unavailable"
             case .reportOnly: return "report-only"
             case .retryableServer: return "retryable-server"
-            case let .requestRejected(status, code, _):
-                return "http-\(status)-\((code ?? "rejected").prefix(48))"
+            case let .requestRejected(_, code, _):
+                switch code {
+                case "moment_runtime_disabled": return "moment-runtime-disabled"
+                case "report_result_unknown": return "request-rejected"
+                case "report_window_closed": return "request-rejected"
+                case "reservation_expired": return "reservation-expired"
+                case "reservation_retry_limit_exceeded": return "reservation-retry-limit"
+                default: return "request-rejected"
+                }
             }
         }
         return "unknown"

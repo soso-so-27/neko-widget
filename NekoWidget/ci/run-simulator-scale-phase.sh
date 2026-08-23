@@ -257,7 +257,7 @@ PY
     MEMORY_SAMPLER_PID=$!
 
     if ! wait_for_photo_authorization \
-        "Photo authorization checked" "authorized" 15; then
+        "Photo permission checked" "authorized" 15; then
         echo "PhotoKit was not authorized for the scale scan." >&2
         authorization_failed="true"
     fi

@@ -21,6 +21,7 @@
 		10000000000000000000000B /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		10000000000000000000000C /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		10000000000000000000000D /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
+		100000000000000000000175 /* DiagnosticLogPrivacy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000113 /* DiagnosticLogPrivacy.swift */; };
 		10000000000000000000000E /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		10000000000000000000000F /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
 		100000000000000000000140 /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
@@ -103,6 +104,7 @@
 		20000000000000000000001B /* WidgetRenderPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000110 /* WidgetRenderPlan.swift */; };
 		200000000000000000000003 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		200000000000000000000004 /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
+		20000000000000000000001C /* DiagnosticLogPrivacy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000113 /* DiagnosticLogPrivacy.swift */; };
 		200000000000000000000005 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		200000000000000000000006 /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		200000000000000000000007 /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
@@ -193,6 +195,7 @@
 
 /* Begin PBXFileReference section */
 		F00000000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		F00000000000000000000002 /* Config.Disabled.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.Disabled.xcconfig; sourceTree = "<group>"; };
 		F00000000000000000000101 /* SharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContainer.swift; sourceTree = "<group>"; };
 		F00000000000000000000102 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		F00000000000000000000103 /* AssetRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetRecord.swift; sourceTree = "<group>"; };
@@ -209,6 +212,7 @@
 		F0000000000000000000010B /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		F0000000000000000000010C /* AtomicJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicJSON.swift; sourceTree = "<group>"; };
 		F0000000000000000000010D /* SharedLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLog.swift; sourceTree = "<group>"; };
+		F00000000000000000000113 /* DiagnosticLogPrivacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogPrivacy.swift; sourceTree = "<group>"; };
 		F0000000000000000000010E /* SharedLikeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedLikeStore.swift; sourceTree = "<group>"; };
 		F0000000000000000000010F /* CatPawMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatPawMark.swift; sourceTree = "<group>"; };
 		F000000000000000000001A0 /* PairingCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingCore.swift; sourceTree = "<group>"; };
@@ -300,6 +304,7 @@
 		F00000000000000000000318 /* NekoWidgetConfigurationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetConfigurationIntent.swift; sourceTree = "<group>"; };
 		F00000000000000000000350 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		F00000000000000000000352 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000356 /* Info.Disabled.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.Disabled.plist; sourceTree = "<group>"; };
 		F00000000000000000000353 /* NekoWidgetShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidgetShareExtension.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000354 /* MomentShareIngressService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentShareIngressService.swift; sourceTree = "<group>"; };
 		F00000000000000000000355 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -373,6 +378,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000001 /* Config.xcconfig */,
+				F00000000000000000000002 /* Config.Disabled.xcconfig */,
 				B00000000000000000000001 /* Shared */,
 				C00000000000000000000001 /* NekoWidget */,
 				D00000000000000000000001 /* NekoWidgetWidget */,
@@ -471,6 +477,7 @@
 		B00000000000000000000006 /* Logging */ = {
 			isa = PBXGroup;
 			children = (
+				F00000000000000000000113 /* DiagnosticLogPrivacy.swift */,
 				F0000000000000000000010D /* SharedLog.swift */,
 			);
 			path = Logging;
@@ -630,6 +637,7 @@
 				F00000000000000000000350 /* ShareViewController.swift */,
 				F00000000000000000000354 /* MomentShareIngressService.swift */,
 				F00000000000000000000352 /* Info.plist */,
+				F00000000000000000000356 /* Info.Disabled.plist */,
 				F00000000000000000000353 /* NekoWidgetShareExtension.entitlements */,
 				F00000000000000000000355 /* PrivacyInfo.xcprivacy */,
 			);
@@ -836,6 +844,7 @@
 				10000000000000000000000B /* DeepLink.swift in Sources */,
 				10000000000000000000000C /* AtomicJSON.swift in Sources */,
 				10000000000000000000000D /* SharedLog.swift in Sources */,
+				100000000000000000000175 /* DiagnosticLogPrivacy.swift in Sources */,
 				10000000000000000000000E /* SharedLikeStore.swift in Sources */,
 				10000000000000000000000F /* CatPawMark.swift in Sources */,
 				100000000000000000000140 /* PairingCore.swift in Sources */,
@@ -925,6 +934,7 @@
 				20000000000000000000001B /* WidgetRenderPlan.swift in Sources */,
 				200000000000000000000003 /* DeepLink.swift in Sources */,
 				200000000000000000000004 /* SharedLog.swift in Sources */,
+				20000000000000000000001C /* DiagnosticLogPrivacy.swift in Sources */,
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
 				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,
@@ -1049,7 +1059,7 @@
 		};
 		A00000000000000000000051 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -1127,7 +1137,7 @@
 		};
 		A00000000000000000000053 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
@@ -1182,7 +1192,7 @@
 		};
 		A00000000000000000000055 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NekoWidgetWidget/NekoWidgetWidget.entitlements;
@@ -1254,7 +1264,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(inherited)";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist;
+				INFOPLIST_FILE = "$(SHARE_EXTENSION_INFOPLIST_FILE)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1274,14 +1284,14 @@
 		};
 		A00000000000000000000059 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
+			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = "$(inherited)";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist;
+				INFOPLIST_FILE = "$(SHARE_EXTENSION_INFOPLIST_FILE)";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

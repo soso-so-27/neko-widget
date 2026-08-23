@@ -172,7 +172,7 @@ final class MomentSharingViewModel: ObservableObject {
             SharedLog.app.warning(
                 "saved-moment",
                 "Received moment bookmark could not be changed",
-                metadata: ["reason": error.localizedDescription]
+                metadata: SharedLog.errorMetadata(error, category: .savedMoment)
             )
         }
     }
@@ -422,10 +422,12 @@ final class MomentSharingViewModel: ObservableObject {
 
     private nonisolated static func userFacingMessage(for error: Error) -> String {
         if let momentError = error as? MomentSharingError {
-            return momentError.localizedDescription
+            return momentError.errorDescription
+                ?? "写真共有の処理を完了できませんでした。時間をおいて、もう一度お試しください。"
         }
         if let pairingError = error as? PairingError {
-            return pairingError.localizedDescription
+            return pairingError.errorDescription
+                ?? "共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
         }
         if error is URLError {
             return "通信を完了できませんでした。接続を確認すると自動で再試行します。"

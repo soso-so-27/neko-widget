@@ -1,5 +1,59 @@
 import Foundation
 
+/// Public policy links for the app itself. These values never participate in
+/// sharing availability or authorization; the local-only release keeps them
+/// available so Settings can meet the app-wide disclosure boundary.
+struct AppPublicLinksConfiguration: Equatable, Sendable {
+    let privacyURL: URL?
+    let supportURL: URL?
+
+    static var current: Self {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return Self(
+            privacyURL: publicPolicyURL(info["AppPrivacyURL"] as? String),
+            supportURL: publicPolicyURL(info["AppSupportURL"] as? String)
+        )
+    }
+
+    private static func publicPolicyURL(_ value: String?) -> URL? {
+        guard let value,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              !value.unicodeScalars.contains(where: {
+                  CharacterSet.controlCharacters.contains($0)
+              }),
+              let url = URL(string: value),
+              url.scheme?.lowercased() == "https",
+              let rawHost = url.host?.lowercased(),
+              !rawHost.hasSuffix("."),
+              rawHost.contains("."),
+              !rawHost.contains(":"),
+              !rawHost.allSatisfy({ $0.isNumber || $0 == "." }),
+              !["localhost", "example", "invalid", "local", "test"].contains(rawHost),
+              ![
+                  ".localhost", ".example", ".invalid", ".local", ".test",
+                  ".internal", ".lan", ".home.arpa"
+              ].contains(
+                  where: { rawHost.hasSuffix($0) }
+              ),
+              rawHost.split(separator: ".").allSatisfy({ label in
+                  guard (1...63).contains(label.count),
+                        label.first != "-",
+                        label.last != "-"
+                  else { return false }
+                  return label.allSatisfy {
+                      $0.isLetter || $0.isNumber || $0 == "-"
+                  }
+              }),
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil
+        else { return nil }
+        return url
+    }
+}
+
 /// Build-time boundary shared by the host app and its capture-only Share
 /// Extension. The direct-send flag is retained only as a release tombstone:
 /// an extension must never turn an App Group or Keychain remnant into network
@@ -73,6 +127,15 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     }
 
     var isReviewVisible: Bool { isAvailable || isReviewPreviewEnabled }
+
+    /// The exact local-only release selection must not retain authorization or
+    /// media from an earlier sharing-enabled build. Do not derive this
+    /// destructive boundary from URL validity: a temporarily malformed
+    /// pairing-only candidate must preserve its room, while a disabled archive
+    /// with accidentally injected network values must still purge locally.
+    var requiresLocalSharingPurge: Bool {
+        isDisabledRelease
+    }
 
     /// Exact local-only release marker. The archive validator binds this mode
     /// to an all-off flag tuple; the runtime marker additionally lets the Share

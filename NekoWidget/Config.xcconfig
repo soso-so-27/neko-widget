@@ -14,6 +14,11 @@ IPHONEOS_DEPLOYMENT_TARGET = 17.1
 MARKETING_VERSION = 1.0
 CURRENT_PROJECT_VERSION = 1
 
+// General app policy links are distinct from the sharing-runtime policy.
+// Individual release overlays must select truthful URLs for their scope.
+APP_PRIVACY_URL =
+APP_SUPPORT_URL =
+
 // Sharing is opt-in per build. Release/TestFlight stays off until the
 // privacy, moderation, and export-compliance gates are completed.
 // This is the local development/review default and the Build 27 preview
@@ -45,6 +50,12 @@ SHARING_MODERATION_PUBLIC_KEY =
 SHARING_PRIVACY_URL =
 SHARING_SUPPORT_URL =
 SHARING_COMMUNITY_STANDARDS_URL =
+
+// Purpose-string and Share Extension plist defaults for non-Release local
+// development. Release configurations use Config.Disabled.xcconfig, while the
+// protected TestFlight workflow supplies explicit per-mode overrides.
+PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は端末内で行います。
+SHARE_EXTENSION_INFOPLIST_FILE = NekoWidgetShareExtension/Info.plist
 
 // GitHub Actions injects the names extracted from the three distribution
 // provisioning profiles. Keep these empty for Xcode automatic signing.

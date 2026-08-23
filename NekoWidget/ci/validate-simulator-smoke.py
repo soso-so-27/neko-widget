@@ -251,12 +251,12 @@ def main() -> int:
         if not matching(message, category):
             failures.append(f"Missing SharedLog event: {category}/{message}")
 
-    permission_entries = matching("Photo authorization checked", "permission")
+    permission_entries = matching("Photo permission checked", "permission")
     if not any(
         entry.get("metadata", {}).get("status") == "authorized"
         for entry in permission_entries
     ):
-        failures.append("Photo authorization was not pre-granted as authorized.")
+        failures.append("Photo permission was not recorded as authorized.")
 
     fetch_entries = matching("Photo library fetch completed", "scan")
     fetched_assets = max(

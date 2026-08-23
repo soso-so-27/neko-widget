@@ -59,6 +59,42 @@ enum SharedLog {
 
     static let maximumFileBytes: UInt64 = 192 * 1_024
     static let maximumRotationIndex = 1
+    fileprivate static let privacySafeSessionPrefix = "p2"
+
+    /// Returns diagnostics that are safe to persist and export. The caller
+    /// supplies a closed category; arbitrary NSError text and userInfo are
+    /// deliberately ignored. Unknown/custom domains are collapsed to `other`.
+    static func errorMetadata(
+        _ error: Error,
+        category: SharedLogErrorCategory,
+        additional: [String: String] = [:]
+    ) -> [String: String] {
+        let value = error as NSError
+        return errorMetadata(
+            domain: value.domain,
+            code: value.code,
+            category: category,
+            additional: additional
+        )
+    }
+
+    static func errorMetadata(
+        domain: String?,
+        code: Int?,
+        category: SharedLogErrorCategory,
+        additional: [String: String] = [:]
+    ) -> [String: String] {
+        DiagnosticLogPrivacy.errorMetadata(
+            domain: domain,
+            code: code,
+            category: category,
+            additional: additional
+        )
+    }
+
+    static func stableErrorDomain(_ domain: String?) -> String {
+        DiagnosticLogPrivacy.stableErrorDomain(domain)
+    }
 
     static func shortHash(_ value: String) -> String {
         // FNV-1a is deliberately non-reversible for diagnostic correlation.
@@ -76,6 +112,10 @@ enum SharedLog {
             return SharedLogReadResult(entries: [], malformedLineCount: 0)
         }
 
+        // Older builds could persist raw NSError text. Delete those physical
+        // files before enumerating anything that can be displayed or exported.
+        purgeLegacyUnsafeLogs(in: directoryURL)
+
         let decoder = JSONDecoder()
         // Fractional-second precision preserves the order of rapid scan/widget
         // breadcrumbs that frequently occur within the same wall-clock second.
@@ -83,7 +123,7 @@ enum SharedLog {
         var entries: [SharedLogEntry] = []
         var malformedLineCount = 0
 
-        let urls = recognizedLogURLs(in: directoryURL).sorted {
+        let urls = privacySafeLogURLs(in: directoryURL).sorted {
             $0.lastPathComponent < $1.lastPathComponent
         }
         for url in urls {
@@ -92,7 +132,8 @@ enum SharedLog {
             }
             for line in data.split(separator: 0x0A) where !line.isEmpty {
                 do {
-                    entries.append(try decoder.decode(SharedLogEntry.self, from: Data(line)))
+                    let entry = try decoder.decode(SharedLogEntry.self, from: Data(line))
+                    entries.append(sanitizedEntry(entry))
                 } catch {
                     // A killed extension can leave one partial final line.
                     // Preserve every other readable entry and surface the
@@ -117,7 +158,8 @@ enum SharedLog {
     static func formattedText(for entries: [SharedLogEntry]) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return entries.map { entry in
+        return entries.map { rawEntry in
+            let entry = sanitizedEntry(rawEntry)
             let metadata = entry.metadata
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key)=\(quotedIfNeeded($0.value))" }
@@ -161,6 +203,30 @@ enum SharedLog {
         }
     }
 
+    fileprivate static func privacySafeLogURLs(in directoryURL: URL) -> [URL] {
+        recognizedLogURLs(in: directoryURL).filter { url in
+            guard let stem = sessionStem(from: url.lastPathComponent) else {
+                return false
+            }
+            return sessionStemIsPrivacySafe(stem)
+        }
+    }
+
+    fileprivate static func purgeLegacyUnsafeLogs(in directoryURL: URL) {
+        for url in recognizedLogURLs(in: directoryURL) {
+            guard let stem = sessionStem(from: url.lastPathComponent),
+                  !sessionStemIsPrivacySafe(stem)
+            else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    fileprivate static func sessionStemIsPrivacySafe(_ stem: String) -> Bool {
+        let pieces = stem.split(separator: "-", omittingEmptySubsequences: false)
+        return pieces.count == 4
+            && pieces[3].hasPrefix(privacySafeSessionPrefix)
+    }
+
     fileprivate static func sessionStem(from filename: String) -> String? {
         guard filename.hasSuffix(".jsonl") else { return nil }
         var stem = String(filename.dropLast(".jsonl".count))
@@ -185,6 +251,31 @@ enum SharedLog {
         }
         return "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\""
     }
+
+    fileprivate static func sanitizedEntry(_ entry: SharedLogEntry) -> SharedLogEntry {
+        SharedLogEntry(
+            id: entry.id,
+            timestamp: entry.timestamp,
+            level: entry.level,
+            category: sanitizedText(entry.category, maximumLength: 48),
+            process: entry.process,
+            message: sanitizedText(entry.message, maximumLength: 600),
+            metadata: sanitizedMetadata(entry.metadata)
+        )
+    }
+
+    fileprivate static func sanitizedMetadata(
+        _ metadata: [String: String]
+    ) -> [String: String] {
+        DiagnosticLogPrivacy.sanitizeMetadata(metadata)
+    }
+
+    fileprivate static func sanitizedText(
+        _ value: String,
+        maximumLength: Int
+    ) -> String {
+        DiagnosticLogPrivacy.sanitizeText(value, maximumLength: maximumLength)
+    }
 }
 
 final class SharedFileLogger: @unchecked Sendable {
@@ -198,7 +289,8 @@ final class SharedFileLogger: @unchecked Sendable {
         self.process = process
         let startedMilliseconds = Int64(Date().timeIntervalSince1970 * 1_000)
         let session = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        sessionStem = "\(process.rawValue)-\(startedMilliseconds)-\(ProcessInfo.processInfo.processIdentifier)-\(session.prefix(12).lowercased())"
+        let safeSession = "\(SharedLog.privacySafeSessionPrefix)\(session.prefix(10).lowercased())"
+        sessionStem = "\(process.rawValue)-\(startedMilliseconds)-\(ProcessInfo.processInfo.processIdentifier)-\(safeSession)"
         systemLogger = Logger(
             subsystem: Bundle.main.bundleIdentifier ?? "NekoWidget",
             category: process.rawValue
@@ -249,7 +341,7 @@ final class SharedFileLogger: @unchecked Sendable {
         log(.error, category, message, metadata: metadata)
     }
 
-    func log(
+    fileprivate func log(
         _ level: SharedLogLevel,
         _ category: String,
         _ message: String,
@@ -257,10 +349,10 @@ final class SharedFileLogger: @unchecked Sendable {
     ) {
         let entry = SharedLogEntry(
             level: level,
-            category: Self.sanitized(category, maximumLength: 48),
+            category: SharedLog.sanitizedText(category, maximumLength: 48),
             process: process,
-            message: Self.sanitized(message, maximumLength: 600),
-            metadata: Self.sanitized(metadata)
+            message: SharedLog.sanitizedText(message, maximumLength: 600),
+            metadata: SharedLog.sanitizedMetadata(metadata)
         )
 
         lock.lock()
@@ -269,8 +361,9 @@ final class SharedFileLogger: @unchecked Sendable {
             try append(entry)
         } catch {
             let value = error as NSError
+            let domain = SharedLog.stableErrorDomain(value.domain)
             systemLogger.error(
-                "file-log: JSONL append failed domain=\(value.domain, privacy: .public) code=\(value.code, privacy: .public)"
+                "file-log: JSONL append failed category=\(SharedLogErrorCategory.fileIO.rawValue, privacy: .public) domain=\(domain, privacy: .public) code=\(value.code, privacy: .public)"
             )
         }
         writeToUnifiedLog(entry)
@@ -366,9 +459,13 @@ final class SharedFileLogger: @unchecked Sendable {
         // Session start milliseconds are encoded in the filename, so retention
         // never reads filesystem creation/modification timestamps.
         let maximumSessions = process == .app ? 4 : 8
+        SharedLog.purgeLegacyUnsafeLogs(in: directoryURL)
+        let recognizedURLs = SharedLog.recognizedLogURLs(in: directoryURL)
         let grouped = Dictionary(
-            grouping: SharedLog.recognizedLogURLs(in: directoryURL).filter {
+            grouping: recognizedURLs.filter {
                 $0.lastPathComponent.hasPrefix("\(process.rawValue)-")
+                    && SharedLog.sessionStem(from: $0.lastPathComponent)
+                        .map(SharedLog.sessionStemIsPrivacySafe) == true
             },
             by: { SharedLog.sessionStem(from: $0.lastPathComponent) ?? "" }
         ).filter { !$0.key.isEmpty }
@@ -402,25 +499,4 @@ final class SharedFileLogger: @unchecked Sendable {
         }
     }
 
-    private static func sanitized(
-        _ metadata: [String: String]
-    ) -> [String: String] {
-        var result: [String: String] = [:]
-        for (key, value) in metadata.sorted(by: { $0.key < $1.key }).prefix(20) {
-            result[sanitized(key, maximumLength: 48)] = sanitized(
-                value,
-                maximumLength: 300
-            )
-        }
-        return result
-    }
-
-    private static func sanitized(_ value: String, maximumLength: Int) -> String {
-        let flattened = value
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-        guard flattened.count > maximumLength else { return flattened }
-        return String(flattened.prefix(maximumLength)) + "…"
-    }
 }

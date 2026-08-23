@@ -6,6 +6,7 @@ struct JSONExporter {
         _ snapshot: LibrarySnapshot,
         curation: CatCandidateCurationState = .empty
     ) throws -> URL {
+        TemporaryExportFileLifecycle.removeManagedFiles(kinds: [.verificationJSON])
         let exportedAt = Date.now
         let likeMeasurement = try SharedLikeStore.measurementSnapshot()
         let formatter = DateFormatter()
@@ -14,16 +15,21 @@ struct JSONExporter {
         let filename = "neko-widget-\(formatter.string(from: exportedAt)).json"
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(filename, isDirectory: false)
-        try AtomicJSON.write(
-            VerificationExportPayload(
-                snapshot: snapshot,
-                exportedAt: exportedAt,
-                likeMeasurement: likeMeasurement,
-                curation: curation
-            ),
-            to: url
-        )
-        return url
+        do {
+            try AtomicJSON.write(
+                VerificationExportPayload(
+                    snapshot: snapshot,
+                    exportedAt: exportedAt,
+                    likeMeasurement: likeMeasurement,
+                    curation: curation
+                ),
+                to: url
+            )
+            return url
+        } catch {
+            TemporaryExportFileLifecycle.removeManagedFile(at: url)
+            throw error
+        }
     }
 }
 
@@ -69,7 +75,11 @@ private struct VerificationExportPayload: Encodable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(snapshot.schemaVersion, forKey: .schemaVersion)
         try container.encode(snapshot.assets, forKey: .assets)
-        try container.encode(snapshot.scanState, forKey: .scanState)
+        var exportScanState = snapshot.scanState
+        exportScanState.lastError = DiagnosticLogPrivacy.normalizedScanLastError(
+            exportScanState.lastError
+        )
+        try container.encode(exportScanState, forKey: .scanState)
         // The optional birthday/adoption day is needed only on this device to
         // group memories. Keep the exact date out of a shareable verification
         // export while still recording whether age-based grouping was active.

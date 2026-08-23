@@ -32,13 +32,12 @@ private final class LogViewModel: ObservableObject {
         do {
             return try await store.makeExportFile()
         } catch {
-            let value = error as NSError
             SharedLog.app.error(
                 "diagnostics",
                 "Diagnostic log export failed",
-                metadata: ["code": "\(value.code)", "domain": value.domain]
+                metadata: SharedLog.errorMetadata(error, category: .diagnostics)
             )
-            errorMessage = error.localizedDescription
+            errorMessage = "診断ログを書き出せませんでした。iPhoneの空き容量を確認して、もう一度お試しください。"
             return nil
         }
     }
@@ -75,10 +74,11 @@ struct LogView: View {
         .refreshable {
             await viewModel.refresh()
         }
-        .sheet(item: $exportFile) { file in
+        .sheet(item: $exportFile, onDismiss: cleanupDiagnosticExport) { file in
             LogActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
         }
+        .onDisappear(perform: cleanupDiagnosticExport)
         .confirmationDialog(
             "Appとウィジェットのログをすべて削除しますか？",
             isPresented: $showsClearConfirmation,
@@ -152,6 +152,7 @@ struct LogView: View {
 
             Button {
                 Task {
+                    cleanupDiagnosticExport()
                     if let url = await viewModel.makeExportFile() {
                         exportFile = LogExportFile(url: url)
                     }
@@ -183,6 +184,11 @@ struct LogView: View {
             return "ログはまだありません。\nアプリのスキャンやウィジェット表示後に更新してください。"
         }
         return viewModel.formattedText
+    }
+
+    private func cleanupDiagnosticExport() {
+        TemporaryExportFileLifecycle.removeManagedFile(at: exportFile?.url)
+        exportFile = nil
     }
 }
 
