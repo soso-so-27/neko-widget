@@ -9,6 +9,7 @@ on:
       - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
+      - ".github/workflows/sharing-staging-monitor.yml"
       - ".gitattributes"
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/sharing-api-v1-responses.json"
       - ".github/workflows/sharing-service.yml"
+      - ".github/workflows/sharing-staging-monitor.yml"
       - ".gitattributes"
   workflow_dispatch:
 
@@ -53,7 +55,8 @@ jobs:
             "scripts/moderation-staging-keygen-windows.ps1",
             "scripts/moderation-staging-keygen-windows-security.ps1",
             "scripts/moderation-staging-drill-windows.ps1",
-            "scripts/moderation-staging-drill-review-windows.ps1"
+            "scripts/moderation-staging-drill-review-windows.ps1",
+            "scripts/personal-staging-emergency-off-windows.ps1"
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -73,6 +76,14 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or
               $result -ne "NEKO_MODERATION_KEYGEN_WINDOWS_POLICY_SELFTEST_V1") {
             throw "Windows policy self-test failed"
+          }
+          $emergencyOffPolicy = & $windowsPowerShell `
+            -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File .\scripts\personal-staging-emergency-off-windows.ps1 `
+            -PolicySelfTest
+          if ($LASTEXITCODE -ne 0 -or
+              $emergencyOffPolicy -ne "NEKO_PERSONAL_STAGING_EMERGENCY_OFF_POLICY_SELFTEST_V1") {
+            throw "Emergency OFF policy self-test failed"
           }
           npm run check:moderation-keygen
           npm run check:moderation-drill
@@ -108,7 +119,7 @@ jobs:
       - name: Run Worker, D1, staging, moderation, and key ceremony tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm run check:staging-config && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test
+        run: npm run check:staging-config && npm run check:staging-runtime && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService

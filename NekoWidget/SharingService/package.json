@@ -7,8 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "npm run typecheck && npm run check:staging-config && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test",
+    "check": "npm run typecheck && npm run check:staging-config && npm run check:staging-runtime && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test",
     "check:staging-config": "node --test scripts/staging-config.node-tests.mjs",
+    "check:staging-runtime": "node --test test/staging-runtime-check.node-tests.mjs",
     "check:moderation-tool": "node --test test/moderation-report-tool.node-tests.mjs",
     "check:moderation-keygen": "node --test test/moderation-staging-keygen.node-tests.mjs",
     "check:moderation-drill": "node --test test/moderation-staging-drill.node-tests.mjs",
@@ -21,6 +22,8 @@
     "staging:config:check": "node scripts/check-staging-config.mjs",
     "media-staging:config:render": "node scripts/render-media-staging-config.mjs",
     "media-staging:config:check": "node scripts/check-media-staging-config.mjs",
+    "staging:runtime:check": "node scripts/check-staging-runtime.mjs",
+    "staging:runtime:emergency-off": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/personal-staging-emergency-off-windows.ps1",
     "moderation:tool": "node scripts/moderation-report-tool.mjs",
     "moderation:keygen:staging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-keygen-windows.ps1",
     "moderation:drill:staging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-drill-windows.ps1",

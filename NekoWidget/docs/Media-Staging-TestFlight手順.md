@@ -2,7 +2,7 @@
 
 この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
 
-Build 30で本人所有2台への内部TestFlight配布と、通常の一枚を届ける最初の短時間受入まで完了しました。受入後はWorkerの`MOMENT_RUNTIME_ENABLED`と`LEGACY_SHARING_RUNTIME_ENABLED`をどちらも`NO`へ戻しています。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
+Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、履歴、ホーム、Widgetの受入まで完了しました。2026-08-23現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視と緊急OFF](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
 
 ## release modeの固定値
 
@@ -90,7 +90,7 @@ uploadの承認後は、専用の内部tester groupにだけ配布します。�
 - 終了直後に通常momentを無効化し、`/health`の`200`、通常momentと旧共有の`503`を確認
 - Environmentに設定した公開privacy、support、community standardsの3 URLは、外部からのHTTPS到達性が`200`で、placeholderを含まない
 
-この合格は通常の`reserve → upload → commit → receive → ACK`だけを対象とする。次は未確認として残す。
+この合格は通常の`reserve → upload → commit → receive → ACK`だけを対象とする。Build 30時点では次を未確認として残した。
 
 - 受信側の分析設定が無効な間は未表示・未ACKとし、有効化後に同じ配送を再試行する実機経路
 - アプリ内のprivacy、support、community standardsの各Linkが端末で開くこと
@@ -98,4 +98,17 @@ uploadの承認後は、専用の内部tester groupにだけ配布します。�
 - offline、Share Extension終了、再起動、通信retry、鍵喪失
 - app削除・再install後に旧資格を使えないこと
 
-上記は2台実機gateの未完了一覧であり、完了してもproduction gateを満たしたことにはならない。[ADR-017のrelease境界](ADR-017-家族共有v1とmoderation境界.md#release境界)と[moderation runbook](../SharingService/MODERATION_RUNBOOK.md)に残る運用、監視、鍵管理、負荷試験、App Store Connect回答も完了するまで、一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。追加の実機窓は項目をまとめ、本人の明示承認を得た短時間だけ実施する。
+## Build 31 本人2台受入記録
+
+2026-08-23、commit `fa5b74312b6e9b90425dde201c21573ea92c49d9`からBuild 31を作成し、本人用の内部TestFlightグループだけへ配布した。両方の本人所有iPhoneをBuild 31へ更新し、既存ペアリングを解除せず継続した。
+
+- 受信側の「センシティブな内容の警告」が無効な間は写真を表示せず、ACKとcursor更新を行わないfail-closed経路を確認
+- 設定を有効にした後、同じ配送を再試行して表示・ACKまで進むことを確認
+- 送信側が緑の配信受付になり、相手端末へ新しい一枚が届くことを複数回確認
+- ホームの受信カードとホーム画面Widgetへ同じ受信写真が表示されることを確認
+- 共有履歴で表示可能3枚と安全確認で非表示2枚を分離して扱えることを確認
+- Widgetの共有写真源では肉球操作を出さず、タップで共有履歴を開くことを確認
+- 写真アクセスを許可していない旧iPhoneでは個人写真源を空のまま保ち、共有写真源だけで届いた写真を表示できることを確認
+- 通常momentだけを継続ONとし、旧日次共有runtimeはOFFのまま維持
+
+Build 31で完了したのは本人2台の内部受入であり、一般公開のproduction gateではない。アプリ内の公開policy Link、実際の通報・block・共有解除、offline／Extension終了／再起動、鍵喪失、再install後の旧資格拒否、負荷、監視、鍵運用、App Store Connect回答は別gateとして残る。本人2台の継続利用は[個人例外runbook](../SharingService/PERSONAL_STAGING_OPERATIONS.md)に従い、異常時は新しい写真配送を緊急OFFにする。一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。

@@ -4,6 +4,8 @@
 
 この手順が作成する外部resourceはstaging専用です。
 
+> 2026-08-23現在、本人所有2台・内部TestFlight Build 31だけは、通常momentを継続利用する個人例外として`MOMENT_RUNTIME_ENABLED=YES`、旧共有を`LEGACY_SHARING_RUNTIME_ENABLED=NO`で運用しています。一般公開や第三者の招待を認める変更ではありません。日次の公開境界監視と緊急OFFは[本人2台用・写真共有staging運用](PERSONAL_STAGING_OPERATIONS.md)を正本とします。以下の通常手順のOFF既定と、ON候補を直接deployしない原則は変更しません。
+
 | 種類 | 名前 |
 |---|---|
 | Worker | `neko-window-sharing-staging` |

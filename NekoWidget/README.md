@@ -49,7 +49,7 @@ push / pull requestでは`iOS build check`を実行します。最初のジョ�
 
 TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使います。通常の`release_mode`は`review-preview`です。Build 28の2台ペアリング確認だけ`pairing-only`を明示し、GitHubの`testflight` Environmentにあるstaging originを注入します。このmodeでは写真のmedia／handoff／direct-sendをすべて無効にし、archiveのprivacy manifestとprocessed Info.plistを検査します。最初は`upload_to_testflight = false`で署名archiveとIPA exportだけを検証し、成功後にtrueへ切り替えてApp Store Connectでの検証とアップロードを行います。実uploadでは`retain_signed_artifacts = true`とし、一致するIPA、xcarchive、dSYMを暗号化artifactで回収します。
 
-2台の1枚共有には、別の`media-staging`を明示します。このmodeはfeature／media／host handoffだけをONにし、direct-sendとreview-previewをOFFに固定し、保護EnvironmentのAPI origin、moderation public key、privacy／support／community URLをarchiveの実値と比較します。現在はWorker runtimeをOFFに保った準備段階で、deployもTestFlight uploadも実施しません。signing-onlyとApp Store Connect申告を含む停止条件は[2台メディアstaging・TestFlight準備](docs/Media-Staging-TestFlight手順.md)を正本とします。
+2台の1枚共有には、別の`media-staging`を明示します。このmodeはfeature／media／host handoffだけをONにし、direct-sendとreview-previewをOFFに固定し、保護EnvironmentのAPI origin、moderation public key、privacy／support／community URLをarchiveの実値と比較します。2026-08-23現在、Build 31を本人所有2台だけの内部TestFlightへ配布し、通常momentを個人利用向けに継続ON、旧共有をOFFで維持しています。一般向けTestFlight、App Store審査提出、公開は行っていません。受入記録とrelease停止条件は[2台メディアstaging・TestFlight準備](docs/Media-Staging-TestFlight手順.md)、日次監視と緊急OFFは[本人2台用・写真共有staging運用](SharingService/PERSONAL_STAGING_OPERATIONS.md)を正本とします。
 
 ### Simulatorスケールテスト
 

@@ -1,0 +1,39 @@
+name: Personal sharing staging monitor
+
+on:
+  schedule:
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-sharing-staging-monitor
+  cancel-in-progress: false
+
+jobs:
+  public-runtime-boundary:
+    name: Verify moment ON and legacy OFF
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NEKO_STAGING_API_ORIGIN: https://neko-window-sharing-staging.nakanishisoya.workers.dev
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Check the public runtime boundary
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-staging-runtime.mjs --expected on
