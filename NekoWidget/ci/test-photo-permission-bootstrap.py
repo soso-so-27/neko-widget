@@ -54,7 +54,7 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
             {
                 "process": "app",
                 "category": "permission",
-                "message": "Photo authorization request started",
+                "message": "Photo permission request started",
                 "metadata": {},
                 "timestamp": 10.0,
             }
@@ -64,7 +64,7 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
                 {
                     "process": "app",
                     "category": "permission",
-                    "message": "Photo authorization request finished",
+                    "message": "Photo permission request finished",
                     "metadata": {"status": finish_status},
                     "timestamp": 11.0,
                 }
@@ -110,6 +110,12 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
         path = self.app_log_path()
         entries = [json.loads(line) for line in path.read_text().splitlines()]
         entries.append({**entries[-1], "metadata": {"status": "denied"}, "timestamp": 12.0})
+        path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+        with self.assertRaises(ValueError):
+            self.validate()
+
+        entries = entries[:2]
+        entries[-1]["timestamp"] = 9.0
         path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
         with self.assertRaises(ValueError):
             self.validate()
@@ -163,10 +169,17 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "event order"):
                     self.validate()
 
-        entries = entries[:2]
-        entries[-1]["timestamp"] = 9.0
-        path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
-        with self.assertRaises(ValueError):
+    def test_rejects_legacy_pre_privacy_wording(self) -> None:
+        self.write_tcc()
+        self.write_events()
+        path = self.app_log_path()
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "Photo permission request", "Photo authorization request"
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "request start"):
             self.validate()
 
     def test_ci_contract_keeps_real_ui_and_terminal_gate(self) -> None:

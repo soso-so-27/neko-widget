@@ -12,8 +12,8 @@ from typing import Any
 
 
 PHOTOS_SERVICE = "kTCCServicePhotos"
-REQUEST_STARTED = "Photo authorization request started"
-REQUEST_FINISHED = "Photo authorization request finished"
+REQUEST_STARTED = "Photo permission request started"
+REQUEST_FINISHED = "Photo permission request finished"
 INT64_MIN = -(2**63)
 INT64_MAX = 2**63 - 1
 INT32_MIN = -(2**31)
