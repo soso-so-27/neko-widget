@@ -188,6 +188,17 @@ workflowはTestFlight upload成功後に、最終証拠を一つのActions artif
 - `NekoWidget-processed-app-info.plist`: archive内Appの処理済みInfo.plist
 - `NekoWidget-signed-artifacts.tar.gz.enc`: 同じrunで生成した暗号化済み署名archive／IPA
 
+`retain_signed_artifacts=true`のartifact matrixは次で固定する。
+
+| release mode | TestFlight upload | 生成するartifact | local-only提出証拠 |
+| --- | --- | --- | --- |
+| `disabled` | `true` | `nekowidget-local-only-release-evidence-<run>-<attempt>`だけ（上記3 member） | 候補。残りの全gateも必要 |
+| `disabled` | `false` | 従来の`nekowidget-signed-artifacts-<run>-<attempt>`だけ | 不可。Build dry-runの保管専用 |
+| `disabled`以外 | `true`または`false` | 従来の`nekowidget-signed-artifacts-<run>-<attempt>`だけ | 不可。別release境界 |
+
+`retain_signed_artifacts=false`かつuploadなしではartifactを保存しない。TestFlight uploadを選んで
+`retain_signed_artifacts=false`にしたrunは、対応archiveを保存できないためworkflowが拒否する。
+
 所有者はActions画面で最終runとartifactを選び、IDを`local-only-owner-input.json`の
 `selected_github_run_id`と`selected_github_artifact_id`へ記録する。validatorへ3つのlocal fileを渡す
 optionはない。validator自身がGitHub APIから選択済みartifact ZIPを認証downloadし、APIのsizeと
@@ -203,7 +214,8 @@ source commitはgitに実在し、現在のrepository HEADと完全一致しな�
 API・認証・download障害、digest不一致、余分なmember、`upload_to_testflight=false`はすべてfail-closedで
 `RED`になる。`aaaa...`、
 `owner-recorded-result`、nullその他のplaceholderは証拠にならない。署名archiveだけを作るdry run
-（`upload_to_testflight=false`）も提出準備は`RED`のままである。
+（`upload_to_testflight=false`）は暗号化artifactを保管できるが、final evidence writer／bundleは実行せず、
+validatorも`nekowidget-signed-artifacts-*`を最終証拠として受け付けないため、提出準備は`RED`のままである。
 
 [local-only-release-evidence.example.json](local-only-release-evidence.example.json)はschemaの例であり、
 証拠そのものではない。workflow生成manifestを手書きで再現しない。Actions run全体の結論が

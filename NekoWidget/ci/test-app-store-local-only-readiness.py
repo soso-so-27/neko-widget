@@ -701,6 +701,14 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
                 123456789, 987654321, head, run, unrelated, jobs
             )
             self.assertTrue(any("unrelated artifact" in item for item in blockers))
+            dry_run_artifact = dict(artifact)
+            dry_run_artifact["name"] = (
+                "nekowidget-signed-artifacts-123456789-1"
+            )
+            blockers = VALIDATOR.validate_remote_run_and_artifact_records(
+                123456789, 987654321, head, run, dry_run_artifact, jobs
+            )
+            self.assertTrue(any("unrelated artifact" in item for item in blockers))
             expired = dict(artifact)
             expired["expired"] = True
             blockers = VALIDATOR.validate_remote_run_and_artifact_records(
@@ -1234,7 +1242,11 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         copy_workflow = COPY_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("python3 ci/test-app-store-local-only-readiness.py", copy_workflow)
         release_workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("inputs.release_mode != 'disabled'", release_workflow)
+        self.assertIn(
+            "if: ${{ inputs.retain_signed_artifacts && "
+            "(inputs.release_mode != 'disabled' || !inputs.upload_to_testflight) }}",
+            release_workflow,
+        )
         self.assertIn(
             "inputs.release_mode == 'disabled' && inputs.upload_to_testflight "
             "&& inputs.retain_signed_artifacts",
@@ -1260,6 +1272,8 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         self.assertIn("selected_github_artifact_id", readme)
         self.assertIn("validator自身がGitHub API", readme)
         self.assertIn("固定3 member", readme)
+        self.assertIn("Build dry-runの保管専用", readme)
+        self.assertIn("validatorも`nekowidget-signed-artifacts-*`", readme)
         self.assertIn("`<a href>`", readme)
         self.assertIn("`<form>`自体へmarker", readme)
         self.assertNotIn("--release-evidence", readme)

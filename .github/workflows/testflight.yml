@@ -994,7 +994,7 @@ jobs:
           grep -Fxq "$ipa_filename" "$RUNNER_TEMP/signed-artifact-contents.txt"
 
       - name: Upload encrypted signed app and symbols
-        if: ${{ inputs.retain_signed_artifacts && inputs.release_mode != 'disabled' }}
+        if: ${{ inputs.retain_signed_artifacts && (inputs.release_mode != 'disabled' || !inputs.upload_to_testflight) }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
