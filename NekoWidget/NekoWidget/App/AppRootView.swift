@@ -33,6 +33,20 @@ struct AppRootView: View {
             widgetInstallationChecker.refresh()
             await viewModel.start()
         }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: MomentForegroundRefreshPolicy.interval)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await viewModel.pollMomentSharingWhileActive(
+                    isSceneActive: scenePhase == .active
+                )
+            }
+        }
         .onChange(of: viewModel.isScanning, initial: true) { _, isScanning in
             UIApplication.shared.isIdleTimerDisabled = isScanning && scenePhase == .active
         }

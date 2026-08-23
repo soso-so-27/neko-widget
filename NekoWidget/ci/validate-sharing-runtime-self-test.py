@@ -25,6 +25,7 @@ REQUIRED_CASES = {
     "moment-commit-ack-metadata",
     "moment-outbox-bounds-and-expiry",
     "moment-outcome-ledger-migration",
+    "moment-process-serialized-refresh",
     "moment-report-outbox-bounds-and-recovery",
     "normalizer-orientation-scale-parity",
     "own-source-local-promotion",

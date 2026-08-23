@@ -1,33 +1,108 @@
 import Foundation
 
-/// The host app owns all relay I/O. Share Extension direct-send is hard
-/// disabled, so one process-wide gate serializes the AppViewModel and
-/// FamilyWindow coordinator instances without holding a filesystem lock over
-/// network awaits.
-private final class MomentProcessSynchronizationGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var isHeld = false
+enum MomentSynchronizationNotice: Equatable, Sendable {
+    case inboundModerationDisabled
+    case inboundModerationUnavailable
+}
 
-    func tryAcquire() -> Bool {
+/// The host app owns all relay I/O. Share Extension direct-send is hard
+/// disabled, so one process-wide queue serializes the AppViewModel and
+/// FamilyWindow coordinator instances. Every caller keeps its own cancellation
+/// context and receives a turn, so a user-requested refresh cannot be dropped
+/// or inherit cancellation from an earlier pass.
+private final class MomentSynchronizationRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isCancelled = false
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        lock.unlock()
+    }
+
+    func shouldBegin() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard !isHeld else { return false }
-        isHeld = true
-        return true
+        return !isCancelled
+    }
+}
+
+private actor MomentProcessSynchronizationGate {
+#if DEBUG
+    private struct RuntimePendingObserver {
+        let expectedCount: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+#endif
+
+    private var isHeld = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+#if DEBUG
+    private var runtimePendingObservers: [RuntimePendingObserver] = []
+#endif
+
+    func acquire() async {
+        guard isHeld else {
+            isHeld = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+#if DEBUG
+            let observers = runtimePendingObservers.filter {
+                $0.expectedCount <= waiters.count
+            }
+            runtimePendingObservers.removeAll {
+                $0.expectedCount <= waiters.count
+            }
+            for observer in observers {
+                observer.continuation.resume()
+            }
+#endif
+        }
     }
 
     func release() {
-        lock.lock()
-        isHeld = false
-        lock.unlock()
+        guard !waiters.isEmpty else {
+            isHeld = false
+            return
+        }
+        // Keep the permit held while handing it directly to the oldest waiter.
+        // A new caller must queue behind that reserved turn.
+        let next = waiters.removeFirst()
+        next.resume()
     }
+
+#if DEBUG
+    func runtimeWaitUntilPendingRequestCount(_ expectedCount: Int) async {
+        guard waiters.count < expectedCount else { return }
+        await withCheckedContinuation { continuation in
+            runtimePendingObservers.append(
+                RuntimePendingObserver(
+                    expectedCount: expectedCount,
+                    continuation: continuation
+                )
+            )
+        }
+    }
+#endif
 }
 
 private let momentProcessSynchronizationGate = MomentProcessSynchronizationGate()
 
-enum MomentSynchronizationNotice: Equatable, Sendable {
-    case inboundModerationDisabled
-    case inboundModerationUnavailable
+private func runMomentProcessSynchronization(
+    request: MomentSynchronizationRequest,
+    operation: @escaping @Sendable () async -> MomentSynchronizationNotice?
+) async -> MomentSynchronizationNotice? {
+    await momentProcessSynchronizationGate.acquire()
+    let notice: MomentSynchronizationNotice?
+    if request.shouldBegin() {
+        notice = await operation()
+    } else {
+        notice = nil
+    }
+    await momentProcessSynchronizationGate.release()
+    return notice
 }
 
 actor MomentSharingCoordinator {
@@ -40,7 +115,6 @@ actor MomentSharingCoordinator {
     private let configuration: SharingAPIConfiguration
     private let moderation: any MomentModerating
     private let handoffProcessor: MomentShareHandoffProcessor
-    private var isSynchronizing = false
     private var latestSynchronizationNotice: MomentSynchronizationNotice?
 
     init(
@@ -53,12 +127,20 @@ actor MomentSharingCoordinator {
     }
 
     func synchronize(trigger: String) async {
-        guard !isSynchronizing else { return }
-        guard momentProcessSynchronizationGate.tryAcquire() else { return }
+        let request = MomentSynchronizationRequest()
+        let notice = await withTaskCancellationHandler {
+            await runMomentProcessSynchronization(request: request) { [self] in
+                await performSynchronization(trigger: trigger)
+                return await synchronizationNotice()
+            }
+        } onCancel: {
+            request.cancel()
+        }
+        latestSynchronizationNotice = notice
+    }
+
+    private func performSynchronization(trigger: String) async {
         latestSynchronizationNotice = nil
-        defer { momentProcessSynchronizationGate.release() }
-        isSynchronizing = true
-        defer { isSynchronizing = false }
 
         // Disabling media/handoff must also revoke any previously published
         // Share Extension admission and physically remove staged plaintext.
@@ -1016,6 +1098,30 @@ actor MomentSharingCoordinator {
     }
 
 #if DEBUG
+    /// Exercises the same process-wide serial queue without touching
+    /// pairing, network, Keychain, or photo state.
+    func runtimeTestJoinProcessSynchronization(
+        operation: @escaping @Sendable () async -> MomentSynchronizationNotice?
+    ) async -> MomentSynchronizationNotice? {
+        let request = MomentSynchronizationRequest()
+        let notice = await withTaskCancellationHandler {
+            await runMomentProcessSynchronization(
+                request: request,
+                operation: operation
+            )
+        } onCancel: {
+            request.cancel()
+        }
+        latestSynchronizationNotice = notice
+        return notice
+    }
+
+    func runtimeTestWaitUntilProcessSynchronizationIsPending(
+        count: Int = 1
+    ) async {
+        await momentProcessSynchronizationGate.runtimeWaitUntilPendingRequestCount(count)
+    }
+
     /// Generated-data simulator coverage for the download → moderation → ACK
     /// → cursor boundary. Release builds keep the receive primitive private.
     func runtimeTestReceiveChanges(

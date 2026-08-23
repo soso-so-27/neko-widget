@@ -466,6 +466,30 @@ final class AppViewModel: ObservableObject {
     /// Foreground activation is the reliable v1 synchronization point.
     /// Any background execution is best effort and is never required for data
     /// correctness or promised to the user.
+    func pollMomentSharingWhileActive(isSceneActive: Bool) async {
+        let configuration = SharingAPIConfiguration.current
+        let pairingState: PairingState?
+        do {
+            pairingState = try await Task.detached(priority: .utility) {
+                try PairingStateStore.load()
+            }.value
+        } catch {
+            return
+        }
+        guard !Task.isCancelled, isSceneActive else { return }
+        let hasCurrentConsent =
+            pairingState?.mediaSharingConsentVersion
+                == PairingMediaSharingConsent.currentVersion
+            && pairingState?.mediaSharingConsentAcceptedAt != nil
+        guard MomentForegroundRefreshPolicy.shouldPoll(
+            isSceneActive: isSceneActive,
+            isMediaAvailable: configuration.isMediaAvailable,
+            isPaired: pairingState?.phase == .paired,
+            hasCurrentConsent: hasCurrentConsent
+        ) else { return }
+        await synchronizeMomentSharing(trigger: "foreground-poll")
+    }
+
     func syncOnActive() async {
         Task { @MainActor [weak self] in
             await self?.synchronizeMomentSharing(trigger: "foreground")
@@ -1593,6 +1617,7 @@ final class AppViewModel: ObservableObject {
 
     private func synchronizeMomentSharing(trigger: String) async {
         await momentSharingCoordinator.synchronize(trigger: trigger)
+        guard !Task.isCancelled else { return }
         await refreshFamilyWindowOutputs(trigger: trigger)
     }
 

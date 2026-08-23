@@ -1,5 +1,21 @@
 import Foundation
 
+/// Foreground polling is deliberately bounded to an active, paired and
+/// consented app session. It never depends on Photos authorization, and it
+/// makes no background-delivery promise when the app is locked or terminated.
+enum MomentForegroundRefreshPolicy {
+    static let interval: Duration = .seconds(30)
+
+    static func shouldPoll(
+        isSceneActive: Bool,
+        isMediaAvailable: Bool,
+        isPaired: Bool,
+        hasCurrentConsent: Bool
+    ) -> Bool {
+        isSceneActive && isMediaAvailable && isPaired && hasCurrentConsent
+    }
+}
+
 enum MomentFamilyWindowItemState: Equatable, Sendable {
     case available
     case acknowledged
