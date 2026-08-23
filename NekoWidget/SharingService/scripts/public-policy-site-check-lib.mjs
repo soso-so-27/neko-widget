@@ -4,11 +4,12 @@ import { isIP } from "node:net";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 
-const POLICY_PAGES = Object.freeze([
+const SHARING_BETA_PAGES = Object.freeze([
   Object.freeze({
     name: "overview",
     path: "",
     h1: "名前を付けたまどへ、一枚ずつ",
+    visibleRevision: false,
     requiredPhrases: Object.freeze([
       "名前を付けた1つの非公開なまど",
       "信頼できる招待相手1人",
@@ -21,6 +22,7 @@ const POLICY_PAGES = Object.freeze([
     name: "privacy",
     path: "privacy/",
     h1: "プライバシーポリシー",
+    visibleRevision: true,
     requiredPhrases: Object.freeze([
       "エンドツーエンド暗号化",
       "通報専用公開鍵",
@@ -35,6 +37,7 @@ const POLICY_PAGES = Object.freeze([
     name: "community",
     path: "community/",
     h1: "コミュニティ基準",
+    visibleRevision: true,
     requiredPhrases: Object.freeze([
       "通報",
       "ブロック",
@@ -47,6 +50,7 @@ const POLICY_PAGES = Object.freeze([
     name: "support",
     path: "support/",
     h1: "サポート",
+    visibleRevision: true,
     requiredPhrases: Object.freeze([
       "GitHub Issues",
       "TestFlight",
@@ -57,6 +61,81 @@ const POLICY_PAGES = Object.freeze([
     ]),
   }),
 ]);
+
+const LOCAL_ONLY_COMMON_PHRASES = Object.freeze([
+  "完全ローカル版",
+  "現在の共有ベータ版とは別の仕様",
+  "この完全ローカル版では",
+  "写真の読み込み、解析、猫判定、一覧、Widget用画像の処理は端末内だけ",
+  "共有・招待・送信・受信はなく",
+  "アプリから開発者のサーバーへ通信しません",
+  "公開フィード、検索、フォローもありません",
+]);
+
+const LOCAL_ONLY_PAGES = Object.freeze([
+  Object.freeze({
+    name: "overview",
+    path: "",
+    h1: "端末の中だけで、ねこの写真をウィジェットへ",
+    visibleRevision: true,
+    requiredPhrases: Object.freeze([
+      ...LOCAL_ONLY_COMMON_PHRASES,
+      "写真アプリやiCloudへ独自に保存することもありません",
+    ]),
+  }),
+  Object.freeze({
+    name: "privacy",
+    path: "privacy/",
+    h1: "プライバシーポリシー",
+    visibleRevision: true,
+    requiredPhrases: Object.freeze([
+      ...LOCAL_ONLY_COMMON_PHRASES,
+      "開発者によるデータ収集を行いません",
+      "派生画像を、開発者やその他の外部サーバーへ送信しません",
+      "写真アプリやiCloudへ独自に保存することはありません",
+      "CloudKitやアプリ独自のiCloudコンテナも使用しません",
+      "共有相手、招待、送信待ち、受信履歴、サーバー上の写真は作成しません",
+      "開発者の共有サーバーや解析サービスへ自動接続しません",
+      "広告、トラッキング、データ販売、生成AIの学習にも利用しません",
+    ]),
+  }),
+  Object.freeze({
+    name: "support",
+    path: "support/",
+    h1: "サポート",
+    visibleRevision: true,
+    requiredPhrases: Object.freeze([
+      ...LOCAL_ONLY_COMMON_PHRASES,
+      "TestFlight",
+      "GitHub Issues",
+      "Build番号",
+      "公開してよい情報だけ",
+      "緊急通報先ではありません",
+      "写真アプリやiCloudへ独自に保存しません",
+    ]),
+  }),
+]);
+
+const PROFILE_DEFINITIONS = Object.freeze({
+  "sharing-beta": Object.freeze({
+    pages: SHARING_BETA_PAGES,
+    requiredBaseSuffix: undefined,
+    forbiddenBaseSuffix: "/app/",
+    requiredSharingBetaLink: false,
+  }),
+  "local-only": Object.freeze({
+    pages: LOCAL_ONLY_PAGES,
+    requiredBaseSuffix: "/app/",
+    forbiddenBaseSuffix: undefined,
+    requiredSharingBetaLink: true,
+  }),
+});
+
+const CLI_FIELDS = Object.freeze({
+  "--profile": Object.freeze({ key: "profile", environment: "NEKO_PUBLIC_POLICY_PROFILE" }),
+  "--site-base": Object.freeze({ key: "siteBase", environment: "NEKO_PUBLIC_POLICY_SITE_BASE" }),
+  "--expected-revision": Object.freeze({ key: "expectedRevision", environment: "NEKO_PUBLIC_POLICY_REVISION" }),
+});
 
 function ipv4Number(address) {
   const parts = address.split(".").map(Number);
@@ -154,6 +233,42 @@ export function normalizePublicHttpsSiteBase(input) {
   }
 
   return url.href;
+}
+
+export function resolvePublicPolicyCheckInput({ argv, environment }) {
+  if (!Array.isArray(argv) || environment === null || typeof environment !== "object") {
+    throw new Error("CLI arguments and environment are required");
+  }
+
+  const argumentValues = new Map();
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    const field = CLI_FIELDS[flag];
+    const value = argv[index + 1];
+    if (field === undefined || typeof value !== "string" || value.length === 0 || value.startsWith("--")) {
+      throw new Error(`unknown or incomplete argument: ${flag ?? "<missing>"}`);
+    }
+    if (argumentValues.has(field.key)) {
+      throw new Error(`duplicate argument: ${flag}`);
+    }
+    argumentValues.set(field.key, value);
+    index += 1;
+  }
+
+  const result = {};
+  for (const field of Object.values(CLI_FIELDS)) {
+    const argumentValue = argumentValues.get(field.key);
+    const environmentValue = environment[field.environment];
+    if (argumentValue !== undefined && environmentValue !== undefined) {
+      throw new Error(`${field.key} must be supplied by arguments or environment, not both`);
+    }
+    const value = argumentValue ?? environmentValue;
+    if (typeof value !== "string" || value.length === 0) {
+      throw new Error(`missing required ${field.key}`);
+    }
+    result[field.key] = value;
+  }
+  return Object.freeze(result);
 }
 
 async function requirePublicDns(hostname, lookupImpl) {
@@ -309,8 +424,16 @@ async function readBoundedUtf8Body(response, label, maximumBytes) {
   }
 }
 
-function validateLinks({ html, pageUrl, baseUrl, expectedPageUrls, label }) {
+function validateLinks({
+  html,
+  pageUrl,
+  baseUrl,
+  expectedPageUrls,
+  requiredSameOriginUrls,
+  label,
+}) {
   const internal = new Set();
+  const requiredSameOrigin = new Set();
   for (const href of extractLinks(html)) {
     let target;
     try {
@@ -318,22 +441,30 @@ function validateLinks({ html, pageUrl, baseUrl, expectedPageUrls, label }) {
     } catch {
       throw new Error(`${label} contains an invalid link`);
     }
-    if (target.protocol !== "https:") {
-      throw new Error(`${label} contains a non-HTTPS link`);
+    if (target.protocol !== "https:" || target.username !== "" || target.password !== "") {
+      throw new Error(`${label} contains a non-HTTPS or credentialed link`);
     }
     if (target.origin !== baseUrl.origin) continue;
-    if (!target.pathname.startsWith(baseUrl.pathname) || target.search !== "") {
+    if (target.search !== "") {
       throw new Error(`${label} contains an internal link outside the policy site`);
     }
     target.hash = "";
-    if (!expectedPageUrls.has(target.href)) {
+    if (expectedPageUrls.has(target.href)) {
+      internal.add(target.href);
+    } else if (requiredSameOriginUrls.has(target.href)) {
+      requiredSameOrigin.add(target.href);
+    } else {
       throw new Error(`${label} contains an unresolved internal policy link: ${target.pathname}`);
     }
-    internal.add(target.href);
   }
   const missing = [...expectedPageUrls].filter((url) => !internal.has(url));
   if (missing.length > 0) {
-    throw new Error(`${label} does not link to every public policy page`);
+    throw new Error(`${label} does not link to every page in its policy profile`);
+  }
+  const missingRequired = [...requiredSameOriginUrls]
+    .filter((url) => !requiredSameOrigin.has(url));
+  if (missingRequired.length > 0) {
+    throw new Error(`${label} does not link to the sharing-beta policy root`);
   }
 }
 
@@ -342,6 +473,7 @@ async function fetchPolicyPage({
   pageUrl,
   baseUrl,
   expectedPageUrls,
+  requiredSameOriginUrls,
   expectedRevision,
   fetchImpl,
   timeoutMs,
@@ -374,7 +506,7 @@ async function fetchPolicyPage({
       throw new Error(`${page.name} returned policy revision ${revision}; expected ${expectedRevision}`);
     }
     const text = visibleText(html);
-    if (page.name !== "overview") {
+    if (page.visibleRevision) {
       const [year, month, day] = expectedRevision.split("-").map(Number);
       const visibleRevision = `最終更新日：${year}年${month}月${day}日`;
       if (!text.includes(visibleRevision)) {
@@ -386,7 +518,14 @@ async function fetchPolicyPage({
         throw new Error(`${page.name} is missing required policy content: ${phrase}`);
       }
     }
-    validateLinks({ html, pageUrl, baseUrl, expectedPageUrls, label: page.name });
+    validateLinks({
+      html,
+      pageUrl,
+      baseUrl,
+      expectedPageUrls,
+      requiredSameOriginUrls,
+      label: page.name,
+    });
     return Object.freeze({
       name: page.name,
       url: pageUrl.href,
@@ -406,6 +545,7 @@ async function fetchPolicyPage({
 }
 
 export async function checkPublicPolicySite({
+  profile,
   siteBase,
   expectedRevision,
   fetchImpl = globalThis.fetch,
@@ -413,6 +553,10 @@ export async function checkPublicPolicySite({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maximumBytes = DEFAULT_MAX_BODY_BYTES,
 }) {
+  const profileDefinition = PROFILE_DEFINITIONS[profile];
+  if (profileDefinition === undefined) {
+    throw new Error("policy profile must be 'sharing-beta' or 'local-only'");
+  }
   const normalizedBase = normalizePublicHttpsSiteBase(siteBase);
   if (typeof expectedRevision !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(expectedRevision)) {
     throw new Error("expected policy revision must use YYYY-MM-DD");
@@ -437,14 +581,30 @@ export async function checkPublicPolicySite({
   }
 
   const baseUrl = new URL(normalizedBase);
+  if (
+    profileDefinition.requiredBaseSuffix !== undefined
+    && !baseUrl.pathname.endsWith(profileDefinition.requiredBaseSuffix)
+  ) {
+    throw new Error(`${profile} policy site base must end in ${profileDefinition.requiredBaseSuffix}`);
+  }
+  if (
+    profileDefinition.forbiddenBaseSuffix !== undefined
+    && baseUrl.pathname.endsWith(profileDefinition.forbiddenBaseSuffix)
+  ) {
+    throw new Error(`${profile} policy site base must not end in ${profileDefinition.forbiddenBaseSuffix}`);
+  }
   await requirePublicDns(baseUrl.hostname, lookupImpl);
-  const pageUrls = POLICY_PAGES.map((page) => new URL(page.path, baseUrl));
+  const pageUrls = profileDefinition.pages.map((page) => new URL(page.path, baseUrl));
   const expectedPageUrls = new Set(pageUrls.map((url) => url.href));
-  const pages = await Promise.all(POLICY_PAGES.map((page, index) => fetchPolicyPage({
+  const requiredSameOriginUrls = new Set(
+    profileDefinition.requiredSharingBetaLink ? [new URL("../", baseUrl).href] : [],
+  );
+  const pages = await Promise.all(profileDefinition.pages.map((page, index) => fetchPolicyPage({
     page,
     pageUrl: pageUrls[index],
     baseUrl,
     expectedPageUrls,
+    requiredSameOriginUrls,
     expectedRevision,
     fetchImpl,
     timeoutMs,
@@ -452,10 +612,11 @@ export async function checkPublicPolicySite({
   })));
 
   return Object.freeze({
+    profile,
     siteBase: normalizedBase,
     expectedRevision,
     pages: Object.freeze(pages),
   });
 }
 
-export const publicPolicyPageSpecifications = POLICY_PAGES;
+export const publicPolicyProfiles = PROFILE_DEFINITIONS;

@@ -14,12 +14,19 @@ concurrency:
 
 jobs:
   public-policy-site:
-    name: Verify deployed public policy pages
+    name: Verify deployed policy pages (${{ matrix.profile }})
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    env:
-      NEKO_PUBLIC_POLICY_SITE_BASE: https://soso-so-27.github.io/neko-widget/
-      NEKO_PUBLIC_POLICY_REVISION: "2026-08-24"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: sharing-beta
+            site_base: https://soso-so-27.github.io/neko-widget/
+            revision: "2026-08-24"
+          - profile: local-only
+            site_base: https://soso-so-27.github.io/neko-widget/app/
+            revision: "2026-08-24"
 
     steps:
       - name: Check out repository
@@ -37,7 +44,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/check-public-policy-site.mjs
+          node scripts/check-public-policy-site.mjs \
+            --profile "${{ matrix.profile }}" \
+            --site-base "${{ matrix.site_base }}" \
+            --expected-revision "${{ matrix.revision }}"
 
   public-runtime-boundary:
     name: Verify moment and window-name ON, legacy OFF
