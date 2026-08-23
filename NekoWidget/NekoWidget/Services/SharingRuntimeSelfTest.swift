@@ -3993,6 +3993,9 @@ actor SharingRuntimeSelfTestRunner {
         } catch PairingError.stateUnavailable {
             // Models a GET/PUT response resuming after unlink. The stale
             // lifecycle cannot recreate either presentation file.
+        } catch SharingLifecycleGate.Error.unavailable {
+            // The terminal purge invalidates the lifecycle before a stale
+            // response can reach either presentation store.
         }
         guard !FileManager.default.fileExists(atPath: windowPresentationURL.path),
               !FileManager.default.fileExists(atPath: windowNameSyncURL.path)
