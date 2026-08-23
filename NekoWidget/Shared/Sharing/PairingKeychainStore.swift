@@ -491,6 +491,8 @@ enum PrivateWindowPresentationStore {
 /// both PairingState CAS and photo outbox/inbox state.
 struct PrivateWindowNameSyncState: Codable, Equatable, Sendable {
     static let schemaVersion = 1
+    static let legacyPendingTranscriptEncodingVersion = 1
+    static let currentPendingTranscriptEncodingVersion = 2
 
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int = 0
@@ -499,6 +501,10 @@ struct PrivateWindowNameSyncState: Codable, Equatable, Sendable {
     var acceptedCiphertextSHA256: Data?
     var pendingPayload: PrivateWindowNamePreparedPayload?
     var pendingClientRequestID: String?
+    /// Build 33 omitted this field and used UInt32-prefixed signature/AAD
+    /// transcripts. A missing value therefore means the legacy encoding and
+    /// must never be retried verbatim by a corrected build.
+    var pendingTranscriptEncodingVersion: Int?
     var updatedAt: Date
 
     func validated() throws -> Self {
@@ -513,6 +519,16 @@ struct PrivateWindowNameSyncState: Codable, Equatable, Sendable {
                 }) == true,
               (acceptedCiphertextSHA256.map({ $0.count == 32 }) ?? true),
               (pendingPayload == nil) == (pendingClientRequestID == nil),
+              pendingPayload != nil
+                || pendingTranscriptEncodingVersion == nil,
+              pendingPayload == nil
+                || [
+                    Self.legacyPendingTranscriptEncodingVersion,
+                    Self.currentPendingTranscriptEncodingVersion
+                ].contains(
+                    pendingTranscriptEncodingVersion
+                        ?? Self.legacyPendingTranscriptEncodingVersion
+                ),
               pendingClientRequestID == nil
                 || pendingClientRequestID.flatMap(UUID.init(uuidString:)) != nil,
               updatedAt > Date(timeIntervalSince1970: 0)
@@ -546,12 +562,50 @@ enum PrivateWindowNameSyncStore {
         guard ownerRevision >= 0 else { throw PairingError.stateUnavailable }
         guard let state = try load(pairing: pairing, validating: lifecycleToken),
               let payload = state.pendingPayload,
+              state.pendingTranscriptEncodingVersion
+                == PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion,
               payload.context.ownerRevision == ownerRevision,
               let requestValue = state.pendingClientRequestID,
               let requestID = UUID(uuidString: requestValue)
         else { return nil }
         try validate(payload: payload, pairing: pairing, ownerOnly: true)
         return (payload, requestID)
+    }
+
+    /// Drops only the Build 33 ambiguous-retry envelope after the caller has
+    /// completed an authenticated GET and rollback-floor check. Accepted
+    /// revision/hash state is retained; the corrected transcript is prepared
+    /// with a new request ID by `stagePending`.
+    @discardableResult
+    static func discardLegacyPendingAfterAuthoritativeRead(
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> Bool {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load(),
+                  try binding(for: currentPairing) == binding(for: pairing)
+            else { throw PairingError.stateUnavailable }
+            let currentBinding = try binding(for: currentPairing)
+            guard var state = try loadWhileLifecycleLocked(),
+                  state.pairingBindingSHA256 == currentBinding,
+                  state.pendingPayload != nil
+            else { return false }
+            let encodingVersion = state.pendingTranscriptEncodingVersion
+                ?? PrivateWindowNameSyncState.legacyPendingTranscriptEncodingVersion
+            guard encodingVersion
+                    < PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion
+            else { return false }
+            let increment = state.storageRevision.addingReportingOverflow(1)
+            guard !increment.overflow else { throw PairingError.stateUnavailable }
+            state.storageRevision = increment.partialValue
+            state.pendingPayload = nil
+            state.pendingClientRequestID = nil
+            state.pendingTranscriptEncodingVersion = nil
+            state.updatedAt = now
+            try writeWhileLifecycleLocked(state)
+            return true
+        }
     }
 
     static func stagePending(
@@ -577,6 +631,8 @@ enum PrivateWindowNameSyncStore {
                 throw PairingError.stateUnavailable
             }
             if let existing = state.pendingPayload,
+               state.pendingTranscriptEncodingVersion
+                == PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion,
                existing.context.ownerRevision == payload.context.ownerRevision,
                let existingRequest = state.pendingClientRequestID,
                let existingRequestID = UUID(uuidString: existingRequest) {
@@ -588,6 +644,8 @@ enum PrivateWindowNameSyncStore {
             state.storageRevision = increment.partialValue
             state.pendingPayload = payload
             state.pendingClientRequestID = clientRequestID.uuidString.lowercased()
+            state.pendingTranscriptEncodingVersion =
+                PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion
             state.updatedAt = now
             try writeWhileLifecycleLocked(state)
             return (payload, clientRequestID)
@@ -640,6 +698,7 @@ enum PrivateWindowNameSyncStore {
             if clearsPending {
                 state.pendingPayload = nil
                 state.pendingClientRequestID = nil
+                state.pendingTranscriptEncodingVersion = nil
             }
             state.updatedAt = now
             try writeWhileLifecycleLocked(state)

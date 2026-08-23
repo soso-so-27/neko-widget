@@ -301,6 +301,51 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private var utcBoundaryMinute",
         )
         self.assertIn("guard model.canEditWindowDisplayName", save_name)
+        update_name = section(
+            pairing_view_model,
+            "func updateWindowDisplayName(",
+            "func reloadWindowDisplayName()",
+        )
+        self.assertIn("windowNameCoordinator.synchronizeWindowNameForUser", update_name)
+        self.assertIn(".momentSharingPresentationNeedsRefresh", update_name)
+        self.assertNotIn(".sharingMediaSyncRequested", update_name)
+        self.assertIn("相手へ共有中…", pairing_view)
+        self.assertIn("相手のiPhoneへ反映できる状態です。", pairing_view_model)
+
+        name_only_admission = section(
+            processor,
+            "func refreshAdmissionLabel(",
+            "private func reconcileOrPromote(",
+        )
+        self.assertIn("MomentShareHandoffStore.publishAdmissions", name_only_admission)
+        self.assertNotIn("nextPendingCapture", name_only_admission)
+
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        explicit_name_sync = section(
+            coordinator,
+            "private func performWindowNameSynchronizationForUser(",
+            "private func performSynchronization(",
+        )
+        self.assertIn("synchronizeWindowName(", explicit_name_sync)
+        self.assertIn("refreshAdmissionLabel(", explicit_name_sync)
+        self.assertNotIn("sendOutbox(", explicit_name_sync)
+        self.assertNotIn("receiveChanges(", explicit_name_sync)
+        window_name_sync = section(
+            coordinator,
+            "private func synchronizeWindowName(",
+            "private func requireWindowNameSynchronizationAllowed(",
+        )
+        self.assertLess(
+            window_name_sync.index("requireWindowNameSynchronizationAllowed("),
+            window_name_sync.index("api.currentWindowName("),
+        )
+        report_only_name_guard = section(
+            coordinator,
+            "private func requireWindowNameSynchronizationAllowed(",
+            "private func sendOutbox(",
+        )
+        self.assertIn("MomentSharingError.reportOnly", report_only_name_guard)
+        self.assertIn("resetAfterRemoteRevocationAsync", report_only_name_guard)
         reset = section(
             pairing_view_model,
             "private func resetLocalPairing(",
@@ -313,6 +358,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         runtime_self_test = source("NekoWidget/Services/SharingRuntimeSelfTest.swift")
         self.assertIn("Models a GET/PUT response resuming after unlink", runtime_self_test)
+        self.assertIn("reportOnlyCounts.gets == 0", runtime_self_test)
+        self.assertIn("reportOnlyCounts.puts == 0", runtime_self_test)
 
     def test_sharing_surfaces_do_not_assume_a_family_relationship(self) -> None:
         surfaces = [

@@ -306,10 +306,10 @@ enum PrivateWindowNameCrypto {
         var value = Data()
         for field in fields {
             let bytes = Data(field.utf8)
-            guard bytes.count <= Int(UInt32.max) else {
+            guard bytes.count <= Int(UInt16.max) else {
                 throw MomentSharingError.invalidPayload
             }
-            var count = UInt32(bytes.count).bigEndian
+            var count = UInt16(bytes.count).bigEndian
             withUnsafeBytes(of: &count) { value.append(contentsOf: $0) }
             value.append(bytes)
         }

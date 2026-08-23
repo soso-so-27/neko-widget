@@ -137,7 +137,7 @@ struct PairingView: View {
             progressSection("招待を作成しています…")
             retrySection("招待作成を再試行") {
                 await model.createInvitation(dailyBoundaryMinuteUTC: utcBoundaryMinute)
-                saveWindowNameIfPossible()
+                await saveWindowNameIfPossible()
             }
         case .awaitingInvitee:
             invitationSection(state)
@@ -146,7 +146,7 @@ struct PairingView: View {
             progressSection("招待を確認しています…")
             retrySection("参加を再試行") {
                 await model.joinInvitation()
-                saveWindowNameIfPossible()
+                await saveWindowNameIfPossible()
             }
         case .pendingApproval:
             phraseSection(state, title: "相手の承認を待っています")
@@ -206,10 +206,35 @@ struct PairingView: View {
                     .autocorrectionDisabled()
 
                 if state.spaceID != nil, state.participantID != nil {
-                    Button("名前を保存して相手と共有") {
-                        saveWindowNameIfPossible()
+                    Button {
+                        Task { await saveWindowNameIfPossible() }
+                    } label: {
+                        if model.isSynchronizingWindowName {
+                            Label("相手へ共有中…", systemImage: "arrow.triangle.2.circlepath")
+                        } else {
+                            Text("名前を保存して相手と共有")
+                        }
                     }
-                    .disabled(model.isWorking)
+                    .disabled(model.isWorking || model.isSynchronizingWindowName)
+
+                    if let message = model.windowNameStatusMessage {
+                        HStack(spacing: 8) {
+                            if model.isSynchronizingWindowName {
+                                ProgressView()
+                            } else {
+                                Image(
+                                    systemName: model.windowNameStatusIsError
+                                        ? "exclamationmark.triangle.fill"
+                                        : "checkmark.circle.fill"
+                                )
+                            }
+                            Text(message)
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(
+                            model.windowNameStatusIsError ? Color.orange : Color.secondary
+                        )
+                    }
                 }
             }
         } header: {
@@ -235,7 +260,7 @@ struct PairingView: View {
                     await model.createInvitation(
                         dailyBoundaryMinuteUTC: utcBoundaryMinute
                     )
-                    saveWindowNameIfPossible()
+                    await saveWindowNameIfPossible()
                 }
             } label: {
                 Label("招待コードを作る", systemImage: "person.badge.plus")
@@ -266,7 +291,7 @@ struct PairingView: View {
                         guard model.recordMediaSharingConsent() else { return }
                     }
                     await model.joinInvitation()
-                    saveWindowNameIfPossible()
+                    await saveWindowNameIfPossible()
                 }
             } label: {
                 Label("招待コードで参加", systemImage: "person.2")
@@ -466,12 +491,12 @@ struct PairingView: View {
         }
     }
 
-    private func saveWindowNameIfPossible() {
+    private func saveWindowNameIfPossible() async {
         guard model.canEditWindowDisplayName,
               model.state?.spaceID != nil,
               model.state?.participantID != nil
         else { return }
-        if model.updateWindowDisplayName(windowDisplayNameDraft) {
+        if await model.updateWindowDisplayName(windowDisplayNameDraft) {
             windowDisplayNameDraft = model.windowDisplayName
         }
     }

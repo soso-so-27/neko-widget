@@ -4,7 +4,7 @@ import process from "node:process";
 import { checkStagingRuntime } from "./staging-runtime-check-lib.mjs";
 
 function usage() {
-  return "Usage: node scripts/check-staging-runtime.mjs --expected on|off [--origin https://example.com]";
+  return "Usage: node scripts/check-staging-runtime.mjs --expected on|moment-on-window-name-off|off [--origin https://example.com]";
 }
 
 function parseArguments(argv) {

@@ -105,6 +105,22 @@ private func runMomentProcessSynchronization(
     return notice
 }
 
+private func runMomentProcessOperation<Value: Sendable>(
+    request: MomentSynchronizationRequest,
+    operation: @escaping @Sendable () async throws -> Value
+) async throws -> Value {
+    await momentProcessSynchronizationGate.acquire()
+    do {
+        guard request.shouldBegin() else { throw CancellationError() }
+        let value = try await operation()
+        await momentProcessSynchronizationGate.release()
+        return value
+    } catch {
+        await momentProcessSynchronizationGate.release()
+        throw error
+    }
+}
+
 actor MomentSharingCoordinator {
     private struct Authorization: Sendable {
         let state: PairingState
@@ -137,6 +153,80 @@ actor MomentSharingCoordinator {
             request.cancel()
         }
         latestSynchronizationNotice = notice
+    }
+
+    /// Runs only the encrypted presentation-name exchange and reports relay
+    /// failures to the caller. Manual rename must not enqueue a complete photo
+    /// pass, and unlike background refresh it must tell the person whether the
+    /// other device can receive the new label.
+    func synchronizeWindowNameForUser(trigger: String) async throws {
+        let request = MomentSynchronizationRequest()
+        try await withTaskCancellationHandler {
+            try await runMomentProcessOperation(request: request) { [self] in
+                try await performWindowNameSynchronizationForUser(trigger: trigger)
+            }
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+#if DEBUG
+    func runtimeSynchronizeWindowName(
+        api: any PrivateWindowNameAPIClientProtocol
+    ) async throws {
+        let authorization = try loadAuthorization()
+        _ = try await synchronizeWindowName(
+            api: api,
+            authorization: authorization
+        )
+    }
+#endif
+
+    private func performWindowNameSynchronizationForUser(trigger: String) async throws {
+        var authorization: Authorization?
+        do {
+            let loaded = try loadAuthorization()
+            authorization = loaded
+            if configuration.isShareExtensionHandoffAvailable {
+                do {
+                    try handoffProcessor.refreshAdmissionLabel(
+                        pairing: loaded.state,
+                        credential: loaded.credential,
+                        lifecycleToken: loaded.lifecycleToken
+                    )
+                } catch {
+                    SharedLog.app.warning(
+                        "window-presentation",
+                        "Share destination label refresh deferred"
+                    )
+                }
+            }
+            let api = try URLSessionMomentSharingAPIClient(configuration: configuration)
+            _ = try await synchronizeWindowName(
+                api: api,
+                authorization: loaded
+            )
+            try SharingLifecycleGate.validate(loaded.lifecycleToken)
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: .momentSharingPresentationNeedsRefresh,
+                    object: nil
+                )
+            }
+            SharedLog.app.info(
+                "window-name-sync",
+                "Encrypted window name synchronized after an explicit save",
+                metadata: ["trigger": String(trigger.prefix(32))]
+            )
+        } catch {
+            if let authorization, Self.requiresLocalRevocationReset(error) {
+                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
+                    expectedState: authorization.state,
+                    lifecycleToken: authorization.lifecycleToken
+                )
+            }
+            throw error
+        }
     }
 
     private func performSynchronization(trigger: String) async {
@@ -896,6 +986,10 @@ actor MomentSharingCoordinator {
               roomKey.count == 32
         else { throw MomentSharingError.notPaired }
 
+        try await requireWindowNameSynchronizationAllowed(
+            authorization: authorization
+        )
+
         let ownerSigningPublicKey: Data
         if role == .inviter {
             ownerSigningPublicKey = try PairingCrypto.signingPublicKey(for: credential)
@@ -958,6 +1052,16 @@ actor MomentSharingCoordinator {
             throw MomentSharingError.invalidPayload
         }
 
+        // Build 33 staged UInt32-prefixed signature/AAD transcripts. The
+        // relay correctly rejected them, but exact ambiguous retry would keep
+        // resending those bytes forever after the UInt16 interoperability fix.
+        // Only discard that pending envelope after the authenticated GET and
+        // rollback-floor checks above; accepted floor/hash state is preserved.
+        try PrivateWindowNameSyncStore.discardLegacyPendingAfterAuthoritativeRead(
+            pairing: pairing,
+            validating: lifecycleToken
+        )
+
         let staged: (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID)
         if let existing = try PrivateWindowNameSyncStore.pending(
             ownerRevision: localRevision,
@@ -1014,6 +1118,70 @@ actor MomentSharingCoordinator {
             validating: lifecycleToken
         )
         return changed || applied.displayName != before
+    }
+
+    /// A terminal safety window permits report delivery only. This guard is
+    /// shared by foreground, media-disabled and explicit rename paths so none
+    /// of them can issue a window-name GET/PUT while report-only authority is
+    /// active. A closed boundary performs the same terminal local purge as the
+    /// full synchronization path before returning no authority to the caller.
+    private func requireWindowNameSynchronizationAllowed(
+        authorization: Authorization,
+        now: Date = .now
+    ) async throws {
+        let markerUntil: Date?
+        do {
+            markerUntil = try MomentShareHandoffStore.reportOnlyHandoffDeadline(
+                validating: authorization.lifecycleToken,
+                now: now
+            )
+        } catch {
+            guard let recoveredUntil = await recoverReportOnlyBoundary(
+                authorization: authorization,
+                now: now
+            ) else { throw MomentSharingError.notPaired }
+            markerUntil = recoveredUntil
+        }
+
+        if let markerUntil {
+            if MomentSharingProtocol.isReportOnlyWindowClosed(
+                until: markerUntil,
+                now: now
+            ) {
+                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
+                    expectedState: authorization.state,
+                    lifecycleToken: authorization.lifecycleToken
+                )
+                throw MomentSharingError.notPaired
+            }
+            guard await establishReportOnlyBoundary(
+                until: markerUntil,
+                authorization: authorization,
+                now: now
+            ) else { throw MomentSharingError.notPaired }
+            throw MomentSharingError.reportOnly(until: markerUntil)
+        }
+
+        try MomentSharingStateStore.pruneLocalHistory(now: now)
+        if let stateUntil = try MomentSharingStateStore.load().reportOnlyUntil {
+            if MomentSharingProtocol.isReportOnlyWindowClosed(
+                until: stateUntil,
+                now: now
+            ) {
+                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
+                    expectedState: authorization.state,
+                    lifecycleToken: authorization.lifecycleToken
+                )
+                throw MomentSharingError.notPaired
+            }
+            guard await establishReportOnlyBoundary(
+                until: stateUntil,
+                authorization: authorization,
+                now: now
+            ) else { throw MomentSharingError.notPaired }
+            throw MomentSharingError.reportOnly(until: stateUntil)
+        }
+        try SharingLifecycleGate.validate(authorization.lifecycleToken)
     }
 
     private func sendOutbox(

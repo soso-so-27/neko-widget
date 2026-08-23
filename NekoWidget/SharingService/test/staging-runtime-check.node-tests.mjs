@@ -70,6 +70,57 @@ test("accepts the expected OFF runtime boundary", async () => {
   });
 });
 
+test("accepts moment ON with private window-name and legacy runtimes OFF", async () => {
+  const result = await checkStagingRuntime({
+    origin,
+    expected: "moment-on-window-name-off",
+    fetchImpl: runtimeFetch({
+      momentStatus: 401,
+      momentCode: "invalid_authentication",
+      windowNameStatus: 503,
+      windowNameCode: "window_name_runtime_disabled",
+    }),
+  });
+  assert.deepEqual(result.checks.map(({ name, status, code }) => ({ name, status, code })), [
+    { name: "health", status: 200, code: undefined },
+    { name: "moment", status: 401, code: "invalid_authentication" },
+    { name: "window-name", status: 503, code: "window_name_runtime_disabled" },
+    { name: "legacy", status: 503, code: "legacy_sharing_runtime_disabled" },
+  ]);
+});
+
+test("rejects an enabled private window-name runtime in the mixed boundary", async () => {
+  await assert.rejects(
+    checkStagingRuntime({
+      origin,
+      expected: "moment-on-window-name-off",
+      fetchImpl: runtimeFetch({
+        momentStatus: 401,
+        momentCode: "invalid_authentication",
+        windowNameStatus: 401,
+        windowNameCode: "invalid_authentication",
+      }),
+    }),
+    /window-name returned HTTP 401; expected 503/u,
+  );
+});
+
+test("rejects a disabled moment runtime in the mixed boundary", async () => {
+  await assert.rejects(
+    checkStagingRuntime({
+      origin,
+      expected: "moment-on-window-name-off",
+      fetchImpl: runtimeFetch({
+        momentStatus: 503,
+        momentCode: "moment_runtime_disabled",
+        windowNameStatus: 503,
+        windowNameCode: "window_name_runtime_disabled",
+      }),
+    }),
+    /moment returned HTTP 503; expected 401/u,
+  );
+});
+
 test("rejects a moment state mismatch", async () => {
   await assert.rejects(
     checkStagingRuntime({
