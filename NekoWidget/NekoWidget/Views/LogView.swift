@@ -32,13 +32,12 @@ private final class LogViewModel: ObservableObject {
         do {
             return try await store.makeExportFile()
         } catch {
-            let value = error as NSError
             SharedLog.app.error(
                 "diagnostics",
                 "Diagnostic log export failed",
-                metadata: ["code": "\(value.code)", "domain": value.domain]
+                metadata: SharedLog.errorMetadata(error, category: .diagnostics)
             )
-            errorMessage = error.localizedDescription
+            errorMessage = "診断ログを書き出せませんでした。iPhoneの空き容量を確認して、もう一度お試しください。"
             return nil
         }
     }

@@ -165,11 +165,12 @@ final class ShareViewController: UIViewController {
                     case .invalidPayload, .payloadTooLarge:
                         statusLabel.text = "この写真を一時保存できませんでした。写真を選び直してください。"
                     default:
-                        statusLabel.text = sharingError.localizedDescription
+                        statusLabel.text = sharingError.errorDescription
+                            ?? "送信準備を完了できませんでした。アプリでまどの状態を確認して、もう一度お試しください。"
                         continueButton.isEnabled = true
                     }
                 } else {
-                    statusLabel.text = error.localizedDescription
+                    statusLabel.text = "この写真を一時保存できませんでした。iPhoneの空き容量を確認して、もう一度お試しください。"
                     continueButton.isEnabled = true
                 }
                 cancelButton.isEnabled = true

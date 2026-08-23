@@ -146,7 +146,8 @@ enum PairingInstallationGuard {
             } catch {
                 let reset = try performCleanupWhileLocked(
                     marker: marker,
-                    message: PairingError.malformedCredential.localizedDescription
+                    message: PairingError.malformedCredential.errorDescription
+                        ?? "保存されている共有鍵を確認できません。再招待が必要です。"
                 )
                 return BootstrapResult(
                     state: reset,

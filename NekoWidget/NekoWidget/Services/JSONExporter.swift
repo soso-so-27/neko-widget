@@ -75,7 +75,11 @@ private struct VerificationExportPayload: Encodable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(snapshot.schemaVersion, forKey: .schemaVersion)
         try container.encode(snapshot.assets, forKey: .assets)
-        try container.encode(snapshot.scanState, forKey: .scanState)
+        var exportScanState = snapshot.scanState
+        exportScanState.lastError = DiagnosticLogPrivacy.normalizedScanLastError(
+            exportScanState.lastError
+        )
+        try container.encode(exportScanState, forKey: .scanState)
         // The optional birthday/adoption day is needed only on this device to
         // group memories. Keep the exact date out of a shareable verification
         // export while still recording whether age-based grouping was active.

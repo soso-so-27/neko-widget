@@ -300,14 +300,10 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         do {
             return try SharedLikeStore.stateSnapshot()
         } catch {
-            let value = error as NSError
             SharedLog.widget.error(
                 "like",
                 "Widget like state could not be read",
-                metadata: [
-                    "code": "\(value.code)",
-                    "domain": value.domain
-                ]
+                metadata: SharedLog.errorMetadata(error, category: .widgetLike)
             )
             return SharedLikeStateSnapshot(records: [:], isInteractionReady: false)
         }
@@ -427,11 +423,10 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 ]
             )
         } catch {
-            let value = error as NSError
             SharedLog.widget.error(
                 "timeline",
                 "Timeline cache lease write failed",
-                metadata: ["code": "\(value.code)", "domain": value.domain]
+                metadata: SharedLog.errorMetadata(error, category: .widgetTimeline)
             )
         }
     }

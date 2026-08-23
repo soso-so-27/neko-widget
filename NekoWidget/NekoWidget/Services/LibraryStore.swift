@@ -40,6 +40,9 @@ actor LibraryStore {
         if value.albumUsage == nil {
             value.albumUsage = .empty
         }
+        value.scanState.lastError = DiagnosticLogPrivacy.normalizedScanLastError(
+            value.scanState.lastError
+        )
         value.updatedAt = .now
         try AtomicJSON.write(value, to: snapshotURL)
     }
@@ -84,6 +87,13 @@ actor LibraryStore {
         }
         if value.albumUsage == nil {
             value.albumUsage = .empty
+            didChange = true
+        }
+        let normalizedLastError = DiagnosticLogPrivacy.normalizedScanLastError(
+            value.scanState.lastError
+        )
+        if value.scanState.lastError != normalizedLastError {
+            value.scanState.lastError = normalizedLastError
             didChange = true
         }
 

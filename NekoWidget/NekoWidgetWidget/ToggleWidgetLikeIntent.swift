@@ -59,16 +59,17 @@ struct ToggleWidgetLikeIntent: AppIntent {
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
         } catch {
-            let value = error as NSError
             SharedLog.widget.error(
                 "like",
                 "Widget like state change failed",
-                metadata: [
-                    "asset": SharedLog.shortHash(localIdentifier),
-                    "code": "\(value.code)",
-                    "domain": value.domain,
-                    "source": "interactive-widget"
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .widgetLike,
+                    additional: [
+                        "asset": SharedLog.shortHash(localIdentifier),
+                        "source": "interactive-widget",
+                    ]
+                )
             )
             // Keep the previous entry visible when persistence fails. Returning
             // the error lets WidgetKit end the invalidated state as a failure

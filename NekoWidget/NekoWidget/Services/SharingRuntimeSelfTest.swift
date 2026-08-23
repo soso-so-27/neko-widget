@@ -461,6 +461,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("canonical-local-only-privacy-budget") {
             try Self.testCanonicalPrivacyAndBudget()
         })
+        results.append(run("diagnostic-persistence-privacy") {
+            try Self.testDiagnosticPersistencePrivacy()
+        })
         results.append(run("day-boundary-convergence") {
             try Self.testDayBoundaryConvergence()
         })
@@ -557,6 +560,31 @@ actor SharingRuntimeSelfTestRunner {
             Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
         }
+    }
+
+    private static func testDiagnosticPersistencePrivacy() throws {
+        let legacyPayload =
+            "https://example.invalid/private/var/mobile/secret?token=SUPERSECRET\nsecond-line"
+        var snapshot = LibrarySnapshot.empty
+        snapshot.scanState.lastError = legacyPayload
+        let url = try JSONExporter().export(snapshot)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let data = try Data(contentsOf: url)
+        let text = String(decoding: data, as: UTF8.self)
+        for forbidden in [
+            "SUPERSECRET",
+            "example.invalid",
+            "/private/var/",
+            "second-line",
+        ] where text.contains(forbidden) {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let scanState = root["scanState"] as? [String: Any],
+              scanState["lastError"] as? String
+                == DiagnosticLogPrivacy.persistedScanFailureCopy
+        else { throw MomentSharingError.stateUnavailable }
     }
 
     private static func writeProgress(caseID: String, phase: String) {
@@ -2698,7 +2726,7 @@ actor SharingRuntimeSelfTestRunner {
                     senderPolicyVersion: 1,
                     senderPolicyAcceptedAt: createdAt,
                     attemptCount: 1,
-                    lastErrorCode: "fixture-failed",
+                    lastErrorCode: "state-unavailable",
                     createdAt: createdAt,
                     updatedAt: createdAt
                 ).validated())
@@ -4599,6 +4627,52 @@ actor SharingRuntimeSelfTestRunner {
             expected: creating,
             lifecycleToken: snapshot.lifecycleToken
         )
+
+        // A normal read may hide legacy diagnostic text in memory, but it must
+        // never rewrite the full PairingState without the lifecycle flock. A
+        // locked operation performs the physical scrub without changing the
+        // authorization identity or its CAS revision.
+        guard let pairingStateURL = SharedContainer.pairingStateURL else {
+            throw PairingError.stateUnavailable
+        }
+        let legacyPairingError =
+            "https://example.invalid/private/var/mobile/pairing?token=SUPERSECRET\nsecond-line"
+        var legacyPairing = paired
+        legacyPairing.lastError = legacyPairingError
+        let legacyPairingEncoder = JSONEncoder()
+        legacyPairingEncoder.dateEncodingStrategy = .iso8601
+        legacyPairingEncoder.outputFormatting = [
+            .prettyPrinted,
+            .sortedKeys,
+            .withoutEscapingSlashes,
+        ]
+        let legacyPairingData = try legacyPairingEncoder.encode(legacyPairing.validated())
+        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
+            try SharingSecureFile.write(legacyPairingData, to: pairingStateURL)
+        }
+        guard String(decoding: legacyPairingData, as: UTF8.self).contains("SUPERSECRET"),
+              let readOnlyPairing = try PairingStateStore.load(),
+              readOnlyPairing.lastError == DiagnosticLogPrivacy.persistedPairingFailureCopy,
+              try Data(contentsOf: pairingStateURL) == legacyPairingData
+        else { throw PairingError.stateUnavailable }
+
+        let lockedMigration = try PairingStateStore.beginOperation()
+        guard lockedMigration.lifecycleToken == snapshot.lifecycleToken,
+              let migratedPairing = lockedMigration.state,
+              migratedPairing.lastError == DiagnosticLogPrivacy.persistedPairingFailureCopy,
+              migratedPairing.storageRevision == paired.storageRevision
+        else { throw PairingError.stateUnavailable }
+        let migratedPairingData = try Data(contentsOf: pairingStateURL)
+        let migratedPairingText = String(decoding: migratedPairingData, as: UTF8.self)
+        for forbidden in [
+            "SUPERSECRET",
+            "example.invalid",
+            "/private/var/",
+            "second-line",
+        ] where migratedPairingText.contains(forbidden) {
+            throw PairingError.stateUnavailable
+        }
+        paired = migratedPairing
 
         let pairingRevisionBeforeRename = paired.storageRevision
         let firstWindowName = try PrivateWindowPresentationStore.save(

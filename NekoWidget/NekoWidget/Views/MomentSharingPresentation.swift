@@ -414,14 +414,13 @@ enum MomentSharingPresentationPolicy {
                     nextRetryAt: value.nextRetryAt,
                     requiresSensitiveContentWarning:
                         value.errorCodes.contains("moderation-disabled"),
-                    isServerRuntimeUnavailable: value.errorCodes.contains(where: {
-                        $0.hasSuffix("moment_runtime_disabled")
-                    }),
+                    isServerRuntimeUnavailable:
+                        value.errorCodes.contains("moment-runtime-disabled"),
                     isOutboxCapacityBlocked: value.errorCodes.contains("outbox-full"),
                     hasOtherRetryReason: value.errorCodes.contains(where: {
                         $0 != "moderation-disabled"
                             && $0 != "outbox-full"
-                            && !$0.hasSuffix("moment_runtime_disabled")
+                            && $0 != "moment-runtime-disabled"
                     })
                 )
             }

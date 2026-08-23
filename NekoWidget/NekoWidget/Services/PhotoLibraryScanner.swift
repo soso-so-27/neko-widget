@@ -1165,15 +1165,16 @@ actor PhotoLibraryScanner {
             // A secondary album classifier must never erase a valid cat or
             // make it disappear from the Widget candidate cache.
             processingOutcome = "detected-album-pending"
-            let value = error as NSError
             SharedLog.app.warning(
                 "vision",
                 "Grouped album analysis deferred",
-                metadata: [
-                    "asset": SharedLog.shortHash(asset.localIdentifier),
-                    "code": "\(value.code)",
-                    "domain": value.domain
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .photoAnalysis,
+                    additional: [
+                        "asset": SharedLog.shortHash(asset.localIdentifier)
+                    ]
+                )
             )
             return finish(AssetRecord(
                 localIdentifier: asset.localIdentifier,
@@ -1238,7 +1239,6 @@ actor PhotoLibraryScanner {
         processingOutcome: inout String,
         recoveryDiagnostics: ScanRecoveryDiagnostics
     ) -> AnalyzedAsset {
-        let value = error as NSError
         if analysisMode.preservesPreviousCatOnFailure,
            let previous,
            previous.isCatCandidate {
@@ -1246,11 +1246,13 @@ actor PhotoLibraryScanner {
             SharedLog.app.warning(
                 "vision",
                 "Cat bounds refresh deferred for grouped albums",
-                metadata: [
-                    "asset": SharedLog.shortHash(asset.localIdentifier),
-                    "code": "\(value.code)",
-                    "domain": value.domain
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .photoAnalysis,
+                    additional: [
+                        "asset": SharedLog.shortHash(asset.localIdentifier)
+                    ]
+                )
             )
             return AnalyzedAsset(
                 record: pendingGroupedAlbumRecord(asset: asset, previous: previous),
@@ -1261,7 +1263,7 @@ actor PhotoLibraryScanner {
         SharedLog.app.error(
             "vision",
             "Vision animal recognition request failed",
-            metadata: ["code": "\(value.code)", "domain": value.domain]
+            metadata: SharedLog.errorMetadata(error, category: .photoAnalysis)
         )
         return AnalyzedAsset(
             record: AssetRecord(
@@ -1284,15 +1286,14 @@ actor PhotoLibraryScanner {
         _ error: Error,
         pass: AssetDetectionPass
     ) {
-        let value = error as NSError
         SharedLog.app.warning(
             "vision",
             "Cat recovery Vision pass failed; keeping the primary result",
-            metadata: [
-                "code": "\(value.code)",
-                "domain": value.domain,
-                "pass": pass.rawValue
-            ]
+            metadata: SharedLog.errorMetadata(
+                error,
+                category: .photoAnalysis,
+                additional: ["pass": pass.rawValue]
+            )
         )
     }
 
@@ -1472,19 +1473,22 @@ actor PhotoLibraryScanner {
             SharedLog.app.warning(
                 "image-load",
                 "Photo thumbnail load failed (sampled)",
-                metadata: [
-                    "asset": SharedLog.shortHash(asset.localIdentifier),
-                    "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
-                    "cancelled": "\(outcome.wasCancelled)",
-                    "code": outcome.errorCode.map { String($0) } ?? "none",
-                    "deliveryMode": profile.logName,
-                    "degraded": "\(outcome.isDegraded)",
-                    "domain": outcome.errorDomain ?? "none",
-                    "inCloud": "\(outcome.isInCloud)",
-                    "networkAllowed": "false",
-                    "targetPixels": "\(Int(profile.targetSize.width))x\(Int(profile.targetSize.height))",
-                    "timedOut": "\(outcome.timedOut)"
-                ]
+                metadata: SharedLog.errorMetadata(
+                    domain: outcome.errorDomain,
+                    code: outcome.errorCode,
+                    category: .photoAnalysis,
+                    additional: [
+                        "asset": SharedLog.shortHash(asset.localIdentifier),
+                        "assetPixels": "\(asset.pixelWidth)x\(asset.pixelHeight)",
+                        "cancelled": "\(outcome.wasCancelled)",
+                        "deliveryMode": profile.logName,
+                        "degraded": "\(outcome.isDegraded)",
+                        "inCloud": "\(outcome.isInCloud)",
+                        "networkAllowed": "false",
+                        "targetPixels": "\(Int(profile.targetSize.width))x\(Int(profile.targetSize.height))",
+                        "timedOut": "\(outcome.timedOut)"
+                    ]
+                )
             )
         }
         if let output = outcome.image {

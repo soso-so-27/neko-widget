@@ -55,6 +55,7 @@ jobs:
           python3 ci/test-public-policy-site.py
           python3 ci/test-export-temp-file-lifecycle.py
           python3 ci/test-photo-permission-bootstrap.py
+          python3 ci/test-diagnostic-log-privacy.py
 
       - name: Verify Swift pairing protocol vectors
         working-directory: NekoWidget

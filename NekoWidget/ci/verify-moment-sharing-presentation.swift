@@ -190,7 +190,7 @@ enum MomentSharingPresentationVerifier {
                     .prepared,
                     updatedAt: 191,
                     retryAt: 210,
-                    error: "http-503-moment_runtime_disabled"
+                    error: "moment-runtime-disabled"
                 ),
                 delivery(
                     "prepared-retry",

@@ -294,7 +294,7 @@ actor DailySharingSyncCoordinator {
             SharedLog.app.warning(
                 "sharing-media",
                 "Sharing continuation could not be persisted after the pass limit",
-                metadata: ["error": String(describing: error)]
+                metadata: SharedLog.errorMetadata(error, category: .sharingMedia)
             )
         }
     }
@@ -428,7 +428,10 @@ actor DailySharingSyncCoordinator {
                         SharedLog.app.warning(
                             "sharing-media",
                             "Outbound reconciliation stopped after a non-retryable response",
-                            metadata: ["error": String(describing: error)]
+                            metadata: SharedLog.errorMetadata(
+                                error,
+                                category: .sharingMedia
+                            )
                         )
                     }
                 }
@@ -445,10 +448,11 @@ actor DailySharingSyncCoordinator {
                     SharedLog.app.warning(
                         "sharing-media",
                         "Daily publish retained the previous verified generation",
-                        metadata: [
-                            "error": String(describing: error),
-                            "trigger": trigger
-                        ]
+                        metadata: SharedLog.errorMetadata(
+                            error,
+                            category: .sharingMedia,
+                            additional: ["trigger": trigger]
+                        )
                     )
                     if Self.isRemoteRevocation(error) {
                         throw error
@@ -508,10 +512,11 @@ actor DailySharingSyncCoordinator {
                     SharedLog.app.warning(
                         "sharing-media",
                         "Inbound sync retained the previous verified generation",
-                        metadata: [
-                            "error": String(describing: error),
-                            "trigger": trigger
-                        ]
+                        metadata: SharedLog.errorMetadata(
+                            error,
+                            category: .sharingMedia,
+                            additional: ["trigger": trigger]
+                        )
                     )
                     if Self.isRemoteRevocation(error) {
                         throw error
@@ -543,7 +548,10 @@ actor DailySharingSyncCoordinator {
                     SharedLog.app.error(
                         "sharing-media",
                         "Remote revocation was confirmed but local purge failed",
-                        metadata: ["error": String(describing: error)]
+                        metadata: SharedLog.errorMetadata(
+                            error,
+                            category: .sharingMedia
+                        )
                     )
                 }
                 return
@@ -551,10 +559,11 @@ actor DailySharingSyncCoordinator {
             SharedLog.app.warning(
                 "sharing-media",
                 "Daily sharing synchronization skipped",
-                metadata: [
-                    "error": String(describing: error),
-                    "trigger": trigger
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .sharingMedia,
+                    additional: ["trigger": trigger]
+                )
             )
         }
     }
@@ -1961,11 +1970,14 @@ actor DailySharingSyncCoordinator {
             SharedLog.app.warning(
                 "sharing-media",
                 "Verified inbound cache failed local integrity recheck",
-                metadata: [
-                    "source": highWater.sourceID,
-                    "generation": highWater.generationID,
-                    "error": String(describing: error)
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .sharingMedia,
+                    additional: [
+                        "source": highWater.sourceID,
+                        "generation": highWater.generationID,
+                    ]
+                )
             )
             return false
         }
@@ -2231,10 +2243,11 @@ actor DailySharingSyncCoordinator {
             SharedLog.app.warning(
                 "sharing-media",
                 "Own committed generation will be recovered from the server",
-                metadata: [
-                    "generation": current.generationID,
-                    "error": String(describing: error)
-                ]
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .sharingMedia,
+                    additional: ["generation": current.generationID]
+                )
             )
             // Do not depend on the independent inbound retry schedule: the
             // outbound ciphertext is deleted immediately after this returns.

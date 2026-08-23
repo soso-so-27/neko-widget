@@ -1777,8 +1777,15 @@ actor MomentSharingCoordinator {
             case .stateUnavailable: return "state-unavailable"
             case .reportOnly: return "report-only"
             case .retryableServer: return "retryable-server"
-            case let .requestRejected(status, code, _):
-                return "http-\(status)-\((code ?? "rejected").prefix(48))"
+            case let .requestRejected(_, code, _):
+                switch code {
+                case "moment_runtime_disabled": return "moment-runtime-disabled"
+                case "report_result_unknown": return "request-rejected"
+                case "report_window_closed": return "request-rejected"
+                case "reservation_expired": return "reservation-expired"
+                case "reservation_retry_limit_exceeded": return "reservation-retry-limit"
+                default: return "request-rejected"
+                }
             }
         }
         return "unknown"
