@@ -131,7 +131,7 @@ Build 31で完了したのは本人2台の内部受入であり、一般公開�
 - main CI [run 32652404425](https://github.com/soso-so-27/neko-widget/actions/runs/32652404425)が成功
 - 同じsourceの署名dry run [run 32652415564](https://github.com/soso-so-27/neko-widget/actions/runs/32652415564)でarchive、署名検査、IPA exportが成功
 - 内部TestFlight upload [run 32653493665](https://github.com/soso-so-27/neko-widget/actions/runs/32653493665)でApp Store Connectのvalidateとuploadが成功
-- 暗号化されたIPA、xcarchive、dSYM artifactをdownloadし、復号せず暗号化されたままprivateな保管場所へbackup済み
+- 暗号化されたIPA、xcarchive、dSYM artifactをdownloadし、復号せず暗号化されたままprivate保管済み
 
 workflow成功が示すのはAppleへのupload受付までである。Apple側の処理完了、Build 35の一覧表示、輸出コンプライアンス状態、内部groupへの割当、本人2台へのinstallと受入はまだ確認していない。外部TestFlight groupへの追加、TestFlight App Review、App Store審査提出は行っていない。
 
@@ -146,11 +146,13 @@ Build 35には写真配送やまど名同期のprotocolを広げず、次の利�
 
 source固定前に、schema 5から6への既定値移行、表示可能な受信写真だけへ印を付けられること、期限・容量・tombstone・unlink・blockで孤立した印が残らないこと、Photos／iCloudへ書き込まないこと、ペアリング各段階の主操作と手動確認結果を対象テストで確認した。Apple側の処理完了後に内部groupへ割り当てる場合は、2台で既存ペアリングを維持した更新、印のON/OFF、手動確認結果、解除を伴わない機種変更案内、一枚の送受信とWidgetの非退行を改めて確認する。一般向けTestFlightやApp Storeへは自動的に広げない。
 
-## PR22 完全ローカル境界の統合記録
+## PR22/PR23の統合とPR24/Build 36のpending記録
 
 PR22で`release_mode = disabled`をmainの`cd5c13e6839dee4c3c33f8c65254a324328fbb32`へ統合した。このmodeは共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにし、App Storeへ出す完全ローカル版の候補境界である。
 
-この文書更新時点では、同commitを使う予定のBuild 36についてmain CIも署名dry runも完了していない。したがってBuild 36をApp Store Connectへupload、build選択、外部配布または審査提出してはならない。Build 35の`media-staging`実績はBuild 36の`disabled` archive検証を代替しない。
+PR23で完全ローカル版の公開policyとread-only監視をmainの`9924edea7da1113d315138a841862a56f7c76e57`へ統合した。Pages deploy run `32656307265`とread-only monitor run `32656352690`は成功したが、非公開のprivacy問い合わせ窓口は未掲載のため、一般公開の提出準備完了とは扱わない。
+
+この文書更新時点ではPR24は未統合で、Build 36の正確source SHA、対象main SHAのmain CI、`release_mode = disabled`の署名dry runは未確定・未実施である。Build 36をApp Store Connectへupload、build選択、外部配布または審査提出してはならない。Build 35の`media-staging`実績はBuild 36の`disabled` archive検証を代替しない。
 
 ## Build 35後も残るもの
 

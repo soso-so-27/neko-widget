@@ -447,7 +447,7 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 
 ## 10. 承認後チェックリスト
 
-直近のBuild 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`で、main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`が成功した。暗号化された署名artifactはprivate保管へbackup済みである。一方、Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認であり、外部group追加や審査提出は行っていない。
+直近のBuild 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`で、main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`が成功した。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みである。一方、Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認であり、外部group追加や審査提出は行っていない。PR23の完全ローカル版policyとread-only監視はmain `9924edea7da1113d315138a841862a56f7c76e57`へ統合・配備済みであるが、非公開のprivacy問い合わせ窓口は未掲載である。PR24は未統合、Build 36はsource SHA未確定で、main CI、`disabled`署名dry run、App Store Connect uploadのいずれも未実施である。
 
 - [ ] Membership active、最新契約承諾、Team ID記録
 - [x] App Store Connect API access申請
@@ -471,6 +471,10 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 - [x] Build 35の暗号化artifactをdownloadし、復号せず暗号化されたままprivate保管
 - [ ] App Store Connectの処理完了と輸出コンプライアンス状態を確認
 - [ ] Build 35を内部TestFlight groupへ割り当て、tester端末で受入
+- [x] PR23の完全ローカル版policyをPagesへ配備し、read-only監視で確認
+- [ ] 実在する非公開のprivacy問い合わせ窓口をpolicyへ掲載
+- [ ] PR24をmainへ統合し、正確なmain SHAとCI結果を記録
+- [ ] Build 36を固定済みmain SHAから`release_mode = disabled`、`upload_to_testflight = false`で署名dry runし、archive/privacy/entitlement検査を確認
 
 ## 公式資料
 
