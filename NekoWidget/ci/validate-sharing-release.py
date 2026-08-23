@@ -435,6 +435,7 @@ def validate_expected_mode(
     expected_community_standards_url: str,
     app_info: dict,
     share_info: dict,
+    widget_info: dict,
     pairing_enabled: bool,
     media_enabled: bool,
     handoff_enabled: bool,
@@ -465,6 +466,16 @@ def validate_expected_mode(
     if share_mode != app_mode:
         failures.append("App and Share Extension SharingReleaseMode do not match.")
 
+    widget_mode_value = widget_info.get("SharingReleaseMode", "")
+    widget_mode = widget_mode_value if isinstance(widget_mode_value, str) else ""
+    if widget_mode != expected_mode:
+        failures.append(
+            "Widget SharingReleaseMode must match the expected app mode "
+            f"{expected_mode}, got {widget_mode or 'empty'}."
+        )
+    if widget_mode != app_mode:
+        failures.append("App and Widget SharingReleaseMode do not match.")
+
     archived_origin = str(app_info.get("SharingAPIBaseURL", ""))
     if archived_origin != expected_api_origin:
         failures.append(
@@ -472,21 +483,20 @@ def validate_expected_mode(
             "by the release workflow."
         )
 
-    if expected_mode == "media-staging":
-        expected_configuration = {
-            "SharingModerationKeyID": expected_moderation_key_id,
-            "SharingModerationPublicKey": expected_moderation_public_key,
-            "SharingPrivacyURL": expected_privacy_url,
-            "SharingSupportURL": expected_support_url,
-            "SharingCommunityStandardsURL": expected_community_standards_url,
-        }
-        for key, expected_value in expected_configuration.items():
-            archived_value = app_info.get(key)
-            if not isinstance(archived_value, str) or archived_value != expected_value:
-                failures.append(
-                    f"Processed {key} does not exactly match the value supplied "
-                    "by the protected release environment."
-                )
+    expected_configuration = {
+        "SharingModerationKeyID": expected_moderation_key_id,
+        "SharingModerationPublicKey": expected_moderation_public_key,
+        "SharingPrivacyURL": expected_privacy_url,
+        "SharingSupportURL": expected_support_url,
+        "SharingCommunityStandardsURL": expected_community_standards_url,
+    }
+    for key, expected_value in expected_configuration.items():
+        archived_value = app_info.get(key)
+        if not isinstance(archived_value, str) or archived_value != expected_value:
+            failures.append(
+                f"Processed {key} does not exactly match the value supplied "
+                "by the protected release environment."
+            )
 
     actual = (
         pairing_enabled,
@@ -516,11 +526,44 @@ def validate_expected_mode(
             f"Expected {expected_mode} flags ({expected_text}); archive has {actual_text}."
         )
 
+    widget_pairing_enabled = parsed_flag(
+        widget_info, "SharingFeatureEnabled", failures
+    )
+    widget_media_enabled = parsed_flag(widget_info, "SharingMediaEnabled", failures)
+    if (widget_pairing_enabled, widget_media_enabled) != expected[:2]:
+        failures.append(
+            "Widget sharing flags must match the expected app feature/media flags."
+        )
+
+    extension = share_info.get("NSExtension")
+    attributes = extension.get("NSExtensionAttributes") if isinstance(extension, dict) else None
+    activation_rule = (
+        attributes.get("NSExtensionActivationRule")
+        if isinstance(attributes, dict)
+        else None
+    )
+    activation_count = (
+        activation_rule.get("NSExtensionActivationSupportsImageWithMaxCount")
+        if isinstance(activation_rule, dict)
+        else None
+    )
+    expected_activation_count = 0 if expected_mode == "disabled" else 1
+    if (
+        isinstance(activation_count, bool)
+        or not isinstance(activation_count, int)
+        or activation_count != expected_activation_count
+    ):
+        failures.append(
+            "Share Extension image activation count must be "
+            f"{expected_activation_count} for {expected_mode}."
+        )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--info-plist", type=Path, required=True)
     parser.add_argument("--share-info-plist", type=Path, required=True)
+    parser.add_argument("--widget-info-plist", type=Path, required=True)
     parser.add_argument("--privacy-manifest", type=Path, required=True)
     parser.add_argument("--widget-privacy-manifest", type=Path, required=True)
     parser.add_argument("--share-privacy-manifest", type=Path, required=True)
@@ -546,6 +589,7 @@ def main() -> int:
     try:
         info = load_plist(args.info_plist)
         share_info = load_plist(args.share_info_plist)
+        widget_info = load_plist(args.widget_info_plist)
         privacy = load_plist(args.privacy_manifest)
         widget_privacy = load_plist(args.widget_privacy_manifest)
         share_privacy = load_plist(args.share_privacy_manifest)
@@ -572,6 +616,7 @@ def main() -> int:
         args.expected_community_standards_url,
         info,
         share_info,
+        widget_info,
         pairing_enabled,
         media_enabled,
         handoff_enabled,

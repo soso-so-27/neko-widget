@@ -104,6 +104,7 @@ def info(
             release_mode = "pairing-only"
         else:
             release_mode = "disabled"
+    has_media_safety_configuration = release_mode == "media-staging"
     return {
         "SharingReleaseMode": release_mode,
         "SharingFeatureEnabled": pairing,
@@ -116,11 +117,17 @@ def info(
             "共有シートで選んだ1枚を最大2,048pxへ縮小し、位置情報を除いて"
             "暗号化して送り、原本は自動送信しません。"
         ),
-        "SharingModerationKeyID": MODERATION_KEY_ID,
-        "SharingModerationPublicKey": MODERATION_PUBLIC_KEY,
-        "SharingPrivacyURL": PRIVACY_URL,
-        "SharingSupportURL": SUPPORT_URL,
-        "SharingCommunityStandardsURL": COMMUNITY_URL,
+        "SharingModerationKeyID": (
+            MODERATION_KEY_ID if has_media_safety_configuration else ""
+        ),
+        "SharingModerationPublicKey": (
+            MODERATION_PUBLIC_KEY if has_media_safety_configuration else ""
+        ),
+        "SharingPrivacyURL": PRIVACY_URL if has_media_safety_configuration else "",
+        "SharingSupportURL": SUPPORT_URL if has_media_safety_configuration else "",
+        "SharingCommunityStandardsURL": (
+            COMMUNITY_URL if has_media_safety_configuration else ""
+        ),
         "ITSAppUsesNonExemptEncryption": False,
     }
 
@@ -137,7 +144,23 @@ def share_info_from(app_info: dict) -> dict:
         "SharingCommunityStandardsURL",
     ):
         value.pop(key, None)
+    activation_count = 0 if app_info.get("SharingReleaseMode") == "disabled" else 1
+    value["NSExtension"] = {
+        "NSExtensionAttributes": {
+            "NSExtensionActivationRule": {
+                "NSExtensionActivationSupportsImageWithMaxCount": activation_count,
+            }
+        }
+    }
     return value
+
+
+def widget_info_from(app_info: dict) -> dict:
+    return {
+        "SharingReleaseMode": app_info.get("SharingReleaseMode", ""),
+        "SharingFeatureEnabled": app_info.get("SharingFeatureEnabled", "NO"),
+        "SharingMediaEnabled": app_info.get("SharingMediaEnabled", "NO"),
+    }
 
 
 class SharingReleasePreflightTests(unittest.TestCase):
@@ -147,6 +170,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         privacy_value: dict,
         export_reviewed: str = "YES",
         share_info_value: dict | None = None,
+        widget_info_value: dict | None = None,
         widget_privacy_value: dict | None = None,
         widget_privacy_exists: bool = True,
         widget_privacy_bytes: bytes | None = None,
@@ -163,6 +187,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             root = Path(directory)
             info_path = root / "Info.plist"
             share_info_path = root / "ShareInfo.plist"
+            widget_info_path = root / "WidgetInfo.plist"
             privacy_path = root / "PrivacyInfo.xcprivacy"
             widget_privacy_path = root / "WidgetPrivacyInfo.xcprivacy"
             share_privacy_path = root / "SharePrivacyInfo.xcprivacy"
@@ -171,6 +196,11 @@ class SharingReleasePreflightTests(unittest.TestCase):
             with share_info_path.open("wb") as stream:
                 plistlib.dump(
                     share_info_value or share_info_from(info_value),
+                    stream,
+                )
+            with widget_info_path.open("wb") as stream:
+                plistlib.dump(
+                    widget_info_value or widget_info_from(info_value),
                     stream,
                 )
             with privacy_path.open("wb") as stream:
@@ -212,6 +242,8 @@ class SharingReleasePreflightTests(unittest.TestCase):
                     str(info_path),
                     "--share-info-plist",
                     str(share_info_path),
+                    "--widget-info-plist",
+                    str(widget_info_path),
                     "--privacy-manifest",
                     str(privacy_path),
                     "--widget-privacy-manifest",
@@ -255,6 +287,96 @@ class SharingReleasePreflightTests(unittest.TestCase):
         result = self.run_preflight(info("NO", "NO"), privacy(), "NO")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("sharing is disabled", result.stdout)
+
+    def test_disabled_rejects_every_sharing_surface_flag(self) -> None:
+        flag_cases = {
+            "feature": ("SharingFeatureEnabled", "YES"),
+            "media": ("SharingMediaEnabled", "YES"),
+            "handoff": ("SharingShareExtensionHandoffEnabled", "YES"),
+            "direct-send": ("SharingShareExtensionSendEnabled", "YES"),
+            "review-preview": ("SharingReviewPreviewEnabled", "YES"),
+        }
+        for name, (key, value) in flag_cases.items():
+            with self.subTest(name=name):
+                app = info("NO", "NO")
+                app[key] = value
+                result = self.run_preflight(
+                    app,
+                    privacy(),
+                    "NO",
+                    expected_mode="disabled",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Expected disabled flags", result.stderr)
+
+    def test_disabled_rejects_endpoint_and_safety_configuration(self) -> None:
+        values = {
+            "SharingAPIBaseURL": ENDPOINT,
+            "SharingModerationKeyID": MODERATION_KEY_ID,
+            "SharingModerationPublicKey": MODERATION_PUBLIC_KEY,
+            "SharingPrivacyURL": PRIVACY_URL,
+            "SharingSupportURL": SUPPORT_URL,
+            "SharingCommunityStandardsURL": COMMUNITY_URL,
+        }
+        for key, value in values.items():
+            with self.subTest(key=key):
+                app = info("NO", "NO")
+                app[key] = value
+                result = self.run_preflight(
+                    app,
+                    privacy(),
+                    "NO",
+                    expected_mode="disabled",
+                    expected_api_origin="",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not exactly match", result.stderr)
+
+    def test_widget_mode_and_flags_must_match_the_archive_mode(self) -> None:
+        app = info("NO", "NO")
+        cases = (
+            {"SharingReleaseMode": "review-preview", "SharingFeatureEnabled": "NO", "SharingMediaEnabled": "NO"},
+            {"SharingReleaseMode": "disabled", "SharingFeatureEnabled": "YES", "SharingMediaEnabled": "NO"},
+            {"SharingReleaseMode": "disabled", "SharingFeatureEnabled": "NO", "SharingMediaEnabled": "YES"},
+        )
+        for widget in cases:
+            with self.subTest(widget=widget):
+                result = self.run_preflight(
+                    app,
+                    privacy(),
+                    "NO",
+                    widget_info_value=widget,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Widget", result.stderr)
+
+    def test_share_extension_activation_matches_the_archive_mode(self) -> None:
+        disabled = info("NO", "NO")
+        disabled_share = share_info_from(disabled)
+        disabled_share["NSExtension"]["NSExtensionAttributes"][
+            "NSExtensionActivationRule"
+        ]["NSExtensionActivationSupportsImageWithMaxCount"] = 1
+        result = self.run_preflight(
+            disabled,
+            privacy(),
+            "NO",
+            share_info_value=disabled_share,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("activation count must be 0", result.stderr)
+
+        media = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+        media_share = share_info_from(media)
+        media_share["NSExtension"]["NSExtensionAttributes"][
+            "NSExtensionActivationRule"
+        ]["NSExtensionActivationSupportsImageWithMaxCount"] = 0
+        result = self.run_preflight(
+            media,
+            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            share_info_value=media_share,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("activation count must be 1", result.stderr)
 
     def test_widget_privacy_manifest_is_required(self) -> None:
         result = self.run_preflight(

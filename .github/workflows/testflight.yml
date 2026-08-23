@@ -8,11 +8,12 @@ on:
         required: false
         type: string
       release_mode:
-        description: "配布範囲。通常はreview-preview、Build 28はpairing-only、次の2台写真確認だけmedia-staging"
+        description: "配布範囲。App Store候補はdisabled、画面確認だけreview-preview、明示した内部試験だけpairing-only/media-staging"
         required: true
-        default: review-preview
+        default: disabled
         type: choice
         options:
+          - disabled
           - review-preview
           - pairing-only
           - media-staging
@@ -76,7 +77,18 @@ jobs:
           release_privacy_url=""
           release_support_url=""
           release_community_standards_url=""
+          share_activation_count="1"
           case "$SELECTED_RELEASE_MODE" in
+            disabled)
+              release_origin=""
+              release_summary="disabled/local-only App Store release"
+              release_feature="NO"
+              release_media="NO"
+              release_handoff="NO"
+              release_direct_send="NO"
+              release_review_preview="NO"
+              share_activation_count="0"
+              ;;
             review-preview)
               release_origin=""
               release_summary="review-preview/runtime disabled"
@@ -124,6 +136,15 @@ jobs:
               exit 1
               ;;
           esac
+
+          share_info_plist="$PROJECT_DIRECTORY/NekoWidgetShareExtension/Info.plist"
+          /usr/libexec/PlistBuddy -c \
+            "Set :NSExtension:NSExtensionAttributes:NSExtensionActivationRule:NSExtensionActivationSupportsImageWithMaxCount $share_activation_count" \
+            "$share_info_plist"
+          actual_share_activation="$(/usr/libexec/PlistBuddy -c \
+            'Print :NSExtension:NSExtensionAttributes:NSExtensionActivationRule:NSExtensionActivationSupportsImageWithMaxCount' \
+            "$share_info_plist")"
+          [[ "$actual_share_activation" == "$share_activation_count" ]]
 
           python3 - \
             "$SELECTED_RELEASE_MODE" \
@@ -205,12 +226,12 @@ jobs:
               ):
                   raise SystemExit(f"{label} must resolve only to public IP addresses.")
 
-          if mode not in {"review-preview", "pairing-only", "media-staging"}:
+          if mode not in {"disabled", "review-preview", "pairing-only", "media-staging"}:
               raise SystemExit(f"Unknown release mode: {mode}")
 
-          if mode == "review-preview":
+          if mode in {"disabled", "review-preview"}:
               if any((origin, moderation_key_id, moderation_public_key, privacy_url, support_url, community_url)):
-                  raise SystemExit("review-preview must not receive sharing runtime configuration.")
+                  raise SystemExit(f"{mode} must not receive sharing runtime configuration.")
           else:
               if not origin:
                   raise SystemExit("SHARING_STAGING_API_ORIGIN is required for enabled sharing modes.")
@@ -711,6 +732,7 @@ jobs:
           python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \
             --info-plist "$app_path/Info.plist" \
             --share-info-plist "$share_path/Info.plist" \
+            --widget-info-plist "$widget_path/Info.plist" \
             --privacy-manifest "$app_path/PrivacyInfo.xcprivacy" \
             --widget-privacy-manifest "$widget_path/PrivacyInfo.xcprivacy" \
             --share-privacy-manifest "$share_path/PrivacyInfo.xcprivacy" \

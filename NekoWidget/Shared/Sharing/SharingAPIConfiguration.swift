@@ -16,6 +16,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     let privacyURL: URL?
     let supportURL: URL?
     let communityStandardsURL: URL?
+    let releaseMode: String
 
     init(
         isEnabled: Bool,
@@ -28,7 +29,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         moderationPublicKey: Data?,
         supportURL: URL?,
         communityStandardsURL: URL?,
-        privacyURL: URL? = nil
+        privacyURL: URL? = nil,
+        releaseMode: String = ""
     ) {
         self.isEnabled = isEnabled
         self.isMediaEnabled = isMediaEnabled
@@ -41,6 +43,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         self.privacyURL = privacyURL
         self.supportURL = supportURL
         self.communityStandardsURL = communityStandardsURL
+        self.releaseMode = releaseMode
     }
 
     var isAvailable: Bool { isEnabled && baseURL != nil }
@@ -71,6 +74,11 @@ struct SharingAPIConfiguration: Equatable, Sendable {
 
     var isReviewVisible: Bool { isAvailable || isReviewPreviewEnabled }
 
+    /// Exact local-only release marker. The archive validator binds this mode
+    /// to an all-off flag tuple; the runtime marker additionally lets the Share
+    /// Extension refuse an unexpected launch before it reads an image provider.
+    var isDisabledRelease: Bool { releaseMode == "disabled" }
+
     static var current: Self {
         let info = Bundle.main.infoDictionary ?? [:]
         let enabled = explicitFlag(info["SharingFeatureEnabled"])
@@ -78,6 +86,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         let handoffEnabled = explicitFlag(info["SharingShareExtensionHandoffEnabled"])
         let directSendEnabled = explicitFlag(info["SharingShareExtensionSendEnabled"])
         let reviewPreviewEnabled = explicitFlag(info["SharingReviewPreviewEnabled"])
+        let releaseMode = (info["SharingReleaseMode"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let rawURL = (info["SharingAPIBaseURL"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let baseURL = URL(string: rawURL).flatMap {
@@ -103,7 +113,8 @@ struct SharingAPIConfiguration: Equatable, Sendable {
             moderationPublicKey: moderationPublicKey,
             supportURL: supportURL,
             communityStandardsURL: communityStandardsURL,
-            privacyURL: privacyURL
+            privacyURL: privacyURL,
+            releaseMode: releaseMode
         )
     }
 

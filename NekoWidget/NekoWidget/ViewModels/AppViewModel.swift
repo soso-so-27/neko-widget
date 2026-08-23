@@ -1799,6 +1799,13 @@ final class AppViewModel: ObservableObject {
                 shownAt: link.shownAt
             )
         case .familyWindow:
+            guard SharingAPIConfiguration.current.isReviewVisible else {
+                SharedLog.app.info(
+                    "deeplink",
+                    "Ignored family window deep link because sharing is unavailable"
+                )
+                return
+            }
             isFamilyWindowPresented = true
             SharedLog.app.info("deeplink", "Opened family window from Widget")
             return

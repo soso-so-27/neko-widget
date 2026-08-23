@@ -16,7 +16,8 @@ CURRENT_PROJECT_VERSION = 1
 
 // Sharing is opt-in per build. Release/TestFlight stays off until the
 // privacy, moderation, and export-compliance gates are completed.
-// This is the shipping default and the Build 27 review-preview boundary.
+// This is the local development/review default and the Build 27 preview
+// boundary. The release workflow defaults to the all-off disabled tuple.
 // Config.PairingOnly.xcconfig and Config.MediaStaging.xcconfig record the
 // explicit test policies. The release workflow applies their values as
 // xcodebuild overrides so target-specific provisioning mappings remain intact.

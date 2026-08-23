@@ -1203,12 +1203,13 @@ actor SharingRuntimeSelfTestRunner {
             isMediaEnabled: false,
             isShareExtensionHandoffEnabled: false,
             isShareExtensionSendEnabled: false,
-            isReviewPreviewEnabled: true,
+            isReviewPreviewEnabled: false,
             baseURL: nil,
             moderationKeyID: nil,
             moderationPublicKey: nil,
             supportURL: nil,
-            communityStandardsURL: nil
+            communityStandardsURL: nil,
+            releaseMode: "disabled"
         )
         let disabledCoordinator = MomentSharingCoordinator(
             configuration: disabledConfiguration
