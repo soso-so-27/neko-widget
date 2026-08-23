@@ -25,16 +25,17 @@ Appleが通常のApple Distribution証明書向けに公開しているCSR作成
 
 ### 1.1 命名規則
 
-3つとも英小文字、数字、ピリオドを中心にした長期利用可能な値にする。GitHub owner名から自動決定せず、自分が今後も使うstable namespaceを決める。
+4つとも英小文字、数字、ピリオドを中心にした長期利用可能な値にする。GitHub owner名から自動決定せず、自分が今後も使うstable namespaceを決める。
 
 ```text
 APP_BUNDLE_IDENTIFIER    = com.<stable-namespace>.nekowidget
 WIDGET_BUNDLE_IDENTIFIER = com.<stable-namespace>.nekowidget.widget
+SHARE_EXTENSION_BUNDLE_IDENTIFIER = com.<stable-namespace>.nekowidget.share
 APP_GROUP_IDENTIFIER     = group.com.<stable-namespace>.nekowidget
 ```
 
-- AppとWidgetは別々のExplicit App IDとして登録する。wildcardは使わない。
-- Widget IDはApp IDを接頭辞に持つ値にする。
+- App、Widget、Share Extensionは別々のExplicit App IDとして登録する。wildcardは使わない。
+- Widget IDとShare Extension IDはApp IDを接頭辞に持つ値にする。
 - App Groupは別のIdentifierであり、必ず`group.`から始める。
 - Team IDはこれらの値へ書かない。署名時の`application-identifier`にはApple側がTeam ID prefixを付ける。
 - App Store Connectへ最初のbuildを送った後は、アプリレコードのBundle IDを変更できない。登録前にスペルを確定する。
@@ -48,6 +49,7 @@ Portal登録時に次を埋める。
 | Stable namespace | `jp.nekowidget` |
 | App Bundle ID | `jp.nekowidget.app` |
 | Widget Bundle ID | `jp.nekowidget.app.widget` |
+| Share Extension Bundle ID | `jp.nekowidget.app.share` |
 | App Group ID | `group.jp.nekowidget.app` |
 | Apple Team ID | `FF96XYPPH2` |
 | App Store Connect App Name | `ねこのまど - 猫の写真ウィジェット` |
@@ -58,10 +60,11 @@ Portal登録時に次を埋める。
 ```xcconfig
 APP_BUNDLE_IDENTIFIER = jp.nekowidget.app
 WIDGET_BUNDLE_IDENTIFIER = jp.nekowidget.app.widget
+SHARE_EXTENSION_BUNDLE_IDENTIFIER = jp.nekowidget.app.share
 APP_GROUP_IDENTIFIER = group.jp.nekowidget.app
 ```
 
-`APP_PROVISIONING_PROFILE_SPECIFIER`と`WIDGET_PROVISIONING_PROFILE_SPECIFIER`は空のままにする。CIがprofileからNameを読み、実行時に注入する。
+`APP_PROVISIONING_PROFILE_SPECIFIER`、`WIDGET_PROVISIONING_PROFILE_SPECIFIER`、`SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER`は空のままにする。CIがprofileからNameを読み、実行時に注入する。
 
 ## 2. Windowsで秘密鍵とCSRを作る
 
@@ -243,7 +246,7 @@ Get-FileHash certificate.public.der -Algorithm SHA256
 
 まずOpenSSL 3の通常形式を使う。GitHubの署名だけ実行するworkflowでmacOS Keychain importに失敗した場合だけ、`pkcs12 -export`へ`-legacy`を加えた互換形式を検討する。
 
-## 5. 配布profileを2つ作る
+## 5. 配布profileを3つ作る
 
 Profilesの`+`からDistributionの`App Store Connect`を選び、次を1つずつ作る。
 
@@ -251,8 +254,9 @@ Profilesの`+`からDistributionの`App Store Connect`を選び、次を1つず�
 | --- | --- | --- |
 | `NekoWidget AppStore App 2026` | App本体 | 前節のApple Distribution |
 | `NekoWidget AppStore Widget 2026` | Widget Extension | 同じApple Distribution |
+| `NekoWidget AppStore Share 2026` | Share Extension | 同じApple Distribution |
 
-それぞれ`.mobileprovision`としてdownloadする。App Store Connect profileには1つのApp IDと1つのdistribution certificateが入るため、Widgetを含むこのアプリでは2ファイル必要である。
+それぞれ`.mobileprovision`としてdownloadする。App Store Connect profileには1つのApp IDと1つのdistribution certificateが入るため、App、Widget、Share Extensionを含むこのアプリでは3ファイル必要である。
 
 Windowsで内容をXMLへ展開する例：
 
@@ -270,6 +274,13 @@ Windowsで内容をXMLへ展開する例：
   -in NekoWidgetWidget_AppStore.mobileprovision `
   -noverify `
   -out NekoWidgetWidget_AppStore.plist
+
+& $OpenSSL cms `
+  -verify `
+  -inform DER `
+  -in NekoWidgetShare_AppStore.mobileprovision `
+  -noverify `
+  -out NekoWidgetShare_AppStore.plist
 ```
 
 展開したplistで、次を確認する。
@@ -320,7 +331,7 @@ Team Keyは特定アプリだけに限定できない。Keyのnameとroleは後�
 - 一人運用中に`Prevent self-review`を有効にすると自分で承認できなくなるため、別reviewerがいない間は有効にしない。
 - 署名素材はRepository SecretsではなくEnvironment Secretsへ置く。
 
-### 7.2 signing-onlyに必要な6 Secrets
+### 7.2 signing-onlyに必要な7 Secrets
 
 | Secret | 値 |
 | --- | --- |
@@ -330,6 +341,7 @@ Team Keyは特定アプリだけに限定できない。Keyのnameとroleは後�
 | `KEYCHAIN_PASSWORD` | CI一時Keychain専用の新規ランダム文字列 |
 | `APP_PROVISIONING_PROFILE_BASE64` | App本体profile全体の改行なしBase64 |
 | `WIDGET_PROVISIONING_PROFILE_BASE64` | Widget profile全体の改行なしBase64 |
+| `SHARE_EXTENSION_PROVISIONING_PROFILE_BASE64` | Share Extension profile全体の改行なしBase64 |
 
 `retain_signed_artifacts = true`で配布buildのxcarchive／dSYMを保管する場合は、次のOptional Secretも追加する。
 
@@ -345,7 +357,7 @@ Team Keyは特定アプリだけに限定できない。Keyのnameとroleは後�
 | `APP_STORE_CONNECT_ISSUER_ID` | Team Keys画面のIssuer UUID |
 | `APP_STORE_CONNECT_PRIVATE_KEY_BASE64` | `AuthKey_<KEY_ID>.p8`全体の改行なしBase64 |
 
-GitHub Variablesは使わない。`GITHUB_TOKEN`、`GITHUB_RUN_NUMBER`、`RUNNER_TEMP`等はGitHub組み込みなので作成不要である。
+署名とuploadの秘密値はEnvironment Secretsに置く。`pairing-only`／`media-staging`の公開origin、公開鍵、policy URLはEnvironment Variablesに分離し、[GitHub Actions / TestFlight設定](GitHub-Actions-TestFlight設定.md)と[2台メディアstaging・TestFlight準備](Media-Staging-TestFlight手順.md)に従う。`GITHUB_TOKEN`、`GITHUB_RUN_NUMBER`、`RUNNER_TEMP`等はGitHub組み込みなので作成不要である。
 
 ### 7.4 PowerShellでBase64を直接Clipboardへ送る
 
@@ -362,6 +374,7 @@ function Copy-FileBase64([string] $Path) {
 Copy-FileBase64 ".\AppleDistribution.p12"
 Copy-FileBase64 ".\NekoWidget_AppStore.mobileprovision"
 Copy-FileBase64 ".\NekoWidgetWidget_AppStore.mobileprovision"
+Copy-FileBase64 ".\NekoWidgetShare_AppStore.mobileprovision"
 Copy-FileBase64 ".\AuthKey_XXXXXXXXXX.p8"
 ```
 
@@ -383,7 +396,7 @@ CI一時Keychain passwordとartifact暗号化passwordは、それぞれ別に生
 - `destination = export`
 - `signingStyle = manual`
 - `signingCertificate = Apple Distribution`
-- App／Widgetの2つのprofile UUID mapping
+- App／Widget／Share Extensionの3つのprofile UUID mapping
 - `manageAppVersionAndBuildNumber = false`
 - `stripSwiftSymbols = true`
 
@@ -434,27 +447,30 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 
 ## 10. 承認後チェックリスト
 
+直近のBuild 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`で、main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`が成功した。暗号化された署名artifactはprivate保管へbackup済みである。一方、Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認であり、外部group追加や審査提出は行っていない。
+
 - [ ] Membership active、最新契約承諾、Team ID記録
 - [x] App Store Connect API access申請
 - [x] App Group登録
 - [x] App本体Explicit App ID登録、App Group割当
 - [x] Widget Explicit App ID登録、同じApp Group割当
-- [x] `Config.xcconfig`の3 IDを同時更新
+- [x] Share Extension Explicit App ID登録、同じApp Group割当
+- [x] `Config.xcconfig`の4 IDを同時更新
 - [x] Apple Distribution証明書発行
 - [x] 証明書と秘密鍵の公開鍵hash一致
 - [x] P12作成・検査
-- [x] App／WidgetのApp Store Connect profile作成
-- [x] 両profileのTeam、Bundle ID、App Group、期限を確認
+- [x] App／Widget／Share ExtensionのApp Store Connect profile作成
+- [x] 3 profileのTeam、Bundle ID、App Group、期限を確認
 - [x] App Store Connectアプリレコード作成
 - [x] Team API Key作成、P8／Key ID／Issuer ID保管
 - [x] GitHub `testflight` EnvironmentとSecrets登録
 - [x] `upload_to_testflight = false`で署名・export成功
-- [ ] build numberを確認
-- [ ] artifact暗号化passwordを別保管し、`retain_signed_artifacts = true`にする
-- [ ] `upload_to_testflight = true`で初回upload
-- [ ] 暗号化artifactをdownload・復号し、xcarchive／dSYMをprivate保管
+- [x] Build 35のbuild numberを確認
+- [x] artifact暗号化passwordを別保管し、`retain_signed_artifacts = true`にする
+- [x] Build 35を`upload_to_testflight = true`でvalidate／upload
+- [x] Build 35の暗号化artifactをdownload・復号し、xcarchive／dSYMをprivate保管
 - [ ] App Store Connectの処理完了と輸出コンプライアンス状態を確認
-- [ ] 内部TestFlight testerへ配布
+- [ ] Build 35を内部TestFlight groupへ割り当て、tester端末で受入
 
 ## 公式資料
 

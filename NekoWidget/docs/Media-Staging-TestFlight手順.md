@@ -2,7 +2,7 @@
 
 この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
 
-Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、履歴、ホーム、Widgetの受入、Build 34で名前付きのまどと1枚共有の本人2台受入まで完了しました。Build 35は共有UXと期限付きの「思い出に残す」を追加する内部候補です。2026-08-24現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視と緊急OFF](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
+Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、履歴、ホーム、Widgetの受入、Build 34で名前付きのまどと1枚共有の本人2台受入まで完了しました。Build 35は共有UXと期限付きの「思い出に残す」を追加し、Appleへのvalidate／upload受付まで完了していますが、Apple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。2026-08-24現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視と緊急OFF](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
 
 ## release modeの固定値
 
@@ -16,7 +16,7 @@ Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfa
 | Share Extension direct-send | `NO` |
 | review-preview | `NO` |
 
-Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネットワーク送信しません。host appは現在のinstallationと明示同意を確認した後にだけ送信候補を作ります。`review-preview`の既定値と`pairing-only`の写真OFF境界は変更しません。
+Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネットワーク送信しません。host appは現在のinstallationと明示同意を確認した後にだけ送信候補を作ります。workflowの既定値は共有を完全にOFFにする`disabled`です。`review-preview`は静的な画面確認だけ、`pairing-only`は写真OFF、`media-staging`は明示した本人2台の内部試験だけに使います。
 
 ## GitHub `testflight` Environmentのprotected variables
 
@@ -44,7 +44,7 @@ Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネ�
 
 privacy policyは写真共有への同意toggleより前と、受信画面の「安全とプライバシー」から開けます。privacy、support、community standardsのいずれかが欠けると、media runtimeは利用可能になりません。
 
-App Store ConnectのApp PrivacyはTestFlight uploadと別の手動gateです。公開policyの内容と上記4種類が実装に一致することを確認し、App Store Connect側を更新するまでuploadしません。
+App Store ConnectのApp PrivacyはTestFlight uploadと別の手動gateです。内部TestFlight向けにbinaryのuploadが成功しても、App Privacyの回答保存・Publishや外部配布、審査提出は完了しません。外部groupへの追加またはApp Store審査提出の前に、公開policyの内容と上記4種類を実装へ一致させ、App Store Connect側を更新します。
 
 ## signing-onlyの実行
 
@@ -124,9 +124,18 @@ Build 31で完了したのは本人2台の内部受入であり、一般公開�
 
 この確認は名前同期を含む本人2台の内部受入であり、複数まど、3人以上、一般向けTestFlight、App Store審査提出、一般公開の完了を意味しない。
 
-## Build 35 候補の受入・配布メモ
+## Build 35 upload記録（Apple処理・実機確認待ち）
 
-Build 35候補は2026-08-24時点で番号未確定・TestFlight未配布である。写真配送やまど名同期のprotocolを広げず、次の利用者向け修正を一つの候補へまとめる。
+2026-08-24、source `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`からBuild 35を作成した。
+
+- main CI [run 32652404425](https://github.com/soso-so-27/neko-widget/actions/runs/32652404425)が成功
+- 同じsourceの署名dry run [run 32652415564](https://github.com/soso-so-27/neko-widget/actions/runs/32652415564)でarchive、署名検査、IPA exportが成功
+- 内部TestFlight upload [run 32653493665](https://github.com/soso-so-27/neko-widget/actions/runs/32653493665)でApp Store Connectのvalidateとuploadが成功
+- 暗号化されたIPA、xcarchive、dSYM artifactをdownload・復号し、privateな保管場所へbackup済み
+
+workflow成功が示すのはAppleへのupload受付までである。Apple側の処理完了、Build 35の一覧表示、輸出コンプライアンス状態、内部groupへの割当、本人2台へのinstallと受入はまだ確認していない。外部TestFlight groupへの追加、TestFlight App Review、App Store審査提出は行っていない。
+
+Build 35には写真配送やまど名同期のprotocolを広げず、次の利用者向け修正をまとめた。
 
 - 最初に「新しいまどを作る」と「招待されたまどに参加」を分け、各段階で役割と次の操作を1つずつ案内する
 - 手動確認後に状態が変わらなくても、確認完了、現在待っている相手側の操作、確認時刻を表示する
@@ -135,9 +144,15 @@ Build 35候補は2026-08-24時点で番号未確定・TestFlight未配布であ�
 - 安全に表示できた受信写真だけへ「思い出に残す」を付けられる。これは共有履歴内の端末ローカルな印であり、写真本体を複製せず、写真アプリやiCloud、個人の「これ好き」へ追加しない
 - 印を付けた写真は最新の一枚を妨げない範囲で端末内履歴の整理時に優先するが、最大90日・500枚・256MBの上限は延長しない。期限、共有解除、block、再インストールで写真と印を削除する
 
-候補SHAを作る前に、schema 5から6への既定値移行、表示可能な受信写真だけへ印を付けられること、期限・容量・tombstone・unlink・blockで孤立した印が残らないこと、Photos／iCloudへ書き込まないこと、ペアリング各段階の主操作と手動確認結果を対象テストで確認する。候補SHAでは通常のiOS buildとsharing runtime self-testを1回通し、その後にだけ本人用内部TestFlightへ配布する。2台では既存ペアリングを維持した更新、印のON/OFF、手動確認結果、解除を伴わない機種変更案内、一枚の送受信とWidgetの非退行を確認する。一般向けTestFlightやApp Storeへは自動的に広げない。
+source固定前に、schema 5から6への既定値移行、表示可能な受信写真だけへ印を付けられること、期限・容量・tombstone・unlink・blockで孤立した印が残らないこと、Photos／iCloudへ書き込まないこと、ペアリング各段階の主操作と手動確認結果を対象テストで確認した。Apple側の処理完了後に内部groupへ割り当てる場合は、2台で既存ペアリングを維持した更新、印のON/OFF、手動確認結果、解除を伴わない機種変更案内、一枚の送受信とWidgetの非退行を改めて確認する。一般向けTestFlightやApp Storeへは自動的に広げない。
 
-### Build 35後も残るもの
+## PR22 完全ローカル境界の統合記録
+
+PR22で`release_mode = disabled`をmainの`cd5c13e6839dee4c3c33f8c65254a324328fbb32`へ統合した。このmodeは共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにし、App Storeへ出す完全ローカル版の候補境界である。
+
+この文書更新時点では、同commitを使う予定のBuild 36についてmain CIも署名dry runも完了していない。したがってBuild 36をApp Store Connectへupload、build選択、外部配布または審査提出してはならない。Build 35の`media-staging`実績はBuild 36の`disabled` archive検証を代替しない。
+
+## Build 35後も残るもの
 
 1. production moderation鍵の複数人バックアップ・rotation・破棄、強い運用者認証、通報判断・異議申立て・早期削除、独立したreport-ingestion緊急OFFを含む一般公開の安全運用
 2. hostile imageの隔離decode／再encode、production D1/R2、負荷試験、監視、App Store ConnectのPrivacy回答・審査メモ・審査用導線

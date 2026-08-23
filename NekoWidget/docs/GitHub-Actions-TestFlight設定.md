@@ -6,7 +6,7 @@
 
 - `ios-build.yml`：push、pull request、手動実行で、AppとWidgetをiOS Simulator向けに無署名ビルドする。これはSwiftのコンパイル検査であり、実機用entitlementや配布署名の正しさまでは保証しない。
 - `ios-scale.yml`：手動実行で、1,000〜3,000枚のSimulatorスケールテストとプロセスメモリ計測を行う。通常は繰り返し実行しない。
-- `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA exportを行う。既定の`review-preview`と、明示的に選んだときだけ使える`pairing-only`を分離する。`upload_to_testflight`がtrueのときだけApp Store Connectで検証し、TestFlightへuploadする。GitHub Environment `testflight`を使う。
+- `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA exportを行う。既定は共有を完全に無効化する`disabled`で、静的な画面確認だけの`review-preview`、写真なしの内部試験だけの`pairing-only`、本人2台の一枚共有だけの`media-staging`を明示的に分離する。`upload_to_testflight`がtrueのときだけApp Store Connectで検証し、TestFlightへuploadする。GitHub Environment `testflight`を使う。
 
 2026年4月28日以降のアップロード要件に合わせ、3つとも`macos-15` runner上のXcode 26.3を明示している。runnerからこのXcodeが削除された場合は、GitHub runner imageの一覧とAppleの提出要件を確認して`DEVELOPER_DIR`を更新する。
 
@@ -19,8 +19,9 @@
 1. Apple Distribution証明書と対応する秘密鍵を含むP12
 2. アプリBundle ID用のApp Store Connect配布プロファイル
 3. Widget Bundle ID用のApp Store Connect配布プロファイル
+4. Share Extension Bundle ID用のApp Store Connect配布プロファイル
 
-2つのプロファイルは、同じTeam、正しいBundle ID、同じApp Group entitlementを持つ必要がある。workflowはarchive前にこれらを検査する。
+3つのプロファイルは、同じTeam、正しいBundle ID、同じApp Group entitlementを持つ必要がある。workflowはarchive前にこれらを検査する。
 
 Xcode 26向けには、プロファイルを現在の保存先である`~/Library/Developer/Xcode/UserData/Provisioning Profiles`へ一時配置し、job終了時に削除する。
 
@@ -63,10 +64,15 @@ Environment Variablesには次を置く。
 
 | Variable | 内容 |
 | --- | --- |
-| `SHARING_STAGING_API_ORIGIN` | `pairing-only`だけに注入するstaging Workerの公開HTTPS origin。末尾path、query、placeholder、localhost、IP直書きは不可 |
+| `SHARING_STAGING_API_ORIGIN` | `pairing-only`または`media-staging`だけに注入するstaging Workerの公開HTTPS origin。末尾path、query、placeholder、localhost、IP直書きは不可 |
 | `SHARING_EXPORT_REVIEWED` | pairing暗号を含むbuildの輸出コンプライアンス確認後だけ`YES` |
+| `SHARING_STAGING_MODERATION_KEY_ID` | `media-staging`用の公開moderation key ID |
+| `SHARING_STAGING_MODERATION_PUBLIC_KEY` | `media-staging`用の公開moderation key。秘密鍵はEnvironmentへ置かない |
+| `SHARING_STAGING_PRIVACY_URL` | `media-staging`用の公開HTTPS Privacy Policy URL |
+| `SHARING_STAGING_SUPPORT_URL` | `media-staging`用の公開HTTPS Support URL |
+| `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | `media-staging`用の公開HTTPS Community Standards URL |
 
-`SHARING_STAGING_API_ORIGIN`は`Config.xcconfig`やソースへ書かない。`testflight` Environmentを`main`だけに制限し、workflowが`pairing-only`を選んだ場合だけarchiveへ注入する。未設定または公開originとして不正なら署名処理前に失敗し、processed Info.plistでも再検査する。
+これらのstaging値は`Config.xcconfig`やソースへ書かない。`testflight` Environmentを`main`だけに制限し、workflowが`pairing-only`または`media-staging`を選んだ場合だけ必要な値をarchiveへ注入する。未設定、不正な公開origin、placeholder URL、非canonical keyは署名処理前に失敗し、processed Info.plistでも再検査する。
 
 macOSで改行なしのBase64文字列をクリップボードへ入れる例：
 
@@ -75,6 +81,7 @@ base64 -i AuthKey_XXXXXXXXXX.p8 | tr -d '\n' | pbcopy
 base64 -i Distribution.p12 | tr -d '\n' | pbcopy
 base64 -i NekoWidget_AppStore.mobileprovision | tr -d '\n' | pbcopy
 base64 -i NekoWidgetWidget_AppStore.mobileprovision | tr -d '\n' | pbcopy
+base64 -i NekoWidgetShare_AppStore.mobileprovision | tr -d '\n' | pbcopy
 ```
 
 Windowsでは秘密値をconsoleやtext fileへ出さず、[Apple Developer署名・TestFlight準備](Apple-Developer署名準備.md#74-powershellでbase64を直接clipboardへ送る)のClipboard関数を使う。貼り付け後はClipboardを空にし、WindowsのClipboard履歴とデバイス間同期を無効にする。
@@ -86,13 +93,24 @@ Windowsでは秘密値をconsoleやtext fileへ出さず、[Apple Developer署�
 1. まず`iOS build check`を手動実行し、無署名コンパイルを通す。
 2. Actions > `Archive and upload to TestFlight` > Run workflowを選ぶ。
    実行対象branchは`main`に限定しており、それ以外でdispatchしたjobはskipする。
-3. 通常は`release_mode = review-preview`のままにする。これはBuild 27までの静的レビュー境界で、共有runtimeと収集申告はOFFのままである。
+3. 通常は既定の`release_mode = disabled`のままにする。これはApp Store候補の完全ローカル境界で、共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにする。`review-preview`は静的な画面確認、`pairing-only`と`media-staging`は明示した内部試験だけに使う。
 4. 初回は`upload_to_testflight = false`、`retain_signed_artifacts = false`にし、P12 import、3 profile、manual archive、署名検査、IPA exportだけを通す。API Key関連の3 Secretsはまだ不要で、Appleへは送信しない。
 5. `build_number`は正の整数を指定する。空欄では当該workflowの`github.run_number`を使うが、手動Xcodeなど別経路で同じ番号を使った場合は、既存より大きい番号を明示する。
 6. `testflight` Environmentの承認を行う。
 7. signing-onlyが成功したらApp Store ConnectのアプリレコードとAPI Keyを確認し、`upload_to_testflight = true`、`retain_signed_artifacts = true`で実行する。
 8. archive、IPA export、validate、uploadの順に成功したことをログで確認する。
 9. App Store Connect側の処理完了を待つ。workflow成功はアップロード受付までであり、Apple側の処理や輸出コンプライアンス回答、TestFlightグループへの配布までは自動化しない。
+
+### 2026-08-24の直近記録
+
+Build 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`から作成した。
+
+- main CI [run 32652404425](https://github.com/soso-so-27/neko-widget/actions/runs/32652404425)が成功
+- 署名dry run [run 32652415564](https://github.com/soso-so-27/neko-widget/actions/runs/32652415564)が成功
+- 内部TestFlight upload [run 32653493665](https://github.com/soso-so-27/neko-widget/actions/runs/32653493665)でvalidate／uploadが成功
+- 暗号化された署名artifactはdownload・復号し、privateな保管場所へbackup済み
+
+Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認である。外部groupへの追加、TestFlight App Review、App Store審査提出は行っていない。PR22の`disabled` modeはmain `cd5c13e`へ統合済みだが、同commitを使うBuild 36のmain CIと署名dry runはまだ完了していない。
 
 ### Build 28の2台ペアリング確認
 

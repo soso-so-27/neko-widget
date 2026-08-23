@@ -26,7 +26,7 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 
 | 選択 | buildの能力 | 必要な申告 | 状態 |
 | --- | --- | --- | --- |
-| A. ローカル写真・Widgetのみ | 写真共有runtime、共有Extensionの送信、まど名同期を完全にOFF | 最終archiveのPrivacy Manifestと実通信を根拠に、共有データを収集しない回答へ揃える。共有を説明・撮影しない | **本人入力** |
+| A. ローカル写真・Widgetのみ | 写真共有runtime、共有Extensionの送信、まど名同期を完全にOFF | 最終archiveのPrivacy Manifestと実通信を根拠に、共有データを収集しない回答へ揃える。共有を説明・撮影しない | **main統合済み。Build 36検証・本人選択待ち** |
 | B. 名前付きの非公開なまどを含む | 招待、2者確認、一枚送受信、履歴、共有Widget、通報、block、共有解除をON | 共有データ4種類、UGC安全策、2端末審査、暗号化輸出、production運用を全て揃える | **本人入力 / 現在は提出停止** |
 
 選択: `【本人入力: A / B】`
@@ -35,6 +35,13 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 - 提出Build: `【Connect確認】`
 - Git commit: `【Connect確認】`
 - archive checksumまたはApp Store Connect build ID: `【Connect確認】`
+
+### 0.3 現在のrelease証跡
+
+- Build 35は共有を含む内部`media-staging`で、source `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`を使用した。main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`は成功し、暗号化artifactもprivate保管へbackup済みである。
+- Build 35についてApple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認である。外部group追加、TestFlight App Review、App Store審査提出は行っていない。
+- 選択Aの`disabled` modeはPR22でmain `cd5c13e6839dee4c3c33f8c65254a324328fbb32`へ統合済みである。ただし同commitを使う予定のBuild 36はmain CIも署名dry runも未完了で、App Store Connectへuploadまたはbuild選択していない。
+- Build 35の共有staging実績を選択Aのarchive検証、App Privacy回答、公開policy、審査提出の完了として流用しない。
 
 共有ONのBは、次が完了するまで**提出停止**とする。
 
@@ -212,9 +219,19 @@ App Store Connect上で判断する。
 
 ### 3.4 公開policy gate
 
-repositoryの`../../docs/`は公開候補sourceであり、公開済みであることを意味しない。提出前に次を満たす。
+GitHub Pagesの[共有ベータ版](https://soso-so-27.github.io/neko-widget/)は公開済みで、現在のstable pathsは`/privacy/`、`/support/`、`/community/`である。これらは共有機能、通報、block、共有解除を説明する**共有ON専用**policyであり、選択Aの完全ローカル版へ流用しない。
 
-- HTTPSでPrivacy Policy、Support、Community Standardsを公開し、exact URLとdeployed commitを記録する。
+選択AではPR23で次の完全ローカル版専用ページを追加する予定である。この文書更新時点では**PR23配備待ち**で、App Store Connectへ入力済みとは扱わない。
+
+| 用途 | 完全ローカル版のexact URL候補 | 現在の状態 |
+| --- | --- | --- |
+| 製品案内／Marketing URL候補 | `https://soso-so-27.github.io/neko-widget/app/` | PR23配備待ち |
+| Privacy Policy URL | `https://soso-so-27.github.io/neko-widget/app/privacy/` | PR23配備待ち |
+| Support URL | `https://soso-so-27.github.io/neko-widget/app/support/` | PR23配備待ち |
+
+PR23をmainへ統合してPages deployが成功した後、各exact URLのHTTPS `200`、内容、相互link、deployed commitを確認してからConnectへ入力する。提出前にさらに次を満たす。
+
+- 選択AはHTTPSのPrivacy PolicyとSupport、選択BはさらにCommunity Standardsを公開し、exact URLとdeployed commitを記録する。
 - 「家族のまど」を製品語の「名前付きの非公開なまど」へ揃える。
 - 保存期間、通報の例外、再インストール、bookmark、Photos／iCloud非保存を最終buildと一致させる。
 - AppleのPlatform version informationに従い、Support URLへ利用者とAppleが実際に連絡できる
@@ -387,9 +404,9 @@ AppleのApp Information reference:
 - [ ] `【本人入力】` Description（最大4,000文字、plain text）
 - [ ] `【本人入力】` Keywords（最大100 bytes、App名／会社名の重複や競合名を避ける）
 - [ ] `【本人入力】` Promotional Textまたは空欄
-- [ ] `【本人入力】` Support URL
-- [ ] `【本人入力】` Privacy Policy URL
-- [ ] `【本人入力】` Marketing URLまたは空欄
+- [ ] `【本人入力 / PR23配備後】` Support URL: `https://soso-so-27.github.io/neko-widget/app/support/`
+- [ ] `【本人入力 / PR23配備後】` Privacy Policy URL: `https://soso-so-27.github.io/neko-widget/app/privacy/`
+- [ ] `【本人入力 / PR23配備後】` Marketing URL候補: `https://soso-so-27.github.io/neko-widget/app/`、または空欄
 - [ ] `【本人入力】` Copyright
 - [ ] `【Connect確認】` 1〜10枚のスクリーンショット
 - [ ] `【Connect確認】` 正しいVersionとBuildを関連付けた
