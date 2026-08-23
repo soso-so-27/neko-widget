@@ -120,6 +120,13 @@ class DisabledReleaseBuildSettingsTests(unittest.TestCase):
         self.assertIn("empty SHARING_API_BASE_URL", result.stderr)
         self.assertIn("Info.Disabled.plist", result.stderr)
 
+    def test_duplicate_target_fails_closed(self) -> None:
+        value = fixture()
+        value.append(copy.deepcopy(value[0]))
+        result = self.run_validator(value)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("duplicate target NekoWidget", result.stderr)
+
     def test_missing_target_and_misleading_photo_copy_fail(self) -> None:
         value = copy.deepcopy(fixture()[:-1])
         value[0]["buildSettings"]["PHOTO_LIBRARY_USAGE_DESCRIPTION"] = (
@@ -141,6 +148,7 @@ class DisabledReleaseBuildSettingsTests(unittest.TestCase):
         step = workflow[start:end]
         for target in TARGETS:
             self.assertIn(target, step)
+        self.assertIn('-target "$target"', step)
         self.assertIn('settings_paths+=("$output")', step)
         self.assertIn('"${settings_paths[@]}"', step)
         self.assertNotIn("-scheme NekoWidget", step)
