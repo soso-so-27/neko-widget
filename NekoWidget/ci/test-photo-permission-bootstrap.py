@@ -188,6 +188,12 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
         harness = (CI_DIRECTORY / "run-simulator-smoke.sh").read_text(encoding="utf-8")
+        scale_phase = (CI_DIRECTORY / "run-simulator-scale-phase.sh").read_text(
+            encoding="utf-8"
+        )
+        smoke_validator = (CI_DIRECTORY / "validate-simulator-smoke.py").read_text(
+            encoding="utf-8"
+        )
         app_view_model = (
             project / "NekoWidget" / "ViewModels" / "AppViewModel.swift"
         ).read_text(encoding="utf-8")
@@ -197,6 +203,12 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
         self.assertIn("フルアクセスを許可", ui_test)
         self.assertIn("-parallel-testing-enabled NO", harness)
         self.assertIn("validate-photo-permission-bootstrap.py", harness)
+        checked_message = '"Photo permission checked"'
+        self.assertIn(checked_message, app_view_model)
+        self.assertNotIn('"Photo authorization checked"', app_view_model)
+        for consumer in (harness, scale_phase, smoke_validator):
+            self.assertIn(checked_message, consumer)
+            self.assertNotIn('"Photo authorization checked"', consumer)
         for message in (MODULE.REQUEST_STARTED, MODULE.REQUEST_FINISHED):
             self.assertRegex(
                 app_view_model,

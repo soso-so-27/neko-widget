@@ -275,12 +275,12 @@ wait_for_photo_authorization() {
     for attempt in $(seq 1 "$timeout_seconds"); do
         if photo_authorization_log_contains \
             "$expected_message" "$expected_status"; then
-            printf 'Photo authorization event "%s" (%s) observed after %d second(s).\n' \
+            printf 'Photo permission event "%s" (%s) observed after %d second(s).\n' \
                 "$expected_message" "$expected_status" "$attempt"
             return 0
         fi
         if [[ -n "${APP_PID:-}" ]] && ! kill -0 "$APP_PID" 2>/dev/null; then
-            echo "The app exited while checking PhotoKit authorization." >&2
+            echo "The app exited while checking PhotoKit permission." >&2
             return 1
         fi
         sleep 1
@@ -1081,7 +1081,7 @@ SCAN_POLLS_PER_LAUNCH=15
 for launch_attempt in $(seq 1 "$MAX_SCAN_LAUNCH_ATTEMPTS"); do
     launch_app "smoke-$launch_attempt"
     if ! wait_for_photo_authorization \
-        "Photo authorization checked" "authorized" 15; then
+        "Photo permission checked" "authorized" 15; then
         echo "PhotoKit was not authorized before the scan timeout window." >&2
         exit 1
     fi
