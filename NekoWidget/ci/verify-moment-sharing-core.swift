@@ -165,6 +165,101 @@ require(report.ciphertext.count <= MomentSharingProtocol.maximumObjectCiphertext
 require(report.ciphertext.range(of: jpeg) == nil, "reported photo escaped moderation encryption")
 require(report.ciphertext.range(of: Data("moment_fixture".utf8)) == nil, "report identity escaped encryption")
 
+let ownerCredential = PairingCrypto.makeCredential(
+    installationMarker: UUID().uuidString,
+    includesInvitationSecret: false,
+    includesRoomKey: true
+)
+let ownerPublicKey = try PairingCrypto.signingPublicKey(for: ownerCredential)
+let nameContext = PrivateWindowNameCiphertextContext(
+    spaceID: "space_fixture",
+    ownerMemberID: "member_owner",
+    ownerRevision: 7,
+    keyEpoch: 1
+)
+let namePayload = try PrivateWindowNameCrypto.prepare(
+    displayName: "しずくのまど",
+    context: nameContext,
+    roomKey: roomKey,
+    ownerCredential: ownerCredential
+)
+let openedName = try PrivateWindowNameCrypto.open(
+    namePayload,
+    roomKey: roomKey,
+    ownerSigningPublicKey: ownerPublicKey
+)
+require(openedName == "しずくのまど", "window name did not round trip")
+require(namePayload.ciphertext.count <= PrivateWindowNameSyncProtocol.maximumCiphertextBytes,
+        "window-name ciphertext cap failed")
+let longNamePayload = try PrivateWindowNameCrypto.prepare(
+    displayName: String(repeating: "a", count: 64),
+    context: nameContext,
+    roomKey: roomKey,
+    ownerCredential: ownerCredential
+)
+require(longNamePayload.ciphertext.count == namePayload.ciphertext.count,
+        "window-name ciphertext leaked UTF-8 name length")
+let serializedName = try JSONEncoder().encode(namePayload)
+require(serializedName.range(of: Data("しずくのまど".utf8)) == nil,
+        "plaintext window name escaped encrypted payload")
+
+var tamperedNameCiphertext = namePayload.ciphertext
+tamperedNameCiphertext[tamperedNameCiphertext.startIndex] ^= 0x01
+let tamperedName = PrivateWindowNamePreparedPayload(
+    context: namePayload.context,
+    ciphertext: tamperedNameCiphertext,
+    ciphertextSHA256: Data(SHA256.hash(data: tamperedNameCiphertext)),
+    ownerSignature: namePayload.ownerSignature
+)
+do {
+    _ = try PrivateWindowNameCrypto.open(
+        tamperedName,
+        roomKey: roomKey,
+        ownerSigningPublicKey: ownerPublicKey
+    )
+    fatalError("tampered window name authenticated")
+} catch MomentSharingError.invalidPayload {
+    // Expected: both the creator signature and AEAD bind the exact bytes.
+}
+
+let reboundName = PrivateWindowNamePreparedPayload(
+    context: PrivateWindowNameCiphertextContext(
+        spaceID: nameContext.spaceID,
+        ownerMemberID: nameContext.ownerMemberID,
+        ownerRevision: nameContext.ownerRevision + 1,
+        keyEpoch: nameContext.keyEpoch
+    ),
+    ciphertext: namePayload.ciphertext,
+    ciphertextSHA256: namePayload.ciphertextSHA256,
+    ownerSignature: namePayload.ownerSignature
+)
+do {
+    _ = try PrivateWindowNameCrypto.open(
+        reboundName,
+        roomKey: roomKey,
+        ownerSigningPublicKey: ownerPublicKey
+    )
+    fatalError("window name opened under a different revision")
+} catch MomentSharingError.invalidPayload {
+    // Expected: a relay cannot relabel an older valid ciphertext as newer.
+}
+
+let otherOwner = PairingCrypto.makeCredential(
+    installationMarker: UUID().uuidString,
+    includesInvitationSecret: false,
+    includesRoomKey: false
+)
+do {
+    _ = try PrivateWindowNameCrypto.open(
+        namePayload,
+        roomKey: roomKey,
+        ownerSigningPublicKey: PairingCrypto.signingPublicKey(for: otherOwner)
+    )
+    fatalError("window name authenticated under another creator")
+} catch MomentSharingError.invalidPayload {
+    // Expected.
+}
+
 print("Moment sharing core verifier passed")
 }
 }

@@ -3850,6 +3850,87 @@ actor SharingRuntimeSelfTestRunner {
               FileManager.default.fileExists(atPath: windowPresentationURL.path)
         else { throw PairingError.stateUnavailable }
 
+        guard let roomKey = keychainProbe.roomKey,
+              let windowNameSyncURL = SharedContainer.privateWindowNameSyncStateURL
+        else { throw PairingError.stateUnavailable }
+        let synchronizedName = try PrivateWindowNameCrypto.prepare(
+            displayName: secondWindowName.displayName,
+            context: PrivateWindowNameCiphertextContext(
+                spaceID: spaceID,
+                ownerMemberID: localMember.memberID,
+                ownerRevision: secondWindowName.storageRevision,
+                keyEpoch: 1
+            ),
+            roomKey: roomKey,
+            ownerCredential: keychainProbe
+        )
+        let retryID = UUID()
+        let stagedName = try PrivateWindowNameSyncStore.stagePending(
+            synchronizedName,
+            clientRequestID: retryID,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        let reloadedPending = try PrivateWindowNameSyncStore.pending(
+            ownerRevision: secondWindowName.storageRevision,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        guard stagedName.payload == synchronizedName,
+              stagedName.clientRequestID == retryID,
+              reloadedPending?.payload == synchronizedName,
+              reloadedPending?.clientRequestID == retryID,
+              FileManager.default.fileExists(atPath: windowNameSyncURL.path),
+              try PrivateWindowNameSyncStore.recordAccepted(
+                synchronizedName,
+                pairing: paired,
+                validating: snapshot.lifecycleToken
+              ),
+              try PrivateWindowNameSyncStore.pending(
+                ownerRevision: secondWindowName.storageRevision,
+                pairing: paired,
+                validating: snapshot.lifecycleToken
+              ) == nil
+        else { throw PairingError.stateUnavailable }
+
+        let staleName = try PrivateWindowNameCrypto.prepare(
+            displayName: firstWindowName.displayName,
+            context: PrivateWindowNameCiphertextContext(
+                spaceID: spaceID,
+                ownerMemberID: localMember.memberID,
+                ownerRevision: firstWindowName.storageRevision,
+                keyEpoch: 1
+            ),
+            roomKey: roomKey,
+            ownerCredential: keychainProbe
+        )
+        guard !(try PrivateWindowNameSyncStore.recordAccepted(
+            staleName,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )) else { throw PairingError.stateUnavailable }
+
+        let conflictingName = try PrivateWindowNameCrypto.prepare(
+            displayName: "別のまど",
+            context: synchronizedName.context,
+            roomKey: roomKey,
+            ownerCredential: keychainProbe
+        )
+        do {
+            _ = try PrivateWindowNameSyncStore.recordAccepted(
+                conflictingName,
+                pairing: paired,
+                validating: snapshot.lifecycleToken
+            )
+            throw PairingError.stateUnavailable
+        } catch PairingError.stateUnavailable {
+            // Same creator revision with different authenticated bytes is a
+            // conflict, never a last-arrival-wins rename.
+        }
+        guard (try PairingStateStore.load())?.storageRevision
+                == pairingRevisionBeforeRename
+        else { throw PairingError.stateUnavailable }
+
         var wrongWindowIdentity = paired
         wrongWindowIdentity.spaceID = opaque(46)
         guard PrivateWindowPresentationStore.resolvedDisplayName(
@@ -3876,7 +3957,8 @@ actor SharingRuntimeSelfTestRunner {
                   installationMarker: unpaired.installationMarker
               ) == keychainProbe,
               FileManager.default.fileExists(atPath: sentinel.path),
-              FileManager.default.fileExists(atPath: windowPresentationURL.path)
+              FileManager.default.fileExists(atPath: windowPresentationURL.path),
+              FileManager.default.fileExists(atPath: windowNameSyncURL.path)
         else { throw PairingError.stateUnavailable }
 
         // A benign mutable revision change must not prevent cleanup of the
@@ -3898,7 +3980,22 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard !FileManager.default.fileExists(atPath: sentinel.path),
               !FileManager.default.fileExists(atPath: windowPresentationURL.path),
+              !FileManager.default.fileExists(atPath: windowNameSyncURL.path),
               (try PairingStateStore.load())?.phase == .unpaired
+        else { throw PairingError.stateUnavailable }
+        do {
+            _ = try PrivateWindowNameSyncStore.recordAccepted(
+                synchronizedName,
+                pairing: paired,
+                validating: snapshot.lifecycleToken
+            )
+            throw PairingError.stateUnavailable
+        } catch PairingError.stateUnavailable {
+            // Models a GET/PUT response resuming after unlink. The stale
+            // lifecycle cannot recreate either presentation file.
+        }
+        guard !FileManager.default.fileExists(atPath: windowPresentationURL.path),
+              !FileManager.default.fileExists(atPath: windowNameSyncURL.path)
         else { throw PairingError.stateUnavailable }
         do {
             _ = try PairingKeychainStore.load(

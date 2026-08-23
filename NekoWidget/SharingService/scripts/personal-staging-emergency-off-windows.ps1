@@ -187,7 +187,7 @@ try {
         --config $configPath `
         --autoconfig=false `
         --keep-vars=false `
-        --message "personal staging emergency OFF; moment+legacy OFF; $commit" `
+        --message "personal staging emergency OFF; moment+window-name+legacy OFF; $commit" `
         --experimental-provision=false `
         --experimental-auto-create=false
     if ($LASTEXITCODE -ne 0) { throw "emergency OFF deployment failed" }

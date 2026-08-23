@@ -30,6 +30,7 @@ final class PairingViewModel: ObservableObject {
 
     var isConfigured: Bool { api != nil }
     var isMediaSyncEnabled: Bool { configuration.isMediaAvailable }
+    var canEditWindowDisplayName: Bool { state?.role != .invitee }
     var hasCurrentMediaSharingConsent: Bool {
         state?.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion
             && state?.mediaSharingConsentAcceptedAt != nil
@@ -91,6 +92,10 @@ final class PairingViewModel: ObservableObject {
     /// concurrent approval, refresh, consent, or cancellation operation.
     @discardableResult
     func updateWindowDisplayName(_ rawValue: String) -> Bool {
+        guard canEditWindowDisplayName else {
+            configurationMessage = "まどの名前は、まどを作った人が変更できます。"
+            return false
+        }
         let operation: PairingOperation
         do { operation = try beginOperation() }
         catch {
@@ -115,6 +120,19 @@ final class PairingViewModel: ObservableObject {
                 metadata: ["reason": error.localizedDescription]
             )
             return false
+        }
+    }
+
+    func reloadWindowDisplayName() {
+        do {
+            let operation = try beginOperation()
+            windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+                pairing: operation.expectedState,
+                validating: operation.lifecycleToken
+            )
+        } catch {
+            // Keep the last verified presentation value. Pairing/bootstrap
+            // surfaces authority failures through its existing status path.
         }
     }
 

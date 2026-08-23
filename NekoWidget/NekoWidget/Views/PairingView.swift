@@ -56,6 +56,13 @@ struct PairingView: View {
         .onChange(of: model.windowDisplayName) { _, value in
             windowDisplayNameDraft = value
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .momentSharingPresentationNeedsRefresh
+            )
+        ) { _ in
+            model.reloadWindowDisplayName()
+        }
         .confirmationDialog(
             "まどの設定をやり直しますか？",
             isPresented: $showsCancelConfirmation,
@@ -191,22 +198,30 @@ struct PairingView: View {
 
     private func windowNameSection(_ state: PairingState) -> some View {
         Section {
-            TextField("例：しずくのまど", text: $windowDisplayNameDraft)
-                .textInputAutocapitalization(.sentences)
-                .autocorrectionDisabled()
+            if state.role == .invitee, state.spaceID != nil {
+                LabeledContent("名前", value: model.windowDisplayName)
+            } else {
+                TextField("例：しずくのまど", text: $windowDisplayNameDraft)
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled()
 
-            if state.spaceID != nil, state.participantID != nil {
-                Button("このiPhoneで名前を保存") {
-                    saveWindowNameIfPossible()
+                if state.spaceID != nil, state.participantID != nil {
+                    Button("名前を保存して相手と共有") {
+                        saveWindowNameIfPossible()
+                    }
+                    .disabled(model.isWorking)
                 }
-                .disabled(model.isWorking)
             }
         } header: {
             Text("まどの名前")
         } footer: {
-            Text(state.spaceID == nil
-                ? "まどを作るか招待へ参加すると、この名前を保存します。現在はこのiPhoneだけの表示名で、相手の端末には自動同期しません。"
-                : "現在はこのiPhoneだけの表示名です。名前を変えても、つながっている相手や届いた写真は変わりません。")
+            if state.role == .invitee, state.spaceID != nil {
+                Text("この名前は、まどを作った人から暗号化して共有されます。名前を変えてもらう場合は、作成者のiPhoneで変更します。")
+            } else if state.spaceID == nil {
+                Text("まどを作ると、この名前を暗号化して招待した相手にも表示します。")
+            } else {
+                Text("名前は暗号化して相手にも表示します。変更しても、つながっている相手や届いた写真は変わりません。")
+            }
         }
     }
 
@@ -452,7 +467,8 @@ struct PairingView: View {
     }
 
     private func saveWindowNameIfPossible() {
-        guard model.state?.spaceID != nil,
+        guard model.canEditWindowDisplayName,
+              model.state?.spaceID != nil,
               model.state?.participantID != nil
         else { return }
         if model.updateWindowDisplayName(windowDisplayNameDraft) {

@@ -26,6 +26,7 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(config.preview_urls, false);
   assert.equal(config.vars.ENVIRONMENT, "staging");
   assert.equal(config.vars.MOMENT_RUNTIME_ENABLED, "NO");
+  assert.equal(config.vars.WINDOW_NAME_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.LEGACY_SHARING_RUNTIME_ENABLED, "NO");
   assert.equal(config.limits, undefined);
   assert.equal(config.d1_databases[0].database_name, "neko-window-sharing-staging");
@@ -33,14 +34,16 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(new Set(config.ratelimits.map((value) => value.namespace_id)).size, 3);
 });
 
-test("derives the media test-window config by changing only the moment runtime", () => {
+test("derives the media test-window config by enabling both private media runtimes", () => {
   const offConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
   const onConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
     expectedMomentRuntime: "YES",
   }));
   assert.equal(onConfig.vars.MOMENT_RUNTIME_ENABLED, "YES");
+  assert.equal(onConfig.vars.WINDOW_NAME_RUNTIME_ENABLED, "YES");
   assert.equal(onConfig.vars.LEGACY_SHARING_RUNTIME_ENABLED, "NO");
   onConfig.vars.MOMENT_RUNTIME_ENABLED = "NO";
+  onConfig.vars.WINDOW_NAME_RUNTIME_ENABLED = "NO";
   assert.deepEqual(onConfig, offConfig);
 });
 
@@ -75,6 +78,23 @@ test("rejects a staging config that enables the moment runtime", () => {
   const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
   config.vars.MOMENT_RUNTIME_ENABLED = "YES";
   assert.throws(() => validateStagingConfig(config), /reviewed staging policy/u);
+});
+
+test("rejects a staging config that enables only private window-name sync", () => {
+  const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
+  config.vars.WINDOW_NAME_RUNTIME_ENABLED = "YES";
+  assert.throws(() => validateStagingConfig(config), /reviewed staging policy/u);
+});
+
+test("rejects a media config that leaves private window-name sync off", () => {
+  const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+  }));
+  config.vars.WINDOW_NAME_RUNTIME_ENABLED = "NO";
+  assert.throws(
+    () => validateStagingConfig(config, { expectedMomentRuntime: "YES" }),
+    /reviewed staging policy/u,
+  );
 });
 
 test("rejects a staging config that enables the legacy sharing runtime", () => {
@@ -116,6 +136,7 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0001_pairing.sql", 37],
     ["0002_daily_sharing.sql", 52],
     ["0003_append_only_moments.sql", 72],
+    ["0004_encrypted_window_name.sql", 12],
   ]);
   for (const [name, expectedStatementCount] of expectedStatementCounts) {
     const migration = await readFile(join(projectDirectory, "migrations", name));

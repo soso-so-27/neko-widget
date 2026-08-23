@@ -140,6 +140,16 @@ enum SharedContainer {
         )
     }
 
+    /// Encrypted-name ordering and retry metadata is kept separate from the
+    /// Build 32 presentation file. An older writer can therefore replace its
+    /// local label without erasing the rollback floor or an ambiguous PUT.
+    static var privateWindowNameSyncStateURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "window-name-sync.v1.json",
+            isDirectory: false
+        )
+    }
+
     static var sharingCacheDirectoryURL: URL? {
         containerURL?.appendingPathComponent("sharing", isDirectory: true)
     }

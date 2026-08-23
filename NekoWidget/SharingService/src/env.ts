@@ -9,6 +9,8 @@ export interface Env {
   /// Exact, server-side operational switch for normal v2 moment traffic.
   /// Reports, blocks and cleanup remain available when this is disabled.
   MOMENT_RUNTIME_ENABLED?: string;
+  /// Exact, independent server-side switch for encrypted private-window names.
+  WINDOW_NAME_RUNTIME_ENABLED?: string;
   /// Exact, server-side operational switch for the retired v1 daily-sharing
   /// transport. Pairing and revocation remain available when this is disabled.
   LEGACY_SHARING_RUNTIME_ENABLED?: string;
@@ -23,6 +25,12 @@ export function momentRuntimeEnabled(
   env: Pick<Env, "MOMENT_RUNTIME_ENABLED">,
 ): boolean {
   return env.MOMENT_RUNTIME_ENABLED === "YES";
+}
+
+export function windowNameRuntimeEnabled(
+  env: Pick<Env, "WINDOW_NAME_RUNTIME_ENABLED">,
+): boolean {
+  return env.WINDOW_NAME_RUNTIME_ENABLED === "YES";
 }
 
 export function legacySharingRuntimeEnabled(

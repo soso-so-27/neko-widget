@@ -329,6 +329,12 @@ enum PrivateWindowPresentationStore {
         validating lifecycleToken: SharingLifecycleGate.Token,
         now: Date = .now
     ) throws -> PrivateWindowPresentationState {
+        // The person who creates the private window names it. An invited
+        // participant receives that encrypted label but cannot race a second
+        // authority into the single-window protocol.
+        guard pairing.role == .inviter else {
+            throw PairingError.stateUnavailable
+        }
         let normalized = PrivateWindowDisplayName.normalized(rawValue)
         let displayName = normalized.isEmpty
             ? PrivateWindowDisplayName.fallback
@@ -342,7 +348,8 @@ enum PrivateWindowPresentationStore {
             }
             let expectedBinding = try binding(for: pairing)
             let currentBinding = try binding(for: currentPairing)
-            guard currentBinding == expectedBinding else {
+            guard currentBinding == expectedBinding,
+                  currentPairing.role == .inviter else {
                 throw PairingError.stateUnavailable
             }
             let current = try? loadWhileLifecycleLocked()
@@ -369,6 +376,73 @@ enum PrivateWindowPresentationStore {
                   committed.storageRevision == next.storageRevision,
                   committed.pairingBindingSHA256 == next.pairingBindingSHA256,
                   committed.displayName == next.displayName
+            else { throw PairingError.stateUnavailable }
+            return committed
+        }
+    }
+
+    /// Applies a creator-authored value after its AEAD context and relay
+    /// metadata have been validated. Creator revisions are authoritative for
+    /// invitees. On the creator device, a locally newer edit always wins and
+    /// will be published by the next synchronization pass.
+    @discardableResult
+    static func applySynchronizedOwnerName(
+        displayName rawValue: String,
+        ownerRevision: Int,
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> PrivateWindowPresentationState {
+        let displayName = PrivateWindowDisplayName.normalized(rawValue)
+        guard ownerRevision >= 0,
+              PrivateWindowDisplayName.isValid(displayName),
+              !displayName.isEmpty,
+              pairing.role == .inviter || pairing.role == .invitee
+        else { throw PairingError.stateUnavailable }
+
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            let expectedBinding = try binding(for: pairing)
+            let currentBinding = try binding(for: currentPairing)
+            guard currentBinding == expectedBinding,
+                  currentPairing.role == pairing.role else {
+                throw PairingError.stateUnavailable
+            }
+            let loaded = try? loadWhileLifecycleLocked()
+            let current = loaded?.pairingBindingSHA256 == currentBinding ? loaded : nil
+
+            if pairing.role == .inviter, let current {
+                if current.storageRevision > ownerRevision { return current }
+                if current.storageRevision == ownerRevision {
+                    guard current.displayName == displayName else {
+                        throw PairingError.stateUnavailable
+                    }
+                    return current
+                }
+            }
+            let localRevision: Int
+            if pairing.role == .inviter {
+                localRevision = ownerRevision
+            } else if let current, current.displayName != displayName {
+                let increment = current.storageRevision.addingReportingOverflow(1)
+                guard !increment.overflow else { throw PairingError.stateUnavailable }
+                localRevision = increment.partialValue
+            } else if let current {
+                return current
+            } else {
+                localRevision = 0
+            }
+            let next = try PrivateWindowPresentationState(
+                storageRevision: localRevision,
+                pairingBindingSHA256: currentBinding,
+                displayName: displayName,
+                updatedAt: now
+            ).validated()
+            try writeWhileLifecycleLocked(next)
+            guard let committed = try loadWhileLifecycleLocked(),
+                  committed == next
             else { throw PairingError.stateUnavailable }
             return committed
         }
@@ -403,6 +477,218 @@ enum PrivateWindowPresentationStore {
         _ value: PrivateWindowPresentationState
     ) throws {
         guard let url = SharedContainer.privateWindowPresentationURL else {
+            throw PairingError.stateUnavailable
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try SharingSecureFile.write(try encoder.encode(value.validated()), to: url)
+    }
+}
+
+/// Rollback floor and exact ambiguous-retry bytes for the encrypted creator
+/// label. This file contains no plaintext name and remains independent from
+/// both PairingState CAS and photo outbox/inbox state.
+struct PrivateWindowNameSyncState: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+
+    var schemaVersion: Int = Self.schemaVersion
+    var storageRevision: Int = 0
+    var pairingBindingSHA256: Data
+    var acceptedOwnerRevision: Int?
+    var acceptedCiphertextSHA256: Data?
+    var pendingPayload: PrivateWindowNamePreparedPayload?
+    var pendingClientRequestID: String?
+    var updatedAt: Date
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              storageRevision >= 0,
+              pairingBindingSHA256.count == 32,
+              (acceptedOwnerRevision == nil) == (acceptedCiphertextSHA256 == nil),
+              acceptedOwnerRevision == nil
+                || acceptedOwnerRevision.map({
+                    (0...PrivateWindowNameSyncProtocol.maximumClientRevision)
+                        .contains($0)
+                }) == true,
+              (acceptedCiphertextSHA256.map({ $0.count == 32 }) ?? true),
+              (pendingPayload == nil) == (pendingClientRequestID == nil),
+              pendingClientRequestID == nil
+                || pendingClientRequestID.flatMap(UUID.init(uuidString:)) != nil,
+              updatedAt > Date(timeIntervalSince1970: 0)
+        else { throw PairingError.stateUnavailable }
+        if let pendingPayload { _ = try pendingPayload.validated() }
+        return self
+    }
+}
+
+enum PrivateWindowNameSyncStore {
+    static func load(
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> PrivateWindowNameSyncState? {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load(),
+                  try binding(for: currentPairing) == binding(for: pairing)
+            else { throw PairingError.stateUnavailable }
+            guard let value = try loadWhileLifecycleLocked() else { return nil }
+            guard value.pairingBindingSHA256 == (try binding(for: currentPairing))
+            else { return nil }
+            return value
+        }
+    }
+
+    static func pending(
+        ownerRevision: Int,
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID)? {
+        guard ownerRevision >= 0 else { throw PairingError.stateUnavailable }
+        guard let state = try load(pairing: pairing, validating: lifecycleToken),
+              let payload = state.pendingPayload,
+              payload.context.ownerRevision == ownerRevision,
+              let requestValue = state.pendingClientRequestID,
+              let requestID = UUID(uuidString: requestValue)
+        else { return nil }
+        try validate(payload: payload, pairing: pairing, ownerOnly: true)
+        return (payload, requestID)
+    }
+
+    static func stagePending(
+        _ payload: PrivateWindowNamePreparedPayload,
+        clientRequestID: UUID,
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID) {
+        let payload = try payload.validated()
+        try validate(payload: payload, pairing: pairing, ownerOnly: true)
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load(),
+                  try binding(for: currentPairing) == binding(for: pairing)
+            else { throw PairingError.stateUnavailable }
+            let currentBinding = try binding(for: currentPairing)
+            var state = try loadWhileLifecycleLocked()
+                ?? PrivateWindowNameSyncState(
+                    pairingBindingSHA256: currentBinding,
+                    updatedAt: now
+                )
+            guard state.pairingBindingSHA256 == currentBinding else {
+                throw PairingError.stateUnavailable
+            }
+            if let existing = state.pendingPayload,
+               existing.context.ownerRevision == payload.context.ownerRevision,
+               let existingRequest = state.pendingClientRequestID,
+               let existingRequestID = UUID(uuidString: existingRequest) {
+                try validate(payload: existing, pairing: pairing, ownerOnly: true)
+                return (existing, existingRequestID)
+            }
+            let increment = state.storageRevision.addingReportingOverflow(1)
+            guard !increment.overflow else { throw PairingError.stateUnavailable }
+            state.storageRevision = increment.partialValue
+            state.pendingPayload = payload
+            state.pendingClientRequestID = clientRequestID.uuidString.lowercased()
+            state.updatedAt = now
+            try writeWhileLifecycleLocked(state)
+            return (payload, clientRequestID)
+        }
+    }
+
+    /// Returns true for a new value and for an exact duplicate. Exact
+    /// duplicates remain applicable so a crash between floor persistence and
+    /// presentation persistence repairs itself on the next GET.
+    static func recordAccepted(
+        _ payload: PrivateWindowNamePreparedPayload,
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> Bool {
+        let payload = try payload.validated()
+        try validate(payload: payload, pairing: pairing, ownerOnly: false)
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load(),
+                  try binding(for: currentPairing) == binding(for: pairing)
+            else { throw PairingError.stateUnavailable }
+            let currentBinding = try binding(for: currentPairing)
+            var state = try loadWhileLifecycleLocked()
+                ?? PrivateWindowNameSyncState(
+                    pairingBindingSHA256: currentBinding,
+                    updatedAt: now
+                )
+            guard state.pairingBindingSHA256 == currentBinding else {
+                throw PairingError.stateUnavailable
+            }
+            var isExactDuplicate = false
+            if let accepted = state.acceptedOwnerRevision {
+                if accepted > payload.context.ownerRevision { return false }
+                if accepted == payload.context.ownerRevision {
+                    guard state.acceptedCiphertextSHA256 == payload.ciphertextSHA256 else {
+                        throw PairingError.stateUnavailable
+                    }
+                    isExactDuplicate = true
+                }
+            }
+            let clearsPending = state.pendingPayload.map {
+                $0.context.ownerRevision <= payload.context.ownerRevision
+            } == true
+            if isExactDuplicate, !clearsPending { return true }
+            let increment = state.storageRevision.addingReportingOverflow(1)
+            guard !increment.overflow else { throw PairingError.stateUnavailable }
+            state.storageRevision = increment.partialValue
+            state.acceptedOwnerRevision = payload.context.ownerRevision
+            state.acceptedCiphertextSHA256 = payload.ciphertextSHA256
+            if clearsPending {
+                state.pendingPayload = nil
+                state.pendingClientRequestID = nil
+            }
+            state.updatedAt = now
+            try writeWhileLifecycleLocked(state)
+            return true
+        }
+    }
+
+    private static func validate(
+        payload: PrivateWindowNamePreparedPayload,
+        pairing: PairingState,
+        ownerOnly: Bool
+    ) throws {
+        guard let spaceID = pairing.spaceID,
+              let ownerID = pairing.role == .inviter
+                ? pairing.memberID
+                : pairing.peerMemberID,
+              payload.context.spaceID == spaceID,
+              payload.context.ownerMemberID == ownerID,
+              payload.context.keyEpoch == 1,
+              (!ownerOnly || pairing.role == .inviter)
+        else { throw PairingError.stateUnavailable }
+    }
+
+    private static func binding(for pairing: PairingState) throws -> Data {
+        guard let spaceID = pairing.spaceID,
+              let participantID = pairing.participantID
+        else { throw PairingError.stateUnavailable }
+        return try MomentShareHandoffStore.makeBindingSHA256(
+            installationMarker: pairing.installationMarker,
+            spaceID: spaceID,
+            participantID: participantID
+        )
+    }
+
+    private static func loadWhileLifecycleLocked() throws -> PrivateWindowNameSyncState? {
+        guard let url = SharedContainer.privateWindowNameSyncStateURL else {
+            throw PairingError.stateUnavailable
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(
+            PrivateWindowNameSyncState.self,
+            from: Data(contentsOf: url, options: .mappedIfSafe)
+        ).validated()
+    }
+
+    private static func writeWhileLifecycleLocked(_ value: PrivateWindowNameSyncState) throws {
+        guard let url = SharedContainer.privateWindowNameSyncStateURL else {
             throw PairingError.stateUnavailable
         }
         let encoder = JSONEncoder()

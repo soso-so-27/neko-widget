@@ -63,6 +63,248 @@ enum MomentSharingProtocol {
     }
 }
 
+/// The private-window label is synchronized independently from photos. The
+/// relay only sees this small opaque AEAD value and ordering metadata; the
+/// plaintext display name is never a server field, log field, identifier, or
+/// part of pairing authority.
+enum PrivateWindowNameSyncProtocol {
+    static let version = 1
+    static let maximumCiphertextBytes = 512
+    static let maximumClientRevision = 9_007_199_254_740_991
+}
+
+struct PrivateWindowNameCiphertextContext: Codable, Equatable, Sendable {
+    var protocolVersion: Int = PrivateWindowNameSyncProtocol.version
+    let spaceID: String
+    let ownerMemberID: String
+    let ownerRevision: Int
+    let keyEpoch: Int
+
+    func validated() throws -> Self {
+        guard protocolVersion == PrivateWindowNameSyncProtocol.version,
+              PairingValidation.isOpaqueIdentifier(spaceID),
+              PairingValidation.isOpaqueIdentifier(ownerMemberID),
+              (0...PrivateWindowNameSyncProtocol.maximumClientRevision)
+                .contains(ownerRevision),
+              keyEpoch >= 1
+        else { throw MomentSharingError.invalidPayload }
+        return self
+    }
+
+    fileprivate func canonicalFields() throws -> [String] {
+        _ = try validated()
+        return [
+            "NW2.WINDOW-NAME-CIPHERTEXT",
+            String(protocolVersion),
+            spaceID,
+            ownerMemberID,
+            String(ownerRevision),
+            String(keyEpoch)
+        ]
+    }
+}
+
+struct PrivateWindowNamePreparedPayload: Codable, Equatable, Sendable {
+    let context: PrivateWindowNameCiphertextContext
+    let ciphertext: Data
+    let ciphertextSHA256: Data
+    let ownerSignature: Data
+
+    func validated() throws -> Self {
+        _ = try context.validated()
+        guard (29...PrivateWindowNameSyncProtocol.maximumCiphertextBytes)
+            .contains(ciphertext.count),
+              ciphertextSHA256.count == 32,
+              ciphertextSHA256 == Data(SHA256.hash(data: ciphertext)),
+              ownerSignature.count == 64
+        else { throw MomentSharingError.invalidPayload }
+        return self
+    }
+}
+
+enum PrivateWindowNameCrypto {
+    private static let plaintextByteCount = 1 + 8 + 2
+        + PrivateWindowDisplayName.maximumUTF8ByteCount
+
+    static func prepare(
+        displayName rawDisplayName: String,
+        context: PrivateWindowNameCiphertextContext,
+        roomKey: Data,
+        ownerCredential: PairingCredential
+    ) throws -> PrivateWindowNamePreparedPayload {
+        let context = try context.validated()
+        let displayName = PrivateWindowDisplayName.normalized(rawDisplayName)
+        guard roomKey.count == 32,
+              PrivateWindowDisplayName.isValid(displayName),
+              !displayName.isEmpty
+        else { throw MomentSharingError.invalidPayload }
+        let plaintext = try encodedPlaintext(
+            displayName: displayName,
+            ownerRevision: context.ownerRevision
+        )
+        let aad = try canonicalData(context.canonicalFields())
+        let key = derivedKey(roomKey: roomKey, aad: aad)
+        let ciphertext: Data
+        do {
+            ciphertext = try ChaChaPoly.seal(
+                plaintext,
+                using: key,
+                authenticating: aad
+            ).combined
+        } catch {
+            throw MomentSharingError.invalidPayload
+        }
+        let hash = Data(SHA256.hash(data: ciphertext))
+        let signature = try PairingCrypto.sign(
+            recordData(context: context, ciphertextSHA256: hash),
+            credential: ownerCredential
+        )
+        return try PrivateWindowNamePreparedPayload(
+            context: context,
+            ciphertext: ciphertext,
+            ciphertextSHA256: hash,
+            ownerSignature: signature
+        ).validated()
+    }
+
+    static func open(
+        _ payload: PrivateWindowNamePreparedPayload,
+        roomKey: Data,
+        ownerSigningPublicKey: Data
+    ) throws -> String {
+        let payload = try payload.validated()
+        guard roomKey.count == 32,
+              (try? PairingCrypto.verifySignature(
+                payload.ownerSignature,
+                for: recordData(
+                    context: payload.context,
+                    ciphertextSHA256: payload.ciphertextSHA256
+                ),
+                publicKey: ownerSigningPublicKey
+              )) == true
+        else { throw MomentSharingError.invalidPayload }
+        let aad = try canonicalData(payload.context.canonicalFields())
+        let plaintext: Data
+        do {
+            plaintext = try ChaChaPoly.open(
+                ChaChaPoly.SealedBox(combined: payload.ciphertext),
+                using: derivedKey(roomKey: roomKey, aad: aad),
+                authenticating: aad
+            )
+        } catch {
+            throw MomentSharingError.invalidPayload
+        }
+        let opened = try decodePlaintext(plaintext)
+        guard opened.ownerRevision == payload.context.ownerRevision else {
+            throw MomentSharingError.invalidPayload
+        }
+        return opened.displayName
+    }
+
+    private static func derivedKey(roomKey: Data, aad: Data) -> SymmetricKey {
+        HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: roomKey),
+            salt: Data(SHA256.hash(data: domainData("key-salt", root: aad))),
+            info: Data("jp.nekowidget.private-window-name.v1".utf8),
+            outputByteCount: 32
+        )
+    }
+
+    static func recordData(
+        context: PrivateWindowNameCiphertextContext,
+        ciphertextSHA256: Data
+    ) throws -> Data {
+        _ = try context.validated()
+        guard ciphertextSHA256.count == 32 else {
+            throw MomentSharingError.invalidPayload
+        }
+        return try canonicalData([
+            "NW2.WINDOW-NAME-RECORD",
+            String(PrivateWindowNameSyncProtocol.version),
+            context.spaceID,
+            context.ownerMemberID,
+            String(context.ownerRevision),
+            String(context.keyEpoch),
+            ciphertextSHA256.base64URLEncodedString()
+        ])
+    }
+
+    /// A fixed 75-byte plaintext keeps the relay from learning the UTF-8 name
+    /// length through ciphertext length. Unused bytes are random and are
+    /// authenticated together with the explicit length.
+    private static func encodedPlaintext(
+        displayName: String,
+        ownerRevision: Int
+    ) throws -> Data {
+        let name = Data(displayName.utf8)
+        guard ownerRevision >= 0,
+              name.count <= PrivateWindowDisplayName.maximumUTF8ByteCount
+        else { throw MomentSharingError.invalidPayload }
+        var value = Data([UInt8(PrivateWindowNameSyncProtocol.version)])
+        var revision = UInt64(ownerRevision).bigEndian
+        withUnsafeBytes(of: &revision) { value.append(contentsOf: $0) }
+        var nameCount = UInt16(name.count).bigEndian
+        withUnsafeBytes(of: &nameCount) { value.append(contentsOf: $0) }
+        var padded = PairingCrypto.randomData(
+            count: PrivateWindowDisplayName.maximumUTF8ByteCount
+        )
+        padded.replaceSubrange(0..<name.count, with: name)
+        value.append(padded)
+        guard value.count == plaintextByteCount else {
+            throw MomentSharingError.invalidPayload
+        }
+        return value
+    }
+
+    private static func decodePlaintext(
+        _ data: Data
+    ) throws -> (ownerRevision: Int, displayName: String) {
+        guard data.count == plaintextByteCount,
+              data[data.startIndex] == UInt8(PrivateWindowNameSyncProtocol.version)
+        else { throw MomentSharingError.invalidPayload }
+        let bytes = [UInt8](data)
+        let revisionValue = bytes[1..<9].reduce(UInt64(0)) {
+            ($0 << 8) | UInt64($1)
+        }
+        guard revisionValue <= UInt64(Int.max) else {
+            throw MomentSharingError.invalidPayload
+        }
+        let nameCount = bytes[9..<11].reduce(UInt16(0)) {
+            ($0 << 8) | UInt16($1)
+        }
+        guard nameCount > 0,
+              Int(nameCount) <= PrivateWindowDisplayName.maximumUTF8ByteCount
+        else { throw MomentSharingError.invalidPayload }
+        let nameBytes = Data(bytes[11..<(11 + Int(nameCount))])
+        guard let displayName = String(data: nameBytes, encoding: .utf8),
+              PrivateWindowDisplayName.isValid(displayName),
+              displayName == PrivateWindowDisplayName.normalized(displayName)
+        else { throw MomentSharingError.invalidPayload }
+        return (Int(revisionValue), displayName)
+    }
+
+    private static func canonicalData(_ fields: [String]) throws -> Data {
+        var value = Data()
+        for field in fields {
+            let bytes = Data(field.utf8)
+            guard bytes.count <= Int(UInt32.max) else {
+                throw MomentSharingError.invalidPayload
+            }
+            var count = UInt32(bytes.count).bigEndian
+            withUnsafeBytes(of: &count) { value.append(contentsOf: $0) }
+            value.append(bytes)
+        }
+        return value
+    }
+
+    private static func domainData(_ domain: String, root: Data) -> Data {
+        var value = Data(domain.utf8)
+        value.append(0)
+        value.append(root)
+        return value
+    }
+}
+
 enum MomentKind: String, Codable, CaseIterable, Sendable {
     case live
     case memory
