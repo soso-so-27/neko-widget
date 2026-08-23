@@ -1749,8 +1749,11 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL
         else { throw MomentSharingError.stateUnavailable }
+        guard let receivedFileName = receivedItem.localJPEGFileName else {
+            throw MomentSharingError.stateUnavailable
+        }
         let receivedURL = receivedDirectory.appendingPathComponent(
-            receivedItem.localJPEGFileName,
+            receivedFileName,
             isDirectory: false
         )
         let reportCiphertext = Data(repeating: 0x91, count: 128)
