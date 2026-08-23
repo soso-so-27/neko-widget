@@ -245,7 +245,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("entry.windowDisplayName", widget_view)
         self.assertIn('static let familyWindowID = "family-window"', configuration)
         self.assertIn('static let personalLibraryID = "personal-library"', configuration)
-        self.assertIn('name: "このiPhoneの写真"', configuration)
+        self.assertIn('name: "このiPhoneの猫写真"', configuration)
         self.assertIn("SharedContainer.familyWidgetWindowDisplayName()", configuration)
         self.assertNotIn("WidgetManifestReader", configuration)
 
@@ -390,6 +390,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('"\\(entry.windowDisplayName)に届いた写真"', widget)
         self.assertNotIn('"\\(entry.windowDisplayName)から届いた', widget)
         self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
+        self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
+        self.assertIn('detail: "このiPhoneで見つけた猫写真"', widget_configuration)
+        self.assertNotIn('name: "このiPhoneの写真"', widget_configuration)
 
         settings = source("NekoWidget/Views/SettingsView.swift")
         profiles = source("NekoWidget/Views/CatProfilesView.swift")

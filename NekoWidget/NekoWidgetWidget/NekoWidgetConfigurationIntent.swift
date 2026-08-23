@@ -14,7 +14,7 @@ struct WidgetPhotoSource: AppEntity {
     static let personalLibraryID = "personal-library"
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
-        name: "このiPhoneの写真",
+        name: "このiPhoneの猫写真",
         detail: "このiPhoneで見つけた猫写真"
     )
     static let familyWindowID = "family-window"
