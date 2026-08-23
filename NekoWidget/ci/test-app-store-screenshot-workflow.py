@@ -24,6 +24,12 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.widget_ui_test = source(
             "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift"
         )
+        self.widget_provider = source(
+            "NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift"
+        )
+        self.widget_view = source("NekoWidget/NekoWidgetWidget/NekoWidgetView.swift")
+        self.widget_info = source("NekoWidget/NekoWidgetWidget/Info.plist")
+        self.config = source("NekoWidget/Config.xcconfig")
         self.exporter = source("NekoWidget/ci/export-app-store-screenshots.sh")
         self.project = source("NekoWidget/NekoWidget.xcodeproj/project.pbxproj")
 
@@ -104,6 +110,16 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "WidgetPlacementScreenshotUITests/testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore",
             self.workflow,
         )
+        self.assertIn("APP_STORE_SCREENSHOT_FIXTURE_ENABLED=YES", self.workflow)
+        self.assertIn("APP_STORE_SCREENSHOT_FIXTURE_ENABLED = NO", self.config)
+        self.assertIn("AppStoreScreenshotFixtureEnabled", self.widget_info)
+        self.assertIn("#if DEBUG", self.widget_provider)
+        self.assertIn("AppStoreWidgetPreviewFixture.isEnabled", self.widget_provider)
+        self.assertIn("#if DEBUG", self.widget_view)
+        self.assertIn('localIdentifier = "app-store-widget-gallery-preview"', self.widget_view)
+        self.assertIn("UIGraphicsImageRenderer", self.widget_view)
+        self.assertNotIn("URLSession.", self.widget_view)
+        self.assertNotIn("PHAsset.", self.widget_view)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [

@@ -10,7 +10,15 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     private static let maximumTimelineEntryCount = 2
 
     func placeholder(in context: Context) -> NekoWidgetEntry {
-        .empty(at: Date(), imageVariant: imageVariant(for: context.family))
+#if DEBUG
+        if AppStoreWidgetPreviewFixture.isEnabled {
+            return AppStoreWidgetPreviewFixture.entry(
+                at: Date(),
+                variant: imageVariant(for: context.family)
+            )
+        }
+#endif
+        return .empty(at: Date(), imageVariant: imageVariant(for: context.family))
     }
 
     func snapshot(
@@ -19,6 +27,11 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     ) async -> NekoWidgetEntry {
         let now = Date()
         let variant = imageVariant(for: context.family)
+#if DEBUG
+        if AppStoreWidgetPreviewFixture.isEnabled {
+            return AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)
+        }
+#endif
         let source = configuration.photoSource ?? .personalLibrary
         if source.id == WidgetPhotoSource.familyWindowID {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
@@ -87,6 +100,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     ) async -> Timeline<NekoWidgetEntry> {
         let now = Date()
         let variant = imageVariant(for: context.family)
+#if DEBUG
+        if AppStoreWidgetPreviewFixture.isEnabled {
+            return Timeline(
+                entries: [AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)],
+                policy: .never
+            )
+        }
+#endif
         let source = configuration.photoSource ?? .personalLibrary
         if source.id == WidgetPhotoSource.familyWindowID {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
