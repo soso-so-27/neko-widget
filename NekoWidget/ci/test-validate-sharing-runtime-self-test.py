@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ CASES = {
     "canonical-local-only-privacy-budget",
     "daily-store-cas-highwater-anchor",
     "day-boundary-convergence",
+    "diagnostic-persistence-privacy",
     "disabled-upgrade-purge",
     "lease-heartbeat",
     "legacy-widget-cache-migration",
@@ -74,6 +76,21 @@ class SharingRuntimeSelfTestValidatorTests(unittest.TestCase):
     def test_complete_privacy_safe_marker_passes(self) -> None:
         result = self.validate(report())
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_validator_cases_match_runtime_runner(self) -> None:
+        runner = (
+            SCRIPT.parent.parent
+            / "NekoWidget"
+            / "Services"
+            / "SharingRuntimeSelfTest.swift"
+        ).read_text(encoding="utf-8")
+        runtime_cases = set(
+            re.findall(
+                r'results\.append\((?:await )?(?:run|runAsync)\("([^"]+)"\)',
+                runner,
+            )
+        )
+        self.assertEqual(runtime_cases, CASES)
 
     def test_missing_case_fails(self) -> None:
         value = report()

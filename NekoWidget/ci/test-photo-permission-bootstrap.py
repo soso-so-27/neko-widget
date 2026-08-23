@@ -188,12 +188,24 @@ class PhotoPermissionBootstrapTests(unittest.TestCase):
             encoding="utf-8"
         )
         harness = (CI_DIRECTORY / "run-simulator-smoke.sh").read_text(encoding="utf-8")
+        app_view_model = (
+            project / "NekoWidget" / "ViewModels" / "AppViewModel.swift"
+        ).read_text(encoding="utf-8")
         self.assertIn("permissionAlert.waitForExistence(timeout: 60)", ui_test)
         self.assertIn("executionTimeAllowance = 240", ui_test)
         self.assertIn("Allow Full Access", ui_test)
         self.assertIn("フルアクセスを許可", ui_test)
         self.assertIn("-parallel-testing-enabled NO", harness)
         self.assertIn("validate-photo-permission-bootstrap.py", harness)
+        for message in (MODULE.REQUEST_STARTED, MODULE.REQUEST_FINISHED):
+            self.assertRegex(
+                app_view_model,
+                re.compile(
+                    r'SharedLog\.app\.info\(\s*"permission",\s*'
+                    + re.escape(f'"{message}"')
+                ),
+            )
+        self.assertNotIn("Photo authorization request", app_view_model)
         self.assertIsNone(
             re.search(r"(?m)^\s*xcrun\s+simctl\s+privacy\s+grant\b", harness),
             "The smoke test must not bypass the real system permission prompt.",
