@@ -21,9 +21,72 @@ private let roomKey = Data((0..<32).map(UInt8.init))
 private let capturedAt = Date(timeIntervalSince1970: 1_777_777_777.125)
 private let jpeg = Data([0xFF, 0xD8]) + Data(repeating: 0x61, count: 1_024) + Data([0xFF, 0xD9])
 
+private struct WindowNameProtocolFixture: Decodable {
+    struct Record: Decodable {
+        struct Expected: Decodable {
+            let canonicalBase64URL: String
+            let sha256: String
+        }
+
+        let fields: [String]
+        let spaceId: String
+        let ownerMemberId: String
+        let ownerRevision: Int
+        let keyEpoch: Int
+        let ciphertextSHA256: String
+        let expected: Expected
+    }
+
+    let schemaVersion: Int
+    let record: Record
+}
+
 @main
 private struct MomentSharingCoreVerifier {
 static func main() throws {
+guard CommandLine.arguments.count == 2 else {
+    fatalError("window-name protocol fixture path is required")
+}
+let windowNameFixture = try JSONDecoder().decode(
+    WindowNameProtocolFixture.self,
+    from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+)
+require(windowNameFixture.schemaVersion == 1, "window-name fixture schema changed")
+let fixtureRecord = windowNameFixture.record
+require(
+    fixtureRecord.fields == [
+        "NW2.WINDOW-NAME-RECORD",
+        "1",
+        fixtureRecord.spaceId,
+        fixtureRecord.ownerMemberId,
+        String(fixtureRecord.ownerRevision),
+        String(fixtureRecord.keyEpoch),
+        fixtureRecord.ciphertextSHA256
+    ],
+    "window-name fixture fields do not match the signed record contract"
+)
+guard let fixtureHash = Data(base64URLString: fixtureRecord.ciphertextSHA256) else {
+    fatalError("window-name fixture hash is not canonical base64url")
+}
+let fixtureTranscript = try PrivateWindowNameCrypto.recordData(
+    context: PrivateWindowNameCiphertextContext(
+        spaceID: fixtureRecord.spaceId,
+        ownerMemberID: fixtureRecord.ownerMemberId,
+        ownerRevision: fixtureRecord.ownerRevision,
+        keyEpoch: fixtureRecord.keyEpoch
+    ),
+    ciphertextSHA256: fixtureHash
+)
+require(
+    fixtureTranscript.base64URLEncodedString()
+        == fixtureRecord.expected.canonicalBase64URL,
+    "Swift window-name signature transcript diverged from the shared fixture"
+)
+require(
+    Data(SHA256.hash(data: fixtureTranscript)).base64URLEncodedString()
+        == fixtureRecord.expected.sha256,
+    "Swift window-name signature transcript hash diverged from the shared fixture"
+)
 let payload = try MomentCrypto.prepare(
     canonicalJPEG: jpeg,
     capturedAt: capturedAt,

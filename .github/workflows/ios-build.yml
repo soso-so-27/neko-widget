@@ -131,7 +131,8 @@ jobs:
             Shared/Sharing/MomentSharingCore.swift \
             ci/verify-moment-sharing-core.swift \
             -o "$RUNNER_TEMP/verify-moment-sharing-core"
-          "$RUNNER_TEMP/verify-moment-sharing-core"
+          "$RUNNER_TEMP/verify-moment-sharing-core" \
+            ci/fixtures/window-name-protocol-v1.json
 
           project=NekoWidget.xcodeproj/project.pbxproj
           grep -Fq 'NekoWidgetShareExtension.appex in Embed App Extensions' "$project"

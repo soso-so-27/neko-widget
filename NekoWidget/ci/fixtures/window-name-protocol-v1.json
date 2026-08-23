@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "record": {
+    "fields": [
+      "NW2.WINDOW-NAME-RECORD",
+      "1",
+      "space_fixture",
+      "member_owner",
+      "7",
+      "1",
+      "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    ],
+    "spaceId": "space_fixture",
+    "ownerMemberId": "member_owner",
+    "ownerRevision": 7,
+    "keyEpoch": 1,
+    "ciphertextSHA256": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "expected": {
+      "canonicalBase64URL": "ABZOVzIuV0lORE9XLU5BTUUtUkVDT1JEAAExAA1zcGFjZV9maXh0dXJlAAxtZW1iZXJfb3duZXIAATcAATEAK0FBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDg",
+      "sha256": "_q6zOqnojpwSYNF9Z659G3KaZ4I_aKEVODOo_2NNg1o"
+    }
+  }
+}
