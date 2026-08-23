@@ -95,7 +95,7 @@ struct HomeView: View {
 
     private var photoAccessCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("うちの子を探すには写真へのアクセスが必要です", systemImage: "photo.on.rectangle.angled")
+            Label("このiPhoneの猫写真を見つけるには、写真へのアクセスが必要です", systemImage: "photo.on.rectangle.angled")
                 .font(.headline)
 
             Text(OnboardingPresentationCopy.homePermissionBody(
@@ -126,7 +126,7 @@ struct HomeView: View {
                     Text("ウィジェットを置く")
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    Text("毎日ちがう、うちの子をホーム画面に。")
+                    Text("毎日ちがう猫写真をホーム画面に。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
@@ -226,7 +226,7 @@ struct HomeView: View {
                     Label(
                         familyPhotoHasPriority
                             ? "いま届いた・\(privateWindowDisplayName)"
-                            : "\(privateWindowDisplayName)から届いた一枚",
+                            : "\(privateWindowDisplayName)に届いた一枚",
                         systemImage: "person.2.fill"
                     )
                     .font(.title3.bold())
@@ -480,7 +480,7 @@ struct PhotoShuffleGuideView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("ロック画面を、うちの子に")
+                        Text("猫写真をロック画面にも")
                             .font(.title2.bold())
                         Text("アルバムを作ったら、Apple標準の写真シャッフルに一度設定します。")
                             .foregroundStyle(.secondary)
@@ -489,14 +489,14 @@ struct PhotoShuffleGuideView: View {
                     VStack(spacing: 0) {
                         GuideStep(number: 1, title: "ロック画面を長押し", detail: "「＋」をタップします。")
                         GuideStep(number: 2, title: "「写真シャッフル」を選ぶ", detail: "上部のカテゴリから開きます。")
-                        GuideStep(number: 3, title: "「アルバム」を選ぶ", detail: "「うちの子」アルバムを指定します。")
+                        GuideStep(number: 3, title: "「アルバム」を選ぶ", detail: "写真アプリの「うちの子」アルバムを指定します。")
                         GuideStep(number: 4, title: "頻度を「ロック時」に", detail: "ロック解除のたびに別の1枚を楽しめます。", isLast: true)
                     }
                     .padding(.horizontal, 16)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
 
                     Label {
-                        Text("写真シャッフルは設定時のアルバム内容を使います。アルバム更新後の写真を反映するには、壁紙で「うちの子」を選び直してください。")
+                        Text("写真シャッフルは設定時のアルバム内容を使います。アルバム更新後の写真を反映するには、壁紙で写真アプリの「うちの子」アルバムを選び直してください。")
                             .font(.subheadline)
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")

@@ -44,7 +44,7 @@ struct NekoWidgetView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityLabel(
                         entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
-                            ? "\(entry.windowDisplayName)から届いた写真"
+                            ? "\(entry.windowDisplayName)に届いた写真"
                             : "このiPhoneで見つけた猫写真"
                     )
                 }
@@ -100,7 +100,7 @@ struct NekoWidgetView: View {
            entry.cacheFilename != nil {
             Text(entry.familyMomentIsFresh
                 ? "いま届いた・\(entry.windowDisplayName)"
-                : "\(entry.windowDisplayName)から届いた一枚")
+                : "\(entry.windowDisplayName)に届いた一枚")
                 .font(.caption2.bold())
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)

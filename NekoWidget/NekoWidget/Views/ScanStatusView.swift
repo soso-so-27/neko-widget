@@ -37,7 +37,7 @@ struct InitialScanView: View {
                         .controlSize(.large)
                     Text(scan.isPreparingGroupedAlbums
                         ? "新しい思い出を準備しています"
-                        : "うちの子を探しています")
+                        : "このiPhoneの猫写真を探しています")
                         .font(.title3.weight(.semibold))
                     Text(scan.isPreparingGroupedAlbums
                         ? "いっしょ・おでかけなどに必要な情報を、端末内で確認しています。"
@@ -84,7 +84,7 @@ struct InitialScanView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 } else {
-                    Text("あなたのカメラロールに\nうちの子の写真は")
+                    Text("このiPhoneで見つけた\n猫写真は")
                         .font(.title3)
                         .multilineTextAlignment(.center)
 

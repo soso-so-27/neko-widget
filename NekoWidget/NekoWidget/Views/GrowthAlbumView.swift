@@ -67,7 +67,7 @@ struct GrowthAlbumDetailView: View {
                                     pendingExclusionIdentifier = item.photo.localIdentifier
                                     showsExclusionConfirmation = true
                                 } label: {
-                                    Label("うちの子ではない", systemImage: "cat.circle")
+                                    Label("表示候補から外す", systemImage: "cat.circle")
                                 }
                             }
                         }
@@ -84,7 +84,7 @@ struct GrowthAlbumDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .confirmationDialog(
-            "「うちの子ではない」にしますか？",
+            "表示候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
         ) {
