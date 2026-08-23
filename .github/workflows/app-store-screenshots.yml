@@ -146,6 +146,7 @@ jobs:
             -derivedDataPath "$derived_data_directory" \
             -resultBundlePath "$result_bundle" \
             -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureJapaneseLocalOnlyProductScreens \
+            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore \
             -parallel-testing-enabled NO \
             -testLanguage ja \
             -testRegion JP \

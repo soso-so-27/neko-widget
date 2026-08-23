@@ -42,12 +42,12 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The local-only Photos privacy page did not finish preparing.", application: app)
             return
         }
-        guard app.staticTexts["・写真は端末の外に出ません"].exists else {
+        guard app.staticTexts["・開発者のサーバーへ写真を自動送信しません"].exists else {
             fail("The disabled-build privacy statement was not visible.", application: app)
             return
         }
 
-        captureScreenshot(named: "01-on-device-photo-privacy")
+        captureScreenshot(named: "05-on-device-photo-privacy")
         app.terminate()
     }
 
@@ -66,7 +66,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The deterministic Window illustration did not finish loading.", application: app)
             return
         }
-        captureScreenshot(named: "02-private-photo-window")
+        captureScreenshot(named: "02-local-photo-window")
 
         guard tapTab(
             application: app,
@@ -83,7 +83,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
         // The first two Memories cards both use the oldest deterministic
         // photo. Requiring two rendered instances prevents a single retained
         // or partially loaded cell from passing this capture gate.
-        guard waitForFixturePhotos(in: app, requirements: [(8, 2)]) else {
+        guard waitForFixturePhotos(
+            in: app,
+            requirements: [(8, 2), (6, 1), (4, 1), (1, 1)]
+        ) else {
             fail("The deterministic Memories illustrations did not finish loading.", application: app)
             return
         }

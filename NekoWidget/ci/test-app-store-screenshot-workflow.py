@@ -21,6 +21,9 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.fixture = source("NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift")
         self.photo_image = source("NekoWidget/NekoWidget/Views/PhotoAssetImageView.swift")
         self.ui_test = source("NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift")
+        self.widget_ui_test = source(
+            "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift"
+        )
         self.exporter = source("NekoWidget/ci/export-app-store-screenshots.sh")
         self.project = source("NekoWidget/NekoWidget.xcodeproj/project.pbxproj")
 
@@ -89,20 +92,39 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         debug_start = app.index("#if DEBUG", app.index("var body: some Scene"))
         release_branch = app.index("#else", debug_start)
         fixture_route = app.index("AppStoreScreenshotFixture.launchArgument", debug_start)
+        widget_fixture_route = app.index(
+            "AppStoreScreenshotFixture.widgetLaunchArgument",
+            debug_start,
+        )
         self.assertLess(fixture_route, release_branch)
+        self.assertLess(widget_fixture_route, release_branch)
+        self.assertIn("installWidgetPreviewFixture", self.fixture)
+        self.assertIn("WidgetCenter.shared.reloadAllTimelines()", self.fixture)
+        self.assertIn(
+            "WidgetPlacementScreenshotUITests/testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore",
+            self.workflow,
+        )
 
-    def test_ui_test_and_exporter_agree_on_four_ordered_names(self) -> None:
+    def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [
-            "01-on-device-photo-privacy",
-            "02-private-photo-window",
+            "01-local-cat-widget",
+            "02-local-photo-window",
             "03-organized-memories",
             "04-liked-photos",
+            "05-on-device-photo-privacy",
         ]
         for name in names:
-            self.assertEqual(self.ui_test.count(f'captureScreenshot(named: "{name}")'), 1)
+            captures = self.ui_test.count(f'captureScreenshot(named: "{name}")')
+            captures += self.widget_ui_test.count(f'captureScreenshot(named: "{name}")')
+            self.assertEqual(captures, 1)
             self.assertEqual(self.exporter.count(f'"{name}"'), 1)
-        self.assertIn("・写真は端末の外に出ません", self.ui_test)
+        self.assertIn("開発者のサーバーへ写真を自動送信しません", self.ui_test)
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
+        self.assertIn("--app-store-widget-screenshot-fixture", self.widget_ui_test)
+        self.assertIn(
+            "このiPhoneで見つけた猫写真",
+            self.widget_ui_test,
+        )
         self.assertIn(
             "AppStoreScreenshotFixture.loadTracker.record(",
             self.photo_image,
@@ -114,7 +136,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.fixture,
         )
         self.assertIn("requirements: [(12, 1)]", self.ui_test)
-        self.assertIn("requirements: [(8, 2)]", self.ui_test)
+        self.assertIn("requirements: [(8, 2), (6, 1), (4, 1), (1, 1)]", self.ui_test)
         self.assertIn("requirements: [(9, 1), (10, 1), (11, 1)]", self.ui_test)
         self.assertNotIn("waitForStableRendering", self.ui_test)
 

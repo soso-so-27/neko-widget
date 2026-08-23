@@ -44,10 +44,11 @@ raw_directory = Path(sys.argv[1]).resolve()
 output_directory = Path(sys.argv[2]).resolve()
 
 targets = [
-    "01-on-device-photo-privacy",
-    "02-private-photo-window",
+    "01-local-cat-widget",
+    "02-local-photo-window",
     "03-organized-memories",
     "04-liked-photos",
+    "05-on-device-photo-privacy",
 ]
 accepted_portrait_sizes = {
     (1260, 2736),
@@ -248,7 +249,7 @@ for target in targets:
     encoding="utf-8",
 )
 
-print("Exported four metadata-free App Store JPEGs:")
+print("Exported five metadata-free App Store JPEGs:")
 for item in report["screenshots"]:
     print(
         f"- {item['file']}: {item['width']}x{item['height']} "
