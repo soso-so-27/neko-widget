@@ -51,3 +51,6 @@ __pycache__/
 
 # App Store owner-only release inputs (never commit contact or legal answers)
 NekoWidget/docs/app-store/local-only-owner-input.json
+NekoWidget/docs/app-store/local-only-release-evidence.json
+NekoWidget/docs/app-store/NekoWidget-signed-artifacts.tar.gz.enc
+NekoWidget/docs/app-store/NekoWidget-processed-app-info.plist

@@ -6,12 +6,15 @@
 貼り付け内容の機械可読な正本は[local-only-ja.json](local-only-ja.json)である。
 共有を有効にしたbuild、外部TestFlight用説明、将来機能の宣伝には流用しない。
 
-現在の状態は、本文検証が`COPY_VALID`、提出可否は`RED`である。公開Privacy／Supportページが
-問い合わせ窓口未掲載を明記しており、所有者入力も未完了のため、App Storeへ提出しない。
+現在の状態は、本文検証が`COPY_VALID`、提出可否は`RED`である。公開Privacy／Supportページに
+実際の問い合わせ経路がなく、所有者入力と最終`disabled`署名archiveの証拠も未完了のため、
+App Storeへ提出しない。
 
 Appleの現行上限は、App名30文字、Subtitle 30文字、Promotional Text 170文字、
 Description 4,000文字、Keywords 100 bytes、Review Notes 4,000 bytesである。
-Keywordsだけは文字数ではなくUTF-8 bytesで確認する。Support URLは実際の連絡先へ到達できる必要がある。
+Keywordsだけは文字数ではなくUTF-8 bytesで確認する。AppleのPlatform version informationに従い、
+Support URLは実際の連絡先情報へ到達できるページでなければならない。GitHub Issuesへの誘導だけ、
+「窓口未掲載」の表示、または連絡不能なplaceholderはこの要件を満たさない。
 
 ## 貼り付け用本文
 
@@ -131,7 +134,17 @@ Sign-in requiredは`No`。初回Version 1.0なので`What’s New`は空欄と�
 [local-only-owner-input.example.json](local-only-owner-input.example.json)をrepository外またはgitignoredの
 `local-only-owner-input.json`へcopyし、値を埋める。`null`、未入力、`false`はすべて提出停止になる。
 所有者が値を`true`にしても、checked-inのPrivacy／Supportページに「窓口は現在未掲載」または
-「提出準備は完了していません」が残る間はvalidatorが自動で`RED`を維持する。
+「提出準備は完了していません」が残る間はvalidatorが自動で`RED`を維持する。通常実行が確認する
+site rootはrepositoryの`docs/app`へ固定しており、CLI引数で別のdummy pageへ差し替えることはできない。
+
+公開準備を完了するときは、Privacy／Support両ページへ次を実装する。個人emailをrepositoryへ
+書く必要がない運用なら、実際に応答できる専用の公開HTTPS formを用意する。
+
+- `<meta name="neko-app-store-contact-ready" content="true">`をheadへ置く。
+- 実際に受信・応答できる`mailto:` link、または公開HTTPS formだけに
+  `data-neko-private-contact="true"`を付ける。
+- HTTPS formのlinkまたはformには`data-neko-contact-kind="form"`も付ける。
+- markerだけ、dummy address、予約domain、転送先未設定のformでは完了扱いにしない。
 
 特に次は文面が完成していても代行判断できない。
 
@@ -145,7 +158,32 @@ Sign-in requiredは`No`。初回Version 1.0なので`What’s New`は空欄と�
 - Export Complianceの回答、免除判断、必要書類
 - Copyright、価格、tax category、配布地域、release方法
 - Version、Build、40桁commit、`disabled` archiveの一致
+- 最終release workflowの結論が`Success`であること
 - 最終previewと`Submit for Review`の所有者承認
+
+## 最終archive evidence gate
+
+所有者入力だけでは`GREEN`にならない。`.github/workflows/testflight.yml`をmainの提出候補SHAで、
+`release_mode=disabled`、`upload_to_testflight=true`、`retain_signed_artifacts=true`として完走させる。
+workflowはTestFlight upload成功後に次の2つのActions artifactを生成する。
+
+- `nekowidget-signed-artifacts-<run>-<attempt>`: 暗号化した署名済みarchive／IPA
+- `nekowidget-local-only-release-evidence-<run>-<attempt>`: workflow生成manifestと処理済みApp Info.plist
+
+両方を同じrunからdownloadし、暗号化artifact、`local-only-release-evidence.json`、
+`NekoWidget-processed-app-info.plist`を一緒に検証する。validatorは実fileのSHA-256／size、処理済み
+Info.plistのVersion／Build／Bundle ID／`disabled` flags、workflow run ID／URL、TestFlight upload成功、
+source commitのgit実在と現在のrepository HEADへの完全一致を確認する。さらに公開GitHub Actions APIで
+runの最終状態が`completed/success`、workflow／main／SHA／attemptが完全一致し、同じrunに暗号化archiveと
+release evidenceの両artifactが存在して期限切れでないことを照合する。ネットワーク障害などでこの最終記録を
+確認できない場合もfail-closedで`RED`になる。`aaaa...`、
+`owner-recorded-result`、nullその他のplaceholderは証拠にならない。署名archiveだけを作るdry run
+（`upload_to_testflight=false`）も提出準備は`RED`のままである。
+
+[local-only-release-evidence.example.json](local-only-release-evidence.example.json)はschemaの例であり、
+証拠そのものではない。workflow生成manifestを手書きで再現しない。Actions run全体の結論が
+`Success`になったことを確認してから、所有者入力の
+`release_workflow_conclusion_success_confirmed`を`true`にする。
 
 ## 検証
 
@@ -155,19 +193,25 @@ Sign-in requiredは`No`。初回Version 1.0なので`What’s New`は空欄と�
 python NekoWidget/ci/validate-app-store-local-only-readiness.py --copy-only
 ```
 
-提出可否を検証する（所有者入力がなければ意図どおり`RED`、終了code 2）:
+提出可否を検証する（所有者入力、公開連絡経路、最終archive evidenceのいずれかがなければ
+意図どおり`RED`、終了code 2）:
 
 ```powershell
 python NekoWidget/ci/validate-app-store-local-only-readiness.py
 ```
 
-所有者入力を含める場合:
+workflowからdownloadした3fileと所有者入力を含める場合:
 
 ```powershell
 python NekoWidget/ci/validate-app-store-local-only-readiness.py `
   --owner-input NekoWidget/docs/app-store/local-only-owner-input.json `
+  --release-evidence NekoWidget/docs/app-store/local-only-release-evidence.json `
+  --signed-artifact NekoWidget/docs/app-store/NekoWidget-signed-artifacts.tar.gz.enc `
+  --processed-app-info NekoWidget/docs/app-store/NekoWidget-processed-app-info.plist `
   --json
 ```
+
+この4fileは`.gitignore`対象であり、commitしない。site rootを指定するoptionは意図的に提供しない。
 
 `GREEN`は提出操作を実行する許可ではない。最後の`Submit for Review`は所有者がApp Store Connectの
 previewを確認して明示的に実行する。

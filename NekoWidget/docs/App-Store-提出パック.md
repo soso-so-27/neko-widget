@@ -217,7 +217,9 @@ repositoryの`../../docs/`は公開候補sourceであり、公開済みである
 - HTTPSでPrivacy Policy、Support、Community Standardsを公開し、exact URLとdeployed commitを記録する。
 - 「家族のまど」を製品語の「名前付きの非公開なまど」へ揃える。
 - 保存期間、通報の例外、再インストール、bookmark、Photos／iCloud非保存を最終buildと一致させる。
-- Support URLへ、利用者とAppleが実際に連絡できる情報を掲載する。
+- AppleのPlatform version informationに従い、Support URLへ利用者とAppleが実際に連絡できる
+  email、電話、または応答可能なHTTPS form等の連絡先情報を掲載する。GitHub Issuesへの誘導だけ、
+  placeholder、または「窓口未掲載」の表示では完了にしない。
 - 48時間以内の初回確認を公開する場合、休日を含む実運用で履行できる。
 - 個人写真、招待code、12語、暗号鍵を公開問い合わせへ添付しない注意を維持する。
 
@@ -225,6 +227,7 @@ Apple Guideline 1.2は、UGCを扱うAppへ投稿前filter、通報と適時対�
 公開連絡先を求める。
 
 - [Apple: App Review Guidelines 1.2](https://developer.apple.com/app-store/review/guidelines/)
+- [Apple: Platform version information](https://developer.apple.com/help/app-store-connect/reference/app-information/platform-version-information/)
 
 ## 4. Age Rating判断材料
 

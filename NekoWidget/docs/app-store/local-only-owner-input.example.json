@@ -29,5 +29,6 @@
   "tax_category_confirmed": null,
   "territories_confirmed": null,
   "release_method": null,
-  "final_owner_submit_approval": null
+  "final_owner_submit_approval": null,
+  "release_workflow_conclusion_success_confirmed": null
 }

@@ -1041,6 +1041,45 @@ jobs:
             --apiKey "$APP_STORE_CONNECT_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
 
+      - name: Write local-only signed release evidence
+        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.retain_signed_artifacts }}
+        shell: bash
+        env:
+          SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
+          UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
+          RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+        run: |
+          set -euo pipefail
+          processed_info="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist"
+          release_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$processed_info")"
+          processed_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$processed_info")"
+          [[ "$processed_build" == "$RELEASE_BUILD_NUMBER" ]]
+          python3 "$PROJECT_DIRECTORY/ci/write-local-only-release-evidence.py" \
+            --repository "$GITHUB_WORKSPACE" \
+            --info-plist "$processed_info" \
+            --artifact "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+            --output-directory "$RUNNER_TEMP/local-only-release-evidence" \
+            --source-commit "$GITHUB_SHA" \
+            --version "$release_version" \
+            --build-number "$processed_build" \
+            --release-mode "$SELECTED_RELEASE_MODE" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --event "$GITHUB_EVENT_NAME" \
+            --upload-to-testflight "$UPLOAD_TO_TESTFLIGHT" \
+            --retain-signed-artifacts "$RETAIN_SIGNED_ARTIFACTS"
+
+      - name: Upload local-only signed release evidence
+        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.retain_signed_artifacts }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nekowidget-local-only-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/local-only-release-evidence/local-only-release-evidence.json
+            ${{ runner.temp }}/local-only-release-evidence/NekoWidget-processed-app-info.plist
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Write release summary
         if: always()
         shell: bash
