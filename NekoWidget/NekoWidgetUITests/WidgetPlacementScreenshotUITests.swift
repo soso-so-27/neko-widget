@@ -136,6 +136,122 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore() {
+        let app = XCUIApplication()
+        app.launchArguments += [
+            "-AppleLanguages", "(ja)",
+            "-AppleLocale", "ja_JP",
+            "--app-store-widget-screenshot-fixture",
+        ]
+        app.launch()
+
+        guard app.staticTexts["app-store-widget-screenshot-fixture-ready"]
+            .waitForExistence(timeout: 20)
+        else {
+            fail(
+                "The local-only Widget fixture was not published to the App Group.",
+                application: app
+            )
+            return
+        }
+
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: springboardBundleIdentifier)
+        guard springboard.wait(for: .runningForeground, timeout: 15) else {
+            fail(
+                "SpringBoard did not become foreground for the App Store Widget capture.",
+                application: springboard
+            )
+            return
+        }
+        guard let editButton = enterHomeScreenEditing(in: springboard) else {
+            fail(
+                "Could not enter Home Screen editing mode for the App Store Widget capture.",
+                application: springboard
+            )
+            return
+        }
+        editButton.tap()
+
+        guard let addWidgetMenuItem = waitForElement(
+            in: springboard,
+            labels: ["ウィジェットを追加", "Add Widget"],
+            elementTypes: [.button, .staticText, .menuItem],
+            timeout: 12
+        ) else {
+            fail(
+                "The Home Screen edit menu did not expose Add Widget.",
+                application: springboard
+            )
+            return
+        }
+        addWidgetMenuItem.tap()
+
+        guard let searchField = waitForFirstElement(
+            springboard.searchFields,
+            timeout: 15
+        ) else {
+            fail(
+                "The Widget gallery search field did not appear.",
+                application: springboard
+            )
+            return
+        }
+        searchField.tap()
+        searchField.typeText("ねこのまど")
+
+        guard let widgetSearchResult = waitForElement(
+            in: springboard,
+            labels: ["ねこのまど", "NekoWidget"],
+            elementTypes: [.button, .cell, .staticText, .other],
+            timeout: 20
+        ) else {
+            fail(
+                "The Widget gallery did not return ねこのまど.",
+                application: springboard
+            )
+            return
+        }
+        if widgetSearchResult.isHittable {
+            widgetSearchResult.tap()
+        } else {
+            widgetSearchResult
+                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                .tap()
+        }
+
+        guard waitForElement(
+            in: springboard,
+            labels: ["ウィジェットを追加", "Add Widget"],
+            elementTypes: [.button],
+            timeout: 20
+        ) != nil else {
+            fail(
+                "The Widget size picker did not expose its Add Widget button.",
+                application: springboard
+            )
+            return
+        }
+        guard waitForElement(
+            in: springboard,
+            labels: ["このiPhoneで見つけた猫写真"],
+            elementTypes: [.image, .other, .staticText],
+            timeout: 30
+        ) != nil else {
+            fail(
+                "The Widget gallery did not render the seeded local cat preview.",
+                application: springboard
+            )
+            return
+        }
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        captureScreenshot(named: "01-local-cat-widget")
+        // Do not tap Add Widget. The disposable Simulator is erased after the
+        // run, but the capture itself remains read-only SpringBoard review.
+    }
+
+    @MainActor
     private func enterHomeScreenEditing(in springboard: XCUIApplication) -> XCUIElement? {
         let labels = ["編集", "Edit"]
         let candidatePoints = [

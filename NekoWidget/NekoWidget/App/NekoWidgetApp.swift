@@ -24,7 +24,11 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if CommandLine.arguments.contains("--sharing-runtime-self-test") {
+            if CommandLine.arguments.contains(AppStoreScreenshotFixture.widgetLaunchArgument) {
+                AppStoreScreenshotWidgetSeedRootView()
+            } else if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
+                AppStoreScreenshotFixtureRootView()
+            } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()
             } else {
                 ProductionAppRootView()
