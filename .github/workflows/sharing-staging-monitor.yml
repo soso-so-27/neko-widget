@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   public-runtime-boundary:
-    name: Verify moment ON, window-name and legacy OFF
+    name: Verify moment and window-name ON, legacy OFF
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -36,4 +36,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/check-staging-runtime.mjs --expected moment-on-window-name-off
+          node scripts/check-staging-runtime.mjs --expected on
