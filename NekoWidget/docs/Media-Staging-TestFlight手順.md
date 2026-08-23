@@ -2,7 +2,7 @@
 
 この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
 
-現在は準備段階です。Workerの`MOMENT_RUNTIME_ENABLED`と`LEGACY_SHARING_RUNTIME_ENABLED`はどちらも`NO`のままであり、この変更でdeploy、TestFlight upload、App Store Connectのprivacy申告更新は行いません。
+Build 30で本人所有2台への内部TestFlight配布と、通常の一枚を届ける最初の短時間受入まで完了しました。受入後はWorkerの`MOMENT_RUNTIME_ENABLED`と`LEGACY_SHARING_RUNTIME_ENABLED`をどちらも`NO`へ戻しています。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
 
 ## release modeの固定値
 
@@ -74,4 +74,28 @@ uploadの承認後は、専用の内部tester groupにだけ配布します。�
 - privacy、support、community standardsのLinkが開けない
 - 通報、block、共有解除のいずれかが失敗する
 
-今回の準備変更ではこの2台試験、TestFlight upload、Cloudflare deployは実施しません。
+## Build 30 初回受入記録
+
+2026-08-23、commit `5172b09015bf1ad9a5d498f0be313fc0b47080ef`からBuild 30を作成し、本人用の内部TestFlightグループだけへ配布した。
+
+- mainのbuild、iOS 18.5／26.2 sharing runtime self-test、Simulator smokeが成功
+- signing-only archiveを先に検証し、同一commitをBuild 30としてAppleへupload
+- App Store Connectで処理完了、Build 30、内部グループ割当を確認
+- 本人所有の2台をBuild 30へ更新し、既存の2人ペアリングを維持
+- 両端末で「センシティブな内容の警告」が有効な状態から開始
+- 本人が選んだ新しいテスト画像1枚だけを、Share Extensionからhost appへ渡した
+- host appで安全確認後に送信し、送信側は「直近の配信受付」を表示
+- 受信側は同じ1枚を表示し、Serverでもmoment `committed`、delivery `acknowledged`を確認
+- テスト窓では通常momentだけを一時的に有効化し、旧日次共有runtimeは常に無効のまま維持
+- 終了直後に通常momentを無効化し、`/health`の`200`、通常momentと旧共有の`503`を確認
+- Environmentに設定した公開privacy、support、community standardsの3 URLは、外部からのHTTPS到達性が`200`で、placeholderを含まない
+
+この合格は通常の`reserve → upload → commit → receive → ACK`だけを対象とする。次は未確認として残す。
+
+- 受信側の分析設定が無効な間は未表示・未ACKとし、有効化後に同じ配送を再試行する実機経路
+- アプリ内のprivacy、support、community standardsの各Linkが端末で開くこと
+- 受信写真の通報、block、共有解除
+- offline、Share Extension終了、再起動、通信retry、鍵喪失
+- app削除・再install後に旧資格を使えないこと
+
+上記は2台実機gateの未完了一覧であり、完了してもproduction gateを満たしたことにはならない。[ADR-017のrelease境界](ADR-017-家族共有v1とmoderation境界.md#release境界)と[moderation runbook](../SharingService/MODERATION_RUNBOOK.md)に残る運用、監視、鍵管理、負荷試験、App Store Connect回答も完了するまで、一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。追加の実機窓は項目をまとめ、本人の明示承認を得た短時間だけ実施する。
