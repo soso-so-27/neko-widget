@@ -3,6 +3,7 @@ import Foundation
 @main
 enum MomentSharingPresentationVerifier {
     static func main() throws {
+        try verifiesForegroundRefreshPolicy()
         try verifiesEmptyState()
         try verifiesPreparationBoundary()
         try verifiesEveryOutboxPhasePrecisely()
@@ -13,6 +14,52 @@ enum MomentSharingPresentationVerifier {
         try verifiesFamilyWindowFreshnessBoundary()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
         print("Moment sharing presentation verifier passed")
+    }
+
+    private static func verifiesForegroundRefreshPolicy() throws {
+        try require(
+            MomentForegroundRefreshPolicy.interval == .seconds(30),
+            "foreground refresh interval drifted from 30 seconds"
+        )
+        try require(
+            MomentForegroundRefreshPolicy.shouldPoll(
+                isSceneActive: true,
+                isMediaAvailable: true,
+                isPaired: true,
+                hasCurrentConsent: true
+            ),
+            "eligible foreground sharing stopped polling"
+        )
+        let ineligible = [
+            MomentForegroundRefreshPolicy.shouldPoll(
+                isSceneActive: false,
+                isMediaAvailable: true,
+                isPaired: true,
+                hasCurrentConsent: true
+            ),
+            MomentForegroundRefreshPolicy.shouldPoll(
+                isSceneActive: true,
+                isMediaAvailable: false,
+                isPaired: true,
+                hasCurrentConsent: true
+            ),
+            MomentForegroundRefreshPolicy.shouldPoll(
+                isSceneActive: true,
+                isMediaAvailable: true,
+                isPaired: false,
+                hasCurrentConsent: true
+            ),
+            MomentForegroundRefreshPolicy.shouldPoll(
+                isSceneActive: true,
+                isMediaAvailable: true,
+                isPaired: true,
+                hasCurrentConsent: false
+            )
+        ]
+        try require(
+            ineligible.allSatisfy { !$0 },
+            "foreground polling bypassed an eligibility boundary"
+        )
     }
 
     private static func verifiesEmptyState() throws {

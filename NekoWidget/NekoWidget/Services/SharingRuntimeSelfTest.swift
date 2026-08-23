@@ -273,6 +273,62 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
     }
 }
 
+private actor RuntimeMomentProcessQueueProbe {
+    private struct RunWaiter {
+        let expectedCount: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private var runCount = 0
+    private var didReleaseFirst = false
+    private var releasedFirstNotice: MomentSynchronizationNotice?
+    private var firstRunContinuations: [
+        CheckedContinuation<MomentSynchronizationNotice?, Never>
+    ] = []
+    private var runWaiters: [RunWaiter] = []
+
+    func run(
+        firstNotice: MomentSynchronizationNotice?,
+        trailingNotice: MomentSynchronizationNotice?
+    ) async -> MomentSynchronizationNotice? {
+        runCount += 1
+        let reached = runWaiters.filter { $0.expectedCount <= runCount }
+        runWaiters.removeAll { $0.expectedCount <= runCount }
+        for waiter in reached {
+            waiter.continuation.resume()
+        }
+        guard runCount == 1 else { return trailingNotice }
+        if didReleaseFirst { return releasedFirstNotice ?? firstNotice }
+        return await withCheckedContinuation { continuation in
+            firstRunContinuations.append(continuation)
+        }
+    }
+
+    func count() -> Int { runCount }
+
+    func waitUntilRunCount(_ expectedCount: Int) async {
+        guard runCount < expectedCount else { return }
+        await withCheckedContinuation { continuation in
+            runWaiters.append(
+                RunWaiter(
+                    expectedCount: expectedCount,
+                    continuation: continuation
+                )
+            )
+        }
+    }
+
+    func releaseFirst(with notice: MomentSynchronizationNotice?) {
+        didReleaseFirst = true
+        releasedFirstNotice = notice
+        let pending = firstRunContinuations
+        firstRunContinuations.removeAll(keepingCapacity: true)
+        for continuation in pending {
+            continuation.resume(returning: notice)
+        }
+    }
+}
+
 /// DEBUG-only, generated-data runtime gate used by simulator smoke CI. The
 /// report deliberately contains only fixed case identifiers and pass/fail
 /// values—never paths, PhotoKit identifiers, keys, invite codes, or bytes.
@@ -329,6 +385,9 @@ actor SharingRuntimeSelfTestRunner {
         var results: [CaseResult] = []
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
+        })
+        results.append(await runAsync("moment-process-serialized-refresh") {
+            try await Self.testMomentProcessSerializedRefresh()
         })
         results.append(await runAsync("moment-install-bound-handoff") {
             try await Self.testMomentInstallBoundHandoff()
@@ -491,6 +550,123 @@ actor SharingRuntimeSelfTestRunner {
         guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url) else {
             throw DailySharingError.stateUnavailable
         }
+    }
+
+    private static func testMomentProcessSerializedRefresh() async throws {
+        let firstCoordinator = MomentSharingCoordinator()
+        let joinedCoordinator = MomentSharingCoordinator()
+        let probe = RuntimeMomentProcessQueueProbe()
+        let ownerNotice = MomentSynchronizationNotice.inboundModerationUnavailable
+        let trailingNotice = MomentSynchronizationNotice.inboundModerationDisabled
+        let first = Task {
+            await firstCoordinator.runtimeTestJoinProcessSynchronization {
+                await probe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await probe.waitUntilRunCount(1)
+
+        let joined = Task {
+            await joinedCoordinator.runtimeTestJoinProcessSynchronization {
+                await probe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await firstCoordinator.runtimeTestWaitUntilProcessSynchronizationIsPending()
+        await probe.releaseFirst(with: ownerNotice)
+        await probe.waitUntilRunCount(2)
+        let firstResult = await first.value
+        let joinedResult = await joined.value
+        let actualRunCount = await probe.count()
+        let firstRecordedNotice = await firstCoordinator.synchronizationNotice()
+        let joinedRecordedNotice = await joinedCoordinator.synchronizationNotice()
+        guard actualRunCount == 2,
+              firstResult == ownerNotice,
+              joinedResult == trailingNotice,
+              firstRecordedNotice == ownerNotice,
+              joinedRecordedNotice == trailingNotice
+        else { throw MomentSharingError.stateUnavailable }
+
+        // A cancelled queued caller must release its reserved turn without
+        // running, and the next caller must execute in its own active Task.
+        let cancellationOwner = MomentSharingCoordinator()
+        let cancelledCoordinator = MomentSharingCoordinator()
+        let activeCoordinator = MomentSharingCoordinator()
+        let cancellationProbe = RuntimeMomentProcessQueueProbe()
+        let cancellationOwnerTask = Task {
+            await cancellationOwner.runtimeTestJoinProcessSynchronization {
+                await cancellationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await cancellationProbe.waitUntilRunCount(1)
+        let cancelledTask = Task {
+            await cancelledCoordinator.runtimeTestJoinProcessSynchronization {
+                await cancellationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await cancellationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending()
+        cancelledTask.cancel()
+        let activeTask = Task {
+            await activeCoordinator.runtimeTestJoinProcessSynchronization {
+                await cancellationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await cancellationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending(
+            count: 2
+        )
+        await cancellationProbe.releaseFirst(with: ownerNotice)
+        await cancellationProbe.waitUntilRunCount(2)
+        let cancellationOwnerResult = await cancellationOwnerTask.value
+        let cancelledResult = await cancelledTask.value
+        let activeResult = await activeTask.value
+        let cancellationRunCount = await cancellationProbe.count()
+        guard cancellationRunCount == 2,
+              cancellationOwnerResult == ownerNotice,
+              cancelledResult == nil,
+              activeResult == trailingNotice
+        else { throw MomentSharingError.stateUnavailable }
+
+        // The next caller must not inherit cancellation from the Task that
+        // previously owned the process permit.
+        let cancelledOwnerCoordinator = MomentSharingCoordinator()
+        let unaffectedCoordinator = MomentSharingCoordinator()
+        let ownerCancellationProbe = RuntimeMomentProcessQueueProbe()
+        let cancelledOwnerTask = Task {
+            await cancelledOwnerCoordinator.runtimeTestJoinProcessSynchronization {
+                await ownerCancellationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await ownerCancellationProbe.waitUntilRunCount(1)
+        let unaffectedTask = Task {
+            await unaffectedCoordinator.runtimeTestJoinProcessSynchronization {
+                Task.isCancelled ? ownerNotice : trailingNotice
+            }
+        }
+        await cancelledOwnerCoordinator
+            .runtimeTestWaitUntilProcessSynchronizationIsPending()
+        cancelledOwnerTask.cancel()
+        await ownerCancellationProbe.releaseFirst(with: ownerNotice)
+        let cancelledOwnerValue = await cancelledOwnerTask.value
+        let unaffectedValue = await unaffectedTask.value
+        guard cancelledOwnerValue == ownerNotice,
+              unaffectedValue == trailingNotice
+        else { throw MomentSharingError.stateUnavailable }
     }
 
     /// The Share Extension may only leave a bounded, short-lived canonical
