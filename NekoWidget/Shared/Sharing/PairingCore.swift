@@ -355,6 +355,7 @@ enum PairingError: LocalizedError, Equatable {
     case requestRejected(status: Int, code: String?, message: String)
     case noPendingEnrollment
     case approvalNotConfirmed
+    case invalidWindowDisplayName
     case stateUnavailable
 
     var errorDescription: String? {
@@ -383,6 +384,8 @@ enum PairingError: LocalizedError, Equatable {
             return "承認待ちの相手はまだいません。"
         case .approvalNotConfirmed:
             return "両方の端末で確認フレーズが同じことを確かめてください。"
+        case .invalidWindowDisplayName:
+            return "まどの名前は64バイト以内で、改行なしにしてください。"
         case .stateUnavailable:
             return "共有の状態を読み込めませんでした。"
         }

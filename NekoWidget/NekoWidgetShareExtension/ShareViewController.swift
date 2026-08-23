@@ -30,17 +30,17 @@ final class ShareViewController: UIViewController {
         titleLabel.font = .preferredFont(forTextStyle: .title2)
         titleLabel.adjustsFontForContentSizeCategory = true
 
-        detailLabel.text = "この1枚を家族のまどへ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
+        detailLabel.text = "この1枚を\(PrivateWindowDisplayName.fallback)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
         detailLabel.numberOfLines = 0
 
-        destinationLabel.text = "届け先　家族のまど"
+        destinationLabel.text = "届け先　\(PrivateWindowDisplayName.fallback)"
         destinationLabel.font = .preferredFont(forTextStyle: .subheadline)
         destinationLabel.textColor = .label
         destinationLabel.adjustsFontForContentSizeCategory = true
         destinationLabel.numberOfLines = 0
-        destinationLabel.accessibilityLabel = "届け先、家族のまど"
+        destinationLabel.accessibilityLabel = "届け先、\(PrivateWindowDisplayName.fallback)"
         destinationLabel.accessibilityIdentifier = "moment-share-destination"
 
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
@@ -150,7 +150,7 @@ final class ShareViewController: UIViewController {
                 if let sharingError = error as? MomentSharingError {
                     switch sharingError {
                     case .notPaired:
-                        statusLabel.text = "届け先を確認できません。アプリを開いて家族のまどを確認してください。"
+                        statusLabel.text = "届け先を確認できません。アプリを開いてまどを確認してください。"
                         self.selectedAdmission = nil
                     case .outboxFull:
                         statusLabel.text = "送信準備中の写真が3枚あります。アプリを開いてから、もう一度試してください。"
@@ -227,12 +227,13 @@ final class ShareViewController: UIViewController {
                 selectedAdmission = admission
                 destinationLabel.text = "届け先　\(admission.displayName)"
                 destinationLabel.accessibilityLabel = "届け先、\(admission.displayName)"
+                detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
                 statusLabel.textColor = .secondaryLabel
                 statusLabel.text = "この端末に一時保存します。保存後にアプリを開くと、安全確認して届けます。"
                 continueButton.isEnabled = true
             } else if admissions.isEmpty {
                 statusLabel.textColor = .systemOrange
-                statusLabel.text = "先に「ねこのまど」アプリで家族のまどを設定してください。"
+                statusLabel.text = "先に「ねこのまど」アプリで共有するまどを設定してください。"
             } else {
                 statusLabel.textColor = .systemOrange
                 statusLabel.text = "届け先をアプリで確認してから、もう一度選び直してください。"
@@ -241,7 +242,7 @@ final class ShareViewController: UIViewController {
             return
         } catch {
             statusLabel.textColor = .systemOrange
-            statusLabel.text = "家族のまどを確認できません。アプリを開いてから、もう一度お試しください。"
+            statusLabel.text = "共有するまどを確認できません。アプリを開いてから、もう一度お試しください。"
         }
     }
 

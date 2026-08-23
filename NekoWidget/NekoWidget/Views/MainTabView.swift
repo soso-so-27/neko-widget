@@ -22,6 +22,7 @@ struct MainTabView: View {
     let shouldOfferWidgetPlacementGuide: Bool
     let widgetIntervalMinutes: Int
     let familyWindowPresentation: MomentFamilyWindowPresentation
+    let privateWindowDisplayName: String
     @Binding var deepLinkedPhotoIdentifier: String?
     @Binding var deepLinkedPhotoShownAt: Date?
     @Binding var deepLinkedFamilyWindowIsPresented: Bool
@@ -62,6 +63,7 @@ struct MainTabView: View {
                     isLimitedAccess: isLimitedAccess,
                     shouldOfferWidgetPlacementGuide: shouldOfferWidgetPlacementGuide,
                     familyWindowPresentation: familyWindowPresentation,
+                    privateWindowDisplayName: privateWindowDisplayName,
                     showsFamilyWindow: $deepLinkedFamilyWindowIsPresented,
                     requestPhotoAccess: requestPhotoAccess,
                     chooseMorePhotos: chooseMorePhotos,
@@ -189,6 +191,7 @@ struct MainTabView: View {
                 exportJSON: exportJSON,
                 catProfilesPresentation: catProfilesPresentation,
                 catProfilesActions: catProfilesActions,
+                privateWindowDisplayName: privateWindowDisplayName,
                 showWidgetPlacementGuide: {
                     replaysWidgetGuideAfterSettingsDismiss = true
                     showsSettings = false

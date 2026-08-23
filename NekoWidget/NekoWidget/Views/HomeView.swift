@@ -8,6 +8,7 @@ struct HomeView: View {
     let isLimitedAccess: Bool
     let shouldOfferWidgetPlacementGuide: Bool
     let familyWindowPresentation: MomentFamilyWindowPresentation
+    let privateWindowDisplayName: String
     @Binding var showsFamilyWindow: Bool
     let requestPhotoAccess: () -> Void
     let chooseMorePhotos: () -> Void
@@ -166,9 +167,10 @@ struct HomeView: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 7) {
-                            Text("家族のまど")
+                            Text(privateWindowDisplayName)
                                 .font(.headline)
                                 .foregroundStyle(.primary)
+                                .lineLimit(1)
                             if !SharingAPIConfiguration.current.isMediaAvailable {
                                 Text(SharingAPIConfiguration.current.isAvailable
                                     ? "ペアリングのみ"
@@ -223,8 +225,8 @@ struct HomeView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Label(
                         familyPhotoHasPriority
-                            ? "いま届いた・家族から"
-                            : "家族から届いた一枚",
+                            ? "いま届いた・\(privateWindowDisplayName)"
+                            : "\(privateWindowDisplayName)から届いた一枚",
                         systemImage: "person.2.fill"
                     )
                     .font(.title3.bold())
@@ -255,7 +257,7 @@ struct HomeView: View {
 
                         HStack(spacing: 6) {
                             Image(systemName: "rectangle.on.rectangle.angled")
-                            Text("家族のまどをひらく")
+                            Text("\(privateWindowDisplayName)をひらく")
                         }
                         .font(.caption.bold())
                         .foregroundStyle(.white)
@@ -283,7 +285,7 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("window-latest-family-photo")
-        .accessibilityHint("家族から届いた写真の履歴を開きます")
+        .accessibilityHint("\(privateWindowDisplayName)に届いた写真の履歴を開きます")
     }
 
     private var familyPhotoHasPriority: Bool {
@@ -310,7 +312,7 @@ struct HomeView: View {
 
     private var familyWindowSubtitle: String {
         let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable { return "家族から届いた一枚を見る" }
+        if configuration.isMediaAvailable { return "\(privateWindowDisplayName)に届いた一枚を見る" }
         if configuration.isAvailable { return "写真共有前のペアリングを確認する" }
         return "今後追加する体験を先に確認できます"
     }
@@ -328,7 +330,7 @@ struct HomeView: View {
 
     private var familyWindowAccessibilityHint: String {
         let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable { return "家族のまどを開きます" }
+        if configuration.isMediaAvailable { return "\(privateWindowDisplayName)を開きます" }
         if configuration.isAvailable { return "共有鍵のペアリング画面を開きます" }
         return "サーバーへ接続しない画面レビューを開きます"
     }

@@ -14,15 +14,17 @@ struct WidgetPhotoSource: AppEntity {
     static let personalLibraryID = "personal-library"
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
-        name: "うちの子",
-        detail: "自分のカメラロール"
+        name: "このiPhoneの写真",
+        detail: "このiPhoneで見つけた猫写真"
     )
     static let familyWindowID = "family-window"
-    static let familyWindow = WidgetPhotoSource(
-        id: familyWindowID,
-        name: "家族のまど",
-        detail: "家族から届いた最新の一枚"
-    )
+    static var familyWindow: WidgetPhotoSource {
+        WidgetPhotoSource(
+            id: familyWindowID,
+            name: SharedContainer.familyWidgetWindowDisplayName(),
+            detail: "招待した相手から届いた最新の一枚"
+        )
+    }
 
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.

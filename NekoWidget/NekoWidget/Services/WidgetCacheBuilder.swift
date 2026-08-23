@@ -462,13 +462,18 @@ actor WidgetCacheBuilder {
     func buildFamilyWindow(
         from item: MomentInboxItem?,
         freshUntil: Date?,
+        windowDisplayName: String,
         validating lifecycleToken: SharingLifecycleGate.Token,
         now: Date = .now
     ) throws -> FamilyWidgetManifest {
+        let resolvedWindowDisplayName = PrivateWindowDisplayName.resolved(
+            windowDisplayName
+        )
         guard let item, let freshUntil else {
             return try clearFamilyWindow(
                 validating: lifecycleToken,
-                generatedAt: now
+                generatedAt: now,
+                windowDisplayName: resolvedWindowDisplayName
             )
         }
         guard let manifestURL = SharedContainer.familyWidgetManifestURL,
@@ -488,7 +493,8 @@ actor WidgetCacheBuilder {
         } catch {
             return try clearFamilyWindow(
                 validating: lifecycleToken,
-                generatedAt: now
+                generatedAt: now,
+                windowDisplayName: resolvedWindowDisplayName
             )
         }
         let filenames = Self.familyCacheFilenames(sourceDigest: source.sourceDigest)
@@ -502,13 +508,22 @@ actor WidgetCacheBuilder {
                 filenames,
                 cacheDirectory: cacheDirectory
            ) {
-            let remainsSafe = try MomentSharingStateStore.withStateWhileLifecycleLocked(
+            let reusable = try MomentSharingStateStore.withStateWhileLifecycleLocked(
                 validating: lifecycleToken
             ) { state in
-                (try? Self.familySourceSnapshot(for: item, in: state))?.sourceDigest
+                guard (try? Self.familySourceSnapshot(for: item, in: state))?.sourceDigest
                     == source.sourceDigest
+                else { return nil as FamilyWidgetManifest? }
+                guard active.windowDisplayName != resolvedWindowDisplayName else {
+                    return active
+                }
+                var renamed = active
+                renamed.windowDisplayName = resolvedWindowDisplayName
+                renamed.generatedAt = now
+                try Self.writeSharingJSON(renamed, to: manifestURL)
+                return renamed
             }
-            if remainsSafe { return active }
+            if let reusable { return reusable }
         }
 
         let renderedFiles: [(variant: WidgetImageVariant, data: Data)] = try autoreleasepool {
@@ -555,7 +570,8 @@ actor WidgetCacheBuilder {
                     manifestURL: manifestURL,
                     cacheDirectory: cacheDirectory,
                     historyURL: historyURL,
-                    generatedAt: now
+                    generatedAt: now,
+                    windowDisplayName: resolvedWindowDisplayName
                 )
             }
 
@@ -578,6 +594,7 @@ actor WidgetCacheBuilder {
                     receivedAt: source.item.receivedAt,
                     freshUntil: freshUntil
                 ),
+                windowDisplayName: resolvedWindowDisplayName,
                 generatedAt: now
             )
             try Self.writeSharingJSON(manifest, to: manifestURL)
@@ -600,7 +617,8 @@ actor WidgetCacheBuilder {
     @discardableResult
     func clearFamilyWindow(
         validating lifecycleToken: SharingLifecycleGate.Token,
-        generatedAt: Date = .now
+        generatedAt: Date = .now,
+        windowDisplayName: String? = nil
     ) throws -> FamilyWidgetManifest {
         guard let manifestURL = SharedContainer.familyWidgetManifestURL,
               let cacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL,
@@ -613,7 +631,10 @@ actor WidgetCacheBuilder {
                 manifestURL: manifestURL,
                 cacheDirectory: cacheDirectory,
                 historyURL: historyURL,
-                generatedAt: generatedAt
+                generatedAt: generatedAt,
+                windowDisplayName: windowDisplayName.map {
+                    PrivateWindowDisplayName.resolved($0)
+                }
             )
         }
     }
@@ -732,9 +753,14 @@ actor WidgetCacheBuilder {
         manifestURL: URL,
         cacheDirectory: URL,
         historyURL: URL,
-        generatedAt: Date
+        generatedAt: Date,
+        windowDisplayName: String?
     ) throws -> FamilyWidgetManifest {
-        let manifest = FamilyWidgetManifest(item: nil, generatedAt: generatedAt)
+        let manifest = FamilyWidgetManifest(
+            item: nil,
+            windowDisplayName: windowDisplayName,
+            generatedAt: generatedAt
+        )
         // Remove renderable bytes first. If the subsequent empty-manifest
         // commit fails, a stale manifest can only point at missing files.
         // Still attempt both operations so either one independently closes

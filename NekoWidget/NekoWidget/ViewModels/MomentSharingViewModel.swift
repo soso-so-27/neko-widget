@@ -9,6 +9,7 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var isSynchronizing = false
     @Published private(set) var isPerformingAction = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var windowDisplayName = PrivateWindowDisplayName.fallback
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -81,7 +82,10 @@ final class MomentSharingViewModel: ObservableObject {
         await progressTask.value
         do {
             try reload()
-            errorMessage = Self.message(for: synchronizationNotice)
+            errorMessage = Self.message(
+                for: synchronizationNotice,
+                windowDisplayName: windowDisplayName
+            )
         }
         catch { errorMessage = error.localizedDescription }
     }
@@ -210,7 +214,8 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     private func reload() throws {
-        let nextPairingState = try PairingStateStore.load()
+        let pairingSnapshot = try PairingStateStore.beginOperation()
+        let nextPairingState = pairingSnapshot.state
         let handoffSnapshot = configuration.isShareExtensionHandoffAvailable
             ? try MomentShareHandoffStore.presentationSnapshot()
             : MomentShareHandoffPresentationSnapshot(statuses: [], terminalOutcomes: [])
@@ -219,6 +224,12 @@ final class MomentSharingViewModel: ObservableObject {
         let nextSharingState = try MomentSharingStateStore.load()
 
         pairingState = nextPairingState
+        windowDisplayName = nextPairingState.map {
+            PrivateWindowPresentationStore.resolvedDisplayName(
+                pairing: $0,
+                validating: pairingSnapshot.lifecycleToken
+            )
+        } ?? PrivateWindowDisplayName.fallback
         sharingState = nextSharingState
         outgoingPresentation = Self.makeOutgoingPresentation(
             handoffSnapshot: handoffSnapshot,
@@ -315,13 +326,14 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     private nonisolated static func message(
-        for notice: MomentSynchronizationNotice?
+        for notice: MomentSynchronizationNotice?,
+        windowDisplayName: String
     ) -> String? {
         switch notice {
         case .inboundModerationDisabled:
-            return "受け取った写真の安全確認を待っています。このiPhoneで「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにし、家族のまどを更新してください。写真はまだ表示せず、受取確認も送っていません。"
+            return "受け取った写真の安全確認を待っています。このiPhoneで「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにし、「\(windowDisplayName)」を更新してください。写真はまだ表示せず、受取確認も送っていません。"
         case .inboundModerationUnavailable:
-            return "受け取った写真の安全確認を完了できませんでした。写真はまだ表示せず、受取確認も送っていません。少し待ってから家族のまどを更新してください。"
+            return "受け取った写真の安全確認を完了できませんでした。写真はまだ表示せず、受取確認も送っていません。少し待ってから「\(windowDisplayName)」を更新してください。"
         case nil:
             return nil
         }

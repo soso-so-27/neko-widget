@@ -7,6 +7,7 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var invitationCode: String?
     @Published private(set) var isWorking = false
     @Published private(set) var configurationMessage: String?
+    @Published private(set) var windowDisplayName = PrivateWindowDisplayName.fallback
     @Published var enteredInvitationCode = ""
     @Published var hasConfirmedPhrase = false
 
@@ -63,6 +64,10 @@ final class PairingViewModel: ObservableObject {
             let operation = try beginOperation()
             let current = operation.expectedState
             let lifecycleToken = operation.lifecycleToken
+            windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+                pairing: current,
+                validating: lifecycleToken
+            )
             bestEffortScrubConsumedInvitationSecret(
                 for: current,
                 lifecycleToken: lifecycleToken
@@ -78,6 +83,38 @@ final class PairingViewModel: ObservableObject {
             }
         } catch {
             configurationMessage = error.localizedDescription
+        }
+    }
+
+    /// Updates presentation metadata only. PairingState and its exact-state
+    /// CAS revision remain untouched, so a label edit cannot interrupt a
+    /// concurrent approval, refresh, consent, or cancellation operation.
+    @discardableResult
+    func updateWindowDisplayName(_ rawValue: String) -> Bool {
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch {
+            configurationMessage = error.localizedDescription
+            return false
+        }
+        do {
+            let saved = try PrivateWindowPresentationStore.save(
+                displayName: rawValue,
+                pairing: operation.expectedState,
+                validating: operation.lifecycleToken
+            )
+            windowDisplayName = saved.displayName
+            configurationMessage = nil
+            NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+            return true
+        } catch {
+            configurationMessage = error.localizedDescription
+            SharedLog.app.error(
+                "window-presentation",
+                "Private window display name could not be saved",
+                metadata: ["reason": error.localizedDescription]
+            )
+            return false
         }
     }
 
@@ -991,9 +1028,11 @@ final class PairingViewModel: ObservableObject {
         let snapshot = try PairingStateStore.beginOperation()
         guard let reset = snapshot.state else { throw PairingError.stateUnavailable }
         state = reset
+        windowDisplayName = PrivateWindowDisplayName.fallback
         invitationCode = nil
         enteredInvitationCode = ""
         hasConfirmedPhrase = false
+        NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
     }
 
     private func record(

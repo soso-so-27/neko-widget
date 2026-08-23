@@ -62,6 +62,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedAssetShownAt: Date?
     @Published var isFamilyWindowPresented = false
     @Published private(set) var familyWindowPresentation: MomentFamilyWindowPresentation = .empty
+    @Published private(set) var privateWindowDisplayName = PrivateWindowDisplayName.fallback
 
     var isLimitedAccess: Bool { authorizationStatus == .limited }
     /// One already-curated value for a SwiftUI presentation pass. Large
@@ -1633,6 +1634,10 @@ final class AppViewModel: ObservableObject {
             let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
             lifecycleToken = bootstrap.lifecycleToken
             guard refreshSequence == familyWindowRefreshSequence else { return }
+            privateWindowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+                pairing: bootstrap.state,
+                validating: bootstrap.lifecycleToken
+            )
             let configuration = SharingAPIConfiguration.current
             guard configuration.isMediaAvailable,
                   bootstrap.state.phase == .paired,
@@ -1642,7 +1647,10 @@ final class AppViewModel: ObservableObject {
             else {
                 familyWindowPresentation = .empty
                 _ = try await widgetCacheBuilder.clearFamilyWindow(
-                    validating: bootstrap.lifecycleToken
+                    validating: bootstrap.lifecycleToken,
+                    windowDisplayName: bootstrap.state.spaceID == nil
+                        ? nil
+                        : privateWindowDisplayName
                 )
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
                 return
@@ -1665,6 +1673,7 @@ final class AppViewModel: ObservableObject {
             let familyManifest = try await widgetCacheBuilder.buildFamilyWindow(
                 from: latestItem,
                 freshUntil: presentation.priorityUntil,
+                windowDisplayName: privateWindowDisplayName,
                 validating: bootstrap.lifecycleToken
             )
             guard refreshSequence == familyWindowRefreshSequence else { return }
@@ -1689,7 +1698,8 @@ final class AppViewModel: ObservableObject {
             familyWindowPresentation = .empty
             if let lifecycleToken {
                 _ = try? await widgetCacheBuilder.clearFamilyWindow(
-                    validating: lifecycleToken
+                    validating: lifecycleToken,
+                    windowDisplayName: privateWindowDisplayName
                 )
                 WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             }
