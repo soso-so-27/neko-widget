@@ -45,6 +45,9 @@ APP_REQUIRED_API_REASONS = {
 SHARE_REQUIRED_API_REASONS = {
     "NSPrivacyAccessedAPICategoryFileTimestamp": "C617.1",
 }
+WIDGET_REQUIRED_API_REASONS = {
+    "NSPrivacyAccessedAPICategoryFileTimestamp": "C617.1",
+}
 EXPECTED_MODE_FLAGS = {
     "disabled": (False, False, False, False, False),
     "review-preview": (False, False, False, False, True),
@@ -519,6 +522,7 @@ def main() -> int:
     parser.add_argument("--info-plist", type=Path, required=True)
     parser.add_argument("--share-info-plist", type=Path, required=True)
     parser.add_argument("--privacy-manifest", type=Path, required=True)
+    parser.add_argument("--widget-privacy-manifest", type=Path, required=True)
     parser.add_argument("--share-privacy-manifest", type=Path, required=True)
     parser.add_argument("--export-reviewed", default="")
     parser.add_argument(
@@ -543,6 +547,7 @@ def main() -> int:
         info = load_plist(args.info_plist)
         share_info = load_plist(args.share_info_plist)
         privacy = load_plist(args.privacy_manifest)
+        widget_privacy = load_plist(args.widget_privacy_manifest)
         share_privacy = load_plist(args.share_privacy_manifest)
     except ValueError as error:
         print(f"sharing release preflight: FAIL: {error}", file=sys.stderr)
@@ -572,6 +577,12 @@ def main() -> int:
         handoff_enabled,
         direct_send_enabled,
         review_preview_enabled,
+        flag_failures,
+    )
+    validate_privacy_manifest(
+        widget_privacy,
+        set(),
+        WIDGET_REQUIRED_API_REASONS,
         flag_failures,
     )
     validate_privacy_manifest(

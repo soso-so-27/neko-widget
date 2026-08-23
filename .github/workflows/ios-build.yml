@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -193,6 +193,14 @@ jobs:
             NekoWidgetShareExtension/PrivacyInfo.xcprivacy
           grep -Fq '<string>C617.1</string>' \
             NekoWidgetShareExtension/PrivacyInfo.xcprivacy
+          grep -Fq 'NSPrivacyAccessedAPICategoryFileTimestamp' \
+            NekoWidgetWidget/PrivacyInfo.xcprivacy
+          grep -Fq '<string>C617.1</string>' \
+            NekoWidgetWidget/PrivacyInfo.xcprivacy
+          grep -Fq 'F00000000000000000000303 /* PrivacyInfo.xcprivacy */' \
+            NekoWidget.xcodeproj/project.pbxproj
+          grep -Fq '740000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */' \
+            NekoWidget.xcodeproj/project.pbxproj
           grep -Fq 'プレビュー・送信されません' NekoWidget/Views/SettingsView.swift
           if grep -Eq '新しい一枚をウィジェットへ優先表示|最近届いた写真と、自分が送った写真を同じ履歴' \
             NekoWidget/Views/SettingsView.swift; then
@@ -750,7 +758,7 @@ jobs:
 
       - name: Upload build result bundle
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ios-build-result-${{ github.run_id }}
           path: ${{ runner.temp }}/NekoWidgetBuild.xcresult
@@ -770,7 +778,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -781,7 +789,7 @@ jobs:
 
       - name: Upload Simulator smoke-test artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ios-simulator-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/neko-smoke-artifacts
@@ -798,7 +806,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
@@ -809,7 +817,7 @@ jobs:
 
       - name: Upload sharing runtime matrix artifacts
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ios-sharing-runtime-matrix-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/neko-sharing-runtime-matrix
