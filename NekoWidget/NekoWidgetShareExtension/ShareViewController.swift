@@ -17,6 +17,10 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        guard !SharingAPIConfiguration.current.isDisabledRelease else {
+            extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+            return
+        }
         configureView()
         Task { await loadSelectedImage() }
     }

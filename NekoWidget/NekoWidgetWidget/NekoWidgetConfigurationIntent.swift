@@ -36,7 +36,7 @@ struct WidgetPhotoSource: AppEntity {
         return sources
     }
 
-    private static var familyWindowSourceIsEnabled: Bool {
+    static var familyWindowSourceIsEnabled: Bool {
         let info = Bundle.main.infoDictionary ?? [:]
         return explicitFlag(info["SharingFeatureEnabled"])
             && explicitFlag(info["SharingMediaEnabled"])

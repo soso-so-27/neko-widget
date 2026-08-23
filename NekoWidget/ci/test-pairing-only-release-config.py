@@ -98,7 +98,7 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
     def test_testflight_selects_mode_and_origin_explicitly(self) -> None:
         workflow = TESTFLIGHT.read_text(encoding="utf-8")
         required_fragments = (
-            "default: review-preview",
+            "default: disabled",
             "- pairing-only",
             "${{ vars.SHARING_STAGING_API_ORIGIN }}",
             'release_origin="${SHARING_STAGING_API_ORIGIN:-}"',
@@ -157,8 +157,12 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
             },
         )
 
-    def test_app_share_info_carry_the_same_processed_mode_marker(self) -> None:
-        for relative in ("NekoWidget/Info.plist", "NekoWidgetShareExtension/Info.plist"):
+    def test_all_bundle_info_files_carry_the_processed_mode_marker(self) -> None:
+        for relative in (
+            "NekoWidget/Info.plist",
+            "NekoWidgetWidget/Info.plist",
+            "NekoWidgetShareExtension/Info.plist",
+        ):
             with self.subTest(relative=relative):
                 source = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn("<key>SharingReleaseMode</key>", source)

@@ -35,6 +35,7 @@ struct AppRootView: View {
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
+            guard SharingAPIConfiguration.current.isMediaAvailable else { return }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: MomentForegroundRefreshPolicy.interval)

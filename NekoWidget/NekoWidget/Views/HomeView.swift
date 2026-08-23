@@ -305,8 +305,10 @@ struct HomeView: View {
             FamilyWindowView()
         } else if SharingAPIConfiguration.current.isAvailable {
             PairingView()
-        } else {
+        } else if SharingAPIConfiguration.current.isReviewPreviewEnabled {
             SharingReviewPreviewView()
+        } else {
+            EmptyView()
         }
     }
 
