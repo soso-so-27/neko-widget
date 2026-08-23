@@ -1,5 +1,34 @@
 import Foundation
 
+/// Presentation-only name for the one invite-only private window supported by
+/// v1. It is never an identifier, key input, server field, or admission
+/// binding. All targets share this policy so a malformed App Group value falls
+/// back to a neutral name instead of entering Widget or Share Extension UI.
+enum PrivateWindowDisplayName {
+    static let fallback = "ふたりのまど"
+    static let maximumUTF8ByteCount = 64
+
+    static func normalized(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+    }
+
+    static func isValid(_ value: String) -> Bool {
+        !value.isEmpty
+            && value == normalized(value)
+            && value.utf8.count <= maximumUTF8ByteCount
+            && !value.unicodeScalars.contains(where: {
+                CharacterSet.controlCharacters.contains($0)
+            })
+    }
+
+    static func resolved(_ storedValue: String?) -> String {
+        guard let storedValue, isValid(storedValue) else { return fallback }
+        return storedValue
+    }
+}
+
 enum WidgetImageVariant: String, Codable, CaseIterable, Hashable, Sendable {
     case small
     case medium
@@ -136,9 +165,16 @@ struct FamilyWidgetManifest: Codable, Equatable, Sendable {
     static let schemaVersion = 1
     var schemaVersion: Int = Self.schemaVersion
     var item: FamilyWidgetManifestItem?
+    /// Optional keeps schema-v1 manifests written before named windows
+    /// decodable. Older extensions ignore this unknown key during rollout.
+    var windowDisplayName: String? = nil
     var generatedAt: Date
 
-    static let empty = FamilyWidgetManifest(item: nil, generatedAt: .distantPast)
+    static let empty = FamilyWidgetManifest(
+        item: nil,
+        windowDisplayName: nil,
+        generatedAt: .distantPast
+    )
 }
 
 /// Each widget family records the filenames referenced by the timeline it

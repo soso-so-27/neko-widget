@@ -143,10 +143,124 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
     def test_home_exposes_latest_count_and_existing_history(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
-        self.assertIn('"いま届いた・家族から"', home)
+        self.assertIn('"いま届いた・\\(privateWindowDisplayName)"', home)
         self.assertIn('Text("ほか \\(familyWindowPresentation.safeCount - 1)枚")', home)
         self.assertIn('accessibilityIdentifier("window-latest-family-photo")', home)
         self.assertIn("showsFamilyWindow = true", home)
+
+    def test_named_window_is_presentation_only_and_migration_safe(self) -> None:
+        container = source("Shared/AppGroup/SharedContainer.swift")
+        presentation_url = section(
+            container,
+            "static var privateWindowPresentationURL",
+            "static var sharingCacheDirectoryURL",
+        )
+        self.assertIn("sharingCacheDirectoryURL", presentation_url)
+        self.assertIn("window-presentation.v1.json", presentation_url)
+
+        models = source("Shared/Models/WidgetManifest.swift")
+        self.assertIn('static let fallback = "ふたりのまど"', models)
+        self.assertIn("var windowDisplayName: String? = nil", models)
+
+        pairing = source("Shared/Sharing/PairingCore.swift")
+        pairing_state = section(pairing, "struct PairingState", "struct PairingCredential")
+        self.assertNotIn("windowDisplayName", pairing_state)
+
+        store = source("Shared/Sharing/PairingKeychainStore.swift")
+        local_presentation = section(
+            store,
+            "struct PrivateWindowPresentationState",
+            "private static func writeWhileLifecycleLocked",
+        )
+        self.assertIn("pairingBindingSHA256", local_presentation)
+        self.assertIn("SharingLifecycleGate.withValidatedToken", local_presentation)
+        self.assertNotIn("PairingStateStore.save(", local_presentation)
+
+        builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
+        publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
+        self.assertIn("windowDisplayName: resolvedWindowDisplayName", publication)
+        self.assertIn("renamed.windowDisplayName = resolvedWindowDisplayName", publication)
+        self.assertLess(
+            publication.index("renamed.windowDisplayName = resolvedWindowDisplayName"),
+            publication.index("let renderedFiles"),
+        )
+
+        provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
+        entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
+        widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        configuration = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
+        self.assertIn("familyWindowDisplayName()", provider)
+        self.assertIn("let windowDisplayName: String", entry)
+        self.assertIn("entry.windowDisplayName", widget_view)
+        self.assertIn('static let familyWindowID = "family-window"', configuration)
+        self.assertIn('static let personalLibraryID = "personal-library"', configuration)
+        self.assertIn('name: "このiPhoneの写真"', configuration)
+
+        processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
+        self.assertIn("PrivateWindowPresentationStore.resolvedDisplayName", processor)
+        self.assertIn("displayName: windowDisplayName", processor)
+
+        share_view = source("NekoWidgetShareExtension/ShareViewController.swift")
+        self.assertIn(
+            'destinationLabel.text = "届け先　\\(admission.displayName)"',
+            share_view,
+        )
+        self.assertIn(
+            'detailLabel.text = "この1枚を\\(admission.displayName)',
+            share_view,
+        )
+
+        handoff = source("Shared/Sharing/MomentShareHandoffStore.swift")
+        binding = section(
+            handoff,
+            "static func makeBindingSHA256(",
+            "static func publishAdmissions(",
+        )
+        self.assertNotIn("displayName", binding)
+
+        app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
+        refresh = section(
+            app_model,
+            "func refreshFamilyWindowOutputs(trigger: String) async",
+            "private nonisolated static func familyWindowInputs",
+        )
+        refresh_failure = section(
+            refresh,
+            "        } catch {",
+            "            Self.logError(",
+        )
+        self.assertIn(
+            "windowDisplayName: privateWindowDisplayName",
+            refresh_failure,
+        )
+
+        pairing_view_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        reset = section(
+            pairing_view_model,
+            "private func resetLocalPairing(",
+            "private func record(",
+        )
+        self.assertIn(
+            "NotificationCenter.default.post(name: .sharingMediaSyncRequested",
+            reset,
+        )
+
+    def test_sharing_surfaces_do_not_assume_a_family_relationship(self) -> None:
+        surfaces = [
+            "NekoWidget/Views/PairingView.swift",
+            "NekoWidget/Views/FamilyWindowView.swift",
+            "NekoWidget/Views/HomeView.swift",
+            "NekoWidget/Views/SettingsView.swift",
+            "NekoWidget/ViewModels/MomentSharingViewModel.swift",
+            "NekoWidgetShareExtension/ShareViewController.swift",
+            "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift",
+            "NekoWidgetWidget/NekoWidgetView.swift",
+            "Shared/Sharing/MomentSharingCore.swift",
+        ]
+        for relative in surfaces:
+            value = source(relative)
+            self.assertNotIn("家族のまど", value, relative)
+            self.assertNotIn("家族から", value, relative)
 
 
 if __name__ == "__main__":

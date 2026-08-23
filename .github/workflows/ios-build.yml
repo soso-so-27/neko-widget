@@ -303,6 +303,13 @@ jobs:
             ci/verify-moment-sharing-presentation.swift \
             -o "$RUNNER_TEMP/verify-moment-sharing-presentation"
           "$RUNNER_TEMP/verify-moment-sharing-presentation"
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/WidgetManifest.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            ci/verify-private-window-display-name.swift \
+            -o "$RUNNER_TEMP/verify-private-window-display-name"
+          "$RUNNER_TEMP/verify-private-window-display-name"
           python3 ci/test-family-window-widget-boundaries.py
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj

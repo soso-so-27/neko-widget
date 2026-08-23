@@ -94,11 +94,11 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .featureDisabled:
-            "家族のまどはまだ利用できません。"
+            "写真を届けるまどはまだ利用できません。"
         case .notPaired:
-            "先に家族のまどへ参加してください。"
+            "先に非公開のまどを作るか、招待へ参加してください。"
         case .consentRequired:
-            "家族のまどで写真共有の内容を確認してください。"
+            "まどの設定で写真共有の内容を確認してください。"
         case .moderationDisabled:
             "iPhoneの「センシティブな内容の警告」を利用できないため送信しません。設定を有効にしてからもう一度お試しください。"
         case .moderationUnavailable:
@@ -110,11 +110,11 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
         case .payloadTooLarge:
             "画質を保ったまま送信上限に収められませんでした。"
         case .outboxFull:
-            "送信待ちが多いため追加できません。アプリの家族のまどで再試行または取り消してください。"
+            "送信待ちが多いため追加できません。アプリのまどで再試行または取り消してください。"
         case .stateUnavailable:
             "送信状態を保存できませんでした。"
         case let .reportOnly(until):
-            "家族のまどの共有は終了しました。\(until.formatted(.dateTime.month().day().hour().minute()))までは通報だけ利用できます。"
+            "このまどの共有は終了しました。\(until.formatted(.dateTime.month().day().hour().minute()))までは通報だけ利用できます。"
         case .retryableServer:
             "通信が完了しませんでした。あとで再試行します。"
         case let .requestRejected(_, _, message):

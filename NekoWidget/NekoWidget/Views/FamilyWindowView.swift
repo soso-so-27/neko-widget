@@ -15,7 +15,7 @@ struct FamilyWindowView: View {
             if model.pairingState == nil {
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("家族のまどを確認しています…")
+                    Text("まどを確認しています…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -25,7 +25,7 @@ struct FamilyWindowView: View {
                 pairedContent
             }
         }
-        .navigationTitle("家族のまど")
+        .navigationTitle(model.windowDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.bootstrap() }
         .onReceive(NotificationCenter.default.publisher(for: .sharingMediaSyncRequested)) { _ in
@@ -45,7 +45,7 @@ struct FamilyWindowView: View {
             reportButton("その他", reason: .other)
             Button("キャンセル", role: .cancel) { reportTarget = nil }
         } message: {
-            Text("確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。家族のまどの暗号鍵は送りません。")
+            Text("確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。このまどの暗号鍵は送りません。")
         }
         .alert(
             "この相手をブロックしますか？",
@@ -133,7 +133,7 @@ struct FamilyWindowView: View {
                     ContentUnavailableView(
                         "届いた写真はまだありません",
                         systemImage: "photo.on.rectangle.angled",
-                        description: Text("家族が共有シートから届けた写真が、ここに追加されます。")
+                        description: Text("招待した相手が共有シートから届けた写真が、ここに追加されます。")
                     )
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
@@ -168,7 +168,7 @@ struct FamilyWindowView: View {
                 } label: {
                     Image(systemName: "gearshape")
                 }
-                .accessibilityLabel("ペアリング設定と共有解除")
+                .accessibilityLabel("招待相手の確認と共有解除")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -181,7 +181,7 @@ struct FamilyWindowView: View {
                     }
                 }
                 .disabled(model.isWorking)
-                .accessibilityLabel("家族のまどを更新")
+                .accessibilityLabel("\(model.windowDisplayName)を更新")
             }
         }
     }
@@ -194,9 +194,10 @@ struct FamilyWindowView: View {
                 .frame(width: 44, height: 44)
                 .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
             VStack(alignment: .leading, spacing: 3) {
-                Text("家族2人のまど")
+                Text(model.windowDisplayName)
                     .font(.headline)
-                Text("明示した1枚だけを、暗号化して届けます")
+                    .lineLimit(1)
+                Text("2人だけの非公開なまど・明示した1枚だけを届けます")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -221,7 +222,7 @@ struct FamilyWindowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("共有の設定・解除")
                         .font(.subheadline.weight(.semibold))
-                    Text("ペアリング、写真共有の同意、共有解除を確認")
+                    Text("招待相手、写真共有の同意、共有解除を確認")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -242,7 +243,7 @@ struct FamilyWindowView: View {
 
     private var reportOnlyCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("家族のまどの共有は終了しました", systemImage: "hand.raised.fill")
+            Label("\(model.windowDisplayName)の共有は終了しました", systemImage: "hand.raised.fill")
                 .font(.headline)
                 .foregroundStyle(.orange)
             if let until = model.reportOnlyUntil {

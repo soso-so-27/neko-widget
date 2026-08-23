@@ -114,6 +114,17 @@ enum SharedContainer {
             .appendingPathComponent("pairing-state.json", isDirectory: false)
     }
 
+    /// Local presentation only. The display name is deliberately separate
+    /// from PairingState so a rename cannot invalidate an in-flight pairing
+    /// CAS, and it is deliberately below `sharing/` so unlink/reinstall cleanup
+    /// removes it with every other artifact for the old private window.
+    static var privateWindowPresentationURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "window-presentation.v1.json",
+            isDirectory: false
+        )
+    }
+
     static var sharingCacheDirectoryURL: URL? {
         containerURL?.appendingPathComponent("sharing", isDirectory: true)
     }

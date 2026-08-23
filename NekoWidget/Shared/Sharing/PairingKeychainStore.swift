@@ -270,3 +270,144 @@ enum PairingStateStore {
         try FileManager.default.removeItem(at: directory)
     }
 }
+
+/// Device-local, non-secret presentation metadata for the current private
+/// window. Keeping this outside PairingState means changing a label never
+/// increments PairingState.storageRevision or makes a concurrent pairing
+/// refresh/cancel lose its exact-state CAS.
+struct PrivateWindowPresentationState: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+
+    var schemaVersion: Int = Self.schemaVersion
+    var storageRevision: Int = 0
+    var pairingBindingSHA256: Data
+    var displayName: String
+    var updatedAt: Date
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              storageRevision >= 0,
+              pairingBindingSHA256.count == 32,
+              PrivateWindowDisplayName.isValid(displayName),
+              updatedAt > Date(timeIntervalSince1970: 0)
+        else { throw PairingError.stateUnavailable }
+        return self
+    }
+}
+
+enum PrivateWindowPresentationStore {
+    /// Missing, stale, or malformed presentation metadata is not sharing
+    /// authority. Callers may always fall back without blocking encryption or
+    /// delivery; a later explicit rename replaces the cache atomically.
+    static func resolvedDisplayName(
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) -> String {
+        (try? load(pairing: pairing, validating: lifecycleToken))?.displayName
+            ?? PrivateWindowDisplayName.fallback
+    }
+
+    static func load(
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> PrivateWindowPresentationState? {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load(),
+                  try binding(for: currentPairing) == binding(for: pairing)
+            else { throw PairingError.stateUnavailable }
+            guard let value = try loadWhileLifecycleLocked() else { return nil }
+            guard value.pairingBindingSHA256 == (try binding(for: currentPairing))
+            else { return nil }
+            return value
+        }
+    }
+
+    @discardableResult
+    static func save(
+        displayName rawValue: String,
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> PrivateWindowPresentationState {
+        let normalized = PrivateWindowDisplayName.normalized(rawValue)
+        let displayName = normalized.isEmpty
+            ? PrivateWindowDisplayName.fallback
+            : normalized
+        guard PrivateWindowDisplayName.isValid(displayName)
+        else { throw PairingError.invalidWindowDisplayName }
+
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let currentPairing = try PairingStateStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            let expectedBinding = try binding(for: pairing)
+            let currentBinding = try binding(for: currentPairing)
+            guard currentBinding == expectedBinding else {
+                throw PairingError.stateUnavailable
+            }
+            let current = try? loadWhileLifecycleLocked()
+            let revision: Int
+            if let current,
+               current.pairingBindingSHA256 == currentBinding {
+                let increment = current.storageRevision.addingReportingOverflow(1)
+                guard !increment.overflow else {
+                    throw PairingError.stateUnavailable
+                }
+                revision = increment.partialValue
+            } else {
+                revision = 0
+            }
+            let next = try PrivateWindowPresentationState(
+                storageRevision: revision,
+                pairingBindingSHA256: currentBinding,
+                displayName: displayName,
+                updatedAt: now
+            ).validated()
+            try writeWhileLifecycleLocked(next)
+            guard let committed = try loadWhileLifecycleLocked(),
+                  committed.schemaVersion == next.schemaVersion,
+                  committed.storageRevision == next.storageRevision,
+                  committed.pairingBindingSHA256 == next.pairingBindingSHA256,
+                  committed.displayName == next.displayName
+            else { throw PairingError.stateUnavailable }
+            return committed
+        }
+    }
+
+    private static func binding(for pairing: PairingState) throws -> Data {
+        guard let spaceID = pairing.spaceID,
+              let participantID = pairing.participantID
+        else { throw PairingError.stateUnavailable }
+        return try MomentShareHandoffStore.makeBindingSHA256(
+            installationMarker: pairing.installationMarker,
+            spaceID: spaceID,
+            participantID: participantID
+        )
+    }
+
+    private static func loadWhileLifecycleLocked() throws
+        -> PrivateWindowPresentationState? {
+        guard let url = SharedContainer.privateWindowPresentationURL else {
+            throw PairingError.stateUnavailable
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(
+            PrivateWindowPresentationState.self,
+            from: Data(contentsOf: url, options: .mappedIfSafe)
+        ).validated()
+    }
+
+    private static func writeWhileLifecycleLocked(
+        _ value: PrivateWindowPresentationState
+    ) throws {
+        guard let url = SharedContainer.privateWindowPresentationURL else {
+            throw PairingError.stateUnavailable
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try SharingSecureFile.write(try encoder.encode(value.validated()), to: url)
+    }
+}

@@ -25,6 +25,7 @@ struct SettingsView: View {
     let exportJSON: () async -> URL?
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
+    let privateWindowDisplayName: String
     let showWidgetPlacementGuide: () -> Void
 
     @State private var draft: SettingsPresentation
@@ -59,6 +60,7 @@ struct SettingsView: View {
         exportJSON: @escaping () async -> URL?,
         catProfilesPresentation: CatProfilesPresentation,
         catProfilesActions: CatProfilesViewActions,
+        privateWindowDisplayName: String,
         showWidgetPlacementGuide: @escaping () -> Void
     ) {
         self.settings = settings
@@ -84,6 +86,7 @@ struct SettingsView: View {
         self.exportJSON = exportJSON
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
+        self.privateWindowDisplayName = privateWindowDisplayName
         self.showWidgetPlacementGuide = showWidgetPlacementGuide
         _draft = State(initialValue: settings)
     }
@@ -246,11 +249,11 @@ struct SettingsView: View {
                             SharingReviewPreviewView()
                         }
                     } label: {
-                        Label("家族のまど", systemImage: "person.2.fill")
+                        Label(privateWindowDisplayName, systemImage: "person.2.fill")
                     }
                     .accessibilityIdentifier("settings-sharing-review")
                 } header: {
-                    Text("家族のまど")
+                    Text("共有するまど")
                 } footer: {
                     Text(sharingSettingsFooter)
                 }
@@ -309,7 +312,7 @@ struct SettingsView: View {
     private var sharingSettingsFooter: String {
         let configuration = SharingAPIConfiguration.current
         if configuration.isMediaAvailable {
-            return "共有シートで選んだ1枚を、招待した家族のまどへ届けます。"
+            return "共有シートで選んだ1枚を、招待した相手との非公開なまどへ届けます。"
         }
         if configuration.isAvailable {
             return "ペアリングのみ。このBuildでは写真を保存・送信しません。"
@@ -633,8 +636,8 @@ struct SharingReviewPreviewView: View {
 
                 familyWindowMock
 
-                reviewSection("家族のまどをはじめる", systemImage: "person.2.fill") {
-                    Text("招待した少数の家族だけで、同じまどを見ます。公開フィード、検索、フォローはありません。")
+                reviewSection("\(PrivateWindowDisplayName.fallback)をはじめる", systemImage: "person.2.fill") {
+                    Text("信頼できる相手を1人招待し、2人だけで同じまどを見ます。家族に限らず、公開フィード、検索、フォローもありません。")
                         .font(.subheadline)
 
                     HStack {
@@ -646,7 +649,7 @@ struct SharingReviewPreviewView: View {
                             .disabled(true)
                     }
 
-                    Label("無料では家族のまど1つ", systemImage: "checkmark.circle")
+                    Label("無料では非公開のまど1つ", systemImage: "checkmark.circle")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -698,9 +701,9 @@ struct SharingReviewPreviewView: View {
                             }
 
                         VStack(alignment: .leading, spacing: 5) {
-                            Label("いま届いた・家族から", systemImage: "sparkles")
+                            Label("いま届いた・\(PrivateWindowDisplayName.fallback)", systemImage: "sparkles")
                                 .font(.subheadline.weight(.semibold))
-                            Text("新しい一枚を家族のまどで先頭表示")
+                            Text("新しい一枚をまどの先頭に表示")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -709,7 +712,7 @@ struct SharingReviewPreviewView: View {
                     Divider()
 
                     Label("受け取った写真は「まどの履歴」で見返す", systemImage: "clock.arrow.circlepath")
-                    Text("この段階の履歴は、家族から受け取った写真だけです。")
+                    Text("この段階の履歴は、招待した相手から受け取った写真だけです。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -731,7 +734,7 @@ struct SharingReviewPreviewView: View {
                         systemImage: "timer"
                     )
 
-                    Text("家族のまどはバックアップではありません。すべての参加端末が鍵を失うと、保持期間内でも復元できません。")
+                    Text("このまどはバックアップではありません。すべての参加端末が鍵を失うと、保持期間内でも復元できません。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -749,7 +752,7 @@ struct SharingReviewPreviewView: View {
             .padding()
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .navigationTitle("家族のまど")
+        .navigationTitle(PrivateWindowDisplayName.fallback)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("sharing-review-preview")
     }
@@ -757,7 +760,7 @@ struct SharingReviewPreviewView: View {
     private var familyWindowMock: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("家族のまど", systemImage: "rectangle.on.rectangle")
+                Label(PrivateWindowDisplayName.fallback, systemImage: "rectangle.on.rectangle")
                     .font(.headline)
                 Spacer()
                 Text("2人")
@@ -772,7 +775,7 @@ struct SharingReviewPreviewView: View {
                     VStack(spacing: 10) {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 38))
-                        Text("いま届いた・家族から")
+                        Text("いま届いた・\(PrivateWindowDisplayName.fallback)")
                             .font(.subheadline.weight(.semibold))
                     }
                     .foregroundStyle(.white.opacity(0.82))
@@ -781,7 +784,7 @@ struct SharingReviewPreviewView: View {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "photo.on.rectangle.angled")
                     .foregroundStyle(Color.accentColor)
-                Text("受け取った一枚は、まずこの「家族のまど」の先頭に表示します。")
+                Text("受け取った一枚は、まずこの非公開のまどの先頭に表示します。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

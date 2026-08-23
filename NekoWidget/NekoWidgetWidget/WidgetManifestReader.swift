@@ -72,6 +72,17 @@ enum WidgetManifestReader {
         return item
     }
 
+    /// The name is presentation-only and remains available even when the
+    /// paired window has not received a photo yet. Invalid or pre-naming
+    /// manifests fall back without hiding an otherwise valid image.
+    static func familyWindowDisplayName() -> String {
+        guard let manifestURL = SharedContainer.familyWidgetManifestURL,
+              let manifest = readFamilyManifest(from: manifestURL),
+              manifest.schemaVersion == FamilyWidgetManifest.schemaVersion
+        else { return PrivateWindowDisplayName.fallback }
+        return PrivateWindowDisplayName.resolved(manifest.windowDisplayName)
+    }
+
     static func cacheURL(
         for filename: String,
         photoSourceIdentifier: String

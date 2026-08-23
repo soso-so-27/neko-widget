@@ -72,6 +72,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             photoSourceIdentifier: source.id,
             usesFamilySpecificImage: item.cacheFilenames != nil,
             familyMomentIsFresh: false,
+            windowDisplayName: PrivateWindowDisplayName.fallback,
             isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
             isLikeInteractionEnabled: likeState.isInteractionReady
         )
@@ -140,6 +141,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 photoSourceIdentifier: source.id,
                 usesFamilySpecificImage: item.cacheFilenames != nil,
                 familyMomentIsFresh: false,
+                windowDisplayName: PrivateWindowDisplayName.fallback,
                 isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
                 isLikeInteractionEnabled: likeState.isInteractionReady
             )
@@ -176,6 +178,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         variant: WidgetImageVariant,
         preview: Bool
     ) -> NekoWidgetEntry {
+        let windowDisplayName = WidgetManifestReader.familyWindowDisplayName()
         guard let item = WidgetManifestReader.familyItem(for: variant) else {
             SharedLog.widget.warning(
                 "timeline",
@@ -185,10 +188,17 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             return .empty(
                 at: now,
                 imageVariant: variant,
-                photoSourceIdentifier: WidgetPhotoSource.familyWindowID
+                photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+                windowDisplayName: windowDisplayName
             )
         }
-        return familyEntry(item: item, date: now, variant: variant, now: now)
+        return familyEntry(
+            item: item,
+            date: now,
+            variant: variant,
+            now: now,
+            windowDisplayName: windowDisplayName
+        )
     }
 
     private func familyTimeline(
@@ -196,6 +206,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         variant: WidgetImageVariant,
         preview: Bool
     ) -> Timeline<NekoWidgetEntry> {
+        let windowDisplayName = WidgetManifestReader.familyWindowDisplayName()
         guard let item = WidgetManifestReader.familyItem(for: variant) else {
             SharedLog.widget.warning(
                 "timeline",
@@ -207,21 +218,29 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     .empty(
                         at: now,
                         imageVariant: variant,
-                        photoSourceIdentifier: WidgetPhotoSource.familyWindowID
+                        photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+                        windowDisplayName: windowDisplayName
                     )
                 ],
                 policy: .never
             )
         }
 
-        var entries = [familyEntry(item: item, date: now, variant: variant, now: now)]
+        var entries = [familyEntry(
+            item: item,
+            date: now,
+            variant: variant,
+            now: now,
+            windowDisplayName: windowDisplayName
+        )]
         if now >= item.receivedAt, now < item.freshUntil {
             entries.append(
                 familyEntry(
                     item: item,
                     date: item.freshUntil,
                     variant: variant,
-                    now: item.freshUntil
+                    now: item.freshUntil,
+                    windowDisplayName: windowDisplayName
                 )
             )
         }
@@ -237,7 +256,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         item: FamilyWidgetManifestItem,
         date: Date,
         variant: WidgetImageVariant,
-        now: Date
+        now: Date,
+        windowDisplayName: String
     ) -> NekoWidgetEntry {
         NekoWidgetEntry(
             date: date,
@@ -247,6 +267,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
             usesFamilySpecificImage: true,
             familyMomentIsFresh: now >= item.receivedAt && now < item.freshUntil,
+            windowDisplayName: windowDisplayName,
             isLiked: false,
             isLikeInteractionEnabled: false
         )

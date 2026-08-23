@@ -44,8 +44,8 @@ struct NekoWidgetView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityLabel(
                         entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
-                            ? "家族から届いた写真"
-                            : "うちの子の写真"
+                            ? "\(entry.windowDisplayName)から届いた写真"
+                            : "このiPhoneで見つけた猫写真"
                     )
                 }
             } else {
@@ -99,9 +99,11 @@ struct NekoWidgetView: View {
         if entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID,
            entry.cacheFilename != nil {
             Text(entry.familyMomentIsFresh
-                ? "いま届いた・家族から"
-                : "家族から届いた一枚")
+                ? "いま届いた・\(entry.windowDisplayName)"
+                : "\(entry.windowDisplayName)から届いた一枚")
                 .font(.caption2.bold())
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .foregroundStyle(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -149,7 +151,7 @@ struct NekoWidgetView: View {
                 .foregroundStyle(.orange)
 
             Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
-                ? "家族の写真はまだありません"
+                ? "\(entry.windowDisplayName)にはまだ写真がありません"
                 : "猫の写真を追加")
                 .font(family == .systemSmall ? .headline : .title3.weight(.semibold))
                 .multilineTextAlignment(.center)
@@ -163,7 +165,7 @@ struct NekoWidgetView: View {
                     .foregroundStyle(.white.opacity(0.72))
             } else {
                 Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
-                    ? "アプリで家族のまどを開いて更新してください"
+                    ? "アプリで\(entry.windowDisplayName)を開いて更新してください"
                     : "アプリで写真へのアクセスを確認し、スキャンしてください")
                     .font(.caption)
                     .multilineTextAlignment(.center)

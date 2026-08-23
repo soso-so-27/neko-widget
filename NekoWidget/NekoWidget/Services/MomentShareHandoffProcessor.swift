@@ -157,8 +157,15 @@ struct MomentShareHandoffProcessor: Sendable {
             spaceID: spaceID,
             participantID: participantID
         )
+        let windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+            pairing: pairing,
+            validating: lifecycleToken
+        )
         let catalog = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(bindingSHA256: binding, displayName: "家族のまど")],
+            [MomentShareAdmissionInput(
+                bindingSHA256: binding,
+                displayName: windowDisplayName
+            )],
             validating: lifecycleToken,
             now: now
         )

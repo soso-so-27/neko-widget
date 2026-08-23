@@ -769,6 +769,26 @@ actor SharingRuntimeSelfTestRunner {
         guard staged.count == MomentShareHandoffStore.maximumPendingCaptureCount else {
             throw MomentSharingError.stateUnavailable
         }
+
+        // A presentation-only rename must retain the admission identity and
+        // every staged capture. Only a pairing binding change may revoke them.
+        let renamedCatalog = try MomentShareHandoffStore.publishAdmissions(
+            [MomentShareAdmissionInput(
+                bindingSHA256: firstAdmission.bindingSHA256,
+                displayName: "しずくのまど"
+            )],
+            validating: token,
+            now: base.addingTimeInterval(5)
+        )
+        guard let renamedAdmission = renamedCatalog.destinations.first,
+              renamedAdmission.id == firstAdmission.id,
+              renamedAdmission.displayName == "しずくのまど",
+              try MomentShareHandoffStore.nextPendingCapture(
+                  admissionID: renamedAdmission.id,
+                  validating: token,
+                  now: base.addingTimeInterval(5)
+              ) != nil
+        else { throw MomentSharingError.stateUnavailable }
         do {
             _ = try MomentShareHandoffStore.stageCapture(
                 admissionID: firstAdmission.id,
@@ -3806,6 +3826,39 @@ actor SharingRuntimeSelfTestRunner {
             lifecycleToken: snapshot.lifecycleToken
         )
 
+        let pairingRevisionBeforeRename = paired.storageRevision
+        let firstWindowName = try PrivateWindowPresentationStore.save(
+            displayName: "  しずくのまど  ",
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        let secondWindowName = try PrivateWindowPresentationStore.save(
+            displayName: "夜のまど",
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        guard firstWindowName.displayName == "しずくのまど",
+              secondWindowName.displayName == "夜のまど",
+              secondWindowName.storageRevision == firstWindowName.storageRevision + 1,
+              (try PairingStateStore.load())?.storageRevision
+                == pairingRevisionBeforeRename,
+              PrivateWindowPresentationStore.resolvedDisplayName(
+                  pairing: paired,
+                  validating: snapshot.lifecycleToken
+              ) == "夜のまど",
+              let windowPresentationURL = SharedContainer.privateWindowPresentationURL,
+              FileManager.default.fileExists(atPath: windowPresentationURL.path)
+        else { throw PairingError.stateUnavailable }
+
+        var wrongWindowIdentity = paired
+        wrongWindowIdentity.spaceID = opaque(46)
+        guard PrivateWindowPresentationStore.resolvedDisplayName(
+            pairing: wrongWindowIdentity,
+            validating: snapshot.lifecycleToken
+        ) == PrivateWindowDisplayName.fallback else {
+            throw PairingError.stateUnavailable
+        }
+
         let sentinel = directory.appendingPathComponent("runtime-purge.enc", isDirectory: false)
         try SharingSecureFile.write(Data(repeating: 0x71, count: 29), to: sentinel)
 
@@ -3819,10 +3872,11 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard (try PairingStateStore.load()) == paired,
               try PairingKeychainStore.load(
-                account: keychainProbe.account,
-                installationMarker: unpaired.installationMarker
+                  account: keychainProbe.account,
+                  installationMarker: unpaired.installationMarker
               ) == keychainProbe,
-              FileManager.default.fileExists(atPath: sentinel.path)
+              FileManager.default.fileExists(atPath: sentinel.path),
+              FileManager.default.fileExists(atPath: windowPresentationURL.path)
         else { throw PairingError.stateUnavailable }
 
         // A benign mutable revision change must not prevent cleanup of the
@@ -3843,6 +3897,7 @@ actor SharingRuntimeSelfTestRunner {
             lifecycleToken: snapshot.lifecycleToken
         )
         guard !FileManager.default.fileExists(atPath: sentinel.path),
+              !FileManager.default.fileExists(atPath: windowPresentationURL.path),
               (try PairingStateStore.load())?.phase == .unpaired
         else { throw PairingError.stateUnavailable }
         do {

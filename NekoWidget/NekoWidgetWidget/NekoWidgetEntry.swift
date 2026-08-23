@@ -12,13 +12,15 @@ struct NekoWidgetEntry: TimelineEntry {
     let photoSourceIdentifier: String
     let usesFamilySpecificImage: Bool
     let familyMomentIsFresh: Bool
+    let windowDisplayName: String
     let isLiked: Bool
     let isLikeInteractionEnabled: Bool
 
     static func empty(
         at date: Date,
         imageVariant: WidgetImageVariant? = nil,
-        photoSourceIdentifier: String = WidgetPhotoSource.personalLibraryID
+        photoSourceIdentifier: String = WidgetPhotoSource.personalLibraryID,
+        windowDisplayName: String = PrivateWindowDisplayName.fallback
     ) -> NekoWidgetEntry {
         NekoWidgetEntry(
             date: date,
@@ -28,6 +30,7 @@ struct NekoWidgetEntry: TimelineEntry {
             photoSourceIdentifier: photoSourceIdentifier,
             usesFamilySpecificImage: false,
             familyMomentIsFresh: false,
+            windowDisplayName: windowDisplayName,
             isLiked: false,
             isLikeInteractionEnabled: false
         )
