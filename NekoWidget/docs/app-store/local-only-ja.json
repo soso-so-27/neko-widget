@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "locale": "ja",
+  "release": {
+    "boundary": "local-only-disabled",
+    "sharing_release_mode": "disabled",
+    "is_initial_version": true,
+    "version_candidate": "1.0"
+  },
+  "metadata": {
+    "app_name": "ねこのまど",
+    "subtitle": "猫写真を見つけて毎日ウィジェットに",
+    "promotional_text": "猫の写真を端末内で見つけ、ホーム画面のウィジェットへ。気に入った一枚は肉球で残し、選んだ1〜30枚をPDFにまとめられます。",
+    "description": "カメラロールに埋もれた猫の写真を、毎日の「まど」へ。\n\n「ねこのまど」は、iPhoneの写真から猫が主役の写真を端末内で見つけ、ホーム画面のウィジェットに表示するアプリです。アプリを開かない時間にも、思い出の一枚と再会できます。\n\nできること\n・許可した写真の中から猫写真を端末内で判定\n・ホーム画面のウィジェットに一枚を表示\n・「思い出」で年ごと、成長、どアップ、人といっしょ、おでかけなどを振り返る（写真の内容や撮影情報に応じて表示）\n・気に入った写真へ肉球を付け、「これ好き」にまとめる\n・「これ好き」から1〜30枚を選び、PDFに書き出す\n・猫ごとのプロフィールを作り、自分で指定した写真や写真アプリのアルバムをつなぐ\n・誤って猫候補になった写真を除外し、あとから戻す\n\nプライバシー\n猫判定、一覧、ウィジェット用画像の準備はこのiPhone内で行います。このバージョンには、ほかの利用者への写真送信、招待、受信、公開フィード、アカウント、広告、トラッキングはありません。写真や判定結果を開発者のサーバーへ自動送信しません。\n\n写真へのアクセスは、許可した範囲だけを使用します。元の写真を削除・移動しません。設定から写真アプリの「うちの子」アルバムを更新した場合は、元写真を複製せず、アルバムへの追加・解除だけを行います。iCloud写真の同期はAppleと利用者の設定に従います。\n\nPDFなどを書き出すときだけiOSの共有シートが開き、共有先は利用者が選びます。",
+    "keywords": "猫写真,ウィジェット,思い出,アルバム,カメラロール,成長記録,写真PDF",
+    "support_url": "https://soso-so-27.github.io/neko-widget/app/support/",
+    "privacy_policy_url": "https://soso-so-27.github.io/neko-widget/app/privacy/",
+    "marketing_url": "",
+    "whats_new": ""
+  },
+  "review": {
+    "sign_in_required": false,
+    "notes": "この提出ビルドは「ねこのまど」の完全ローカル版です。サインインやデモアカウントは不要です。\n\n主な確認手順\n1. 起動し、写真アクセスを「すべての写真」または「選択した写真」で許可します。\n2. アプリを前面にしたまま、許可した写真から猫写真の判定が進むことを確認します。猫が主役の写真がない場合は空状態を表示します。\n3. 「まど」で一枚を開き、肉球を押すと「これ好き」に追加されます。\n4. 「思い出」で、利用可能な写真に応じたアルバムを開けます。\n5. 「これ好き」で1〜30枚を選ぶと、端末内でPDFを作成し、iOSの共有シートを開けます。\n6. ホーム画面の空白を長押しし、「編集」から「ウィジェットを追加」を選び、「ねこのまど」を追加します。WidgetKitの更新時刻はiOSが決めるため、操作直後に画像が切り替わらない場合があります。\n\nプライバシーと機能境界\n・猫判定、一覧、ウィジェット用画像、PDF作成は端末内で行います。\n・許可した写真だけを読み、元写真を削除・移動しません。\n・このビルドでは、ほかの利用者とのネットワーク写真共有、招待、送信、受信、共有履歴を無効にしています。\n・開発者サーバーへの自動通信、サインイン、アカウント、広告、トラッキングはありません。\n・利用者がPDF等の書き出しを選んだ場合だけiOSの共有シートを開きます。\n・写真アプリの「うちの子」アルバム更新は利用者が設定から実行する操作です。元写真を複製せず、アルバム所属だけを変更します。iCloud写真の同期はAppleと利用者の設定に従います。\n\n写真アクセスを許可しない場合、設定、プライバシーポリシー、サポートは確認できますが、猫写真とウィジェットの実画像は表示されません。"
+  },
+  "verified_facts": {
+    "photo_classification_on_device": true,
+    "widget_derivatives_on_device": true,
+    "pdf_generation_on_device": true,
+    "developer_server_automatic_communication": false,
+    "network_photo_sharing": false,
+    "account_or_sign_in": false,
+    "advertising": false,
+    "tracking": false,
+    "deletes_original_photos": false,
+    "photos_album_membership_changes_only_after_user_action": true
+  },
+  "apple_references": {
+    "app_information": "https://developer.apple.com/help/app-store-connect/reference/app-information/app-information/",
+    "platform_version_information": "https://developer.apple.com/help/app-store-connect/reference/app-information/platform-version-information/",
+    "required_properties": "https://developer.apple.com/help/app-store-connect/reference/app-information/required-localizable-and-editable-properties/",
+    "app_privacy": "https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/"
+  }
+}

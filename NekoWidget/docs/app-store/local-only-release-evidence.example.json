@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": null,
+  "repository": "soso-so-27/neko-widget",
+  "source_commit": null,
+  "version": "1.0",
+  "build_number": null,
+  "release_mode": "disabled",
+  "ci_run": {
+    "workflow": ".github/workflows/testflight.yml",
+    "run_id": null,
+    "run_attempt": null,
+    "event": "workflow_dispatch",
+    "head_sha": null,
+    "run_url": null,
+    "status": null,
+    "conclusion": null,
+    "inputs": {
+      "requested_build_number": null,
+      "release_mode": null,
+      "upload_to_testflight": null,
+      "retain_signed_artifacts": null
+    },
+    "upload_to_testflight": null,
+    "app_store_upload_passed": null,
+    "retain_signed_artifacts": null
+  },
+  "validations": {
+    "archive_validator": "NekoWidget/ci/validate-sharing-release.py",
+    "archive_validator_passed": null,
+    "signature_validation_passed": null,
+    "artifact_encryption_verified": null
+  },
+  "signed_artifact": {
+    "filename": "NekoWidget-signed-artifacts.tar.gz.enc",
+    "sha256": null,
+    "size_bytes": null,
+    "encrypted": null
+  },
+  "processed_app_info": {
+    "filename": "NekoWidget-processed-app-info.plist",
+    "sha256": null
+  }
+}
