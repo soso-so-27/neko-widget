@@ -6,6 +6,7 @@ PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE_DIRECTORY="$PROJECT_DIRECTORY/ci/fixtures/cats"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-simulator-smoke.py"
 SHARING_RUNTIME_VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
+PHOTO_PERMISSION_VALIDATOR="$PROJECT_DIRECTORY/ci/validate-photo-permission-bootstrap.py"
 SHARING_RUNTIME_REPORT_FILENAME="sharing-runtime-self-test.json"
 SHARING_RUNTIME_PROGRESS_FILENAME="sharing-runtime-self-test-progress.json"
 SHARING_RUNTIME_RENDERER_VERSION="cat-aware-full-bleed-v6"
@@ -1019,6 +1020,18 @@ xcrun simctl terminate "$SIMULATOR_UDID" "$APP_BUNDLE_ID" || true
 xcrun simctl terminate "$SIMULATOR_UDID" "$WIDGET_BUNDLE_ID" || true
 sleep 1
 capture_tcc_state "after-ui-test"
+if (( PERMISSION_TEST_STATUS == 0 )); then
+    permission_container="$(resolve_group_container || true)"
+    if [[ -z "$permission_container" || ! -d "$permission_container/diagnostic-logs" ]]; then
+        echo "The permission bootstrap diagnostic log directory was unavailable." >&2
+        PERMISSION_TEST_STATUS=1
+    elif ! python3 "$PHOTO_PERMISSION_VALIDATOR" \
+        --tcc-report "$ARTIFACT_DIRECTORY/tcc-after-ui-test.json" \
+        --log-directory "$permission_container/diagnostic-logs" \
+        --bundle-identifier "$APP_BUNDLE_ID"; then
+        PERMISSION_TEST_STATUS=1
+    fi
+fi
 if (( PERMISSION_TEST_STATUS != 0 )); then
     exit "$PERMISSION_TEST_STATUS"
 fi

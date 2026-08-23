@@ -49,7 +49,10 @@ final class PhotoPermissionUITests: XCTestCase {
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let permissionAlert = springboard.alerts.firstMatch
-        guard permissionAlert.waitForExistence(timeout: 15) else {
+        // Hosted Simulators can display the Photos prompt well after PhotoKit
+        // has submitted the TCC request. Keep this fail-closed, but allow the
+        // observed SpringBoard/accessibility propagation delay.
+        guard permissionAlert.waitForExistence(timeout: 60) else {
             addDiagnosticAttachment(
                 name: "Missing Photos permission alert",
                 contents: springboard.debugDescription
