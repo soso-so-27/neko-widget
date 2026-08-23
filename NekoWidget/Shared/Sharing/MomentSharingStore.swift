@@ -251,14 +251,46 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// A local bookmark for a safely displayed received photo. It deliberately
+/// stores no file path, participant identifier, PhotoKit identifier, or image
+/// bytes. The corresponding JPEG remains governed by the sharing history's
+/// absolute 90-day / 500-item / 256-MiB limits.
+struct MomentSavedMemoryRecord: Codable, Equatable, Identifiable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let momentID: String
+    let savedAt: Date
+
+    var id: String { momentID }
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              Self.isOpaqueIdentifier(momentID),
+              savedAt > Date(timeIntervalSince1970: 0)
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+
+    private static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (1...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45 || $0 == 95
+        }
+    }
+}
+
 struct MomentSharingState: Codable, Equatable, Sendable {
-    static let schemaVersion = 5
+    static let schemaVersion = 6
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int
     var changeCursor: String?
     var reportOnlyUntil: Date?
     var outbox: [MomentOutboxItem]
     var inbox: [MomentInboxItem]
+    var savedMemories: [MomentSavedMemoryRecord]
     var reportOutbox: [MomentReportOutboxItem]
     var outgoingOutcomes: [MomentOutgoingOutcome]
 
@@ -269,6 +301,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         case reportOnlyUntil
         case outbox
         case inbox
+        case savedMemories
         case reportOutbox
         case outgoingOutcomes
     }
@@ -279,6 +312,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         reportOnlyUntil: Date? = nil,
         outbox: [MomentOutboxItem],
         inbox: [MomentInboxItem],
+        savedMemories: [MomentSavedMemoryRecord] = [],
         reportOutbox: [MomentReportOutboxItem],
         outgoingOutcomes: [MomentOutgoingOutcome] = []
     ) {
@@ -287,6 +321,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         self.reportOnlyUntil = reportOnlyUntil
         self.outbox = outbox
         self.inbox = inbox
+        self.savedMemories = savedMemories
         self.reportOutbox = reportOutbox
         self.outgoingOutcomes = outgoingOutcomes
     }
@@ -340,6 +375,10 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         }
         outbox = decodedOutbox
         inbox = try container.decode([MomentInboxItem].self, forKey: .inbox)
+        savedMemories = try container.decodeIfPresent(
+            [MomentSavedMemoryRecord].self,
+            forKey: .savedMemories
+        ) ?? []
         reportOutbox = decodedReportOutbox
         outgoingOutcomes = try container.decodeIfPresent(
             [MomentOutgoingOutcome].self,
@@ -353,6 +392,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         reportOnlyUntil: nil,
         outbox: [],
         inbox: [],
+        savedMemories: [],
         reportOutbox: [],
         outgoingOutcomes: []
     )
@@ -363,6 +403,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
               reportOnlyUntil.map { $0 > Date(timeIntervalSince1970: 0) } ?? true,
               Set(outbox.map(\.id)).count == outbox.count,
               Set(inbox.map(\.id)).count == inbox.count,
+              Set(savedMemories.map(\.momentID)).count == savedMemories.count,
               Set(reportOutbox.map(\.id)).count == reportOutbox.count,
               Set(reportOutbox.map(\.momentID)).count == reportOutbox.count,
               outgoingOutcomes.count <= MomentOutgoingOutcome.maximumCount,
@@ -370,6 +411,15 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         else { throw MomentSharingError.stateUnavailable }
         _ = try outbox.map { try $0.validated() }
         _ = try inbox.map { try $0.validated() }
+        _ = try savedMemories.map { try $0.validated() }
+        let savableMomentIDs = Set(inbox.compactMap { item -> String? in
+            guard item.state == .available || item.state == .acknowledged,
+                  item.localJPEGFileName != nil
+            else { return nil }
+            return item.id
+        })
+        guard savedMemories.allSatisfy({ savableMomentIDs.contains($0.momentID) })
+        else { throw MomentSharingError.stateUnavailable }
         _ = try reportOutbox.map { try $0.validated() }
         _ = try outgoingOutcomes.map { try $0.validated() }
         return self
@@ -382,7 +432,7 @@ enum MomentSharingStateStore {
     private static let maximumCommitAmbiguitySeconds: TimeInterval =
         MomentSharingProtocol.commitReplayRetentionSeconds
     private static let maximumPendingReportSeconds: TimeInterval = 24 * 60 * 60
-    private static let maximumLocalHistoryCount = 500
+    static let maximumLocalHistoryCount = 500
     private static let maximumLocalHistoryBytes = 256 * 1_024 * 1_024
     private static let maximumPendingOutboxCount = 10
     private static let maximumPendingOutboxBytes = 10 * 1_024 * 1_024
@@ -505,6 +555,13 @@ enum MomentSharingStateStore {
             try SharingSecureFile.write(jpeg, to: url)
             do {
                 state.inbox.removeAll { $0.id == candidate.id }
+                // A newly blocked classification must win over an older
+                // visible copy. Remove its local bookmark in the same state
+                // transaction so validation cannot fail after the JPEG has
+                // already been replaced on disk.
+                if candidate.state == .blocked {
+                    state.savedMemories.removeAll { $0.momentID == candidate.id }
+                }
                 state.inbox.append(candidate)
                 state.storageRevision += 1
                 try writeWhileLocked(try state.validated())
@@ -528,6 +585,7 @@ enum MomentSharingStateStore {
               tombstone.localJPEGFileName == nil
         else { throw MomentSharingError.invalidPayload }
         _ = try mutate(validating: lifecycleToken) { state in
+            state.savedMemories.removeAll { $0.momentID == tombstone.id }
             if let index = state.inbox.firstIndex(where: { $0.id == tombstone.id }) {
                 guard state.inbox[index].senderParticipantID
                         == tombstone.senderParticipantID,
@@ -541,6 +599,45 @@ enum MomentSharingStateStore {
                 }
             } else {
                 state.inbox.append(tombstone)
+            }
+        }
+    }
+
+    /// Adds or removes a local, sharing-scoped bookmark without performing a
+    /// network request or writing to Photos/iCloud. The lifecycle flock and
+    /// state validation keep the mark atomic with revoke/unlink cleanup.
+    static func setSavedMemory(
+        momentID: String,
+        isSaved: Bool,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard state.reportOnlyUntil == nil else {
+                throw MomentSharingError.reportOnly(until: state.reportOnlyUntil!)
+            }
+            guard let item = state.inbox.first(where: { $0.id == momentID }),
+                  item.state == .available || item.state == .acknowledged,
+                  let fileName = item.localJPEGFileName,
+                  let directory = SharedContainer.momentSharingReceivedDirectoryURL
+            else { throw MomentSharingError.stateUnavailable }
+
+            let url = directory.appendingPathComponent(fileName, isDirectory: false)
+            let values = try url.resourceValues(
+                forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+            )
+            guard values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  let fileSize = values.fileSize,
+                  fileSize > 0,
+                  fileSize <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28
+            else { throw MomentSharingError.stateUnavailable }
+
+            state.savedMemories.removeAll { $0.momentID == momentID }
+            if isSaved {
+                state.savedMemories.append(
+                    MomentSavedMemoryRecord(momentID: momentID, savedAt: now)
+                )
             }
         }
     }
@@ -1094,9 +1191,41 @@ enum MomentSharingStateStore {
         var retainedInbox: [MomentInboxItem] = []
         var removedImageNames: [String] = []
 
-            for item in state.inbox.sorted(by: {
-                if $0.receivedAt != $1.receivedAt { return $0.receivedAt > $1.receivedAt }
-                return $0.id < $1.id
+            let savedAtByMomentID = Dictionary(
+                uniqueKeysWithValues: state.savedMemories.map { ($0.momentID, $0.savedAt) }
+            )
+            let newestDisplayableMomentID = state.inbox
+                .filter { $0.state == .available || $0.state == .acknowledged }
+                .max(by: {
+                if $0.receivedAt != $1.receivedAt { return $0.receivedAt < $1.receivedAt }
+                return $0.id > $1.id
+            })?.id
+            for item in state.inbox.sorted(by: { first, second in
+                if first.id == second.id { return false }
+                // Keep the current visible experience without allowing a
+                // bookmark to displace hidden report evidence or a revocation
+                // tombstone. All groups still obey the absolute age/count/
+                // byte limits below.
+                if first.id == newestDisplayableMomentID { return true }
+                if second.id == newestDisplayableMomentID { return false }
+                let firstIsSafetyState = first.state == .blocked || first.state == .revoked
+                let secondIsSafetyState = second.state == .blocked || second.state == .revoked
+                if firstIsSafetyState != secondIsSafetyState {
+                    return firstIsSafetyState
+                }
+                let firstSavedAt = savedAtByMomentID[first.id]
+                let secondSavedAt = savedAtByMomentID[second.id]
+                if (firstSavedAt != nil) != (secondSavedAt != nil) {
+                    return firstSavedAt != nil
+                }
+                if let firstSavedAt, let secondSavedAt,
+                   firstSavedAt != secondSavedAt {
+                    return firstSavedAt > secondSavedAt
+                }
+                if first.receivedAt != second.receivedAt {
+                    return first.receivedAt > second.receivedAt
+                }
+                return first.id < second.id
             }) {
                 let fileBytes: Int
                 let fileIsAvailable: Bool
@@ -1123,6 +1252,10 @@ enum MomentSharingStateStore {
                 }
             }
             state.inbox = retainedInbox
+            let retainedMomentIDs = Set(retainedInbox.map(\.id))
+            state.savedMemories.removeAll {
+                !retainedMomentIDs.contains($0.momentID)
+            }
 
             var expiredPending: [MomentOutboxItem] = []
             for index in state.outbox.indices where

@@ -358,6 +358,23 @@ do {
     // Expected.
 }
 
+require(
+    MomentSharingError.requestRejected(
+        status: 429,
+        code: "moment_daily_quota_exceeded",
+        message: "relay-internal-detail-must-not-appear"
+    ).localizedDescription == "今日届けられる枚数に達しました。明日、もう一度お試しください。",
+    "moment quota guidance was not preserved"
+)
+require(
+    !MomentSharingError.requestRejected(
+        status: 400,
+        code: "unknown_relay_code",
+        message: "relay-internal-detail-must-not-appear"
+    ).localizedDescription.contains("relay-internal-detail"),
+    "relay error detail reached the user-facing description"
+)
+
 print("Moment sharing core verifier passed")
 }
 }

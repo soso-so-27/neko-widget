@@ -385,8 +385,27 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
             "このまどの共有は終了しました。\(until.formatted(.dateTime.month().day().hour().minute()))までは通報だけ利用できます。"
         case .retryableServer:
             "通信が完了しませんでした。あとで再試行します。"
-        case let .requestRejected(_, _, message):
-            message
+        case let .requestRejected(status, code, _):
+            switch code {
+            case "sharing_revoked", "invalid_authentication":
+                "このまどの共有は終了しました。もう一度招待してください。"
+            case "reservation_expired":
+                "送信の準備期限が切れました。保存済みの続きから再試行します。"
+            case "report_window_closed":
+                "このまどの通報受付期間は終了しました。"
+            case "moment_daily_quota_exceeded", "daily_limit_exceeded":
+                "今日届けられる枚数に達しました。明日、もう一度お試しください。"
+            case "report_daily_quota_exceeded":
+                "今日受け付けられる通報数に達しました。緊急の場合はサポートへ連絡してください。"
+            default:
+                if status == 429 {
+                    "操作が続いたため、少し待ってからもう一度お試しください。"
+                } else if status >= 500 {
+                    "共有サーバーが一時的に利用できません。あとで再試行します。"
+                } else {
+                    "写真共有の処理を完了できませんでした。時間をおいて、もう一度お試しください。"
+                }
+            }
         }
     }
 }

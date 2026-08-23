@@ -12,6 +12,9 @@ extension Notification.Name {
     static let momentSharingPresentationNeedsRefresh = Notification.Name(
         "jp.nekowidget.sharing.presentation-needs-refresh"
     )
+    static let momentSharingContentNeedsReload = Notification.Name(
+        "jp.nekowidget.sharing.content-needs-reload"
+    )
 }
 
 enum AlbumUpdateStatus: Equatable {
@@ -1620,6 +1623,14 @@ final class AppViewModel: ObservableObject {
         await momentSharingCoordinator.synchronize(trigger: trigger)
         guard !Task.isCancelled else { return }
         await refreshFamilyWindowOutputs(trigger: trigger)
+        guard !Task.isCancelled else { return }
+        // FamilyWindowView owns a separate presentation model. Tell an open
+        // screen to reload the durable ledger only; it must not start another
+        // network pass and form a synchronization loop.
+        NotificationCenter.default.post(
+            name: .momentSharingContentNeedsReload,
+            object: nil
+        )
     }
 
     func refreshFamilyWindowOutputs(trigger: String) async {

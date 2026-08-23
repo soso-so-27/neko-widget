@@ -364,10 +364,10 @@ enum PairingError: LocalizedError, Equatable {
             return "このビルドには共有サーバーが設定されていません。"
         case .invalidInvitationCode:
             return "招待コードを確認できませんでした。コード全体を貼り付けてください。"
-        case let .keychainUnavailable(status):
-            return "共有鍵を安全に保存できませんでした（Keychain: \(status)）。"
+        case .keychainUnavailable:
+            return "共有鍵を安全に保存できませんでした。iPhoneを再起動して、もう一度お試しください。"
         case .keychainAccessGroupUnavailable:
-            return "App GroupのKeychainを利用できません。署名設定を確認してください。"
+            return "このアプリでは共有鍵を利用できません。アプリを更新して、もう一度お試しください。"
         case .malformedCredential:
             return "保存されている共有鍵を確認できません。再招待が必要です。"
         case .installationChanged:
@@ -378,8 +378,29 @@ enum PairingError: LocalizedError, Equatable {
             return "相手の確認情報が一致しません。承認せず、招待をやり直してください。"
         case .unsupportedProtocol:
             return "この招待は現在のアプリでは利用できません。アプリを更新してください。"
-        case let .requestRejected(_, _, message):
-            return message
+        case let .requestRejected(status, code, _):
+            switch code {
+            case "enrollment_expired":
+                return "招待の期限が切れました。新しい招待コードが必要です。"
+            case "invitation_unavailable", "enrollment_unavailable":
+                return "この招待は利用できません。新しい招待コードが必要です。"
+            case "pairing_cancelled", "sharing_revoked", "invalid_authentication":
+                return "このまどの共有は終了しました。もう一度招待してください。"
+            case "invalid_enrollment_proof", "invitation_not_found":
+                return "招待コードを確認できませんでした。新しいコードを相手に送ってもらってください。"
+            case "invalid_pairing_state":
+                return "まどの状態が変わりました。状態を確認して、もう一度お試しください。"
+            case "rate_limited":
+                return "操作が続いたため、少し待ってからもう一度お試しください。"
+            default:
+                if status == 429 {
+                    return "操作が続いたため、少し待ってからもう一度お試しください。"
+                }
+                if status >= 500 {
+                    return "共有サーバーが一時的に利用できません。時間をおいて、もう一度お試しください。"
+                }
+                return "共有の処理を完了できませんでした。状態を確認して、もう一度お試しください。"
+            }
         case .noPendingEnrollment:
             return "承認待ちの相手はまだいません。"
         case .approvalNotConfirmed:

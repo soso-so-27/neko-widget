@@ -422,6 +422,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("moment-report-only-terminal-gate") {
             try Self.testMomentReportOnlyTerminalGate()
         })
+        results.append(run("moment-saved-memory-boundary") {
+            try Self.testMomentSavedMemoryBoundary()
+        })
         results.append(run("moment-empty-cursor-normalization") {
             try Self.testMomentEmptyCursorNormalization()
         })
@@ -1476,6 +1479,246 @@ actor SharingRuntimeSelfTestRunner {
         ) else { throw MomentSharingError.stateUnavailable }
     }
 
+    private static func testMomentSavedMemoryBoundary() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let baseDate = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970)
+        )
+        let momentID = "moment_saved_memory_fixture"
+        let item = try MomentInboxItem(
+            id: momentID,
+            senderParticipantID: "participant_saved_memory_fixture",
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "\(momentID).jpg",
+            capturedAt: baseDate,
+            captureDateIsMissing: false,
+            committedAt: baseDate,
+            receivedAt: baseDate,
+            state: .available,
+            accessExpiresAt: baseDate.addingTimeInterval(30 * 24 * 60 * 60)
+        ).validated()
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            item,
+            jpeg: jpeg,
+            validating: lifecycleToken
+        )
+
+        let likesBefore = SharedContainer.likesURL.flatMap {
+            try? Data(contentsOf: $0)
+        }
+        try MomentSharingStateStore.setSavedMemory(
+            momentID: momentID,
+            isSaved: true,
+            now: baseDate.addingTimeInterval(1),
+            validating: lifecycleToken
+        )
+        let saved = try MomentSharingStateStore.load()
+        let likesAfter = SharedContainer.likesURL.flatMap {
+            try? Data(contentsOf: $0)
+        }
+        guard saved.savedMemories == [
+            MomentSavedMemoryRecord(
+                momentID: momentID,
+                savedAt: baseDate.addingTimeInterval(1)
+            )
+        ],
+        let receivedDirectory = SharedContainer.momentSharingReceivedDirectoryURL,
+        try Data(contentsOf: receivedDirectory.appendingPathComponent("\(momentID).jpg"))
+            == jpeg,
+        likesBefore == likesAfter
+        else { throw MomentSharingError.stateUnavailable }
+
+        let blockedMomentID = "moment_saved_then_blocked_fixture"
+        let blockedItem = try MomentInboxItem(
+            id: blockedMomentID,
+            senderParticipantID: item.senderParticipantID,
+            kind: item.kind,
+            keyEpoch: item.keyEpoch,
+            localJPEGFileName: "\(blockedMomentID).jpg",
+            capturedAt: baseDate.addingTimeInterval(3),
+            captureDateIsMissing: false,
+            committedAt: baseDate.addingTimeInterval(3),
+            receivedAt: baseDate.addingTimeInterval(3),
+            state: .available,
+            accessExpiresAt: baseDate.addingTimeInterval(30 * 24 * 60 * 60)
+        ).validated()
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            blockedItem,
+            jpeg: jpeg,
+            validating: lifecycleToken
+        )
+        try MomentSharingStateStore.setSavedMemory(
+            momentID: blockedMomentID,
+            isSaved: true,
+            now: baseDate.addingTimeInterval(4),
+            validating: lifecycleToken
+        )
+        var blockedCandidate = blockedItem
+        blockedCandidate.state = .blocked
+        let blockedJPEG = Data([0xFF, 0xD8, 0x00, 0xFF, 0xD9])
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            blockedCandidate,
+            jpeg: blockedJPEG,
+            validating: lifecycleToken
+        )
+        let blockedState = try MomentSharingStateStore.load()
+        guard blockedState.savedMemories == saved.savedMemories,
+              blockedState.inbox.first(where: { $0.id == blockedMomentID })?.state == .blocked,
+              try Data(
+                contentsOf: receivedDirectory.appendingPathComponent("\(blockedMomentID).jpg")
+              ) == blockedJPEG
+        else { throw MomentSharingError.stateUnavailable }
+
+        let reportOnlyUntil = baseDate.addingTimeInterval(60 * 60)
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: reportOnlyUntil,
+            validating: lifecycleToken,
+            now: baseDate
+        )
+        do {
+            try MomentSharingStateStore.setSavedMemory(
+                momentID: momentID,
+                isSaved: false,
+                now: baseDate.addingTimeInterval(2),
+                validating: lifecycleToken
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case .reportOnly = error else { throw error }
+        }
+
+        let tombstone = try MomentInboxItem(
+            id: momentID,
+            senderParticipantID: item.senderParticipantID,
+            kind: item.kind,
+            keyEpoch: item.keyEpoch,
+            localJPEGFileName: nil,
+            capturedAt: item.capturedAt,
+            captureDateIsMissing: item.captureDateIsMissing,
+            committedAt: item.committedAt,
+            receivedAt: item.receivedAt,
+            state: .revoked,
+            accessExpiresAt: item.accessExpiresAt
+        ).validated()
+        try MomentSharingStateStore.revokeInbox(
+            tombstone: tombstone,
+            validating: lifecycleToken
+        )
+        let revoked = try MomentSharingStateStore.load()
+        guard revoked.savedMemories.isEmpty,
+              revoked.inbox.first(where: { $0.id == momentID })?.state == .revoked,
+              revoked.inbox.first(where: { $0.id == blockedMomentID })?.state == .blocked
+        else { throw MomentSharingError.stateUnavailable }
+
+        // Exercise the real 500-item pruning boundary without letting old
+        // bookmarks displace safety evidence or the newest visible photo.
+        try clearMomentSharingFixture()
+        guard let retentionDirectory = SharedContainer.momentSharingReceivedDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let retentionNow = baseDate.addingTimeInterval(10_000)
+        func retentionItem(
+            id: String,
+            state: MomentInboxState,
+            receivedAt: Date
+        ) throws -> MomentInboxItem {
+            try MomentInboxItem(
+                id: id,
+                senderParticipantID: item.senderParticipantID,
+                kind: item.kind,
+                keyEpoch: item.keyEpoch,
+                localJPEGFileName: state == .revoked ? nil : "\(id).jpg",
+                capturedAt: receivedAt,
+                captureDateIsMissing: false,
+                committedAt: receivedAt,
+                receivedAt: receivedAt,
+                state: state,
+                accessExpiresAt: receivedAt.addingTimeInterval(30 * 24 * 60 * 60)
+            ).validated()
+        }
+
+        let newestVisible = try retentionItem(
+            id: "retention_newest_visible",
+            state: .available,
+            receivedAt: retentionNow.addingTimeInterval(-2)
+        )
+        let blockedEvidence = try retentionItem(
+            id: "retention_blocked_evidence",
+            state: .blocked,
+            receivedAt: retentionNow.addingTimeInterval(-1)
+        )
+        let revocationTombstone = try retentionItem(
+            id: "retention_revocation_tombstone",
+            state: .revoked,
+            receivedAt: retentionNow
+        )
+        let ordinaryVisible = try retentionItem(
+            id: "retention_ordinary_visible",
+            state: .available,
+            receivedAt: retentionNow.addingTimeInterval(-2_000)
+        )
+        var retentionItems = [
+            newestVisible,
+            blockedEvidence,
+            revocationTombstone,
+            ordinaryVisible
+        ]
+        var retentionBookmarks: [MomentSavedMemoryRecord] = []
+        for index in 0..<499 {
+            let receivedAt = retentionNow.addingTimeInterval(-1_000 - Double(index))
+            let savedItem = try retentionItem(
+                id: String(format: "retention_saved_%03d", index),
+                state: .available,
+                receivedAt: receivedAt
+            )
+            retentionItems.append(savedItem)
+            retentionBookmarks.append(
+                MomentSavedMemoryRecord(
+                    momentID: savedItem.id,
+                    savedAt: receivedAt.addingTimeInterval(1)
+                )
+            )
+        }
+        for retentionItem in retentionItems {
+            if let fileName = retentionItem.localJPEGFileName {
+                try SharingSecureFile.write(
+                    jpeg,
+                    to: retentionDirectory.appendingPathComponent(fileName)
+                )
+            }
+        }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox = retentionItems
+            state.savedMemories = retentionBookmarks
+        }
+        try MomentSharingStateStore.pruneLocalHistory(now: retentionNow)
+        let capped = try MomentSharingStateStore.load()
+        guard capped.inbox.count == MomentSharingStateStore.maximumLocalHistoryCount,
+              capped.savedMemories.count == 497,
+              capped.inbox.contains(where: { $0.id == newestVisible.id }),
+              capped.inbox.contains(where: { $0.id == blockedEvidence.id }),
+              capped.inbox.contains(where: { $0.id == revocationTombstone.id }),
+              !capped.inbox.contains(where: { $0.id == ordinaryVisible.id })
+        else { throw MomentSharingError.stateUnavailable }
+
+        try MomentSharingStateStore.pruneLocalHistory(
+            now: retentionNow.addingTimeInterval(90 * 24 * 60 * 60 + 1)
+        )
+        let expired = try MomentSharingStateStore.load()
+        let remainingJPEGs = try FileManager.default.contentsOfDirectory(
+            at: retentionDirectory,
+            includingPropertiesForKeys: nil
+        )
+        guard expired.inbox.isEmpty,
+              expired.savedMemories.isEmpty,
+              remainingJPEGs.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
     private static func testMomentEmptyCursorNormalization() throws {
         guard try MomentChangeCursorPolicy.normalize("") == nil,
               try MomentChangeCursorPolicy.normalize("0123456789abcdef0123456789abcdef")
@@ -2088,11 +2331,18 @@ actor SharingRuntimeSelfTestRunner {
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
+        let currentEncoded = try encoder.encode(currentEncoding)
+        var schema5Object = try JSONSerialization.jsonObject(
+            with: encoder.encode(MomentSharingState.empty)
+        ) as? [String: Any]
+        schema5Object?["schemaVersion"] = 5
+        schema5Object?.removeValue(forKey: "savedMemories")
         var legacyObject = try JSONSerialization.jsonObject(
-            with: encoder.encode(currentEncoding)
+            with: currentEncoded
         ) as? [String: Any]
         legacyObject?["schemaVersion"] = 3
         legacyObject?.removeValue(forKey: "outgoingOutcomes")
+        legacyObject?.removeValue(forKey: "savedMemories")
         if var legacyOutboxItems = legacyObject?["outbox"] as? [[String: Any]],
            !legacyOutboxItems.isEmpty {
             for index in legacyOutboxItems.indices {
@@ -2108,9 +2358,20 @@ actor SharingRuntimeSelfTestRunner {
             legacyReports[0].removeValue(forKey: "commitStartedAt")
             legacyObject?["reportOutbox"] = legacyReports
         }
-        guard let legacyObject,
+        guard let schema5Object,
+              let legacyObject,
               let stateURL = SharedContainer.momentSharingStateURL
         else { throw MomentSharingError.stateUnavailable }
+        try SharingSecureFile.write(
+            JSONSerialization.data(withJSONObject: schema5Object, options: [.sortedKeys]),
+            to: stateURL
+        )
+        let migratedSchema5 = try MomentSharingStateStore.load()
+        guard migratedSchema5.schemaVersion == MomentSharingState.schemaVersion,
+              migratedSchema5.savedMemories.isEmpty,
+              migratedSchema5 == .empty
+        else { throw MomentSharingError.stateUnavailable }
+
         try SharingSecureFile.write(
             JSONSerialization.data(withJSONObject: legacyObject, options: [.sortedKeys]),
             to: stateURL
@@ -2118,6 +2379,7 @@ actor SharingRuntimeSelfTestRunner {
 
         let migrated = try MomentSharingStateStore.load()
         guard migrated.schemaVersion == MomentSharingState.schemaVersion,
+              migrated.savedMemories.isEmpty,
               migrated.outgoingOutcomes.isEmpty,
               migrated.outbox.count == 2,
               let migratedCommitted = migrated.outbox.first(where: {

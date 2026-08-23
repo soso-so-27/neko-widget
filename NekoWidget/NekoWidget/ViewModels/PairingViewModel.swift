@@ -11,6 +11,11 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var isSynchronizingWindowName = false
     @Published private(set) var windowNameStatusMessage: String?
     @Published private(set) var windowNameStatusIsError = false
+    @Published private(set) var manualCheckMessage: String?
+    @Published private(set) var manualCheckCompletedAt: Date?
+    @Published private(set) var manualCheckSucceeded: Bool?
+    @Published private(set) var operationCompletionMessage: String?
+    @Published private(set) var operationErrorMessage: String?
     @Published var enteredInvitationCode = ""
     @Published var hasConfirmedPhrase = false
 
@@ -26,7 +31,7 @@ final class PairingViewModel: ObservableObject {
             do {
                 api = try URLSessionPairingAPIClient(configuration: configuration)
             } catch {
-                configurationMessage = error.localizedDescription
+                configurationMessage = Self.userFacingMessage(for: error)
             }
         } else {
             configurationMessage = "共有はこの開発ビルドでは未接続です。"
@@ -36,6 +41,16 @@ final class PairingViewModel: ObservableObject {
     var isConfigured: Bool { api != nil }
     var isMediaSyncEnabled: Bool { configuration.isMediaAvailable }
     var canEditWindowDisplayName: Bool { state?.role != .invitee }
+    var userFacingStatusMessage: String? {
+        if let operationErrorMessage { return operationErrorMessage }
+        if let configurationMessage { return configurationMessage }
+        // Build 34 and earlier could persist arbitrary relay text or a raw
+        // Keychain status in lastError. Never render that legacy string.
+        if state?.lastError != nil {
+            return "前回の共有操作を完了できませんでした。画面の案内を確認して、もう一度お試しください。"
+        }
+        return nil
+    }
     var hasCurrentMediaSharingConsent: Bool {
         state?.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion
             && state?.mediaSharingConsentAcceptedAt != nil
@@ -85,10 +100,10 @@ final class PairingViewModel: ObservableObject {
             if isConfigured,
                [.awaitingInvitee, .pendingApproval, .awaitingCompletion]
                 .contains(current.phase) {
-                await refresh()
+                await refresh(isManual: false)
             }
         } catch {
-            configurationMessage = error.localizedDescription
+            configurationMessage = Self.userFacingMessage(for: error)
         }
     }
 
@@ -105,7 +120,7 @@ final class PairingViewModel: ObservableObject {
         let operation: PairingOperation
         do { operation = try beginOperation() }
         catch {
-            configurationMessage = error.localizedDescription
+            configurationMessage = Self.userFacingMessage(for: error)
             return false
         }
         do {
@@ -156,7 +171,7 @@ final class PairingViewModel: ObservableObject {
             }
             return true
         } catch {
-            configurationMessage = error.localizedDescription
+            configurationMessage = Self.userFacingMessage(for: error)
             windowNameStatusIsError = true
             windowNameStatusMessage = "まどの名前を保存できませんでした。"
             SharedLog.app.error(
@@ -182,6 +197,7 @@ final class PairingViewModel: ObservableObject {
     }
 
     func createInvitation(dailyBoundaryMinuteUTC: Int) async {
+        clearTransientOperationFeedback()
         guard let api else {
             configurationMessage = PairingError.apiNotConfigured.localizedDescription
             return
@@ -283,6 +299,7 @@ final class PairingViewModel: ObservableObject {
     }
 
     func joinInvitation() async {
+        clearTransientOperationFeedback()
         guard let api else {
             configurationMessage = PairingError.apiNotConfigured.localizedDescription
             return
@@ -435,8 +452,14 @@ final class PairingViewModel: ObservableObject {
         }
     }
 
-    func refresh() async {
+    func refresh(isManual: Bool = true) async {
         guard let api else { return }
+        operationErrorMessage = nil
+        if isManual {
+            manualCheckMessage = nil
+            manualCheckCompletedAt = nil
+            manualCheckSucceeded = nil
+        }
         let operation: PairingOperation
         do { operation = try beginOperation() }
         catch { record(error); return }
@@ -526,6 +549,11 @@ final class PairingViewModel: ObservableObject {
                 for: current,
                 lifecycleToken: lifecycleToken
             )
+            if isManual {
+                manualCheckCompletedAt = .now
+                manualCheckSucceeded = true
+                manualCheckMessage = Self.manualCheckMessage(for: current.phase)
+            }
         } catch {
             if let pairingError = error as? PairingError,
                Self.serverConfirmsPairingIsGone(pairingError)
@@ -542,10 +570,31 @@ final class PairingViewModel: ObservableObject {
                 return
             }
             record(error, operation: operation)
+            if isManual {
+                manualCheckCompletedAt = .now
+                manualCheckSucceeded = false
+                manualCheckMessage = "確認を完了できませんでした。画面の案内を確認して、もう一度お試しください。"
+            }
+        }
+    }
+
+    private static func manualCheckMessage(for phase: PairingPhase) -> String {
+        switch phase {
+        case .awaitingInvitee:
+            return "確認処理が終わりました。まだ相手の参加を待っています。"
+        case .pendingApproval:
+            return "確認処理が終わりました。まだ、まどを作った人の承認を待っています。"
+        case .awaitingCompletion:
+            return "確認処理が終わりました。まだ相手のiPhoneでの確認を待っています。"
+        case .paired:
+            return "確認処理が終わりました。このまどは接続されています。"
+        default:
+            return "確認処理が終わりました。画面に表示されている次の操作へ進んでください。"
         }
     }
 
     func approveAfterPhraseConfirmation() async {
+        clearTransientOperationFeedback()
         guard hasConfirmedPhrase else {
             record(PairingError.approvalNotConfirmed)
             return
@@ -651,6 +700,7 @@ final class PairingViewModel: ObservableObject {
     }
 
     func cancelAndReset() async {
+        clearTransientOperationFeedback()
         guard let api else { return }
         let operation: PairingOperation
         do { operation = try beginOperation() }
@@ -707,6 +757,8 @@ final class PairingViewModel: ObservableObject {
                 operation: operation
             )
             try await resetLocalPairing(operation: operation)
+            operationCompletionMessage =
+                "共有を解除しました。このiPhoneの共有鍵、届いた写真、まど内の思い出の印を削除しました。"
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation
@@ -965,6 +1017,14 @@ final class PairingViewModel: ObservableObject {
         )
     }
 
+    private func clearTransientOperationFeedback() {
+        manualCheckMessage = nil
+        manualCheckCompletedAt = nil
+        manualCheckSucceeded = nil
+        operationCompletionMessage = nil
+        operationErrorMessage = nil
+    }
+
     /// Saves with an exact-state CAS, then returns the decoded committed value.
     /// Callers must replace their local operation state with this return value
     /// before another mutation so storageRevision and ISO-8601 dates stay exact.
@@ -1091,6 +1151,9 @@ final class PairingViewModel: ObservableObject {
         let snapshot = try PairingStateStore.beginOperation()
         guard let reset = snapshot.state else { throw PairingError.stateUnavailable }
         state = reset
+        if let message {
+            operationErrorMessage = message
+        }
         windowDisplayName = PrivateWindowDisplayName.fallback
         invitationCode = nil
         enteredInvitationCode = ""
@@ -1102,9 +1165,10 @@ final class PairingViewModel: ObservableObject {
         _ error: Error,
         operation: PairingOperation? = nil
     ) {
+        operationErrorMessage = Self.userFacingMessage(for: error)
         if let operation {
             var updated = operation.expectedState
-            updated.lastError = error.localizedDescription
+            updated.lastError = operationErrorMessage
             updated.lastUpdatedAt = .now
             do {
                 _ = try persist(updated, operation: operation)
@@ -1122,5 +1186,15 @@ final class PairingViewModel: ObservableObject {
             "Pairing operation failed",
             metadata: ["reason": error.localizedDescription]
         )
+    }
+
+    private static func userFacingMessage(for error: Error) -> String {
+        if let pairingError = error as? PairingError {
+            return pairingError.localizedDescription
+        }
+        if error is URLError {
+            return "通信を完了できませんでした。接続を確認して、もう一度お試しください。"
+        }
+        return "共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
     }
 }

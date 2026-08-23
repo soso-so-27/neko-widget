@@ -20,6 +20,7 @@ CASES = {
     "lease-heartbeat",
     "legacy-widget-cache-migration",
     "moment-report-only-terminal-gate",
+    "moment-saved-memory-boundary",
     "moment-empty-cursor-normalization",
     "moment-expired-delivery-advances",
     "moment-install-bound-handoff",
