@@ -76,11 +76,12 @@ final class MomentSharingViewModel: ObservableObject {
             }
         }
         await coordinator.synchronize(trigger: "family-window")
+        let synchronizationNotice = await coordinator.synchronizationNotice()
         progressTask.cancel()
         await progressTask.value
         do {
             try reload()
-            errorMessage = nil
+            errorMessage = Self.message(for: synchronizationNotice)
         }
         catch { errorMessage = error.localizedDescription }
     }
@@ -171,7 +172,9 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func imageURL(for item: MomentInboxItem) -> URL? {
-        guard let name = item.localJPEGFileName else { return nil }
+        guard item.state == .available || item.state == .acknowledged,
+              let name = item.localJPEGFileName
+        else { return nil }
         return SharedContainer.momentSharingReceivedDirectoryURL?
             .appendingPathComponent(name, isDirectory: false)
     }
@@ -304,6 +307,19 @@ final class MomentSharingViewModel: ObservableObject {
         switch phase {
         case .pending: .pending
         case .processing: .processing
+        }
+    }
+
+    private nonisolated static func message(
+        for notice: MomentSynchronizationNotice?
+    ) -> String? {
+        switch notice {
+        case .inboundModerationDisabled:
+            return "受け取った写真の安全確認を待っています。このiPhoneで「設定」→「プライバシーとセキュリティ」→「センシティブな内容の警告」をオンにし、家族のまどを更新してください。写真はまだ表示せず、受取確認も送っていません。"
+        case .inboundModerationUnavailable:
+            return "受け取った写真の安全確認を完了できませんでした。写真はまだ表示せず、受取確認も送っていません。少し待ってから家族のまどを更新してください。"
+        case nil:
+            return nil
         }
     }
 

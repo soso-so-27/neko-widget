@@ -15,6 +15,9 @@ struct PairingView: View {
                 pairingOnlyBuildSection
             }
             privacySection
+            if model.isMediaSyncEnabled {
+                safetyCheckSettingSection
+            }
 
             if !model.isConfigured {
                 Section {
@@ -88,6 +91,22 @@ struct PairingView: View {
             Text(model.isMediaSyncEnabled
                 ? "写真が自動送信されることはありません。肉球も共有の指示ではありません。招待コードは信頼できる家族にだけ送り、機種変更や再インストール後は再招待してください。"
                 : "写真同期を有効にするビルドでは、送信前に改めて同意を求めます。招待リンクは信頼できる相手にだけ送り、機種変更や再インストール後は再招待してください。")
+        }
+    }
+
+    private var safetyCheckSettingSection: some View {
+        Section {
+            Label(
+                "「センシティブな内容の警告」をオン",
+                systemImage: "checkmark.shield"
+            )
+            Text("設定 → プライバシーとセキュリティ → センシティブな内容の警告")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("両方のiPhoneで必要")
+        } footer: {
+            Text("送る側と受け取る側の両方でオンにしてください。オフの端末では写真を表示せず、オンにして「家族のまど」を更新すると安全確認を再試行します。")
         }
     }
 

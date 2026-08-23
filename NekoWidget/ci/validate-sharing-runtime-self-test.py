@@ -20,6 +20,8 @@ REQUIRED_CASES = {
     "moment-empty-cursor-normalization",
     "moment-expired-delivery-advances",
     "moment-install-bound-handoff",
+    "moment-inbound-moderation-retry-policy",
+    "moment-inbound-moderation-flow",
     "moment-commit-ack-metadata",
     "moment-outbox-bounds-and-expiry",
     "moment-outcome-ledger-migration",

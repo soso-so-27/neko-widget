@@ -130,6 +130,149 @@ private actor RuntimeSharingAPI: DailySharingAPIClientProtocol {
     }
 }
 
+private enum RuntimeMomentModerationStep: Sendable {
+    case safe
+    case failure(MomentSharingError)
+}
+
+private actor RuntimeMomentModerator: MomentModerating {
+    private var steps: [RuntimeMomentModerationStep]
+    private var analysisCount = 0
+
+    init(steps: [RuntimeMomentModerationStep]) {
+        self.steps = steps
+    }
+
+    func requireSafeImage(at url: URL) async throws {
+        guard FileManager.default.fileExists(atPath: url.path),
+              (try Data(contentsOf: url)).isEmpty == false,
+              !steps.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+        analysisCount += 1
+        switch steps.removeFirst() {
+        case .safe:
+            return
+        case .failure(let error):
+            throw error
+        }
+    }
+
+    func runtimeAnalysisCount() -> Int { analysisCount }
+}
+
+private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
+    private let change: MomentChange
+    private let ciphertext: Data
+    private var downloadCount = 0
+    private var acknowledgementCount = 0
+
+    init(change: MomentChange, ciphertext: Data) {
+        self.change = change
+        self.ciphertext = ciphertext
+    }
+
+    private func unsupported<T>() throws -> T {
+        throw MomentSharingError.invalidPayload
+    }
+
+    func reserve(
+        item: MomentOutboxItem,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentReservationResult { try unsupported() }
+
+    func upload(
+        momentID: String,
+        ciphertext: Data,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws { throw MomentSharingError.invalidPayload }
+
+    func commit(
+        momentID: String,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentCommitResult { try unsupported() }
+
+    func changes(
+        after cursor: String?,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentChangesResult {
+        if cursor == change.cursor {
+            return MomentChangesResult(changes: [], nextCursor: change.cursor)
+        }
+        guard cursor == nil else { throw MomentSharingError.invalidPayload }
+        return MomentChangesResult(changes: [change], nextCursor: change.cursor)
+    }
+
+    func download(
+        momentID: String,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> Data {
+        guard momentID == change.momentID else {
+            throw MomentSharingError.invalidPayload
+        }
+        downloadCount += 1
+        return ciphertext
+    }
+
+    func acknowledge(
+        momentID: String,
+        ciphertextSHA256: Data,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentAcknowledgementResult {
+        guard momentID == change.momentID,
+              ciphertextSHA256 == change.ciphertextSHA256
+        else { throw MomentSharingError.invalidPayload }
+        acknowledgementCount += 1
+        return MomentAcknowledgementResult(
+            momentID: momentID,
+            acknowledgedAt: change.committedAt.addingTimeInterval(1),
+            accessExpiresAt: change.accessExpiresAt
+        )
+    }
+
+    func block(
+        participantID: String,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentBlockResult { try unsupported() }
+
+    func reserveReport(
+        momentID: String,
+        reason: MomentReportReason,
+        prepared: MomentPreparedReport,
+        clientRequestID: UUID,
+        reporterConsentAcceptedAt: Date,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentReportReservationResult { try unsupported() }
+
+    func uploadReport(
+        reportID: String,
+        ciphertext: Data,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws { throw MomentSharingError.invalidPayload }
+
+    func commitReport(
+        reportID: String,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentReportCommitResult { try unsupported() }
+
+    func runtimeCounts() -> (downloads: Int, acknowledgements: Int) {
+        (downloadCount, acknowledgementCount)
+    }
+}
+
 /// DEBUG-only, generated-data runtime gate used by simulator smoke CI. The
 /// report deliberately contains only fixed case identifiers and pass/fail
 /// values—never paths, PhotoKit identifiers, keys, invite codes, or bytes.
@@ -198,6 +341,12 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(run("moment-expired-delivery-advances") {
             try Self.testMomentExpiredDeliveryPolicy()
+        })
+        results.append(run("moment-inbound-moderation-retry-policy") {
+            try Self.testMomentInboundModerationRetryPolicy()
+        })
+        results.append(await runAsync("moment-inbound-moderation-flow") {
+            try await Self.testMomentInboundModerationFlow()
         })
         results.append(run("moment-outbox-bounds-and-expiry") {
             try Self.testMomentOutboxBoundsAndExpiry()
@@ -1148,6 +1297,279 @@ actor SharingRuntimeSelfTestRunner {
         ).validated()
         skewedClockItem.state = .revoked
         _ = try skewedClockItem.validated()
+    }
+
+    private static func testMomentInboundModerationRetryPolicy() throws {
+        guard try MomentInboundModerationPolicy.inboxState(after: nil) == .available,
+              try MomentInboundModerationPolicy.inboxState(
+                  after: .sensitiveContent
+              ) == .blocked
+        else { throw MomentSharingError.stateUnavailable }
+
+        for expected in [
+            MomentSharingError.moderationDisabled,
+            MomentSharingError.moderationUnavailable
+        ] {
+            do {
+                _ = try MomentInboundModerationPolicy.inboxState(after: expected)
+                throw MomentSharingError.stateUnavailable
+            } catch let received as MomentSharingError {
+                guard received == expected else {
+                    throw MomentSharingError.stateUnavailable
+                }
+            }
+        }
+
+        do {
+            _ = try MomentInboundModerationPolicy.inboxState(
+                after: .invalidPayload
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let received as MomentSharingError {
+            guard received == .moderationUnavailable else {
+                throw MomentSharingError.stateUnavailable
+            }
+        }
+    }
+
+    private static func testMomentInboundModerationFlow() async throws {
+        try clearMomentSharingFixture()
+        let moderationDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "NekoWidgetMomentInboundModeration",
+                isDirectory: true
+            )
+        try? FileManager.default.removeItem(at: moderationDirectory)
+        defer {
+            try? clearMomentSharingFixture()
+            try? FileManager.default.removeItem(at: moderationDirectory)
+        }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+        let roomKey = Data(repeating: 0x71, count: 32)
+        let installationMarker = UUID().uuidString.lowercased()
+        let spaceID = "space_inbound_moderation_flow"
+        let receiverID = "member_inbound_receiver"
+        let senderID = "member_inbound_sender"
+        var pairing = PairingState.unpaired(installationMarker: installationMarker)
+        pairing.phase = .paired
+        pairing.spaceID = spaceID
+        pairing.memberID = receiverID
+        let credential = PairingCredential(
+            installationMarker: installationMarker,
+            account: UUID().uuidString.lowercased(),
+            participantID: Data(repeating: 0x72, count: 16),
+            agreementPrivateKey: Data(repeating: 0x73, count: 32),
+            signingPrivateKey: Data(repeating: 0x74, count: 32),
+            roomKey: roomKey,
+            enrollmentSecret: nil
+        )
+
+        func fixture(_ suffix: String) throws -> (MomentChange, Data, URL) {
+            let clientMomentID = UUID()
+            let payload = try MomentCrypto.prepare(
+                canonicalJPEG: preview.jpeg,
+                capturedAt: nil,
+                pixelWidth: preview.pixelWidth,
+                pixelHeight: preview.pixelHeight,
+                context: MomentRequestContext(
+                    spaceID: spaceID,
+                    senderParticipantID: senderID,
+                    senderDeviceID: senderID,
+                    clientRequestID: UUID(),
+                    clientMomentID: clientMomentID,
+                    kind: .live,
+                    keyEpoch: 1
+                ),
+                spaceGenerationKey: roomKey
+            )
+            let momentID = "moment_inbound_\(suffix)"
+            let committedAt = Date().addingTimeInterval(-60)
+            let change = MomentChange(
+                cursor: "cursor_inbound_\(suffix)",
+                type: .momentCommitted,
+                createdAt: committedAt,
+                momentID: momentID,
+                clientMomentID: clientMomentID,
+                senderParticipantID: senderID,
+                kind: .live,
+                keyEpoch: 1,
+                ciphertextSize: payload.ciphertext.count,
+                ciphertextSHA256: payload.ciphertextSHA256,
+                committedAt: committedAt,
+                accessExpiresAt: committedAt.addingTimeInterval(3_600),
+                deliveryState: "pending"
+            )
+            guard let receivedDirectory = SharedContainer
+                .momentSharingReceivedDirectoryURL
+            else { throw MomentSharingError.stateUnavailable }
+            return (
+                change,
+                payload.ciphertext,
+                receivedDirectory.appendingPathComponent(
+                    "\(momentID).jpg",
+                    isDirectory: false
+                )
+            )
+        }
+
+        func requireNoModerationResidue() throws {
+            guard FileManager.default.fileExists(atPath: moderationDirectory.path)
+            else { return }
+            let files = try FileManager.default.contentsOfDirectory(
+                at: moderationDirectory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsSubdirectoryDescendants]
+            )
+            guard !files.contains(where: {
+                $0.lastPathComponent.hasPrefix(".inbound-")
+            }) else { throw MomentSharingError.stateUnavailable }
+        }
+
+        let disabledFixture = try fixture("disabled")
+        let disabledAPI = RuntimeMomentAPI(
+            change: disabledFixture.0,
+            ciphertext: disabledFixture.1
+        )
+        let disabledModerator = RuntimeMomentModerator(
+            steps: [.failure(.moderationDisabled), .safe]
+        )
+        let disabledCoordinator = MomentSharingCoordinator(
+            moderation: disabledModerator
+        )
+        do {
+            _ = try await disabledCoordinator.runtimeTestReceiveChanges(
+                api: disabledAPI,
+                pairing: pairing,
+                credential: credential,
+                lifecycleToken: lifecycleToken
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard error == .moderationDisabled else { throw error }
+        }
+        let disabledRetryState = try MomentSharingStateStore.load()
+        let disabledRetryCounts = await disabledAPI.runtimeCounts()
+        let disabledRetryAnalysisCount = await disabledModerator
+            .runtimeAnalysisCount()
+        guard disabledRetryState.changeCursor == nil,
+              disabledRetryState.inbox.isEmpty,
+              disabledRetryCounts.downloads == 1,
+              disabledRetryCounts.acknowledgements == 0,
+              disabledRetryAnalysisCount == 1,
+              !FileManager.default.fileExists(atPath: disabledFixture.2.path)
+        else { throw MomentSharingError.stateUnavailable }
+        try requireNoModerationResidue()
+
+        guard try await disabledCoordinator.runtimeTestReceiveChanges(
+            api: disabledAPI,
+            pairing: pairing,
+            credential: credential,
+            lifecycleToken: lifecycleToken
+        ) == 1 else { throw MomentSharingError.stateUnavailable }
+        let recoveredState = try MomentSharingStateStore.load()
+        let recoveredCounts = await disabledAPI.runtimeCounts()
+        let recoveredAnalysisCount = await disabledModerator
+            .runtimeAnalysisCount()
+        guard recoveredState.changeCursor == disabledFixture.0.cursor,
+              recoveredState.inbox.count == 1,
+              recoveredState.inbox[0].state == .acknowledged,
+              recoveredCounts.downloads == 2,
+              recoveredCounts.acknowledgements == 1,
+              recoveredAnalysisCount == 2,
+              try Data(contentsOf: disabledFixture.2) == preview.jpeg,
+              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
+                  disabledFixture.2
+              )
+        else { throw MomentSharingError.stateUnavailable }
+        try requireNoModerationResidue()
+
+        try clearMomentSharingFixture()
+        let unavailableFixture = try fixture("unavailable")
+        let unavailableAPI = RuntimeMomentAPI(
+            change: unavailableFixture.0,
+            ciphertext: unavailableFixture.1
+        )
+        let unavailableModerator = RuntimeMomentModerator(
+            steps: [.failure(.moderationUnavailable)]
+        )
+        let unavailableCoordinator = MomentSharingCoordinator(
+            moderation: unavailableModerator
+        )
+        do {
+            _ = try await unavailableCoordinator.runtimeTestReceiveChanges(
+                api: unavailableAPI,
+                pairing: pairing,
+                credential: credential,
+                lifecycleToken: lifecycleToken
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard error == .moderationUnavailable else { throw error }
+        }
+        let unavailableState = try MomentSharingStateStore.load()
+        let unavailableCounts = await unavailableAPI.runtimeCounts()
+        let unavailableAnalysisCount = await unavailableModerator
+            .runtimeAnalysisCount()
+        guard unavailableState.changeCursor == nil,
+              unavailableState.inbox.isEmpty,
+              unavailableCounts.downloads == 1,
+              unavailableCounts.acknowledgements == 0,
+              unavailableAnalysisCount == 1,
+              !FileManager.default.fileExists(atPath: unavailableFixture.2.path)
+        else { throw MomentSharingError.stateUnavailable }
+        try requireNoModerationResidue()
+
+        try clearMomentSharingFixture()
+        let sensitiveFixture = try fixture("sensitive")
+        let sensitiveAPI = RuntimeMomentAPI(
+            change: sensitiveFixture.0,
+            ciphertext: sensitiveFixture.1
+        )
+        let sensitiveModerator = RuntimeMomentModerator(
+            steps: [.failure(.sensitiveContent)]
+        )
+        let sensitiveCoordinator = MomentSharingCoordinator(
+            moderation: sensitiveModerator
+        )
+        guard try await sensitiveCoordinator.runtimeTestReceiveChanges(
+            api: sensitiveAPI,
+            pairing: pairing,
+            credential: credential,
+            lifecycleToken: lifecycleToken
+        ) == 1 else { throw MomentSharingError.stateUnavailable }
+        let sensitiveState = try MomentSharingStateStore.load()
+        let sensitiveCounts = await sensitiveAPI.runtimeCounts()
+        let sensitiveAnalysisCount = await sensitiveModerator
+            .runtimeAnalysisCount()
+        guard sensitiveState.changeCursor == sensitiveFixture.0.cursor,
+              sensitiveState.inbox.count == 1,
+              sensitiveState.inbox[0].state == .blocked,
+              sensitiveState.inbox[0].acknowledgedAt != nil,
+              sensitiveCounts.downloads == 1,
+              sensitiveCounts.acknowledgements == 1,
+              sensitiveAnalysisCount == 1,
+              try Data(contentsOf: sensitiveFixture.2) == preview.jpeg,
+              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
+                  sensitiveFixture.2
+              )
+        else { throw MomentSharingError.stateUnavailable }
+        try requireNoModerationResidue()
+
+        guard try await sensitiveCoordinator.runtimeTestReceiveChanges(
+            api: sensitiveAPI,
+            pairing: pairing,
+            credential: credential,
+            lifecycleToken: lifecycleToken
+        ) == 0 else { throw MomentSharingError.stateUnavailable }
+        let terminalSensitiveCounts = await sensitiveAPI.runtimeCounts()
+        let terminalSensitiveAnalysisCount = await sensitiveModerator
+            .runtimeAnalysisCount()
+        guard terminalSensitiveCounts.downloads == 1,
+              terminalSensitiveCounts.acknowledgements == 1,
+              terminalSensitiveAnalysisCount == 1
+        else { throw MomentSharingError.stateUnavailable }
     }
 
     private static func testMomentOutboxBoundsAndExpiry() throws {
