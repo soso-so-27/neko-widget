@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "owner_selected_and_approved": null,
+  "pages": {
+    "support": {
+      "canonical_page_uri": "https://soso-so-27.github.io/neko-widget/app/support/",
+      "contact_kind": null,
+      "contact_uri": null,
+      "owner_delivery_test_completed": null,
+      "approved_at_utc": null
+    },
+    "privacy": {
+      "canonical_page_uri": "https://soso-so-27.github.io/neko-widget/app/privacy/",
+      "contact_kind": null,
+      "contact_uri": null,
+      "owner_delivery_test_completed": null,
+      "approved_at_utc": null
+    }
+  }
+}

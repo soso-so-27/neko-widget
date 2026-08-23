@@ -25,6 +25,8 @@
   "selected_version": null,
   "selected_build": null,
   "selected_git_commit": null,
+  "selected_github_run_id": null,
+  "selected_github_artifact_id": null,
   "pricing": null,
   "tax_category_confirmed": null,
   "territories_confirmed": null,

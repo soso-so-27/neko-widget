@@ -141,10 +141,25 @@ site rootはrepositoryの`docs/app`へ固定しており、CLI引数で別のdum
 書く必要がない運用なら、実際に応答できる専用の公開HTTPS formを用意する。
 
 - `<meta name="neko-app-store-contact-ready" content="true">`をheadへ置く。
-- 実際に受信・応答できる`mailto:` link、または公開HTTPS formだけに
-  `data-neko-private-contact="true"`を付ける。
-- HTTPS formのlinkまたはformには`data-neko-contact-kind="form"`も付ける。
+- 実際に受信・応答できる`mailto:`、または公開HTTPS formへの、本文内で見える
+  `<a href>`だけに`data-neko-private-contact="true"`を付ける。
+- HTTPS formへ移動する`<a href>`には`data-neko-contact-kind="form"`も付ける。
+  `<form>`自体へmarkerを付けるだけでは完了扱いにしない。
 - markerだけ、dummy address、予約domain、転送先未設定のformでは完了扱いにしない。
+
+さらに[local-only-contact-approval.example.json](local-only-contact-approval.example.json)を
+gitignoredの`local-only-contact-approval.json`へcopyし、所有者がページごとに選定した実在の
+`contact_uri`、種類、承認日時を記録する。`owner_selected_and_approved`と
+`owner_delivery_test_completed`は、実際に問い合わせを送り、受信・応答経路を所有者が確認した後だけ
+`true`にする。この承認fileは連絡先運用の非公開記録であり、repositoryへcommitしない。
+送受信試験は提出検証時点から90日以内のものだけを有効とし、古い承認は再試験する。
+
+通常検証は、承認fileのURIが固定のcanonical sourceと公開中のPrivacy／Supportページの両方に
+完全一致することも確認する。公開ページはredirectなしのexact URL、HTTP 2xx、HTMLでなければならず、
+DNSがprivate、loopback、link-local等へ解決される場合も`RED`になる。HTTPS formを選んだ場合はform
+自身もredirectなしで到達可能な2xx HTMLでなければならない。`mailto:`はMXの存在だけでは完了にせず、
+承認fileの完全一致と所有者による送受信試験を必須にする。存在しないformや構文だけ正しいemailでは
+`GREEN`にならない。
 
 特に次は文面が完成していても代行判断できない。
 
@@ -165,18 +180,28 @@ site rootはrepositoryの`docs/app`へ固定しており、CLI引数で別のdum
 
 所有者入力だけでは`GREEN`にならない。`.github/workflows/testflight.yml`をmainの提出候補SHAで、
 `release_mode=disabled`、`upload_to_testflight=true`、`retain_signed_artifacts=true`として完走させる。
-workflowはTestFlight upload成功後に次の2つのActions artifactを生成する。
+workflowはTestFlight upload成功後に、最終証拠を一つのActions artifact
+`nekowidget-local-only-release-evidence-<run>-<attempt>`へまとめる。そのartifact ZIPのrootは次の
+3 memberだけである。
 
-- `nekowidget-signed-artifacts-<run>-<attempt>`: 暗号化した署名済みarchive／IPA
-- `nekowidget-local-only-release-evidence-<run>-<attempt>`: workflow生成manifestと処理済みApp Info.plist
+- `local-only-release-evidence.json`: workflow dispatch inputs、run／attempt／SHA、検証結果、各hash
+- `NekoWidget-processed-app-info.plist`: archive内Appの処理済みInfo.plist
+- `NekoWidget-signed-artifacts.tar.gz.enc`: 同じrunで生成した暗号化済み署名archive／IPA
 
-両方を同じrunからdownloadし、暗号化artifact、`local-only-release-evidence.json`、
-`NekoWidget-processed-app-info.plist`を一緒に検証する。validatorは実fileのSHA-256／size、処理済み
-Info.plistのVersion／Build／Bundle ID／`disabled` flags、workflow run ID／URL、TestFlight upload成功、
-source commitのgit実在と現在のrepository HEADへの完全一致を確認する。さらに公開GitHub Actions APIで
-runの最終状態が`completed/success`、workflow／main／SHA／attemptが完全一致し、同じrunに暗号化archiveと
-release evidenceの両artifactが存在して期限切れでないことを照合する。ネットワーク障害などでこの最終記録を
-確認できない場合もfail-closedで`RED`になる。`aaaa...`、
+所有者はActions画面で最終runとartifactを選び、IDを`local-only-owner-input.json`の
+`selected_github_run_id`と`selected_github_artifact_id`へ記録する。validatorへ3つのlocal fileを渡す
+optionはない。validator自身がGitHub APIから選択済みartifact ZIPを認証downloadし、APIのsizeと
+SHA-256 digestをdownload byteへ照合してから、固定3 memberだけを安全に展開する。認証には
+`gh auth login`済みのGitHub CLI、またはActions artifactのreadに必要な最小権限だけを持つ
+`GH_TOKEN`／`GITHUB_TOKEN`を使う。tokenを文書、JSON、command line、repositoryへ保存しない。
+
+validatorは、期限切れでないartifact ID／名前／run／attempt、remote runの
+`workflow_dispatch`／main／source SHA／`completed`／`success`、attempt-specific jobとTestFlight uploadを
+含む必須stepの成功を照合する。ZIP内では暗号化artifactの実SHA-256／size、処理済みInfo.plistの
+Version／Build／Bundle ID／`disabled` flags、dispatch event payloadからwriterが固定したinputsを検証する。
+source commitはgitに実在し、現在のrepository HEADと完全一致しなければならない。artifactの期限切れ、
+API・認証・download障害、digest不一致、余分なmember、`upload_to_testflight=false`はすべてfail-closedで
+`RED`になる。`aaaa...`、
 `owner-recorded-result`、nullその他のplaceholderは証拠にならない。署名archiveだけを作るdry run
 （`upload_to_testflight=false`）も提出準備は`RED`のままである。
 
@@ -200,18 +225,20 @@ python NekoWidget/ci/validate-app-store-local-only-readiness.py --copy-only
 python NekoWidget/ci/validate-app-store-local-only-readiness.py
 ```
 
-workflowからdownloadした3fileと所有者入力を含める場合:
+所有者入力、連絡先承認、owner-selectedのremote run／artifactを含めて検証する場合:
 
 ```powershell
 python NekoWidget/ci/validate-app-store-local-only-readiness.py `
   --owner-input NekoWidget/docs/app-store/local-only-owner-input.json `
-  --release-evidence NekoWidget/docs/app-store/local-only-release-evidence.json `
-  --signed-artifact NekoWidget/docs/app-store/NekoWidget-signed-artifacts.tar.gz.enc `
-  --processed-app-info NekoWidget/docs/app-store/NekoWidget-processed-app-info.plist `
+  --contact-approval NekoWidget/docs/app-store/local-only-contact-approval.json `
   --json
 ```
 
-この4fileは`.gitignore`対象であり、commitしない。site rootを指定するoptionは意図的に提供しない。
+2つのowner-only fileは`.gitignore`対象であり、commitしない。release evidenceは手動file指定を受け付けず、
+選択したGitHub run／artifactからだけ取得する。通常の提出可否検証ではmetadata manifestも固定の
+`local-only-ja.json`だけを使用し、同manifestとPrivacy／Support sourceがtrackedかつrepository HEADと
+差分なしであることを確認する。別manifestの`--manifest`は本文だけの`--copy-only`検証に限って使える。
+site rootを指定するoptionも意図的に提供しない。
 
 `GREEN`は提出操作を実行する許可ではない。最後の`Submit for Review`は所有者がApp Store Connectの
 previewを確認して明示的に実行する。

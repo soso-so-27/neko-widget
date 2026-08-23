@@ -73,15 +73,63 @@ def main() -> int:
         "GITHUB_RUN_ATTEMPT": str(args.run_attempt),
         "GITHUB_EVENT_NAME": args.event,
         "GITHUB_REPOSITORY": EXPECTED_REPOSITORY,
+        "GITHUB_REF": "refs/heads/main",
     }
     for key, expected in expected_environment.items():
         if os.environ.get(key) != expected:
             raise SystemExit(f"{key} does not match the explicit evidence input.")
 
+    event_path_value = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path_value:
+        raise SystemExit("GITHUB_EVENT_PATH is required.")
+    try:
+        event_payload = json.loads(Path(event_path_value).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"workflow_dispatch event payload is invalid: {error}") from error
+    if not isinstance(event_payload, dict) or event_payload.get("ref") != "main":
+        raise SystemExit("workflow_dispatch event ref must be main.")
+    event_repository = event_payload.get("repository")
+    if (
+        not isinstance(event_repository, dict)
+        or event_repository.get("full_name") != EXPECTED_REPOSITORY
+    ):
+        raise SystemExit("workflow_dispatch repository does not match.")
+    event_inputs = event_payload.get("inputs")
+    expected_input_keys = {
+        "build_number",
+        "release_mode",
+        "upload_to_testflight",
+        "retain_signed_artifacts",
+    }
+    if not isinstance(event_inputs, dict) or set(event_inputs) != expected_input_keys:
+        raise SystemExit("workflow_dispatch inputs do not match the exact release contract.")
+
+    def event_bool(key: str) -> bool:
+        value = event_inputs.get(key)
+        if value in {True, "true"}:
+            return True
+        if value in {False, "false"}:
+            return False
+        raise SystemExit(f"workflow_dispatch input {key} is not boolean.")
+
+    requested_build_number = event_inputs.get("build_number")
+    if not isinstance(requested_build_number, str):
+        raise SystemExit("workflow_dispatch build_number must be a string.")
+    if requested_build_number not in {"", args.build_number}:
+        raise SystemExit("workflow_dispatch build_number does not match the archive.")
+    if event_inputs.get("release_mode") != args.release_mode:
+        raise SystemExit("workflow_dispatch release_mode does not match.")
+    if event_bool("upload_to_testflight") != args.upload_to_testflight:
+        raise SystemExit("workflow_dispatch upload_to_testflight does not match.")
+    if event_bool("retain_signed_artifacts") != args.retain_signed_artifacts:
+        raise SystemExit("workflow_dispatch retain_signed_artifacts does not match.")
+
     if args.release_mode != "disabled":
         raise SystemExit("Local-only release evidence requires release_mode=disabled.")
     if args.event != "workflow_dispatch":
         raise SystemExit("Release evidence requires workflow_dispatch.")
+    if not args.upload_to_testflight:
+        raise SystemExit("Release evidence requires a successful TestFlight upload.")
     if not args.retain_signed_artifacts:
         raise SystemExit("Release evidence requires retained signed artifacts.")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
@@ -131,9 +179,13 @@ def main() -> int:
         if not isinstance(info, dict) or info.get(key) != expected:
             raise SystemExit(f"Processed App Info.plist mismatch for {key}.")
 
+    if args.output_directory.exists() and any(args.output_directory.iterdir()):
+        raise SystemExit("Evidence output directory must be empty.")
     args.output_directory.mkdir(parents=True, exist_ok=True)
     processed_output = args.output_directory / EXPECTED_INFO_FILENAME
+    artifact_output = args.output_directory / EXPECTED_ARTIFACT_FILENAME
     shutil.copyfile(args.info_plist, processed_output)
+    shutil.copyfile(args.artifact, artifact_output)
     evidence = {
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -153,6 +205,12 @@ def main() -> int:
             ),
             "status": "completed",
             "conclusion": "success",
+            "inputs": {
+                "requested_build_number": requested_build_number,
+                "release_mode": event_inputs["release_mode"],
+                "upload_to_testflight": event_bool("upload_to_testflight"),
+                "retain_signed_artifacts": event_bool("retain_signed_artifacts"),
+            },
             "upload_to_testflight": args.upload_to_testflight,
             "app_store_upload_passed": args.upload_to_testflight,
             "retain_signed_artifacts": args.retain_signed_artifacts,
@@ -165,8 +223,8 @@ def main() -> int:
         },
         "signed_artifact": {
             "filename": EXPECTED_ARTIFACT_FILENAME,
-            "sha256": sha256_file(args.artifact),
-            "size_bytes": artifact_size,
+            "sha256": sha256_file(artifact_output),
+            "size_bytes": artifact_output.stat().st_size,
             "encrypted": True,
         },
         "processed_app_info": {

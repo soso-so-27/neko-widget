@@ -15,6 +15,12 @@
     "run_url": null,
     "status": null,
     "conclusion": null,
+    "inputs": {
+      "requested_build_number": null,
+      "release_mode": null,
+      "upload_to_testflight": null,
+      "retain_signed_artifacts": null
+    },
     "upload_to_testflight": null,
     "app_store_upload_passed": null,
     "retain_signed_artifacts": null

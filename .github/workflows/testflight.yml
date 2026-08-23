@@ -994,7 +994,7 @@ jobs:
           grep -Fxq "$ipa_filename" "$RUNNER_TEMP/signed-artifact-contents.txt"
 
       - name: Upload encrypted signed app and symbols
-        if: ${{ inputs.retain_signed_artifacts }}
+        if: ${{ inputs.retain_signed_artifacts && inputs.release_mode != 'disabled' }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1042,7 +1042,7 @@ jobs:
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
 
       - name: Write local-only signed release evidence
-        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.retain_signed_artifacts }}
+        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
         shell: bash
         env:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
@@ -1070,14 +1070,13 @@ jobs:
             --retain-signed-artifacts "$RETAIN_SIGNED_ARTIFACTS"
 
       - name: Upload local-only signed release evidence
-        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.retain_signed_artifacts }}
+        if: ${{ success() && inputs.release_mode == 'disabled' && inputs.upload_to_testflight && inputs.retain_signed_artifacts }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-local-only-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/local-only-release-evidence/local-only-release-evidence.json
-            ${{ runner.temp }}/local-only-release-evidence/NekoWidget-processed-app-info.plist
+          path: ${{ runner.temp }}/local-only-release-evidence/
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14
 
       - name: Write release summary
