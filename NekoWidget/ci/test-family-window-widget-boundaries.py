@@ -66,6 +66,42 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("clearFamilyWindowWhileLifecycleLocked", publication)
         self.assertIn("Data(SHA256.hash(data: current.data))", publication)
 
+        app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
+        refresh = section(
+            app_model,
+            "func refreshFamilyWindowOutputs(trigger: String) async",
+            "private nonisolated static func familyWindowInputs",
+        )
+        self.assertLess(
+            refresh.index("familyWindowPresentation = .empty"),
+            refresh.index("PairingInstallationGuard.bootstrapAsync()"),
+        )
+        self.assertLess(
+            refresh.index("buildFamilyWindow("),
+            refresh.index("familyWindowPresentation = presentation"),
+        )
+
+    def test_family_clear_and_history_are_fail_closed(self) -> None:
+        builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
+        clear = section(
+            builder,
+            "private static func clearFamilyWindowWhileLifecycleLocked(",
+            "private static func updateFamilyHistoryAndRemoveStaleFiles(",
+        )
+        self.assertLess(
+            clear.index("removeItem(at: cacheDirectory)"),
+            clear.index("writeSharingJSON(manifest, to: manifestURL)"),
+        )
+
+        history = section(
+            builder,
+            "private static func updateFamilyHistoryAndRemoveStaleFiles(",
+            "private static func writeSharingJSON<Value: Encodable>(",
+        )
+        self.assertIn("retainedCandidateDigests", history)
+        self.assertIn("familySourceSnapshot(for: candidate, in: state)", history)
+        self.assertNotIn("FileManager.default.fileExists", history)
+
     def test_widget_cannot_like_or_route_a_family_photo_identifier(self) -> None:
         provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
         family_entry = section(

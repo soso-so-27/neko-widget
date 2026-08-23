@@ -1599,6 +1599,10 @@ final class AppViewModel: ObservableObject {
     func refreshFamilyWindowOutputs(trigger: String) async {
         familyWindowRefreshSequence += 1
         let refreshSequence = familyWindowRefreshSequence
+        // The durable sharing ledger may already have hidden, revoked or
+        // removed the previously presented item. Keep Home fail-closed while
+        // bootstrap, state validation and Widget publication are in flight.
+        familyWindowPresentation = .empty
         var lifecycleToken: SharingLifecycleGate.Token?
         do {
             let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
@@ -1630,7 +1634,6 @@ final class AppViewModel: ObservableObject {
                 inputs: stateAndInputs.1,
                 now: .now
             )
-            familyWindowPresentation = presentation
             let latestItem = presentation.latestStableID.flatMap { stableID in
                 stateAndInputs.0.inbox.first(where: { $0.id == stableID })
             }
@@ -1640,8 +1643,11 @@ final class AppViewModel: ObservableObject {
                 validating: bootstrap.lifecycleToken
             )
             guard refreshSequence == familyWindowRefreshSequence else { return }
-            if familyManifest.item == nil {
-                familyWindowPresentation = .empty
+            // WidgetCacheBuilder revalidates both lifecycle and the durable
+            // inbox immediately before publication. Do not surface the same
+            // candidate on Home until that fail-closed boundary succeeds.
+            if familyManifest.item != nil {
+                familyWindowPresentation = presentation
             }
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             SharedLog.app.debug(

@@ -202,10 +202,10 @@ jobs:
 
           source = Path("NekoWidget/ViewModels/AppViewModel.swift").read_text()
           start = source.index("func start() async")
-          launch_sync = source.index('synchronize(trigger: "launch")', start)
+          launch_sync = source.index('synchronizeMomentSharing(trigger: "launch")', start)
           curation_guard = source.index("guard await loadCatCandidateCuration()", start)
           foreground = source.index("func syncOnActive() async")
-          foreground_sync = source.index('synchronize(trigger: "foreground")', foreground)
+          foreground_sync = source.index('synchronizeMomentSharing(trigger: "foreground")', foreground)
           identity_guard = source.index("guard catIdentityLoadState == .ready", foreground)
           if not launch_sync < curation_guard or not foreground_sync < identity_guard:
               raise SystemExit("Moment sync must not depend on scanner or cat-identity storage")

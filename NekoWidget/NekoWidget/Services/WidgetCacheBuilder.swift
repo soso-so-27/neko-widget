@@ -735,10 +735,30 @@ actor WidgetCacheBuilder {
         generatedAt: Date
     ) throws -> FamilyWidgetManifest {
         let manifest = FamilyWidgetManifest(item: nil, generatedAt: generatedAt)
-        try writeSharingJSON(manifest, to: manifestURL)
-        try? FileManager.default.removeItem(at: historyURL)
+        // Remove renderable bytes first. If the subsequent empty-manifest
+        // commit fails, a stale manifest can only point at missing files.
+        // Still attempt both operations so either one independently closes
+        // the display path, and report any cleanup failure to the caller.
+        var cacheRemovalError: Error?
         if FileManager.default.fileExists(atPath: cacheDirectory.path) {
-            try FileManager.default.removeItem(at: cacheDirectory)
+            do {
+                try FileManager.default.removeItem(at: cacheDirectory)
+            } catch {
+                cacheRemovalError = error
+            }
+        }
+        try? FileManager.default.removeItem(at: historyURL)
+        do {
+            try writeSharingJSON(manifest, to: manifestURL)
+        } catch {
+            // Cache removal may already have made the stale manifest
+            // unreadable, but callers still need the I/O failure.
+            throw error
+        }
+        if let cacheRemovalError {
+            // The committed empty manifest prevents presentation even when
+            // best-effort deletion of old JPEG bytes did not complete.
+            throw cacheRemovalError
         }
         SharedLog.app.info("family-widget-cache", "Family Widget cache cleared")
         return manifest
@@ -756,16 +776,20 @@ actor WidgetCacheBuilder {
             FamilyWidgetCacheHistory.self,
             from: historyURL
         )) ?? .empty
+        // History is capped at four generations. Restrict source decoding to
+        // those few digests (plus the just-published one) so the lifecycle
+        // transaction never scans every JPEG in a large inbox.
+        let retainedCandidateDigests = Set(
+            oldHistory.generations.map(\.sourceDigest) + [item.sourceDigest]
+        )
         let safeDigests = Set(state.inbox.compactMap { candidate -> String? in
-            guard candidate.state == .available || candidate.state == .acknowledged,
-                  let filename = candidate.localJPEGFileName,
-                  filename == "\(candidate.id).jpg",
-                  let directory = SharedContainer.momentSharingReceivedDirectoryURL,
-                  FileManager.default.fileExists(
-                    atPath: directory.appendingPathComponent(filename).path
-                  )
+            // Old Widget timelines may retain a prior generation only while
+            // its source is still both lifecycle-safe and a canonical JPEG.
+            // Existence alone is insufficient: corruption must revoke the
+            // old generation just like blocked/revoked state does.
+            guard retainedCandidateDigests.contains(familySourceDigest(for: candidate))
             else { return nil }
-            return familySourceDigest(for: candidate)
+            return try? familySourceSnapshot(for: candidate, in: state).sourceDigest
         })
         let newest = FamilyWidgetCacheGeneration(
             sourceDigest: item.sourceDigest,
