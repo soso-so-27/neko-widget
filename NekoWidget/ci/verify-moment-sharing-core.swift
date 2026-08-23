@@ -181,7 +181,7 @@ let namePayload = try PrivateWindowNameCrypto.prepare(
     displayName: "しずくのまど",
     context: nameContext,
     roomKey: roomKey,
-    ownerCredential: ownerCredential
+    ownerSigningPrivateKey: ownerCredential.signingPrivateKey
 )
 let openedName = try PrivateWindowNameCrypto.open(
     namePayload,
@@ -195,7 +195,7 @@ let longNamePayload = try PrivateWindowNameCrypto.prepare(
     displayName: String(repeating: "a", count: 64),
     context: nameContext,
     roomKey: roomKey,
-    ownerCredential: ownerCredential
+    ownerSigningPrivateKey: ownerCredential.signingPrivateKey
 )
 require(longNamePayload.ciphertext.count == namePayload.ciphertext.count,
         "window-name ciphertext leaked UTF-8 name length")

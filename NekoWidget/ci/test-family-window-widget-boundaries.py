@@ -200,6 +200,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("jp.nekowidget.private-window-name.v1", name_crypto)
         self.assertIn("ownerMemberID", name_crypto)
         self.assertNotIn("ownerParticipantID", name_crypto)
+        self.assertNotIn("PairingCredential", name_crypto)
+        self.assertNotIn("PairingCrypto", name_crypto)
+        self.assertIn("ownerSigningPrivateKey", name_crypto)
         self.assertIn("ownerSignature", name_crypto)
         self.assertIn("ChaChaPoly.open", name_crypto)
 

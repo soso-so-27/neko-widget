@@ -975,7 +975,7 @@ actor MomentSharingCoordinator {
                     keyEpoch: 1
                 ),
                 roomKey: roomKey,
-                ownerCredential: credential
+                ownerSigningPrivateKey: credential.signingPrivateKey
             )
             staged = try PrivateWindowNameSyncStore.stagePending(
                 prepared,

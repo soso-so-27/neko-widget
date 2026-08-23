@@ -71,6 +71,17 @@ enum PrivateWindowNameSyncProtocol {
     static let version = 1
     static let maximumCiphertextBytes = 512
     static let maximumClientRevision = 9_007_199_254_740_991
+
+    static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (8...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45
+                || $0 == 95
+        }
+    }
 }
 
 struct PrivateWindowNameCiphertextContext: Codable, Equatable, Sendable {
@@ -82,8 +93,8 @@ struct PrivateWindowNameCiphertextContext: Codable, Equatable, Sendable {
 
     func validated() throws -> Self {
         guard protocolVersion == PrivateWindowNameSyncProtocol.version,
-              PairingValidation.isOpaqueIdentifier(spaceID),
-              PairingValidation.isOpaqueIdentifier(ownerMemberID),
+              PrivateWindowNameSyncProtocol.isOpaqueIdentifier(spaceID),
+              PrivateWindowNameSyncProtocol.isOpaqueIdentifier(ownerMemberID),
               (0...PrivateWindowNameSyncProtocol.maximumClientRevision)
                 .contains(ownerRevision),
               keyEpoch >= 1
@@ -130,11 +141,12 @@ enum PrivateWindowNameCrypto {
         displayName rawDisplayName: String,
         context: PrivateWindowNameCiphertextContext,
         roomKey: Data,
-        ownerCredential: PairingCredential
+        ownerSigningPrivateKey: Data
     ) throws -> PrivateWindowNamePreparedPayload {
         let context = try context.validated()
         let displayName = PrivateWindowDisplayName.normalized(rawDisplayName)
         guard roomKey.count == 32,
+              ownerSigningPrivateKey.count == 32,
               PrivateWindowDisplayName.isValid(displayName),
               !displayName.isEmpty
         else { throw MomentSharingError.invalidPayload }
@@ -155,10 +167,14 @@ enum PrivateWindowNameCrypto {
             throw MomentSharingError.invalidPayload
         }
         let hash = Data(SHA256.hash(data: ciphertext))
-        let signature = try PairingCrypto.sign(
-            recordData(context: context, ciphertextSHA256: hash),
-            credential: ownerCredential
-        )
+        let signature: Data
+        do {
+            signature = try Curve25519.Signing.PrivateKey(
+                rawRepresentation: ownerSigningPrivateKey
+            ).signature(for: recordData(context: context, ciphertextSHA256: hash))
+        } catch {
+            throw MomentSharingError.invalidPayload
+        }
         return try PrivateWindowNamePreparedPayload(
             context: context,
             ciphertext: ciphertext,
@@ -174,13 +190,15 @@ enum PrivateWindowNameCrypto {
     ) throws -> String {
         let payload = try payload.validated()
         guard roomKey.count == 32,
-              (try? PairingCrypto.verifySignature(
+              ownerSigningPublicKey.count == 32,
+              (try? Curve25519.Signing.PublicKey(
+                rawRepresentation: ownerSigningPublicKey
+              ).isValidSignature(
                 payload.ownerSignature,
                 for: recordData(
                     context: payload.context,
                     ciphertextSHA256: payload.ciphertextSHA256
-                ),
-                publicKey: ownerSigningPublicKey
+                )
               )) == true
         else { throw MomentSharingError.invalidPayload }
         let aad = try canonicalData(payload.context.canonicalFields())
@@ -225,7 +243,7 @@ enum PrivateWindowNameCrypto {
             context.ownerMemberID,
             String(context.ownerRevision),
             String(context.keyEpoch),
-            ciphertextSHA256.base64URLEncodedString()
+            base64URLEncodedString(ciphertextSHA256)
         ])
     }
 
@@ -245,9 +263,10 @@ enum PrivateWindowNameCrypto {
         withUnsafeBytes(of: &revision) { value.append(contentsOf: $0) }
         var nameCount = UInt16(name.count).bigEndian
         withUnsafeBytes(of: &nameCount) { value.append(contentsOf: $0) }
-        var padded = PairingCrypto.randomData(
-            count: PrivateWindowDisplayName.maximumUTF8ByteCount
-        )
+        var generator = SystemRandomNumberGenerator()
+        var padded = Data((0..<PrivateWindowDisplayName.maximumUTF8ByteCount).map { _ in
+            UInt8.random(in: UInt8.min ... UInt8.max, using: &generator)
+        })
         padded.replaceSubrange(0..<name.count, with: name)
         value.append(padded)
         guard value.count == plaintextByteCount else {
@@ -302,6 +321,13 @@ enum PrivateWindowNameCrypto {
         value.append(0)
         value.append(root)
         return value
+    }
+
+    private static func base64URLEncodedString(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 

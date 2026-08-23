@@ -3862,7 +3862,7 @@ actor SharingRuntimeSelfTestRunner {
                 keyEpoch: 1
             ),
             roomKey: roomKey,
-            ownerCredential: keychainProbe
+            ownerSigningPrivateKey: keychainProbe.signingPrivateKey
         )
         let retryID = UUID()
         let stagedName = try PrivateWindowNameSyncStore.stagePending(
@@ -3902,7 +3902,7 @@ actor SharingRuntimeSelfTestRunner {
                 keyEpoch: 1
             ),
             roomKey: roomKey,
-            ownerCredential: keychainProbe
+            ownerSigningPrivateKey: keychainProbe.signingPrivateKey
         )
         guard !(try PrivateWindowNameSyncStore.recordAccepted(
             staleName,
@@ -3914,7 +3914,7 @@ actor SharingRuntimeSelfTestRunner {
             displayName: "別のまど",
             context: synchronizedName.context,
             roomKey: roomKey,
-            ownerCredential: keychainProbe
+            ownerSigningPrivateKey: keychainProbe.signingPrivateKey
         )
         do {
             _ = try PrivateWindowNameSyncStore.recordAccepted(
