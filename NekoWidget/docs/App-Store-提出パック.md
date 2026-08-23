@@ -293,6 +293,10 @@ portrait accepted sizeには`1260 x 2736`、`1290 x 2796`、`1320 x 2868`があ�
 
 ### 5.2 撮影・権利チェック
 
+共有OFFの境界A用候補は[App Storeスクリーンショット撮影](App-Store-スクリーンショット撮影.md)の
+手動workflowで、消去済みSimulatorとコード生成fixtureから再現できる。workflowはApp Store Connectへ
+アップロードせず、成功後もownerの目視・Content Rights・最終Build一致の承認を必要とする。
+
 - `【本人入力】` 最終caption、順序、localizationを承認した。
 - `【本人入力】` 使用する猫写真の権利とlicense証跡を確認した。
 - CIのCC0 fixtureまたは同等の公開可能fixtureだけを使う。

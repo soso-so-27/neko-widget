@@ -1,3 +1,4 @@
+import Foundation
 import Photos
 import SwiftUI
 import UIKit
@@ -287,6 +288,9 @@ private final class PhotoAssetImageLoader: ObservableObject {
     private var loadGeneration = 0
     private var finalImageGeneration: Int?
     private var displayedImageGeneration: Int?
+#if DEBUG
+    private let screenshotFixtureLoaderIdentifier = UUID()
+#endif
 
     func load(
         localIdentifier: String,
@@ -307,6 +311,20 @@ private final class PhotoAssetImageLoader: ObservableObject {
             networkAccessAllowed: networkAccessAllowed
         )
         state = .loading
+
+#if DEBUG
+        // App Store screenshot capture uses deterministic illustrations that
+        // never enter Photos. The launch route and identifiers are DEBUG-only,
+        // so Release archives continue to resolve every image through PhotoKit.
+        if let fixture = AppStoreScreenshotFixture.image(for: localIdentifier) {
+            state = .loaded(fixture)
+            AppStoreScreenshotFixture.loadTracker.record(
+                localIdentifier: localIdentifier,
+                loaderIdentifier: screenshotFixtureLoaderIdentifier
+            )
+            return
+        }
+#endif
 
         if !showsFullImage,
            let cached = PhotoAssetDisplayCache.shared.thumbnail(for: loadKey) {

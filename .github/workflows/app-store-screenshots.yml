@@ -1,0 +1,209 @@
+name: Capture privacy-safe App Store screenshots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-screenshots-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  capture-local-only-iphone:
+    name: Capture Japanese local-only iPhone set
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      CAPTURE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Capture erased-Simulator product screens
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          artifact_directory="$RUNNER_TEMP/neko-app-store-screenshots"
+          derived_data_directory="$RUNNER_TEMP/NekoAppStoreScreenshotDerivedData"
+          result_bundle="$artifact_directory/AppStoreScreenshots.xcresult"
+          mkdir -p "$artifact_directory"
+
+          xcodebuild -version | tee "$artifact_directory/xcode-version.txt"
+          xcrun simctl list devices available --json \
+            > "$artifact_directory/available-simulators.json"
+
+          python3 - \
+            "$artifact_directory/available-simulators.json" \
+            "$artifact_directory/selected-simulator.tsv" \
+            "$CAPTURE_IOS_RUNTIME" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          destination = Path(sys.argv[2])
+          runtime = sys.argv[3]
+          devices = json.loads(source.read_text(encoding="utf-8"))["devices"]
+          available = [
+              device
+              for device in devices.get(runtime, [])
+              if device.get("isAvailable", False)
+          ]
+          # Every name below is in Apple's 6.9-inch screenshot class. The
+          # exporter still rejects the result unless its pixels are one of the
+          # currently accepted portrait sizes.
+          preferred_names = [
+              "iPhone 17 Pro Max",
+              "iPhone 16 Pro Max",
+              "iPhone 16 Plus",
+              "iPhone 15 Pro Max",
+              "iPhone 15 Plus",
+              "iPhone 14 Pro Max",
+          ]
+          selected = next(
+              (
+                  device
+                  for name in preferred_names
+                  for device in available
+                  if device.get("name") == name
+              ),
+              None,
+          )
+          if selected is None:
+              names = ", ".join(sorted(str(item.get("name")) for item in available))
+              raise SystemExit(
+                  f"No available 6.9-inch iPhone for {runtime}. Available: {names or '(none)'}"
+              )
+          destination.write_text(
+              f"{selected['udid']}\t{selected['name']}\t{runtime}\n",
+              encoding="utf-8",
+          )
+          PY
+
+          IFS=$'\t' read -r simulator_udid simulator_name simulator_runtime \
+            < "$artifact_directory/selected-simulator.tsv"
+          if [[ -z "$simulator_udid" || -z "$simulator_name" || -z "$simulator_runtime" ]]; then
+            echo "The selected Simulator record is incomplete." >&2
+            exit 1
+          fi
+          printf 'Selected Simulator: %s (%s, %s)\n' \
+            "$simulator_name" "$simulator_runtime" "$simulator_udid" \
+            | tee "$artifact_directory/selected-simulator.txt"
+
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            xcrun simctl shutdown "$simulator_udid" || true
+            xcrun simctl erase "$simulator_udid" || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          # Erasure before and after capture is the account/photo isolation
+          # boundary. No media is imported; fixture pixels are drawn by DEBUG
+          # code and are excluded from Release archives.
+          xcrun simctl shutdown "$simulator_udid" || true
+          xcrun simctl erase "$simulator_udid"
+          xcrun simctl boot "$simulator_udid"
+          xcrun simctl bootstatus "$simulator_udid" -b
+          xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLanguages -array ja-JP
+          xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLocale ja_JP
+          xcrun simctl shutdown "$simulator_udid"
+          xcrun simctl boot "$simulator_udid"
+          xcrun simctl bootstatus "$simulator_udid" -b
+          xcrun simctl ui "$simulator_udid" appearance light
+          if ! xcrun simctl status_bar "$simulator_udid" override \
+              --time 09:41 \
+              --batteryLevel 100 \
+              --batteryState charged \
+              --wifiBars 3 \
+              --cellularBars 4; then
+            # Older simctl variants accept the stable fields but not the bar
+            # count flags. Time and battery are the reproducibility boundary.
+            xcrun simctl status_bar "$simulator_udid" override \
+              --time 09:41 \
+              --batteryLevel 100 \
+              --batteryState charged
+          fi
+
+          set +e
+          xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$simulator_udid" \
+            -derivedDataPath "$derived_data_directory" \
+            -resultBundlePath "$result_bundle" \
+            -only-testing:NekoWidgetUITests/AppStoreScreenshotUITests/testCaptureJapaneseLocalOnlyProductScreens \
+            -parallel-testing-enabled NO \
+            -testLanguage ja \
+            -testRegion JP \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            SHARING_RELEASE_MODE=disabled \
+            SHARING_FEATURE_ENABLED=NO \
+            SHARING_MEDIA_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_HANDOFF_ENABLED=NO \
+            SHARING_SHARE_EXTENSION_SEND_ENABLED=NO \
+            SHARING_REVIEW_PREVIEW_ENABLED=NO \
+            SHARING_API_BASE_URL= \
+            SHARING_MODERATION_KEY_ID= \
+            SHARING_MODERATION_PUBLIC_KEY= \
+            SHARING_PRIVACY_URL= \
+            SHARING_SUPPORT_URL= \
+            SHARING_COMMUNITY_STANDARDS_URL= \
+            'APP_PRIVACY_URL=https://soso-so-27.github.io/neko-widget/app/privacy/' \
+            'APP_SUPPORT_URL=https://soso-so-27.github.io/neko-widget/app/support/' \
+            SHARE_EXTENSION_INFOPLIST_FILE=NekoWidgetShareExtension/Info.Disabled.plist \
+            test 2>&1 | tee "$artifact_directory/xcodebuild-test.log"
+          test_status=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$test_status" > "$artifact_directory/test-exit-code.txt"
+          exit "$test_status"
+
+      - name: Export accepted-size JPEGs without metadata
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          result_bundle="$RUNNER_TEMP/neko-app-store-screenshots/AppStoreScreenshots.xcresult"
+          output_directory="$RUNNER_TEMP/neko-app-store-screenshots/exported"
+          bash ci/export-app-store-screenshots.sh \
+            "$result_bundle" "$output_directory"
+          cp "$RUNNER_TEMP/neko-app-store-screenshots/selected-simulator.txt" \
+            "$output_directory/capture-device.txt"
+          xcodebuild -version > "$output_directory/xcode-version.txt"
+
+      - name: Upload review-ready candidates
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: app-store-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/neko-app-store-screenshots/exported
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload capture diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: app-store-screenshot-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/neko-app-store-screenshots/xcodebuild-test.log
+            ${{ runner.temp }}/neko-app-store-screenshots/test-exit-code.txt
+            ${{ runner.temp }}/neko-app-store-screenshots/selected-simulator.txt
+            ${{ runner.temp }}/neko-app-store-screenshots/xcode-version.txt
+          if-no-files-found: warn
+          retention-days: 7

@@ -29,6 +29,7 @@
 		100000000000000000000147 /* DailySharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A2 /* DailySharingCore.swift */; };
 		100000000000000000000101 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000201 /* AppRootView.swift */; };
 		100000000000000000000102 /* NekoWidgetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000202 /* NekoWidgetApp.swift */; };
+		100000000000000000000176 /* AppStoreScreenshotFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000259 /* AppStoreScreenshotFixture.swift */; };
 		100000000000000000000110 /* JSONExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000210 /* JSONExporter.swift */; };
 		100000000000000000000111 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000211 /* LibraryStore.swift */; };
 		100000000000000000000112 /* PhotoAlbumService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000212 /* PhotoAlbumService.swift */; };
@@ -137,6 +138,7 @@
 		500000000000000000000002 /* NekoWidgetShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F00000000000000000000403 /* NekoWidgetShareExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000601 /* PhotoPermissionUITests.swift */; };
 		600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */; };
+		600000000000000000000003 /* AppStoreScreenshotUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000604 /* AppStoreScreenshotUITests.swift */; };
 		700000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		700000000000000000000002 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		700000000000000000000005 /* MomentSharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A3 /* MomentSharingCore.swift */; };
@@ -224,6 +226,7 @@
 		F000000000000000000001A6 /* SharingAPIConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingAPIConfiguration.swift; sourceTree = "<group>"; };
 		F00000000000000000000201 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000202 /* NekoWidgetApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NekoWidgetApp.swift; sourceTree = "<group>"; };
+		F00000000000000000000259 /* AppStoreScreenshotFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotFixture.swift; sourceTree = "<group>"; };
 		F00000000000000000000203 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000204 /* NekoWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NekoWidget.entitlements; sourceTree = "<group>"; };
 		F00000000000000000000205 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -322,6 +325,7 @@
 		F00000000000000000000509 /* SensitiveContentAnalysis.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SensitiveContentAnalysis.framework; path = System/Library/Frameworks/SensitiveContentAnalysis.framework; sourceTree = SDKROOT; };
 		F00000000000000000000601 /* PhotoPermissionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoPermissionUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPlacementScreenshotUITests.swift; sourceTree = "<group>"; };
+		F00000000000000000000604 /* AppStoreScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000602 /* NekoWidgetUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NekoWidgetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -525,6 +529,7 @@
 			children = (
 				F00000000000000000000201 /* AppRootView.swift */,
 				F00000000000000000000202 /* NekoWidgetApp.swift */,
+				F00000000000000000000259 /* AppStoreScreenshotFixture.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -649,6 +654,7 @@
 			children = (
 				F00000000000000000000601 /* PhotoPermissionUITests.swift */,
 				F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */,
+				F00000000000000000000604 /* AppStoreScreenshotUITests.swift */,
 			);
 			path = NekoWidgetUITests;
 			sourceTree = "<group>";
@@ -854,6 +860,7 @@
 				100000000000000000000154 /* CatHouseholdIdentity.swift in Sources */,
 				100000000000000000000101 /* AppRootView.swift in Sources */,
 				100000000000000000000102 /* NekoWidgetApp.swift in Sources */,
+				100000000000000000000176 /* AppStoreScreenshotFixture.swift in Sources */,
 				100000000000000000000110 /* JSONExporter.swift in Sources */,
 				100000000000000000000111 /* LibraryStore.swift in Sources */,
 				100000000000000000000112 /* PhotoAlbumService.swift in Sources */,
@@ -956,6 +963,7 @@
 			files = (
 				600000000000000000000001 /* PhotoPermissionUITests.swift in Sources */,
 				600000000000000000000002 /* WidgetPlacementScreenshotUITests.swift in Sources */,
+				600000000000000000000003 /* AppStoreScreenshotUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
