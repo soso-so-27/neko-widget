@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// Captures privacy-safe, real SpringBoard screenshots for the in-app Widget
 /// placement guide. This test is intentionally excluded from the normal smoke
@@ -229,21 +230,17 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             )
             return
         }
-        guard waitForElement(
-            in: springboard,
-            labels: ["このiPhoneで見つけた猫写真"],
-            elementTypes: [.image, .other, .staticText],
-            timeout: 30
-        ) != nil else {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        let fixtureScreenshot = XCUIScreen.main.screenshot()
+        guard fixturePaletteIsVisible(in: fixtureScreenshot) else {
             fail(
-                "The Widget gallery did not render the seeded local cat preview.",
+                "The Widget gallery did not render the deterministic local cat preview.",
                 application: springboard
             )
             return
         }
 
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        captureScreenshot(named: "01-local-cat-widget")
+        captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
         // Do not tap Add Widget. The disposable Simulator is erased after the
         // run, but the capture itself remains read-only SpringBoard review.
     }
@@ -322,8 +319,64 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func captureScreenshot(named name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    private func fixturePaletteIsVisible(in screenshot: XCUIScreenshot) -> Bool {
+        guard let source = screenshot.image.cgImage else { return false }
+        let width = 330
+        let height = max(
+            1,
+            Int((Double(source.height) / Double(source.width) * Double(width)).rounded())
+        )
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue
+            | CGImageAlphaInfo.premultipliedLast.rawValue
+        var drewImage = false
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(
+                data: buffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo
+            ) else {
+                return
+            }
+            context.interpolationQuality = .none
+            context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+            drewImage = true
+        }
+        guard drewImage else { return false }
+
+        var furPixels = 0
+        var eyePixels = 0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[offset])
+            let green = Int(pixels[offset + 1])
+            let blue = Int(pixels[offset + 2])
+            if isNear(red, 130) && isNear(green, 92) && isNear(blue, 115) {
+                furPixels += 1
+            }
+            if isNear(red, 227) && isNear(green, 191) && isNear(blue, 77) {
+                eyePixels += 1
+            }
+        }
+        return furPixels >= 500 && eyePixels >= 25
+    }
+
+    private func isNear(_ value: Int, _ target: Int) -> Bool {
+        abs(value - target) <= 12
+    }
+
+    @MainActor
+    private func captureScreenshot(
+        named name: String,
+        screenshot: XCUIScreenshot? = nil
+    ) {
+        let attachment = XCTAttachment(
+            screenshot: screenshot ?? XCUIScreen.main.screenshot()
+        )
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

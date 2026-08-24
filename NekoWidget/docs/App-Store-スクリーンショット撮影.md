@@ -65,8 +65,10 @@ gh run download <run-id> --name app-store-screenshots-<run-id>-1
 日本語、ライト表示、09:41、満充電へ固定し、製品画面とWidget Gallery previewの2つのUI testを
 直列で実行する。成果物の保持期間は14日。
 
-失敗時はlog、選択Simulator、終了codeに加えて`.xcresult`を7日だけ保存し、空previewと
-SpringBoard accessibilityの見落としを区別できるようにする。成功画像の成果物とは分離する。
+失敗時はlog、選択Simulator、終了codeに加え、`.xcresult`から抽出した失敗画面やUI階層などの
+named attachmentを7日だけ保存する。空previewと画面自体は正常なのにSpringBoardがWidget内部の
+accessibilityを公開しない場合を区別できるようにし、巨大なraw `.xcresult`は保存しない。
+成功画像の成果物とは分離する。
 
 成果物:
 

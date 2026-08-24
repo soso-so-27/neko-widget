@@ -14,7 +14,7 @@ jobs:
   capture-local-only-iphone:
     name: Capture Japanese local-only iPhone set
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       CAPTURE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
@@ -26,6 +26,7 @@ jobs:
           persist-credentials: false
 
       - name: Capture erased-Simulator product screens
+        timeout-minutes: 25
         working-directory: NekoWidget
         shell: bash
         run: |
@@ -229,6 +230,26 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Export named capture diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifact_directory="$RUNNER_TEMP/neko-app-store-screenshots"
+          result_bundle="$artifact_directory/AppStoreScreenshots.xcresult"
+          output_directory="$artifact_directory/failure-attachments"
+          export_log="$artifact_directory/failure-xcresulttool-export.log"
+          mkdir -p "$artifact_directory"
+          if [[ -d "$result_bundle" ]]; then
+            mkdir -p "$output_directory"
+            xcrun xcresulttool export attachments \
+              --path "$result_bundle" \
+              --output-path "$output_directory" \
+              > "$export_log" 2>&1
+          else
+            printf '%s\n' "Result bundle was not created." > "$export_log"
+          fi
+
       - name: Upload capture diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -240,6 +261,7 @@ jobs:
             ${{ runner.temp }}/neko-app-store-screenshots/selected-simulator.txt
             ${{ runner.temp }}/neko-app-store-screenshots/xcode-version.txt
             ${{ runner.temp }}/neko-app-store-screenshots/widget-fixture-build-conditions.txt
-            ${{ runner.temp }}/neko-app-store-screenshots/AppStoreScreenshots.xcresult
-          if-no-files-found: warn
+            ${{ runner.temp }}/neko-app-store-screenshots/failure-attachments
+            ${{ runner.temp }}/neko-app-store-screenshots/failure-xcresulttool-export.log
+          if-no-files-found: error
           retention-days: 7

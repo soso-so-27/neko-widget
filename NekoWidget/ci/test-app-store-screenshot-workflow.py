@@ -140,6 +140,20 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("widget-fixture-build-conditions.txt", self.workflow)
         self.assertIn("ordinary_debug_conditions", self.workflow)
         self.assertIn("release_conditions", self.workflow)
+        self.assertIn("failure-attachments", self.workflow)
+        self.assertIn("failure-xcresulttool-export.log", self.workflow)
+        self.assertIn("timeout-minutes: 40", self.workflow)
+        capture_step = self.workflow.split(
+            "- name: Capture erased-Simulator product screens",
+            1,
+        )[1].split("- name:", 1)[0]
+        self.assertIn("timeout-minutes: 25", capture_step)
+        failure_upload = self.workflow.split(
+            "- name: Upload capture diagnostics on failure",
+            1,
+        )[1]
+        self.assertNotIn("AppStoreScreenshots.xcresult", failure_upload)
+        self.assertIn("if-no-files-found: error", failure_upload)
         self.assertNotIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=", self.workflow)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
@@ -151,8 +165,8 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "05-on-device-photo-privacy",
         ]
         for name in names:
-            captures = self.ui_test.count(f'captureScreenshot(named: "{name}")')
-            captures += self.widget_ui_test.count(f'captureScreenshot(named: "{name}")')
+            captures = self.ui_test.count(f'captureScreenshot(named: "{name}"')
+            captures += self.widget_ui_test.count(f'captureScreenshot(named: "{name}"')
             self.assertEqual(captures, 1)
             self.assertEqual(self.exporter.count(f'"{name}"'), 1)
         self.assertIn("開発者のサーバーへ写真を自動送信しません", self.ui_test)
@@ -160,6 +174,16 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(
             "このiPhoneで見つけた猫写真",
+            self.widget_view,
+        )
+        self.assertNotIn("このiPhoneで見つけた猫写真", self.widget_ui_test)
+        self.assertIn("fixturePaletteIsVisible", self.widget_ui_test)
+        self.assertIn("pixels.withUnsafeMutableBytes", self.widget_ui_test)
+        self.assertIn("XCUIScreen.main.screenshot()", self.widget_ui_test)
+        self.assertIn("furPixels >= 500", self.widget_ui_test)
+        self.assertIn("eyePixels >= 25", self.widget_ui_test)
+        self.assertIn(
+            "@MainActor\n    private func captureScreenshot",
             self.widget_ui_test,
         )
         self.assertIn(
