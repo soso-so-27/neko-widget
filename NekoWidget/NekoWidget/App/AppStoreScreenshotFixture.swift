@@ -3,7 +3,6 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 import UIKit
-import WidgetKit
 
 struct AppStoreScreenshotFixtureLoadedImage: Hashable {
     let localIdentifier: String
@@ -32,12 +31,9 @@ final class AppStoreScreenshotFixtureLoadTracker: ObservableObject {
 @MainActor
 enum AppStoreScreenshotFixture {
     static let launchArgument = "--app-store-screenshot-fixture"
-    static let widgetLaunchArgument = "--app-store-widget-screenshot-fixture"
     static let identifierPrefix = "app-store-screenshot-fixture-"
     static let loadedAccessibilityIdentifierPrefix =
         "app-store-screenshot-fixture-photo-loaded-"
-    static let widgetReadyAccessibilityIdentifier =
-        "app-store-widget-screenshot-fixture-ready"
     static let loadTracker = AppStoreScreenshotFixtureLoadTracker()
 
     private static let identifiers = (1...12).map {
@@ -59,97 +55,6 @@ enum AppStoreScreenshotFixture {
 
     static func isFixtureIdentifier(_ localIdentifier: String) -> Bool {
         identifiers.contains(localIdentifier)
-    }
-
-    static func installWidgetPreviewFixture() throws {
-        guard let cacheDirectory = SharedContainer.widgetCacheDirectoryURL,
-              let manifestURL = SharedContainer.widgetManifestURL
-        else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(
-            at: cacheDirectory,
-            withIntermediateDirectories: true
-        )
-
-        let source = makeCatIllustration(variant: 2)
-        var filenames: [WidgetImageVariant: String] = [:]
-        for variant in WidgetImageVariant.allCases {
-            let filename = "app-store-widget-fixture-\(variant.rawValue).jpg"
-            let target = cacheDirectory.appendingPathComponent(
-                filename,
-                isDirectory: false
-            )
-            let canvas = widgetCanvas(source: source, variant: variant)
-            guard let data = canvas.jpegData(compressionQuality: 0.88),
-                  !data.isEmpty,
-                  data.count <= variant.maximumJPEGByteCount
-            else {
-                throw CocoaError(.fileWriteUnknown)
-            }
-            try data.write(to: target, options: .atomic)
-            filenames[variant] = filename
-        }
-
-        guard let small = filenames[.small],
-              let medium = filenames[.medium],
-              let large = filenames[.large]
-        else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        let cacheFilenames = WidgetCacheFilenames(
-            small: small,
-            medium: medium,
-            large: large
-        )
-        let scheduledDate = date(year: 2026, month: 8, day: 24)
-        let manifest = WidgetManifest(
-            items: [
-                WidgetManifestItem(
-                    localIdentifier: "app-store-widget-fixture",
-                    cacheFilename: small,
-                    cacheFilenames: cacheFilenames,
-                    scheduledDate: scheduledDate
-                )
-            ],
-            generatedAt: scheduledDate
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
-        WidgetCenter.shared.reloadAllTimelines()
-    }
-
-    private static func widgetCanvas(
-        source: UIImage,
-        variant: WidgetImageVariant
-    ) -> UIImage {
-        let size = CGSize(width: variant.pixelWidth, height: variant.pixelHeight)
-        let format = UIGraphicsImageRendererFormat()
-        format.opaque = true
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            UIColor(red: 0.12, green: 0.10, blue: 0.09, alpha: 1).setFill()
-            UIRectFill(CGRect(origin: .zero, size: size))
-            let scale = max(
-                size.width / source.size.width,
-                size.height / source.size.height
-            )
-            let renderedSize = CGSize(
-                width: source.size.width * scale,
-                height: source.size.height * scale
-            )
-            let target = CGRect(
-                x: (size.width - renderedSize.width) / 2,
-                y: (size.height - renderedSize.height) / 2,
-                width: renderedSize.width,
-                height: renderedSize.height
-            )
-            source.draw(in: target)
-        }
     }
 
     static var photos: [PhotoPresentation] {
@@ -463,33 +368,4 @@ struct AppStoreScreenshotFixtureRootView: View {
     }
 }
 
-@MainActor
-struct AppStoreScreenshotWidgetSeedRootView: View {
-    @State private var isReady = false
-    @State private var didFail = false
-
-    var body: some View {
-        VStack(spacing: 12) {
-            if isReady {
-                Text("Widget preview ready")
-                    .accessibilityIdentifier(
-                        AppStoreScreenshotFixture.widgetReadyAccessibilityIdentifier
-                    )
-            } else if didFail {
-                Text("Widget preview failed")
-                    .accessibilityIdentifier("app-store-widget-screenshot-fixture-failed")
-            } else {
-                ProgressView("Widget preview preparing")
-            }
-        }
-        .task {
-            do {
-                try AppStoreScreenshotFixture.installWidgetPreviewFixture()
-                isReady = true
-            } catch {
-                didFail = true
-            }
-        }
-    }
-}
 #endif

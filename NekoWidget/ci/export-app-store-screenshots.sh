@@ -146,10 +146,13 @@ def jpeg_dimensions_and_app1(path):
     data = path.read_bytes()
     if not data.startswith(b"\xff\xd8"):
         raise SystemExit(f"Not a JPEG payload: {path}")
+    if not data.endswith(b"\xff\xd9"):
+        raise SystemExit(f"JPEG end marker is missing: {path}")
 
     offset = 2
     has_app1 = False
     dimensions = None
+    saw_sos = False
     while offset + 4 <= len(data):
         if data[offset] != 0xFF:
             offset += 1
@@ -159,6 +162,7 @@ def jpeg_dimensions_and_app1(path):
         if marker in {0xD8, 0xD9}:
             continue
         if marker == 0xDA:
+            saw_sos = True
             break
         if marker == 0xE1:
             has_app1 = True
@@ -174,9 +178,68 @@ def jpeg_dimensions_and_app1(path):
             height, width = struct.unpack(">HH", data[offset + 3:offset + 7])
             dimensions = (width, height)
         offset += length
+    if not saw_sos:
+        raise SystemExit(f"JPEG scan marker is missing: {path}")
     if dimensions is None:
         raise SystemExit(f"JPEG dimensions were not found: {path}")
     return dimensions[0], dimensions[1], has_app1
+
+
+def strip_jpeg_app1(path):
+    data = path.read_bytes()
+    if not data.startswith(b"\xff\xd8"):
+        raise SystemExit(f"Not a JPEG payload: {path}")
+    if not data.endswith(b"\xff\xd9"):
+        raise SystemExit(f"JPEG end marker is missing: {path}")
+
+    output = bytearray(data[:2])
+    offset = 2
+    stripped = 0
+    saw_sos = False
+    while offset < len(data):
+        marker_start = offset
+        if data[offset] != 0xFF:
+            raise SystemExit(f"Malformed JPEG marker sequence in {path}")
+        while offset < len(data) and data[offset] == 0xFF:
+            offset += 1
+        if offset >= len(data):
+            raise SystemExit(f"Truncated JPEG marker in {path}")
+
+        marker = data[offset]
+        offset += 1
+        if marker == 0xDA:
+            saw_sos = True
+            if offset + 2 > len(data):
+                raise SystemExit(f"Truncated JPEG scan header in {path}")
+            length = struct.unpack(">H", data[offset:offset + 2])[0]
+            if length < 2 or offset + length > len(data):
+                raise SystemExit(f"Malformed JPEG scan header in {path}")
+            output.extend(data[marker_start:])
+            break
+
+        if marker in {0xD8, 0xD9, 0x01} or 0xD0 <= marker <= 0xD7:
+            output.extend(data[marker_start:offset])
+            if marker == 0xD9:
+                break
+            continue
+
+        if offset + 2 > len(data):
+            raise SystemExit(f"Truncated JPEG segment in {path}")
+        length = struct.unpack(">H", data[offset:offset + 2])[0]
+        segment_end = offset + length
+        if length < 2 or segment_end > len(data):
+            raise SystemExit(f"Malformed JPEG segment in {path}")
+        if marker == 0xE1:
+            stripped += 1
+        else:
+            output.extend(data[marker_start:segment_end])
+        offset = segment_end
+
+    if not saw_sos:
+        raise SystemExit(f"JPEG scan marker is missing: {path}")
+    if stripped:
+        path.write_bytes(output)
+    return stripped
 
 
 report = {
@@ -220,6 +283,7 @@ for target in targets:
             f"sips failed for {target}:\n{conversion.stdout}\n{conversion.stderr}"
         )
 
+    stripped_app1_segments = strip_jpeg_app1(destination)
     width, height, has_app1 = jpeg_dimensions_and_app1(destination)
     if (width, height) not in accepted_portrait_sizes:
         raise SystemExit(
@@ -239,6 +303,7 @@ for target in targets:
             "format": "jpeg",
             "height": height,
             "metadataApp1": False,
+            "removedApp1Segments": stripped_app1_segments,
             "sha256": digest,
             "width": width,
         }

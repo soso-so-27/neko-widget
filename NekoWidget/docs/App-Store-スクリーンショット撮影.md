@@ -10,7 +10,7 @@ App Store Connectへのアップロードや提出は行わない。
 
 | 順 | ファイル | 実際に示す機能 |
 | --- | --- | --- |
-| 1 | `01-local-cat-widget.jpg` | Widget Galleryに表示された実際のローカル猫写真Widget候補 |
+| 1 | `01-local-cat-widget.jpg` | Widget Galleryで実際のWidget Extensionが描いたローカル猫写真Widgetのサンプル |
 | 2 | `02-local-photo-window.jpg` | 端末内で選ばれた「思い出の一枚」と肉球 |
 | 3 | `03-organized-memories.jpg` | 撮影年や端末内の解析結果から作る「思い出」 |
 | 4 | `04-liked-photos.jpg` | 利用者が肉球で残した「これ好き」 |
@@ -22,14 +22,18 @@ background delivery、複数人利用があるようなcaptionも付けない。
 ## プライバシーと権利の境界
 
 - workflowは既存Simulatorを撮影前後にeraseし、写真やアカウントをimportしない。
-- 猫は`AppStoreScreenshotFixture.swift`がCore Graphicsで描く決定的なベクター風イラストである。
+- 猫はアプリ画面用fixtureとWidget Extension内の撮影専用fixtureがCore Graphicsで描く、
+  決定的なベクター風イラストである。
   参照写真、生成AI画像、CC0画像、人物、文字、ロゴ、EXIF、GPSを入力しない。
-- fixture rootとfixture identifierの解決は`#if DEBUG`内だけにある。Releaseではその条件を満たさず、
-  通常の写真表示は引き続きPhotoKitだけを読む。ただしこの撮影run自体はDebug UI testであり、最終Release
-  archiveのbinary検査を行ったという証拠にはしない。
+- アプリ画面のfixture rootとidentifier解決は`#if DEBUG`内だけにある。Widgetサンプルはさらに
+  `#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE`で囲み、専用conditionをこの手動workflowだけが
+  Widget ExtensionのDebug targetへ注入する。通常DebugとReleaseではコードも画像もコンパイルされず、
+  通常の写真表示は引き続きPhotoKit／App Group cacheだけを読む。ただしこの撮影run自体はDebug UI testであり、
+  最終Release archiveのbinary検査を行ったという証拠にはしない。
 - 画面本体は`OnboardingView`、`MainTabView`、`HomeView`、`AlbumView`、`LikedPhotosView`という
-  製品UIをそのまま使う。Widget候補は同じApp GroupへDEBUG fixtureを一時公開し、実際のWidget
-  ExtensionがWidget Galleryで描画したpreviewを撮る。存在しない機能やマーケティング用の上書きUIは足さない。
+  製品UIをそのまま使う。Widget候補も実際の`NekoWidgetView`、timeline provider、image loaderを通し、
+  App Group、写真、network、timeline reloadに依存しない撮影専用sample entryをWidget Galleryで描画する。
+  存在しない機能やマーケティング用の上書きUIは足さない。
 - xcodebuildにはdisabled tupleを全て明示し、API URL、共有policy URL、moderation keyを空にする。
   Share Extensionも`FALSEPREDICATE`のdisabled plistを使う。
 - XCTestのPNGはmacOS `sips`でJPEGへ変換する。exporterはJPEG APP1 metadata（EXIF/XMP）を拒否し、
@@ -61,12 +65,19 @@ gh run download <run-id> --name app-store-screenshots-<run-id>-1
 日本語、ライト表示、09:41、満充電へ固定し、製品画面とWidget Gallery previewの2つのUI testを
 直列で実行する。成果物の保持期間は14日。
 
+失敗時はlog、選択Simulator、終了codeに加え、`.xcresult`から抽出した失敗画面やUI階層などの
+named attachmentを7日だけ保存する。空previewと画面自体は正常なのにSpringBoardがWidget内部の
+accessibilityを公開しない場合を区別できるようにし、巨大なraw `.xcresult`は保存しない。
+成功画像の成果物とは分離する。
+
 成果物:
 
 - 上記5枚のJPEG
 - `app-store-screenshot-manifest.json`: pixel size、SHA-256、metadata検査、fixture由来
 - `capture-device.txt`
 - `xcode-version.txt`
+- `widget-fixture-build-conditions.txt`: 撮影Debugだけに専用conditionが入り、通常Debug／Releaseには
+  入らないことを`xcodebuild -showBuildSettings`で確認した記録
 
 ## アップロード前の人による確認
 

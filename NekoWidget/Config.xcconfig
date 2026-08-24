@@ -19,6 +19,10 @@ CURRENT_PROJECT_VERSION = 1
 APP_PRIVACY_URL =
 APP_SUPPORT_URL =
 
+// Empty by default. The manual, erased-Simulator App Store screenshot workflow
+// alone injects a compiler condition into the Widget extension's Debug target.
+WIDGET_SCREENSHOT_FIXTURE_CONDITION =
+
 // Sharing is opt-in per build. Release/TestFlight stays off until the
 // privacy, moderation, and export-compliance gates are completed.
 // This is the local development/review default and the Build 27 preview
