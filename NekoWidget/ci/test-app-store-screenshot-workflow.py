@@ -132,6 +132,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("UIGraphicsImageRenderer", self.widget_view)
         self.assertIn(dual_guard, self.widget_loader)
         self.assertIn("AppStoreWidgetPreviewFixture.image", self.widget_loader)
+        self.assertIn(".accessibilityElement(children: .ignore)", self.widget_view)
         self.assertNotIn("URLSession.", self.widget_view)
         self.assertNotIn("PHAsset.", self.widget_view)
         self.assertIn("AppStoreScreenshots.xcresult", self.workflow)

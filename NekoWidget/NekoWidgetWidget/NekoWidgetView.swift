@@ -50,6 +50,7 @@ struct NekoWidgetView: View {
                         }
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
                         entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
                             ? "\(entry.windowDisplayName)に届いた写真"
