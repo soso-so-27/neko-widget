@@ -913,7 +913,11 @@ actor SharingRuntimeSelfTestRunner {
         ),
         !MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(cases[0].0),
         !MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(
-            .requestRejected(status: 401, code: nil, message: "ignored")
+            MomentSharingError.requestRejected(
+                status: 401,
+                code: nil,
+                message: "ignored"
+            )
         ) else { throw MomentSharingError.stateUnavailable }
 
         guard DailySharingSyncCoordinator.isRemoteRevocation(
