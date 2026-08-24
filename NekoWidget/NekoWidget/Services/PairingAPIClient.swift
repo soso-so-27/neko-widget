@@ -583,6 +583,10 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             authentication: Authentication(memberID: memberID, credential: credential)
         )
         let descriptor = try validatedDeviceRecoveryDescriptor(response)
+        let localAgreementPublicKey = try PairingCrypto.agreementPublicKey(for: credential)
+            .base64URLEncodedString()
+        let localSigningPublicKey = try PairingCrypto.signingPublicKey(for: credential)
+            .base64URLEncodedString()
         guard descriptor.state == "awaitingClaim",
               response.recovery.codePrefix
                 == "\(PairingProtocol.deviceRecoveryPrefix).\(descriptor.recoveryID)",
@@ -594,10 +598,8 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
               descriptor.target.signingPublicKey == state.peerSigningPublicKey,
               descriptor.peer.memberID == memberID,
               descriptor.peer.participantID == credential.participantIDString,
-              descriptor.peer.agreementPublicKey
-                == PairingCrypto.agreementPublicKey(for: credential).base64URLEncodedString(),
-              descriptor.peer.signingPublicKey
-                == PairingCrypto.signingPublicKey(for: credential).base64URLEncodedString()
+              descriptor.peer.agreementPublicKey == localAgreementPublicKey,
+              descriptor.peer.signingPublicKey == localSigningPublicKey
         else { throw PairingError.invalidServerResponse }
         return descriptor
     }
@@ -846,15 +848,17 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             recoveryID: recoveryID,
             credential: nil
         )
+        let localAgreementPublicKey = try PairingCrypto.agreementPublicKey(for: credential)
+            .base64URLEncodedString()
+        let localSigningPublicKey = try PairingCrypto.signingPublicKey(for: credential)
+            .base64URLEncodedString()
         guard result.spaceID == state.spaceID,
               result.membershipRevision == state.recoveryMembershipRevision,
               result.keyEpoch == state.recoveryKeyEpoch,
               result.peer.memberID == memberID,
               result.peer.participantID == credential.participantIDString,
-              result.peer.agreementPublicKey
-                == PairingCrypto.agreementPublicKey(for: credential).base64URLEncodedString(),
-              result.peer.signingPublicKey
-                == PairingCrypto.signingPublicKey(for: credential).base64URLEncodedString(),
+              result.peer.agreementPublicKey == localAgreementPublicKey,
+              result.peer.signingPublicKey == localSigningPublicKey,
               result.credential.memberID == state.peerMemberID,
               result.credential.participantID == state.peerParticipantID
         else { throw PairingError.invalidServerResponse }

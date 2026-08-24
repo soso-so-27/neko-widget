@@ -341,6 +341,13 @@ async function windowNameBody(
 async function remapOwnerToDistinctMomentParticipant(space: TestSpace): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const participantID = randomValue(16);
+  const credential = await testEnv.DB.prepare(
+    "SELECT agreement_public_key, signing_public_key FROM members WHERE id = ?",
+  ).bind(space.owner.id).first<{
+    agreement_public_key: string;
+    signing_public_key: string;
+  }>();
+  if (credential === null) throw new Error("owner credential fixture is missing");
   await testEnv.DB.batch([
     testEnv.DB.prepare(
       "DELETE FROM moment_devices WHERE legacy_member_id = ?",
@@ -362,8 +369,8 @@ async function remapOwnerToDistinctMomentParticipant(space: TestSpace): Promise<
       randomValue(16),
       participantID,
       space.owner.id,
-      randomValue(32),
-      randomValue(32),
+      credential.agreement_public_key,
+      credential.signing_public_key,
       now,
       now,
     ),
