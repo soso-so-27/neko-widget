@@ -1,6 +1,41 @@
 import Darwin
 import Foundation
 
+enum SharingFileReadFailureDisposition: Equatable, Sendable {
+    case missing
+    case retryable
+}
+
+/// A non-throwing existence probe cannot distinguish ENOENT from a temporary
+/// filesystem, volume, or Data Protection failure. Destructive bootstrap
+/// decisions therefore use a throwing read and treat only an exact no-such-
+/// file result (including a wrapped POSIX error) as positive proof of absence.
+enum SharingFileReadFailureClassifier {
+    static func disposition(
+        _ error: Swift.Error,
+        recursionDepth: Int = 0
+    ) -> SharingFileReadFailureDisposition {
+        guard recursionDepth < 4 else { return .retryable }
+        let value = error as NSError
+        if value.domain == NSCocoaErrorDomain,
+           value.code == CocoaError.Code.fileReadNoSuchFile.rawValue
+            || value.code == CocoaError.Code.fileNoSuchFile.rawValue {
+            return .missing
+        }
+        if value.domain == NSCocoaErrorDomain,
+           value.code == CocoaError.Code.fileReadNoPermission.rawValue {
+            return .retryable
+        }
+        if value.domain == NSPOSIXErrorDomain {
+            return value.code == Int(ENOENT) ? .missing : .retryable
+        }
+        if let underlying = value.userInfo[NSUnderlyingErrorKey] as? Swift.Error {
+            return disposition(underlying, recursionDepth: recursionDepth + 1)
+        }
+        return .retryable
+    }
+}
+
 enum AtomicJSON {
     private static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
@@ -173,7 +208,10 @@ enum SharingSecureFile {
 /// outside the purgeable `sharing/` subtree, so unlinking media/state can never
 /// split the lock between an old writer and a new process.
 enum SharingLifecycleGate {
-    enum Error: Swift.Error { case unavailable }
+    enum Error: Swift.Error {
+        case unavailable
+        case corrupted
+    }
 
     struct Token: Equatable, Sendable {
         fileprivate let epoch: Int
@@ -263,7 +301,8 @@ enum SharingLifecycleGate {
     }
 
     static func issueTokenWhileLocked() throws -> Token {
-        guard !isCleanupRequired else { throw Error.unavailable }
+        let cleanupRequired = try cleanupRequiredWhileLocked()
+        guard !cleanupRequired else { throw Error.unavailable }
         return Token(epoch: try currentEpochWhileLocked())
     }
 
@@ -272,7 +311,8 @@ enum SharingLifecycleGate {
         operation: () throws -> Value
     ) throws -> Value {
         try withExclusive {
-            guard !isCleanupRequired,
+            let cleanupRequired = try cleanupRequiredWhileLocked()
+            guard !cleanupRequired,
                   try currentEpochWhileLocked() == token.epoch
             else { throw Error.unavailable }
             return try operation()
@@ -295,12 +335,33 @@ enum SharingLifecycleGate {
         guard let url = SharedContainer.sharingLifecycleStateURL else {
             throw Error.unavailable
         }
-        if FileManager.default.fileExists(atPath: url.path) {
-            do {
-                return try AtomicJSON.read(LifecycleState.self, from: url).validated().epoch
-            } catch {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
                 throw Error.unavailable
             }
+            let state = LifecycleState(epoch: freshEpoch(excluding: nil))
+            try writeLifecycleState(state, to: url)
+            return state.epoch
+        }
+        do {
+            return try JSONDecoder().decode(LifecycleState.self, from: data)
+                .validated().epoch
+        } catch {
+            throw Error.corrupted
+        }
+    }
+
+    /// Repairs only bytes that were conclusively readable but invalid. The
+    /// caller owns the lifecycle flock; replacing the unreadable epoch with a
+    /// fresh random value invalidates every in-memory token without touching
+    /// the room credential or pairing state.
+    @discardableResult
+    static func recoverCorruptedEpochWhileLocked() throws -> Int {
+        guard let url = SharedContainer.sharingLifecycleStateURL else {
+            throw Error.unavailable
         }
         let state = LifecycleState(epoch: freshEpoch(excluding: nil))
         try writeLifecycleState(state, to: url)
@@ -337,17 +398,35 @@ enum SharingLifecycleGate {
         guard let url = SharedContainer.sharingCleanupRequiredURL else {
             throw Error.unavailable
         }
-        if FileManager.default.fileExists(atPath: url.path) {
+        do {
             try FileManager.default.removeItem(at: url)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
+                throw error
+            }
         }
-        guard !FileManager.default.fileExists(atPath: url.path) else {
+    }
+
+    static func cleanupRequiredWhileLocked() throws -> Bool {
+        guard let url = SharedContainer.sharingCleanupRequiredURL else {
             throw Error.unavailable
+        }
+        do {
+            _ = try Data(contentsOf: url, options: .mappedIfSafe)
+            return true
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
+                throw Error.unavailable
+            }
+            return false
         }
     }
 
     static var isCleanupRequired: Bool {
-        guard let url = SharedContainer.sharingCleanupRequiredURL else { return true }
-        return FileManager.default.fileExists(atPath: url.path)
+        // Callers that cannot surface an error must conservatively stop work.
+        // Bootstrap uses the throwing form so uncertainty never authorizes a
+        // cleanup or credential deletion.
+        (try? cleanupRequiredWhileLocked()) ?? true
     }
 
     private static func writeLifecycleState(_ state: LifecycleState, to url: URL) throws {

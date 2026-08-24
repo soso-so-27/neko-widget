@@ -384,8 +384,10 @@ enum PairingError: LocalizedError, Equatable {
                 return "招待の期限が切れました。新しい招待コードが必要です。"
             case "invitation_unavailable", "enrollment_unavailable":
                 return "この招待は利用できません。新しい招待コードが必要です。"
-            case "pairing_cancelled", "sharing_revoked", "invalid_authentication":
+            case "pairing_cancelled", "sharing_revoked":
                 return "このまどの共有は終了しました。もう一度招待してください。"
+            case "invalid_authentication":
+                return "共有の認証を一時的に確認できませんでした。まどは解除せず、時間をおいてもう一度お試しください。"
             case "invalid_enrollment_proof", "invitation_not_found":
                 return "招待コードを確認できませんでした。新しいコードを相手に送ってもらってください。"
             case "invalid_pairing_state":

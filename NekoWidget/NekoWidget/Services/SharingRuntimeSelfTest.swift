@@ -1,5 +1,7 @@
 #if DEBUG
+import Darwin
 import Foundation
+import Security
 import UIKit
 
 private enum RuntimeReserveStep: Sendable {
@@ -413,8 +415,14 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("secure-file-attributes") {
             try Self.testSecureFileAttributes()
         })
+        results.append(run("pairing-bootstrap-transient-preservation") {
+            try Self.testPairingBootstrapTransientPreservation()
+        })
         results.append(await runAsync("moment-process-serialized-refresh") {
             try await Self.testMomentProcessSerializedRefresh()
+        })
+        results.append(run("moment-terminal-authorization-classification") {
+            try Self.testMomentTerminalAuthorizationClassification()
         })
         results.append(await runAsync("moment-install-bound-handoff") {
             try await Self.testMomentInstallBoundHandoff()
@@ -559,6 +567,92 @@ actor SharingRuntimeSelfTestRunner {
         } catch {
             Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
+        }
+    }
+
+    private static func testPairingBootstrapTransientPreservation() throws {
+        guard PairingKeychainStore.readStatusDisposition(errSecSuccess) == .success,
+              PairingKeychainStore.readStatusDisposition(errSecItemNotFound) == .missing,
+              PairingKeychainStore.readStatusDisposition(errSecInteractionNotAllowed)
+                == .retryable(.protectedDataUnavailable),
+              PairingKeychainStore.readStatusDisposition(errSecNotAvailable)
+                == .retryable(.protectedDataUnavailable),
+              PairingKeychainStore.readStatusDisposition(errSecParam)
+                == .retryable(.keychainUnavailable)
+        else { throw PairingError.stateUnavailable }
+
+        let missingCocoaFile = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadNoSuchFile.rawValue
+        )
+        let missingPOSIXFile = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))
+        let wrappedMissingFile = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadUnknown.rawValue,
+            userInfo: [NSUnderlyingErrorKey: missingPOSIXFile]
+        )
+        let unavailableFile = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadNoPermission.rawValue
+        )
+        guard SharingFileReadFailureClassifier.disposition(missingCocoaFile) == .missing,
+              SharingFileReadFailureClassifier.disposition(wrappedMissingFile) == .missing,
+              SharingFileReadFailureClassifier.disposition(unavailableFile) == .retryable,
+              PairingViewModel.runtimeTestIsRetryableBootstrapCompletionError(
+                SharingSecureFile.Error.cannotCreateTemporaryFile
+              ),
+              PairingViewModel.runtimeTestIsRetryableBootstrapCompletionError(
+                DailySharingError.stateUnavailable
+              )
+        else { throw PairingError.stateUnavailable }
+
+        let directProtectionFailure = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadNoPermission.rawValue
+        )
+        guard PairingInstallationGuard.pairingStateLoadFailureDisposition(
+            directProtectionFailure
+        ) == .retryable(.pairingStateProtectedDataUnavailable) else {
+            throw PairingError.stateUnavailable
+        }
+
+        let underlyingProtectionFailure = NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(EACCES)
+        )
+        let wrappedProtectionFailure = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadUnknown.rawValue,
+            userInfo: [NSUnderlyingErrorKey: underlyingProtectionFailure]
+        )
+        guard PairingInstallationGuard.pairingStateLoadFailureDisposition(
+            wrappedProtectionFailure
+        ) == .retryable(.pairingStateProtectedDataUnavailable) else {
+            throw PairingError.stateUnavailable
+        }
+
+        let genericReadFailure = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadUnknown.rawValue
+        )
+        guard PairingInstallationGuard.pairingStateLoadFailureDisposition(
+            genericReadFailure
+        ) == .retryable(.pairingStateReadUnavailable),
+              PairingInstallationGuard.pairingStateLoadFailureDisposition(
+                PairingError.stateUnavailable
+              ) == .retryable(.pairingStateReadUnavailable),
+              PairingInstallationGuard.pairingStateLoadFailureDisposition(
+                PairingStateStore.LoadError.invalidState
+              ) == .failClosed
+        else { throw PairingError.stateUnavailable }
+
+        let malformedState = DecodingError.dataCorrupted(
+            .init(codingPath: [], debugDescription: "runtime generated malformed state")
+        )
+        guard PairingInstallationGuard.pairingStateLoadFailureDisposition(
+            malformedState
+        ) == .failClosed else {
+            throw PairingError.stateUnavailable
         }
     }
 
@@ -728,6 +822,129 @@ actor SharingRuntimeSelfTestRunner {
         guard cancelledOwnerValue == ownerNotice,
               unaffectedValue == trailingNotice
         else { throw MomentSharingError.stateUnavailable }
+    }
+
+    /// Only an exact, authenticated authorization-wide terminal response may
+    /// destroy the room credential. Resource 410s and undecodable future 410s
+    /// remain paired so a later synchronization can reconcile them.
+    private static func testMomentTerminalAuthorizationClassification() throws {
+        let cases: [(MomentSharingError, Bool, String)] = [
+            (
+                .requestRejected(
+                    status: 410,
+                    code: "sharing_revoked",
+                    message: "ignored"
+                ),
+                true,
+                "remote-authorization-terminal"
+            ),
+            (
+                .requestRejected(
+                    status: 401,
+                    code: "invalid_authentication",
+                    message: "ignored"
+                ),
+                false,
+                "request-rejected-nonterminal"
+            ),
+            (
+                .requestRejected(
+                    status: 410,
+                    code: "reservation_expired",
+                    message: "ignored"
+                ),
+                false,
+                "resource-gone-nonterminal"
+            ),
+            (
+                .requestRejected(
+                    status: 410,
+                    code: "report_window_closed",
+                    message: "ignored"
+                ),
+                false,
+                "resource-gone-nonterminal"
+            ),
+            (
+                .requestRejected(
+                    status: 410,
+                    code: "report_unavailable",
+                    message: "ignored"
+                ),
+                false,
+                "resource-gone-nonterminal"
+            ),
+            (
+                .requestRejected(
+                    status: 410,
+                    code: "window_name_unavailable",
+                    message: "ignored"
+                ),
+                false,
+                "resource-gone-nonterminal"
+            ),
+            (
+                .requestRejected(status: 410, code: nil, message: "ignored"),
+                false,
+                "resource-gone-nonterminal"
+            ),
+            (
+                .requestRejected(
+                    status: 409,
+                    code: "sharing_revoked",
+                    message: "ignored"
+                ),
+                false,
+                "request-rejected-nonterminal"
+            ),
+            (.stateUnavailable, false, "local-state-unavailable")
+        ]
+
+        for (error, shouldReset, expectedReason) in cases {
+            guard MomentSharingCoordinator.runtimeRequiresLocalRevocationReset(error)
+                    == shouldReset,
+                  MomentSharingCoordinator.runtimeLocalFailureReason(error)
+                    == expectedReason
+            else { throw MomentSharingError.stateUnavailable }
+        }
+
+        guard MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(
+            cases[1].0
+        ),
+        !MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(cases[0].0),
+        !MomentSharingCoordinator.runtimeIsNonterminalAuthenticationFailure(
+            .requestRejected(status: 401, code: nil, message: "ignored")
+        ) else { throw MomentSharingError.stateUnavailable }
+
+        guard DailySharingSyncCoordinator.isRemoteRevocation(
+            PairingError.requestRejected(
+                status: 410,
+                code: "sharing_revoked",
+                message: "ignored"
+            )
+        ), !DailySharingSyncCoordinator.isRemoteRevocation(
+            PairingError.requestRejected(
+                status: 401,
+                code: "invalid_authentication",
+                message: "ignored"
+            )
+        ), !DailySharingSyncCoordinator.isRemoteRevocation(
+            PairingError.requestRejected(status: 410, code: nil, message: "ignored")
+        ), PairingViewModel.runtimeServerConfirmsPairingIsGone(
+            PairingError.requestRejected(
+                status: 410,
+                code: "sharing_revoked",
+                message: "ignored"
+            )
+        ), !PairingViewModel.runtimeServerConfirmsPairingIsGone(
+            PairingError.requestRejected(
+                status: 401,
+                code: "invalid_authentication",
+                message: "ignored"
+            )
+        ), !PairingViewModel.runtimeServerConfirmsPairingIsGone(
+            PairingError.requestRejected(status: 410, code: nil, message: "ignored")
+        ) else { throw PairingError.stateUnavailable }
     }
 
     /// The Share Extension may only leave a bounded, short-lived canonical

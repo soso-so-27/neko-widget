@@ -2637,8 +2637,11 @@ actor DailySharingSyncCoordinator {
         guard let pairingError = error as? PairingError,
               case let .requestRejected(status, code, _) = pairingError
         else { return false }
-        return (status == 401 && code == "invalid_authentication")
-            || (status == 410 && code == "sharing_revoked")
+        // Authentication can fail because a request was malformed, signed
+        // with temporarily unreadable local material, or rejected at a route
+        // boundary. Only the relay's exact authorization-wide tombstone proves
+        // this private window ended and permits destructive local cleanup.
+        return status == 410 && code == "sharing_revoked"
     }
 
     private static func isSupersededSnapshot(_ error: Error) -> Bool {

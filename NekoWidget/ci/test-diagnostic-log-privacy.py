@@ -400,6 +400,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             "marginComparisonScope",
             "pass",
             "photoSource",
+            "sharingFailureReason",
             "source",
             "status",
         ):
@@ -861,7 +862,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
                     key
                     for label in ("metadata:", "additional:")
                     for key in dictionary_argument_keys(value, label)
-                    if sensitive_metadata_key(key)
+                    if key != "sharingFailureReason" and sensitive_metadata_key(key)
                 })
                 if unsafe_keys:
                     violations.append(

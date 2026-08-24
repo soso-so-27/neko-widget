@@ -387,8 +387,10 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
             "通信が完了しませんでした。あとで再試行します。"
         case let .requestRejected(status, code, _):
             switch code {
-            case "sharing_revoked", "invalid_authentication":
+            case "sharing_revoked":
                 "このまどの共有は終了しました。もう一度招待してください。"
+            case "invalid_authentication":
+                "共有の認証を一時的に確認できませんでした。まどは解除せず、あとで再試行します。"
             case "reservation_expired":
                 "送信の準備期限が切れました。保存済みの続きから再試行します。"
             case "report_window_closed":
