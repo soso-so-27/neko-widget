@@ -133,6 +133,7 @@ struct MomentShareHandoffProcessor: Sendable {
         guard let spaceID = pairing.spaceID,
               let participantID = pairing.participantID,
               let memberID = pairing.memberID,
+              let localMomentDeviceID = pairing.resolvedLocalMomentDeviceID,
               pairing.credentialAccount == credential.account,
               pairing.installationMarker == credential.installationMarker,
               participantID == credential.participantIDString,
@@ -238,10 +239,7 @@ struct MomentShareHandoffProcessor: Sendable {
                 let context = MomentRequestContext(
                     spaceID: spaceID,
                     senderParticipantID: memberID,
-                    // Migration 0003 uses the member's opaque ID for its first
-                    // device. Future device enrollment can replace this field
-                    // without changing the handoff admission boundary.
-                    senderDeviceID: memberID,
+                    senderDeviceID: localMomentDeviceID,
                     clientRequestID: claim.record.clientRequestID,
                     clientMomentID: claim.record.id,
                     kind: claim.record.kind,
@@ -434,14 +432,16 @@ struct MomentShareHandoffProcessor: Sendable {
         pairing: PairingState
     ) throws -> MomentOutboxItem? {
         guard let spaceID = pairing.spaceID,
-              let memberID = pairing.memberID
+              let memberID = pairing.memberID,
+              let localMomentDeviceID = pairing.resolvedLocalMomentDeviceID
         else { throw MomentSharingError.notPaired }
         return try MomentSharingStateStore.existingOutboxWhileLifecycleLocked(
             clientMomentID: record.id,
             clientRequestID: record.clientRequestID,
             spaceID: spaceID,
             senderParticipantID: memberID,
-            senderDeviceID: memberID,
+            senderDeviceID: localMomentDeviceID,
+            legacySenderDeviceID: localMomentDeviceID == memberID ? nil : memberID,
             kind: record.kind,
             keyEpoch: 1,
             senderPolicyVersion: record.senderPolicyVersion,
@@ -460,7 +460,9 @@ struct MomentShareHandoffProcessor: Sendable {
               existing.context.clientRequestID == record.clientRequestID,
               existing.context.spaceID == spaceID,
               existing.context.senderParticipantID == memberID,
-              existing.context.senderDeviceID == memberID,
+              pairing.acceptsPersistedMomentDeviceID(
+                  existing.context.senderDeviceID
+              ),
               existing.context.kind == record.kind,
               existing.context.keyEpoch == 1,
               existing.senderPolicyVersion == record.senderPolicyVersion,

@@ -258,7 +258,11 @@ enum PairingStateStore {
                 value.lastError = normalizedLastError
                 didNormalize = true
             }
+            let originalLocalMomentDeviceID = value.localMomentDeviceID
             value = try value.validated()
+            if value.localMomentDeviceID != originalLocalMomentDeviceID {
+                didNormalize = true
+            }
             return (value, didNormalize)
         } catch {
             throw LoadError.invalidState

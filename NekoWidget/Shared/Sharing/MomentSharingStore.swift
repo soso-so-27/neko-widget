@@ -834,6 +834,7 @@ enum MomentSharingStateStore {
         spaceID: String,
         senderParticipantID: String,
         senderDeviceID: String,
+        legacySenderDeviceID: String? = nil,
         kind: MomentKind,
         keyEpoch: Int,
         senderPolicyVersion: Int,
@@ -850,7 +851,12 @@ enum MomentSharingStateStore {
               existing.context.clientRequestID == clientRequestID,
               existing.context.spaceID == spaceID,
               existing.context.senderParticipantID == senderParticipantID,
-              existing.context.senderDeviceID == senderDeviceID,
+              (
+                  existing.context.senderDeviceID == senderDeviceID
+                      || legacySenderDeviceID.map({
+                          existing.context.senderDeviceID == $0
+                      }) == true
+              ),
               existing.context.kind == kind,
               existing.context.keyEpoch == keyEpoch,
               existing.senderPolicyVersion == senderPolicyVersion,

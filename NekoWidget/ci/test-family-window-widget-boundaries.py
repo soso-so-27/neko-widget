@@ -210,6 +210,51 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('path: "/v2/window-name"', api_client)
         self.assertNotIn('case window', moment_kind)
 
+        pairing_core = source("Shared/Sharing/PairingCore.swift")
+        local_device = section(
+            pairing_core,
+            "var resolvedLocalMomentDeviceID: String?",
+            "static func unpaired(",
+        )
+        self.assertIn("if let localMomentDeviceID", local_device)
+        self.assertIn("recoveryWasLocalDeviceReplacement == true", local_device)
+        self.assertIn("return recoveryDeviceID", local_device)
+        self.assertIn("return memberID", local_device)
+
+        moment_api_implementation = section(
+            api_client,
+            "actor URLSessionMomentSharingAPIClient",
+            "private final class MomentNoRedirectSessionDelegate",
+        )
+        reservation = section(
+            moment_api_implementation,
+            "func reserve(\n        item: MomentOutboxItem",
+            "func upload(\n        momentID: String",
+        )
+        self.assertIn("MomentReservationIdentityPolicy.accepts(", reservation)
+        self.assertLess(
+            reservation.index("MomentReservationIdentityPolicy.acceptsContext("),
+            reservation.index("let response: ReservationResponse = try await sendJSON("),
+        )
+        self.assertNotIn(
+            "response.moment.senderDeviceId == localMemberID",
+            reservation,
+        )
+
+        reservation_identity = section(
+            api_client,
+            "enum MomentReservationIdentityPolicy",
+            "enum MomentSendFailurePolicy",
+        )
+        self.assertIn(
+            "pairingState.acceptsPersistedMomentDeviceID(context.senderDeviceID)",
+            reservation_identity,
+        )
+        self.assertIn(
+            "responseDeviceID == localMomentDeviceID",
+            reservation_identity,
+        )
+
         coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
         best_effort = section(
             coordinator,
@@ -252,6 +297,27 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
         self.assertIn("PrivateWindowPresentationStore.resolvedDisplayName", processor)
         self.assertIn("displayName: windowDisplayName", processor)
+        self.assertIn(
+            "senderDeviceID: localMomentDeviceID",
+            processor,
+        )
+
+        pairing_store = source("Shared/Sharing/PairingKeychainStore.swift")
+        self.assertIn(
+            "value.localMomentDeviceID != originalLocalMomentDeviceID",
+            pairing_store,
+        )
+
+        pairing_view_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        finish_recovery = section(
+            pairing_view_model,
+            "private func finishLocalDeviceRecovery(",
+            "private func validateDeviceRecoveryStatus(",
+        )
+        self.assertIn(
+            "current.localMomentDeviceID = recoveredDeviceID",
+            finish_recovery,
+        )
 
         share_view = source("NekoWidgetShareExtension/ShareViewController.swift")
         self.assertIn(

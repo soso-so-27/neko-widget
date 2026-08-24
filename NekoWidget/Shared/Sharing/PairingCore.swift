@@ -53,6 +53,11 @@ struct PairingState: Codable, Equatable, Sendable {
     var participantID: String?
     var spaceID: String?
     var memberID: String?
+    /// Stable relay device identity for this installation. Initial pairing
+    /// uses the legacy member ID; peer-approved local recovery rotates this
+    /// value to the replacement device ID. It is intentionally separate from
+    /// `recoveryDeviceID`, which may later describe the peer being recovered.
+    var localMomentDeviceID: String?
     var invitationID: String?
     var invitationExpiresAt: Date?
     var enrollmentID: String?
@@ -103,6 +108,28 @@ struct PairingState: Codable, Equatable, Sendable {
     var lastUpdatedAt: Date
     var lastError: String?
 
+    /// Build 41 did not persist `localMomentDeviceID`. Its completed local
+    /// recovery record is nevertheless transcript-bound, so it is a safe
+    /// one-time source while the normalized value is being persisted.
+    var resolvedLocalMomentDeviceID: String? {
+        if let localMomentDeviceID { return localMomentDeviceID }
+        if recoveryWasLocalDeviceReplacement == true { return recoveryDeviceID }
+        return memberID
+    }
+
+    /// A Build 41 draft may still contain the initial legacy device ID. The
+    /// device ID is deliberately outside moment AAD, so the replacement
+    /// credential may finish that exact participant-bound draft. New drafts
+    /// always use `resolvedLocalMomentDeviceID`.
+    func acceptsPersistedMomentDeviceID(_ candidate: String) -> Bool {
+        guard let resolvedLocalMomentDeviceID,
+              let memberID,
+              PairingValidation.isOpaqueIdentifier(candidate)
+        else { return false }
+        if candidate == resolvedLocalMomentDeviceID { return true }
+        return resolvedLocalMomentDeviceID != memberID && candidate == memberID
+    }
+
     static func unpaired(installationMarker: String) -> Self {
         Self(
             installationMarker: installationMarker,
@@ -130,6 +157,9 @@ struct PairingState: Codable, Equatable, Sendable {
               mediaSharingConsentVersion == nil
                 || mediaSharingConsentVersion.map({ (1...10_000).contains($0) }) == true
         else { throw PairingError.stateUnavailable }
+        guard localMomentDeviceID == nil
+                || localMomentDeviceID.map(PairingValidation.isOpaqueIdentifier) == true
+        else { throw PairingError.stateUnavailable }
 
         switch phase {
         case .unpaired:
@@ -137,6 +167,7 @@ struct PairingState: Codable, Equatable, Sendable {
                   participantID == nil,
                   spaceID == nil,
                   memberID == nil,
+                  localMomentDeviceID == nil,
                   recoveryID == nil
             else { throw PairingError.stateUnavailable }
         case .creatingInvitation, .joining:
@@ -197,7 +228,9 @@ struct PairingState: Codable, Equatable, Sendable {
                 try validateLocalIdentity()
             }
         }
-        return self
+        var normalized = self
+        normalized.localMomentDeviceID = resolvedLocalMomentDeviceID
+        return normalized
     }
 
     private func validatePairingCeremony() throws {
@@ -223,7 +256,8 @@ struct PairingState: Codable, Equatable, Sendable {
 
     private func validateServerIdentity() throws {
         guard spaceID.map(PairingValidation.isOpaqueIdentifier) == true,
-              memberID.map(PairingValidation.isOpaqueIdentifier) == true
+              memberID.map(PairingValidation.isOpaqueIdentifier) == true,
+              resolvedLocalMomentDeviceID.map(PairingValidation.isOpaqueIdentifier) == true
         else { throw PairingError.stateUnavailable }
     }
 

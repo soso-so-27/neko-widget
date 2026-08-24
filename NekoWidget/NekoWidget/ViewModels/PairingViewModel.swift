@@ -1715,9 +1715,11 @@ final class PairingViewModel: ObservableObject {
               result.peer.participantID == current.peerParticipantID,
               result.previousTargetSigningPublicKey
                 == current.recoveryPreviousTargetSigningPublicKey,
+              let recoveredDeviceID = current.recoveryDeviceID,
               let recoveredAt = result.recoveredAt
         else { throw PairingError.transcriptMismatch }
         current.phase = .paired
+        current.localMomentDeviceID = recoveredDeviceID
         current.peerAgreementPublicKey = result.peer.agreementPublicKey
         current.peerSigningPublicKey = result.peer.signingPublicKey
         current.recoveryCandidateAgreementPublicKey = result.credential.agreementPublicKey

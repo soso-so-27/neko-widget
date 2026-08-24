@@ -951,10 +951,180 @@ actor SharingRuntimeSelfTestRunner {
         ) else { throw PairingError.stateUnavailable }
     }
 
+    private static func testMomentDeviceIdentityResolution() throws {
+        let memberID = "member_device_identity_fixture"
+        let spaceID = "space_device_identity_fixture"
+        let recoveredDeviceID = "device_recovered_fixture"
+        let peerReplacementDeviceID = "device_peer_replacement_fixture"
+
+        var ordinary = PairingState.unpaired(installationMarker: UUID().uuidString)
+        ordinary.spaceID = spaceID
+        ordinary.memberID = memberID
+        guard ordinary.resolvedLocalMomentDeviceID == memberID else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        // Build and decode a fully valid paired recovery state with the field
+        // removed, matching bytes written by Build 41.
+        let installationMarker = UUID().uuidString
+        let localCredential = PairingCrypto.makeCredential(
+            installationMarker: installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        let peerCredential = PairingCrypto.makeCredential(
+            installationMarker: installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        let previousCredential = PairingCrypto.makeCredential(
+            installationMarker: installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        let recoveryTranscript = Data("device-identity-recovery".utf8)
+        let recoveryHash = PairingCrypto.sha256(recoveryTranscript)
+        var build41Recovery = PairingState.unpaired(
+            installationMarker: installationMarker
+        )
+        build41Recovery.phase = .paired
+        build41Recovery.role = .inviter
+        build41Recovery.credentialAccount = localCredential.account
+        build41Recovery.participantID = localCredential.participantIDString
+        build41Recovery.spaceID = spaceID
+        build41Recovery.memberID = memberID
+        build41Recovery.peerMemberID = "member_peer_device_identity_fixture"
+        build41Recovery.peerParticipantID = peerCredential.participantIDString
+        build41Recovery.peerAgreementPublicKey = try PairingCrypto
+            .agreementPublicKey(for: peerCredential).base64URLEncodedString()
+        build41Recovery.peerSigningPublicKey = try PairingCrypto
+            .signingPublicKey(for: peerCredential).base64URLEncodedString()
+        build41Recovery.recoveryID = "recovery_device_identity_fixture"
+        build41Recovery.recoveryExpiresAt = Date().addingTimeInterval(3_600)
+        build41Recovery.recoveryMembershipRevision = 1
+        build41Recovery.recoveryKeyEpoch = 1
+        build41Recovery.recoveryDeviceID = recoveredDeviceID
+        build41Recovery.recoveryPreviousTargetAgreementPublicKey = try PairingCrypto
+            .agreementPublicKey(for: previousCredential).base64URLEncodedString()
+        build41Recovery.recoveryPreviousTargetSigningPublicKey = try PairingCrypto
+            .signingPublicKey(for: previousCredential).base64URLEncodedString()
+        build41Recovery.recoveryCandidateAgreementPublicKey = try PairingCrypto
+            .agreementPublicKey(for: localCredential).base64URLEncodedString()
+        build41Recovery.recoveryCandidateSigningPublicKey = try PairingCrypto
+            .signingPublicKey(for: localCredential).base64URLEncodedString()
+        build41Recovery.recoveryTranscript = recoveryTranscript.base64URLEncodedString()
+        build41Recovery.recoveryTranscriptHash = recoveryHash.base64URLEncodedString()
+        build41Recovery.recoveryVerificationPhrase = PairingCrypto
+            .verificationPhrase(for: recoveryHash)
+        build41Recovery.recoveryCompletedAt = Date()
+        build41Recovery.recoveryWasLocalDeviceReplacement = true
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var legacyObject = try JSONSerialization.jsonObject(
+            with: encoder.encode(build41Recovery)
+        ) as? [String: Any]
+        legacyObject?.removeValue(forKey: "localMomentDeviceID")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject ?? [:])
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let migratedRecovery = try decoder.decode(PairingState.self, from: legacyData)
+            .validated()
+        guard migratedRecovery.localMomentDeviceID == recoveredDeviceID,
+              migratedRecovery.resolvedLocalMomentDeviceID == recoveredDeviceID
+        else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        // Sponsoring a peer recovery must not change this installation's
+        // relay device identity, even though recoveryDeviceID is reused by the
+        // current recovery ceremony.
+        var stableRecovery = migratedRecovery
+        stableRecovery.localMomentDeviceID = recoveredDeviceID
+        stableRecovery.recoveryDeviceID = peerReplacementDeviceID
+        guard stableRecovery.resolvedLocalMomentDeviceID == recoveredDeviceID else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        var sponsor = ordinary
+        sponsor.recoveryDeviceID = peerReplacementDeviceID
+        sponsor.recoveryWasLocalDeviceReplacement = false
+        guard sponsor.resolvedLocalMomentDeviceID == memberID else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        let recoveredContext = MomentRequestContext(
+            spaceID: spaceID,
+            senderParticipantID: memberID,
+            senderDeviceID: recoveredDeviceID,
+            clientRequestID: UUID(),
+            clientMomentID: UUID(),
+            kind: .live,
+            keyEpoch: 1
+        )
+        guard MomentReservationIdentityPolicy.accepts(
+            context: recoveredContext,
+            pairingState: migratedRecovery,
+            responseSpaceID: spaceID,
+            responseParticipantID: memberID,
+            responseDeviceID: recoveredDeviceID
+        ), !MomentReservationIdentityPolicy.accepts(
+            context: recoveredContext,
+            pairingState: migratedRecovery,
+            responseSpaceID: spaceID,
+            responseParticipantID: memberID,
+            responseDeviceID: memberID
+        ), !MomentReservationIdentityPolicy.accepts(
+            context: recoveredContext,
+            pairingState: migratedRecovery,
+            responseSpaceID: spaceID,
+            responseParticipantID: memberID,
+            responseDeviceID: peerReplacementDeviceID
+        ) else { throw MomentSharingError.stateUnavailable }
+
+        let build41Context = MomentRequestContext(
+            spaceID: spaceID,
+            senderParticipantID: memberID,
+            senderDeviceID: memberID,
+            clientRequestID: UUID(),
+            clientMomentID: UUID(),
+            kind: .live,
+            keyEpoch: 1
+        )
+        guard MomentReservationIdentityPolicy.acceptsContext(
+            build41Context,
+            pairingState: migratedRecovery
+        ), MomentReservationIdentityPolicy.accepts(
+            context: build41Context,
+            pairingState: migratedRecovery,
+            responseSpaceID: spaceID,
+            responseParticipantID: memberID,
+            responseDeviceID: recoveredDeviceID
+        ) else { throw MomentSharingError.stateUnavailable }
+
+        let ordinaryContext = MomentRequestContext(
+            spaceID: spaceID,
+            senderParticipantID: memberID,
+            senderDeviceID: memberID,
+            clientRequestID: UUID(),
+            clientMomentID: UUID(),
+            kind: .live,
+            keyEpoch: 1
+        )
+        guard MomentReservationIdentityPolicy.accepts(
+            context: ordinaryContext,
+            pairingState: sponsor,
+            responseSpaceID: spaceID,
+            responseParticipantID: memberID,
+            responseDeviceID: memberID
+        ) else { throw MomentSharingError.stateUnavailable }
+    }
+
     /// The Share Extension may only leave a bounded, short-lived canonical
     /// input. A host-issued binding change and an installation reset must
     /// remove it before any room credential or network client is involved.
     private static func testMomentInstallBoundHandoff() async throws {
+        try testMomentDeviceIdentityResolution()
         let initial = try PairingInstallationGuard.bootstrap()
         _ = try PairingInstallationGuard.resetLocalSharing(
             expectedState: initial.state,
@@ -1324,6 +1494,7 @@ actor SharingRuntimeSelfTestRunner {
         )
         let spaceID = opaque(0x61)
         let memberID = opaque(0x62)
+        let replacementDeviceID = opaque(0x64)
         let context = MomentRequestContext(
             spaceID: spaceID,
             senderParticipantID: memberID,
@@ -1364,7 +1535,8 @@ actor SharingRuntimeSelfTestRunner {
                     clientRequestID: record.clientRequestID,
                     spaceID: spaceID,
                     senderParticipantID: memberID,
-                    senderDeviceID: memberID,
+                    senderDeviceID: replacementDeviceID,
+                    legacySenderDeviceID: memberID,
                     kind: record.kind,
                     keyEpoch: 1,
                     senderPolicyVersion: record.senderPolicyVersion,

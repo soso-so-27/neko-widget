@@ -92,6 +92,37 @@ enum MomentChangeCursorPolicy {
     }
 }
 
+enum MomentReservationIdentityPolicy {
+    static func acceptsContext(
+        _ context: MomentRequestContext,
+        pairingState: PairingState
+    ) -> Bool {
+        guard let spaceID = pairingState.spaceID,
+              let memberID = pairingState.memberID
+        else { return false }
+        return context.spaceID == spaceID
+            && context.senderParticipantID == memberID
+            && pairingState.acceptsPersistedMomentDeviceID(context.senderDeviceID)
+    }
+
+    static func accepts(
+        context: MomentRequestContext,
+        pairingState: PairingState,
+        responseSpaceID: String,
+        responseParticipantID: String,
+        responseDeviceID: String
+    ) -> Bool {
+        guard let spaceID = pairingState.spaceID,
+              let memberID = pairingState.memberID,
+              let localMomentDeviceID = pairingState.resolvedLocalMomentDeviceID
+        else { return false }
+        return acceptsContext(context, pairingState: pairingState)
+            && responseSpaceID == spaceID
+            && responseParticipantID == memberID
+            && responseDeviceID == localMomentDeviceID
+    }
+}
+
 enum MomentSendFailurePolicy {
     static func canRemainQueued(_ error: MomentSharingError) -> Bool {
         switch error {
@@ -348,9 +379,14 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         pairingState: PairingState,
         credential: PairingCredential
     ) async throws -> MomentReservationResult {
-        guard let localSpaceID = pairingState.spaceID,
-              let localMemberID = pairingState.memberID
+        guard pairingState.spaceID != nil,
+              pairingState.memberID != nil,
+              pairingState.resolvedLocalMomentDeviceID != nil
         else { throw MomentSharingError.notPaired }
+        guard MomentReservationIdentityPolicy.acceptsContext(
+            item.context,
+            pairingState: pairingState
+        ) else { throw MomentSharingError.invalidPayload }
         let response: ReservationResponse = try await sendJSON(
             path: "/v2/moments/reservations",
             method: "POST",
@@ -378,9 +414,13 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         )
         guard response.protocolVersion == MomentSharingProtocol.version,
               response.moment.clientMomentId == item.context.clientMomentID.uuidString.lowercased(),
-              response.moment.spaceId == localSpaceID,
-              response.moment.senderParticipantId == localMemberID,
-              response.moment.senderDeviceId == localMemberID,
+              MomentReservationIdentityPolicy.accepts(
+                  context: item.context,
+                  pairingState: pairingState,
+                  responseSpaceID: response.moment.spaceId,
+                  responseParticipantID: response.moment.senderParticipantId,
+                  responseDeviceID: response.moment.senderDeviceId
+              ),
               response.moment.state == "reserved",
               response.moment.ciphertextSize == item.ciphertextSize,
               Data(base64URLString: response.moment.ciphertextSHA256) == item.ciphertextSHA256,
