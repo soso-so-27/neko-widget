@@ -4,7 +4,9 @@
 
 ## 現在の引き継ぎ状態
 
-> 2026-08-24現在、Build 34までを本人所有2台の内部TestFlightで確認済みです。名前付きの非公開なまど、作成者から相手への暗号化された名前同期、明示した一枚の送受信、受信履歴、共有Widget、安全確認での非表示、通報・block・共有解除を実装しています。Build 35候補はペアリング画面の次の操作と手動確認結果を明確にし、受信写真へ共有履歴内だけの「思い出に残す」を追加します。一般向けTestFlight、App Store審査提出、一般公開は行っていません。
+> 2026-08-24現在、Build 34までを本人所有2台の内部TestFlightで確認済みです。名前付きの非公開なまど、作成者から相手への暗号化された名前同期、明示した一枚の送受信、受信履歴、共有Widget、安全確認での非表示、通報・block・共有解除を実装しています。Build 35（source `2e6f565`）はmain CI、署名dry run、App Store Connectのvalidate／uploadまで成功しました。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みです。ただしApple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。外部TestFlight groupへの追加、App Store審査提出、一般公開は行っていません。
+>
+> PR22〜PR28をmain（`df7c7acf7747e9673f8269dd67763845ab9960e2`）へ統合し、main CI [run 32679594269](https://github.com/soso-so-27/neko-widget/actions/runs/32679594269)と、共有OFFの正本スクリーンショット [run 32679649547](https://github.com/soso-so-27/neko-widget/actions/runs/32679649547)が成功しました。同じmain SHAからBuild 36を`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`で署名dry runし、[run 32680522092](https://github.com/soso-so-27/neko-widget/actions/runs/32680522092)が成功しています。App Store Connect API keyの導入、IPAのvalidate／upload、build選択は実行していません。Build 35の内部共有staging実績やBuild 36のdry runを、App Store提出完了として扱いません。
 
 ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。iPhoneではBuild 7までの技術検証に加え、Build 8のMedium / Large表示不具合まで確認し、8,861枚の確定スキャンとdetected無作為100枚のレビューを完了しました。レビューは`reviewNo 74`だけを製品候補から除外し、99 / 100を採用しました。scannerはBuild 10でも変更しないため、このPrecision標本は再利用します。Build 7の1週間計測はLike表示不具合で中断し、その再計測案も「結果が製品判断を変えない」として2026-08-17に撤回しました。新しいbaselineから再開する予定はなく、特定端末へ別buildを入れない制約もありません。Build 8では高解像度20件TimelineによりMedium / Largeがplaceholder相当になる不具合を確認し、Build 9でTimelineを最大2件へ制限、Build 10で写真ブラウザの標準ページングを修復しました。3サイズ、like／unlike即時反映、写真ブラウザの操作感は通常の機能ゲートとして実機確認します。Build 10の写真ブラウザが固まる場合は、待たずに遅延pagingを含む開発branchのbuildを同じ端末へ入れて確認します。実施順は[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)、Like修復は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、Timeline修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)、アルバム／共有は[ADR-009](docs/ADR-009-ローカルアルバムと招待制共有.md)、898件の遅延pagingは[ADR-010](docs/ADR-010-大規模写真ブラウザの遅延ページング.md)、うちの子の選別と将来の個体推定は[ADR-011](docs/ADR-011-うちの子の選別と将来の個体推定.md)、多頭プロフィールと安全な移行は[ADR-012](docs/ADR-012-多頭identity基盤と安全な移行.md)、関節点を使わないbbox姿勢アルバムは[ADR-013](docs/ADR-013-bbox姿勢アルバム.md)、確認回数を減らすFeaturePrintグループは[ADR-014](docs/ADR-014-FeaturePrint確認グループ.md)で管理します。
 
@@ -28,18 +30,19 @@ Build 5とBuild 6は技術検証専用です。Build 6では3サイズの右下�
 | --- | --- | --- |
 | アプリ | `APP_BUNDLE_IDENTIFIER` | `jp.nekowidget.app` |
 | Widget Extension | `WIDGET_BUNDLE_IDENTIFIER` | `jp.nekowidget.app.widget` |
+| Share Extension | `SHARE_EXTENSION_BUNDLE_IDENTIFIER` | `jp.nekowidget.app.share` |
 | 共有コンテナ | `APP_GROUP_IDENTIFIER` | `group.jp.nekowidget.app` |
 
 識別子を変更する場合は、Developer Portal、配布プロファイル、`Config.xcconfig`を同時に更新してください。命名と登録の記録は[TestFlight準備手順](docs/Apple-Developer署名準備.md)を参照してください。
 
 ## Mac / Xcodeでの設定
 
-1. Macへリポジトリを取得し、`NekoWidget.xcodeproj`を開きます。2026年4月28日以降にTestFlightへアップロードするarchiveはXcode 26以上で作成します。アプリtarget `NekoWidget`とWidget Extension target `NekoWidgetWidgetExtension`が表示されることを確認します。
-2. Debug / ReleaseのBase Configurationに`Config.xcconfig`を設定します。両targetのDeployment Targetが`17.1`であることを確認します。
-3. アプリtargetのProduct Bundle Identifierを`$(APP_BUNDLE_IDENTIFIER)`、Widget targetを`$(WIDGET_BUNDLE_IDENTIFIER)`にします。
-4. アプリtargetではInfo.plist Fileを`NekoWidget/Info.plist`、Code Signing Entitlementsを`NekoWidget/NekoWidget.entitlements`にします。Widget targetにも同様に、そのtarget用のInfo.plistとentitlementsを割り当てます。手書きのplistを使うtargetではGenerate Info.plist Fileを`No`にします。
-5. Signing & Capabilitiesで、アプリとWidgetの両targetへ同じApple Development Teamを設定します。両方へApp Groups capabilityを追加し、`$(APP_GROUP_IDENTIFIER)`の展開後と同じGroupを有効にします。Apple Developer側に存在しない場合は、この時点で登録します。
-6. ビルド設定を展開表示し、`APP_BUNDLE_IDENTIFIER`、`WIDGET_BUNDLE_IDENTIFIER`、`APP_GROUP_IDENTIFIER`が期待する実値になっていることを両targetで確認します。アプリのInfoとentitlementsが同じApp Groupを参照していない状態では共有データを読めません。
+1. Macへリポジトリを取得し、`NekoWidget.xcodeproj`を開きます。2026年4月28日以降にTestFlightへアップロードするarchiveはXcode 26以上で作成します。アプリtarget `NekoWidget`、Widget Extension target `NekoWidgetWidgetExtension`、Share Extension target `NekoWidgetShareExtension`が表示されることを確認します。
+2. Debug / ReleaseのBase Configurationに`Config.xcconfig`を設定します。3 targetのDeployment Targetが`17.1`であることを確認します。
+3. アプリtargetのProduct Bundle Identifierを`$(APP_BUNDLE_IDENTIFIER)`、Widget targetを`$(WIDGET_BUNDLE_IDENTIFIER)`、Share Extension targetを`$(SHARE_EXTENSION_BUNDLE_IDENTIFIER)`にします。
+4. アプリtargetではInfo.plist Fileを`NekoWidget/Info.plist`、Code Signing Entitlementsを`NekoWidget/NekoWidget.entitlements`にします。WidgetとShare Extensionにも同様に、そのtarget用のInfo.plistとentitlementsを割り当てます。手書きのplistを使うtargetではGenerate Info.plist Fileを`No`にします。
+5. Signing & Capabilitiesで、3 targetへ同じApple Development Teamを設定します。全targetへApp Groups capabilityを追加し、`$(APP_GROUP_IDENTIFIER)`の展開後と同じGroupを有効にします。Apple Developer側に存在しない場合は、この時点で登録します。
+6. ビルド設定を展開表示し、3つのBundle Identifierと`APP_GROUP_IDENTIFIER`が期待する実値になっていることを各targetで確認します。アプリ、Widget、Share ExtensionのInfoとentitlementsが同じApp Groupを参照していない状態では共有データを正しく受け渡せません。
 7. `nekowidget` URL schemeがアプリtargetのInfoに入っていることを確認します。Build 6の非公開Widget App IntentはAppとWidgetの両targetへ含めますが、Siri / ショートカット連携は追加しません。
 8. 実機を接続し、Developer Modeと端末上の開発者信頼を必要に応じて有効にして、アプリschemeを選びRunします。
 
@@ -47,9 +50,11 @@ Build 5とBuild 6は技術検証専用です。Build 6では3サイズの右下�
 
 push / pull requestでは`iOS build check`を実行します。最初のジョブはmacOS runner上でAppとWidgetを無署名コンパイルします。成功後のSimulatorジョブはiOS 18.6 Simulator上でXCUITestを使い、アプリの写真許可ボタンから実際のシステムダイアログを開いてフルアクセスを許可します。その時点の写真IDをbaselineとして保存してから、[専用に生成したCC0の猫画像3枚](ci/fixtures/cats/README.md)を写真ライブラリへ投入し、本試験としてアプリを通常起動します。`simctl addmedia`の画像resource準備が遅れる場合は、時間上限付きでアプリを再起動して再スキャンします。baselineとの差分3件についてPhotoKit取得とVision分類を確認し、App GroupへのJSONLログ／snapshot／Widget cache書き込みも検証します。権限テスト結果、起動画面、SharedLog、統合ログ、検証レポート、App Group成果物は7日間artifactに保存します。GitHub Hosted SimulatorのiOS 18.6／26.2では、`simctl privacy grant photos`が成功しTCCへ許可行を保存してもPhotoKitの`.readWrite`判定が未決定のままになる挙動を確認したため、実際のダイアログを操作する方式を採用しています。最新OSの権限フローは別途実機で確認します。この自動テストはフルアクセス許可フローだけが対象で、拒否／制限付きアクセス、ホーム画面へ配置したWidgetプロセスからの読み出しも実機確認の対象です。
 
-TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使います。通常の`release_mode`は`review-preview`です。Build 28の2台ペアリング確認だけ`pairing-only`を明示し、GitHubの`testflight` Environmentにあるstaging originを注入します。このmodeでは写真のmedia／handoff／direct-sendをすべて無効にし、archiveのprivacy manifestとprocessed Info.plistを検査します。最初は`upload_to_testflight = false`で署名archiveとIPA exportだけを検証し、成功後にtrueへ切り替えてApp Store Connectでの検証とアップロードを行います。実uploadでは`retain_signed_artifacts = true`とし、一致するIPA、xcarchive、dSYMを暗号化artifactで回収します。
+共有OFFのApp Storeスクリーンショット候補は、手動実行専用の`Capture privacy-safe App Store screenshots`で作ります。消去済みの6.9-inch iPhone Simulatorと決定的な描画fixtureから日本語5枚をJPEGで出力し、pixel size、SHA-256、metadata検査をmanifestへ記録して14日保存します。AppleやApp Store Connectへは接続・uploadしません。main `df7c7acf7747e9673f8269dd67763845ab9960e2`の正本run `32679649547`では5枚すべてが`1320 x 2868`、APP1 metadataなし、manifest SHA-256一致で成功しました。失敗時はlogと`.xcresult`から抽出したnamed attachmentだけを7日保存し、raw `.xcresult`はartifactへ残しません。Content Rights、最終Build一致、caption、順序、登録はownerの手動gateです。詳細は[App Storeスクリーンショット撮影](docs/App-Store-スクリーンショット撮影.md)を参照してください。
 
-2台の1枚共有には、別の`media-staging`を明示します。このmodeはfeature／media／host handoffだけをONにし、direct-sendとreview-previewをOFFに固定し、保護EnvironmentのAPI origin、moderation public key、privacy／support／community URLをarchiveの実値と比較します。2026-08-24現在、Build 34を本人所有2台だけの内部TestFlightへ配布し、通常momentと暗号化まど名同期を個人利用向けに継続ON、旧共有をOFFで維持しています。Build 35は候補段階で、TestFlightへは未配布です。一般向けTestFlight、App Store審査提出、公開は行っていません。受入記録とrelease停止条件は[2台メディアstaging・TestFlight準備](docs/Media-Staging-TestFlight手順.md)、日次監視と緊急OFFは[本人2台用・写真共有staging運用](SharingService/PERSONAL_STAGING_OPERATIONS.md)を正本とします。
+TestFlight配布は手動起動専用の`Archive and upload to TestFlight`を使います。`release_mode`の既定値はfail-closedな`disabled`で、共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにします。画面だけの静的確認には`review-preview`、写真なしの明示的な内部ペアリング試験には`pairing-only`、本人2台だけの一枚共有試験には`media-staging`を選びます。最初は`upload_to_testflight = false`で署名archiveとIPA exportだけを検証し、成功後にだけtrueへ切り替えてApp Store Connectでの検証とアップロードを行います。実uploadでは`retain_signed_artifacts = true`とし、一致するIPA、xcarchive、dSYMを暗号化artifactで回収します。
+
+2台の1枚共有には、別の`media-staging`を明示します。このmodeはfeature／media／host handoffだけをONにし、direct-sendとreview-previewをOFFに固定し、保護EnvironmentのAPI origin、moderation public key、privacy／support／community URLをarchiveの実値と比較します。2026-08-24現在、Build 34を本人所有2台だけの内部TestFlightへ配布し、通常momentと暗号化まど名同期を個人利用向けに継続ON、旧共有をOFFで維持しています。Build 35はAppleへのvalidate／upload受付まで成功していますが、Apple側の処理完了と内部配布は未確認です。一般向けTestFlight、App Store審査提出、公開は行っていません。受入記録とrelease停止条件は[2台メディアstaging・TestFlight準備](docs/Media-Staging-TestFlight手順.md)、日次監視と緊急OFFは[本人2台用・写真共有staging運用](SharingService/PERSONAL_STAGING_OPERATIONS.md)を正本とします。
 
 ### Simulatorスケールテスト
 
@@ -61,7 +66,7 @@ SimulatorではiPhoneのメモリ警告やOOM終了が再現されないため�
 
 2026-08-16に1,000枚を1回実行し、全件完走、lifetime physical footprint 76.147MiB、48MP区間の生涯ピーク増分0.344MiB、途中終了とクラッシュ痕跡なしでPASSしました。2,000枚／3,000枚は実行していません。
 
-App Store Connect APIキーはアップロード認証用です。コード署名には別途、Apple Distribution証明書の秘密鍵を含むP12と、アプリ／Widgetそれぞれの配布プロファイルが必要です。必要なGitHub Environment、Secrets、作成手順は[GitHub Actions / TestFlight設定](docs/GitHub-Actions-TestFlight設定.md)を参照してください。
+App Store Connect APIキーはアップロード認証用です。コード署名には別途、Apple Distribution証明書の秘密鍵を含むP12と、アプリ／Widget／Share Extensionそれぞれの配布プロファイルが必要です。必要なGitHub Environment、Secrets、作成手順は[GitHub Actions / TestFlight設定](docs/GitHub-Actions-TestFlight設定.md)を参照してください。
 
 ## 診断ログ
 
