@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import struct
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -205,6 +207,9 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         for dimensions in ("(1260, 2736)", "(1290, 2796)", "(1320, 2868)"):
             self.assertIn(dimensions, self.exporter)
         self.assertIn('"format": "jpeg"', self.exporter)
+        self.assertIn("def strip_jpeg_app1(path):", self.exporter)
+        self.assertIn("stripped_app1_segments = strip_jpeg_app1(destination)", self.exporter)
+        self.assertIn('"removedApp1Segments": stripped_app1_segments', self.exporter)
         self.assertIn("if marker == 0xE1", self.exporter)
         self.assertIn("contains a JPEG APP1 metadata segment", self.exporter)
         self.assertIn('"userReviewRequiredBeforeUpload": True', self.exporter)
@@ -214,6 +219,30 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("releaseArchiveContainsFixtureRoute", self.exporter)
         self.assertIn('rm -rf "$RAW_DIRECTORY"', self.exporter)
+
+    def test_exporter_strips_app1_and_rejects_truncated_jpeg(self) -> None:
+        helper_start = self.exporter.index("def jpeg_dimensions_and_app1(path):")
+        helper_end = self.exporter.index("\n\nreport =", helper_start)
+        namespace = {"struct": struct}
+        exec(self.exporter[helper_start:helper_end], namespace)
+
+        app0 = b"\xff\xe0\x00\x04JF"
+        app1 = b"\xff\xe1\x00\x06EXIF"
+        scan = b"\xff\xda\x00\x04AB\x11\x22\xff\xd9"
+        expected = b"\xff\xd8" + app0 + scan
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            destination = Path(temporary_directory) / "fixture.jpg"
+            destination.write_bytes(b"\xff\xd8" + app0 + app1 + scan)
+            self.assertEqual(namespace["strip_jpeg_app1"](destination), 1)
+            self.assertEqual(destination.read_bytes(), expected)
+
+            destination.write_bytes(expected[:-2])
+            with self.assertRaisesRegex(SystemExit, "end marker is missing"):
+                namespace["strip_jpeg_app1"](destination)
+
+            destination.write_bytes(b"\xff\xd8" + app0 + b"\xff\xd9")
+            with self.assertRaisesRegex(SystemExit, "scan marker is missing"):
+                namespace["strip_jpeg_app1"](destination)
 
     def test_xcode_project_references_both_new_swift_sources(self) -> None:
         self.assertEqual(self.project.count("AppStoreScreenshotFixture.swift"), 6)
