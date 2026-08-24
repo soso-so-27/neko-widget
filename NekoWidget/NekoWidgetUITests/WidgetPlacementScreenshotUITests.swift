@@ -230,9 +230,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             )
             return
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        let fixtureScreenshot = XCUIScreen.main.screenshot()
-        guard fixturePaletteIsVisible(in: fixtureScreenshot) else {
+        guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {
             fail(
                 "The Widget gallery did not render the deterministic local cat preview.",
                 application: springboard
@@ -316,6 +314,19 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     ) -> XCUIElement? {
         let element = query.firstMatch
         return element.waitForExistence(timeout: timeout) ? element : nil
+    }
+
+    @MainActor
+    private func waitForFixturePalette(timeout: TimeInterval) -> XCUIScreenshot? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let screenshot = XCUIScreen.main.screenshot()
+            if fixturePaletteIsVisible(in: screenshot) {
+                return screenshot
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return nil
     }
 
     @MainActor
