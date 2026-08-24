@@ -128,6 +128,32 @@ actor MomentSharingCoordinator {
         let lifecycleToken: SharingLifecycleGate.Token
     }
 
+    /// Closed, non-sensitive categories persisted in diagnostic log messages.
+    /// Never include relay-provided codes/messages or local paths here.
+    private enum PairingResetReason: String, Sendable {
+        case remoteAuthorizationTerminal = "remote-authorization-terminal"
+        case reportOnlyWindowClosed = "report-only-window-closed"
+    }
+
+    private enum LocalSharingFailureReason: String, Sendable {
+        case remoteAuthorizationTerminal = "remote-authorization-terminal"
+        case stateCorrupt = "local-state-corrupt"
+        case stateUnavailable = "local-state-unavailable"
+        case reportOnlyBoundaryUnavailable = "report-only-boundary-unavailable"
+        case handoffCleanupUnavailable = "handoff-cleanup-unavailable"
+        case resourceGone = "resource-gone-nonterminal"
+        case requestRejected = "request-rejected-nonterminal"
+        case runtimeUnavailable = "runtime-unavailable"
+    }
+
+    /// Internal route provenance. The relay code is converted to this marker
+    /// only inside the report outbox path, so a future non-report endpoint
+    /// cannot trigger report-only credential cleanup by returning the same
+    /// untrusted code string.
+    private enum BackgroundSynchronizationTermination: Error, Sendable {
+        case reportOnlyWindowClosed
+    }
+
     private let configuration: SharingAPIConfiguration
     private let moderation: any MomentModerating
     private let handoffProcessor: MomentShareHandoffProcessor
@@ -230,10 +256,12 @@ actor MomentSharingCoordinator {
             )
         } catch {
             if let authorization, Self.requiresLocalRevocationReset(error) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try? await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .remoteAuthorizationTerminal
                 )
+            } else {
+                Self.logNonterminalRequestRejection(error)
             }
             throw error
         }
@@ -319,11 +347,10 @@ actor MomentSharingCoordinator {
                     until: markerUntil,
                     now: resumeNow
                 ) else {
-                    try await PairingInstallationGuard
-                        .resetAfterRemoteRevocationAsync(
-                            expectedState: loadedAuthorization.state,
-                            lifecycleToken: loadedAuthorization.lifecycleToken
-                        )
+                    try await resetLocalPairing(
+                        authorization: loadedAuthorization,
+                        reason: .reportOnlyWindowClosed
+                    )
                     return
                 }
                 // A transient disk error here leaves the already-durable
@@ -344,9 +371,9 @@ actor MomentSharingCoordinator {
                MomentSharingProtocol.isReportOnlyWindowClosed(
                    until: reportOnlyUntil
                ) {
-                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: loadedAuthorization.state,
-                    lifecycleToken: loadedAuthorization.lifecycleToken
+                try await resetLocalPairing(
+                    authorization: loadedAuthorization,
+                    reason: .reportOnlyWindowClosed
                 )
                 return
             }
@@ -427,6 +454,9 @@ actor MomentSharingCoordinator {
             )
         } catch {
             latestSynchronizationNotice = Self.synchronizationNotice(for: error)
+            if error is BackgroundSynchronizationTermination {
+                return
+            }
             if let authorization,
                let momentError = error as? MomentSharingError,
                case let .reportOnly(until) = momentError {
@@ -435,20 +465,17 @@ actor MomentSharingCoordinator {
                     authorization: authorization
                 )
             } else if let authorization, Self.requiresLocalRevocationReset(error) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try? await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .remoteAuthorizationTerminal
                 )
+                return
             } else if let authorization,
                       let momentError = error as? MomentSharingError,
                       case .stateUnavailable = momentError {
                 await handleStateUnavailable(authorization: authorization)
             }
-            SharedLog.app.warning(
-                "moment-sharing",
-                "Moment synchronization deferred",
-                metadata: ["trigger": String(trigger.prefix(32))]
-            )
+            Self.logSynchronizationDeferred(error: error, trigger: trigger)
         }
     }
 
@@ -490,9 +517,9 @@ actor MomentSharingCoordinator {
                 until: markerUntil,
                 now: directActionNow
             ) else {
-                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .reportOnlyWindowClosed
                 )
                 throw MomentSharingError.notPaired
             }
@@ -507,9 +534,9 @@ actor MomentSharingCoordinator {
             if MomentSharingProtocol.isReportOnlyWindowClosed(
                 until: reportOnlyUntil
             ) {
-                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .reportOnlyWindowClosed
                 )
                 throw MomentSharingError.notPaired
             }
@@ -579,10 +606,14 @@ actor MomentSharingCoordinator {
             }
             if Self.requiresLocalRevocationReset(error)
                 || Self.isReportWindowClosed(error) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try? await resetLocalPairing(
+                    authorization: authorization,
+                    reason: Self.isReportWindowClosed(error)
+                        ? .reportOnlyWindowClosed
+                        : .remoteAuthorizationTerminal
                 )
+            } else {
+                Self.logNonterminalRequestRejection(error)
             }
             throw error
         }
@@ -626,7 +657,14 @@ actor MomentSharingCoordinator {
                 throw error
             } catch let error as MomentSharingError {
                 if case .reportOnly = error { throw error }
-                if Self.isReportWindowClosed(error) { throw error }
+                if Self.isReportWindowClosed(error) {
+                    try await resetLocalPairing(
+                        authorization: authorization,
+                        reason: .reportOnlyWindowClosed
+                    )
+                    throw BackgroundSynchronizationTermination.reportOnlyWindowClosed
+                }
+                Self.logNonterminalRequestRejection(error)
                 // The user already approved this encrypted report copy. Keep
                 // it bounded on disk and retry idempotently on next foreground
                 // rather than making safety depend on reopening the menu.
@@ -836,9 +874,9 @@ actor MomentSharingCoordinator {
                     authorization: authorization
                 )
             } else if Self.requiresLocalRevocationReset(error) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: state,
-                    lifecycleToken: authorization.lifecycleToken
+                try? await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .remoteAuthorizationTerminal
                 )
             }
             throw error
@@ -946,15 +984,18 @@ actor MomentSharingCoordinator {
             return
         } catch {
             if let authorization, Self.requiresLocalRevocationReset(error) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try? await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .remoteAuthorizationTerminal
                 )
             }
             SharedLog.app.warning(
                 "window-name-sync",
                 "Encrypted window name synchronization deferred",
-                metadata: ["trigger": String(trigger.prefix(32))]
+                metadata: [
+                    "sharingFailureReason": Self.localFailureReason(for: error).rawValue,
+                    "trigger": String(trigger.prefix(32))
+                ]
             )
         }
     }
@@ -982,16 +1023,19 @@ actor MomentSharingCoordinator {
             }
             return changed
         } catch let error where Self.requiresLocalRevocationReset(error) {
-            try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                expectedState: authorization.state,
-                lifecycleToken: authorization.lifecycleToken
+            try? await resetLocalPairing(
+                authorization: authorization,
+                reason: .remoteAuthorizationTerminal
             )
             return false
         } catch {
             SharedLog.app.warning(
                 "window-name-sync",
                 "Encrypted window name synchronization deferred",
-                metadata: ["trigger": String(trigger.prefix(32))]
+                metadata: [
+                    "sharingFailureReason": Self.localFailureReason(for: error).rawValue,
+                    "trigger": String(trigger.prefix(32))
+                ]
             )
             return false
         }
@@ -1177,9 +1221,9 @@ actor MomentSharingCoordinator {
                 until: markerUntil,
                 now: now
             ) {
-                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .reportOnlyWindowClosed
                 )
                 throw MomentSharingError.notPaired
             }
@@ -1197,9 +1241,9 @@ actor MomentSharingCoordinator {
                 until: stateUntil,
                 now: now
             ) {
-                try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .reportOnlyWindowClosed
                 )
                 throw MomentSharingError.notPaired
             }
@@ -1318,6 +1362,7 @@ actor MomentSharingCoordinator {
                 throw error
             } catch let error as MomentSharingError {
                 if case .reportOnly = error { throw error }
+                Self.logNonterminalRequestRejection(error)
                 // The relay checks an existing idempotent commit response
                 // before returning reservation_expired. This response therefore
                 // proves the old lease did not commit and is safe to re-reserve,
@@ -1327,6 +1372,18 @@ actor MomentSharingCoordinator {
                     _ = try MomentSharingStateStore.recoverExpiredReservation(
                         itemID: candidate.id,
                         validating: lifecycleToken
+                    )
+                    continue
+                }
+                if Self.isNonterminalAuthenticationFailure(error) {
+                    // `invalid_authentication` deliberately conflates missing
+                    // credentials, malformed headers, and signature failures.
+                    // It does not prove revocation, so preserve this exact
+                    // encrypted item and retry with bounded backoff.
+                    try? recordRetry(
+                        for: candidate.id,
+                        error: error,
+                        lifecycleToken: lifecycleToken
                     )
                     continue
                 }
@@ -1811,18 +1868,124 @@ actor MomentSharingCoordinator {
         else {
             return false
         }
-        // Moment/report routes use 410 only for an expired upload lease or a
-        // terminal authorization boundary. A well-formed
-        // reservation_expired response is recoverable; every other or
-        // undecodable 410 must fail closed and clear local authorization.
-        return status == 410 && code != "reservation_expired"
+        // Destroy the room credential only when the authenticated relay names
+        // an authorization-wide terminal state. A resource-specific 410 (for
+        // a reservation, report, moment, or presentation name), and especially
+        // an undecodable/unknown 410, cannot prove that this pairing ended.
+        return status == 410 && code == "sharing_revoked"
+    }
+
+    private nonisolated static func localFailureReason(
+        for error: Error
+    ) -> LocalSharingFailureReason {
+        if requiresLocalRevocationReset(error) {
+            return .remoteAuthorizationTerminal
+        }
+        guard let momentError = error as? MomentSharingError else {
+            return .runtimeUnavailable
+        }
+        switch momentError {
+        case .stateUnavailable:
+            return .stateUnavailable
+        case let .requestRejected(status, _, _):
+            return status == 410 ? .resourceGone : .requestRejected
+        default:
+            return .runtimeUnavailable
+        }
+    }
+
+#if DEBUG
+    nonisolated static func runtimeRequiresLocalRevocationReset(
+        _ error: Error
+    ) -> Bool {
+        requiresLocalRevocationReset(error)
+    }
+
+    nonisolated static func runtimeLocalFailureReason(_ error: Error) -> String {
+        localFailureReason(for: error).rawValue
+    }
+
+    nonisolated static func runtimeIsNonterminalAuthenticationFailure(
+        _ error: Error
+    ) -> Bool {
+        isNonterminalAuthenticationFailure(error)
+    }
+#endif
+
+    private func resetLocalPairing(
+        authorization: Authorization,
+        reason: PairingResetReason
+    ) async throws {
+        SharedLog.app.warning(
+            "moment-sharing",
+            "Local pairing reset started after a terminal sharing boundary",
+            metadata: ["sharingFailureReason": reason.rawValue]
+        )
+        do {
+            try await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
+                expectedState: authorization.state,
+                lifecycleToken: authorization.lifecycleToken
+            )
+            SharedLog.app.info(
+                "moment-sharing",
+                "Local pairing reset completed after a terminal sharing boundary",
+                metadata: ["sharingFailureReason": reason.rawValue]
+            )
+        } catch {
+            SharedLog.app.error(
+                "moment-sharing",
+                "Local pairing reset failed after a terminal sharing boundary",
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .momentSharing,
+                    additional: ["sharingFailureReason": reason.rawValue]
+                )
+            )
+            throw error
+        }
+    }
+
+    private nonisolated static func logSynchronizationDeferred(
+        error: Error,
+        trigger: String
+    ) {
+        SharedLog.app.warning(
+            "moment-sharing",
+            "Moment synchronization deferred without changing pairing credentials",
+            metadata: SharedLog.errorMetadata(
+                error,
+                category: .momentSharing,
+                additional: [
+                    "sharingFailureReason": localFailureReason(for: error).rawValue,
+                    "trigger": String(trigger.prefix(32))
+                ]
+            )
+        )
+    }
+
+    private nonisolated static func logNonterminalRequestRejection(_ error: Error) {
+        guard let momentError = error as? MomentSharingError,
+              case .requestRejected = momentError,
+              !requiresLocalRevocationReset(error)
+        else { return }
+        SharedLog.app.warning(
+            "moment-sharing",
+            "Relay request was rejected without changing pairing credentials",
+            metadata: SharedLog.errorMetadata(
+                error,
+                category: .momentSharing,
+                additional: [
+                    "sharingFailureReason": localFailureReason(for: error).rawValue
+                ]
+            )
+        )
     }
 
     /// Establishes the durable report-only marker/state boundary. If the
     /// cross-store state write cannot finish, the fallback must still commit
-    /// the marker and remove all handoff plaintext; an admission-only purge is
-    /// not durable enough. Only when that marker fallback also fails do we
-    /// tear down the entire local pairing.
+    /// the marker and remove all handoff plaintext. If local storage remains
+    /// unavailable, stop admissions again and retry later without treating
+    /// that I/O failure as proof that relay authorization ended.
     private func establishReportOnlyBoundary(
         until: Date,
         authorization: Authorization,
@@ -1844,9 +2007,17 @@ actor MomentSharingCoordinator {
                 )
                 return true
             } catch {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                SharedLog.app.error(
+                    "moment-sharing",
+                    "Report-only boundary persistence deferred without changing pairing credentials",
+                    metadata: [
+                        "sharingFailureReason": LocalSharingFailureReason
+                            .reportOnlyBoundaryUnavailable.rawValue
+                    ]
+                )
+                suspendHandoffForLocalFailure(
+                    authorization: authorization,
+                    reason: .reportOnlyBoundaryUnavailable
                 )
                 return false
             }
@@ -1857,8 +2028,8 @@ actor MomentSharingCoordinator {
     /// it a permanent retention or reporting blocker. A valid local state
     /// deadline wins. If state was never committed (marker-first crash), the
     /// protected inode's fixed creation/modification anchor supplies a local
-    /// maximum window. When neither source is trustworthy, full reset is the
-    /// only bounded fail-closed recovery.
+    /// maximum window. When neither source is trustworthy, admissions remain
+    /// stopped and recovery is retried without deleting the room credential.
     private func recoverReportOnlyBoundary(
         authorization: Authorization,
         now: Date
@@ -1875,9 +2046,9 @@ actor MomentSharingCoordinator {
                 until: stateUntil,
                 now: now
             ) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
+                try? await resetLocalPairing(
+                    authorization: authorization,
+                    reason: .reportOnlyWindowClosed
                 )
                 return nil
             }
@@ -1899,15 +2070,28 @@ actor MomentSharingCoordinator {
             }
         }
 
-        guard let recoveredUntil,
-              !MomentSharingProtocol.isReportOnlyWindowClosed(
-                  until: recoveredUntil,
-                  now: now
-              )
-        else {
-            try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                expectedState: authorization.state,
-                lifecycleToken: authorization.lifecycleToken
+        guard let recoveredUntil else {
+            SharedLog.app.error(
+                "moment-sharing",
+                "Report-only boundary recovery deferred without changing pairing credentials",
+                metadata: [
+                    "sharingFailureReason": LocalSharingFailureReason
+                        .reportOnlyBoundaryUnavailable.rawValue
+                ]
+            )
+            suspendHandoffForLocalFailure(
+                authorization: authorization,
+                reason: .reportOnlyBoundaryUnavailable
+            )
+            return nil
+        }
+        guard !MomentSharingProtocol.isReportOnlyWindowClosed(
+            until: recoveredUntil,
+            now: now
+        ) else {
+            try? await resetLocalPairing(
+                authorization: authorization,
+                reason: .reportOnlyWindowClosed
             )
             return nil
         }
@@ -1919,17 +2103,36 @@ actor MomentSharingCoordinator {
         return recoveredUntil
     }
 
-    private func revokeHandoffOrReset(
-        authorization: Authorization
-    ) async {
+    /// Moment state and Share Extension admissions are replaceable local
+    /// stores; neither can prove that relay authorization ended. Stop new
+    /// plaintext handoffs when possible, preserve the room credential, and let
+    /// the next foreground pass retry. A transient cleanup failure is logged
+    /// but must never be escalated into deleting the pairing key.
+    private func suspendHandoffForLocalFailure(
+        authorization: Authorization,
+        reason: LocalSharingFailureReason
+    ) {
         do {
             try handoffProcessor.revokeAdmissions(
                 lifecycleToken: authorization.lifecycleToken
             )
+            SharedLog.app.warning(
+                "moment-sharing",
+                "Share Extension handoff stopped after a local sharing failure",
+                metadata: ["sharingFailureReason": reason.rawValue]
+            )
         } catch {
-            try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                expectedState: authorization.state,
-                lifecycleToken: authorization.lifecycleToken
+            SharedLog.app.error(
+                "moment-sharing",
+                "Share Extension handoff cleanup deferred without changing pairing credentials",
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .momentSharing,
+                    additional: [
+                        "sharingFailureReason": LocalSharingFailureReason
+                            .handoffCleanupUnavailable.rawValue
+                    ]
+                )
             )
         }
     }
@@ -1937,23 +2140,31 @@ actor MomentSharingCoordinator {
     private func handleStateUnavailable(
         authorization: Authorization
     ) async {
+        let reason: LocalSharingFailureReason
         do {
             if try MomentSharingStateStore.isPersistedStateDefinitelyCorrupt(
                 validating: authorization.lifecycleToken
             ) {
-                try? await PairingInstallationGuard.resetAfterRemoteRevocationAsync(
-                    expectedState: authorization.state,
-                    lifecycleToken: authorization.lifecycleToken
-                )
-                return
+                reason = .stateCorrupt
+            } else {
+                reason = .stateUnavailable
             }
         } catch {
             // An unreadable protected file can be transient while the device
             // is locked or storage is unavailable. Preserve evidence and let
             // a later foreground sync retry instead of treating I/O as proof
             // of corruption.
+            reason = .stateUnavailable
         }
-        await revokeHandoffOrReset(authorization: authorization)
+        SharedLog.app.warning(
+            "moment-sharing",
+            "Local sharing state unavailable; pairing credentials retained for retry",
+            metadata: ["sharingFailureReason": reason.rawValue]
+        )
+        suspendHandoffForLocalFailure(
+            authorization: authorization,
+            reason: reason
+        )
     }
 
     private nonisolated static func isExpiredReservation(_ error: Error) -> Bool {
@@ -1963,6 +2174,15 @@ actor MomentSharingCoordinator {
             return false
         }
         return status == 410 && code == "reservation_expired"
+    }
+
+    private nonisolated static func isNonterminalAuthenticationFailure(
+        _ error: Error
+    ) -> Bool {
+        guard let error = error as? MomentSharingError,
+              case let .requestRejected(status, code, _) = error
+        else { return false }
+        return status == 401 && code == "invalid_authentication"
     }
 
     private nonisolated static func isReservationRetryLimit(_ error: Error) -> Bool {

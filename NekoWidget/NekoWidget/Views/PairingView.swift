@@ -52,6 +52,11 @@ struct PairingView: View {
                 Section("確認してください") {
                     Label(message, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
+                    if model.bootstrapRetryMessage != nil {
+                        Button("もう一度確認する") {
+                            Task { await model.bootstrap() }
+                        }
+                    }
                 }
             }
         }
@@ -60,6 +65,20 @@ struct PairingView: View {
         .task {
             await model.bootstrap()
             windowDisplayNameDraft = model.windowDisplayName
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.protectedDataDidBecomeAvailableNotification
+            )
+        ) { _ in
+            Task { await model.bootstrap() }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            Task { await model.bootstrap() }
         }
         .onChange(of: model.windowDisplayName) { _, value in
             windowDisplayNameDraft = value

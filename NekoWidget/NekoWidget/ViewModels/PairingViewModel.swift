@@ -16,6 +16,7 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var manualCheckSucceeded: Bool?
     @Published private(set) var operationCompletionMessage: String?
     @Published private(set) var operationErrorMessage: String?
+    @Published private(set) var bootstrapRetryMessage: String?
     @Published var enteredInvitationCode = ""
     @Published var hasConfirmedPhrase = false
 
@@ -23,6 +24,8 @@ final class PairingViewModel: ObservableObject {
     private let windowNameCoordinator: MomentSharingCoordinator
     private var api: (any PairingAPIClientProtocol)?
     private var didBootstrap = false
+    private var isBootstrapping = false
+    private var bootstrapRetryRequested = false
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
@@ -43,6 +46,7 @@ final class PairingViewModel: ObservableObject {
     var canEditWindowDisplayName: Bool { state?.role != .invitee }
     var userFacingStatusMessage: String? {
         if let operationErrorMessage { return operationErrorMessage }
+        if let bootstrapRetryMessage { return bootstrapRetryMessage }
         if let configurationMessage { return configurationMessage }
         // Build 34 and earlier could persist arbitrary relay text or a raw
         // Keychain status in lastError. Never render that legacy string.
@@ -76,9 +80,25 @@ final class PairingViewModel: ObservableObject {
 
     func bootstrap() async {
         guard !didBootstrap else { return }
-        didBootstrap = true
+        if isBootstrapping {
+            // Foreground and protected-data notifications can race the first
+            // bootstrap. Preserve one follow-up attempt instead of dropping
+            // the only signal that storage became readable.
+            bootstrapRetryRequested = true
+            return
+        }
+        isBootstrapping = true
+        defer {
+            isBootstrapping = false
+            let shouldRetry = bootstrapRetryRequested && !didBootstrap
+            bootstrapRetryRequested = false
+            if shouldRetry {
+                Task { await self.bootstrap() }
+            }
+        }
         do {
             let result = try await PairingInstallationGuard.bootstrapAsync()
+            bootstrapRetryMessage = nil
             if result.invalidatedPreviousInstallation {
                 configurationMessage = Self.message(for: .installationChanged)
             }
@@ -102,8 +122,23 @@ final class PairingViewModel: ObservableObject {
                 .contains(current.phase) {
                 await refresh(isManual: false)
             }
+            didBootstrap = true
+        } catch let error as PairingInstallationGuard.RetryableBootstrapError {
+            // Data Protection/Keychain availability is not a completed
+            // bootstrap. Keep this model eligible for the next foreground or
+            // protected-data notification instead of freezing an empty view.
+            didBootstrap = false
+            bootstrapRetryMessage = Self.userFacingMessage(for: error)
         } catch {
-            configurationMessage = Self.userFacingMessage(for: error)
+            if Self.isRetryableBootstrapCompletionError(error) {
+                didBootstrap = false
+                bootstrapRetryMessage =
+                    "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+            } else {
+                didBootstrap = true
+                bootstrapRetryMessage = nil
+                configurationMessage = Self.userFacingMessage(for: error)
+            }
         }
     }
 
@@ -560,10 +595,10 @@ final class PairingViewModel: ObservableObject {
                 || (current.role == .invitee
                     && Self.isExpiredEnrollment(pairingError)) {
                 do {
-                    let message = Self.isInvalidAuthentication(pairingError)
-                        ? "共有の有効期限が切れました。もう一度招待してください。"
-                        : Self.message(for: pairingError)
-                    try await resetLocalPairing(operation: operation, message: message)
+                    try await resetLocalPairing(
+                        operation: operation,
+                        message: Self.message(for: pairingError)
+                    )
                 } catch {
                     record(error, operation: operation)
                 }
@@ -846,16 +881,20 @@ final class PairingViewModel: ObservableObject {
         }
     }
 
-    private static func serverConfirmsPairingIsGone(_ error: PairingError) -> Bool {
+    private nonisolated static func serverConfirmsPairingIsGone(
+        _ error: PairingError
+    ) -> Bool {
         guard case let .requestRejected(status, code, _) = error else { return false }
-        return (status == 401 && code == "invalid_authentication")
-            || (status == 410 && code == "sharing_revoked")
+        return status == 410 && code == "sharing_revoked"
     }
 
-    private static func isInvalidAuthentication(_ error: PairingError) -> Bool {
-        guard case let .requestRejected(status, code, _) = error else { return false }
-        return status == 401 && code == "invalid_authentication"
+#if DEBUG
+    nonisolated static func runtimeServerConfirmsPairingIsGone(
+        _ error: PairingError
+    ) -> Bool {
+        serverConfirmsPairingIsGone(error)
     }
+#endif
 
     private static func isExpiredEnrollment(_ error: PairingError) -> Bool {
         guard case let .requestRejected(status, code, _) = error else { return false }
@@ -1189,6 +1228,10 @@ final class PairingViewModel: ObservableObject {
     }
 
     private static func userFacingMessage(for error: Error) -> String {
+        if let retryable = error as? PairingInstallationGuard.RetryableBootstrapError {
+            return retryable.errorDescription
+                ?? "共有の状態を一時的に確認できませんでした。もう一度お試しください。"
+        }
         if let pairingError = error as? PairingError {
             return message(for: pairingError)
         }
@@ -1197,6 +1240,46 @@ final class PairingViewModel: ObservableObject {
         }
         return "共有の状態を確認できませんでした。時間をおいて、もう一度お試しください。"
     }
+
+    private nonisolated static func isRetryableBootstrapCompletionError(
+        _ error: Error
+    ) -> Bool {
+        if error is PairingKeychainStore.RetryableReadError
+            || error is PairingStateStore.LoadError
+            || error is DecodingError
+            || error is SharingLifecycleGate.Error
+            || error is SharingSecureFile.Error {
+            return true
+        }
+        if let pairingError = error as? PairingError {
+            switch pairingError {
+            case .stateUnavailable, .keychainUnavailable:
+                return true
+            default:
+                return false
+            }
+        }
+        if let dailySharingError = error as? DailySharingError {
+            switch dailySharingError {
+            case .stateUnavailable, .stateChanged:
+                return true
+            default:
+                return false
+            }
+        }
+        let value = error as NSError
+        return value.domain == NSCocoaErrorDomain
+            || value.domain == NSPOSIXErrorDomain
+            || value.domain == NSOSStatusErrorDomain
+    }
+
+    #if DEBUG
+    nonisolated static func runtimeTestIsRetryableBootstrapCompletionError(
+        _ error: Error
+    ) -> Bool {
+        isRetryableBootstrapCompletionError(error)
+    }
+    #endif
 
     private static func message(for error: PairingError) -> String {
         error.errorDescription

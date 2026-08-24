@@ -1620,6 +1620,21 @@ final class AppViewModel: ObservableObject {
     }
 
     private func synchronizeMomentSharing(trigger: String) async {
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            // The room credential is intentionally WhenUnlockedThisDeviceOnly.
+            // A launch/prewarm can reach this task before protected data is
+            // readable; defer without asking the installation guard to
+            // interpret that temporary condition as credential loss.
+            SharedLog.app.warning(
+                "moment-sharing",
+                "Moment synchronization deferred",
+                metadata: [
+                    "trigger": String(trigger.prefix(32)),
+                    "sharingFailureReason": "protected-data-unavailable"
+                ]
+            )
+            return
+        }
         await momentSharingCoordinator.synchronize(trigger: trigger)
         guard !Task.isCancelled else { return }
         await refreshFamilyWindowOutputs(trigger: trigger)
@@ -1634,6 +1649,17 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshFamilyWindowOutputs(trigger: String) async {
+        guard UIApplication.shared.isProtectedDataAvailable else {
+            SharedLog.app.warning(
+                "moment-sharing",
+                "Family window presentation refresh deferred",
+                metadata: [
+                    "sharingFailureReason": "protected-data-unavailable",
+                    "trigger": String(trigger.prefix(32))
+                ]
+            )
+            return
+        }
         familyWindowRefreshSequence += 1
         let refreshSequence = familyWindowRefreshSequence
         // The durable sharing ledger may already have hidden, revoked or

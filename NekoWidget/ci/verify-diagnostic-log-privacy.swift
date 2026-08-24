@@ -98,6 +98,7 @@ private struct DiagnosticLogPrivacyVerifier {
             "visibleLiked": "1",
             "priority": "true",
             "pass": "localRecovery512",
+            "sharingFailureReason": "keychain-protected-data-unavailable",
             "status": "limited",
             "photoSource": "family-window",
             "action": "liked",
@@ -121,6 +122,7 @@ private struct DiagnosticLogPrivacyVerifier {
             "priority": "true",
             "requestedPixels": "1024x1024",
             "sharedLiked": "2",
+            "sharingFailureReason": "keychain-protected-data-unavailable",
             "source": "interactive-widget",
             "status": "limited",
             "visibleLiked": "1",
@@ -131,6 +133,7 @@ private struct DiagnosticLogPrivacyVerifier {
             "networkAllowed": "true\ntoken=SUPERSECRET",
             "asset": "SUPERSECRET",
             "outputPixels": "2048x1536?token=SUPERSECRET",
+            "sharingFailureReason": "raw-error-/private/var/mobile/secret",
         ])
         try expect(
             malformedKnownFields.isEmpty,

@@ -345,7 +345,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func sendOutbox(",
         )
         self.assertIn("MomentSharingError.reportOnly", report_only_name_guard)
-        self.assertIn("resetAfterRemoteRevocationAsync", report_only_name_guard)
+        self.assertIn("resetLocalPairing", report_only_name_guard)
+        self.assertIn(".reportOnlyWindowClosed", report_only_name_guard)
         reset = section(
             pairing_view_model,
             "private func resetLocalPairing(",
@@ -528,6 +529,95 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("相手が見ました", family_model)
         self.assertNotIn("相手が受け取りました", family_model)
 
+    def test_retryable_pairing_bootstrap_is_retried_after_data_protection(self) -> None:
+        pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        pairing_view = source("NekoWidget/Views/PairingView.swift")
+        pairing_store = source("Shared/Sharing/PairingKeychainStore.swift")
+        pairing_guard = source("NekoWidget/Services/PairingInstallationGuard.swift")
+        lifecycle = source("Shared/Storage/AtomicJSON.swift")
+        bootstrap = section(
+            pairing_model,
+            "func bootstrap() async",
+            "/// Updates presentation metadata only.",
+        )
+        self.assertIn("guard !didBootstrap else", bootstrap)
+        self.assertIn("if isBootstrapping", bootstrap)
+        self.assertIn("PairingInstallationGuard.RetryableBootstrapError", bootstrap)
+        self.assertIn("didBootstrap = false", bootstrap)
+        self.assertIn("bootstrapRetryMessage", bootstrap)
+        self.assertGreater(
+            bootstrap.rindex("didBootstrap = true"),
+            bootstrap.index("restoreInvitationCodeIfAvailable"),
+        )
+        self.assertIn("isRetryableBootstrapCompletionError", bootstrap)
+        self.assertIn(
+            "UIApplication.protectedDataDidBecomeAvailableNotification",
+            pairing_view,
+        )
+        self.assertIn("UIApplication.didBecomeActiveNotification", pairing_view)
+        pairing_decode = section(
+            pairing_store,
+            "private static func decodedStateWithNormalizedDiagnostics",
+            "/// Physical cleanup is allowed only",
+        )
+        self.assertIn("data = try Data(contentsOf: url)", pairing_decode)
+        self.assertNotIn("FileManager.default.fileExists", pairing_decode)
+        self.assertIn("SharingFileReadFailureClassifier.disposition", pairing_decode)
+        self.assertLess(pairing_decode.index("throw error"), pairing_decode.index("let decoder"))
+        self.assertIn("throw LoadError.invalidState", pairing_decode)
+        self.assertIn("readLocalMarkerForBootstrap()", pairing_guard)
+        self.assertIn('"installation-marker-read-unavailable"', pairing_guard)
+        marker_read = section(
+            pairing_guard,
+            "private static func readLocalMarker()",
+            "private static func readLocalMarkerForBootstrap()",
+        )
+        self.assertIn("let data: Data", marker_read)
+        self.assertIn("String(data: data, encoding: .utf8)", marker_read)
+        self.assertNotIn("fileExists", marker_read)
+        self.assertIn("SharingFileReadFailureClassifier.disposition", marker_read)
+        epoch_read = section(
+            lifecycle,
+            "static func currentEpochWhileLocked() throws -> Int",
+            "/// Repairs only bytes",
+        )
+        self.assertIn("let data: Data", epoch_read)
+        self.assertIn("throw Error.unavailable", epoch_read)
+        self.assertIn("throw Error.corrupted", epoch_read)
+        self.assertNotIn("fileExists", epoch_read)
+        self.assertIn("recoverCorruptedEpochWhileLocked", lifecycle)
+        self.assertIn("lifecycle-state-recovered", pairing_guard)
+        self.assertIn("bootstrapRetryRequested", pairing_model)
+        self.assertIn("error is SharingSecureFile.Error", pairing_model)
+        self.assertIn("case .stateUnavailable, .stateChanged:", pairing_model)
+        self.assertIn("もう一度確認する", pairing_view)
+
+        terminal_classifier = section(
+            pairing_model,
+            "private nonisolated static func serverConfirmsPairingIsGone",
+            "#if DEBUG",
+        )
+        self.assertIn('status == 410 && code == "sharing_revoked"', terminal_classifier)
+        self.assertNotIn("invalid_authentication", terminal_classifier)
+
+    def test_report_window_closed_reset_keeps_report_route_provenance(self) -> None:
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        synchronize = section(
+            coordinator,
+            "private func performSynchronization(trigger: String) async",
+            "func synchronizationNotice()",
+        )
+        report_outbox = section(
+            coordinator,
+            "private func sendReportOutbox(",
+            "private func finalizeCommittedReport(",
+        )
+        self.assertIn("BackgroundSynchronizationTermination", synchronize)
+        self.assertNotIn("Self.isReportWindowClosed(error)", synchronize)
+        self.assertIn("Self.isReportWindowClosed(error)", report_outbox)
+        self.assertIn(".reportOnlyWindowClosed", report_outbox)
+        self.assertIn("resetLocalPairing", report_outbox)
+
     def test_foreground_sync_reloads_an_open_window_without_network_loop(self) -> None:
         app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
         family_model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
@@ -536,6 +626,22 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             app_model,
             "private func synchronizeMomentSharing(trigger: String) async",
             "func refreshFamilyWindowOutputs(trigger: String) async",
+        )
+        self.assertIn("UIApplication.shared.isProtectedDataAvailable", synchronize)
+        self.assertIn('"protected-data-unavailable"', synchronize)
+        self.assertLess(
+            synchronize.index("isProtectedDataAvailable"),
+            synchronize.index("momentSharingCoordinator.synchronize"),
+        )
+        refresh = section(
+            app_model,
+            "func refreshFamilyWindowOutputs(trigger: String) async",
+            "private nonisolated static func familyWindowInputs",
+        )
+        self.assertIn("UIApplication.shared.isProtectedDataAvailable", refresh)
+        self.assertLess(
+            refresh.index("isProtectedDataAvailable"),
+            refresh.index("PairingInstallationGuard.bootstrapAsync"),
         )
         self.assertIn(".momentSharingContentNeedsReload", synchronize)
         self.assertIn(".momentSharingContentNeedsReload", family_view)

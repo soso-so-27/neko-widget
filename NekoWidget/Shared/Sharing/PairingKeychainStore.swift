@@ -9,6 +9,46 @@ enum PairingKeychainStore {
     private static let service = "jp.nekowidget.sharing.credentials.v2.host"
     private static let legacySharedService = "jp.nekowidget.sharing.credentials.v1"
 
+    /// A Keychain read is destructive only when the item is conclusively
+    /// absent. Data Protection and Keychain daemon availability failures do
+    /// not prove that the credential is missing or malformed.
+    enum ReadFailureReason: String, Equatable, Sendable {
+        case protectedDataUnavailable = "keychain-protected-data-unavailable"
+        case keychainUnavailable = "keychain-unavailable"
+    }
+
+    struct RetryableReadError: LocalizedError, Equatable, Sendable {
+        let reason: ReadFailureReason
+
+        var errorDescription: String? {
+            "共有鍵を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+        }
+    }
+
+    enum ReadStatusDisposition: Equatable, Sendable {
+        case success
+        case missing
+        case retryable(ReadFailureReason)
+    }
+
+    /// Pure status classification used by bootstrap and DEBUG runtime tests.
+    /// No raw OSStatus leaves this boundary for a read availability failure.
+    static func readStatusDisposition(_ status: OSStatus) -> ReadStatusDisposition {
+        switch status {
+        case errSecSuccess:
+            return .success
+        case errSecItemNotFound:
+            return .missing
+        case errSecInteractionNotAllowed, errSecNotAvailable:
+            return .retryable(.protectedDataUnavailable)
+        default:
+            // An unexpected Keychain failure is still not evidence that the
+            // item is absent. Keep the credential/state and let a later read
+            // retry; explicit decode and binding failures remain fail-closed.
+            return .retryable(.keychainUnavailable)
+        }
+    }
+
     static func save(
         _ credential: PairingCredential,
         lifecycleToken: SharingLifecycleGate.Token
@@ -56,10 +96,13 @@ enum PairingKeychainStore {
 
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess else {
-            throw status == errSecItemNotFound
-                ? PairingError.malformedCredential
-                : PairingError.keychainUnavailable(status)
+        switch readStatusDisposition(status) {
+        case .success:
+            break
+        case .missing:
+            throw PairingError.malformedCredential
+        case let .retryable(reason):
+            throw RetryableReadError(reason: reason)
         }
         guard let data = result as? Data else {
             throw PairingError.malformedCredential
@@ -149,6 +192,13 @@ enum PairingKeychainStore {
 }
 
 enum PairingStateStore {
+    /// Positive proof that readable pairing-state bytes failed the closed
+    /// schema or cryptographic validation. Availability failures retain their
+    /// original error and can never authorize credential deletion.
+    enum LoadError: Error, Equatable, Sendable {
+        case invalidState
+    }
+
     struct OperationSnapshot: Sendable {
         let lifecycleToken: SharingLifecycleGate.Token
         let state: PairingState?
@@ -181,24 +231,38 @@ enum PairingStateStore {
         guard let url = SharedContainer.pairingStateURL else {
             throw PairingError.stateUnavailable
         }
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
+                throw error
+            }
             return (nil, false)
         }
-        var value = try AtomicJSON.read(PairingState.self, from: url)
-        var didNormalize = false
-        if value.storageRevision == nil {
-            value.storageRevision = 0
-            didNormalize = true
+        // Keep filesystem access outside the integrity catch. Data Protection,
+        // App Group availability, and storage I/O do not prove corruption.
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            var value = try decoder.decode(PairingState.self, from: data)
+            var didNormalize = false
+            if value.storageRevision == nil {
+                value.storageRevision = 0
+                didNormalize = true
+            }
+            let normalizedLastError = DiagnosticLogPrivacy.normalizedPairingLastError(
+                value.lastError
+            )
+            if value.lastError != normalizedLastError {
+                value.lastError = normalizedLastError
+                didNormalize = true
+            }
+            value = try value.validated()
+            return (value, didNormalize)
+        } catch {
+            throw LoadError.invalidState
         }
-        let normalizedLastError = DiagnosticLogPrivacy.normalizedPairingLastError(
-            value.lastError
-        )
-        if value.lastError != normalizedLastError {
-            value.lastError = normalizedLastError
-            didNormalize = true
-        }
-        value = try value.validated()
-        return (value, didNormalize)
     }
 
     /// Physical cleanup is allowed only while the caller owns the pairing

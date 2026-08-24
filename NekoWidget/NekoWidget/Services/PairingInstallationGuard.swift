@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Binds sharing credentials to this installation. Keychain items can survive
@@ -5,6 +6,31 @@ import Foundation
 /// current installation is authorized to reuse a room key.
 enum PairingInstallationGuard {
     private static let markerFileName = "sharing-installation-marker.v1"
+
+    enum RetryableBootstrapReason: String, Equatable, Sendable {
+        case installationMarkerReadUnavailable =
+            "installation-marker-read-unavailable"
+        case lifecycleStateUnavailable = "lifecycle-state-unavailable"
+        case pairingStateProtectedDataUnavailable =
+            "pairing-state-protected-data-unavailable"
+        case pairingStateReadUnavailable = "pairing-state-read-unavailable"
+        case keychainProtectedDataUnavailable =
+            "keychain-protected-data-unavailable"
+        case keychainUnavailable = "keychain-unavailable"
+    }
+
+    struct RetryableBootstrapError: LocalizedError, Equatable, Sendable {
+        let reason: RetryableBootstrapReason
+
+        var errorDescription: String? {
+            "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+        }
+    }
+
+    enum PairingStateLoadFailureDisposition: Equatable, Sendable {
+        case failClosed
+        case retryable(RetryableBootstrapReason)
+    }
 
     struct BootstrapResult: Sendable {
         let state: PairingState
@@ -56,9 +82,21 @@ enum PairingInstallationGuard {
     }
 
     private static func bootstrapWhileLocked() throws -> BootstrapResult {
-        if SharingLifecycleGate.isCleanupRequired {
-            let marker = try readLocalMarker() ?? UUID().uuidString
-            if try readLocalMarker() == nil { try writeLocalMarker(marker) }
+        let cleanupRequired: Bool
+        do {
+            cleanupRequired = try SharingLifecycleGate.cleanupRequiredWhileLocked()
+        } catch {
+            throw deferredBootstrapError(reason: .lifecycleStateUnavailable)
+        }
+        if cleanupRequired {
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap reset",
+                metadata: ["sharingFailureReason": "cleanup-resume-required"]
+            )
+            let existingMarker = try readLocalMarkerForBootstrap()
+            let marker = existingMarker ?? UUID().uuidString
+            if existingMarker == nil { try writeLocalMarker(marker) }
             let reset = try performCleanupWhileLocked(
                 marker: marker,
                 message: "共有の削除処理を完了しました。もう一度招待できます。"
@@ -70,10 +108,15 @@ enum PairingInstallationGuard {
             )
         }
         let existingState = try? PairingStateStore.load()
-        guard let marker = try readLocalMarker() else {
+        guard let marker = try readLocalMarkerForBootstrap() else {
             // A missing ordinary-container marker means first install or
             // reinstall. In both cases all App Group/Keychain remnants are
             // untrusted and must be removed before any network operation.
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap reset",
+                metadata: ["sharingFailureReason": "installation-marker-missing"]
+            )
             let newMarker = UUID().uuidString
             try writeLocalMarker(newMarker)
             let state = try performCleanupWhileLocked(marker: newMarker, message: nil)
@@ -86,33 +129,53 @@ enum PairingInstallationGuard {
 
         do {
             _ = try SharingLifecycleGate.currentEpochWhileLocked()
+        } catch SharingLifecycleGate.Error.corrupted {
+            do {
+                _ = try SharingLifecycleGate.recoverCorruptedEpochWhileLocked()
+                SharedLog.app.warning(
+                    "pairing",
+                    "Pairing lifecycle epoch recovered without changing credentials",
+                    metadata: ["sharingFailureReason": "lifecycle-state-recovered"]
+                )
+            } catch {
+                throw deferredBootstrapError(reason: .lifecycleStateUnavailable)
+            }
         } catch {
-            let reset = try performCleanupWhileLocked(
-                marker: marker,
-                message: "共有の保護状態を復旧しました。もう一度招待してください。"
-            )
-            return BootstrapResult(
-                state: reset,
-                lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
-                invalidatedPreviousInstallation: true
-            )
+            // Availability is not proof of corruption. Preserve the credential
+            // and retry after Data Protection/App Group access recovers.
+            throw deferredBootstrapError(reason: .lifecycleStateUnavailable)
         }
 
         let loadedState: PairingState?
         do {
             loadedState = try PairingStateStore.load()
         } catch {
-            let reset = try performCleanupWhileLocked(marker: marker, message: nil)
-            return BootstrapResult(
-                state: reset,
-                lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
-                invalidatedPreviousInstallation: true
-            )
+            switch pairingStateLoadFailureDisposition(error) {
+            case .failClosed:
+                SharedLog.app.warning(
+                    "pairing",
+                    "Pairing bootstrap reset",
+                    metadata: ["sharingFailureReason": "pairing-state-invalid"]
+                )
+                let reset = try performCleanupWhileLocked(marker: marker, message: nil)
+                return BootstrapResult(
+                    state: reset,
+                    lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
+                    invalidatedPreviousInstallation: true
+                )
+            case let .retryable(reason):
+                throw deferredBootstrapError(reason: reason)
+            }
         }
 
         guard let state = loadedState else {
             // Orphaned Keychain items have no non-secret state binding them to
             // a space. Delete only this app's sharing service.
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap reset",
+                metadata: ["sharingFailureReason": "pairing-state-missing"]
+            )
             let state = try performCleanupWhileLocked(marker: marker, message: nil)
             return BootstrapResult(
                 state: state,
@@ -122,6 +185,11 @@ enum PairingInstallationGuard {
         }
 
         guard state.installationMarker == marker else {
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap reset",
+                metadata: ["sharingFailureReason": "installation-marker-mismatch"]
+            )
             let reset = try performCleanupWhileLocked(marker: marker, message: nil)
             return BootstrapResult(
                 state: reset,
@@ -134,6 +202,13 @@ enum PairingInstallationGuard {
             // create/join writes Keychain before publishing its state binding.
             // A crash between those two writes can therefore leave an orphan;
             // an explicitly unpaired state proves no sharing credential is live.
+            SharedLog.app.info(
+                "pairing",
+                "Pairing bootstrap cleanup",
+                metadata: [
+                    "sharingFailureReason": "unpaired-credential-orphan-cleanup"
+                ]
+            )
             try PairingKeychainStore.deleteAllSharingCredentials()
         }
 
@@ -143,17 +218,54 @@ enum PairingInstallationGuard {
                     account: account,
                     installationMarker: marker
                 )
-            } catch {
+            } catch let error as PairingKeychainStore.RetryableReadError {
+                throw deferredBootstrapError(
+                    reason: error.reason == .protectedDataUnavailable
+                        ? .keychainProtectedDataUnavailable
+                        : .keychainUnavailable
+                )
+            } catch let error as PairingError {
+                let resetMessage: String
+                switch error {
+                case .malformedCredential:
+                    SharedLog.app.warning(
+                        "pairing",
+                        "Pairing bootstrap reset",
+                        metadata: [
+                            "sharingFailureReason": "credential-missing-or-malformed"
+                        ]
+                    )
+                    resetMessage = error.errorDescription
+                        ?? "保存されている共有鍵を確認できません。再招待が必要です。"
+                case .installationChanged:
+                    SharedLog.app.warning(
+                        "pairing",
+                        "Pairing bootstrap reset",
+                        metadata: [
+                            "sharingFailureReason": "credential-installation-mismatch"
+                        ]
+                    )
+                    resetMessage = error.errorDescription
+                        ?? "保存されている共有鍵を確認できません。再招待が必要です。"
+                default:
+                    // A Keychain access failure is not proof that the item is
+                    // absent. Preserve both the credential and PairingState.
+                    throw deferredBootstrapError(reason: .keychainUnavailable)
+                }
                 let reset = try performCleanupWhileLocked(
                     marker: marker,
-                    message: PairingError.malformedCredential.errorDescription
-                        ?? "保存されている共有鍵を確認できません。再招待が必要です。"
+                    message: resetMessage
                 )
                 return BootstrapResult(
                     state: reset,
                     lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
                     invalidatedPreviousInstallation: true
                 )
+            } catch {
+                // Credential decoding is normalized to malformedCredential by
+                // PairingKeychainStore. Anything else is availability-unknown
+                // and therefore retryable rather than destructive.
+                throw deferredBootstrapError(reason: .keychainUnavailable)
             }
         }
         return BootstrapResult(
@@ -161,6 +273,99 @@ enum PairingInstallationGuard {
             lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
             invalidatedPreviousInstallation: false
         )
+    }
+
+    /// Pure failure classification. Decode/validation failures prove that the
+    /// persisted state cannot safely authorize sharing. File access failures,
+    /// including Data Protection, preserve the state for a later retry.
+    static func pairingStateLoadFailureDisposition(
+        _ error: Error
+    ) -> PairingStateLoadFailureDisposition {
+        if error is DecodingError || error is PairingStateStore.LoadError {
+            return .failClosed
+        }
+        return .retryable(
+            isProtectedDataReadFailure(error)
+                ? .pairingStateProtectedDataUnavailable
+                : .pairingStateReadUnavailable
+        )
+    }
+
+    private static func isProtectedDataReadFailure(
+        _ error: Error,
+        recursionDepth: Int = 0
+    ) -> Bool {
+        guard recursionDepth < 4 else { return false }
+        let value = error as NSError
+        if value.domain == NSCocoaErrorDomain,
+           value.code == CocoaError.Code.fileReadNoPermission.rawValue {
+            return true
+        }
+        if value.domain == NSPOSIXErrorDomain,
+           value.code == Int(EACCES) || value.code == Int(EPERM) {
+            return true
+        }
+        if let underlying = value.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isProtectedDataReadFailure(
+                underlying,
+                recursionDepth: recursionDepth + 1
+            )
+        }
+        return false
+    }
+
+    private static func deferredBootstrapError(
+        reason: RetryableBootstrapReason
+    ) -> RetryableBootstrapError {
+        switch reason {
+        case .installationMarkerReadUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: [
+                    "sharingFailureReason": "installation-marker-read-unavailable"
+                ]
+            )
+        case .lifecycleStateUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: [
+                    "sharingFailureReason": "lifecycle-state-unavailable"
+                ]
+            )
+        case .pairingStateProtectedDataUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: [
+                    "sharingFailureReason": "pairing-state-protected-data-unavailable"
+                ]
+            )
+        case .pairingStateReadUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: [
+                    "sharingFailureReason": "pairing-state-read-unavailable"
+                ]
+            )
+        case .keychainProtectedDataUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: [
+                    "sharingFailureReason": "keychain-protected-data-unavailable"
+                ]
+            )
+        case .keychainUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: ["sharingFailureReason": "keychain-unavailable"]
+            )
+        }
+        return RetryableBootstrapError(reason: reason)
     }
 
     /// Called only after an authenticated sharing endpoint proves this member
@@ -287,11 +492,28 @@ enum PairingInstallationGuard {
 
     private static func readLocalMarker() throws -> String? {
         let url = try markerURL()
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let value = try String(contentsOf: url, encoding: .utf8)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
+                throw error
+            }
+            return nil
+        }
+        guard let decoded = String(data: data, encoding: .utf8) else { return nil }
+        let value = decoded
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard UUID(uuidString: value) != nil else { return nil }
         return value
+    }
+
+    private static func readLocalMarkerForBootstrap() throws -> String? {
+        do {
+            return try readLocalMarker()
+        } catch {
+            throw deferredBootstrapError(reason: .installationMarkerReadUnavailable)
+        }
     }
 
     private static func writeLocalMarker(_ marker: String) throws {
