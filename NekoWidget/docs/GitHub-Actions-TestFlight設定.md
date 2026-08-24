@@ -2,13 +2,14 @@
 
 ## 役割分担
 
-3つのworkflowをリポジトリルートの`.github/workflows`に置いている。
+4つの主要workflowをリポジトリルートの`.github/workflows`に置いている。
 
 - `ios-build.yml`：push、pull request、手動実行で、AppとWidgetをiOS Simulator向けに無署名ビルドする。これはSwiftのコンパイル検査であり、実機用entitlementや配布署名の正しさまでは保証しない。
 - `ios-scale.yml`：手動実行で、1,000〜3,000枚のSimulatorスケールテストとプロセスメモリ計測を行う。通常は繰り返し実行しない。
+- `app-store-screenshots.yml`：手動実行だけで、消去済みの6.9-inch iPhone Simulatorから共有OFFの日本語候補5枚を作る。AppleやApp Store Connectへ接続・uploadしない。
 - `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA exportを行う。既定は共有を完全に無効化する`disabled`で、静的な画面確認だけの`review-preview`、写真なしの内部試験だけの`pairing-only`、本人2台の一枚共有だけの`media-staging`を明示的に分離する。`upload_to_testflight`がtrueのときだけApp Store Connectで検証し、TestFlightへuploadする。GitHub Environment `testflight`を使う。
 
-2026年4月28日以降のアップロード要件に合わせ、3つとも`macos-15` runner上のXcode 26.3を明示している。runnerからこのXcodeが削除された場合は、GitHub runner imageの一覧とAppleの提出要件を確認して`DEVELOPER_DIR`を更新する。
+2026年4月28日以降のアップロード要件に合わせ、4つとも`macos-15` runner上のXcode 26.3を明示している。runnerからこのXcodeが削除された場合は、GitHub runner imageの一覧とAppleの提出要件を確認して`DEVELOPER_DIR`を更新する。
 
 ## APIキーとコード署名は別物
 
@@ -100,6 +101,17 @@ Windowsでは秘密値をconsoleやtext fileへ出さず、[Apple Developer署�
 7. signing-onlyが成功したらApp Store ConnectのアプリレコードとAPI Keyを確認し、`upload_to_testflight = true`、`retain_signed_artifacts = true`で実行する。
 8. archive、IPA export、validate、uploadの順に成功したことをログで確認する。
 9. App Store Connect側の処理完了を待つ。workflow成功はアップロード受付までであり、Apple側の処理や輸出コンプライアンス回答、TestFlightグループへの配布までは自動化しない。
+
+### App Storeスクリーンショット候補
+
+Actionsの`Capture privacy-safe App Store screenshots`は必要な候補を更新するときだけ手動実行する。
+成功時の`app-store-screenshots-<run>-<attempt>`は、5枚のJPEG、pixel size・SHA-256・metadata検査を
+記録したmanifest、撮影端末、Xcode versionを14日保存する。成果物は撮影候補であり、Content Rights、
+最終Buildとの一致、caption、順序、App Store Connectへの登録を自動承認しない。
+
+失敗時の`app-store-screenshot-failure-<run>-<attempt>`は、log、終了code、選択Simulator、Xcode versionと、
+`.xcresult`から抽出したnamed attachmentだけを7日保存する。個人写真をimportせず、巨大なraw `.xcresult`は
+artifactへ残さない。実行・確認手順は[App Storeスクリーンショット撮影](App-Store-スクリーンショット撮影.md)を正本とする。
 
 ### 2026-08-24の直近記録
 

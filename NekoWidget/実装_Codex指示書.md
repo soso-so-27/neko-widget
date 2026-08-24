@@ -82,7 +82,7 @@ Build 5の実機確認後、常設のぼかし帯が没入感を損なうと判�
 
 ### 1-9. Build 8の計測修復、Build 9のTimeline修復、Build 10の標準ページング
 
-- 製品表示名は`ねこのまど`、App Store Connectのアプリ名は`ねこのまど - 猫の写真ウィジェット`とする。App Store Connectの既存レコード名はコード変更とは別に手動更新する。
+- 製品表示名とApp Store Connectのアプリ名はどちらも`ねこのまど`とする。App Store Connectの既存レコード名はコード変更とは別に手動確認する。
 - Widget App IntentはApp GroupのLikeストアへ原子的に保存する。アプリは起動、フォアグラウンド復帰、Deep Link時にLikeストアを読み、更新済みsnapshot全体を再代入してSwiftUIへ通知する。再スキャンを表示同期の条件にしない。
 - 実機ゲートは、Widget肉球ON→アプリを開く（手動スキャン操作なし）→総数+1／一覧／likedAt、Widgetへ戻りOFF→アプリで総数-1／一覧から消える、の順で行う。診断ログのLike同期がscan startより前であることも確認する。これは計測開始条件ではなく、Like同期の通常の機能ゲートである。
 - Build 9はmanifest最大20件を維持し、providerが時刻anchor基準の最大2件だけを返す。Build 10は写真ブラウザをOS標準ページングへ直し、ページ集合の入れ替えによる操作感悪化を解消する。CIの1枚5MiB／family別2件10MiBは静的予算であり、Widget Extension全体の実peak 30MiB未満を保証しない。実機ではSmall→Medium→Largeを段階配置し、20分切り替え、次pair取得、肉球操作でplaceholder化・再読込ループ・クラッシュがないこと、写真ブラウザが898件でも初期表示で固まらないこと、TestFlight crash／iOS AnalyticsにJetsamがないことを確認する。

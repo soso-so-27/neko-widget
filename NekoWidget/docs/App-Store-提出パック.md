@@ -2,7 +2,7 @@
 
 最終更新: 2026-08-24
 
-この文書は、`ねこのまど - 猫の写真ウィジェット`をApp Store Connectへ提出する前に、
+この文書は、`ねこのまど`をApp Store Connectへ提出する前に、
 実装、公開文書、審査情報、運用を同じrelease境界で照合するための作業用正本である。
 現時点の本人所有2台による内部TestFlight確認は、一般向けTestFlight、App Store審査提出、
 一般公開の完了を意味しない。
@@ -226,22 +226,22 @@ GitHub Pagesの[共有ベータ版](https://soso-so-27.github.io/neko-widget/)�
 
 | 用途 | 完全ローカル版のexact URL候補 | 現在の状態 |
 | --- | --- | --- |
-| 製品案内／Marketing URL候補 | `https://soso-so-27.github.io/neko-widget/app/` | 公開・HTTPS `200`確認済み／Connect入力未確認 |
+| Marketing URL | 空欄 | local-only metadataの正本どおり。`/app/`は提出準備状況を示すpolicy landingであり、Marketing URLへ流用しない |
 | Privacy Policy URL | `https://soso-so-27.github.io/neko-widget/app/privacy/` | 公開・HTTPS `200`確認済み／非公開のprivacy連絡先未掲載／Connect入力未確認 |
 | Support URL | `https://soso-so-27.github.io/neko-widget/app/support/` | 公開・HTTPS `200`確認済み／非公開のprivacy連絡先未掲載／Connect入力未確認 |
 
 PR23の配備と自動監視は完了したが、Connect入力と提出条件は別の手動gateである。提出前にさらに次を満たす。
 
 - 選択AはHTTPSのPrivacy PolicyとSupport、選択BはさらにCommunity Standardsを公開し、exact URLとdeployed commitを記録する。
-- 「家族のまど」を製品語の「名前付きの非公開なまど」へ揃える。
-- 保存期間、通報の例外、再インストール、bookmark、Photos／iCloud非保存を最終buildと一致させる。
+- 選択Bだけは、「家族のまど」を製品語の「名前付きの非公開なまど」へ揃える。
+- 選択Bだけは、保存期間、通報の例外、再インストール、bookmark、Photos／iCloud非保存を最終buildと一致させる。
 - AppleのPlatform version informationに従い、Support URLへ利用者とAppleが実際に連絡できる
   email、電話、または応答可能なHTTPS form等の連絡先情報を掲載する。GitHub Issuesへの誘導だけ、
   placeholder、または「窓口未掲載」の表示では完了にしない。
-- 48時間以内の初回確認を公開する場合、休日を含む実運用で履行できる。
-- 個人写真、招待code、12語、暗号鍵を公開問い合わせへ添付しない注意を維持する。
+- 選択Bで48時間以内の初回確認を公開する場合、休日を含む実運用で履行できる。
+- 選択を問わず、個人写真や個人情報を公開問い合わせへ添付しない注意を維持する。選択Bではさらに、招待code、12語、暗号鍵を添付しない。
 
-Apple Guideline 1.2は、UGCを扱うAppへ投稿前filter、通報と適時対応、abusive userのblock、
+選択Bについて、Apple Guideline 1.2はUGCを扱うAppへ投稿前filter、通報と適時対応、abusive userのblock、
 公開連絡先を求める。
 
 - [Apple: App Review Guidelines 1.2](https://developer.apple.com/app-store/review/guidelines/)
@@ -301,19 +301,18 @@ portrait accepted sizeには`1260 x 2736`、`1290 x 2796`、`1320 x 2868`があ�
 - [Apple: Screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
 - [Apple: Upload app previews and screenshots](https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots)
 
-### 5.1 推奨shot list
+### 5.1 選択Aの5枚
 
-| 順 | 伝える内容 | 画面候補 | 注意 |
+| 順 | ファイル | 実際に示す機能 | 注意 |
 | --- | --- | --- | --- |
-| 1 | 猫の写真を毎日のWidgetへ | App homeと代表Widget | 個人のホーム画面通知を写さない |
-| 2 | 写真はiPhoneの中で見つける | onboarding／写真処理説明 | serverへ全libraryを送ると誤認させない |
-| 3 | 好きな一枚を残して振り返る | 写真詳細、肉球、履歴 | 内部diagnostic語を写さない |
-| 4 | 名前付きの非公開なまど | まどhome、一般的なまど名 | 招待code、12語、個人名を写さない |
-| 5 | 選んだ一枚だけを届ける | host appの送信確認 | 送信前確認と2,048px／metadata除去を正確に表現 |
-| 6 | 届いた一枚をWidgetにも | 受信履歴と共有Widget | push通知があるように表現しない |
-| 7 | 通報・block・共有解除 | 安全設定menu | 違反写真そのものを載せない |
+| 1 | `01-local-cat-widget.jpg` | Widget Galleryで実際のWidget Extensionが描くローカル猫写真Widget | 個人のホーム画面や通知を写さない |
+| 2 | `02-local-photo-window.jpg` | 端末内で選ばれた「思い出の一枚」と肉球 | 共有写真や内部diagnostic語を写さない |
+| 3 | `03-organized-memories.jpg` | 撮影年や端末内解析から作る「思い出」 | serverへ写真libraryを送ると誤認させない |
+| 4 | `04-liked-photos.jpg` | 利用者が肉球で残した「これ好き」 | 写真送信や共有履歴として表現しない |
+| 5 | `05-on-device-photo-privacy.jpg` | 端末内解析と開発者serverへの自動送信なし | 許可前の説明と最終buildを一致させる |
 
-選択Aでは4〜7を削除する。選択Bでも、最終buildにない画面や将来機能を掲載しない。
+選択Bで共有を提出する場合に限り、名前付きの非公開なまど、一枚送信、受信Widget、通報・block・
+共有解除を別候補として検討する。選択Aへ共有画面を混ぜず、選択Bでも最終buildにない画面や将来機能を掲載しない。
 
 ### 5.2 撮影・権利チェック
 
@@ -322,8 +321,8 @@ portrait accepted sizeには`1260 x 2736`、`1290 x 2796`、`1320 x 2868`があ�
 アップロードせず、成功後もownerの目視・Content Rights・最終Build一致の承認を必要とする。
 
 - `【本人入力】` 最終caption、順序、localizationを承認した。
-- `【本人入力】` 使用する猫写真の権利とlicense証跡を確認した。
-- CIのCC0 fixtureまたは同等の公開可能fixtureだけを使う。
+- `【本人入力】` 使用する猫イラストと画面素材の権利を確認した。
+- workflowがCore Graphicsで描く決定的な猫イラスト、または権利を確認済みの公開可能素材だけを使う。
 - 人物、住所、位置情報、通知、Apple Account、email、端末名を写さない。
 - TestFlight表示、内部Build表示、debug menu、staging hostを写さない。
 - 招待code、QR、12語、暗号鍵、通報case IDを写さない。
@@ -374,7 +373,7 @@ App targetとShare Extensionの`ITSAppUsesNonExemptEncryption`は現在`false`�
 
 | 項目 | 値 |
 | --- | --- |
-| App name | `ねこのまど - 猫の写真ウィジェット` |
+| App name | `ねこのまど` |
 | Bundle ID | `jp.nekowidget.app` |
 | SKU | `jp.nekowidget.app.2026` |
 | Platform | iOS / iPhone only |
@@ -388,7 +387,7 @@ App名、Bundle ID、SKUは署名準備の記録を正本とする。App Store C
 - [ ] `【本人入力】` Primary language
 - [ ] `【本人入力】` Primary category
 - [ ] `【本人入力】` Secondary categoryまたはなし
-- [ ] `【本人入力】` Content Rights。利用者写真とmarketing fixtureの権利を含む
+- [ ] `【本人入力】` Content Rights。利用者が端末内で表示する写真とスクリーンショット用猫イラストの権利境界を含む
 - [ ] `【本人入力】` Made for Kids
 - [ ] `【Connect確認】` Age Rating questionnaireと地域別結果
 - [ ] `【本人入力】` License Agreement。標準EULAまたはcustom EULA
@@ -407,13 +406,13 @@ AppleのApp Information reference:
 - [ ] `【本人入力】` Promotional Textまたは空欄
 - [ ] `【本人入力 / 非公開問い合わせ窓口の掲載後】` Support URL: `https://soso-so-27.github.io/neko-widget/app/support/`
 - [ ] `【本人入力 / 非公開問い合わせ窓口の掲載後】` Privacy Policy URL: `https://soso-so-27.github.io/neko-widget/app/privacy/`
-- [ ] `【本人入力】` Marketing URL候補: `https://soso-so-27.github.io/neko-widget/app/`、または空欄
+- [ ] `【Connect確認】` Marketing URLは空欄
 - [ ] `【本人入力】` Copyright
-- [ ] `【Connect確認】` 1〜10枚のスクリーンショット
+- [ ] `【Connect確認】` 選択A用5枚のスクリーンショットと順序
 - [ ] `【Connect確認】` 正しいVersionとBuildを関連付けた
 
-Support URLは、適用法が求める実際の連絡先情報へ到達でき、Guideline 1.2の公開連絡先として
-機能しなければならない。公開GitHub Issueだけを個人情報・安全通報の窓口にしない。
+Support URLは、利用者とAppleが実際に連絡できる情報へ到達できなければならない。選択Bではさらに
+Guideline 1.2の公開連絡先として機能させる。公開GitHub Issueだけを個人情報・安全通報の窓口にしない。
 
 ### 7.4 App Privacy・暗号化・安全
 
@@ -423,8 +422,8 @@ Support URLは、適用法が求める実際の連絡先情報へ到達でき、
 - [ ] `【Connect確認】` Privacy Policy URLがHTTPSで開く
 - [ ] `【Connect確認】` export compliance質問
 - [ ] `【Connect確認】` 必要な暗号化文書をbuildへattach
-- [ ] `【提出停止】` Guideline 1.2のfilter、report、timely response、block、公開連絡先
-- [ ] `【提出停止】` production moderationと独立緊急OFF
+- [ ] `【境界Bのみ・提出停止 / AはN/A】` Guideline 1.2のfilter、report、timely response、block、公開連絡先
+- [ ] `【境界Bのみ・提出停止 / AはN/A】` production moderationと独立緊急OFF
 
 ### 7.5 Pricing and Availability
 
@@ -439,8 +438,8 @@ Support URLは、適用法が求める実際の連絡先情報へ到達でき、
 - [ ] `【本人入力】` Contact name、email、国番号付きphoneをConnectへ直接入力
 - [ ] `【Connect確認】` Sign-in required = No
 - [ ] `【Connect確認】` Review Notesが4,000 bytes以下
-- [ ] `【Connect確認】` 2端末手順が最終buildと一致
-- [ ] `【提出停止】` 審査期間中に同じ環境と通報対応を維持できる
+- [ ] `【境界Bのみ・Connect確認 / AはN/A】` 2端末手順が最終buildと一致
+- [ ] `【境界Bのみ・提出停止 / AはN/A】` 審査期間中に同じ環境と通報対応を維持できる
 - [ ] `【Connect確認】` 秘密、個人写真、期限切れcodeをNotesへ残していない
 
 ### 7.7 提出操作
