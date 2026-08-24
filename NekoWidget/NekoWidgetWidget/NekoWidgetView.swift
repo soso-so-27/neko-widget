@@ -1,8 +1,12 @@
-import Foundation
 import SwiftUI
 import WidgetKit
-#if DEBUG
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
+import Foundation
 import UIKit
+#endif
+
+#if APP_STORE_SCREENSHOT_WIDGET_FIXTURE && !DEBUG
+#error("The App Store Widget screenshot fixture must never compile outside Debug.")
 #endif
 
 struct NekoWidgetView: View {
@@ -11,7 +15,51 @@ struct NekoWidgetView: View {
     let entry: NekoWidgetEntry
 
     var body: some View {
-        widgetContent
+        Group {
+            if
+                let cacheFilename = entry.cacheFilename,
+                let variant = entry.imageVariant,
+                let image = WidgetCacheImageLoader.image(
+                    cacheFilename: cacheFilename,
+                    photoSourceIdentifier: entry.photoSourceIdentifier,
+                    maximumPixelSize: maximumPixelSize(for: variant)
+                )
+            {
+                GeometryReader { proxy in
+                    ZStack {
+                        Color(red: 0.12, green: 0.10, blue: 0.09)
+
+                        if entry.usesFamilySpecificImage {
+                            // The app precomposes the family canvas: normally a
+                            // sharp cat-aware full-bleed crop, with blurred fit
+                            // retained only for geometric fallback.
+                            Image(uiImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFill()
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .clipped()
+                        } else {
+                            // During an app/extension update, an old manifest can
+                            // still point at the legacy square. Avoid recropping it.
+                            Image(uiImage: image)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFit()
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                        }
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .accessibilityLabel(
+                        entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                            ? "\(entry.windowDisplayName)に届いた写真"
+                            : "このiPhoneで見つけた猫写真"
+                    )
+                }
+            } else {
+                emptyState
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             likeButton
         }
@@ -22,78 +70,6 @@ struct NekoWidgetView: View {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
         .widgetURL(entry.photoURL)
-    }
-
-    @ViewBuilder
-    private var widgetContent: some View {
-#if DEBUG
-        if AppStoreWidgetPreviewFixture.isEntry(entry) {
-            GeometryReader { proxy in
-                ZStack {
-                    Color(red: 0.12, green: 0.10, blue: 0.09)
-                    Image(uiImage: AppStoreWidgetPreviewFixture.image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFill()
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .clipped()
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityLabel("このiPhoneで見つけた猫写真")
-            }
-        } else {
-            storedWidgetContent
-        }
-#else
-        storedWidgetContent
-#endif
-    }
-
-    @ViewBuilder
-    private var storedWidgetContent: some View {
-        if
-            let cacheFilename = entry.cacheFilename,
-            let variant = entry.imageVariant,
-            let image = WidgetCacheImageLoader.image(
-                cacheFilename: cacheFilename,
-                photoSourceIdentifier: entry.photoSourceIdentifier,
-                maximumPixelSize: maximumPixelSize(for: variant)
-            )
-        {
-            GeometryReader { proxy in
-                ZStack {
-                    Color(red: 0.12, green: 0.10, blue: 0.09)
-
-                    if entry.usesFamilySpecificImage {
-                        // The app precomposes the family canvas: normally a
-                        // sharp cat-aware full-bleed crop, with blurred fit
-                        // retained only for geometric fallback.
-                        Image(uiImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
-                    } else {
-                        // During an app/extension update, an old manifest can
-                        // still point at the legacy square. Avoid recropping it.
-                        Image(uiImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                    }
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .accessibilityLabel(
-                    entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
-                        ? "\(entry.windowDisplayName)に届いた写真"
-                        : "このiPhoneで見つけた猫写真"
-                )
-            }
-        } else {
-            emptyState
-        }
     }
 
     @ViewBuilder
@@ -210,47 +186,33 @@ struct NekoWidgetView: View {
     }
 }
 
-#if DEBUG
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
 /// A workflow-gated Widget Gallery preview. It is compiled only in Debug and
-/// is additionally disabled in ordinary Debug builds by the extension plist
-/// setting. Release archives always use the real App Group cache path above.
+/// only when the manual screenshot workflow injects its dedicated compiler
+/// condition. Ordinary Debug and every Release archive omit these pixels.
 enum AppStoreWidgetPreviewFixture {
-    static let localIdentifier = "app-store-widget-gallery-preview"
-
-    static var isEnabled: Bool {
-        let value = Bundle.main.object(
-            forInfoDictionaryKey: "AppStoreScreenshotFixtureEnabled"
-        )
-        if let enabled = value as? Bool {
-            return enabled
-        }
-        guard let text = value as? String else { return false }
-        return ["1", "true", "yes"].contains(text.lowercased())
-    }
+    static let cacheFilename = "app-store-widget-gallery-preview.fixture"
 
     static func entry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
         NekoWidgetEntry(
             date: date,
-            localIdentifier: localIdentifier,
-            cacheFilename: nil,
+            localIdentifier: nil,
+            cacheFilename: cacheFilename,
             imageVariant: variant,
             photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
             usesFamilySpecificImage: true,
             familyMomentIsFresh: false,
             windowDisplayName: PrivateWindowDisplayName.fallback,
-            isLiked: true,
-            isLikeInteractionEnabled: true
+            isLiked: false,
+            isLikeInteractionEnabled: false
         )
-    }
-
-    static func isEntry(_ entry: NekoWidgetEntry) -> Bool {
-        isEnabled && entry.localIdentifier == localIdentifier
     }
 
     /// Original code-defined pixels only: no Photos input, account, network,
     /// EXIF/GPS, face, text, logo, or third-party asset lineage.
     static let image: UIImage = {
-        let canvas = CGSize(width: 1_200, height: 1_200)
+        let artboard = CGSize(width: 1_200, height: 1_200)
+        let canvas = CGSize(width: 1_000, height: 1_000)
         let format = UIGraphicsImageRendererFormat()
         format.opaque = true
         format.scale = 1
@@ -261,6 +223,10 @@ enum AppStoreWidgetPreviewFixture {
 
         return UIGraphicsImageRenderer(size: canvas, format: format).image { renderer in
             let context = renderer.cgContext
+            context.scaleBy(
+                x: canvas.width / artboard.width,
+                y: canvas.height / artboard.height
+            )
             let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [background.cgColor, accent.withAlphaComponent(0.72).cgColor] as CFArray,
@@ -269,7 +235,7 @@ enum AppStoreWidgetPreviewFixture {
             context.drawLinearGradient(
                 gradient,
                 start: .zero,
-                end: CGPoint(x: canvas.width, y: canvas.height),
+                end: CGPoint(x: artboard.width, y: artboard.height),
                 options: []
             )
 

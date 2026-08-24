@@ -141,15 +141,12 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         app.launchArguments += [
             "-AppleLanguages", "(ja)",
             "-AppleLocale", "ja_JP",
-            "--app-store-widget-screenshot-fixture",
         ]
         app.launch()
 
-        guard app.staticTexts["app-store-widget-screenshot-fixture-ready"]
-            .waitForExistence(timeout: 20)
-        else {
+        guard app.wait(for: .runningForeground, timeout: 20) else {
             fail(
-                "The local-only Widget fixture was not published to the App Group.",
+                "The app did not launch before opening the Widget Gallery.",
                 application: app
             )
             return

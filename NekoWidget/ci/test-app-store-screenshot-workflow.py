@@ -28,7 +28,9 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             "NekoWidget/NekoWidgetWidget/NekoWidgetTimelineProvider.swift"
         )
         self.widget_view = source("NekoWidget/NekoWidgetWidget/NekoWidgetView.swift")
-        self.widget_info = source("NekoWidget/NekoWidgetWidget/Info.plist")
+        self.widget_loader = source(
+            "NekoWidget/NekoWidgetWidget/WidgetCacheImageLoader.swift"
+        )
         self.config = source("NekoWidget/Config.xcconfig")
         self.exporter = source("NekoWidget/ci/export-app-store-screenshots.sh")
         self.project = source("NekoWidget/NekoWidget.xcodeproj/project.pbxproj")
@@ -98,28 +100,46 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         debug_start = app.index("#if DEBUG", app.index("var body: some Scene"))
         release_branch = app.index("#else", debug_start)
         fixture_route = app.index("AppStoreScreenshotFixture.launchArgument", debug_start)
-        widget_fixture_route = app.index(
-            "AppStoreScreenshotFixture.widgetLaunchArgument",
-            debug_start,
-        )
         self.assertLess(fixture_route, release_branch)
-        self.assertLess(widget_fixture_route, release_branch)
-        self.assertIn("installWidgetPreviewFixture", self.fixture)
-        self.assertIn("WidgetCenter.shared.reloadAllTimelines()", self.fixture)
+        self.assertNotIn("installWidgetPreviewFixture", self.fixture)
+        self.assertNotIn("WidgetCenter.shared.reloadAllTimelines()", self.fixture)
+        self.assertNotIn("--app-store-widget-screenshot-fixture", app)
+        self.assertNotIn("--app-store-widget-screenshot-fixture", self.widget_ui_test)
         self.assertIn(
             "WidgetPlacementScreenshotUITests/testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore",
             self.workflow,
         )
-        self.assertIn("APP_STORE_SCREENSHOT_FIXTURE_ENABLED=YES", self.workflow)
-        self.assertIn("APP_STORE_SCREENSHOT_FIXTURE_ENABLED = NO", self.config)
-        self.assertIn("AppStoreScreenshotFixtureEnabled", self.widget_info)
-        self.assertIn("#if DEBUG", self.widget_provider)
-        self.assertIn("AppStoreWidgetPreviewFixture.isEnabled", self.widget_provider)
-        self.assertIn("#if DEBUG", self.widget_view)
-        self.assertIn('localIdentifier = "app-store-widget-gallery-preview"', self.widget_view)
+        condition = "APP_STORE_SCREENSHOT_WIDGET_FIXTURE"
+        dual_guard = f"#if DEBUG && {condition}"
+        self.assertIn(
+            f"WIDGET_SCREENSHOT_FIXTURE_CONDITION={condition}",
+            self.workflow,
+        )
+        self.assertIn("WIDGET_SCREENSHOT_FIXTURE_CONDITION =\n", self.config)
+        self.assertEqual(self.project.count("$(WIDGET_SCREENSHOT_FIXTURE_CONDITION)"), 1)
+        widget_debug = self.project.split(
+            "A00000000000000000000054 /* Debug */",
+            1,
+        )[1].split("A00000000000000000000055 /* Release */", 1)[0]
+        self.assertIn("$(WIDGET_SCREENSHOT_FIXTURE_CONDITION)", widget_debug)
+        self.assertGreaterEqual(self.widget_provider.count(dual_guard), 3)
+        self.assertIn(dual_guard, self.widget_view)
+        self.assertIn("#if APP_STORE_SCREENSHOT_WIDGET_FIXTURE && !DEBUG", self.widget_view)
+        self.assertIn("#error(", self.widget_view)
+        self.assertIn('cacheFilename = "app-store-widget-gallery-preview.fixture"', self.widget_view)
+        self.assertIn("localIdentifier: nil", self.widget_view)
+        self.assertIn("isLikeInteractionEnabled: false", self.widget_view)
         self.assertIn("UIGraphicsImageRenderer", self.widget_view)
+        self.assertIn(dual_guard, self.widget_loader)
+        self.assertIn("AppStoreWidgetPreviewFixture.image", self.widget_loader)
         self.assertNotIn("URLSession.", self.widget_view)
         self.assertNotIn("PHAsset.", self.widget_view)
+        self.assertIn("AppStoreScreenshots.xcresult", self.workflow)
+        self.assertIn("-showBuildSettings", self.workflow)
+        self.assertIn("widget-fixture-build-conditions.txt", self.workflow)
+        self.assertIn("ordinary_debug_conditions", self.workflow)
+        self.assertIn("release_conditions", self.workflow)
+        self.assertNotIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=", self.workflow)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [
@@ -136,7 +156,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.assertEqual(self.exporter.count(f'"{name}"'), 1)
         self.assertIn("開発者のサーバーへ写真を自動送信しません", self.ui_test)
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
-        self.assertIn("--app-store-widget-screenshot-fixture", self.widget_ui_test)
+        self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(
             "このiPhoneで見つけた猫写真",
             self.widget_ui_test,

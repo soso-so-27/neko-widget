@@ -17,6 +17,11 @@ enum WidgetCacheImageLoader {
         photoSourceIdentifier: String,
         maximumPixelSize: Int
     ) -> UIImage? {
+#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
+        if cacheFilename == AppStoreWidgetPreviewFixture.cacheFilename {
+            return AppStoreWidgetPreviewFixture.image
+        }
+#endif
         let requestedMaximumPixelSize = min(
             absoluteMaximumPixelSize,
             max(1, maximumPixelSize)

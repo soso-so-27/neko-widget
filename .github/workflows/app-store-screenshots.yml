@@ -37,6 +37,36 @@ jobs:
           mkdir -p "$artifact_directory"
 
           xcodebuild -version | tee "$artifact_directory/xcode-version.txt"
+          widget_conditions() {
+            local configuration="$1"
+            local fixture_condition="$2"
+            xcodebuild \
+              -project NekoWidget.xcodeproj \
+              -target NekoWidgetWidgetExtension \
+              -configuration "$configuration" \
+              -sdk iphonesimulator \
+              -showBuildSettings \
+              "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$fixture_condition" \
+              2>/dev/null \
+              | awk -F ' = ' \
+                  '/^[[:space:]]*SWIFT_ACTIVE_COMPILATION_CONDITIONS = / {print $2; exit}'
+          }
+          capture_conditions="$(widget_conditions Debug APP_STORE_SCREENSHOT_WIDGET_FIXTURE)"
+          ordinary_debug_conditions="$(widget_conditions Debug '')"
+          release_conditions="$(widget_conditions Release APP_STORE_SCREENSHOT_WIDGET_FIXTURE)"
+          printf 'capture-debug=%s\nordinary-debug=%s\nrelease=%s\n' \
+            "$capture_conditions" "$ordinary_debug_conditions" "$release_conditions" \
+            | tee "$artifact_directory/widget-fixture-build-conditions.txt"
+          if [[ " $capture_conditions " != *" DEBUG "* \
+                || " $capture_conditions " != *" APP_STORE_SCREENSHOT_WIDGET_FIXTURE "* ]]; then
+            echo "The capture Widget target is missing its dual compiler guard." >&2
+            exit 1
+          fi
+          if [[ " $ordinary_debug_conditions " == *" APP_STORE_SCREENSHOT_WIDGET_FIXTURE "* \
+                || " $release_conditions " == *" APP_STORE_SCREENSHOT_WIDGET_FIXTURE "* ]]; then
+            echo "The screenshot fixture leaked outside the dedicated capture Debug target." >&2
+            exit 1
+          fi
           xcrun simctl list devices available --json \
             > "$artifact_directory/available-simulators.json"
 
@@ -154,7 +184,7 @@ jobs:
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            APP_STORE_SCREENSHOT_FIXTURE_ENABLED=YES \
+            WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE \
             SHARING_RELEASE_MODE=disabled \
             SHARING_FEATURE_ENABLED=NO \
             SHARING_MEDIA_ENABLED=NO \
@@ -188,6 +218,8 @@ jobs:
           cp "$RUNNER_TEMP/neko-app-store-screenshots/selected-simulator.txt" \
             "$output_directory/capture-device.txt"
           xcodebuild -version > "$output_directory/xcode-version.txt"
+          cp "$RUNNER_TEMP/neko-app-store-screenshots/widget-fixture-build-conditions.txt" \
+            "$output_directory/widget-fixture-build-conditions.txt"
 
       - name: Upload review-ready candidates
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -207,5 +239,7 @@ jobs:
             ${{ runner.temp }}/neko-app-store-screenshots/test-exit-code.txt
             ${{ runner.temp }}/neko-app-store-screenshots/selected-simulator.txt
             ${{ runner.temp }}/neko-app-store-screenshots/xcode-version.txt
+            ${{ runner.temp }}/neko-app-store-screenshots/widget-fixture-build-conditions.txt
+            ${{ runner.temp }}/neko-app-store-screenshots/AppStoreScreenshots.xcresult
           if-no-files-found: warn
           retention-days: 7

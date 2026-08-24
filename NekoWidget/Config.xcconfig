@@ -19,9 +19,9 @@ CURRENT_PROJECT_VERSION = 1
 APP_PRIVACY_URL =
 APP_SUPPORT_URL =
 
-// Disabled by default. The manual, erased-Simulator App Store screenshot
-// workflow is the only caller that enables the DEBUG-only Widget preview.
-APP_STORE_SCREENSHOT_FIXTURE_ENABLED = NO
+// Empty by default. The manual, erased-Simulator App Store screenshot workflow
+// alone injects a compiler condition into the Widget extension's Debug target.
+WIDGET_SCREENSHOT_FIXTURE_CONDITION =
 
 // Sharing is opt-in per build. Release/TestFlight stays off until the
 // privacy, moderation, and export-compliance gates are completed.
