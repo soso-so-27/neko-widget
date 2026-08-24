@@ -196,7 +196,7 @@ struct PairingView: View {
             cancelSection
         case .paired:
             Section {
-                Label("2人のまどを設定済み", systemImage: "checkmark.seal.fill")
+                Label("相手と接続済み", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
                 if let phrase = state.verificationPhrase {
                     LabeledContent("確認フレーズ", value: phrase)
@@ -540,7 +540,7 @@ struct PairingView: View {
             .disabled(model.isWorking)
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "解除をサーバーで確認してから、このiPhoneの共有鍵・届いた写真・まど内の思い出の印を削除します。通信に失敗した場合は削除せず再試行できます。相手が端末外へ保存・スクリーンショットしたコピーは回収できません。"
+                ? "解除をサーバーで確認してから、このiPhoneの共有鍵・届いた写真・しおりを削除します。通信に失敗した場合は削除せず再試行できます。相手が端末外へ保存・スクリーンショットしたコピーは回収できません。"
                 : "現在は写真同期前のため、共有鍵とペアリング情報だけを解除します。写真同期を追加する段階では、サーバー上の縮小画像を削除する進捗表示もここへ追加します。")
         }
     }

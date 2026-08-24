@@ -118,7 +118,7 @@ struct SettingsView: View {
                 Text("写真")
             } footer: {
                 Text(hasPhotoAccess
-                    ? "出す範囲は、まど・ウィジェット・思い出の候補に共通で使います。"
+                    ? "出す範囲は、ホーム・ウィジェット・思い出の候補に共通で使います。"
                     : "許可するまで写真のスキャンは行いません。ウィジェットの案内など、ほかの設定は利用できます。")
             }
 
@@ -656,7 +656,7 @@ struct SharingReviewPreviewView: View {
                 familyWindowMock
 
                 reviewSection("\(PrivateWindowDisplayName.fallback)をはじめる", systemImage: "person.2.fill") {
-                    Text("信頼できる相手を1人招待し、2人だけで同じまどを見ます。家族に限らず、公開フィード、検索、フォローもありません。")
+                    Text("信頼できる相手を1人招待し、同じまどを見ます。家族に限らず、公開フィード、検索、フォローもありません。")
                         .font(.subheadline)
 
                     HStack {
@@ -703,12 +703,12 @@ struct SharingReviewPreviewView: View {
                     Label("届いた一枚をウィジェットへ一時的に優先表示", systemImage: "rectangle.on.rectangle")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Label("自分が送った写真も残す送受信履歴", systemImage: "clock.arrow.2.circlepath")
+                    Label("自分が届けた写真も一覧で見返す", systemImage: "clock.arrow.2.circlepath")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
-                reviewSection("届いた写真と履歴", systemImage: "sparkles.rectangle.stack") {
+                reviewSection("届いた写真", systemImage: "sparkles.rectangle.stack") {
                     HStack(spacing: 12) {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(Color.secondary.opacity(0.16))
@@ -730,8 +730,8 @@ struct SharingReviewPreviewView: View {
 
                     Divider()
 
-                    Label("受け取った写真は「まどの履歴」で見返す", systemImage: "clock.arrow.circlepath")
-                    Text("この段階の履歴は、招待した相手から受け取った写真だけです。")
+                    Label("受け取った写真は「届いた写真」で見返す", systemImage: "clock.arrow.circlepath")
+                    Text("この段階で表示するのは、招待した相手から受け取った写真だけです。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

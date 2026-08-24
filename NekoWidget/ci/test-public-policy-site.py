@@ -117,8 +117,9 @@ class PublicPolicySiteTests(unittest.TestCase):
         required = (
             "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。",
             "名前を付けた1つの非公開なまど",
+            "作成者と信頼できる招待相手1人",
+            "それぞれ1台のiPhone",
             "信頼できる招待相手1人",
-            "2人・各1台",
             "家族に限定しません",
             "公開フィード、検索、フォロー、匿名の出会いはありません",
         )
@@ -149,26 +150,30 @@ class PublicPolicySiteTests(unittest.TestCase):
         ):
             self.assertIn(phrase, privacy)
 
-    def test_keep_memory_is_a_bounded_local_bookmark(self):
+    def test_bookmark_is_a_free_bounded_local_marker(self):
         for page in (PAGES[1], PAGES[3]):
             text = "".join(self.parsed(page).text)
             for phrase in (
-                "「思い出に残す」",
-                "まど内履歴",
-                "期限付き",
+                "「しおり」",
+                "「届いた写真」",
+                "無料・期限付き",
                 "bookmark",
+                "保持上限内なら優先して残す",
+                "写真を新しく保存する機能や長期保管ではなく",
                 "JPEGを複製しません",
                 "写真アプリやiCloudへ保存せず",
                 "90日",
                 "500枚",
                 "256MiB",
-                "保持上限を延長しません",
+                "保持期限と上限を延長しません",
                 "expiry",
                 "unlink",
                 "block",
                 "reinstall",
             ):
                 self.assertIn(phrase, text, f"{page}: {phrase}")
+            self.assertNotIn("思い出に残す", text, page)
+            self.assertNotIn("まど内履歴", text, page)
 
     def test_release_safety_facts_are_present(self):
         privacy = "".join(self.parsed(PAGES[1]).text)
@@ -260,7 +265,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         for phrase in (
             "開発者によるデータ収集を行いません",
             "CloudKitやアプリ独自のiCloudコンテナも使用しません",
-            "共有相手、招待、送信待ち、受信履歴、サーバー上の写真は作成しません",
+            "共有相手、招待、送信待ち、届いた写真の一覧、サーバー上の写真は作成しません",
             "開発者の共有サーバーや解析サービスへ自動接続しません",
             "データ販売、生成AIの学習にも利用しません",
         ):

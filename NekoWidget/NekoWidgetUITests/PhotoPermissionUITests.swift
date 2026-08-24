@@ -111,7 +111,7 @@ final class PhotoPermissionUITests: XCTestCase {
         let continueFromZero = firstExistingButton(
             in: app,
             identifiers: ["initial-scan-continue"],
-            labels: ["次へ", "まどを見る", "ホームを見る"],
+            labels: ["次へ", "ホームを見る"],
             timeout: 10
         )
         guard let continueFromZero else {
@@ -146,7 +146,7 @@ final class PhotoPermissionUITests: XCTestCase {
         let homeWidgetGuide = app.buttons["home-widget-placement-guide"]
         guard homeWidgetGuide.waitForExistence(timeout: 20) else {
             fail(
-                "The completed first-run flow did not show the uninstalled-Widget Window recovery action.",
+                "The completed first-run flow did not show the uninstalled-Widget Home recovery action.",
                 app: app
             )
             return
@@ -165,7 +165,7 @@ final class PhotoPermissionUITests: XCTestCase {
         guard firstExistingButton(
             in: app,
             identifiers: ["main-tab-window"],
-            labels: ["まど"],
+            labels: ["ホーム"],
             timeout: 10
         ) != nil,
               firstExistingButton(
@@ -174,12 +174,12 @@ final class PhotoPermissionUITests: XCTestCase {
                   labels: ["思い出"],
                   timeout: 10
               ) != nil else {
-            fail("The primary Window or Memories tab was not available.", app: app)
+            fail("The primary Home or Memories tab was not available.", app: app)
             return
         }
 
         guard !app.tabBars.buttons["設定"].exists else {
-            fail("Settings remained a peer tab instead of moving under the Window.", app: app)
+            fail("Settings remained a peer tab instead of moving under Home.", app: app)
             return
         }
 
@@ -201,7 +201,7 @@ final class PhotoPermissionUITests: XCTestCase {
             timeout: 10
         )
         guard let settingsButton else {
-            fail("The Window did not expose its Settings action after onboarding.", app: app)
+            fail("Home did not expose its Settings action after onboarding.", app: app)
             return
         }
         settingsButton.tap()

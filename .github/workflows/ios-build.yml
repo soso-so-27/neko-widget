@@ -467,7 +467,7 @@ jobs:
           grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
           grep -Fq 'Label("これ好き", systemImage: "pawprint.fill")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Label("まど", systemImage: "rectangle.on.rectangle")' \
+          grep -Fq 'Label("ホーム", systemImage: "house.fill")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("思い出", systemImage: "square.grid.3x3.fill")' \
             NekoWidget/Views/MainTabView.swift

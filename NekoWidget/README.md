@@ -1,12 +1,14 @@
 # ねこのまど v1
 
-端末の写真ライブラリをオンデバイスで調べ、猫が主役の写真を選別するiOS 17.1以上向けSwiftUIアプリです。選別結果は「うちの子」アルバムと、Small / Medium / LargeのWidgetKitウィジェットへ渡します。「これ好き」の記録はApp Group内へ永続化します。本人所有2台の内部TestFlightでは、名前付きの非公開なまど1つ・2人に限定したE2E暗号化の一枚共有も検証しています。
+端末の写真ライブラリをオンデバイスで調べ、猫が主役の写真を選別するiOS 17.1以上向けSwiftUIアプリです。選別結果は「うちの子」アルバムと、Small / Medium / LargeのWidgetKitウィジェットへ渡します。「これ好き」の記録はApp Group内へ永続化します。アプリの「ホーム」はこのiPhoneの写真を見る場所、利用者が名前を付ける「まど」は招待した相手1人との非公開な共有空間です。本人所有2台の内部TestFlightでは、名前付きの非公開なまど1つ・2人に限定したE2E暗号化の一枚共有も検証しています。
 
 ## 現在の引き継ぎ状態
 
-> 2026-08-24現在、Build 34までを本人所有2台の内部TestFlightで確認済みです。名前付きの非公開なまど、作成者から相手への暗号化された名前同期、明示した一枚の送受信、受信履歴、共有Widget、安全確認での非表示、通報・block・共有解除を実装しています。Build 35（source `2e6f565`）はmain CI、署名dry run、App Store Connectのvalidate／uploadまで成功しました。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みです。ただしApple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。外部TestFlight groupへの追加、App Store審査提出、一般公開は行っていません。
+> 2026-08-24現在、Build 34までを本人所有2台の内部TestFlightで確認済みです。名前付きの非公開なまど、作成者から相手への暗号化された名前同期、明示した一枚の送受信、「届いた写真」、共有Widget、安全確認での非表示、通報・block・共有解除を実装しています。Build 35（source `2e6f565`）はmain CI、署名dry run、App Store Connectのvalidate／uploadまで成功しました。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みです。ただしApple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。外部TestFlight groupへの追加、App Store審査提出、一般公開は行っていません。
 >
 > PR22〜PR28をmain（`df7c7acf7747e9673f8269dd67763845ab9960e2`）へ統合し、main CI [run 32679594269](https://github.com/soso-so-27/neko-widget/actions/runs/32679594269)と、共有OFFの正本スクリーンショット [run 32679649547](https://github.com/soso-so-27/neko-widget/actions/runs/32679649547)が成功しました。同じmain SHAからBuild 36を`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`で署名dry runし、[run 32680522092](https://github.com/soso-so-27/neko-widget/actions/runs/32680522092)が成功しています。App Store Connect API keyの導入、IPAのvalidate／upload、build選択は実行していません。Build 35の内部共有staging実績やBuild 36のdry runを、App Store提出完了として扱いません。
+
+「届いた写真」の「しおり」は、無料で、端末内の通常整理時に保持上限内なら優先して残す目印です。写真を新しく保存する機能や長期保管ではなく、写真アプリやiCloudへ追加せず、最長90日・最大500枚・256MBという保持期限と上限も延長しません。将来、有料の「長期保管」を追加する場合は「しおり」とは別の機能として設計し、現行buildには含めません。
 
 ソースはWindows上で作成しています。GitHub ActionsではXcodeコンパイル、Simulator上の起動・PhotoKit・Vision・App Groupスモークテスト、1,000枚のスケール／メモリテストまで成功しています。iPhoneではBuild 7までの技術検証に加え、Build 8のMedium / Large表示不具合まで確認し、8,861枚の確定スキャンとdetected無作為100枚のレビューを完了しました。レビューは`reviewNo 74`だけを製品候補から除外し、99 / 100を採用しました。scannerはBuild 10でも変更しないため、このPrecision標本は再利用します。Build 7の1週間計測はLike表示不具合で中断し、その再計測案も「結果が製品判断を変えない」として2026-08-17に撤回しました。新しいbaselineから再開する予定はなく、特定端末へ別buildを入れない制約もありません。Build 8では高解像度20件TimelineによりMedium / Largeがplaceholder相当になる不具合を確認し、Build 9でTimelineを最大2件へ制限、Build 10で写真ブラウザの標準ページングを修復しました。3サイズ、like／unlike即時反映、写真ブラウザの操作感は通常の機能ゲートとして実機確認します。Build 10の写真ブラウザが固まる場合は、待たずに遅延pagingを含む開発branchのbuildを同じ端末へ入れて確認します。実施順は[実機技術検証チェックリスト](docs/実機技術検証チェックリスト.md)、Like修復は[ADR-007](docs/ADR-007-Build8計測修復と最終UX.md)、Timeline修復は[ADR-008](docs/ADR-008-高解像度WidgetのTimeline負荷制限.md)、アルバム／共有は[ADR-009](docs/ADR-009-ローカルアルバムと招待制共有.md)、898件の遅延pagingは[ADR-010](docs/ADR-010-大規模写真ブラウザの遅延ページング.md)、うちの子の選別と将来の個体推定は[ADR-011](docs/ADR-011-うちの子の選別と将来の個体推定.md)、多頭プロフィールと安全な移行は[ADR-012](docs/ADR-012-多頭identity基盤と安全な移行.md)、関節点を使わないbbox姿勢アルバムは[ADR-013](docs/ADR-013-bbox姿勢アルバム.md)、確認回数を減らすFeaturePrintグループは[ADR-014](docs/ADR-014-FeaturePrint確認グループ.md)で管理します。
 

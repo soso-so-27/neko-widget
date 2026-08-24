@@ -235,7 +235,7 @@ struct FamilyWindowView: View {
                 Text(model.windowDisplayName)
                     .font(.headline)
                     .lineLimit(1)
-                Text("2人だけの非公開なまど・明示した1枚だけを届けます")
+                Text("信頼できる相手1人との非公開なまど・明示した1枚だけを届けます")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -327,7 +327,7 @@ struct FamilyWindowView: View {
             }
 
             if model.outgoingPresentation.outcomeCount > 0 {
-                Button("送信しなかった履歴表示を消す") {
+                Button("送信しなかった結果の表示を消す") {
                     Task { await model.clearOutgoingOutcomes() }
                 }
                 .font(.caption)
@@ -545,7 +545,7 @@ struct FamilyWindowView: View {
                     Task { await model.toggleSavedMemory(item) }
                 } label: {
                     Label(
-                        model.isSavedMemory(item) ? "思い出に残しました（外す）" : "思い出に残す",
+                        model.isSavedMemory(item) ? "しおりを外す" : "しおりを付ける",
                         systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
                     )
                     .font(.subheadline.weight(.semibold))
@@ -556,7 +556,7 @@ struct FamilyWindowView: View {
                 .disabled(model.isPerformingAction)
                 .accessibilityIdentifier("family-window-save-memory")
             } else if model.isSavedMemory(item) {
-                Label("思い出に残しています", systemImage: "bookmark.fill")
+                Label("しおり付き", systemImage: "bookmark.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(13)
@@ -632,10 +632,10 @@ struct FamilyWindowView: View {
             if let url = SharingAPIConfiguration.current.supportURL {
                 Link("問題を問い合わせる", destination: url)
             }
-            Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。端末内の履歴は90日・最大500枚・256MBまで保持します。")
+            Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MBまで保持します。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("「思い出に残す」は、このiPhoneのまど内で履歴を優先して残す印です。最大90日で、写真アプリやiCloudには追加されず、共有解除・ブロック・再インストールで消えます。")
+            Text("しおりは無料で、届いた写真をこのiPhone内の保持上限内で優先して残す目印です。写真を新しく保存する機能や長期保管ではなく、付けても期限と上限は延びません。写真アプリやiCloudには追加されず、共有解除・ブロック・再インストールで写真としおりが消えます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
