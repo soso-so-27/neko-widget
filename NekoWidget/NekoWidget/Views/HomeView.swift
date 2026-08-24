@@ -53,7 +53,7 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("まど")
+        .navigationTitle("ホーム")
         .background(Color(.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -285,7 +285,7 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("window-latest-family-photo")
-        .accessibilityHint("\(privateWindowDisplayName)に届いた写真の履歴を開きます")
+        .accessibilityHint("\(privateWindowDisplayName)に届いた写真を開きます")
     }
 
     private var familyPhotoHasPriority: Bool {
@@ -424,7 +424,7 @@ struct HomeView: View {
 
     private func windowPhotoSourceLabel(_ photo: PhotoPresentation) -> String {
         guard let creationDate = photo.creationDate else {
-            return "まどに表示中"
+            return "ホームに表示中"
         }
         let year = Calendar.current.component(.year, from: creationDate)
         return "思い出から・\(year)年"

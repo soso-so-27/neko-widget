@@ -124,6 +124,14 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
 
     def test_workflow_injects_only_protected_media_values_and_verifies_archive(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            '届いた写真の表示と「しおり」には写真アクセスを使わず',
+            workflow,
+        )
+        self.assertNotIn(
+            '受信と共有履歴内の「思い出に残す」',
+            workflow,
+        )
         variable_names = (
             "SHARING_STAGING_API_ORIGIN",
             "SHARING_STAGING_MODERATION_KEY_ID",

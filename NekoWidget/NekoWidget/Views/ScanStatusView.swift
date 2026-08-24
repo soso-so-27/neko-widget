@@ -151,8 +151,8 @@ struct InitialScanView: View {
 
     private var continueButtonTitle: String {
         if let continueButtonTitleOverride { return continueButtonTitleOverride }
-        if isFinalZero { return "まどを見る" }
-        return scan.hasFinalResult ? "まどを見る" : "続きはまどで"
+        if isFinalZero { return "ホームを見る" }
+        return scan.hasFinalResult ? "ホームを見る" : "続きはホームで"
     }
 }
 

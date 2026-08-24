@@ -75,7 +75,7 @@ struct MainTabView: View {
                 .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
-                Label("まど", systemImage: "rectangle.on.rectangle")
+                Label("ホーム", systemImage: "house.fill")
                     .accessibilityIdentifier("main-tab-window")
             }
             .tag(AppTab.window)

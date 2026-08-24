@@ -380,6 +380,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
     def test_window_and_cat_copy_name_the_actual_destination_or_object(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
+        main_tab = source("NekoWidget/Views/MainTabView.swift")
         widget = source("NekoWidgetWidget/NekoWidgetView.swift")
         widget_configuration = source(
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
@@ -393,6 +394,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
         self.assertIn('detail: "このiPhoneで見つけた猫写真"', widget_configuration)
         self.assertNotIn('name: "このiPhoneの写真"', widget_configuration)
+        self.assertIn('Label("ホーム", systemImage: "house.fill")', main_tab)
+        self.assertNotIn('Label("まど",', main_tab)
+        self.assertIn('.navigationTitle("ホーム")', home)
+        self.assertNotIn('.navigationTitle("まど")', home)
+        onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
+        self.assertIn("猫写真のウィジェットをひとつ。", onboarding)
+        self.assertNotIn("猫写真のまどをひとつ。", onboarding)
 
         settings = source("NekoWidget/Views/SettingsView.swift")
         profiles = source("NekoWidget/Views/CatProfilesView.swift")
@@ -421,6 +429,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         ]
         for relative in surfaces_without_legacy_album_copy:
             self.assertNotIn("うちの子", source(relative), relative)
+
+        local_photo_surfaces = [
+            "NekoWidget/Views/CatCandidateCurationView.swift",
+            "NekoWidget/Views/GrowthAlbumView.swift",
+            "NekoWidget/Views/LikedPhotosView.swift",
+            "NekoWidget/Views/SettingsView.swift",
+        ]
+        for relative in local_photo_surfaces:
+            value = source(relative)
+            self.assertNotIn("まど、ウィジェット", value, relative)
+            self.assertNotIn("まど・ウィジェット", value, relative)
 
         self.assertEqual(
             home.count("うちの子"),
@@ -583,9 +602,32 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("migratedSchema5.savedMemories.isEmpty", migration)
 
         family = source("NekoWidget/Views/FamilyWindowView.swift")
-        self.assertIn("思い出に残す", family)
+        self.assertIn("しおりを付ける", family)
+        self.assertIn("しおりを外す", family)
+        self.assertIn("しおりは無料", family)
+        self.assertIn("保持上限内で優先して残す", family)
+        self.assertIn("写真を新しく保存する機能や長期保管ではなく", family)
         self.assertIn("写真アプリやiCloudには追加されず", family)
-        self.assertIn("最大90日", family)
+        self.assertIn("最長90日", family)
+        self.assertNotIn("思い出に残す", family)
+        self.assertNotIn("まど内の思い出", family)
+        for legacy_received_list_copy in (
+            "受信履歴",
+            "共有履歴",
+            "まどの履歴",
+            "届いた写真の履歴",
+        ):
+            self.assertNotIn(legacy_received_list_copy, family)
+
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        home = source("NekoWidget/Views/HomeView.swift")
+        self.assertIn("相手と接続済み", pairing)
+        self.assertNotIn("2人のまどを設定済み", pairing)
+        self.assertIn("届いた写真・しおり", pairing)
+        self.assertIn("届いた写真、しおり", pairing_model)
+        self.assertIn("届いた写真を開きます", home)
+        self.assertNotIn("届いた写真の履歴", home)
 
 
 if __name__ == "__main__":

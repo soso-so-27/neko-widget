@@ -31,7 +31,7 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 | 選択 | buildの能力 | 必要な申告 | 状態 |
 | --- | --- | --- | --- |
 | A. ローカル写真・Widgetのみ | 写真共有runtime、共有Extensionの送信、まど名同期を完全にOFF | 最終archiveのPrivacy Manifestと実通信を根拠に、共有データを収集しない回答へ揃える。共有を説明・撮影しない | **PR22〜PR28、main CI、スクリーンショット、Build 36 dry runは完了。非公開のprivacy連絡先、本人入力、最終upload証拠は待ち** |
-| B. 名前付きの非公開なまどを含む | 招待、2者確認、一枚送受信、履歴、共有Widget、通報、block、共有解除をON | 共有データ4種類、UGC安全策、2端末審査、暗号化輸出、production運用を全て揃える | **本人入力 / 現在は提出停止** |
+| B. 名前付きの非公開なまどを含む | 招待、2者確認、一枚送受信、届いた写真、しおり、共有Widget、通報、block、共有解除をON | 共有データ4種類、UGC安全策、2端末審査、暗号化輸出、production運用を全て揃える | **本人入力 / 現在は提出停止** |
 
 選択: `【本人入力: A / B】`
 
@@ -143,16 +143,17 @@ bypassを設けない。
 7. Share Extensionの説明を確認して続け、host appへ戻る。
 8. host appで送り先、縮小後preview、安全確認を確認して送信する。
 9. Bでアプリを前面にする。自動更新後も変化がなければ、画面の更新操作を1回行う。
-10. Bの受信履歴へ同じ写真が1枚だけ表示されることを確認する。
+10. Bの「届いた写真」へ同じ写真が1枚だけ表示されることを確認する。
 11. Bの共有Widgetを配置し、同じ受信写真が表示候補になることを確認する。
-12. Bで「思い出に残す」をON／OFFできることを確認する。
+12. Bで「しおり」を付け外しできることを確認する。
 
 期待結果:
 
 - Bは写真ライブラリへのアクセスを許可しなくても、共有写真を受信・表示できる。
 - Share Extensionは選んだ1枚をhost appへ一時handoffし、Extensionから直接送信しない。
-- 「思い出に残す」はまど内の期限付きbookmarkで、写真アプリやiCloudへ保存しない。
-- bookmarkは端末内共有履歴の最大90日、500枚、256MiBを延長しない。
+- 「しおり」は無料で「届いた写真」に付け、端末内の通常整理時に保持上限内なら優先して残す目印である。写真を新しく保存する機能や長期保管ではなく、写真アプリやiCloudへ追加しない。
+- 「しおり」は端末内の「届いた写真」の最長90日、最大500枚、256MiBという保持上限を延長しない。
+- 有料の「長期保管」は将来の別機能であり、現行buildには含めず、「しおり」を長期保存のように説明しない。
 - background pushは使用しないため、「送信直後に通知が来る」ことを合格条件にしない。
 
 ### 2.3 安全機能
@@ -164,7 +165,7 @@ bypassを設けない。
 3. 受信側で送信者をblockし、新しい送受信が停止することを確認する。
 4. 最後に共有解除を確認する。
 
-blockと共有解除はpairing、鍵、履歴を破棄するため、通常経路と同じpairingでは必ず最後に実施する。
+blockと共有解除はpairing、鍵、「届いた写真」、「しおり」を破棄するため、通常経路と同じpairingでは必ず最後に実施する。
 再インストール後はThisDeviceOnlyの鍵を復元せず、再招待が必要である。
 
 ### 2.4 審査用記録
@@ -201,7 +202,7 @@ App Store Connectのprivacy回答はPrivacy Manifestの存在だけでは完了�
 | Product Interaction | reserve、commit、配送、受領、ACK、更新、quota、通報理由、block等 | Yes | No | App Functionality | 整合性、不正利用防止、cleanup、必要最小限の監査期間 |
 
 端末内の猫判定、一覧、Widget派生画像は、端末外へ送らない限りserver収集として扱わない。
-受信履歴は端末内で最大90日、500枚、256MiBのうち最初に達した上限まで保持する。
+「届いた写真」は端末内で最長90日、最大500枚、256MiBのうち最初に達した上限まで保持する。「しおり」はこの上限を延長しない。
 
 ### 3.2 最終回答前の確認事項
 
@@ -239,7 +240,7 @@ PR23の配備と自動監視は完了したが、Connect入力と提出条件は
 
 - 選択AはHTTPSのPrivacy PolicyとSupport、選択BはさらにCommunity Standardsを公開し、exact URLとdeployed commitを記録する。
 - 選択Bだけは、「家族のまど」を製品語の「名前付きの非公開なまど」へ揃える。
-- 選択Bだけは、保存期間、通報の例外、再インストール、bookmark、Photos／iCloud非保存を最終buildと一致させる。
+- 選択Bだけは、保存期間、通報の例外、再インストール、「しおり」、Photos／iCloud非保存を最終buildと一致させる。
 - AppleのPlatform version informationに従い、Support URLへ利用者とAppleが実際に連絡できる
   email、電話、または応答可能なHTTPS form等の連絡先情報を掲載する。GitHub Issuesへの誘導だけ、
   placeholder、または「窓口未掲載」の表示では完了にしない。
@@ -313,7 +314,7 @@ portrait accepted sizeには`1260 x 2736`、`1290 x 2796`、`1320 x 2868`があ�
 | 1 | `01-local-cat-widget.jpg` | Widget Galleryで実際のWidget Extensionが描くローカル猫写真Widget | 個人のホーム画面や通知を写さない |
 | 2 | `02-local-photo-window.jpg` | 端末内で選ばれた「思い出の一枚」と肉球 | 共有写真や内部diagnostic語を写さない |
 | 3 | `03-organized-memories.jpg` | 撮影年や端末内解析から作る「思い出」 | serverへ写真libraryを送ると誤認させない |
-| 4 | `04-liked-photos.jpg` | 利用者が肉球で残した「これ好き」 | 写真送信や共有履歴として表現しない |
+| 4 | `04-liked-photos.jpg` | 利用者が肉球で残した「これ好き」 | 写真送信や「届いた写真」として表現しない |
 | 5 | `05-on-device-photo-privacy.jpg` | 端末内解析と開発者serverへの自動送信なし | 許可前の説明と最終buildを一致させる |
 
 選択Bで共有を提出する場合に限り、名前付きの非公開なまど、一枚送信、受信Widget、通報・block・

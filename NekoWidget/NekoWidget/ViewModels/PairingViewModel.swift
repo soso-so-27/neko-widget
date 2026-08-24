@@ -758,7 +758,7 @@ final class PairingViewModel: ObservableObject {
             )
             try await resetLocalPairing(operation: operation)
             operationCompletionMessage =
-                "共有を解除しました。このiPhoneの共有鍵、届いた写真、まど内の思い出の印を削除しました。"
+                "共有を解除しました。このiPhoneの共有鍵、届いた写真、しおりを削除しました。"
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation

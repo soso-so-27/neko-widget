@@ -97,7 +97,7 @@ struct GrowthAlbumDetailView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("まど、ウィジェット、思い出の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("ホーム、ウィジェット、思い出の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             if let identifier = pendingAssignmentIdentifier {
