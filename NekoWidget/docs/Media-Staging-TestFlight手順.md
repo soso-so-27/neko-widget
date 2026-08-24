@@ -146,13 +146,13 @@ Build 35には写真配送やまど名同期のprotocolを広げず、次の利�
 
 source固定前に、schema 5から6への既定値移行、表示可能な受信写真だけへ印を付けられること、期限・容量・tombstone・unlink・blockで孤立した印が残らないこと、Photos／iCloudへ書き込まないこと、ペアリング各段階の主操作と手動確認結果を対象テストで確認した。Apple側の処理完了後に内部groupへ割り当てる場合は、2台で既存ペアリングを維持した更新、印のON/OFF、手動確認結果、解除を伴わない機種変更案内、一枚の送受信とWidgetの非退行を改めて確認する。一般向けTestFlightやApp Storeへは自動的に広げない。
 
-## PR22/PR23の統合とPR24/Build 36のpending記録
+## PR22〜PR28の統合とBuild 36の送信なし記録
 
 PR22で`release_mode = disabled`をmainの`cd5c13e6839dee4c3c33f8c65254a324328fbb32`へ統合した。このmodeは共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにし、App Storeへ出す完全ローカル版の候補境界である。
 
 PR23で完全ローカル版の公開policyとread-only監視をmainの`9924edea7da1113d315138a841862a56f7c76e57`へ統合した。Pages deploy run `32656307265`とread-only monitor run `32656352690`は成功したが、非公開のprivacy問い合わせ窓口は未掲載のため、一般公開の提出準備完了とは扱わない。
 
-この文書更新時点ではPR24は未統合で、Build 36の正確source SHA、対象main SHAのmain CI、`release_mode = disabled`の署名dry runは未確定・未実施である。Build 36をApp Store Connectへupload、build選択、外部配布または審査提出してはならない。Build 35の`media-staging`実績はBuild 36の`disabled` archive検証を代替しない。
+PR24〜PR28はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`へ統合済みで、main CI run `32679594269`と共有OFFの正本スクリーンショットrun `32679649547`が成功した。同じmain SHAのBuild 36は`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`の署名dry run `32680522092`として成功した。Build 36のarchive/privacy/entitlement/IPA exportと暗号化artifact保存は確認したが、App Store Connect API key導入とvalidate／uploadはskipされ、build選択、外部配布、審査提出は行っていない。Build 36はこのpersonal stagingのWorker、D1、R2、secret、runtime flagを変更していない。Build 35の`media-staging`実績とBuild 36の`disabled` dry runは別境界として維持する。
 
 ## Build 35後も残るもの
 

@@ -6,9 +6,10 @@
 貼り付け内容の機械可読な正本は[local-only-ja.json](local-only-ja.json)である。
 共有を有効にしたbuild、外部TestFlight用説明、将来機能の宣伝には流用しない。
 
-現在の状態は、本文検証が`COPY_VALID`、提出可否は`RED`である。公開Privacy／Supportページに
-実際の問い合わせ経路がなく、所有者入力と最終`disabled`署名archiveの証拠も未完了のため、
-App Storeへ提出しない。
+現在の状態は、本文検証が`COPY_VALID`、提出可否は`RED`である。main
+`df7c7acf7747e9673f8269dd67763845ab9960e2`からBuild 36の`disabled`署名dry runは成功したが、
+`upload_to_testflight=false`なので最終archive evidenceではない。公開Privacy／Supportページに実際の
+問い合わせ経路がなく、所有者入力と最終`disabled` uploadの証拠も未完了のため、App Storeへ提出しない。
 
 Appleの現行上限は、App名30文字、Subtitle 30文字、Promotional Text 170文字、
 Description 4,000文字、Keywords 100 bytes、Review Notes 4,000 bytesである。

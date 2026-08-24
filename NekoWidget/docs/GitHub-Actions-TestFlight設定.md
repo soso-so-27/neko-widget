@@ -113,7 +113,11 @@ Actionsの`Capture privacy-safe App Store screenshots`は必要な候補を更�
 `.xcresult`から抽出したnamed attachmentだけを7日保存する。個人写真をimportせず、巨大なraw `.xcresult`は
 artifactへ残さない。実行・確認手順は[App Storeスクリーンショット撮影](App-Store-スクリーンショット撮影.md)を正本とする。
 
-### 2026-08-24の直近記録
+main `df7c7acf7747e9673f8269dd67763845ab9960e2`の正本撮影run `32679649547`は成功した。artifact
+`app-store-screenshots-32679649547-1`（ID `9503891782`）は5枚すべて`1320 x 2868`、manifest SHA-256一致、
+APP1 metadataなしである。これはContent Rights、caption、順序、App Store Connect登録の所有者承認ではない。
+
+### 2026-08-24のBuild 35／36記録
 
 Build 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`から作成した。
 
@@ -122,7 +126,15 @@ Build 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`から作成した�
 - 内部TestFlight upload [run 32653493665](https://github.com/soso-so-27/neko-widget/actions/runs/32653493665)でvalidate／uploadが成功
 - 暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済み
 
-Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認である。外部groupへの追加、TestFlight App Review、App Store審査提出は行っていない。PR22の`disabled` modeとPR23の完全ローカル版policy/read-only監視はmainへ統合済みである。PR24は未統合で、Build 36の正確source SHA、main CI、`release_mode = disabled`の署名dry runは未確定・未実施である。Build 36はApp Store Connectへuploadしていない。
+Build 36はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`から作成した。
+
+- main CI [run 32679594269](https://github.com/soso-so-27/neko-widget/actions/runs/32679594269)が成功
+- `release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`の署名dry run [32680522092](https://github.com/soso-so-27/neko-widget/actions/runs/32680522092)が成功
+- archive、Privacy／export gate、署名／App Group entitlement、IPA export、暗号化artifact保存が成功
+- App Store Connect API private key導入とIPA validate／uploadはskip
+- 暗号化fileは20,142,112 bytes、SHA-256 `c5cc3646c3f8d4eaf83e400561cf18e48a253e25b2fff5b640a161cc2c1e6e34`で、復号せずprivate保管
+
+PR22〜PR28はmainへ統合済みである。Build 35についてApple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認である。Build 36はApp Store Connectへuploadしておらず、build一覧へ追加されない。外部groupへの追加、TestFlight App Review、App Store審査提出も行っていない。Build 36のdry runは最終`disabled` upload証拠を代替しない。
 
 ### Build 28の2台ペアリング確認
 

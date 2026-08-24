@@ -79,6 +79,20 @@ accessibilityを公開しない場合を区別できるようにし、巨大なr
 - `widget-fixture-build-conditions.txt`: 撮影Debugだけに専用conditionが入り、通常Debug／Releaseには
   入らないことを`xcodebuild -showBuildSettings`で確認した記録
 
+### 2026-08-24のmain正本記録
+
+PR28を統合したmain `df7c7acf7747e9673f8269dd67763845ab9960e2`について、main CI
+[run 32679594269](https://github.com/soso-so-27/neko-widget/actions/runs/32679594269)と撮影
+[run 32679649547](https://github.com/soso-so-27/neko-widget/actions/runs/32679649547)が成功した。撮影artifactは
+`app-store-screenshots-32679649547-1`（artifact ID `9503891782`、GitHub artifact digest
+`sha256:0b8d89d36a90b33ac36f5f121357d7699554602f2e9f041bf9a1cf716c12c228`、2026-09-07失効予定）である。
+
+5枚はすべて`1320 x 2868`のJPEGで、manifest SHA-256と一致し、SOI／SOS／EOI構造が有効、APP1 segmentは
+0件だった。manifestは個人写真0件、外部画像0件、account／位置情報なし、`local-only-disabled`境界、
+`userReviewRequiredBeforeUpload = true`を記録している。5枚の技術的な目視確認でも、描画不良、共有UI、
+個人情報、文字切れは見つからなかった。これはApp ownerによるContent Rights、caption、順序、最終Build一致の
+承認を代替しない。
+
 ## アップロード前の人による確認
 
 workflow成功は撮影候補の技術検査であり、Content RightsやApp Store提出の承認ではない。App ownerが
@@ -91,10 +105,11 @@ workflow成功は撮影候補の技術検査であり、Content RightsやApp Sto
 - captionを付ける場合もlocal-onlyを超える共有・push・自動送信を示さない。
 - App Store Connectのpreviewで順序、crop、文字切れを確認する。
 
-## macOSでのみ残る検証
+## macOSでのみ残る検証（候補を再生成するときも必須）
 
 Windows／Linuxで行えるのはworkflow、project参照、fixture境界、exporterの静的契約テストまでである。
-次はXcodeを備えたmacOSでだけ完了する。
+次はXcodeを備えたmacOSで確認する。上記main正本runで1〜3と技術的な5を完了し、Build 36の
+`disabled`署名dry runで4のRelease境界も確認した。source、UI、Xcode、撮影deviceを変えた場合は再実行する。
 
 1. UI testのSwiftコンパイルと6.9-inch Simulatorでの実描画
 2. XCTest attachmentのexportと`sips`によるJPEG変換
@@ -102,4 +117,4 @@ Windows／Linuxで行えるのはworkflow、project参照、fixture境界、expo
 4. 最終Release archiveでDEBUG fixture routeが含まれないことのRelease CI確認
 5. 5枚の目視確認
 
-App Store Connectへの登録、Content Rights確認、caption・順番の最終承認、Submit for Reviewは自動化しない。
+App Store Connectへの登録、Content Rights確認、caption・順番の最終承認、Submit for Reviewは完了しておらず、自動化しない。

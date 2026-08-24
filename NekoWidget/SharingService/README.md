@@ -4,6 +4,8 @@ Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserve
 
 これとは分離した本人所有2台だけのpersonal stagingはdeploy済みで、2026-08-24現在は通常momentと暗号化まど名同期をON、旧共有をOFFで維持しています。日次監視と緊急OFFを適用する個人例外であり、外部testerや一般利用者へ配るproduction環境ではありません。現在の運用境界は[`PERSONAL_STAGING_OPERATIONS.md`](PERSONAL_STAGING_OPERATIONS.md)を正本とします。
 
+同日のBuild 36は共有を完全にOFFにした`disabled`署名dry runだけである。SharingServiceのdeploy、D1／R2／rate-limit resource、secret、personal stagingのruntime flagは変更しておらず、server側の配備または共有機能の提出証拠として扱わない。
+
 ## Phase 1で成立すること
 
 - 氏名、mail、password、電話番号、global installation IDを作らず、spaceごとの鍵だけで二台をpairingする。

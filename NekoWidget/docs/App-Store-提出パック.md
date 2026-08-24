@@ -13,6 +13,10 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 共有を完全に無効化した選択Aの日本語貼り付け用正本と、fail-closedの提出可否検証は
 [app-store/README.md](app-store/README.md)で管理する。そこにある文面を共有ONの選択Bへ流用しない。
 
+技術証跡はPR22〜PR28、main CI、正本スクリーンショット、Build 36の送信なし署名dry runまで完了した。
+提出可否は引き続き`RED`であり、非公開のprivacy問い合わせ窓口、所有者入力、App Store Connect回答、
+最終`disabled` upload証拠、build選択、審査提出は完了していない。
+
 ## 0. 表記と提出境界
 
 ### 0.1 表記
@@ -26,7 +30,7 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 
 | 選択 | buildの能力 | 必要な申告 | 状態 |
 | --- | --- | --- | --- |
-| A. ローカル写真・Widgetのみ | 写真共有runtime、共有Extensionの送信、まど名同期を完全にOFF | 最終archiveのPrivacy Manifestと実通信を根拠に、共有データを収集しない回答へ揃える。共有を説明・撮影しない | **PR22/PR23はmain統合済み。PR24、Build 36検証、非公開のprivacy連絡先、本人選択は待ち** |
+| A. ローカル写真・Widgetのみ | 写真共有runtime、共有Extensionの送信、まど名同期を完全にOFF | 最終archiveのPrivacy Manifestと実通信を根拠に、共有データを収集しない回答へ揃える。共有を説明・撮影しない | **PR22〜PR28、main CI、スクリーンショット、Build 36 dry runは完了。非公開のprivacy連絡先、本人入力、最終upload証拠は待ち** |
 | B. 名前付きの非公開なまどを含む | 招待、2者確認、一枚送受信、履歴、共有Widget、通報、block、共有解除をON | 共有データ4種類、UGC安全策、2端末審査、暗号化輸出、production運用を全て揃える | **本人入力 / 現在は提出停止** |
 
 選択: `【本人入力: A / B】`
@@ -41,7 +45,8 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 - Build 35は共有を含む内部`media-staging`で、source `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`を使用した。main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`は成功した。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みである。
 - Build 35についてApple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認である。外部group追加、TestFlight App Review、App Store審査提出は行っていない。
 - 選択Aの`disabled` modeはPR22でmain `cd5c13e6839dee4c3c33f8c65254a324328fbb32`へ統合済みである。完全ローカル版のpolicyとread-only監視はPR23でmain `9924edea7da1113d315138a841862a56f7c76e57`へ統合し、Pages deploy run `32656307265`とread-only monitor run `32656352690`が成功した。
-- PR24のrelease hardeningとdiagnostic privacyは未統合である。Build 36の正確source SHAは未確定で、対象main SHAのmain CI、`release_mode = disabled`の署名dry runは未実施である。App Store Connectへuploadまたはbuild選択していない。
+- PR24〜PR28はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`へ統合済みで、main CI run `32679594269`と共有OFFの正本スクリーンショットrun `32679649547`が成功した。5枚はすべて`1320 x 2868`、APP1 metadataなし、manifest SHA-256一致である。
+- 同じmain SHAからBuild 36を`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`で実行し、run `32680522092`が成功した。archive、privacy/export gate、署名／App Group entitlement、IPA export、暗号化artifact保存は成功し、App Store Connect API key導入とvalidate／uploadはskipされた。App Store Connectへのbuild選択、外部配布、審査提出は行っていない。
 - Build 35の共有staging実績を選択Aのarchive検証、App Privacy回答、公開policy、審査提出の完了として流用しない。
 
 共有ONのBは、次が完了するまで**提出停止**とする。
@@ -319,6 +324,10 @@ portrait accepted sizeには`1260 x 2736`、`1290 x 2796`、`1320 x 2868`があ�
 共有OFFの境界A用候補は[App Storeスクリーンショット撮影](App-Store-スクリーンショット撮影.md)の
 手動workflowで、消去済みSimulatorとコード生成fixtureから再現できる。workflowはApp Store Connectへ
 アップロードせず、成功後もownerの目視・Content Rights・最終Build一致の承認を必要とする。
+
+main `df7c7acf7747e9673f8269dd67763845ab9960e2`のrun `32679649547`で、上記5枚の生成、accepted size、
+SHA-256、APP1 metadata除去、fixture境界、技術的な目視確認まで完了した。artifactは
+`app-store-screenshots-32679649547-1`（ID `9503891782`）で、owner承認とApp Store Connect登録は未完了である。
 
 - `【本人入力】` 最終caption、順序、localizationを承認した。
 - `【本人入力】` 使用する猫イラストと画面素材の権利を確認した。

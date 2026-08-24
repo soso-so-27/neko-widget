@@ -447,7 +447,11 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 
 ## 10. 承認後チェックリスト
 
-直近のBuild 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`で、main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`が成功した。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みである。一方、Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認であり、外部group追加や審査提出は行っていない。PR23の完全ローカル版policyとread-only監視はmain `9924edea7da1113d315138a841862a56f7c76e57`へ統合・配備済みであるが、非公開のprivacy問い合わせ窓口は未掲載である。PR24は未統合、Build 36はsource SHA未確定で、main CI、`disabled`署名dry run、App Store Connect uploadのいずれも未実施である。
+Build 35はsource `2e6f565e4272d1df40a1bad2a1411d0aafa67c78`で、main CI `32652404425`、署名dry run `32652415564`、validate／upload run `32653493665`が成功した。暗号化された署名artifactはdownloadし、復号せず暗号化されたままprivate保管済みである。一方、Apple側の処理完了・build一覧表示、輸出コンプライアンス状態、内部group割当は未確認であり、外部group追加や審査提出は行っていない。
+
+PR24〜PR28はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`へ統合済みで、main CI run `32679594269`と共有OFFの正本スクリーンショットrun `32679649547`が成功した。同じmain SHAからBuild 36を`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`で実行し、署名dry run `32680522092`が成功した。archive、Privacy／export gate、署名とApp Group entitlement、IPA export、暗号化artifact保存が成功し、App Store Connect API key導入とvalidate／uploadはskipされた。
+
+Build 36のActions artifact `nekowidget-signed-artifacts-32680522092-1`（ID `9504044384`）はAPI上20,142,302 bytes、artifact digest `sha256:297863681149967bdf7af29b0d5caabe3c4ed18f43053dbb1f735afbf08d2ab2`である。内部の暗号化file `NekoWidget-signed-artifacts.tar.gz.enc`だけをprivateな`NekoWidgetPrivateReleases/Build36-20260824-run32680522092/`へdownloadし、復号していない。暗号化fileは20,142,112 bytes、SHA-256 `c5cc3646c3f8d4eaf83e400561cf18e48a253e25b2fff5b640a161cc2c1e6e34`である。非公開のprivacy問い合わせ窓口、所有者入力、最終`upload_to_testflight = true`の提出証拠、build選択、審査提出は未完了である。
 
 - [ ] Membership active、最新契約承諾、Team ID記録
 - [x] App Store Connect API access申請
@@ -473,8 +477,10 @@ tar -xzf NekoWidget-signed-artifacts.tar.gz
 - [ ] Build 35を内部TestFlight groupへ割り当て、tester端末で受入
 - [x] PR23の完全ローカル版policyをPagesへ配備し、read-only監視で確認
 - [ ] 実在する非公開のprivacy問い合わせ窓口をpolicyへ掲載
-- [ ] PR24をmainへ統合し、正確なmain SHAとCI結果を記録
-- [ ] Build 36を固定済みmain SHAから`release_mode = disabled`、`upload_to_testflight = false`で署名dry runし、archive/privacy/entitlement検査を確認
+- [x] PR24〜PR28をmainへ統合し、main `df7c7acf7747e9673f8269dd67763845ab9960e2`とCI run `32679594269`を記録
+- [x] Build 36を固定済みmain SHAから`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`で署名dry runし、archive/privacy/entitlement検査を確認
+- [x] Build 36の暗号化artifactをprivate領域へdownloadし、20,142,112 bytesとSHA-256を確認して復号せず保管
+- [ ] 所有者gate完了後、最終`disabled` buildを`upload_to_testflight = true`で実行し、固定3 memberのlocal-only release evidenceを確認
 
 ## 公式資料
 
