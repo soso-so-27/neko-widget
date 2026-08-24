@@ -409,33 +409,52 @@ actor MomentSharingCoordinator {
                 authorization: loadedAuthorization
             )
             let handedOff: Int
-            if configuration.isShareExtensionHandoffAvailable {
-                handedOff = try await handoffProcessor.refreshAdmissionsAndDrain(
-                    pairing: loadedAuthorization.state,
-                    credential: loadedAuthorization.credential,
-                    lifecycleToken: loadedAuthorization.lifecycleToken
-                )
-            } else {
+            let sent: Int
+            let received: Int
+            let hasCurrentMediaConsent =
+                loadedAuthorization.state.mediaSharingConsentVersion
+                    == PairingMediaSharingConsent.currentVersion
+                && loadedAuthorization.state.mediaSharingConsentAcceptedAt != nil
+            if !hasCurrentMediaConsent {
+                // A recovered installation deliberately starts without photo
+                // consent. Keep every media admission and operation disabled,
+                // but do not treat that media-only boundary as a reason to
+                // suppress the encrypted presentation-name exchange below.
                 try handoffProcessor.revokeAdmissions(
                     lifecycleToken: loadedAuthorization.lifecycleToken
                 )
                 handedOff = 0
+                sent = 0
+                received = 0
+            } else {
+                if configuration.isShareExtensionHandoffAvailable {
+                    handedOff = try await handoffProcessor.refreshAdmissionsAndDrain(
+                        pairing: loadedAuthorization.state,
+                        credential: loadedAuthorization.credential,
+                        lifecycleToken: loadedAuthorization.lifecycleToken
+                    )
+                } else {
+                    try handoffProcessor.revokeAdmissions(
+                        lifecycleToken: loadedAuthorization.lifecycleToken
+                    )
+                    handedOff = 0
+                }
+                sent = try await sendOutbox(
+                    api: api,
+                    pairing: loadedAuthorization.state,
+                    credential: loadedAuthorization.credential,
+                    lifecycleToken: loadedAuthorization.lifecycleToken
+                )
+                received = try await receiveChanges(
+                    api: api,
+                    pairing: loadedAuthorization.state,
+                    credential: loadedAuthorization.credential,
+                    lifecycleToken: loadedAuthorization.lifecycleToken
+                )
             }
-            let sent = try await sendOutbox(
-                api: api,
-                pairing: loadedAuthorization.state,
-                credential: loadedAuthorization.credential,
-                lifecycleToken: loadedAuthorization.lifecycleToken
-            )
-            let received = try await receiveChanges(
-                api: api,
-                pairing: loadedAuthorization.state,
-                credential: loadedAuthorization.credential,
-                lifecycleToken: loadedAuthorization.lifecycleToken
-            )
-            // Keep presentation metadata behind the photo pipeline. A stalled
-            // or unavailable name endpoint must not delay delivery, ACKs, or
-            // the photo change cursor.
+            // Keep presentation metadata behind safety reports and every
+            // consented photo operation. A stalled or unavailable name
+            // endpoint must not delay delivery, ACKs, or cursor progress.
             let windowNameChanged = await synchronizeWindowNameBestEffort(
                 api: api,
                 authorization: loadedAuthorization,

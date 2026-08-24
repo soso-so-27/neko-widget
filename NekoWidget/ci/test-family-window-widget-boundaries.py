@@ -219,11 +219,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("return false", best_effort)
         normal_sync = section(
             coordinator,
-            "let sent = try await sendOutbox(",
+            "sent = try await sendOutbox(",
             'SharedLog.app.info(\n                "moment-sharing"',
         )
         self.assertLess(
-            normal_sync.index("let received = try await receiveChanges("),
+            normal_sync.index("received = try await receiveChanges("),
             normal_sync.index("synchronizeWindowNameBestEffort("),
         )
 
@@ -361,6 +361,48 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("Models a GET/PUT response resuming after unlink", runtime_self_test)
         self.assertIn("reportOnlyCounts.gets == 0", runtime_self_test)
         self.assertIn("reportOnlyCounts.puts == 0", runtime_self_test)
+
+    def test_window_name_sync_survives_missing_media_consent_after_reports(self) -> None:
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        report_start = "let reported = try await sendReportOutbox("
+        report_only_start = coordinator.index(report_start)
+        normal_start = coordinator.index(
+            report_start,
+            report_only_start + len(report_start),
+        )
+        normal_end = coordinator.index("\n        } catch {", normal_start)
+        synchronization = coordinator[normal_start:normal_end]
+        consent_predicate = section(
+            synchronization,
+            "let hasCurrentMediaConsent =",
+            "if !hasCurrentMediaConsent {",
+        )
+        self.assertIn("mediaSharingConsentVersion", consent_predicate)
+        self.assertIn("PairingMediaSharingConsent.currentVersion", consent_predicate)
+        self.assertIn("mediaSharingConsentAcceptedAt != nil", consent_predicate)
+        no_consent = section(
+            synchronization,
+            "if !hasCurrentMediaConsent {",
+            "} else {",
+        )
+        self.assertIn("handoffProcessor.revokeAdmissions(", no_consent)
+        self.assertIn("sent = 0", no_consent)
+        self.assertIn("received = 0", no_consent)
+        self.assertNotIn("sendOutbox(", no_consent)
+        self.assertNotIn("receiveChanges(", no_consent)
+        self.assertNotIn("refreshAdmissionsAndDrain(", no_consent)
+        self.assertLess(
+            synchronization.index("sendReportOutbox("),
+            synchronization.index("if !hasCurrentMediaConsent {"),
+        )
+        self.assertIn(
+            "\n            }\n            // Keep presentation metadata",
+            synchronization,
+        )
+        self.assertLess(
+            synchronization.index("// Keep presentation metadata"),
+            synchronization.index("synchronizeWindowNameBestEffort("),
+        )
 
     def test_sharing_surfaces_do_not_assume_a_family_relationship(self) -> None:
         surfaces = [
