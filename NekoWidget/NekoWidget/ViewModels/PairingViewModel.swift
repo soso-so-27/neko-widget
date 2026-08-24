@@ -5,6 +5,7 @@ import SwiftUI
 final class PairingViewModel: ObservableObject {
     @Published private(set) var state: PairingState?
     @Published private(set) var invitationCode: String?
+    @Published private(set) var recoveryInvitationCode: String?
     @Published private(set) var isWorking = false
     @Published private(set) var configurationMessage: String?
     @Published private(set) var windowDisplayName = PrivateWindowDisplayName.fallback
@@ -18,7 +19,9 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var operationErrorMessage: String?
     @Published private(set) var bootstrapRetryMessage: String?
     @Published var enteredInvitationCode = ""
+    @Published var enteredRecoveryCode = ""
     @Published var hasConfirmedPhrase = false
+    @Published var hasConfirmedRecoveryPhrase = false
 
     private let configuration: SharingAPIConfiguration
     private let windowNameCoordinator: MomentSharingCoordinator
@@ -58,6 +61,9 @@ final class PairingViewModel: ObservableObject {
     var hasCurrentMediaSharingConsent: Bool {
         state?.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion
             && state?.mediaSharingConsentAcceptedAt != nil
+    }
+    var hasPendingDeviceRecovery: Bool {
+        state?.recoveryID != nil && state?.recoveryCompletedAt == nil
     }
 
     @discardableResult
@@ -103,8 +109,17 @@ final class PairingViewModel: ObservableObject {
                 configurationMessage = Self.message(for: .installationChanged)
             }
             let operation = try beginOperation()
-            let current = operation.expectedState
+            var current = operation.expectedState
             let lifecycleToken = operation.lifecycleToken
+            if current.phase == .unpaired,
+               current.pendingOperation == nil,
+               current.lastError != nil {
+                // A durable error from an older build describes the operation
+                // that already ended, not the current recovery choice screen.
+                current.lastError = nil
+                current.lastUpdatedAt = .now
+                current = try persist(current, operation: operation)
+            }
             windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
                 pairing: current,
                 validating: lifecycleToken
@@ -117,7 +132,15 @@ final class PairingViewModel: ObservableObject {
                 from: current,
                 lifecycleToken: lifecycleToken
             )
+            try restoreRecoveryInvitationCodeIfAvailable(
+                from: current,
+                lifecycleToken: lifecycleToken
+            )
             if isConfigured,
+               current.recoveryID != nil,
+               current.recoveryCompletedAt == nil {
+                await refreshDeviceRecovery(isManual: false)
+            } else if isConfigured,
                [.awaitingInvitee, .pendingApproval, .awaitingCompletion]
                 .contains(current.phase) {
                 await refresh(isManual: false)
@@ -558,6 +581,9 @@ final class PairingViewModel: ObservableObject {
                         operation: operation
                     )
                 } else if result.state == "active" {
+                    if let peer = result.peer {
+                        try applyCurrentPeer(peer, to: &current)
+                    }
                     current.phase = .paired
                     current.pendingClientRequestID = nil
                     current.pendingOperation = nil
@@ -729,6 +755,621 @@ final class PairingViewModel: ObservableObject {
             current.lastError = nil
             current = try persist(current, operation: operation)
             SharedLog.app.info("pairing", "Peer explicitly approved")
+        } catch {
+            record(error, operation: operation)
+        }
+    }
+
+    func createDeviceRecoveryInvitation() async {
+        clearTransientOperationFeedback()
+        guard let api else {
+            configurationMessage = Self.message(for: .apiNotConfigured)
+            return
+        }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        guard current.phase == .paired,
+              current.recoveryCompletedAt != nil || current.recoveryID == nil,
+              let account = current.credentialAccount,
+              let memberID = current.memberID,
+              current.peerParticipantID != nil
+        else {
+            record(PairingError.stateUnavailable, operation: operation)
+            return
+        }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            var credential = try PairingKeychainStore.load(
+                account: account,
+                installationMarker: current.installationMarker
+            )
+            let requestID: UUID
+            let proofSecret: Data
+            if current.pendingOperation == "recoveryCreate",
+               let saved = current.pendingClientRequestID.flatMap(UUID.init(uuidString:)),
+               let savedSecret = credential.enrollmentSecret {
+                requestID = saved
+                proofSecret = savedSecret
+            } else {
+                requestID = UUID()
+                proofSecret = PairingCrypto.makeDeviceRecoveryProofSecret()
+                credential.enrollmentSecret = proofSecret
+                try PairingKeychainStore.save(
+                    credential,
+                    lifecycleToken: lifecycleToken
+                )
+                current.pendingClientRequestID = requestID.uuidString
+                current.pendingOperation = "recoveryCreate"
+                current.pendingCancelRevokesWholeSpace = nil
+                current.pendingKeyEnvelope = nil
+                current.pendingApprovalSignature = nil
+                current.lastUpdatedAt = .now
+                current.lastError = nil
+                current = try persist(current, operation: operation)
+            }
+            let proofPublicKey = try PairingCrypto.deviceRecoveryProofPublicKey(
+                for: proofSecret
+            ).base64URLEncodedString()
+            try SharingLifecycleGate.validate(lifecycleToken)
+            let descriptor = try await api.createDeviceRecovery(
+                state: current,
+                proofPublicKey: proofPublicKey,
+                clientRequestID: requestID,
+                credential: credential
+            )
+            try SharingLifecycleGate.validate(lifecycleToken)
+            current.recoveryID = descriptor.recoveryID
+            current.recoveryExpiresAt = descriptor.expiresAt
+            current.recoveryMembershipRevision = descriptor.membershipRevision
+            current.recoveryKeyEpoch = descriptor.keyEpoch
+            current.recoveryDeviceID = nil
+            current.recoveryPreviousTargetAgreementPublicKey = descriptor.target.agreementPublicKey
+            current.recoveryPreviousTargetSigningPublicKey = descriptor.target.signingPublicKey
+            current.recoveryCandidateAgreementPublicKey = nil
+            current.recoveryCandidateSigningPublicKey = nil
+            current.recoveryTranscript = nil
+            current.recoveryTranscriptHash = nil
+            current.recoveryVerificationPhrase = nil
+            current.recoveryApprovalSubmittedAt = nil
+            current.recoveryCompletedAt = nil
+            current.recoveryWasLocalDeviceReplacement = nil
+            current.pendingClientRequestID = nil
+            current.pendingOperation = nil
+            current.lastUpdatedAt = .now
+            current.lastError = nil
+            current = try persist(current, operation: operation)
+            recoveryInvitationCode = try PairingDeviceRecoveryCode(
+                recoveryID: descriptor.recoveryID,
+                proofSecret: proofSecret
+            ).code
+            operationCompletionMessage =
+                "復旧コードを作りました。接続を戻すiPhoneへ送ってください。"
+        } catch {
+            record(error, operation: operation)
+        }
+    }
+
+    func joinDeviceRecovery() async {
+        clearTransientOperationFeedback()
+        guard let api else {
+            configurationMessage = Self.message(for: .apiNotConfigured)
+            return
+        }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let code: PairingDeviceRecoveryCode
+            let descriptor: PairingDeviceRecoveryDescriptor
+            let credential: PairingCredential
+            let requestID: UUID
+            let deviceID: String
+            if current.phase == .claimingRecovery,
+               let account = current.credentialAccount,
+               let savedRequestID = current.pendingClientRequestID.flatMap(UUID.init(uuidString:)),
+               let savedDeviceID = current.recoveryDeviceID {
+                credential = try PairingKeychainStore.load(
+                    account: account,
+                    installationMarker: current.installationMarker
+                )
+                guard let proofSecret = credential.enrollmentSecret else {
+                    throw PairingError.malformedCredential
+                }
+                guard let recoveryID = current.recoveryID else {
+                    throw PairingError.stateUnavailable
+                }
+                code = try PairingDeviceRecoveryCode(
+                    recoveryID: recoveryID,
+                    proofSecret: proofSecret
+                )
+                descriptor = try recoveryDescriptor(
+                    from: current,
+                    targetCredential: credential
+                )
+                requestID = savedRequestID
+                deviceID = savedDeviceID
+            } else {
+                guard current.phase == .unpaired else {
+                    throw PairingError.stateUnavailable
+                }
+                code = try PairingDeviceRecoveryCode(code: enteredRecoveryCode)
+                try SharingLifecycleGate.validate(lifecycleToken)
+                descriptor = try await api.deviceRecoveryDescriptor(
+                    recoveryID: code.recoveryID
+                )
+                try SharingLifecycleGate.validate(lifecycleToken)
+                guard let participantID = Data(
+                    base64URLString: descriptor.target.participantID
+                ), participantID.count == 16,
+                      let targetRole = descriptor.target.pairingRole
+                else { throw PairingError.invalidServerResponse }
+                var generated = PairingCrypto.makeCredential(
+                    installationMarker: current.installationMarker,
+                    includesInvitationSecret: false,
+                    includesRoomKey: false
+                )
+                generated.participantID = participantID
+                generated.enrollmentSecret = code.proofSecret
+                credential = generated
+                requestID = UUID()
+                deviceID = PairingCrypto.randomData(count: 16).base64URLEncodedString()
+                current.phase = .claimingRecovery
+                current.role = targetRole
+                current.credentialAccount = credential.account
+                current.participantID = descriptor.target.participantID
+                current.spaceID = descriptor.spaceID
+                current.memberID = descriptor.target.memberID
+                current.peerMemberID = descriptor.peer.memberID
+                current.peerParticipantID = descriptor.peer.participantID
+                current.peerAgreementPublicKey = descriptor.peer.agreementPublicKey
+                current.peerSigningPublicKey = descriptor.peer.signingPublicKey
+                current.dailyBoundaryMinuteUTC = descriptor.dailyBoundaryMinuteUTC
+                current.recoveryID = descriptor.recoveryID
+                current.recoveryExpiresAt = descriptor.expiresAt
+                current.recoveryMembershipRevision = descriptor.membershipRevision
+                current.recoveryKeyEpoch = descriptor.keyEpoch
+                current.recoveryDeviceID = deviceID
+                current.recoveryPreviousTargetAgreementPublicKey =
+                    descriptor.target.agreementPublicKey
+                current.recoveryPreviousTargetSigningPublicKey =
+                    descriptor.target.signingPublicKey
+                current.recoveryCandidateAgreementPublicKey = try PairingCrypto
+                    .agreementPublicKey(for: credential).base64URLEncodedString()
+                current.recoveryCandidateSigningPublicKey = try PairingCrypto
+                    .signingPublicKey(for: credential).base64URLEncodedString()
+                current.recoveryTranscript = nil
+                current.recoveryTranscriptHash = nil
+                current.recoveryVerificationPhrase = nil
+                current.recoveryApprovalSubmittedAt = nil
+                current.recoveryCompletedAt = nil
+                current.recoveryWasLocalDeviceReplacement = nil
+                current.pendingClientRequestID = requestID.uuidString
+                current.pendingOperation = "recoveryClaim"
+                current.pendingCancelRevokesWholeSpace = nil
+                current.lastUpdatedAt = .now
+                current.lastError = nil
+                current = try persistInitialCredential(
+                    credential,
+                    state: current,
+                    operation: operation
+                )
+            }
+            try SharingLifecycleGate.validate(lifecycleToken)
+            let result = try await api.claimDeviceRecovery(
+                code: code,
+                descriptor: descriptor,
+                deviceID: deviceID,
+                clientRequestID: requestID,
+                credential: credential
+            )
+            try SharingLifecycleGate.validate(lifecycleToken)
+            try applyDeviceRecoveryClaim(result, to: &current)
+            current.phase = .pendingRecoveryApproval
+            current.pendingClientRequestID = nil
+            current.pendingOperation = nil
+            current.lastUpdatedAt = .now
+            current.lastError = nil
+            current = try persist(current, operation: operation)
+            enteredRecoveryCode = ""
+            hasConfirmedRecoveryPhrase = false
+            operationCompletionMessage =
+                "復旧の確認を始めました。両方のiPhoneで12語を比べてください。"
+        } catch {
+            record(error, operation: operation)
+        }
+    }
+
+    func refreshDeviceRecovery(isManual: Bool = true) async {
+        guard let api else { return }
+        if isManual { clearTransientOperationFeedback() }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        guard let account = current.credentialAccount,
+              let recoveryID = current.recoveryID
+        else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            var credential = try PairingKeychainStore.load(
+                account: account,
+                installationMarker: current.installationMarker
+            )
+            if current.phase == .paired {
+                if current.recoveryCandidateAgreementPublicKey == nil {
+                    try SharingLifecycleGate.validate(lifecycleToken)
+                    if let claim = try await api.pendingDeviceRecovery(
+                        state: current,
+                        credential: credential
+                    ) {
+                        try SharingLifecycleGate.validate(lifecycleToken)
+                        try applyDeviceRecoveryClaim(claim, to: &current)
+                        current.lastUpdatedAt = .now
+                        current.lastError = nil
+                        current = try persist(current, operation: operation)
+                        hasConfirmedRecoveryPhrase = false
+                        operationCompletionMessage =
+                            "新しいiPhoneから復旧の確認が届きました。12語を比べてください。"
+                    } else if let expiresAt = current.recoveryExpiresAt,
+                              Date() >= expiresAt.addingTimeInterval(
+                                PairingProtocol.maximumClockSkewSeconds
+                              ) {
+                        try clearExpiredSponsorRecovery(
+                            credential: &credential,
+                            state: &current,
+                            lifecycleToken: lifecycleToken
+                        )
+                        current = try persist(current, operation: operation)
+                        operationCompletionMessage =
+                            "復旧コードの期限が切れました。相手側のまどは解除されていません。必要なら新しいコードを作れます。"
+                    } else if isManual {
+                        manualCheckSucceeded = true
+                        manualCheckCompletedAt = .now
+                        manualCheckMessage = "まだ新しいiPhoneから復旧の確認は届いていません。"
+                    }
+                    return
+                }
+                try SharingLifecycleGate.validate(lifecycleToken)
+                let result = try await api.sponsorDeviceRecoveryStatus(
+                    state: current,
+                    credential: credential
+                )
+                try SharingLifecycleGate.validate(lifecycleToken)
+                guard result.recoveryID == recoveryID,
+                      result.transcriptData.base64URLEncodedString()
+                        == current.recoveryTranscript,
+                      result.transcriptHash == current.recoveryTranscriptHash
+                else { throw PairingError.transcriptMismatch }
+                if result.state == "active" {
+                    current.peerMemberID = result.credential.memberID
+                    current.peerParticipantID = result.credential.participantID
+                    current.peerAgreementPublicKey = result.credential.agreementPublicKey
+                    current.peerSigningPublicKey = result.credential.signingPublicKey
+                    current.recoveryCompletedAt = result.recoveredAt ?? .now
+                    current.recoveryWasLocalDeviceReplacement = false
+                    current.pendingClientRequestID = nil
+                    current.pendingOperation = nil
+                    current.pendingKeyEnvelope = nil
+                    current.pendingApprovalSignature = nil
+                    current.lastUpdatedAt = .now
+                    current.lastError = nil
+                    credential.enrollmentSecret = nil
+                    try PairingKeychainStore.save(
+                        credential,
+                        lifecycleToken: lifecycleToken
+                    )
+                    current = try persist(current, operation: operation)
+                    recoveryInvitationCode = nil
+                    operationCompletionMessage =
+                        "新しいiPhoneへ接続を引き継ぎました。サーバー上の共有は維持されています。"
+                    NotificationCenter.default.post(
+                        name: .sharingMediaSyncRequested,
+                        object: nil
+                    )
+                } else if result.state == "expired" {
+                    try clearExpiredSponsorRecovery(
+                        credential: &credential,
+                        state: &current,
+                        lifecycleToken: lifecycleToken
+                    )
+                    current = try persist(current, operation: operation)
+                    operationCompletionMessage =
+                        "復旧コードの期限が切れました。相手側のまどは解除されていません。必要なら新しいコードを作れます。"
+                } else if isManual {
+                    if result.state == "approvedAwaitingCompletion" {
+                        current.recoveryApprovalSubmittedAt =
+                            current.recoveryApprovalSubmittedAt ?? .now
+                        current.lastUpdatedAt = .now
+                        current = try persist(current, operation: operation)
+                    }
+                    manualCheckSucceeded = true
+                    manualCheckCompletedAt = .now
+                    manualCheckMessage = result.state == "approvedAwaitingCompletion"
+                        ? "承認済みです。新しいiPhoneで完了するのを待っています。"
+                        : "まだ12語の確認と承認を待っています。"
+                }
+                return
+            }
+
+            if current.pendingOperation == "recoveryComplete",
+               let requestID = current.pendingClientRequestID.flatMap(UUID.init(uuidString:)),
+               let hash = current.recoveryTranscriptHash {
+                guard credential.roomKey?.count == 32 else {
+                    throw PairingError.malformedCredential
+                }
+                try SharingLifecycleGate.validate(lifecycleToken)
+                let latest = try await api.deviceRecoveryStatus(
+                    recoveryID: recoveryID,
+                    credential: credential
+                )
+                try SharingLifecycleGate.validate(lifecycleToken)
+                try validateDeviceRecoveryStatus(latest, against: current)
+                if latest.state == "expired" {
+                    try await resetLocalPairing(operation: operation)
+                    operationCompletionMessage =
+                        "復旧を完了できなかったため、このiPhoneの復旧だけを取り消しました。接続済みの相手側のまどは解除されていません。"
+                    return
+                }
+                let completed: PairingDeviceRecoveryStatusResult
+                if latest.state == "active" {
+                    completed = latest
+                } else {
+                    guard latest.state == "approvedAwaitingCompletion" else {
+                        throw PairingError.invalidServerResponse
+                    }
+                    completed = try await api.completeDeviceRecovery(
+                        recoveryID: recoveryID,
+                        transcriptHash: hash,
+                        clientRequestID: requestID,
+                        credential: credential
+                    )
+                    try SharingLifecycleGate.validate(lifecycleToken)
+                }
+                try finishLocalDeviceRecovery(completed, state: &current)
+                current = try persist(current, operation: operation)
+                recoveryInvitationCode = nil
+                operationCompletionMessage =
+                    "まどを作り直さず接続を戻しました。サーバー上の共有は維持されています。"
+                NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+                return
+            }
+
+            try SharingLifecycleGate.validate(lifecycleToken)
+            let result = try await api.deviceRecoveryStatus(
+                recoveryID: recoveryID,
+                credential: credential
+            )
+            try SharingLifecycleGate.validate(lifecycleToken)
+            try validateDeviceRecoveryStatus(result, against: current)
+            if result.state == "approvedAwaitingCompletion" {
+                guard let envelopeValue = result.keyEnvelope,
+                      let envelope = Data(base64URLString: envelopeValue),
+                      let algorithm = result.envelopeAlgorithm,
+                      let signatureValue = result.approvalSignature,
+                      let signature = Data(base64URLString: signatureValue),
+                      let peerSigningValue = current.peerSigningPublicKey,
+                      let peerSigning = Data(base64URLString: peerSigningValue),
+                      let peerAgreementValue = current.peerAgreementPublicKey,
+                      let peerAgreement = Data(base64URLString: peerAgreementValue),
+                      let hashValue = current.recoveryTranscriptHash,
+                      let hash = Data(base64URLString: hashValue),
+                      let deviceID = current.recoveryDeviceID,
+                      let revision = current.recoveryMembershipRevision,
+                      let keyEpoch = current.recoveryKeyEpoch,
+                      let targetMemberID = current.memberID
+                else { throw PairingError.invalidServerResponse }
+                let approvalTranscript = try PairingCrypto.deviceRecoveryApprovalTranscript(
+                    recoveryID: recoveryID,
+                    spaceID: result.spaceID,
+                    targetMemberID: targetMemberID,
+                    deviceID: deviceID,
+                    membershipRevision: revision,
+                    keyEpoch: keyEpoch,
+                    transcriptHash: hashValue,
+                    envelopeAlgorithm: algorithm,
+                    keyEnvelope: envelopeValue
+                )
+                guard try PairingCrypto.verifySignature(
+                    signature,
+                    for: approvalTranscript,
+                    publicKey: peerSigning
+                ) else { throw PairingError.transcriptMismatch }
+                let roomKey = try PairingCrypto.openDeviceRecoveryRoomKeyEnvelope(
+                    envelope,
+                    peerAgreementPublicKey: peerAgreement,
+                    transcript: result.transcriptData,
+                    transcriptHash: hash,
+                    credential: credential
+                )
+                credential.roomKey = roomKey
+                credential.enrollmentSecret = nil
+                try PairingKeychainStore.save(
+                    credential,
+                    lifecycleToken: lifecycleToken
+                )
+                let completionID = UUID()
+                current.phase = .recoveryAwaitingCompletion
+                current.pendingClientRequestID = completionID.uuidString
+                current.pendingOperation = "recoveryComplete"
+                current.pendingKeyEnvelope = nil
+                current.pendingApprovalSignature = nil
+                current.lastUpdatedAt = .now
+                current.lastError = nil
+                current = try persist(current, operation: operation)
+                try SharingLifecycleGate.validate(lifecycleToken)
+                let completed = try await api.completeDeviceRecovery(
+                    recoveryID: recoveryID,
+                    transcriptHash: hashValue,
+                    clientRequestID: completionID,
+                    credential: credential
+                )
+                try SharingLifecycleGate.validate(lifecycleToken)
+                try finishLocalDeviceRecovery(completed, state: &current)
+                current = try persist(current, operation: operation)
+                operationCompletionMessage =
+                    "まどを作り直さず接続を戻しました。サーバー上の共有は維持されています。"
+                NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+            } else if result.state == "expired" {
+                try await resetLocalPairing(operation: operation)
+                operationCompletionMessage =
+                    "復旧コードの期限が切れたため、このiPhoneの復旧だけを取り消しました。接続済みの相手側のまどは解除されていません。"
+            } else if isManual {
+                manualCheckSucceeded = true
+                manualCheckCompletedAt = .now
+                manualCheckMessage = "接続済みのiPhoneで12語を確認し、承認してください。"
+            }
+        } catch {
+            record(error, operation: operation)
+            if isManual {
+                manualCheckSucceeded = false
+                manualCheckCompletedAt = .now
+                manualCheckMessage =
+                    "復旧状態を確認できませんでした。接続情報は消さず、もう一度確認できます。"
+            }
+        }
+    }
+
+    func approveDeviceRecoveryAfterPhraseConfirmation() async {
+        clearTransientOperationFeedback()
+        guard hasConfirmedRecoveryPhrase else {
+            record(PairingError.approvalNotConfirmed)
+            return
+        }
+        guard let api else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        let lifecycleToken = operation.lifecycleToken
+        guard current.phase == .paired,
+              let account = current.credentialAccount,
+              let memberID = current.memberID,
+              let recoveryID = current.recoveryID,
+              let targetMemberID = current.peerMemberID,
+              let deviceID = current.recoveryDeviceID,
+              let revision = current.recoveryMembershipRevision,
+              let keyEpoch = current.recoveryKeyEpoch,
+              let transcriptValue = current.recoveryTranscript,
+              let transcript = Data(base64URLString: transcriptValue),
+              let hashValue = current.recoveryTranscriptHash,
+              let hash = Data(base64URLString: hashValue),
+              let candidateAgreementValue = current.recoveryCandidateAgreementPublicKey,
+              let candidateAgreement = Data(base64URLString: candidateAgreementValue)
+        else {
+            record(PairingError.stateUnavailable, operation: operation)
+            return
+        }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let credential = try PairingKeychainStore.load(
+                account: account,
+                installationMarker: current.installationMarker
+            )
+            guard let roomKey = credential.roomKey else {
+                throw PairingError.malformedCredential
+            }
+            let requestID: UUID
+            let envelopeValue: String
+            let signatureValue: String
+            if current.pendingOperation == "recoveryApprove",
+               let saved = current.pendingClientRequestID.flatMap(UUID.init(uuidString:)),
+               let envelope = current.pendingKeyEnvelope,
+               let signature = current.pendingApprovalSignature {
+                requestID = saved
+                envelopeValue = envelope
+                signatureValue = signature
+            } else {
+                requestID = UUID()
+                envelopeValue = try PairingCrypto.makeDeviceRecoveryRoomKeyEnvelope(
+                    roomKey: roomKey,
+                    peerAgreementPublicKey: candidateAgreement,
+                    transcript: transcript,
+                    transcriptHash: hash,
+                    credential: credential
+                ).base64URLEncodedString()
+                let approvalTranscript = try PairingCrypto.deviceRecoveryApprovalTranscript(
+                    recoveryID: recoveryID,
+                    spaceID: current.spaceID ?? "",
+                    targetMemberID: targetMemberID,
+                    deviceID: deviceID,
+                    membershipRevision: revision,
+                    keyEpoch: keyEpoch,
+                    transcriptHash: hashValue,
+                    envelopeAlgorithm: PairingProtocol.roomKeyEnvelopeAlgorithm,
+                    keyEnvelope: envelopeValue
+                )
+                signatureValue = try PairingCrypto.sign(
+                    approvalTranscript,
+                    credential: credential
+                ).base64URLEncodedString()
+                current.pendingClientRequestID = requestID.uuidString
+                current.pendingOperation = "recoveryApprove"
+                current.pendingKeyEnvelope = envelopeValue
+                current.pendingApprovalSignature = signatureValue
+                current.lastUpdatedAt = .now
+                current = try persist(current, operation: operation)
+            }
+            try SharingLifecycleGate.validate(lifecycleToken)
+            try await api.approveDeviceRecovery(
+                recoveryID: recoveryID,
+                targetMemberID: targetMemberID,
+                deviceID: deviceID,
+                membershipRevision: revision,
+                keyEpoch: keyEpoch,
+                transcriptHash: hashValue,
+                keyEnvelope: envelopeValue,
+                approvalSignature: signatureValue,
+                clientRequestID: requestID,
+                memberID: memberID,
+                credential: credential
+            )
+            try SharingLifecycleGate.validate(lifecycleToken)
+            current.pendingClientRequestID = nil
+            current.pendingOperation = nil
+            current.pendingKeyEnvelope = nil
+            current.pendingApprovalSignature = nil
+            current.recoveryApprovalSubmittedAt = .now
+            current.lastUpdatedAt = .now
+            current.lastError = nil
+            current = try persist(current, operation: operation)
+            operationCompletionMessage =
+                "新しいiPhoneを承認しました。新しいiPhoneで更新してください。"
+        } catch {
+            record(error, operation: operation)
+        }
+    }
+
+    /// Abandons only the not-yet-activated replacement credential on this
+    /// iPhone. The existing space and the still-connected peer are untouched;
+    /// the short-lived server capability expires independently.
+    func abandonLocalDeviceRecovery() async {
+        clearTransientOperationFeedback()
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        guard [.claimingRecovery, .pendingRecoveryApproval]
+            .contains(operation.expectedState.phase)
+        else {
+            record(PairingError.stateUnavailable, operation: operation)
+            return
+        }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await resetLocalPairing(operation: operation)
+            operationCompletionMessage =
+                "このiPhoneの復旧を取り消しました。接続済みの相手側のまどは解除されていません。"
         } catch {
             record(error, operation: operation)
         }
@@ -978,6 +1619,182 @@ final class PairingViewModel: ObservableObject {
         current.pendingCancelRevokesWholeSpace = nil
     }
 
+    private func recoveryDescriptor(
+        from state: PairingState,
+        targetCredential: PairingCredential
+    ) throws -> PairingDeviceRecoveryDescriptor {
+        guard let recoveryID = state.recoveryID,
+              let expiresAt = state.recoveryExpiresAt,
+              let revision = state.recoveryMembershipRevision,
+              let keyEpoch = state.recoveryKeyEpoch,
+              let spaceID = state.spaceID,
+              let boundary = state.dailyBoundaryMinuteUTC,
+              let targetMemberID = state.memberID,
+              let targetParticipantID = state.participantID,
+              let targetRole = state.role,
+              let previousAgreement = state.recoveryPreviousTargetAgreementPublicKey,
+              let previousSigning = state.recoveryPreviousTargetSigningPublicKey,
+              let peerMemberID = state.peerMemberID,
+              let peerParticipantID = state.peerParticipantID,
+              let peerAgreement = state.peerAgreementPublicKey,
+              let peerSigning = state.peerSigningPublicKey
+        else { throw PairingError.stateUnavailable }
+        guard targetParticipantID == targetCredential.participantIDString else {
+            throw PairingError.malformedCredential
+        }
+        return PairingDeviceRecoveryDescriptor(
+            recoveryID: recoveryID,
+            state: "awaitingClaim",
+            createdAt: nil,
+            expiresAt: expiresAt,
+            membershipRevision: revision,
+            keyEpoch: keyEpoch,
+            spaceID: spaceID,
+            dailyBoundaryMinuteUTC: boundary,
+            target: PairingDeviceRecoveryIdentity(
+                memberID: targetMemberID,
+                participantID: targetParticipantID,
+                role: targetRole == .inviter ? "owner" : "invitee",
+                agreementPublicKey: previousAgreement,
+                signingPublicKey: previousSigning,
+                state: "active"
+            ),
+            peer: PairingDeviceRecoveryIdentity(
+                memberID: peerMemberID,
+                participantID: peerParticipantID,
+                role: targetRole == .inviter ? "invitee" : "owner",
+                agreementPublicKey: peerAgreement,
+                signingPublicKey: peerSigning,
+                state: "active"
+            )
+        )
+    }
+
+    private func applyDeviceRecoveryClaim(
+        _ result: PairingDeviceRecoveryClaimResult,
+        to current: inout PairingState
+    ) throws {
+        guard result.descriptor.recoveryID == current.recoveryID,
+              result.descriptor.spaceID == current.spaceID,
+              result.descriptor.expiresAt == current.recoveryExpiresAt,
+              result.descriptor.membershipRevision == current.recoveryMembershipRevision,
+              result.descriptor.keyEpoch == current.recoveryKeyEpoch,
+              result.credential.memberID
+                == (current.phase == .paired ? current.peerMemberID : current.memberID),
+              result.credential.participantID
+                == (current.phase == .paired ? current.peerParticipantID : current.participantID)
+        else { throw PairingError.transcriptMismatch }
+        let localHash = PairingCrypto.sha256(result.transcriptData)
+        guard localHash.base64URLEncodedString() == result.transcriptHash else {
+            throw PairingError.transcriptMismatch
+        }
+        current.recoveryDeviceID = result.deviceID
+        current.recoveryCandidateAgreementPublicKey = result.credential.agreementPublicKey
+        current.recoveryCandidateSigningPublicKey = result.credential.signingPublicKey
+        current.recoveryTranscript = result.transcriptData.base64URLEncodedString()
+        current.recoveryTranscriptHash = result.transcriptHash
+        current.recoveryVerificationPhrase = PairingCrypto.verificationPhrase(for: localHash)
+        current.recoveryApprovalSubmittedAt = nil
+    }
+
+    private func finishLocalDeviceRecovery(
+        _ result: PairingDeviceRecoveryStatusResult,
+        state current: inout PairingState
+    ) throws {
+        guard result.state == "active",
+              result.recoveryID == current.recoveryID,
+              result.spaceID == current.spaceID,
+              result.membershipRevision == current.recoveryMembershipRevision,
+              result.keyEpoch == current.recoveryKeyEpoch,
+              result.transcriptData.base64URLEncodedString() == current.recoveryTranscript,
+              result.transcriptHash == current.recoveryTranscriptHash,
+              result.credential.memberID == current.memberID,
+              result.credential.participantID == current.participantID,
+              result.credential.pairingRole == current.role,
+              result.peer.memberID == current.peerMemberID,
+              result.peer.participantID == current.peerParticipantID,
+              result.previousTargetSigningPublicKey
+                == current.recoveryPreviousTargetSigningPublicKey,
+              let recoveredAt = result.recoveredAt
+        else { throw PairingError.transcriptMismatch }
+        current.phase = .paired
+        current.peerAgreementPublicKey = result.peer.agreementPublicKey
+        current.peerSigningPublicKey = result.peer.signingPublicKey
+        current.recoveryCandidateAgreementPublicKey = result.credential.agreementPublicKey
+        current.recoveryCandidateSigningPublicKey = result.credential.signingPublicKey
+        current.recoveryCompletedAt = recoveredAt
+        current.recoveryWasLocalDeviceReplacement = true
+        current.pendingClientRequestID = nil
+        current.pendingOperation = nil
+        current.pendingCancelRevokesWholeSpace = nil
+        current.pendingKeyEnvelope = nil
+        current.pendingApprovalSignature = nil
+        current.lastUpdatedAt = .now
+        current.lastError = nil
+        hasConfirmedRecoveryPhrase = false
+    }
+
+    private func validateDeviceRecoveryStatus(
+        _ result: PairingDeviceRecoveryStatusResult,
+        against current: PairingState
+    ) throws {
+        guard result.recoveryID == current.recoveryID,
+              result.spaceID == current.spaceID,
+              result.membershipRevision == current.recoveryMembershipRevision,
+              result.keyEpoch == current.recoveryKeyEpoch,
+              result.transcriptData.base64URLEncodedString() == current.recoveryTranscript,
+              result.transcriptHash == current.recoveryTranscriptHash,
+              result.credential.memberID == current.memberID,
+              result.credential.participantID == current.participantID,
+              result.credential.agreementPublicKey
+                == current.recoveryCandidateAgreementPublicKey,
+              result.credential.signingPublicKey
+                == current.recoveryCandidateSigningPublicKey,
+              result.peer.memberID == current.peerMemberID,
+              result.peer.participantID == current.peerParticipantID,
+              result.peer.agreementPublicKey == current.peerAgreementPublicKey,
+              result.peer.signingPublicKey == current.peerSigningPublicKey,
+              result.previousTargetSigningPublicKey
+                == current.recoveryPreviousTargetSigningPublicKey
+        else { throw PairingError.transcriptMismatch }
+    }
+
+    private func clearExpiredSponsorRecovery(
+        credential: inout PairingCredential,
+        state current: inout PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        credential.enrollmentSecret = nil
+        try PairingKeychainStore.save(
+            credential,
+            lifecycleToken: lifecycleToken
+        )
+        current.recoveryID = nil
+        current.recoveryExpiresAt = nil
+        current.recoveryMembershipRevision = nil
+        current.recoveryKeyEpoch = nil
+        current.recoveryDeviceID = nil
+        current.recoveryPreviousTargetAgreementPublicKey = nil
+        current.recoveryPreviousTargetSigningPublicKey = nil
+        current.recoveryCandidateAgreementPublicKey = nil
+        current.recoveryCandidateSigningPublicKey = nil
+        current.recoveryTranscript = nil
+        current.recoveryTranscriptHash = nil
+        current.recoveryVerificationPhrase = nil
+        current.recoveryApprovalSubmittedAt = nil
+        current.recoveryCompletedAt = nil
+        current.recoveryWasLocalDeviceReplacement = nil
+        current.pendingClientRequestID = nil
+        current.pendingOperation = nil
+        current.pendingCancelRevokesWholeSpace = nil
+        current.pendingKeyEnvelope = nil
+        current.pendingApprovalSignature = nil
+        current.lastUpdatedAt = .now
+        current.lastError = nil
+        recoveryInvitationCode = nil
+        hasConfirmedRecoveryPhrase = false
+    }
+
     private func applyOwnerStatus(
         _ result: PairingStatusResult,
         to current: inout PairingState
@@ -985,6 +1802,9 @@ final class PairingViewModel: ObservableObject {
         if let transcript = result.transcript,
            let hash = result.transcriptHash {
             try applyTranscript(transcript, hash: hash, to: &current)
+        }
+        if result.state == "active", let peer = result.peer {
+            try applyCurrentPeer(peer, to: &current)
         }
         switch result.state {
         case "active": current.phase = .paired
@@ -1003,6 +1823,18 @@ final class PairingViewModel: ObservableObject {
             )
         default: break
         }
+    }
+
+    private func applyCurrentPeer(
+        _ peer: PairingMemberIdentity,
+        to current: inout PairingState
+    ) throws {
+        _ = try peer.validated()
+        guard peer.memberID == current.peerMemberID,
+              peer.participantID == current.peerParticipantID
+        else { throw PairingError.transcriptMismatch }
+        current.peerAgreementPublicKey = peer.agreementPublicKey
+        current.peerSigningPublicKey = peer.signingPublicKey
     }
 
     private func applyTranscript(
@@ -1139,14 +1971,42 @@ final class PairingViewModel: ObservableObject {
         ).code
     }
 
+    private func restoreRecoveryInvitationCodeIfAvailable(
+        from state: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        guard state.phase == .paired,
+              state.recoveryCompletedAt == nil,
+              let account = state.credentialAccount,
+              let recoveryID = state.recoveryID
+        else { return }
+        try SharingLifecycleGate.validate(lifecycleToken)
+        let credential = try PairingKeychainStore.load(
+            account: account,
+            installationMarker: state.installationMarker
+        )
+        guard let proofSecret = credential.enrollmentSecret else { return }
+        recoveryInvitationCode = try PairingDeviceRecoveryCode(
+            recoveryID: recoveryID,
+            proofSecret: proofSecret
+        ).code
+    }
+
     private func bestEffortScrubConsumedInvitationSecret(
         for state: PairingState,
         lifecycleToken: SharingLifecycleGate.Token
     ) {
+        if state.recoveryCompletedAt == nil,
+           state.recoveryID != nil || state.pendingOperation == "recoveryCreate"
+                || state.pendingOperation == "recoveryClaim" {
+            return
+        }
         let isConsumedPhase: Bool
         switch state.phase {
         case .pendingApproval, .approvalRequired, .awaitingCompletion, .paired:
             isConsumedPhase = true
+        case .claimingRecovery, .pendingRecoveryApproval, .recoveryAwaitingCompletion:
+            isConsumedPhase = false
         case .failed:
             isConsumedPhase = state.memberID != nil
         default:
@@ -1195,8 +2055,11 @@ final class PairingViewModel: ObservableObject {
         }
         windowDisplayName = PrivateWindowDisplayName.fallback
         invitationCode = nil
+        recoveryInvitationCode = nil
         enteredInvitationCode = ""
+        enteredRecoveryCode = ""
         hasConfirmedPhrase = false
+        hasConfirmedRecoveryPhrase = false
         NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
     }
 

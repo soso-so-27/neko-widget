@@ -70,7 +70,8 @@ jobs:
             ci/verify-pairing-protocol-vectors.swift \
             -o "$RUNNER_TEMP/verify-pairing-protocol-vectors"
           "$RUNNER_TEMP/verify-pairing-protocol-vectors" \
-            ci/fixtures/pairing-protocol-v1.json
+            ci/fixtures/pairing-protocol-v1.json \
+            ci/fixtures/device-recovery-protocol-v2.json
 
       - name: Verify Swift pairing API response contract
         working-directory: NekoWidget

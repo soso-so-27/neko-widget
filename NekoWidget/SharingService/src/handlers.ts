@@ -712,9 +712,15 @@ export async function getStatus(request: Request, env: Env): Promise<Response> {
   }
   await consumeNonceAndTouch(env, member);
   const enrollment = await loadEnrollment(env, member.spaceId);
+  const completedRecovery = await env.DB.prepare(
+    `SELECT consumed_at FROM device_recoveries
+      WHERE space_id = ? AND state = 'consumed'
+      ORDER BY consumed_at DESC LIMIT 1`,
+  ).bind(member.spaceId).first<{ consumed_at: number }>();
+  const recovered = completedRecovery !== null;
   let state: "awaitingInvitee" | "pendingApproval" | "approvedAwaitingCompletion" | "active" | "cancelled" | "expired" =
-    "awaitingInvitee";
-  if (enrollment !== null) {
+    recovered ? "active" : "awaitingInvitee";
+  if (!recovered && enrollment !== null) {
     state = enrollment.enrollment_state === "pending"
       ? "pendingApproval"
       : enrollment.enrollment_state === "approved"
@@ -726,40 +732,41 @@ export async function getStatus(request: Request, env: Env): Promise<Response> {
             : "expired";
   }
 
-  const owner = await env.DB.prepare(
-    `SELECT id, participant_id, agreement_public_key, signing_public_key, state
-       FROM members WHERE space_id = ? AND role = 'owner' LIMIT 1`,
-  ).bind(member.spaceId).first<{
+  const currentPeer = await env.DB.prepare(
+    `SELECT peer.id, peer.participant_id, peer.role, peer.state,
+            device.agreement_public_key, device.signing_public_key
+       FROM members AS peer
+       JOIN moment_participants AS participant
+         ON participant.legacy_member_id = peer.id
+        AND participant.space_id = peer.space_id
+        AND participant.state = 'active'
+       JOIN moment_devices AS device
+         ON device.participant_id = participant.id
+        AND device.legacy_member_id = peer.id
+        AND device.state = 'active'
+      WHERE peer.space_id = ? AND peer.id <> ? AND peer.state = 'active'
+      ORDER BY peer.created_at ASC LIMIT 1`,
+  ).bind(member.spaceId, member.id).first<{
     id: string;
     participant_id: string;
+    role: "owner" | "invitee";
     agreement_public_key: string;
     signing_public_key: string;
-    state: "active" | "revoked" | "expired";
+    state: "pending" | "active" | "revoked" | "expired";
   }>();
-  const peer = member.role === "owner"
-    ? enrollment === null
-      ? null
-      : publicMember(
-        enrollment.invitee_member_id,
-        "invitee",
-        enrollment.invitee_state,
-        enrollment.invitee_participant_id,
-        enrollment.invitee_agreement_public_key,
-        enrollment.invitee_signing_public_key,
-      )
-    : owner === null
-      ? null
-      : publicMember(
-        owner.id,
-        "owner",
-        owner.state,
-        owner.participant_id,
-        owner.agreement_public_key,
-        owner.signing_public_key,
-      );
+  const peer = currentPeer === null
+    ? null
+    : publicMember(
+      currentPeer.id,
+      currentPeer.role,
+      currentPeer.state,
+      currentPeer.participant_id,
+      currentPeer.agreement_public_key,
+      currentPeer.signing_public_key,
+    );
 
   const keyEnvelope =
-    member.role === "invitee" &&
+    !recovered && member.role === "invitee" &&
     enrollment?.enrollment_state === "approved" &&
     enrollment.key_envelope !== null &&
     enrollment.envelope_algorithm !== null &&
@@ -787,7 +794,7 @@ export async function getStatus(request: Request, env: Env): Promise<Response> {
     ),
     pairing: {
       state,
-      enrollment: enrollment === null
+      enrollment: enrollment === null || recovered
         ? null
         : {
           id: enrollment.enrollment_id,

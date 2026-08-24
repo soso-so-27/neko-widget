@@ -1073,6 +1073,16 @@ actor MomentSharingCoordinator {
             else { throw MomentSharingError.invalidPayload }
             ownerSigningPublicKey = decoded
         }
+        let predecessorOwnerSigningPublicKey: Data?
+        if role == .inviter,
+           pairing.recoveryWasLocalDeviceReplacement == true,
+           let encoded = pairing.recoveryPreviousTargetSigningPublicKey,
+           let decoded = Data(base64URLString: encoded),
+           decoded.count == 32 {
+            predecessorOwnerSigningPublicKey = decoded
+        } else {
+            predecessorOwnerSigningPublicKey = nil
+        }
 
         let remote = try await api.currentWindowName(
             pairingState: pairing,
@@ -1082,11 +1092,24 @@ actor MomentSharingCoordinator {
         var changed = false
         if let remote {
             let payload = try remote.preparedPayload(spaceID: spaceID)
-            let displayName = try PrivateWindowNameCrypto.open(
-                payload,
-                roomKey: roomKey,
-                ownerSigningPublicKey: ownerSigningPublicKey
-            )
+            let displayName: String
+            let requiresOwnerResign: Bool
+            do {
+                displayName = try PrivateWindowNameCrypto.open(
+                    payload,
+                    roomKey: roomKey,
+                    ownerSigningPublicKey: ownerSigningPublicKey
+                )
+                requiresOwnerResign = false
+            } catch {
+                guard let predecessorOwnerSigningPublicKey else { throw error }
+                displayName = try PrivateWindowNameCrypto.open(
+                    payload,
+                    roomKey: roomKey,
+                    ownerSigningPublicKey: predecessorOwnerSigningPublicKey
+                )
+                requiresOwnerResign = true
+            }
             if try PrivateWindowNameSyncStore.recordAccepted(
                 payload,
                 pairing: pairing,
@@ -1103,6 +1126,18 @@ actor MomentSharingCoordinator {
                     validating: lifecycleToken
                 )
                 changed = applied.displayName != before
+                if requiresOwnerResign {
+                    // The recovered owner proves continuity by accepting the
+                    // predecessor-signed value once, then increments the local
+                    // revision so the same plaintext is re-encrypted and
+                    // signed with the replacement device key below.
+                    _ = try PrivateWindowPresentationStore.save(
+                        displayName: displayName,
+                        pairing: pairing,
+                        validating: lifecycleToken
+                    )
+                    changed = true
+                }
             }
         }
 

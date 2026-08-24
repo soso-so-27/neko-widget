@@ -53,6 +53,43 @@ private struct Fixture: Decodable {
     let request: RequestVector
 }
 
+private struct DeviceRecoveryClaimVector: Decodable {
+    let recoveryId: String
+    let spaceId: String
+    let dailyBoundaryMinuteUTC: Int
+    let expiresAt: Int
+    let membershipRevision: Int
+    let keyEpoch: Int
+    let target: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+    let clientRequestId: String
+    let deviceId: String
+    let agreementPublicKey: String
+    let signingPublicKey: String
+    let expected: Expected
+}
+
+private struct DeviceRecoveryApprovalVector: Decodable {
+    let keyEnvelope: String
+    let expected: Expected
+}
+
+private struct DeviceRecoveryRequestVector: Decodable {
+    let timestamp: Int
+    let nonce: String
+    let method: String
+    let pathname: String
+    let bodySHA256: String
+    let expected: Expected
+}
+
+private struct DeviceRecoveryFixture: Decodable {
+    let schemaVersion: Int
+    let claim: DeviceRecoveryClaimVector
+    let approval: DeviceRecoveryApprovalVector
+    let request: DeviceRecoveryRequestVector
+}
+
 private enum VectorError: Error, CustomStringConvertible {
     case mismatch(String)
 
@@ -87,14 +124,19 @@ private func verify(
 @main
 private struct PairingProtocolVectorVerifier {
     static func main() throws {
-        guard CommandLine.arguments.count == 2 else {
-            throw VectorError.mismatch("Expected one fixture path argument")
+        guard CommandLine.arguments.count == 3 else {
+            throw VectorError.mismatch("Expected pairing and device-recovery fixture paths")
         }
         let fixture = try JSONDecoder().decode(
             Fixture.self,
             from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
         )
+        let recoveryFixture = try JSONDecoder().decode(
+            DeviceRecoveryFixture.self,
+            from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
+        )
         try require(fixture.schemaVersion == 1, "Unsupported fixture schema")
+        try require(recoveryFixture.schemaVersion == 2, "Unsupported recovery fixture schema")
 
         let pairing = fixture.pairing
         let pairingTranscript = PairingVerificationTranscript(
@@ -164,6 +206,65 @@ private struct PairingProtocolVectorVerifier {
         ])
         _ = try verify(data: requestData, expected: request.expected, label: "request")
 
-        print("Pairing protocol v1 Swift vectors: PASS")
+        let recovery = recoveryFixture.claim
+        let recoveryTranscript = PairingDeviceRecoveryTranscript(
+            recoveryID: recovery.recoveryId,
+            spaceID: recovery.spaceId,
+            dailyBoundaryMinuteUTC: recovery.dailyBoundaryMinuteUTC,
+            expiresAtUnix: recovery.expiresAt,
+            membershipRevision: recovery.membershipRevision,
+            keyEpoch: recovery.keyEpoch,
+            target: recovery.target,
+            peer: recovery.peer,
+            clientRequestID: recovery.clientRequestId,
+            deviceID: recovery.deviceId,
+            agreementPublicKey: recovery.agreementPublicKey,
+            signingPublicKey: recovery.signingPublicKey
+        )
+        let recoveryHash = try verify(
+            data: recoveryTranscript.canonicalData(),
+            expected: recovery.expected,
+            label: "device recovery claim"
+        )
+        try require(
+            PairingCrypto.verificationPhrase(for: recoveryHash)
+                == recovery.expected.verificationPhrase,
+            "device recovery verification phrase differs"
+        )
+
+        let approval = recoveryFixture.approval
+        let approvalData = try PairingCrypto.deviceRecoveryApprovalTranscript(
+            recoveryID: recovery.recoveryId,
+            spaceID: recovery.spaceId,
+            targetMemberID: recovery.target.memberID,
+            deviceID: recovery.deviceId,
+            membershipRevision: recovery.membershipRevision,
+            keyEpoch: recovery.keyEpoch,
+            transcriptHash: recovery.expected.sha256,
+            envelopeAlgorithm: PairingProtocol.roomKeyEnvelopeAlgorithm,
+            keyEnvelope: approval.keyEnvelope
+        )
+        _ = try verify(
+            data: approvalData,
+            expected: approval.expected,
+            label: "device recovery approval"
+        )
+
+        let recoveryRequest = recoveryFixture.request
+        let recoveryRequestData = try PairingCrypto.deviceRecoverySignedRequestTranscript(
+            recoveryID: recovery.recoveryId,
+            timestamp: recoveryRequest.timestamp,
+            nonce: recoveryRequest.nonce,
+            method: recoveryRequest.method,
+            path: recoveryRequest.pathname,
+            bodySHA256: recoveryRequest.bodySHA256
+        )
+        _ = try verify(
+            data: recoveryRequestData,
+            expected: recoveryRequest.expected,
+            label: "device recovery request"
+        )
+
+        print("Pairing v1 and device recovery v2 Swift vectors: PASS")
     }
 }

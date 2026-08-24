@@ -53,7 +53,7 @@ Phase 1は写真、render plan、reactionを一切受け取りません。
 {"error":{"code":"stable_machine_code","message":"Human-readable message"}}
 ```
 
-Pairing成功responseの正本は[`pairing-api-v1-responses.json`](../ci/fixtures/pairing-api-v1-responses.json)、日次共有responseの正本は[`sharing-api-v1-responses.json`](../ci/fixtures/sharing-api-v1-responses.json)です。Swift/Worker共通canonical vectorは[`pairing-protocol-v1.json`](../ci/fixtures/pairing-protocol-v1.json)と[`sharing-protocol-v1.json`](../ci/fixtures/sharing-protocol-v1.json)です。
+Pairing成功responseの正本は[`pairing-api-v1-responses.json`](../ci/fixtures/pairing-api-v1-responses.json)、日次共有responseの正本は[`sharing-api-v1-responses.json`](../ci/fixtures/sharing-api-v1-responses.json)です。Swift/Worker共通canonical vectorは[`pairing-protocol-v1.json`](../ci/fixtures/pairing-protocol-v1.json)、[`device-recovery-protocol-v2.json`](../ci/fixtures/device-recovery-protocol-v2.json)、[`sharing-protocol-v1.json`](../ci/fixtures/sharing-protocol-v1.json)です。
 
 | Method | Path | 認証 | 用途 |
 |---|---|---|---|

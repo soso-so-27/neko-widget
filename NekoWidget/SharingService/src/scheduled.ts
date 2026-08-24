@@ -1,6 +1,7 @@
 import type { Env } from "./env";
 import { runMomentCleanup } from "./moments";
 import { expireStalePairingState } from "./handlers";
+import { expireDeviceRecoveries } from "./device-recovery";
 
 // Space cleanup uses the candidate IDs as bound parameters. Keep ten slots of
 // headroom below D1's hard 100-parameter ceiling for timestamps and guards.
@@ -527,6 +528,7 @@ export async function runLegacyScheduledCleanup(
   now = Math.floor(Date.now() / 1000),
 ): Promise<void> {
   await cleanupEphemeralRows(env, now);
+  await expireDeviceRecoveries(env, now);
 
   const pairingSpaceIds = await pairingExpiryCandidates(env, now);
   await expireStalePairingState(env, now, { spaceIds: pairingSpaceIds });

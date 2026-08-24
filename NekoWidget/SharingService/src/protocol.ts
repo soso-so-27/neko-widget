@@ -123,6 +123,104 @@ export function approvalTranscript(
   ]);
 }
 
+export interface DeviceRecoveryClaimFields {
+  recoveryId: string;
+  spaceId: string;
+  dailyBoundaryMinuteUTC: number;
+  expiresAt: number;
+  membershipRevision: number;
+  keyEpoch: number;
+  targetMemberId: string;
+  targetParticipantId: string;
+  targetRole: "owner" | "invitee";
+  targetAgreementPublicKey: string;
+  targetSigningPublicKey: string;
+  initiatorMemberId: string;
+  initiatorParticipantId: string;
+  initiatorRole: "owner" | "invitee";
+  initiatorAgreementPublicKey: string;
+  initiatorSigningPublicKey: string;
+  clientRequestId: string;
+  deviceId: string;
+  agreementPublicKey: string;
+  signingPublicKey: string;
+}
+
+export function deviceRecoveryClaimTranscript(
+  fields: DeviceRecoveryClaimFields,
+): Uint8Array {
+  return encodeCanonicalFields([
+    "NW2.DEVICE-RECOVERY.CLAIM",
+    "2",
+    fields.recoveryId,
+    fields.spaceId,
+    String(fields.dailyBoundaryMinuteUTC),
+    String(fields.expiresAt),
+    String(fields.membershipRevision),
+    String(fields.keyEpoch),
+    fields.targetMemberId,
+    fields.targetParticipantId,
+    fields.targetRole,
+    fields.targetAgreementPublicKey,
+    fields.targetSigningPublicKey,
+    fields.initiatorMemberId,
+    fields.initiatorParticipantId,
+    fields.initiatorRole,
+    fields.initiatorAgreementPublicKey,
+    fields.initiatorSigningPublicKey,
+    fields.clientRequestId,
+    fields.deviceId,
+    fields.agreementPublicKey,
+    fields.signingPublicKey,
+  ]);
+}
+
+export function deviceRecoveryApprovalTranscript(fields: {
+  recoveryId: string;
+  spaceId: string;
+  targetMemberId: string;
+  deviceId: string;
+  membershipRevision: number;
+  keyEpoch: number;
+  transcriptHash: string;
+  envelopeAlgorithm: string;
+  keyEnvelope: string;
+}): Uint8Array {
+  return encodeCanonicalFields([
+    "NW2.DEVICE-RECOVERY.APPROVE",
+    "2",
+    fields.recoveryId,
+    fields.spaceId,
+    fields.targetMemberId,
+    fields.deviceId,
+    String(fields.membershipRevision),
+    String(fields.keyEpoch),
+    fields.transcriptHash,
+    fields.envelopeAlgorithm,
+    fields.keyEnvelope,
+  ]);
+}
+
+export function deviceRecoverySignedRequestTranscript(fields: {
+  recoveryId: string;
+  timestamp: number;
+  nonce: string;
+  method: string;
+  pathname: string;
+  bodySHA256: string;
+}): Uint8Array {
+  return encodeCanonicalFields([
+    "NW2.DEVICE-RECOVERY.REQUEST",
+    "2",
+    fields.recoveryId,
+    String(fields.timestamp),
+    fields.nonce,
+    fields.method.toUpperCase(),
+    fields.pathname,
+    fields.bodySHA256,
+  ]);
+}
+
 export interface SignedRequestFields {
   memberId: string;
   timestamp: number;

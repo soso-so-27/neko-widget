@@ -5,6 +5,7 @@ import Security
 enum PairingProtocol {
     static let version = 1
     static let invitationPrefix = "NW1"
+    static let deviceRecoveryPrefix = "NWR1"
     static let maximumClockSkewSeconds: TimeInterval = 300
     static let roomKeyEnvelopeAlgorithm = "X25519-HKDF-SHA256-CHACHA20POLY1305"
 }
@@ -26,6 +27,9 @@ enum PairingPhase: String, Codable, Sendable {
     case creatingInvitation
     case awaitingInvitee
     case joining
+    case claimingRecovery
+    case pendingRecoveryApproval
+    case recoveryAwaitingCompletion
     case pendingApproval
     case approvalRequired
     case awaitingCompletion
@@ -73,6 +77,24 @@ struct PairingState: Codable, Equatable, Sendable {
     var pendingKeyEnvelope: String?
     var pendingApprovalSignature: String?
     var pendingCancelRevokesWholeSpace: Bool?
+    /// A peer-approved device replacement keeps the space and room key while
+    /// rotating only the missing peer's device credential. These fields never
+    /// contain the room key or the one-time proof secret.
+    var recoveryID: String?
+    var recoveryExpiresAt: Date?
+    var recoveryMembershipRevision: Int?
+    var recoveryKeyEpoch: Int?
+    var recoveryDeviceID: String?
+    var recoveryPreviousTargetAgreementPublicKey: String?
+    var recoveryPreviousTargetSigningPublicKey: String?
+    var recoveryCandidateAgreementPublicKey: String?
+    var recoveryCandidateSigningPublicKey: String?
+    var recoveryTranscript: String?
+    var recoveryTranscriptHash: String?
+    var recoveryVerificationPhrase: String?
+    var recoveryApprovalSubmittedAt: Date?
+    var recoveryCompletedAt: Date?
+    var recoveryWasLocalDeviceReplacement: Bool?
     /// Local-only consent evidence. It is never included in a server request.
     /// Existing paired installs without the current version fail closed when
     /// media synchronization is enabled and must explicitly consent again.
@@ -94,7 +116,10 @@ struct PairingState: Codable, Equatable, Sendable {
               storageRevision == nil || storageRevision.map({ $0 >= 0 }) == true,
               UUID(uuidString: installationMarker) != nil
         else { throw PairingError.stateUnavailable }
-        let allowedOperations: Set<String> = ["create", "enroll", "approve", "complete", "cancel"]
+        let allowedOperations: Set<String> = [
+            "create", "enroll", "approve", "complete", "cancel",
+            "recoveryCreate", "recoveryClaim", "recoveryApprove", "recoveryComplete"
+        ]
         guard pendingOperation == nil || allowedOperations.contains(pendingOperation!),
               (pendingOperation == nil) == (pendingClientRequestID == nil),
               pendingClientRequestID == nil
@@ -111,7 +136,8 @@ struct PairingState: Codable, Equatable, Sendable {
             guard credentialAccount == nil,
                   participantID == nil,
                   spaceID == nil,
-                  memberID == nil
+                  memberID == nil,
+                  recoveryID == nil
             else { throw PairingError.stateUnavailable }
         case .creatingInvitation, .joining:
             try validateLocalIdentity()
@@ -127,36 +153,66 @@ struct PairingState: Codable, Equatable, Sendable {
                   invitationExpiresAt != nil,
                   dailyBoundaryMinuteUTC.map({ (0...1_439).contains($0) }) == true
             else { throw PairingError.stateUnavailable }
-        case .pendingApproval, .approvalRequired, .awaitingCompletion, .paired:
+        case .claimingRecovery, .pendingRecoveryApproval, .recoveryAwaitingCompletion:
             try validateLocalIdentity()
             try validateServerIdentity()
-            guard invitationID.map(PairingValidation.isOpaqueIdentifier) == true,
-                  enrollmentID.map(PairingValidation.isOpaqueIdentifier) == true,
-                  peerMemberID.map(PairingValidation.isOpaqueIdentifier) == true,
-                  let participant = peerParticipantID.flatMap({ Data(base64URLString: $0) }),
-                  participant.count == 16,
-                  let agreement = peerAgreementPublicKey.flatMap({ Data(base64URLString: $0) }),
-                  agreement.count == 32,
-                  let signing = peerSigningPublicKey.flatMap({ Data(base64URLString: $0) }),
-                  signing.count == 32,
-                  let transcriptData = transcript.flatMap({ Data(base64URLString: $0) }),
-                  let hashData = transcriptHash.flatMap({ Data(base64URLString: $0) }),
-                  hashData.count == 32,
-                  verificationPhrase?.isEmpty == false,
-                  dailyBoundaryMinuteUTC.map({ (0...1_439).contains($0) }) == true
-            else { throw PairingError.stateUnavailable }
-            _ = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: agreement)
-            _ = try Curve25519.Signing.PublicKey(rawRepresentation: signing)
-            let calculatedHash = PairingCrypto.sha256(transcriptData)
-            guard calculatedHash == hashData,
-                  verificationPhrase == PairingCrypto.verificationPhrase(for: calculatedHash)
-            else { throw PairingError.stateUnavailable }
+            try validatePeerIdentity()
+            try validateRecovery(requireDevice: true, requireTranscript: phase != .claimingRecovery)
+            if phase == .claimingRecovery {
+                guard pendingOperation == "recoveryClaim" else {
+                    throw PairingError.stateUnavailable
+                }
+            } else if phase == .recoveryAwaitingCompletion {
+                guard pendingOperation == "recoveryComplete" else {
+                    throw PairingError.stateUnavailable
+                }
+            } else if pendingOperation != nil {
+                throw PairingError.stateUnavailable
+            }
+        case .pendingApproval, .approvalRequired, .awaitingCompletion:
+            try validateLocalIdentity()
+            try validateServerIdentity()
+            try validatePeerIdentity()
+            try validatePairingCeremony()
+        case .paired:
+            try validateLocalIdentity()
+            try validateServerIdentity()
+            try validatePeerIdentity()
+            if invitationID != nil || enrollmentID != nil {
+                try validatePairingCeremony()
+            } else {
+                guard recoveryCompletedAt != nil else {
+                    throw PairingError.stateUnavailable
+                }
+                try validateRecovery(requireDevice: true, requireTranscript: true)
+            }
+            if recoveryID != nil, recoveryCompletedAt == nil {
+                try validateRecovery(
+                    requireDevice: recoveryCandidateAgreementPublicKey != nil,
+                    requireTranscript: recoveryTranscript != nil
+                )
+            }
         case .failed:
             if credentialAccount != nil || participantID != nil {
                 try validateLocalIdentity()
             }
         }
         return self
+    }
+
+    private func validatePairingCeremony() throws {
+        guard invitationID.map(PairingValidation.isOpaqueIdentifier) == true,
+              enrollmentID.map(PairingValidation.isOpaqueIdentifier) == true,
+                  let transcriptData = transcript.flatMap({ Data(base64URLString: $0) }),
+                  let hashData = transcriptHash.flatMap({ Data(base64URLString: $0) }),
+                  hashData.count == 32,
+              verificationPhrase?.isEmpty == false,
+              dailyBoundaryMinuteUTC.map({ (0...1_439).contains($0) }) == true
+            else { throw PairingError.stateUnavailable }
+        let calculatedHash = PairingCrypto.sha256(transcriptData)
+        guard calculatedHash == hashData,
+              verificationPhrase == PairingCrypto.verificationPhrase(for: calculatedHash)
+        else { throw PairingError.stateUnavailable }
     }
 
     private func validateLocalIdentity() throws {
@@ -169,6 +225,58 @@ struct PairingState: Codable, Equatable, Sendable {
         guard spaceID.map(PairingValidation.isOpaqueIdentifier) == true,
               memberID.map(PairingValidation.isOpaqueIdentifier) == true
         else { throw PairingError.stateUnavailable }
+    }
+
+    private func validatePeerIdentity() throws {
+        guard peerMemberID.map(PairingValidation.isOpaqueIdentifier) == true,
+              let participant = peerParticipantID.flatMap({ Data(base64URLString: $0) }),
+              participant.count == 16,
+              let agreement = peerAgreementPublicKey.flatMap({ Data(base64URLString: $0) }),
+              agreement.count == 32,
+              let signing = peerSigningPublicKey.flatMap({ Data(base64URLString: $0) }),
+              signing.count == 32
+        else { throw PairingError.stateUnavailable }
+        _ = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: agreement)
+        _ = try Curve25519.Signing.PublicKey(rawRepresentation: signing)
+    }
+
+    private func validateRecovery(requireDevice: Bool, requireTranscript: Bool) throws {
+        guard recoveryID.map(PairingValidation.isOpaqueIdentifier) == true,
+              recoveryExpiresAt != nil,
+              recoveryMembershipRevision.map({ $0 > 0 }) == true,
+              recoveryKeyEpoch.map({ $0 > 0 }) == true,
+              let previousAgreement = recoveryPreviousTargetAgreementPublicKey
+                .flatMap({ Data(base64URLString: $0) }),
+              previousAgreement.count == 32,
+              let previousSigning = recoveryPreviousTargetSigningPublicKey
+                .flatMap({ Data(base64URLString: $0) }),
+              previousSigning.count == 32
+        else { throw PairingError.stateUnavailable }
+        _ = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: previousAgreement)
+        _ = try Curve25519.Signing.PublicKey(rawRepresentation: previousSigning)
+        if requireDevice {
+            guard recoveryDeviceID.map(PairingValidation.isOpaqueIdentifier) == true,
+                  let candidateAgreement = recoveryCandidateAgreementPublicKey
+                    .flatMap({ Data(base64URLString: $0) }),
+                  candidateAgreement.count == 32,
+                  let candidateSigning = recoveryCandidateSigningPublicKey
+                    .flatMap({ Data(base64URLString: $0) }),
+                  candidateSigning.count == 32
+            else { throw PairingError.stateUnavailable }
+            _ = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: candidateAgreement)
+            _ = try Curve25519.Signing.PublicKey(rawRepresentation: candidateSigning)
+        }
+        if requireTranscript {
+            guard let transcriptData = recoveryTranscript.flatMap({ Data(base64URLString: $0) }),
+                  let hashData = recoveryTranscriptHash.flatMap({ Data(base64URLString: $0) }),
+                  hashData.count == 32,
+                  recoveryVerificationPhrase?.isEmpty == false
+            else { throw PairingError.stateUnavailable }
+            let calculatedHash = PairingCrypto.sha256(transcriptData)
+            guard calculatedHash == hashData,
+                  recoveryVerificationPhrase == PairingCrypto.verificationPhrase(for: calculatedHash)
+            else { throw PairingError.stateUnavailable }
+        }
     }
 }
 
@@ -274,6 +382,163 @@ struct PairingInvitationCode: Equatable, Sendable {
     }
 }
 
+/// A one-time capability created by the still-connected peer. The secret is
+/// used only to prove possession of the recovery invitation; it never derives
+/// or encrypts the room key.
+struct PairingDeviceRecoveryCode: Equatable, Sendable {
+    let recoveryID: String
+    let proofSecret: Data
+
+    init(recoveryID: String, proofSecret: Data) throws {
+        guard PairingValidation.isOpaqueIdentifier(recoveryID), proofSecret.count == 32 else {
+            throw PairingError.invalidDeviceRecoveryCode
+        }
+        _ = try Curve25519.Signing.PrivateKey(rawRepresentation: proofSecret)
+        self.recoveryID = recoveryID
+        self.proofSecret = proofSecret
+    }
+
+    init(code: String) throws {
+        let compact = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        let components = compact.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count == 3,
+              components[0] == Substring(PairingProtocol.deviceRecoveryPrefix),
+              let secret = Data(base64URLString: String(components[2]))
+        else { throw PairingError.invalidDeviceRecoveryCode }
+        try self.init(recoveryID: String(components[1]), proofSecret: secret)
+    }
+
+    var code: String {
+        "\(PairingProtocol.deviceRecoveryPrefix).\(recoveryID).\(proofSecret.base64URLEncodedString())"
+    }
+
+    var recoveryURL: URL? {
+        URL(
+            string: "nekowidget://pair/recover?id=\(recoveryID)#\(proofSecret.base64URLEncodedString())"
+        )
+    }
+
+    static func parse(url: URL) throws -> Self {
+        guard url.scheme == "nekowidget",
+              url.host == "pair",
+              url.path == "/recover",
+              let recoveryID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "id" })?.value,
+              let fragment = url.fragment,
+              let secret = Data(base64URLString: fragment)
+        else { throw PairingError.invalidDeviceRecoveryCode }
+        return try Self(recoveryID: recoveryID, proofSecret: secret)
+    }
+}
+
+struct PairingDeviceRecoveryIdentity: Codable, Equatable, Sendable {
+    let memberID: String
+    let participantID: String
+    let role: String
+    let agreementPublicKey: String
+    let signingPublicKey: String
+    let state: String
+
+    enum CodingKeys: String, CodingKey {
+        case memberID = "memberId"
+        case participantID = "participantId"
+        case role
+        case agreementPublicKey
+        case signingPublicKey
+        case state
+    }
+
+    var pairingRole: PairingRole? {
+        switch role {
+        case "owner": return .inviter
+        case "invitee": return .invitee
+        default: return nil
+        }
+    }
+
+    var memberIdentity: PairingMemberIdentity {
+        PairingMemberIdentity(
+            memberID: memberID,
+            participantID: participantID,
+            agreementPublicKey: agreementPublicKey,
+            signingPublicKey: signingPublicKey
+        )
+    }
+
+    func validated(allowedStates: Set<String>) throws -> Self {
+        guard pairingRole != nil,
+              allowedStates.contains(state)
+        else { throw PairingError.invalidServerResponse }
+        _ = try memberIdentity.validated()
+        return self
+    }
+}
+
+struct PairingDeviceRecoveryTranscript: Equatable, Sendable {
+    let recoveryID: String
+    let spaceID: String
+    let dailyBoundaryMinuteUTC: Int
+    let expiresAtUnix: Int
+    let membershipRevision: Int
+    let keyEpoch: Int
+    let target: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+    let clientRequestID: String
+    let deviceID: String
+    let agreementPublicKey: String
+    let signingPublicKey: String
+
+    func canonicalData() throws -> Data {
+        guard PairingValidation.isOpaqueIdentifier(recoveryID),
+              PairingValidation.isOpaqueIdentifier(spaceID),
+              (0...1_439).contains(dailyBoundaryMinuteUTC),
+              expiresAtUnix > 0,
+              membershipRevision > 0,
+              keyEpoch > 0,
+              UUID(uuidString: clientRequestID) != nil,
+              PairingValidation.isOpaqueIdentifier(deviceID),
+              let agreement = Data(base64URLString: agreementPublicKey), agreement.count == 32,
+              let signing = Data(base64URLString: signingPublicKey), signing.count == 32
+        else { throw PairingError.invalidServerResponse }
+        let target = try target.validated(allowedStates: ["active"])
+        let peer = try peer.validated(allowedStates: ["active"])
+        guard target.memberID != peer.memberID,
+              target.participantID != peer.participantID,
+              target.pairingRole != peer.pairingRole
+        else { throw PairingError.invalidServerResponse }
+        _ = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: agreement)
+        _ = try Curve25519.Signing.PublicKey(rawRepresentation: signing)
+        return try PairingCanonicalEncoder.encode([
+            "NW2.DEVICE-RECOVERY.CLAIM",
+            "2",
+            recoveryID,
+            spaceID,
+            String(dailyBoundaryMinuteUTC),
+            String(expiresAtUnix),
+            String(membershipRevision),
+            String(keyEpoch),
+            target.memberID,
+            target.participantID,
+            target.role,
+            target.agreementPublicKey,
+            target.signingPublicKey,
+            peer.memberID,
+            peer.participantID,
+            peer.role,
+            peer.agreementPublicKey,
+            peer.signingPublicKey,
+            clientRequestID.lowercased(),
+            deviceID,
+            agreementPublicKey,
+            signingPublicKey
+        ])
+    }
+
+    func hash() throws -> Data {
+        PairingCrypto.sha256(try canonicalData())
+    }
+}
+
 struct PairingMemberIdentity: Codable, Equatable, Sendable {
     let memberID: String
     let participantID: String
@@ -345,6 +610,7 @@ struct PairingVerificationTranscript: Equatable, Sendable {
 enum PairingError: LocalizedError, Equatable {
     case apiNotConfigured
     case invalidInvitationCode
+    case invalidDeviceRecoveryCode
     case keychainUnavailable(OSStatus)
     case keychainAccessGroupUnavailable
     case malformedCredential
@@ -364,6 +630,8 @@ enum PairingError: LocalizedError, Equatable {
             return "このビルドには共有サーバーが設定されていません。"
         case .invalidInvitationCode:
             return "招待コードを確認できませんでした。コード全体を貼り付けてください。"
+        case .invalidDeviceRecoveryCode:
+            return "復旧コードを確認できませんでした。NWR1.で始まるコード全体を貼り付けてください。"
         case .keychainUnavailable:
             return "共有鍵を安全に保存できませんでした。iPhoneを再起動して、もう一度お試しください。"
         case .keychainAccessGroupUnavailable:
@@ -390,6 +658,16 @@ enum PairingError: LocalizedError, Equatable {
                 return "共有の認証を一時的に確認できませんでした。まどは解除せず、時間をおいてもう一度お試しください。"
             case "invalid_enrollment_proof", "invitation_not_found":
                 return "招待コードを確認できませんでした。新しいコードを相手に送ってもらってください。"
+            case "invalid_recovery_proof", "invalid_recovery_signature",
+                 "device_recovery_not_found", "recovery_already_claimed":
+                return "復旧コードを確認できませんでした。接続済みの相手から新しいコードを受け取ってください。"
+            case "device_recovery_expired", "device_recovery_unavailable", "recovery_unavailable":
+                return "復旧コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
+            case "recovery_already_pending":
+                return "以前の復旧コードがまだ有効です。期限が切れてから、新しいコードを作ってください。"
+            case "device_recovery_conflict", "recovery_conflict", "invalid_recovery_state",
+                 "recovery_target_unavailable", "membership_changed", "key_epoch_changed":
+                return "まどの状態が変わったため復旧を停止しました。現在の共有は解除せず、状態を確認してください。"
             case "invalid_pairing_state":
                 return "まどの状態が変わりました。状態を確認して、もう一度お試しください。"
             case "rate_limited":
@@ -464,6 +742,22 @@ enum PairingCrypto {
         ).signature(for: data)
     }
 
+    static func makeDeviceRecoveryProofSecret() -> Data {
+        Curve25519.Signing.PrivateKey().rawRepresentation
+    }
+
+    static func deviceRecoveryProofPublicKey(for secret: Data) throws -> Data {
+        guard secret.count == 32 else { throw PairingError.malformedCredential }
+        return try Curve25519.Signing.PrivateKey(rawRepresentation: secret)
+            .publicKey.rawRepresentation
+    }
+
+    static func signDeviceRecoveryProof(_ data: Data, secret: Data) throws -> Data {
+        guard secret.count == 32 else { throw PairingError.malformedCredential }
+        return try Curve25519.Signing.PrivateKey(rawRepresentation: secret)
+            .signature(for: data)
+    }
+
     static func sign(_ data: Data, credential: PairingCredential) throws -> Data {
         try Curve25519.Signing.PrivateKey(
             rawRepresentation: credential.validated().signingPrivateKey
@@ -497,6 +791,69 @@ enum PairingCrypto {
             transcriptHash,
             envelopeAlgorithm,
             keyEnvelope
+        ])
+    }
+
+    static func deviceRecoveryApprovalTranscript(
+        recoveryID: String,
+        spaceID: String,
+        targetMemberID: String,
+        deviceID: String,
+        membershipRevision: Int,
+        keyEpoch: Int,
+        transcriptHash: String,
+        envelopeAlgorithm: String,
+        keyEnvelope: String
+    ) throws -> Data {
+        guard PairingValidation.isOpaqueIdentifier(recoveryID),
+              PairingValidation.isOpaqueIdentifier(spaceID),
+              PairingValidation.isOpaqueIdentifier(targetMemberID),
+              PairingValidation.isOpaqueIdentifier(deviceID),
+              membershipRevision > 0,
+              keyEpoch > 0,
+              Data(base64URLString: transcriptHash)?.count == 32,
+              envelopeAlgorithm == PairingProtocol.roomKeyEnvelopeAlgorithm,
+              Data(base64URLString: keyEnvelope)?.count == 60
+        else { throw PairingError.invalidServerResponse }
+        return try PairingCanonicalEncoder.encode([
+            "NW2.DEVICE-RECOVERY.APPROVE",
+            "2",
+            recoveryID,
+            spaceID,
+            targetMemberID,
+            deviceID,
+            String(membershipRevision),
+            String(keyEpoch),
+            transcriptHash,
+            envelopeAlgorithm,
+            keyEnvelope
+        ])
+    }
+
+    static func deviceRecoverySignedRequestTranscript(
+        recoveryID: String,
+        timestamp: Int,
+        nonce: String,
+        method: String,
+        path: String,
+        bodySHA256: String
+    ) throws -> Data {
+        guard PairingValidation.isOpaqueIdentifier(recoveryID),
+              timestamp > 0,
+              Data(base64URLString: nonce)?.count == 16,
+              !method.isEmpty,
+              path.hasPrefix("/v2/device-recoveries/"),
+              Data(base64URLString: bodySHA256)?.count == 32
+        else { throw PairingError.invalidServerResponse }
+        return try PairingCanonicalEncoder.encode([
+            "NW2.DEVICE-RECOVERY.REQUEST",
+            "2",
+            recoveryID,
+            String(timestamp),
+            nonce,
+            method.uppercased(),
+            path,
+            bodySHA256
         ])
     }
 
@@ -597,6 +954,74 @@ enum PairingCrypto {
             using: SHA256.self,
             salt: transcriptHash,
             sharedInfo: Data("NW1.ROOM.KEY.WRAP".utf8),
+            outputByteCount: 32
+        )
+        let roomKey = try ChaChaPoly.open(
+            ChaChaPoly.SealedBox(combined: envelope),
+            using: wrappingKey,
+            authenticating: transcript
+        )
+        guard roomKey.count == 32 else { throw PairingError.invalidServerResponse }
+        return roomKey
+    }
+
+    static func makeDeviceRecoveryRoomKeyEnvelope(
+        roomKey: Data,
+        peerAgreementPublicKey: Data,
+        transcript: Data,
+        transcriptHash: Data,
+        credential: PairingCredential
+    ) throws -> Data {
+        guard roomKey.count == 32, peerAgreementPublicKey.count == 32 else {
+            throw PairingError.malformedCredential
+        }
+        guard sha256(transcript) == transcriptHash else {
+            throw PairingError.transcriptMismatch
+        }
+        let privateKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: credential.validated().agreementPrivateKey
+        )
+        let peerKey = try Curve25519.KeyAgreement.PublicKey(
+            rawRepresentation: peerAgreementPublicKey
+        )
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: peerKey)
+        let wrappingKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: transcriptHash,
+            sharedInfo: Data("NW2.DEVICE-RECOVERY.ROOM.KEY.WRAP".utf8),
+            outputByteCount: 32
+        )
+        return try ChaChaPoly.seal(
+            roomKey,
+            using: wrappingKey,
+            authenticating: transcript
+        ).combined
+    }
+
+    static func openDeviceRecoveryRoomKeyEnvelope(
+        _ envelope: Data,
+        peerAgreementPublicKey: Data,
+        transcript: Data,
+        transcriptHash: Data,
+        credential: PairingCredential
+    ) throws -> Data {
+        guard envelope.count == 60, peerAgreementPublicKey.count == 32 else {
+            throw PairingError.invalidServerResponse
+        }
+        guard sha256(transcript) == transcriptHash else {
+            throw PairingError.transcriptMismatch
+        }
+        let privateKey = try Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: credential.validated().agreementPrivateKey
+        )
+        let peerKey = try Curve25519.KeyAgreement.PublicKey(
+            rawRepresentation: peerAgreementPublicKey
+        )
+        let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: peerKey)
+        let wrappingKey = sharedSecret.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: transcriptHash,
+            sharedInfo: Data("NW2.DEVICE-RECOVERY.ROOM.KEY.WRAP".utf8),
             outputByteCount: 32
         )
         let roomKey = try ChaChaPoly.open(

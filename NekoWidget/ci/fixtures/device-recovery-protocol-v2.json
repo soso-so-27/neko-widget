@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 2,
+  "claim": {
+    "recoveryId": "cXJzdHV2d3h5ent8fX5_gA",
+    "spaceId": "AQIDBAUGBwgJCgsMDQ4PEA",
+    "dailyBoundaryMinuteUTC": 540,
+    "expiresAt": 1786972500,
+    "membershipRevision": 2,
+    "keyEpoch": 1,
+    "target": {
+      "memberId": "UVJTVFVWV1hZWltcXV5fYA",
+      "participantId": "YWJjZGVmZ2hpamtsbW5vcA",
+      "role": "invitee",
+      "agreementPublicKey": "SJzrunoWbGGYNf4S7txYHb_Bs23hDIMOTwvBxIc0hks",
+      "signingPublicKey": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA",
+      "state": "active"
+    },
+    "peer": {
+      "memberId": "MTIzNDU2Nzg5Ojs8PT4_QA",
+      "participantId": "QUJDREVGR0hJSktMTU5PUA",
+      "role": "owner",
+      "agreementPublicKey": "rUOL-uMfbAk9YdQzklXqeYCSyfrdB7l4J_Swrp3ufBw",
+      "signingPublicKey": "dSnEVtk40rj-kPpsz5FtNGdwpkvLt7UyO2h6zeIM0Aw",
+      "state": "active"
+    },
+    "clientRequestId": "123e4567-e89b-42d3-a456-426614174002",
+    "deviceId": "BwgJCgsMDQ4PEBESExQVFg",
+    "agreementPublicKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "signingPublicKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+    "expected": {
+      "canonicalBase64URL": "ABlOVzIuREVWSUNFLVJFQ09WRVJZLkNMQUlNAAEyABZjWEp6ZEhWMmQzaDVlbnQ4Zlg1X2dBABZBUUlEQkFVR0J3Z0pDZ3NNRFE0UEVBAAM1NDAACjE3ODY5NzI1MDAAATIAATEAFlVWSlRWRlZXVjFoWldsdGNYVjVmWUEAFllXSmpaR1ZtWjJocGFtdHNiVzV2Y0EAB2ludml0ZWUAK1NKenJ1bm9XYkdHWU5mNFM3dHhZSGJfQnMyM2hESU1PVHd2QnhJYzBoa3MAKzVfRmlvUXZzVlpyLW9aWGszT2hMYVZhTlhTeXdsajYwUnNCb1hpc1g4dkEAFk1USXpORFUyTnpnNU9qczhQVDRfUUEAFlFVSkRSRVZHUjBoSlNrdE1UVTVQVUEABW93bmVyACtyVU9MLXVNZmJBazlZZFF6a2xYcWVZQ1N5ZnJkQjdsNEpfU3dycDN1ZkJ3ACtkU25FVnRrNDByai1rUHBzejVGdE5HZHdwa3ZMdDdVeU8yaDZ6ZUlNMEF3ACQxMjNlNDU2Ny1lODliLTQyZDMtYTQ1Ni00MjY2MTQxNzQwMDIAFkJ3Z0pDZ3NNRFE0UEVCRVNFeFFWRmcAK0FBRUNBd1FGQmdjSUNRb0xEQTBPRHhBUkVoTVVGUllYR0JrYUd4d2RIaDgAK0lDRWlJeVFsSmljb0tTb3JMQzB1THpBeE1qTTBOVFkzT0RrNk96dzlQajg",
+      "sha256": "P9ENlZMg9XgnH8EhrJJcLM_qBC1zAWNIdJaNZwzTi6k",
+      "verificationPhrase": "かぜ・よる・きり・つき・まど・おと・しずく・なみ・えき・うみ・ほし・はな"
+    }
+  },
+  "approval": {
+    "keyEnvelope": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7",
+    "expected": {
+      "canonicalBase64URL": "ABtOVzIuREVWSUNFLVJFQ09WRVJZLkFQUFJPVkUAATIAFmNYSnpkSFYyZDNoNWVudDhmWDVfZ0EAFkFRSURCQVVHQndnSkNnc01EUTRQRUEAFlVWSlRWRlZXVjFoWldsdGNYVjVmWUEAFkJ3Z0pDZ3NNRFE0UEVCRVNFeFFWRmcAATIAATEAK1A5RU5sWk1nOVhnbkg4RWhySkpjTE1fcUJDMXpBV05JZEphTlp3elRpNmsAI1gyNTUxOS1IS0RGLVNIQTI1Ni1DSEFDSEEyMFBPTFkxMzA1AFBRRUZDUTBSRlJrZElTVXBMVEUxT1QxQlJVbE5VVlZaWFdGbGFXMXhkWGw5Z1lXSmpaR1ZtWjJocGFtdHNiVzV2Y0hGeWMzUjFkbmQ0ZVhwNw",
+      "sha256": "CsA-xxSM_lxC0H5RG-HcZcLchnazilguafoJKEDVWdY"
+    }
+  },
+  "request": {
+    "timestamp": 1786972000,
+    "nonce": "BwgJCgsMDQ4PEBESExQVFg",
+    "method": "GET",
+    "pathname": "/v2/device-recoveries/cXJzdHV2d3h5ent8fX5_gA/status",
+    "bodySHA256": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU",
+    "expected": {
+      "canonicalBase64URL": "ABtOVzIuREVWSUNFLVJFQ09WRVJZLlJFUVVFU1QAATIAFmNYSnpkSFYyZDNoNWVudDhmWDVfZ0EACjE3ODY5NzIwMDAAFkJ3Z0pDZ3NNRFE0UEVCRVNFeFFWRmcAA0dFVAAzL3YyL2RldmljZS1yZWNvdmVyaWVzL2NYSnpkSFYyZDNoNWVudDhmWDVfZ0Evc3RhdHVzACs0N0RFUXBqOEhCU2EtX1RJbVctNUpDZXVRZVJrbTVOTXBKV1pHM2hTdUZV",
+      "sha256": "VV5YrqtH_d4Ge67w60xufLmnZsZH_8RApnmfaMMfCBM"
+    }
+  }
+}

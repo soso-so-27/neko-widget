@@ -29,6 +29,27 @@ enum PairingPresentationVerifier {
             refreshText: "承認されたか確認"
         )
         try verify(
+            phase: .claimingRecovery,
+            role: .invitee,
+            roleText: "以前のまどへ接続を戻します",
+            actionText: "復旧コードを確認しています",
+            refreshText: nil
+        )
+        try verify(
+            phase: .pendingRecoveryApproval,
+            role: .invitee,
+            roleText: "以前のまどへ接続を戻します",
+            actionText: "接続済みの相手と12語を比べてください",
+            refreshText: "承認されたか確認"
+        )
+        try verify(
+            phase: .recoveryAwaitingCompletion,
+            role: .invitee,
+            roleText: "以前のまどへ接続を戻します",
+            actionText: "端末の置き換えを完了しています",
+            refreshText: "完了したか確認"
+        )
+        try verify(
             phase: .approvalRequired,
             role: .inviter,
             roleText: "あなたは、まどを作った人です",
@@ -56,6 +77,14 @@ enum PairingPresentationVerifier {
                 message: "relay-internal-detail-must-not-appear"
             ),
             expected: "この招待は利用できません。新しい招待コードが必要です。"
+        )
+        try verifySafeError(
+            PairingError.requestRejected(
+                status: 410,
+                code: "recovery_unavailable",
+                message: "relay-internal-detail-must-not-appear"
+            ),
+            expected: "復旧コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
         )
     }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import fixture from "../../ci/fixtures/pairing-protocol-v1.json";
+import recoveryFixture from "../../ci/fixtures/device-recovery-protocol-v2.json";
 import sharingFixture from "../../ci/fixtures/sharing-protocol-v1.json";
 import windowNameFixture from "../../ci/fixtures/window-name-protocol-v1.json";
 import {
@@ -11,6 +12,9 @@ import {
   verifyEd25519,
 } from "../src/encoding";
 import {
+  deviceRecoveryApprovalTranscript,
+  deviceRecoveryClaimTranscript,
+  deviceRecoverySignedRequestTranscript,
   enrollmentTranscript,
   encodeCanonicalFields,
   pairingTranscript,
@@ -19,6 +23,71 @@ import {
   signedRequestTranscript,
   verificationPhrase,
 } from "../src/protocol";
+
+describe("device recovery protocol v2 golden vectors", () => {
+  it("matches Swift canonical claim, approval and request bytes", async () => {
+    const claim = recoveryFixture.claim;
+    expect(["owner", "invitee"]).toContain(claim.target.role);
+    expect(["owner", "invitee"]).toContain(claim.peer.role);
+    const claimBytes = deviceRecoveryClaimTranscript({
+      recoveryId: claim.recoveryId,
+      spaceId: claim.spaceId,
+      dailyBoundaryMinuteUTC: claim.dailyBoundaryMinuteUTC,
+      expiresAt: claim.expiresAt,
+      membershipRevision: claim.membershipRevision,
+      keyEpoch: claim.keyEpoch,
+      targetMemberId: claim.target.memberId,
+      targetParticipantId: claim.target.participantId,
+      targetRole: claim.target.role as "owner" | "invitee",
+      targetAgreementPublicKey: claim.target.agreementPublicKey,
+      targetSigningPublicKey: claim.target.signingPublicKey,
+      initiatorMemberId: claim.peer.memberId,
+      initiatorParticipantId: claim.peer.participantId,
+      initiatorRole: claim.peer.role as "owner" | "invitee",
+      initiatorAgreementPublicKey: claim.peer.agreementPublicKey,
+      initiatorSigningPublicKey: claim.peer.signingPublicKey,
+      clientRequestId: claim.clientRequestId,
+      deviceId: claim.deviceId,
+      agreementPublicKey: claim.agreementPublicKey,
+      signingPublicKey: claim.signingPublicKey,
+    });
+    expect(base64urlEncode(claimBytes)).toBe(claim.expected.canonicalBase64URL);
+    expect(await sha256Base64url(claimBytes)).toBe(claim.expected.sha256);
+    expect(verificationPhrase(await sha256(claimBytes))).toBe(
+      claim.expected.verificationPhrase,
+    );
+
+    const approvalBytes = deviceRecoveryApprovalTranscript({
+      recoveryId: claim.recoveryId,
+      spaceId: claim.spaceId,
+      targetMemberId: claim.target.memberId,
+      deviceId: claim.deviceId,
+      membershipRevision: claim.membershipRevision,
+      keyEpoch: claim.keyEpoch,
+      transcriptHash: claim.expected.sha256,
+      envelopeAlgorithm: "X25519-HKDF-SHA256-CHACHA20POLY1305",
+      keyEnvelope: recoveryFixture.approval.keyEnvelope,
+    });
+    expect(base64urlEncode(approvalBytes)).toBe(
+      recoveryFixture.approval.expected.canonicalBase64URL,
+    );
+    expect(await sha256Base64url(approvalBytes)).toBe(
+      recoveryFixture.approval.expected.sha256,
+    );
+
+    const signed = recoveryFixture.request;
+    const requestBytes = deviceRecoverySignedRequestTranscript({
+      recoveryId: claim.recoveryId,
+      timestamp: signed.timestamp,
+      nonce: signed.nonce,
+      method: signed.method,
+      pathname: signed.pathname,
+      bodySHA256: signed.bodySHA256,
+    });
+    expect(base64urlEncode(requestBytes)).toBe(signed.expected.canonicalBase64URL);
+    expect(await sha256Base64url(requestBytes)).toBe(signed.expected.sha256);
+  });
+});
 
 describe("pairing protocol v1 golden vectors", () => {
   it("matches the same canonical bytes, hashes and phrase as CryptoKit", async () => {

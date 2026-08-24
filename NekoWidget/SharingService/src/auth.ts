@@ -64,10 +64,19 @@ export async function authenticateSignedRequest(
   }
 
   const member = await env.DB.prepare(
-    `SELECT m.id, m.space_id, m.role, m.participant_id, m.agreement_public_key,
-            m.signing_public_key, m.state, s.state AS space_state
+    `SELECT m.id, m.space_id, m.role, m.participant_id,
+            device.agreement_public_key, device.signing_public_key,
+            m.state, s.state AS space_state
        FROM members AS m
        JOIN spaces AS s ON s.id = m.space_id
+       JOIN moment_participants AS participant
+         ON participant.legacy_member_id = m.id
+        AND participant.space_id = m.space_id
+        AND participant.state = m.state
+       JOIN moment_devices AS device
+         ON device.participant_id = participant.id
+        AND device.legacy_member_id = m.id
+        AND device.state = m.state
       WHERE m.id = ?`,
   ).bind(memberId).first<MemberRow>();
   if (member === null) {

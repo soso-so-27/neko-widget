@@ -20,7 +20,7 @@ struct PairingGuidancePresentation: Equatable, Sendable {
             return Self(
                 roleTitle: "まだまどにつながっていません",
                 nextActionTitle: "はじめに、どちらをするか選んでください",
-                nextActionDetail: "新しいまどを作るか、相手から届いた招待コードで参加します。",
+                nextActionDetail: "新しいまどを作る、招待に参加する、または接続済みの相手から復旧コードを受け取ります。",
                 refreshButtonTitle: nil
             )
         case .creatingInvitation:
@@ -43,6 +43,27 @@ struct PairingGuidancePresentation: Equatable, Sendable {
                 nextActionTitle: "招待コードを確認しています",
                 nextActionDetail: "この画面を閉じずに少しお待ちください。",
                 refreshButtonTitle: nil
+            )
+        case .claimingRecovery:
+            return Self(
+                roleTitle: "以前のまどへ接続を戻します",
+                nextActionTitle: "復旧コードを確認しています",
+                nextActionDetail: "サーバー上のまどを解除せず、新しい端末の鍵を登録しています。",
+                refreshButtonTitle: nil
+            )
+        case .pendingRecoveryApproval:
+            return Self(
+                roleTitle: "以前のまどへ接続を戻します",
+                nextActionTitle: "接続済みの相手と12語を比べてください",
+                nextActionDetail: "12語が違う場合は承認せず、新しい復旧コードからやり直してください。",
+                refreshButtonTitle: "承認されたか確認"
+            )
+        case .recoveryAwaitingCompletion:
+            return Self(
+                roleTitle: "以前のまどへ接続を戻します",
+                nextActionTitle: "端末の置き換えを完了しています",
+                nextActionDetail: "共有鍵は保存済みです。この画面を閉じずに少しお待ちください。",
+                refreshButtonTitle: "完了したか確認"
             )
         case .pendingApproval:
             return Self(

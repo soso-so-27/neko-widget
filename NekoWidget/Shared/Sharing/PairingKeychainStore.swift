@@ -301,7 +301,8 @@ enum PairingStateStore {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
             guard expected.phase == .unpaired,
                   expected.credentialAccount == nil,
-                  state.phase == .creatingInvitation || state.phase == .joining,
+                  state.phase == .creatingInvitation || state.phase == .joining
+                    || state.phase == .claimingRecovery,
                   state.credentialAccount == credential.account,
                   state.installationMarker == credential.installationMarker
             else { throw PairingError.stateUnavailable }

@@ -16,6 +16,16 @@ import {
   redeemInvitation,
   revokeSpace,
 } from "./handlers";
+import {
+  approveDeviceRecovery,
+  claimDeviceRecovery,
+  completeDeviceRecovery,
+  createDeviceRecovery,
+  getDeviceRecoveryDescriptor,
+  getDeviceRecoveryStatus,
+  getSponsorDeviceRecoveryStatus,
+  getPendingDeviceRecoveries,
+} from "./device-recovery";
 import { rejectQuery } from "./http";
 import {
   acknowledgeMoment,
@@ -95,6 +105,48 @@ export async function route(request: Request, env: Env): Promise<Response> {
   }
   if (request.method === "POST" && pathname === "/v1/pairing/revoke") {
     return revokeSpace(request, env);
+  }
+  if (request.method === "POST" && pathname === "/v2/device-recoveries") {
+    return createDeviceRecovery(request, env);
+  }
+  if (request.method === "GET" && pathname === "/v2/device-recoveries/pending") {
+    return getPendingDeviceRecoveries(request, env);
+  }
+  const recoveryDescriptorMatch = pathname.match(
+    /^\/v2\/device-recoveries\/([^/]+)\/descriptor$/u,
+  );
+  if (request.method === "GET" && recoveryDescriptorMatch?.[1] !== undefined) {
+    return getDeviceRecoveryDescriptor(request, env, recoveryDescriptorMatch[1]);
+  }
+  const recoveryClaimMatch = pathname.match(
+    /^\/v2\/device-recoveries\/([^/]+)\/claim$/u,
+  );
+  if (request.method === "POST" && recoveryClaimMatch?.[1] !== undefined) {
+    return claimDeviceRecovery(request, env, recoveryClaimMatch[1]);
+  }
+  const recoveryApproveMatch = pathname.match(
+    /^\/v2\/device-recoveries\/([^/]+)\/approve$/u,
+  );
+  if (request.method === "POST" && recoveryApproveMatch?.[1] !== undefined) {
+    return approveDeviceRecovery(request, env, recoveryApproveMatch[1]);
+  }
+  const recoveryStatusMatch = pathname.match(
+    /^\/v2\/device-recoveries\/([^/]+)\/status$/u,
+  );
+  if (request.method === "GET" && recoveryStatusMatch?.[1] !== undefined) {
+    return getDeviceRecoveryStatus(request, env, recoveryStatusMatch[1]);
+  }
+  const recoverySponsorStatusMatch = pathname.match(
+    /^\/v2\/device-recoveries\/([^/]+)\/sponsor-status$/u,
+  );
+  if (request.method === "GET" && recoverySponsorStatusMatch?.[1] !== undefined) {
+    return getSponsorDeviceRecoveryStatus(request, env, recoverySponsorStatusMatch[1]);
+  }
+  const recoveryCompleteMatch = pathname.match(
+    /^\/v2\/device-recoveries\/([^/]+)\/complete$/u,
+  );
+  if (request.method === "POST" && recoveryCompleteMatch?.[1] !== undefined) {
+    return completeDeviceRecovery(request, env, recoveryCompleteMatch[1]);
   }
   if (pathname === "/v2/moments" || pathname.startsWith("/v2/moments/")) {
     if (!momentRuntimeEnabled(env)) {

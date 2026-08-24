@@ -27,11 +27,54 @@ struct PairingEnrollmentResult: Sendable {
 
 struct PairingStatusResult: Sendable {
     let state: String
+    let peer: PairingMemberIdentity?
     let transcript: PairingVerificationTranscript?
     let transcriptHash: String?
     let envelopeAlgorithm: String?
     let keyEnvelope: String?
     let approvalSignature: String?
+}
+
+struct PairingDeviceRecoveryDescriptor: Sendable {
+    let recoveryID: String
+    let state: String
+    let createdAt: Date?
+    let expiresAt: Date
+    let membershipRevision: Int
+    let keyEpoch: Int
+    let spaceID: String
+    let dailyBoundaryMinuteUTC: Int
+    let target: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+}
+
+struct PairingDeviceRecoveryClaimResult: Sendable {
+    let descriptor: PairingDeviceRecoveryDescriptor
+    let clientRequestID: String
+    let deviceID: String
+    let transcriptData: Data
+    let transcriptHash: String
+    let credential: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+}
+
+struct PairingDeviceRecoveryStatusResult: Sendable {
+    let recoveryID: String
+    let state: String
+    let expiresAt: Date
+    let membershipRevision: Int
+    let keyEpoch: Int
+    let spaceID: String
+    let dailyBoundaryMinuteUTC: Int
+    let transcriptData: Data
+    let transcriptHash: String
+    let credential: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+    let envelopeAlgorithm: String?
+    let keyEnvelope: String?
+    let approvalSignature: String?
+    let recoveredAt: Date?
+    let previousTargetSigningPublicKey: String
 }
 
 protocol PairingAPIClientProtocol {
@@ -86,6 +129,61 @@ protocol PairingAPIClientProtocol {
         clientRequestID: UUID,
         credential: PairingCredential
     ) async throws
+
+    func createDeviceRecovery(
+        state: PairingState,
+        proofPublicKey: String,
+        clientRequestID: UUID,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryDescriptor
+
+    func deviceRecoveryDescriptor(
+        recoveryID: String
+    ) async throws -> PairingDeviceRecoveryDescriptor
+
+    func claimDeviceRecovery(
+        code: PairingDeviceRecoveryCode,
+        descriptor: PairingDeviceRecoveryDescriptor,
+        deviceID: String,
+        clientRequestID: UUID,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryClaimResult
+
+    func pendingDeviceRecovery(
+        state: PairingState,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryClaimResult?
+
+    func approveDeviceRecovery(
+        recoveryID: String,
+        targetMemberID: String,
+        deviceID: String,
+        membershipRevision: Int,
+        keyEpoch: Int,
+        transcriptHash: String,
+        keyEnvelope: String,
+        approvalSignature: String,
+        clientRequestID: UUID,
+        memberID: String,
+        credential: PairingCredential
+    ) async throws
+
+    func deviceRecoveryStatus(
+        recoveryID: String,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryStatusResult
+
+    func sponsorDeviceRecoveryStatus(
+        state: PairingState,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryStatusResult
+
+    func completeDeviceRecovery(
+        recoveryID: String,
+        transcriptHash: String,
+        clientRequestID: UUID,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryStatusResult
 }
 
 actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
@@ -302,6 +400,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         guard let pending = response.pending.first else {
             return PairingStatusResult(
                 state: "awaitingInvitee",
+                peer: nil,
                 transcript: nil,
                 transcriptHash: nil,
                 envelopeAlgorithm: nil,
@@ -338,6 +437,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         )
         return PairingStatusResult(
             state: pending.state,
+            peer: pending.member.identity,
             transcript: transcript,
             transcriptHash: pending.transcriptHash,
             envelopeAlgorithm: nil,
@@ -459,6 +559,499 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         }
     }
 
+    func createDeviceRecovery(
+        state: PairingState,
+        proofPublicKey: String,
+        clientRequestID: UUID,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryDescriptor {
+        guard state.phase == .paired,
+              let memberID = state.memberID,
+              let targetParticipantID = state.peerParticipantID,
+              Data(base64URLString: proofPublicKey)?.count == 32
+        else { throw PairingError.stateUnavailable }
+        let request = DeviceRecoveryCreateRequest(
+            protocolVersion: 2,
+            clientRequestId: clientRequestID.uuidString.lowercased(),
+            targetParticipantId: targetParticipantID,
+            recoveryProofPublicKey: proofPublicKey
+        )
+        let response: DeviceRecoveryDescriptorResponse = try await send(
+            path: "/v2/device-recoveries",
+            method: "POST",
+            body: request,
+            authentication: Authentication(memberID: memberID, credential: credential)
+        )
+        let descriptor = try validatedDeviceRecoveryDescriptor(response)
+        guard descriptor.state == "awaitingClaim",
+              response.recovery.codePrefix
+                == "\(PairingProtocol.deviceRecoveryPrefix).\(descriptor.recoveryID)",
+              descriptor.spaceID == state.spaceID,
+              descriptor.dailyBoundaryMinuteUTC == state.dailyBoundaryMinuteUTC,
+              descriptor.target.participantID == targetParticipantID,
+              descriptor.target.memberID == state.peerMemberID,
+              descriptor.target.agreementPublicKey == state.peerAgreementPublicKey,
+              descriptor.target.signingPublicKey == state.peerSigningPublicKey,
+              descriptor.peer.memberID == memberID,
+              descriptor.peer.participantID == credential.participantIDString,
+              descriptor.peer.agreementPublicKey
+                == PairingCrypto.agreementPublicKey(for: credential).base64URLEncodedString(),
+              descriptor.peer.signingPublicKey
+                == PairingCrypto.signingPublicKey(for: credential).base64URLEncodedString()
+        else { throw PairingError.invalidServerResponse }
+        return descriptor
+    }
+
+    func deviceRecoveryDescriptor(
+        recoveryID: String
+    ) async throws -> PairingDeviceRecoveryDescriptor {
+        guard PairingValidation.isOpaqueIdentifier(recoveryID) else {
+            throw PairingError.invalidDeviceRecoveryCode
+        }
+        let response: DeviceRecoveryDescriptorResponse = try await sendEmpty(
+            path: "/v2/device-recoveries/\(recoveryID)/descriptor",
+            method: "GET",
+            authentication: nil
+        )
+        let descriptor = try validatedDeviceRecoveryDescriptor(response)
+        guard descriptor.recoveryID == recoveryID,
+              descriptor.state == "awaitingClaim"
+        else { throw PairingError.invalidServerResponse }
+        return descriptor
+    }
+
+    func claimDeviceRecovery(
+        code: PairingDeviceRecoveryCode,
+        descriptor: PairingDeviceRecoveryDescriptor,
+        deviceID: String,
+        clientRequestID: UUID,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryClaimResult {
+        guard descriptor.recoveryID == code.recoveryID,
+              descriptor.state == "awaitingClaim",
+              descriptor.expiresAt > .now,
+              descriptor.target.participantID == credential.participantIDString,
+              PairingValidation.isOpaqueIdentifier(deviceID)
+        else { throw PairingError.stateUnavailable }
+        let agreementPublicKey = try PairingCrypto.agreementPublicKey(for: credential)
+            .base64URLEncodedString()
+        let signingPublicKey = try PairingCrypto.signingPublicKey(for: credential)
+            .base64URLEncodedString()
+        let requestID = clientRequestID.uuidString.lowercased()
+        let transcript = PairingDeviceRecoveryTranscript(
+            recoveryID: descriptor.recoveryID,
+            spaceID: descriptor.spaceID,
+            dailyBoundaryMinuteUTC: descriptor.dailyBoundaryMinuteUTC,
+            expiresAtUnix: Int(descriptor.expiresAt.timeIntervalSince1970),
+            membershipRevision: descriptor.membershipRevision,
+            keyEpoch: descriptor.keyEpoch,
+            target: descriptor.target,
+            peer: descriptor.peer,
+            clientRequestID: requestID,
+            deviceID: deviceID,
+            agreementPublicKey: agreementPublicKey,
+            signingPublicKey: signingPublicKey
+        )
+        let canonical = try transcript.canonicalData()
+        let request = DeviceRecoveryClaimRequest(
+            protocolVersion: 2,
+            clientRequestId: requestID,
+            deviceId: deviceID,
+            agreementPublicKey: agreementPublicKey,
+            signingPublicKey: signingPublicKey,
+            recoveryProofSignature: try PairingCrypto.signDeviceRecoveryProof(
+                canonical,
+                secret: code.proofSecret
+            ).base64URLEncodedString(),
+            deviceSignature: try PairingCrypto.sign(canonical, credential: credential)
+                .base64URLEncodedString()
+        )
+        let response: DeviceRecoveryClaimResponse = try await send(
+            path: "/v2/device-recoveries/\(descriptor.recoveryID)/claim",
+            method: "POST",
+            body: request,
+            authentication: nil
+        )
+        return try validatedDeviceRecoveryClaim(
+            response,
+            descriptor: descriptor,
+            expectedTranscript: transcript,
+            expectedCanonical: canonical
+        )
+    }
+
+    func pendingDeviceRecovery(
+        state: PairingState,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryClaimResult? {
+        guard state.phase == .paired,
+              let memberID = state.memberID,
+              let spaceID = state.spaceID,
+              let recoveryID = state.recoveryID,
+              let expiresAt = state.recoveryExpiresAt,
+              let membershipRevision = state.recoveryMembershipRevision,
+              let keyEpoch = state.recoveryKeyEpoch,
+              let targetMemberID = state.peerMemberID,
+              let targetParticipantID = state.peerParticipantID,
+              let targetAgreement = state.recoveryPreviousTargetAgreementPublicKey,
+              let targetSigning = state.recoveryPreviousTargetSigningPublicKey,
+              let peerRole = state.role,
+              let boundary = state.dailyBoundaryMinuteUTC
+        else { throw PairingError.stateUnavailable }
+        let response: DeviceRecoveryPendingResponse = try await sendEmpty(
+            path: "/v2/device-recoveries/pending",
+            method: "GET",
+            authentication: Authentication(memberID: memberID, credential: credential)
+        )
+        guard response.protocolVersion == 2,
+              response.spaceId == spaceID,
+              response.pending.count <= 1
+        else { throw PairingError.invalidServerResponse }
+        guard let pending = response.pending.first else { return nil }
+        let target = PairingDeviceRecoveryIdentity(
+            memberID: targetMemberID,
+            participantID: targetParticipantID,
+            role: peerRole == .inviter ? "invitee" : "owner",
+            agreementPublicKey: targetAgreement,
+            signingPublicKey: targetSigning,
+            state: "active"
+        )
+        let localIdentity = PairingDeviceRecoveryIdentity(
+            memberID: memberID,
+            participantID: credential.participantIDString,
+            role: peerRole == .inviter ? "owner" : "invitee",
+            agreementPublicKey: try PairingCrypto.agreementPublicKey(for: credential)
+                .base64URLEncodedString(),
+            signingPublicKey: try PairingCrypto.signingPublicKey(for: credential)
+                .base64URLEncodedString(),
+            state: "active"
+        )
+        let descriptor = PairingDeviceRecoveryDescriptor(
+            recoveryID: recoveryID,
+            state: pending.recovery.state,
+            createdAt: nil,
+            expiresAt: expiresAt,
+            membershipRevision: membershipRevision,
+            keyEpoch: keyEpoch,
+            spaceID: spaceID,
+            dailyBoundaryMinuteUTC: boundary,
+            target: target,
+            peer: localIdentity
+        )
+        guard let claimRequestID = pending.recovery.clientRequestId,
+              let claimedDeviceID = pending.recovery.deviceId
+        else { throw PairingError.invalidServerResponse }
+        let expected = PairingDeviceRecoveryTranscript(
+            recoveryID: recoveryID,
+            spaceID: spaceID,
+            dailyBoundaryMinuteUTC: boundary,
+            expiresAtUnix: Int(expiresAt.timeIntervalSince1970),
+            membershipRevision: membershipRevision,
+            keyEpoch: keyEpoch,
+            target: target,
+            peer: localIdentity,
+            clientRequestID: claimRequestID,
+            deviceID: claimedDeviceID,
+            agreementPublicKey: pending.credential.agreementPublicKey,
+            signingPublicKey: pending.credential.signingPublicKey
+        )
+        let canonical = try expected.canonicalData()
+        guard pending.recovery.id == recoveryID,
+              pending.recovery.state == "pendingApproval",
+              pending.recovery.expiresAt == Int(expiresAt.timeIntervalSince1970),
+              pending.recovery.membershipRevision == membershipRevision,
+              pending.recovery.keyEpoch == keyEpoch,
+              pending.peer == localIdentity,
+              pending.credential.memberID == targetMemberID,
+              pending.credential.participantID == targetParticipantID,
+              pending.credential.state == "pending"
+        else { throw PairingError.invalidServerResponse }
+        return try validatedDeviceRecoveryClaim(
+            DeviceRecoveryClaimResponse(
+                protocolVersion: 2,
+                recovery: pending.recovery,
+                credential: pending.credential,
+                peer: pending.peer
+            ),
+            descriptor: descriptor,
+            expectedTranscript: expected,
+            expectedCanonical: canonical
+        )
+    }
+
+    func approveDeviceRecovery(
+        recoveryID: String,
+        targetMemberID: String,
+        deviceID: String,
+        membershipRevision: Int,
+        keyEpoch: Int,
+        transcriptHash: String,
+        keyEnvelope: String,
+        approvalSignature: String,
+        clientRequestID: UUID,
+        memberID: String,
+        credential: PairingCredential
+    ) async throws {
+        let request = DeviceRecoveryApprovalRequest(
+            protocolVersion: 2,
+            clientRequestId: clientRequestID.uuidString.lowercased(),
+            transcriptHash: transcriptHash,
+            envelopeAlgorithm: PairingProtocol.roomKeyEnvelopeAlgorithm,
+            keyEnvelope: keyEnvelope,
+            approvalSignature: approvalSignature
+        )
+        let response: DeviceRecoveryApprovalResponse = try await send(
+            path: "/v2/device-recoveries/\(recoveryID)/approve",
+            method: "POST",
+            body: request,
+            authentication: Authentication(memberID: memberID, credential: credential)
+        )
+        guard response.protocolVersion == 2,
+              response.recoveryId == recoveryID,
+              response.targetMemberId == targetMemberID,
+              response.deviceId == deviceID,
+              response.membershipRevision == membershipRevision,
+              response.keyEpoch == keyEpoch,
+              response.state == "approvedAwaitingCompletion"
+        else { throw PairingError.invalidServerResponse }
+    }
+
+    func deviceRecoveryStatus(
+        recoveryID: String,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryStatusResult {
+        let response: DeviceRecoveryStatusResponse = try await sendEmpty(
+            path: "/v2/device-recoveries/\(recoveryID)/status",
+            method: "GET",
+            authentication: .deviceRecovery(recoveryID: recoveryID, credential: credential)
+        )
+        return try validatedDeviceRecoveryStatus(response, recoveryID: recoveryID, credential: credential)
+    }
+
+    func sponsorDeviceRecoveryStatus(
+        state: PairingState,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryStatusResult {
+        guard state.phase == .paired,
+              let recoveryID = state.recoveryID,
+              let memberID = state.memberID
+        else { throw PairingError.stateUnavailable }
+        let response: DeviceRecoveryStatusResponse = try await sendEmpty(
+            path: "/v2/device-recoveries/\(recoveryID)/sponsor-status",
+            method: "GET",
+            authentication: Authentication(memberID: memberID, credential: credential)
+        )
+        let result = try validatedDeviceRecoveryStatus(
+            response,
+            recoveryID: recoveryID,
+            credential: nil
+        )
+        guard result.spaceID == state.spaceID,
+              result.membershipRevision == state.recoveryMembershipRevision,
+              result.keyEpoch == state.recoveryKeyEpoch,
+              result.peer.memberID == memberID,
+              result.peer.participantID == credential.participantIDString,
+              result.peer.agreementPublicKey
+                == PairingCrypto.agreementPublicKey(for: credential).base64URLEncodedString(),
+              result.peer.signingPublicKey
+                == PairingCrypto.signingPublicKey(for: credential).base64URLEncodedString(),
+              result.credential.memberID == state.peerMemberID,
+              result.credential.participantID == state.peerParticipantID
+        else { throw PairingError.invalidServerResponse }
+        return result
+    }
+
+    func completeDeviceRecovery(
+        recoveryID: String,
+        transcriptHash: String,
+        clientRequestID: UUID,
+        credential: PairingCredential
+    ) async throws -> PairingDeviceRecoveryStatusResult {
+        let request = DeviceRecoveryCompletionRequest(
+            protocolVersion: 2,
+            clientRequestId: clientRequestID.uuidString.lowercased(),
+            transcriptHash: transcriptHash
+        )
+        let response: DeviceRecoveryStatusResponse = try await send(
+            path: "/v2/device-recoveries/\(recoveryID)/complete",
+            method: "POST",
+            body: request,
+            authentication: .deviceRecovery(recoveryID: recoveryID, credential: credential)
+        )
+        let result = try validatedDeviceRecoveryStatus(
+            response,
+            recoveryID: recoveryID,
+            credential: credential
+        )
+        guard result.state == "active",
+              result.credential.state == "active",
+              result.recoveredAt != nil,
+              result.keyEnvelope == nil
+        else { throw PairingError.invalidServerResponse }
+        return result
+    }
+
+    private func validatedDeviceRecoveryDescriptor(
+        _ response: DeviceRecoveryDescriptorResponse
+    ) throws -> PairingDeviceRecoveryDescriptor {
+        guard response.protocolVersion == 2,
+              PairingValidation.isOpaqueIdentifier(response.recovery.id),
+              ["awaitingClaim", "pendingApproval"].contains(response.recovery.state),
+              response.recovery.expiresAt > Int(Date().timeIntervalSince1970),
+              response.recovery.membershipRevision > 0,
+              response.recovery.keyEpoch > 0,
+              PairingValidation.isOpaqueIdentifier(response.space.id),
+              (0...1_439).contains(response.space.dailyBoundaryMinuteUTC),
+              response.target.memberID != response.peer.memberID,
+              response.target.participantID != response.peer.participantID,
+              response.target.pairingRole != response.peer.pairingRole
+        else { throw PairingError.invalidServerResponse }
+        _ = try response.target.validated(allowedStates: ["active"])
+        _ = try response.peer.validated(allowedStates: ["active"])
+        return PairingDeviceRecoveryDescriptor(
+            recoveryID: response.recovery.id,
+            state: response.recovery.state,
+            createdAt: response.recovery.createdAt.map {
+                Date(timeIntervalSince1970: TimeInterval($0))
+            },
+            expiresAt: Date(timeIntervalSince1970: TimeInterval(response.recovery.expiresAt)),
+            membershipRevision: response.recovery.membershipRevision,
+            keyEpoch: response.recovery.keyEpoch,
+            spaceID: response.space.id,
+            dailyBoundaryMinuteUTC: response.space.dailyBoundaryMinuteUTC,
+            target: response.target,
+            peer: response.peer
+        )
+    }
+
+    private func validatedDeviceRecoveryClaim(
+        _ response: DeviceRecoveryClaimResponse,
+        descriptor: PairingDeviceRecoveryDescriptor,
+        expectedTranscript: PairingDeviceRecoveryTranscript,
+        expectedCanonical: Data
+    ) throws -> PairingDeviceRecoveryClaimResult {
+        guard response.protocolVersion == 2,
+              response.recovery.id == descriptor.recoveryID,
+              response.recovery.state == "pendingApproval",
+              response.recovery.expiresAt
+                == Int(descriptor.expiresAt.timeIntervalSince1970),
+              response.recovery.membershipRevision == descriptor.membershipRevision,
+              response.recovery.keyEpoch == descriptor.keyEpoch,
+              response.credential.memberID == descriptor.target.memberID,
+              response.credential.participantID == descriptor.target.participantID,
+              response.credential.role == descriptor.target.role,
+              response.credential.agreementPublicKey == expectedTranscript.agreementPublicKey,
+              response.credential.signingPublicKey == expectedTranscript.signingPublicKey,
+              response.credential.state == "pending",
+              response.peer == descriptor.peer,
+              let transcriptValue = response.recovery.transcript,
+              let transcriptData = Data(base64URLString: transcriptValue),
+              transcriptData == expectedCanonical,
+              let hashValue = response.recovery.transcriptHash,
+              let hashData = Data(base64URLString: hashValue),
+              hashData.count == 32,
+              PairingCrypto.sha256(expectedCanonical) == hashData
+        else { throw PairingError.transcriptMismatch }
+        _ = try response.credential.validated(allowedStates: ["pending"])
+        _ = try response.peer.validated(allowedStates: ["active"])
+        var claimedDescriptor = descriptor
+        claimedDescriptor = PairingDeviceRecoveryDescriptor(
+            recoveryID: descriptor.recoveryID,
+            state: "pendingApproval",
+            createdAt: descriptor.createdAt,
+            expiresAt: descriptor.expiresAt,
+            membershipRevision: descriptor.membershipRevision,
+            keyEpoch: descriptor.keyEpoch,
+            spaceID: descriptor.spaceID,
+            dailyBoundaryMinuteUTC: descriptor.dailyBoundaryMinuteUTC,
+            target: descriptor.target,
+            peer: descriptor.peer
+        )
+        return PairingDeviceRecoveryClaimResult(
+            descriptor: claimedDescriptor,
+            clientRequestID: expectedTranscript.clientRequestID,
+            deviceID: expectedTranscript.deviceID,
+            transcriptData: transcriptData,
+            transcriptHash: hashValue,
+            credential: response.credential,
+            peer: response.peer
+        )
+    }
+
+    private func validatedDeviceRecoveryStatus(
+        _ response: DeviceRecoveryStatusResponse,
+        recoveryID: String,
+        credential: PairingCredential?
+    ) throws -> PairingDeviceRecoveryStatusResult {
+        let localAgreement = try credential.map {
+            try PairingCrypto.agreementPublicKey(for: $0).base64URLEncodedString()
+        }
+        let localSigning = try credential.map {
+            try PairingCrypto.signingPublicKey(for: $0).base64URLEncodedString()
+        }
+        guard response.protocolVersion == 2,
+              response.recovery.id == recoveryID,
+              ["pendingApproval", "approvedAwaitingCompletion", "active", "expired"]
+                .contains(response.recovery.state),
+              response.recovery.expiresAt > 0,
+              response.recovery.membershipRevision > 0,
+              response.recovery.keyEpoch > 0,
+              PairingValidation.isOpaqueIdentifier(response.space.id),
+              (0...1_439).contains(response.space.dailyBoundaryMinuteUTC),
+              credential == nil || response.credential.participantID == credential?.participantIDString,
+              credential == nil || response.credential.agreementPublicKey == localAgreement,
+              credential == nil || response.credential.signingPublicKey == localSigning,
+              response.peer.memberID != response.credential.memberID,
+              response.peer.participantID != response.credential.participantID,
+              response.peer.pairingRole != response.credential.pairingRole,
+              let transcriptValue = response.recovery.transcript,
+              let transcriptData = Data(base64URLString: transcriptValue),
+              let hashValue = response.recovery.transcriptHash,
+              let hashData = Data(base64URLString: hashValue),
+              hashData.count == 32,
+              PairingCrypto.sha256(transcriptData) == hashData,
+              Data(base64URLString: response.previousTargetSigningPublicKey)?.count == 32
+        else { throw PairingError.invalidServerResponse }
+        _ = try response.credential.validated(allowedStates: ["pending", "active"])
+        _ = try response.peer.validated(allowedStates: ["active"])
+        let envelope = response.recovery.keyEnvelope
+        if let envelope {
+            guard response.recovery.state == "approvedAwaitingCompletion",
+                  envelope.algorithm == PairingProtocol.roomKeyEnvelopeAlgorithm,
+                  Data(base64URLString: envelope.ciphertext)?.count == 60,
+                  Data(base64URLString: envelope.approvalSignature)?.count == 64
+            else { throw PairingError.invalidServerResponse }
+        } else if response.recovery.state == "approvedAwaitingCompletion" {
+            throw PairingError.invalidServerResponse
+        }
+        if response.recovery.state == "active" {
+            guard response.credential.state == "active",
+                  response.recoveredAt != nil,
+                  envelope == nil
+            else { throw PairingError.invalidServerResponse }
+        }
+        return PairingDeviceRecoveryStatusResult(
+            recoveryID: recoveryID,
+            state: response.recovery.state,
+            expiresAt: Date(timeIntervalSince1970: TimeInterval(response.recovery.expiresAt)),
+            membershipRevision: response.recovery.membershipRevision,
+            keyEpoch: response.recovery.keyEpoch,
+            spaceID: response.space.id,
+            dailyBoundaryMinuteUTC: response.space.dailyBoundaryMinuteUTC,
+            transcriptData: transcriptData,
+            transcriptHash: hashValue,
+            credential: response.credential,
+            peer: response.peer,
+            envelopeAlgorithm: envelope?.algorithm,
+            keyEnvelope: envelope?.ciphertext,
+            approvalSignature: envelope?.approvalSignature,
+            recoveredAt: response.recoveredAt.map {
+                Date(timeIntervalSince1970: TimeInterval($0))
+            },
+            previousTargetSigningPublicKey: response.previousTargetSigningPublicKey
+        )
+    }
+
     private func validatedChallenge(
         _ response: ChallengeResponse,
         invitation: PairingInvitationCode
@@ -578,6 +1171,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         }
         return PairingStatusResult(
             state: response.pairing.state,
+            peer: response.pairing.peer?.identity,
             transcript: transcript,
             transcriptHash: response.pairing.enrollment?.transcriptHash,
             envelopeAlgorithm: response.pairing.keyEnvelope?.algorithm,
@@ -704,19 +1298,35 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         let timestamp = Int(Date().timeIntervalSince1970)
         let nonce = PairingCrypto.randomData(count: 16).base64URLEncodedString()
         let bodyHash = PairingCrypto.sha256(body).base64URLEncodedString()
-        let transcript = try PairingCanonicalEncoder.encode([
-            "NW1.REQUEST",
-            String(PairingProtocol.version),
-            authentication.memberID,
-            String(timestamp),
-            nonce,
-            method.uppercased(),
-            path,
-            bodyHash
-        ])
+        let transcript: Data
+        let protocolVersion: Int
+        switch authentication.domain {
+        case .pairing:
+            protocolVersion = PairingProtocol.version
+            transcript = try PairingCanonicalEncoder.encode([
+                "NW1.REQUEST",
+                String(PairingProtocol.version),
+                authentication.memberID,
+                String(timestamp),
+                nonce,
+                method.uppercased(),
+                path,
+                bodyHash
+            ])
+        case .deviceRecovery:
+            protocolVersion = 2
+            transcript = try PairingCrypto.deviceRecoverySignedRequestTranscript(
+                recoveryID: authentication.memberID,
+                timestamp: timestamp,
+                nonce: nonce,
+                method: method,
+                path: path,
+                bodySHA256: bodyHash
+            )
+        }
         let signature = try PairingCrypto.sign(transcript, credential: authentication.credential)
             .base64URLEncodedString()
-        request.setValue(String(PairingProtocol.version), forHTTPHeaderField: "Neko-Protocol-Version")
+        request.setValue(String(protocolVersion), forHTTPHeaderField: "Neko-Protocol-Version")
         request.setValue(authentication.memberID, forHTTPHeaderField: "Neko-Member-ID")
         request.setValue(String(timestamp), forHTTPHeaderField: "Neko-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "Neko-Nonce")
@@ -740,8 +1350,33 @@ private final class PairingNoRedirectSessionDelegate: NSObject, URLSessionTaskDe
 }
 
 private struct Authentication {
+    enum Domain {
+        case pairing
+        case deviceRecovery
+    }
+
     let memberID: String
     let credential: PairingCredential
+    let domain: Domain
+
+    init(memberID: String, credential: PairingCredential) {
+        self.memberID = memberID
+        self.credential = credential
+        domain = .pairing
+    }
+
+    static func deviceRecovery(
+        recoveryID: String,
+        credential: PairingCredential
+    ) -> Self {
+        Self(memberID: recoveryID, credential: credential, domain: .deviceRecovery)
+    }
+
+    private init(memberID: String, credential: PairingCredential, domain: Domain) {
+        self.memberID = memberID
+        self.credential = credential
+        self.domain = domain
+    }
 }
 
 private struct CreateSpaceRequest: Encodable {
@@ -919,6 +1554,112 @@ private struct RevocationResponse: Decodable {
     let spaceId: String
     let state: String
     let deletionState: String
+}
+
+private struct DeviceRecoverySpace: Decodable {
+    let id: String
+    let dailyBoundaryMinuteUTC: Int
+}
+
+private struct DeviceRecoveryKeyEnvelope: Decodable {
+    let algorithm: String
+    let ciphertext: String
+    let approvalSignature: String
+    let approvedAt: Int
+}
+
+private struct DeviceRecoveryMetadata: Decodable {
+    let id: String
+    let state: String
+    let codePrefix: String?
+    let createdAt: Int?
+    let expiresAt: Int
+    let membershipRevision: Int
+    let keyEpoch: Int
+    let clientRequestId: String?
+    let deviceId: String?
+    let transcript: String?
+    let transcriptHash: String?
+    let keyEnvelope: DeviceRecoveryKeyEnvelope?
+}
+
+private struct DeviceRecoveryCreateRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let targetParticipantId: String
+    let recoveryProofPublicKey: String
+}
+
+private struct DeviceRecoveryDescriptorResponse: Decodable {
+    let protocolVersion: Int
+    let recovery: DeviceRecoveryMetadata
+    let space: DeviceRecoverySpace
+    let target: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+}
+
+private struct DeviceRecoveryClaimRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let deviceId: String
+    let agreementPublicKey: String
+    let signingPublicKey: String
+    let recoveryProofSignature: String
+    let deviceSignature: String
+}
+
+private struct DeviceRecoveryClaimResponse: Decodable {
+    let protocolVersion: Int
+    let recovery: DeviceRecoveryMetadata
+    let credential: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+}
+
+private struct DeviceRecoveryPendingItem: Decodable {
+    let recovery: DeviceRecoveryMetadata
+    let credential: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+}
+
+private struct DeviceRecoveryPendingResponse: Decodable {
+    let protocolVersion: Int
+    let spaceId: String
+    let pending: [DeviceRecoveryPendingItem]
+}
+
+private struct DeviceRecoveryApprovalRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let transcriptHash: String
+    let envelopeAlgorithm: String
+    let keyEnvelope: String
+    let approvalSignature: String
+}
+
+private struct DeviceRecoveryApprovalResponse: Decodable {
+    let protocolVersion: Int
+    let recoveryId: String
+    let targetMemberId: String
+    let deviceId: String
+    let membershipRevision: Int
+    let keyEpoch: Int
+    let state: String
+}
+
+private struct DeviceRecoveryCompletionRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let transcriptHash: String
+}
+
+private struct DeviceRecoveryStatusResponse: Decodable {
+    let protocolVersion: Int
+    let recovery: DeviceRecoveryMetadata
+    let space: DeviceRecoverySpace
+    let credential: PairingDeviceRecoveryIdentity
+    let peer: PairingDeviceRecoveryIdentity
+    let previousTargetSigningPublicKey: String
+    let recoveredAt: Int?
 }
 
 private struct APIErrorResponse: Decodable {
