@@ -20,6 +20,7 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var operationCompletionMessage: String?
     @Published private(set) var operationErrorMessage: String?
     @Published private(set) var bootstrapRetryMessage: String?
+    @Published private(set) var isBootstrapping = false
     @Published var enteredInvitationCode = ""
     @Published var enteredRecoveryCode = ""
     @Published var hasConfirmedPhrase = false
@@ -29,7 +30,6 @@ final class PairingViewModel: ObservableObject {
     private let windowNameCoordinator: MomentSharingCoordinator
     private var api: (any PairingAPIClientProtocol)?
     private var didBootstrap = false
-    private var isBootstrapping = false
     private var bootstrapRetryRequested = false
 
     init(configuration: SharingAPIConfiguration = .current) {
@@ -115,7 +115,6 @@ final class PairingViewModel: ObservableObject {
         }
         do {
             let result = try await PairingInstallationGuard.bootstrapAsync()
-            bootstrapRetryMessage = nil
             if result.invalidatedPreviousInstallation {
                 configurationMessage = Self.message(for: .installationChanged)
             }
@@ -157,6 +156,7 @@ final class PairingViewModel: ObservableObject {
                 .contains(current.phase) {
                 await refresh(isManual: false)
             }
+            bootstrapRetryMessage = nil
             didBootstrap = true
         } catch let error as PairingInstallationGuard.RetryableBootstrapError {
             // Data Protection/Keychain availability is not a completed

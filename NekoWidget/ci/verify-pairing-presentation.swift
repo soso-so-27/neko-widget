@@ -71,6 +71,9 @@ enum PairingPresentationVerifier {
             refreshText: "接続状態を確認"
         )
         try verifyDeviceChangeGuidance()
+        try verifyAvailabilityGuidance()
+        try verifyBuildIdentity()
+        try verifyPendingFamilyMemoryTargetPolicy()
         try verifySafeError(
             PairingError.requestRejected(
                 status: 410,
@@ -87,6 +90,58 @@ enum PairingPresentationVerifier {
             ),
             expected: "端末追加コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
         )
+    }
+
+    private static func verifyAvailabilityGuidance() throws {
+        let unavailable = PairingAvailabilityPresentation.temporarilyUnavailable(
+            detail: "一時的な確認エラー"
+        )
+        guard unavailable.title == "まどを一時的に確認できません",
+              unavailable.detail == "一時的な確認エラー",
+              unavailable.retryButtonTitle == "もう一度確認する"
+        else {
+            throw PairingPresentationVerificationError.failed(
+                "Unexpected temporarily unavailable guidance"
+            )
+        }
+
+        let consent = PairingAvailabilityPresentation.consentRequired
+        guard consent.title == "相手と接続済み",
+              consent.detail.contains("同意を更新"),
+              consent.retryButtonTitle == nil
+        else {
+            throw PairingPresentationVerificationError.failed(
+                "Unexpected consent renewal guidance"
+            )
+        }
+    }
+
+    private static func verifyBuildIdentity() throws {
+        guard PairingBuildPresentation.make(version: "1.0", build: "64")
+            == "バージョン 1.0（Build 64）",
+              PairingBuildPresentation.make(version: " ", build: nil)
+                == "バージョン -（Build -）"
+        else {
+            throw PairingPresentationVerificationError.failed(
+                "Unexpected build identity presentation"
+            )
+        }
+    }
+
+    private static func verifyPendingFamilyMemoryTargetPolicy() throws {
+        let phases: [PendingFamilyMemoryTargetBootstrapPhase] = [
+            .checking,
+            .temporarilyUnavailable,
+            .ready
+        ]
+        let dispositions = phases.map {
+            PendingFamilyMemoryTargetPresentationPolicy.disposition(for: $0)
+        }
+        guard dispositions == [.preserve, .preserve, .resolve] else {
+            throw PairingPresentationVerificationError.failed(
+                "Pending Widget target was consumed before bootstrap became ready"
+            )
+        }
     }
 
     private static func verifyDeviceChangeGuidance() throws {

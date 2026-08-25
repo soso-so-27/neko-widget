@@ -20,6 +20,23 @@ enum PairingInstallationGuard {
     }
     private static let markerFileName = "sharing-installation-marker.v1"
 
+    private struct PairedRecoveryCandidate {
+        let location: PrivateWindowRecoveryLocation
+        let state: PairingState
+    }
+
+    private enum PairedRecoveryDiscovery {
+        case none
+        case ambiguous
+        case unique(PairedRecoveryCandidate)
+    }
+
+    private enum ActiveWindowSelectionPlan {
+        case stored(PairingState)
+        case recover(PairedRecoveryCandidate)
+        case initializeEmpty
+    }
+
     enum RetryableBootstrapReason: String, Equatable, Sendable {
         case installationMarkerReadUnavailable =
             "installation-marker-read-unavailable"
@@ -139,9 +156,10 @@ enum PairingInstallationGuard {
         }.value
     }
 
-    /// Selects an existing catalog slot. Missing or malformed target state is
-    /// never substituted with another room; a genuinely new empty slot gets a
-    /// fresh unpaired state bound to the current installation marker.
+    /// Selects an existing catalog slot. A missing target is never replaced
+    /// with a different catalog slot. It may resume its own authenticated
+    /// migration copy, or become unpaired only when the target is provably an
+    /// empty slot left by an interrupted explicit creation.
     static func activatePrivateWindow(localWindowID: String) throws -> BootstrapResult {
         try SharingLifecycleGate.withExclusive {
             try finishPendingCleanupBeforeWindowSelectionWhileLocked()
@@ -150,18 +168,34 @@ enum PairingInstallationGuard {
             }
             _ = try PrivateWindowCatalogStore
                 .bootstrapLegacyMigrationWhileLifecycleLocked()
+            let plan = try selectionPlanWhileLocked(
+                targetLocalWindowID: localWindowID,
+                installationMarker: marker,
+                rejectInstallationMarkerMismatch: true
+            )
             _ = try SharingLifecycleGate.bumpEpochWhileLocked()
             try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
             _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
                 localWindowID: localWindowID
             )
             let state: PairingState
-            if let stored = try PairingStateStore.load() {
-                guard stored.installationMarker == marker else {
-                    throw PairingError.installationChanged
+            switch plan {
+            case let .stored(expected):
+                guard let committed = try PairingStateStore.load(),
+                      committed == expected
+                else {
+                    throw deferredBootstrapError(
+                        reason: .privateWindowMigrationUnavailable
+                    )
                 }
-                state = stored
-            } else {
+                state = committed
+            case let .recover(candidate):
+                state = try promotePairedRecoveryCandidateWhileLocked(
+                    candidate,
+                    targetLocalWindowID: localWindowID,
+                    invalidateLifecycle: false
+                )
+            case .initializeEmpty:
                 let empty = PairingState.unpaired(installationMarker: marker)
                 try PairingStateStore.saveWhileLifecycleLocked(empty)
                 guard let committed = try PairingStateStore.load() else {
@@ -290,48 +324,42 @@ enum PairingInstallationGuard {
             _ = try PrivateWindowCatalogStore
                 .bootstrapLegacyMigrationWhileLifecycleLocked()
         } catch {
-            throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+            // Build 62 could leave the authoritative legacy room beside a
+            // cache-only destination. Recover only when exactly one fully
+            // validated room also proves its exact Keychain account, then
+            // require the ordinary migration bootstrap to succeed again.
+            guard let catalog = try PrivateWindowCatalogStore.load() else {
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable
+                )
+            }
+            let discovery = try discoverPairedRecoveryCandidateWhileLocked(
+                installationMarker: marker,
+                targetLocalWindowID: catalog.activeWindowID
             )
-        }
-
-        let loadedState: PairingState?
-        do {
-            loadedState = try PairingStateStore.load()
-        } catch {
-            switch pairingStateLoadFailureDisposition(error) {
-            case .failClosed:
-                SharedLog.app.warning(
-                    "pairing",
-                    "Pairing bootstrap reset",
-                    metadata: ["sharingFailureReason": "pairing-state-invalid"]
+            guard case let .unique(candidate) = discovery else {
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable
                 )
-                let reset = try performCleanupWhileLocked(marker: marker, message: nil)
-                return BootstrapResult(
-                    state: reset,
-                    lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
-                    invalidatedPreviousInstallation: true
+            }
+            _ = try promotePairedRecoveryCandidateWhileLocked(
+                candidate,
+                targetLocalWindowID: catalog.activeWindowID,
+                invalidateLifecycle: true
+            )
+            do {
+                _ = try PrivateWindowCatalogStore
+                    .bootstrapLegacyMigrationWhileLifecycleLocked()
+            } catch {
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable
                 )
-            case let .retryable(reason):
-                throw deferredBootstrapError(reason: reason)
             }
         }
 
-        guard let state = loadedState else {
-            // Orphaned Keychain items have no non-secret state binding them to
-            // a space. Delete only this app's sharing service.
-            SharedLog.app.warning(
-                "pairing",
-                "Pairing bootstrap reset",
-                metadata: ["sharingFailureReason": "pairing-state-missing"]
-            )
-            let state = try performCleanupWhileLocked(marker: marker, message: nil)
-            return BootstrapResult(
-                state: state,
-                lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
-                invalidatedPreviousInstallation: false
-            )
-        }
+        let state = try loadOrRecoverActiveStateWhileLocked(
+            installationMarker: marker
+        )
 
         guard state.installationMarker == marker else {
             SharedLog.app.warning(
@@ -475,6 +503,642 @@ enum PairingInstallationGuard {
                 ? .pairingStateProtectedDataUnavailable
                 : .pairingStateReadUnavailable
         )
+    }
+
+    /// Resolves the active catalog slot without treating another independently
+    /// paired catalog window as a recovery source. Missing state becomes a new
+    /// unpaired document only when the target is structurally empty and every
+    /// other retained location is either empty or fully understood.
+    private static func loadOrRecoverActiveStateWhileLocked(
+        installationMarker: String
+    ) throws -> PairingState {
+        guard let catalog = try PrivateWindowCatalogStore.load() else {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+        let targetLocalWindowID = catalog.activeWindowID
+        let plan = try selectionPlanWhileLocked(
+            targetLocalWindowID: targetLocalWindowID,
+            installationMarker: installationMarker,
+            rejectInstallationMarkerMismatch: false
+        )
+        switch plan {
+        case let .stored(state):
+            return state
+        case let .recover(candidate):
+            return try promotePairedRecoveryCandidateWhileLocked(
+                candidate,
+                targetLocalWindowID: targetLocalWindowID,
+                invalidateLifecycle: true
+            )
+        case .initializeEmpty:
+            let empty = PairingState.unpaired(
+                installationMarker: installationMarker
+            )
+            try PairingStateStore.saveWhileLifecycleLocked(empty)
+            guard let committed = try PairingStateStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            return committed
+        }
+    }
+
+    /// Performs a read-only selection preflight. `activatePrivateWindow` calls
+    /// this before changing the catalog's active ID or lifecycle epoch, so a
+    /// malformed/missing target cannot partially switch the application.
+    private static func selectionPlanWhileLocked(
+        targetLocalWindowID: String,
+        installationMarker: String,
+        rejectInstallationMarkerMismatch: Bool
+    ) throws -> ActiveWindowSelectionPlan {
+        guard let catalog = try PrivateWindowCatalogStore.load(),
+              catalog.windows.contains(where: {
+                  $0.localWindowID == targetLocalWindowID
+              })
+        else {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+
+        let storedState: PairingState?
+        let storedStateWasInvalid: Bool
+        do {
+            storedState = try PairingStateStore.load(
+                localWindowID: targetLocalWindowID
+            )
+            storedStateWasInvalid = false
+        } catch {
+            switch pairingStateLoadFailureDisposition(error) {
+            case .failClosed:
+                storedState = nil
+                storedStateWasInvalid = true
+            case let .retryable(reason):
+                throw deferredBootstrapError(reason: reason)
+            }
+        }
+
+        if let storedState {
+            if storedState.installationMarker != installationMarker {
+                if rejectInstallationMarkerMismatch {
+                    throw PairingError.installationChanged
+                }
+                return .stored(storedState)
+            }
+            guard storedState.phase == .unpaired else {
+                return .stored(storedState)
+            }
+            switch try discoverPairedRecoveryCandidateWhileLocked(
+                installationMarker: installationMarker,
+                targetLocalWindowID: targetLocalWindowID
+            ) {
+            case .none:
+                return .stored(storedState)
+            case .ambiguous:
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable
+                )
+            case let .unique(candidate):
+                return .recover(candidate)
+            }
+        }
+
+        switch try discoverPairedRecoveryCandidateWhileLocked(
+            installationMarker: installationMarker,
+            targetLocalWindowID: targetLocalWindowID
+        ) {
+        case .ambiguous:
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        case let .unique(candidate):
+            return .recover(candidate)
+        case .none:
+            guard !storedStateWasInvalid,
+                  try targetCanInitializeUnpairedWhileLocked(
+                      targetLocalWindowID: targetLocalWindowID
+                  )
+            else {
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable
+                )
+            }
+            return .initializeEmpty
+        }
+    }
+
+    /// Searches only the selected catalog slot and migration storage that can
+    /// be proved to target that same slot. Another catalog window is never an
+    /// implicit fallback. Zero or multiple candidates do not mutate storage.
+    private static func discoverPairedRecoveryCandidateWhileLocked(
+        installationMarker: String,
+        targetLocalWindowID: String
+    ) throws -> PairedRecoveryDiscovery {
+        guard let catalog = try PrivateWindowCatalogStore.load(),
+              catalog.windows.contains(where: {
+                  $0.localWindowID == targetLocalWindowID
+              })
+        else {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+        let locations: [PrivateWindowRecoveryLocation]
+        do {
+            locations = try PrivateWindowCatalogStore
+                .recoveryLocationsWhileLifecycleLocked()
+        } catch {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+
+        var candidates: [PairedRecoveryCandidate] = []
+        for location in locations {
+            switch location.kind {
+            case let .catalogWindow(localWindowID)
+                where localWindowID != targetLocalWindowID:
+                continue
+            case .legacy:
+                let legacyTarget = catalog.pendingLegacyMigrationWindowID
+                    ?? catalog.windows.first?.localWindowID
+                if legacyTarget != targetLocalWindowID { continue }
+            default:
+                break
+            }
+            if let candidate = try pairedRecoveryCandidate(
+                at: location,
+                installationMarker: installationMarker
+            ), recoveryLocation(
+                location,
+                targets: targetLocalWindowID,
+                candidateState: candidate.state,
+                catalog: catalog
+            ) {
+                candidates.append(candidate)
+            }
+        }
+        switch candidates.count {
+        case 0:
+            return .none
+        case 1:
+            guard let candidate = candidates.first else { return .none }
+            return .unique(candidate)
+        default:
+            return .ambiguous
+        }
+    }
+
+    private static func promotePairedRecoveryCandidateWhileLocked(
+        _ candidate: PairedRecoveryCandidate,
+        targetLocalWindowID: String,
+        invalidateLifecycle: Bool
+    ) throws -> PairingState {
+        guard let spaceID = candidate.state.spaceID,
+              let credentialAccount = candidate.state.credentialAccount
+        else {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+
+        do {
+            if invalidateLifecycle {
+                _ = try SharingLifecycleGate.bumpEpochWhileLocked()
+                try DailySharingStateStore
+                    .revokeAllSyncLeasesWhileLifecycleLocked()
+            }
+            _ = try PrivateWindowCatalogStore
+                .promoteRecoveryLocationWhileLifecycleLocked(
+                    candidate.location,
+                    targetLocalWindowID: targetLocalWindowID,
+                    spaceID: spaceID,
+                    credentialAccount: credentialAccount
+                )
+            // A quarantined source can carry its pre-recovery logical lease
+            // into the destination. The epoch already rejects its owner; this
+            // second bounded revoke removes the moved stale lease record.
+            try DailySharingStateStore
+                .revokeAllSyncLeasesWhileLifecycleLocked()
+        } catch {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+
+        let recovered: PairingState
+        do {
+            guard let state = try PairingStateStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            recovered = state
+        } catch {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+        guard recovered.phase == .paired,
+              sameRecoveryAuthority(recovered, candidate.state)
+        else {
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
+        }
+        SharedLog.app.info(
+            "pairing",
+            "Paired sharing state recovered"
+        )
+        return recovered
+    }
+
+    private static func recoveryLocation(
+        _ location: PrivateWindowRecoveryLocation,
+        targets targetLocalWindowID: String,
+        candidateState: PairingState,
+        catalog: PrivateWindowCatalogState
+    ) -> Bool {
+        guard let target = catalog.windows.first(where: {
+            $0.localWindowID == targetLocalWindowID
+        }) else { return false }
+        switch location.kind {
+        case let .catalogWindow(localWindowID):
+            return localWindowID == targetLocalWindowID
+        case .legacy:
+            let legacyTarget = catalog.pendingLegacyMigrationWindowID
+                ?? catalog.windows.first?.localWindowID
+            return legacyTarget == targetLocalWindowID
+        case .quarantine:
+            if catalog.pendingLegacyMigrationWindowID == targetLocalWindowID {
+                return true
+            }
+            if let spaceID = target.spaceID,
+               let credentialAccount = target.credentialAccount {
+                return candidateState.spaceID == spaceID
+                    && candidateState.credentialAccount == credentialAccount
+            }
+            // Build 63 could move the original Build 40 owner into quarantine
+            // before committing that first catalog entry's metadata. With
+            // multiple windows, the append-only first slot is still the sole
+            // legacy owner, but only while it is also the explicitly active
+            // target. Never use this rule to switch to another catalog slot.
+            guard catalog.activeWindowID == targetLocalWindowID,
+                  catalog.windows.first?.localWindowID == targetLocalWindowID
+            else { return catalog.windows.count == 1 }
+            // If the authenticated state already belongs to a different,
+            // metadata-bound catalog entry, it is not the first slot's legacy
+            // recovery even though both happen to share the quarantine root.
+            let belongsToAnotherCatalogWindow = catalog.windows.contains {
+                $0.localWindowID != targetLocalWindowID
+                    && $0.spaceID == candidateState.spaceID
+                    && $0.credentialAccount == candidateState.credentialAccount
+            }
+            return !belongsToAnotherCatalogWindow
+        }
+    }
+
+    private static func pairedRecoveryCandidate(
+        at location: PrivateWindowRecoveryLocation,
+        installationMarker: String
+    ) throws -> PairedRecoveryCandidate? {
+        guard let state = try validatedRecoveryState(at: location),
+              state.phase == .paired,
+              state.installationMarker == installationMarker,
+              let credential = try recoveryCredential(for: state),
+              try credentialMatchesRecoveryState(credential, state: state)
+        else { return nil }
+        return PairedRecoveryCandidate(location: location, state: state)
+    }
+
+    private static func validatedRecoveryState(
+        at location: PrivateWindowRecoveryLocation
+    ) throws -> PairingState? {
+        let stateURL = location.sharingDirectoryURL.appendingPathComponent(
+            "pairing-state.json",
+            isDirectory: false
+        )
+        let data: Data
+        do {
+            data = try Data(contentsOf: stateURL, options: .mappedIfSafe)
+        } catch {
+            if SharingFileReadFailureClassifier.disposition(error) == .missing {
+                return nil
+            }
+            throw deferredBootstrapError(
+                reason: isProtectedDataReadFailure(error)
+                    ? .pairingStateProtectedDataUnavailable
+                    : .pairingStateReadUnavailable
+            )
+        }
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
+                  location.sharingDirectoryURL
+              ),
+              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(stateURL)
+        else { return nil }
+
+        let state: PairingState
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            state = try decoder.decode(PairingState.self, from: data)
+                .validated()
+        } catch {
+            return nil
+        }
+        return state
+    }
+
+    private static func recoveryCredential(
+        for state: PairingState
+    ) throws -> PairingCredential? {
+        guard let credentialAccount = state.credentialAccount else {
+            return nil
+        }
+        do {
+            return try PairingKeychainStore.load(
+                account: credentialAccount,
+                installationMarker: state.installationMarker
+            )
+        } catch let error as PairingKeychainStore.RetryableReadError {
+            throw deferredBootstrapError(
+                reason: error.reason == .protectedDataUnavailable
+                    ? .keychainProtectedDataUnavailable
+                    : .keychainUnavailable
+            )
+        } catch let error as PairingError {
+            switch error {
+            case .malformedCredential, .installationChanged:
+                return nil
+            default:
+                throw deferredBootstrapError(reason: .keychainUnavailable)
+            }
+        } catch {
+            throw deferredBootstrapError(reason: .keychainUnavailable)
+        }
+    }
+
+    /// Proves that the Keychain item is the local authority described by the
+    /// pairing document, not merely an item stored under the same account UUID.
+    private static func credentialMatchesRecoveryState(
+        _ credential: PairingCredential,
+        state: PairingState
+    ) throws -> Bool {
+        guard credential.account == state.credentialAccount,
+              credential.installationMarker == state.installationMarker,
+              credential.participantIDString == state.participantID
+        else { return false }
+
+        if let resolvedDeviceID = state.resolvedLocalMomentDeviceID {
+            if let credentialDeviceID = credential.deviceID {
+                guard credentialDeviceID == resolvedDeviceID else { return false }
+            }
+            // Build 41/61 recovery credentials can predate the deviceID
+            // backfill even though their paired state already resolves to a
+            // recovered/additional device. The account, installation marker,
+            // participant and room-key-bearing Keychain item remain the
+            // stable authority in that legacy shape. When deviceID is present
+            // it is always required to match exactly.
+        }
+
+        guard state.phase == .paired else { return true }
+        guard credential.roomKey != nil else { return false }
+        let agreementPublicKey = try PairingCrypto
+            .agreementPublicKey(for: credential)
+            .base64URLEncodedString()
+        let signingPublicKey = try PairingCrypto
+            .signingPublicKey(for: credential)
+            .base64URLEncodedString()
+
+        if let invitationID = state.invitationID,
+           let enrollmentID = state.enrollmentID,
+           let spaceID = state.spaceID,
+           let dailyBoundaryMinuteUTC = state.dailyBoundaryMinuteUTC,
+           let memberID = state.memberID,
+           let peerMemberID = state.peerMemberID,
+           let peerParticipantID = state.peerParticipantID,
+           let peerAgreementPublicKey = state.peerAgreementPublicKey,
+           let peerSigningPublicKey = state.peerSigningPublicKey,
+           let role = state.role,
+           let encodedTranscript = state.transcript.flatMap({
+               Data(base64URLString: $0)
+           }) {
+            let local = PairingMemberIdentity(
+                memberID: memberID,
+                participantID: credential.participantIDString,
+                agreementPublicKey: agreementPublicKey,
+                signingPublicKey: signingPublicKey
+            )
+            let peer = PairingMemberIdentity(
+                memberID: peerMemberID,
+                participantID: peerParticipantID,
+                agreementPublicKey: peerAgreementPublicKey,
+                signingPublicKey: peerSigningPublicKey
+            )
+            let transcript = PairingVerificationTranscript(
+                spaceID: spaceID,
+                invitationID: invitationID,
+                enrollmentID: enrollmentID,
+                dailyBoundaryMinuteUTC: dailyBoundaryMinuteUTC,
+                inviter: role == .inviter ? local : peer,
+                invitee: role == .inviter ? peer : local
+            )
+            return try transcript.canonicalData() == encodedTranscript
+        }
+
+        // A paired recovery/additional-device state from Build 41/61 may not
+        // retain the original invitation transcript. Do not use
+        // recoveryCandidate* as a fallback: a recovered iPhone can later
+        // sponsor another iPhone, and those fields then describe the new
+        // candidate rather than this installation. The Keychain lookup was
+        // already scoped by account and installation marker above, and we
+        // additionally bound participantID, room-key presence, and deviceID
+        // whenever the legacy credential has one.
+        return true
+    }
+
+    private static func targetCanInitializeUnpairedWhileLocked(
+        targetLocalWindowID: String
+    ) throws -> Bool {
+        guard let catalog = try PrivateWindowCatalogStore.load(),
+              let target = catalog.windows.first(where: {
+                  $0.localWindowID == targetLocalWindowID
+              }),
+              target.spaceID == nil,
+              target.credentialAccount == nil
+        else { return false }
+        let locations = try PrivateWindowCatalogStore
+            .recoveryLocationsWhileLifecycleLocked()
+        let targetLocation = locations.first {
+            if case let .catalogWindow(localWindowID) = $0.kind {
+                return localWindowID == targetLocalWindowID
+            }
+            return false
+        }
+        if let targetLocation {
+            guard try recoveryDirectoryIsSafeForUnpairedInitialization(
+                targetLocation.sharingDirectoryURL
+            )
+            else { return false }
+        } else {
+            guard let targetDirectory = SharedContainer.windowSharingDirectoryURL(
+                localWindowID: targetLocalWindowID
+            ), try recoveryDirectoryIsAbsentOrSafeForUnpairedInitialization(
+                targetDirectory
+            )
+            else { return false }
+        }
+
+        // Another catalog slot is an independent user-selected authority. Its
+        // files and Keychain availability cannot decide whether this empty
+        // target may initialize. Only migration storage that can belong to the
+        // selected target is inspected conservatively below.
+        for location in locations {
+            switch location.kind {
+            case .catalogWindow:
+                continue
+            case .legacy:
+                let legacyTarget = catalog.pendingLegacyMigrationWindowID
+                    ?? catalog.windows.first?.localWindowID
+                if legacyTarget != targetLocalWindowID {
+                    continue
+                }
+            case .quarantine:
+                if let state = try? validatedRecoveryState(at: location),
+                   !recoveryLocation(
+                       location,
+                       targets: targetLocalWindowID,
+                       candidateState: state,
+                       catalog: catalog
+                   ) {
+                    continue
+                }
+            }
+            guard try recoveryDirectoryIsSafeForUnpairedInitialization(
+                location.sharingDirectoryURL
+            ) else { return false }
+        }
+        return true
+    }
+
+    private static let maximumSafeAtomicResidueCount = 16
+    private static let maximumSafeAtomicResidueBytes = 4 * 1_024 * 1_024
+    private static let maximumSafeAtomicResidueTotalBytes = 16 * 1_024 * 1_024
+
+    /// Treats only bounded, fully protected AtomicJSON crash inodes as empty.
+    /// They contain no committed filename/authority and are overwritten by no
+    /// recovery path. Unknown entries, directories and symlinks remain a
+    /// retryable ambiguity and are preserved untouched.
+    private static func recoveryDirectoryIsSafeForUnpairedInitialization(
+        _ directory: URL
+    ) throws -> Bool {
+        let entries: [URL]
+        do {
+            entries = try FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .fileSizeKey,
+                ],
+                options: []
+            )
+        } catch {
+            throw deferredBootstrapError(
+                reason: isProtectedDataReadFailure(error)
+                    ? .pairingStateProtectedDataUnavailable
+                    : .pairingStateReadUnavailable
+            )
+        }
+        guard entries.count <= maximumSafeAtomicResidueCount else { return false }
+        guard !entries.isEmpty else { return true }
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(directory)
+        else { return false }
+
+        var totalBytes = 0
+        for entry in entries {
+            let name = entry.lastPathComponent
+            let prefix = ".sharing-secure-"
+            guard name.hasPrefix(prefix),
+                  UUID(uuidString: String(name.dropFirst(prefix.count))) != nil,
+                  let values = try? entry.resourceValues(forKeys: [
+                      .isRegularFileKey,
+                      .isSymbolicLinkKey,
+                      .fileSizeKey,
+                  ]),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  let fileSize = values.fileSize,
+                  fileSize >= 0,
+                  fileSize <= maximumSafeAtomicResidueBytes,
+                  SharingSecureFile.hasRequiredProtectionAndBackupExclusion(entry)
+            else { return false }
+            totalBytes += fileSize
+            guard totalBytes <= maximumSafeAtomicResidueTotalBytes else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func recoveryDirectoryIsAbsentOrSafeForUnpairedInitialization(
+        _ directory: URL
+    ) throws -> Bool {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: directory.path) else { return true }
+        guard let values = try? directory.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ]), values.isDirectory == true, values.isSymbolicLink != true
+        else { return false }
+        return try recoveryDirectoryIsSafeForUnpairedInitialization(directory)
+    }
+
+    private static func recoveryCandidateCountIsUnique(_ count: Int) -> Bool {
+        count == 1
+    }
+
+#if DEBUG
+    static func runtimeTestRecoveryCandidateCountIsUnique(_ count: Int) -> Bool {
+        recoveryCandidateCountIsUnique(count)
+    }
+
+    static func runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(
+        _ directory: URL
+    ) -> Bool {
+        (try? recoveryDirectoryIsSafeForUnpairedInitialization(directory)) == true
+    }
+
+    static func runtimeTestTargetCanInitializeUnpairedWhileLocked(
+        localWindowID: String
+    ) -> Bool {
+        (try? targetCanInitializeUnpairedWhileLocked(
+            targetLocalWindowID: localWindowID
+        )) == true
+    }
+
+    static func runtimeTestCredentialMatchesRecoveryState(
+        _ credential: PairingCredential,
+        state: PairingState
+    ) -> Bool {
+        (try? credentialMatchesRecoveryState(credential, state: state)) == true
+    }
+#endif
+
+    private static func sameRecoveryAuthority(
+        _ lhs: PairingState,
+        _ rhs: PairingState
+    ) -> Bool {
+        lhs.installationMarker == rhs.installationMarker
+            && lhs.role == rhs.role
+            && lhs.credentialAccount == rhs.credentialAccount
+            && lhs.participantID == rhs.participantID
+            && lhs.spaceID == rhs.spaceID
+            && lhs.memberID == rhs.memberID
+            && lhs.resolvedLocalMomentDeviceID == rhs.resolvedLocalMomentDeviceID
+            && lhs.peerMemberID == rhs.peerMemberID
+            && lhs.peerParticipantID == rhs.peerParticipantID
+            && lhs.peerAgreementPublicKey == rhs.peerAgreementPublicKey
+            && lhs.peerSigningPublicKey == rhs.peerSigningPublicKey
     }
 
     private static func isProtectedDataReadFailure(

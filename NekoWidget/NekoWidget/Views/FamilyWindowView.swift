@@ -50,7 +50,6 @@ struct FamilyWindowView: View {
     @State private var focusedMomentID: String?
     @State private var widgetMemoryTarget: MomentInboxItem?
     @State private var showsStaleWidgetPhotoAlert = false
-    @State private var didFinishBootstrap = false
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
 
@@ -64,24 +63,30 @@ struct FamilyWindowView: View {
 
     private var baseContent: some View {
         Group {
-            if model.pairingState == nil {
+            switch model.bootstrapPresentationState {
+            case .checking:
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("まどを確認しています…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !model.isPaired || !model.hasCurrentMediaSharingConsent {
-                PairingView()
-            } else {
-                pairedContent
+            case let .temporarilyUnavailable(message):
+                temporarilyUnavailableContent(message: message)
+            case .ready:
+                if !model.isPaired {
+                    PairingView()
+                } else if !model.hasCurrentMediaSharingConsent {
+                    consentRequiredContent
+                } else {
+                    pairedContent
+                }
             }
         }
         .navigationTitle(model.windowDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await model.bootstrap()
-            didFinishBootstrap = true
             consumePendingMemoryTargetIfReady()
         }
         .task(id: scenePhase) {
@@ -89,7 +94,10 @@ struct FamilyWindowView: View {
             await refreshNotificationAuthorizationState()
         }
         .onReceive(NotificationCenter.default.publisher(for: .sharingMediaSyncRequested)) { _ in
-            Task { await model.bootstrap() }
+            Task {
+                await model.bootstrap()
+                consumePendingMemoryTargetIfReady()
+            }
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -110,6 +118,68 @@ struct FamilyWindowView: View {
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()
         }
+        .onChange(of: model.bootstrapPresentationState) { _, _ in
+            consumePendingMemoryTargetIfReady()
+        }
+    }
+
+    private func temporarilyUnavailableContent(message: String) -> some View {
+        let presentation = PairingAvailabilityPresentation
+            .temporarilyUnavailable(detail: message)
+        return VStack(spacing: 20) {
+            ContentUnavailableView(
+                presentation.title,
+                systemImage: "arrow.triangle.2.circlepath",
+                description: Text(presentation.detail)
+            )
+
+            if let retryButtonTitle = presentation.retryButtonTitle {
+                Button(retryButtonTitle) {
+                    Task { await model.retryBootstrap() }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("family-window-bootstrap-retry")
+            }
+
+            buildIdentityText
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var consentRequiredContent: some View {
+        let presentation = PairingAvailabilityPresentation.consentRequired
+        return VStack(spacing: 20) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 42))
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+            VStack(spacing: 8) {
+                Text(presentation.title)
+                    .font(.title3.weight(.semibold))
+                Text(presentation.detail)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            NavigationLink {
+                PairingView()
+            } label: {
+                Label("共有の同意を更新", systemImage: "checkmark.shield")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("family-window-consent-renewal")
+
+            buildIdentityText
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var buildIdentityText: some View {
+        Text(PairingBuildPresentation.currentText)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .accessibilityIdentifier("pairing-build-identity")
     }
 
     private var moderationDialogs: some View {
@@ -1055,44 +1125,79 @@ struct FamilyWindowView: View {
 
     private func consumePendingMemoryTargetIfReady() {
         guard let sourceDigest = pendingMemorySourceDigest else { return }
-        guard model.pairingState != nil else {
-            if didFinishBootstrap {
-                rejectPendingMemoryTarget()
-            }
+        guard PendingFamilyMemoryTargetPresentationPolicy.disposition(
+            for: pendingMemoryTargetBootstrapPhase
+        ) == .resolve else {
             return
         }
-        pendingMemorySourceDigest = nil
-        focusedMomentID = nil
-        widgetMemoryTarget = nil
+        guard model.pairingState != nil else {
+            rejectPendingMemoryTarget()
+            return
+        }
 
-        guard let activeWindow = PrivateWindowCatalogStore.activeEntry() else {
-            showsStaleWidgetPhotoAlert = true
+        let bootstrap: PairingInstallationGuard.BootstrapResult
+        do {
+            bootstrap = try PairingInstallationGuard.bootstrap()
+        } catch is PairingInstallationGuard.RetryableBootstrapError {
+            return
+        } catch {
+            rejectPendingMemoryTarget()
+            return
+        }
+        let activeWindow: PrivateWindowCatalogEntry
+        do {
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let entry = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  })
+            else {
+                rejectPendingMemoryTarget()
+                return
+            }
+            activeWindow = entry
+        } catch {
+            // An unreadable catalog is not evidence that the Widget photo is
+            // stale. Keep the exact target for the next successful refresh.
             return
         }
         let momentID: String?
         do {
-            let bootstrap = try PairingInstallationGuard.bootstrap()
             momentID = try WidgetCacheBuilder.retainedFamilyMomentID(
                 forSourceDigest: sourceDigest,
                 localWindowID: activeWindow.localWindowID,
                 validating: bootstrap.lifecycleToken
             )
         } catch {
-            showsStaleWidgetPhotoAlert = true
+            rejectPendingMemoryTarget()
             return
         }
         guard let momentID,
               let target = model.receivedMoments.first(where: { $0.id == momentID })
         else {
-            showsStaleWidgetPhotoAlert = true
+            rejectPendingMemoryTarget()
             return
         }
 
+        pendingMemorySourceDigest = nil
+        focusedMomentID = nil
+        widgetMemoryTarget = nil
         selectedSection = .received
         receivedPhotoFilter = .all
         focusedMomentID = target.id
         if !model.isSavedMemory(target) {
             widgetMemoryTarget = target
+        }
+    }
+
+    private var pendingMemoryTargetBootstrapPhase:
+        PendingFamilyMemoryTargetBootstrapPhase {
+        switch model.bootstrapPresentationState {
+        case .checking:
+            return .checking
+        case .temporarilyUnavailable:
+            return .temporarilyUnavailable
+        case .ready:
+            return .ready
         }
     }
 

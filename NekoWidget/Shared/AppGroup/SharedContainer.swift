@@ -71,6 +71,21 @@ struct PrivateWindowCatalogState: Codable, Equatable, Sendable {
     }
 }
 
+/// One bounded location that may still contain the authoritative pairing
+/// document after a crash or a legacy-directory migration conflict. The type
+/// deliberately carries paths only; PairingState and Keychain validation stay
+/// in the containing app and are never linked into Widget/Share targets.
+struct PrivateWindowRecoveryLocation: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case catalogWindow(localWindowID: String)
+        case legacy
+        case quarantine
+    }
+
+    let kind: Kind
+    let sharingDirectoryURL: URL
+}
+
 /// Device-local catalog for multiple private windows.
 ///
 /// Mutations are performed only while the existing sharing lifecycle flock is
@@ -131,6 +146,186 @@ enum PrivateWindowCatalogStore {
             if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
             return $0.localWindowID < $1.localWindowID
         }
+    }
+
+    /// Enumerates only the closed set of locations owned by the private-window
+    /// migration. Callers still have to decode PairingState, bind it to the
+    /// ordinary-container installation marker, and prove its exact Keychain
+    /// account before any location can become active.
+    static func recoveryLocationsWhileLifecycleLocked() throws
+        -> [PrivateWindowRecoveryLocation] {
+        guard let catalog = try load() else { throw Error.invalidCatalog }
+        let fileManager = FileManager.default
+        var locations: [PrivateWindowRecoveryLocation] = []
+
+        for entry in catalog.windows {
+            guard let directory = SharedContainer.windowSharingDirectoryURL(
+                localWindowID: entry.localWindowID
+            ) else { throw Error.invalidCatalog }
+            if fileManager.fileExists(atPath: directory.path) {
+                guard recoveryLocationIsOrdinaryDirectory(directory) else {
+                    throw Error.conflictingLegacyMigration
+                }
+                locations.append(
+                    PrivateWindowRecoveryLocation(
+                        kind: .catalogWindow(localWindowID: entry.localWindowID),
+                        sharingDirectoryURL: directory
+                    )
+                )
+            }
+        }
+
+        if let legacy = SharedContainer.legacySharingCacheDirectoryURL,
+           fileManager.fileExists(atPath: legacy.path) {
+            guard recoveryLocationIsOrdinaryDirectory(legacy) else {
+                throw Error.conflictingLegacyMigration
+            }
+            locations.append(
+                PrivateWindowRecoveryLocation(
+                    kind: .legacy,
+                    sharingDirectoryURL: legacy
+                )
+            )
+        }
+
+        if let quarantineRoot = SharedContainer
+            .privateWindowLegacySharingQuarantineDirectoryURL,
+           fileManager.fileExists(atPath: quarantineRoot.path) {
+            guard recoveryLocationIsOrdinaryDirectory(quarantineRoot) else {
+                throw Error.conflictingLegacyMigration
+            }
+            let quarantined = try fileManager.contentsOfDirectory(
+                at: quarantineRoot,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: []
+            )
+            // Recovery work must remain bounded even if a previous build was
+            // repeatedly interrupted by a late extension writer.
+            guard quarantined.count <= 64 else {
+                throw Error.conflictingLegacyMigration
+            }
+            for directory in quarantined {
+                guard UUID(uuidString: directory.lastPathComponent) != nil,
+                      recoveryLocationIsOrdinaryDirectory(directory)
+                else { throw Error.conflictingLegacyMigration }
+                locations.append(
+                    PrivateWindowRecoveryLocation(
+                        kind: .quarantine,
+                        sharingDirectoryURL: directory
+                    )
+                )
+            }
+        }
+
+        var seen = Set<String>()
+        return locations.filter {
+            seen.insert($0.sharingDirectoryURL.standardizedFileURL.path).inserted
+        }
+    }
+
+    /// Promotes one already-authenticated recovery location. No directory is
+    /// merged or deleted: a pre-existing target is atomically moved into the
+    /// same protected quarantine first, so every interruption is recoverable by
+    /// running the bounded scan again.
+    @discardableResult
+    static func promoteRecoveryLocationWhileLifecycleLocked(
+        _ location: PrivateWindowRecoveryLocation,
+        targetLocalWindowID: String,
+        spaceID: String,
+        credentialAccount: String,
+        now: Date = .now
+    ) throws -> PrivateWindowCatalogEntry {
+        guard var state = try load() else { throw Error.invalidCatalog }
+        guard try recoveryLocationsWhileLifecycleLocked().contains(location) else {
+            throw Error.conflictingLegacyMigration
+        }
+        guard state.activeWindowID == targetLocalWindowID else {
+            throw Error.conflictingLegacyMigration
+        }
+
+        guard let targetIndex = state.windows.firstIndex(where: {
+            $0.localWindowID == targetLocalWindowID
+        }) else { throw Error.unknownWindow }
+        switch location.kind {
+        case let .catalogWindow(localWindowID):
+            guard localWindowID == targetLocalWindowID else {
+                throw Error.conflictingLegacyMigration
+            }
+        case .legacy:
+            let legacyTargetWindowID = state.pendingLegacyMigrationWindowID
+                ?? state.windows.first?.localWindowID
+            guard legacyTargetWindowID == targetLocalWindowID else {
+                throw Error.conflictingLegacyMigration
+            }
+        case .quarantine:
+            break
+        }
+
+        let existingEntry = state.windows[targetIndex]
+        guard (existingEntry.spaceID == nil || existingEntry.spaceID == spaceID),
+              (existingEntry.credentialAccount == nil
+                || existingEntry.credentialAccount == credentialAccount)
+        else { throw Error.conflictingLegacyMigration }
+        var validatedEntry = existingEntry
+        validatedEntry.spaceID = spaceID
+        validatedEntry.credentialAccount = credentialAccount
+        validatedEntry.updatedAt = max(validatedEntry.updatedAt, now)
+        _ = try validatedEntry.validated()
+
+        guard let destination = SharedContainer.windowSharingDirectoryURL(
+            localWindowID: existingEntry.localWindowID
+        ) else { throw Error.invalidCatalog }
+        let source = location.sharingDirectoryURL
+        if source.standardizedFileURL != destination.standardizedFileURL {
+            let fileManager = FileManager.default
+            guard recoveryLocationIsOrdinaryDirectory(source),
+                  let quarantineRoot = SharedContainer
+                    .privateWindowLegacySharingQuarantineDirectoryURL
+            else { throw Error.conflictingLegacyMigration }
+            try fileManager.createDirectory(
+                at: quarantineRoot,
+                withIntermediateDirectories: true
+            )
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(quarantineRoot)
+            try fileManager.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if fileManager.fileExists(atPath: destination.path) {
+                guard recoveryLocationIsOrdinaryDirectory(destination) else {
+                    throw Error.conflictingLegacyMigration
+                }
+                let displaced = quarantineRoot.appendingPathComponent(
+                    UUID().uuidString.lowercased(),
+                    isDirectory: true
+                )
+                guard !fileManager.fileExists(atPath: displaced.path) else {
+                    throw Error.conflictingLegacyMigration
+                }
+                do {
+                    try fileManager.moveItem(at: destination, to: displaced)
+                } catch {
+                    throw Error.conflictingLegacyMigration
+                }
+            }
+            do {
+                try fileManager.moveItem(at: source, to: destination)
+                try SharingSecureFile.enforceProtectionAndBackupExclusion(destination)
+            } catch {
+                // The source and any displaced target remain in the bounded
+                // quarantine and are rediscovered on the next bootstrap.
+                throw Error.conflictingLegacyMigration
+            }
+        }
+
+        state.windows[targetIndex] = validatedEntry
+        state.activeWindowID = validatedEntry.localWindowID
+        if state.pendingLegacyMigrationWindowID == validatedEntry.localWindowID {
+            state.pendingLegacyMigrationWindowID = nil
+        }
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+        return validatedEntry
     }
 
     /// Called by installation bootstrap while it already owns the lifecycle
@@ -523,6 +718,14 @@ enum PrivateWindowCatalogStore {
             else { return false }
         }
         return true
+    }
+
+    private static func recoveryLocationIsOrdinaryDirectory(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ]) else { return false }
+        return values.isDirectory == true && values.isSymbolicLink != true
     }
 
 #if DEBUG

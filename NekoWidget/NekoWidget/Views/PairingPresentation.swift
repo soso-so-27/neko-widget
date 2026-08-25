@@ -1,5 +1,70 @@
 import Foundation
 
+struct PairingBuildPresentation {
+    static var currentText: String {
+        make(
+            version: Bundle.main.object(
+                forInfoDictionaryKey: "CFBundleShortVersionString"
+            ) as? String,
+            build: Bundle.main.object(
+                forInfoDictionaryKey: "CFBundleVersion"
+            ) as? String
+        )
+    }
+
+    static func make(version: String?, build: String?) -> String {
+        let visibleVersion = version?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visibleBuild = build?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedVersion = visibleVersion.flatMap { $0.isEmpty ? nil : $0 } ?? "-"
+        let resolvedBuild = visibleBuild.flatMap { $0.isEmpty ? nil : $0 } ?? "-"
+        return "バージョン \(resolvedVersion)（Build \(resolvedBuild)）"
+    }
+}
+
+struct PairingAvailabilityPresentation: Equatable, Sendable {
+    let title: String
+    let detail: String
+    let retryButtonTitle: String?
+
+    static func temporarilyUnavailable(detail: String) -> Self {
+        Self(
+            title: "まどを一時的に確認できません",
+            detail: detail,
+            retryButtonTitle: "もう一度確認する"
+        )
+    }
+
+    static let consentRequired = Self(
+        title: "相手と接続済み",
+        detail: "写真を届ける前に、共有内容への同意を更新してください。",
+        retryButtonTitle: nil
+    )
+}
+
+enum PendingFamilyMemoryTargetBootstrapPhase: Equatable, Sendable {
+    case checking
+    case temporarilyUnavailable
+    case ready
+}
+
+enum PendingFamilyMemoryTargetDisposition: Equatable, Sendable {
+    case preserve
+    case resolve
+}
+
+struct PendingFamilyMemoryTargetPresentationPolicy {
+    static func disposition(
+        for phase: PendingFamilyMemoryTargetBootstrapPhase
+    ) -> PendingFamilyMemoryTargetDisposition {
+        switch phase {
+        case .checking, .temporarilyUnavailable:
+            return .preserve
+        case .ready:
+            return .resolve
+        }
+    }
+}
+
 /// User-facing guidance for one selected window and its one peer.
 ///
 /// This type deliberately accepts only the public phase and role. It cannot

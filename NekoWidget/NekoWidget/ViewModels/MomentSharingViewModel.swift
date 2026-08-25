@@ -1,6 +1,12 @@
 import Combine
 import Foundation
 
+enum MomentSharingBootstrapPresentationState: Equatable {
+    case checking
+    case ready
+    case temporarilyUnavailable(message: String)
+}
+
 @MainActor
 final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var pairingState: PairingState?
@@ -16,6 +22,8 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var memoryActionMessage: String?
     @Published private(set) var heartActionMessage: String?
     @Published private(set) var importedMemoryMomentIDs = Set<String>()
+    @Published private(set) var bootstrapPresentationState:
+        MomentSharingBootstrapPresentationState = .checking
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -54,12 +62,20 @@ final class MomentSharingViewModel: ObservableObject {
             _ = try await PairingInstallationGuard.bootstrapAsync()
             try reload()
             errorMessage = nil
+            bootstrapPresentationState = .ready
             if isPaired {
                 await synchronize(isManual: false)
             }
         } catch {
-            errorMessage = Self.userFacingMessage(for: error)
+            let message = Self.userFacingMessage(for: error)
+            errorMessage = message
+            bootstrapPresentationState = .temporarilyUnavailable(message: message)
         }
+    }
+
+    func retryBootstrap() async {
+        bootstrapPresentationState = .checking
+        await bootstrap()
     }
 
     func synchronize(isManual: Bool = true) async {
@@ -500,7 +516,9 @@ final class MomentSharingViewModel: ObservableObject {
         do {
             try reload(notifyPresentationChange: false)
         } catch {
-            errorMessage = Self.userFacingMessage(for: error)
+            let message = Self.userFacingMessage(for: error)
+            errorMessage = message
+            bootstrapPresentationState = .temporarilyUnavailable(message: message)
         }
     }
 

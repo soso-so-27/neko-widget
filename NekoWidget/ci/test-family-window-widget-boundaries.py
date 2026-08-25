@@ -355,20 +355,43 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("forSourceDigest: sourceDigest", resolver)
         self.assertIn("localWindowID: activeWindow.localWindowID", resolver)
         self.assertIn("validating: bootstrap.lifecycleToken", resolver)
+        self.assertIn("let catalog = try PrivateWindowCatalogStore.load()", resolver)
+        catalog_read = section(
+            resolver,
+            "let activeWindow: PrivateWindowCatalogEntry",
+            "let momentID: String?",
+        )
+        self.assertIn("catch {", catalog_read)
+        self.assertIn("Keep the exact target", catalog_read)
         self.assertIn(
             "model.receivedMoments.first(where: { $0.id == momentID })",
             resolver,
         )
-        self.assertLess(
+        self.assertGreater(
             resolver.index("pendingMemorySourceDigest = nil"),
             resolver.index("WidgetCacheBuilder.retainedFamilyMomentID("),
         )
-        self.assertLess(
+        self.assertGreater(
             resolver.index("focusedMomentID = nil"),
             resolver.index("WidgetCacheBuilder.retainedFamilyMomentID("),
         )
         self.assertIn("showsStaleWidgetPhotoAlert = true", resolver)
-        self.assertIn("if didFinishBootstrap", resolver)
+        self.assertNotIn("didFinishBootstrap", family_view)
+        self.assertIn(
+            "PendingFamilyMemoryTargetPresentationPolicy.disposition(",
+            resolver,
+        )
+        self.assertIn(
+            "catch is PairingInstallationGuard.RetryableBootstrapError",
+            resolver,
+        )
+        retryable_catch = section(
+            resolver,
+            "catch is PairingInstallationGuard.RetryableBootstrapError",
+            "} catch {",
+        )
+        self.assertIn("return", retryable_catch)
+        self.assertNotIn("rejectPendingMemoryTarget()", retryable_catch)
         self.assertIn("rejectPendingMemoryTarget()", resolver)
         rejection = section(
             family_view,
@@ -393,6 +416,20 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "performMemoryAction(item, clearsWidgetFocusAfterCompletion: true)",
             confirmation,
         )
+
+        presentation = source("NekoWidget/Views/PairingPresentation.swift")
+        policy = section(
+            presentation,
+            "enum PendingFamilyMemoryTargetBootstrapPhase",
+            "/// User-facing guidance",
+        )
+        self.assertIn("case checking", policy)
+        self.assertIn("case temporarilyUnavailable", policy)
+        self.assertIn("case ready", policy)
+        self.assertIn("case .checking, .temporarilyUnavailable:", policy)
+        self.assertIn("return .preserve", policy)
+        self.assertIn("case .ready:", policy)
+        self.assertIn("return .resolve", policy)
 
         cache_builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
         retained = section(
@@ -1824,6 +1861,100 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("写真アプリへ保存した思い出は残ります", pairing_model)
         self.assertIn("届いた写真を開きます", home)
         self.assertNotIn("届いた写真の履歴", home)
+
+    def test_temporary_pairing_storage_failure_has_one_retry_path(self) -> None:
+        sharing_model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        bootstrap = section(
+            sharing_model,
+            "func bootstrap() async",
+            "func retryBootstrap() async",
+        )
+        self.assertIn("bootstrapPresentationState = .ready", bootstrap)
+        self.assertIn(
+            "bootstrapPresentationState = .temporarilyUnavailable(message: message)",
+            bootstrap,
+        )
+
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        base = section(
+            family,
+            "private var baseContent: some View",
+            "private func temporarilyUnavailableContent",
+        )
+        self.assertIn("switch model.bootstrapPresentationState", base)
+        self.assertIn("case let .temporarilyUnavailable(message):", base)
+        self.assertLess(
+            base.index("case let .temporarilyUnavailable(message):"),
+            base.index("if !model.isPaired"),
+        )
+        unavailable = section(
+            family,
+            "private func temporarilyUnavailableContent",
+            "private var consentRequiredContent",
+        )
+        self.assertEqual(unavailable.count("Button("), 1)
+        self.assertIn("await model.retryBootstrap()", unavailable)
+        self.assertNotIn("PairingView()", unavailable)
+
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        pairing_bootstrap = section(
+            pairing_model,
+            "func bootstrap() async",
+            "/// Updates presentation metadata only.",
+        )
+        self.assertGreater(
+            pairing_bootstrap.index("bootstrapRetryMessage = nil"),
+            pairing_bootstrap.index("restoreRecoveryInvitationCodeIfAvailable"),
+        )
+        body = section(pairing, "var body: some View", "private func temporarilyUnavailableSection")
+        self.assertLess(
+            body.index("if let retryMessage = model.bootstrapRetryMessage"),
+            body.index("pairingContent(state)"),
+        )
+        retry_section = section(
+            pairing,
+            "private func temporarilyUnavailableSection",
+            "private var buildIdentitySection",
+        )
+        self.assertEqual(retry_section.count("Button("), 1)
+        self.assertIn("await model.bootstrap()", retry_section)
+        self.assertIn("if model.isBootstrapping", retry_section)
+        self.assertIn("接続情報を確認しています…", retry_section)
+        self.assertNotIn("setupChoiceSection", retry_section)
+
+    def test_paired_consent_renewal_and_dynamic_build_identity_are_explicit(self) -> None:
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        base = section(
+            family,
+            "private var baseContent: some View",
+            "private func temporarilyUnavailableContent",
+        )
+        self.assertIn("if !model.isPaired", base)
+        self.assertIn("else if !model.hasCurrentMediaSharingConsent", base)
+        self.assertIn("consentRequiredContent", base)
+        consent = section(
+            family,
+            "private var consentRequiredContent",
+            "private var buildIdentityText",
+        )
+        self.assertIn("PairingAvailabilityPresentation.consentRequired", consent)
+        self.assertIn('Label("共有の同意を更新"', consent)
+        self.assertIn("PairingView()", consent)
+
+        presentation = source("NekoWidget/Views/PairingPresentation.swift")
+        self.assertIn('forInfoDictionaryKey: "CFBundleShortVersionString"', presentation)
+        self.assertIn('forInfoDictionaryKey: "CFBundleVersion"', presentation)
+        self.assertIn('return "バージョン \\(resolvedVersion)（Build \\(resolvedBuild)）"', presentation)
+
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        build = section(
+            pairing,
+            "private var buildIdentitySection",
+            "private var pairingOnlyBuildSection",
+        )
+        self.assertIn("PairingBuildPresentation.currentText", build)
+        self.assertIn('accessibilityIdentifier("pairing-build-identity")', build)
 
 
 if __name__ == "__main__":
