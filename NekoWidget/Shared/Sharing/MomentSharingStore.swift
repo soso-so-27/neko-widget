@@ -41,6 +41,11 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     var committedAt: Date? = nil
     var unreceivedExpiresAt: Date? = nil
     var recipientCount: Int? = nil
+    /// The first time this installation observed the relay reporting that the
+    /// recipient device acknowledged the encrypted delivery. This is not an
+    /// opened/read receipt and intentionally carries no image or recipient
+    /// metadata. Older records decode this additive optional field as nil.
+    var recipientDeliveryConfirmedAt: Date? = nil
     let createdAt: Date
     var updatedAt: Date
 
@@ -66,6 +71,10 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
                 || phase == .deliveryResultUnknown || commitStartedAt == nil),
               serverMomentID.map(Self.isOpaqueIdentifier) ?? true,
               phase == .prepared || phase == .failed || serverMomentID != nil,
+              (phase == .committed || recipientDeliveryConfirmedAt == nil),
+              recipientDeliveryConfirmedAt.map { confirmedAt in
+                  confirmedAt >= (committedAt ?? createdAt) && confirmedAt <= updatedAt
+              } ?? true,
               Self.hasValidCommitMetadata(
                   phase: phase,
                   commitStartedAt: commitStartedAt,
@@ -661,6 +670,39 @@ enum MomentSharingStateStore {
                 )
             }
         }
+    }
+
+    /// Records a sender-visible device-arrival receipt for a committed item.
+    /// Both relay and client IDs must match the durable outbox row so a stale
+    /// or unrelated change cannot relabel another send. The timestamp is the
+    /// local observation time because the changes feed deliberately exposes
+    /// only the acknowledgement state, not recipient activity metadata.
+    @discardableResult
+    static func markRecipientDeliveryConfirmed(
+        serverMomentID: String,
+        clientMomentID: UUID,
+        observedAt: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Bool {
+        var changed = false
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: {
+                $0.phase == .committed
+                    && $0.serverMomentID == serverMomentID
+                    && $0.context.clientMomentID == clientMomentID
+            }) else { return }
+            guard state.outbox[index].recipientDeliveryConfirmedAt == nil else { return }
+            let lowerBound = state.outbox[index].committedAt
+                ?? state.outbox[index].createdAt
+            let confirmedAt = max(observedAt, lowerBound)
+            state.outbox[index].recipientDeliveryConfirmedAt = confirmedAt
+            state.outbox[index].updatedAt = max(
+                state.outbox[index].updatedAt,
+                confirmedAt
+            )
+            changed = true
+        }
+        return changed
     }
 
     /// Opaque relay cursors are not orderable. Compare-and-swap prevents a

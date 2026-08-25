@@ -129,6 +129,31 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     let committedAt: Date?
     let unreceivedExpiresAt: Date?
     let recipientCount: Int?
+    let recipientDeliveryConfirmedAt: Date?
+
+    init(
+        stableID: String,
+        destinationKey: String,
+        phase: Phase,
+        updatedAt: Date,
+        retryAt: Date?,
+        lastErrorCode: String?,
+        committedAt: Date?,
+        unreceivedExpiresAt: Date?,
+        recipientCount: Int?,
+        recipientDeliveryConfirmedAt: Date? = nil
+    ) {
+        self.stableID = stableID
+        self.destinationKey = destinationKey
+        self.phase = phase
+        self.updatedAt = updatedAt
+        self.retryAt = retryAt
+        self.lastErrorCode = lastErrorCode
+        self.committedAt = committedAt
+        self.unreceivedExpiresAt = unreceivedExpiresAt
+        self.recipientCount = recipientCount
+        self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
+    }
 }
 
 enum MomentOutgoingOutcomePresentationReason: Int, CaseIterable, Sendable, Hashable {
@@ -296,12 +321,53 @@ struct MomentLatestServerAcceptancePresentation: Equatable, Sendable {
     }
 }
 
+enum MomentSentRecordDeliveryState: Equatable, Sendable {
+    case serverAccepted
+    case recipientDeviceArrivalConfirmed
+}
+
+/// Privacy-safe delivery ledger entry. It deliberately contains no image,
+/// thumbnail, local path, URL, filename, or media identifier.
+struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
+    let id: Int
+    let serverAcceptedAt: Date
+    let recipientDeliveryConfirmedAt: Date?
+
+    var deliveryState: MomentSentRecordDeliveryState {
+        recipientDeliveryConfirmedAt == nil
+            ? .serverAccepted
+            : .recipientDeviceArrivalConfirmed
+    }
+
+    var title: String {
+        switch deliveryState {
+        case .serverAccepted: "サーバー受付済み"
+        case .recipientDeviceArrivalConfirmed: "相手端末へ到着"
+        }
+    }
+
+    var detail: String {
+        switch deliveryState {
+        case .serverAccepted:
+            "サーバーが配信を受け付けました。相手の端末への到着、閲覧、既読はまだ確認していません。"
+        case .recipientDeviceArrivalConfirmed:
+            "相手の端末への到着を確認しました。写真を開いたことや見たことを示す、閲覧・既読の確認ではありません。"
+        }
+    }
+}
+
 struct MomentOutgoingPresentation: Equatable, Sendable {
     let statuses: [MomentOutgoingStatusPresentation]
     let outcomes: [MomentOutgoingOutcomeGroupPresentation]
     let latestServerAcceptance: MomentLatestServerAcceptancePresentation?
+    let sentRecords: [MomentSentRecordPresentation]
 
-    static let empty = Self(statuses: [], outcomes: [], latestServerAcceptance: nil)
+    static let empty = Self(
+        statuses: [],
+        outcomes: [],
+        latestServerAcceptance: nil,
+        sentRecords: []
+    )
 
     /// Encrypted outbox cancellation remains separate from claim-safe
     /// plaintext preparation cancellation so the confirmation copy never
@@ -323,7 +389,10 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
     }
 
     var hasActivity: Bool {
-        !statuses.isEmpty || !outcomes.isEmpty || latestServerAcceptance != nil
+        !statuses.isEmpty
+            || !outcomes.isEmpty
+            || latestServerAcceptance != nil
+            || !sentRecords.isEmpty
     }
 
     var outcomeCount: Int {
@@ -342,6 +411,8 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
 /// keys so additional windows and concurrent sends do not require UI-specific
 /// branching.
 enum MomentSharingPresentationPolicy {
+    static let sentRecordLimit = 20
+
     static func make(
         preparations: [MomentPreparationPresentationInput],
         deliveries: [MomentDeliveryPresentationInput],
@@ -448,7 +519,7 @@ enum MomentSharingPresentationPolicy {
                 return $0.reason.rawValue < $1.reason.rawValue
             }
 
-        let latestServerAcceptance = deliveries
+        let committedDeliveries = deliveries
             .filter { $0.phase == .committed }
             .sorted {
                 let lhsAcceptedAt = $0.committedAt ?? $0.updatedAt
@@ -456,6 +527,23 @@ enum MomentSharingPresentationPolicy {
                 if lhsAcceptedAt != rhsAcceptedAt { return lhsAcceptedAt > rhsAcceptedAt }
                 return $0.stableID < $1.stableID
             }
+
+        let sentRecords = committedDeliveries
+            .prefix(sentRecordLimit)
+            .enumerated()
+            .map { index, delivery in
+                let serverAcceptedAt = delivery.committedAt ?? delivery.updatedAt
+                let confirmedAt = delivery.recipientDeliveryConfirmedAt.flatMap {
+                    $0 >= serverAcceptedAt ? $0 : nil
+                }
+                return MomentSentRecordPresentation(
+                    id: index,
+                    serverAcceptedAt: serverAcceptedAt,
+                    recipientDeliveryConfirmedAt: confirmedAt
+                )
+            }
+
+        let latestServerAcceptance = committedDeliveries
             .first
             .map {
                 MomentLatestServerAcceptancePresentation(
@@ -470,7 +558,8 @@ enum MomentSharingPresentationPolicy {
         return MomentOutgoingPresentation(
             statuses: statuses,
             outcomes: outcomeGroups,
-            latestServerAcceptance: latestServerAcceptance
+            latestServerAcceptance: latestServerAcceptance,
+            sentRecords: sentRecords
         )
     }
 

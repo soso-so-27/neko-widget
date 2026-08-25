@@ -13,6 +13,7 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var manualRefreshMessage: String?
     @Published private(set) var manualRefreshCompletedAt: Date?
     @Published private(set) var manualRefreshSucceeded: Bool?
+    @Published private(set) var bookmarkActionMessage: String?
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -65,6 +66,7 @@ final class MomentSharingViewModel: ObservableObject {
 
     func synchronize(isManual: Bool = true) async {
         guard !isSynchronizing, !isPerformingAction else { return }
+        bookmarkActionMessage = nil
         if isManual {
             manualRefreshMessage = nil
             manualRefreshCompletedAt = nil
@@ -156,24 +158,41 @@ final class MomentSharingViewModel: ObservableObject {
         guard !isWorking, !isReportOnly,
               item.state == .available || item.state == .acknowledged
         else { return }
+        bookmarkActionMessage = nil
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
+            let willSave = !isSavedMemory(item)
             let bootstrap = try PairingInstallationGuard.bootstrap()
             try MomentSharingStateStore.setSavedMemory(
                 momentID: item.id,
-                isSaved: !isSavedMemory(item),
+                isSaved: willSave,
                 validating: bootstrap.lifecycleToken
             )
             errorMessage = nil
             try reload()
+            showBookmarkActionMessage(willSave
+                ? "しおりを付けました。このiPhone内の目印として表示します。"
+                : "しおりを外しました。写真そのものは削除していません。")
         } catch {
+            bookmarkActionMessage = nil
             errorMessage = "この写真の保存状態を変更できませんでした。時間をおいて、もう一度お試しください。"
             SharedLog.app.warning(
                 "saved-moment",
                 "Received moment bookmark could not be changed",
                 metadata: SharedLog.errorMetadata(error, category: .savedMoment)
             )
+        }
+    }
+
+    private func showBookmarkActionMessage(_ message: String) {
+        bookmarkActionMessage = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled,
+                  self?.bookmarkActionMessage == message
+            else { return }
+            self?.bookmarkActionMessage = nil
         }
     }
 
@@ -377,7 +396,8 @@ final class MomentSharingViewModel: ObservableObject {
                     lastErrorCode: $0.lastErrorCode,
                     committedAt: $0.committedAt,
                     unreceivedExpiresAt: $0.unreceivedExpiresAt,
-                    recipientCount: $0.recipientCount
+                    recipientCount: $0.recipientCount,
+                    recipientDeliveryConfirmedAt: $0.recipientDeliveryConfirmedAt
                 )
             },
             outcomes: sharingState.outgoingOutcomes.map {

@@ -592,6 +592,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("新しいまどを作る", pairing)
         self.assertIn("招待されたまどに参加", pairing)
+        self.assertIn("新しいiPhoneで、以前のまどへ戻る", pairing)
         self.assertIn("この名前でまどを作る", pairing)
         self.assertNotIn("Keychain:", pairing)
         self.assertNotIn("App Group", pairing)
@@ -623,6 +624,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("state?.lastError != nil", status)
         self.assertNotIn("return state?.lastError", status)
 
+    def test_device_change_ui_names_each_phone_and_one_primary_next_action(self) -> None:
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        presentation = source("NekoWidget/Views/PairingPresentation.swift")
+
+        for device_name in ["新しいiPhone", "以前のiPhone", "相手のiPhone"]:
+            self.assertIn(device_name, pairing)
+            self.assertIn(device_name, presentation)
+
+        self.assertIn("DeviceChangeGuidancePresentation", pairing)
+        self.assertIn("機種変更で使う3台", pairing)
+        self.assertIn("今すること", pairing)
+        self.assertIn("primaryActionLabel", pairing)
+        self.assertIn(".buttonStyle(.borderedProminent)", pairing)
+        self.assertIn("相手のiPhoneの機種変更を手伝う", pairing)
+        self.assertIn("新しいiPhone用の復旧コードを作る", pairing)
+        self.assertIn("新しいiPhoneへ復旧コードを送る", pairing)
+        self.assertIn("新しいiPhoneを承認する", pairing)
+        self.assertNotIn("相手側のiPhoneを置き換える", pairing)
+        self.assertNotIn("相手側の新しいiPhoneへ置き換える", pairing)
+
     def test_manual_refresh_result_is_visible_without_claiming_read_receipt(self) -> None:
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
         family_model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
@@ -636,6 +657,38 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("現在このiPhoneで表示できる新しい写真はありません", family_model)
         self.assertNotIn("相手が見ました", family_model)
         self.assertNotIn("相手が受け取りました", family_model)
+
+    def test_sent_ledger_separates_server_acceptance_from_device_arrival(self) -> None:
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        presentation = source("NekoWidget/Views/MomentSharingPresentation.swift")
+        model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+
+        self.assertIn("recipientDeliveryConfirmedAt", store)
+        self.assertIn("markRecipientDeliveryConfirmed", store)
+        self.assertIn('change.deliveryState == "acknowledged"', coordinator)
+        self.assertIn("markRecipientDeliveryConfirmed", coordinator)
+        self.assertIn("recipientDeliveryConfirmedAt: $0.recipientDeliveryConfirmedAt", model)
+        self.assertIn("MomentSentRecordDeliveryState", presentation)
+        self.assertIn("serverAccepted", presentation)
+        self.assertIn("recipientDeviceArrivalConfirmed", presentation)
+        self.assertIn("閲覧・既読の確認ではありません", presentation)
+        self.assertIn("自分が届けた写真", family)
+        self.assertIn("写真そのものや縮小画像はこの一覧に保存せず", family)
+
+    def test_bookmark_action_has_visible_result_and_cannot_silently_overlap_sync(self) -> None:
+        model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+
+        self.assertIn("bookmarkActionMessage", model)
+        self.assertIn("しおりを付けました。このiPhone内の目印", model)
+        self.assertIn("family-window-bookmark-result", family)
+        self.assertIn('Label("しおり付き", systemImage: "bookmark.fill")', family)
+        bookmark_button = family.split(
+            "Task { await model.toggleSavedMemory(item) }", 1
+        )[1].split('accessibilityIdentifier("family-window-save-memory")', 1)[0]
+        self.assertIn(".disabled(model.isWorking)", bookmark_button)
 
     def test_retryable_pairing_bootstrap_is_retried_after_data_protection(self) -> None:
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")

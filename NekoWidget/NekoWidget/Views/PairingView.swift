@@ -12,6 +12,7 @@ struct PairingView: View {
     @State private var showsCopyRecoveryConfirmation = false
     @State private var windowDisplayNameDraft = PrivateWindowDisplayName.fallback
     @State private var setupPath: SetupPath?
+    @State private var showsDeviceChangeFlow = false
 
     var body: some View {
         Form {
@@ -92,6 +93,13 @@ struct PairingView: View {
             if currentPhase == .unpaired, previousPhase != .unpaired {
                 setupPath = nil
                 hasAcceptedPairingTerms = false
+                showsDeviceChangeFlow = false
+            }
+        }
+        .onChange(of: model.hasPendingDeviceRecovery) {
+            hadPendingRecovery, hasPendingRecovery in
+            if hadPendingRecovery, !hasPendingRecovery {
+                showsDeviceChangeFlow = false
             }
         }
         .onReceive(
@@ -185,16 +193,28 @@ struct PairingView: View {
 
         switch state.phase {
         case .unpaired:
-            setupChoiceSection
-            if setupPath == .create {
-                windowNameSection(state)
-                consentSection
-                createSection
-            } else if setupPath == .join {
-                consentSection
-                joinSection
-            } else if setupPath == .recover {
-                recoveryJoinSection
+            if let setupPath {
+                if setupPath == .recover {
+                    deviceChangeRoleSection(
+                        currentDevice: .newIPhone,
+                        canChooseDifferentSetup: true
+                    )
+                } else {
+                    selectedSetupSection(setupPath)
+                }
+
+                if setupPath == .create {
+                    windowNameSection(state)
+                    consentSection
+                    createSection
+                } else if setupPath == .join {
+                    consentSection
+                    joinSection
+                } else {
+                    recoveryJoinSection
+                }
+            } else {
+                setupChoiceSection
             }
         case .creatingInvitation:
             progressSection("招待を作成しています…")
@@ -261,7 +281,11 @@ struct PairingView: View {
                 mediaConsentRenewalSection
             }
             refreshSection(state)
-            deviceChangeSection
+            if model.hasPendingDeviceRecovery || showsDeviceChangeFlow {
+                deviceChangeSection
+            } else {
+                deviceChangeStartSection
+            }
             pairedCancelSection
         case .failed:
             Section {
@@ -314,14 +338,51 @@ struct PairingView: View {
             Button {
                 setupPath = .recover
             } label: {
-                Label("以前のまどへ接続を戻す", systemImage: "iphone.and.arrow.forward")
+                Label(
+                    "新しいiPhoneで、以前のまどへ戻る",
+                    systemImage: "iphone.and.arrow.forward"
+                )
                     .font(.headline)
             }
-            .accessibilityHint("接続済みの相手から届いたNWR1.で始まる復旧コードを使います")
+            .accessibilityHint("新しいiPhoneで、相手から届いたNWR1.で始まる復旧コードを使います")
         } header: {
-            Text("何をしますか？")
+            Text("このiPhoneで何をしますか？")
         } footer: {
-            Text("機種変更や再インストールで接続だけ失った場合は、新しいまどを作らず復旧できます。接続済みの相手のiPhoneが必要です。")
+            Text("機種変更では新しいまどを作りません。新しいiPhoneを選び、接続済みの相手のiPhoneに手伝ってもらいます。以前のiPhoneは操作しません。")
+        }
+    }
+
+    private func selectedSetupSection(_ path: SetupPath) -> some View {
+        let title: String
+        let detail: String
+        let icon: String
+        switch path {
+        case .create:
+            title = "このiPhoneで、新しいまどを作ります"
+            detail = "まどの名前を付け、信頼できる相手へ招待コードを送ります。"
+            icon = "rectangle.badge.plus"
+        case .join:
+            title = "このiPhoneで、招待されたまどに参加します"
+            detail = "相手から届いたNW1.で始まる招待コードを使います。"
+            icon = "person.badge.plus"
+        case .recover:
+            // Device recovery has a dedicated three-device explanation.
+            title = "このiPhoneを、新しいiPhoneとして接続します"
+            detail = "相手のiPhoneが作った復旧コードを使います。"
+            icon = "iphone.and.arrow.forward"
+        }
+        return Section {
+            Label(title, systemImage: icon)
+                .font(.headline)
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("別の操作を選ぶ") {
+                setupPath = nil
+            }
+            .font(.footnote)
+        } header: {
+            Text("選んだ操作")
         }
     }
 
@@ -452,17 +513,21 @@ struct PairingView: View {
             Button {
                 Task { await model.joinDeviceRecovery() }
             } label: {
-                Label("復旧コードで接続を戻す", systemImage: "iphone.and.arrow.forward")
+                primaryActionLabel(
+                    "この新しいiPhoneへ接続を戻す",
+                    systemImage: "iphone.and.arrow.forward"
+                )
             }
+            .buttonStyle(.borderedProminent)
             .disabled(
                 model.isWorking
                     || model.enteredRecoveryCode
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             )
         } header: {
-            Text("以前のまどへ接続を戻す")
+            Text("今すること")
         } footer: {
-            Text("接続済みの相手がこの復旧を承認した場合だけ、既存のまどへ戻ります。新しいまどは作らず、サーバー上の共有を維持します。")
+            Text("相手のiPhoneがこの復旧を承認した場合だけ、既存のまどへ戻ります。新しいまどは作らず、サーバー上の共有を維持します。")
         }
     }
 
@@ -596,17 +661,21 @@ struct PairingView: View {
     }
 
     private func recoveryRefreshSection(_ state: PairingState) -> some View {
-        Section {
-            Button(
-                PairingGuidancePresentation.make(
-                    phase: state.phase,
-                    role: state.role
-                ).refreshButtonTitle ?? "復旧状態を確認"
-            ) {
+        let title = PairingGuidancePresentation.make(
+            phase: state.phase,
+            role: state.role
+        ).refreshButtonTitle ?? "復旧状態を確認"
+        return Section {
+            Button {
                 Task { await model.refreshDeviceRecovery() }
+            } label: {
+                primaryActionLabel(title, systemImage: "arrow.clockwise")
             }
+            .buttonStyle(.borderedProminent)
             .disabled(model.isWorking)
             manualCheckResult
+        } header: {
+            Text("今すること")
         }
     }
 
@@ -675,82 +744,208 @@ struct PairingView: View {
         }
     }
 
+    private func deviceChangeRoleSection(
+        currentDevice: DeviceChangeGuidancePresentation.CurrentDevice,
+        canChooseDifferentSetup: Bool = false,
+        canCloseDeviceChangeFlow: Bool = false
+    ) -> some View {
+        let guidance = DeviceChangeGuidancePresentation.make(currentDevice: currentDevice)
+        return Section {
+            deviceRoleRow(
+                title: guidance.newIPhoneTitle,
+                detail: guidance.newIPhoneDetail,
+                systemImage: "iphone.gen3"
+            )
+            deviceRoleRow(
+                title: guidance.previousIPhoneTitle,
+                detail: guidance.previousIPhoneDetail,
+                systemImage: "iphone"
+            )
+            deviceRoleRow(
+                title: guidance.partnerIPhoneTitle,
+                detail: guidance.partnerIPhoneDetail,
+                systemImage: "person.crop.circle.badge.checkmark"
+            )
+            if canChooseDifferentSetup {
+                Button("別の操作を選ぶ") {
+                    setupPath = nil
+                }
+                .font(.footnote)
+            }
+            if canCloseDeviceChangeFlow {
+                Button("機種変更の案内を閉じる") {
+                    showsDeviceChangeFlow = false
+                }
+                .font(.footnote)
+            }
+        } header: {
+            Text("機種変更で使う3台")
+        }
+    }
+
+    private func deviceRoleRow(
+        title: String,
+        detail: String,
+        systemImage: String
+    ) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: systemImage)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
     private var deviceChangeSection: some View {
+        deviceChangeRoleSection(
+            currentDevice: .partnerIPhone,
+            canCloseDeviceChangeFlow: !model.hasPendingDeviceRecovery
+        )
+
         Section {
             if let state = model.state, model.hasPendingDeviceRecovery {
-                if let code = model.recoveryInvitationCode {
-                    Text(code)
-                        .font(.system(.caption2, design: .monospaced))
-                        .accessibilityLabel("端末の復旧コード")
+                if state.recoveryVerificationPhrase == nil {
+                    if let code = model.recoveryInvitationCode {
+                        Text(code)
+                            .font(.system(.caption2, design: .monospaced))
+                            .accessibilityLabel("端末の復旧コード")
 
-                    ShareLink(item: code) {
-                        Label("復旧コードを送る", systemImage: "square.and.arrow.up")
-                    }
-
-                    Button {
-                        copyRecoveryCode(code, expiresAt: state.recoveryExpiresAt)
-                    } label: {
-                        Label("復旧コードをコピー", systemImage: "doc.on.doc")
-                    }
-
-                    if showsCopyRecoveryConfirmation {
-                        Label("この端末内にコピーしました（最長10分で消去）", systemImage: "checkmark")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if let expiresAt = state.recoveryExpiresAt {
-                    LabeledContent(
-                        "有効期限",
-                        value: expiresAt.formatted(.dateTime.month().day().hour().minute())
-                    )
-                }
-
-                if state.recoveryVerificationPhrase != nil {
-                    if let phrase = state.recoveryVerificationPhrase {
-                        Text(phrase)
-                            .font(.title3.weight(.semibold))
-                            .accessibilityLabel(
-                                "復旧の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
+                        ShareLink(item: code) {
+                            primaryActionLabel(
+                                "新しいiPhoneへ復旧コードを送る",
+                                systemImage: "square.and.arrow.up"
                             )
-                    }
-                    if state.recoveryApprovalSubmittedAt == nil {
-                        Toggle(
-                            "新しいiPhoneと同じ12語です",
-                            isOn: $model.hasConfirmedRecoveryPhrase
-                        )
-                        Button("相手側の新しいiPhoneへ置き換える") {
-                            Task { await model.approveDeviceRecoveryAfterPhraseConfirmation() }
                         }
-                        .disabled(!model.hasConfirmedRecoveryPhrase || model.isWorking)
+                        .buttonStyle(.borderedProminent)
+
+                        Button {
+                            copyRecoveryCode(code, expiresAt: state.recoveryExpiresAt)
+                        } label: {
+                            Label("代わりにコードをコピー", systemImage: "doc.on.doc")
+                        }
+                        .font(.footnote)
+
+                        if showsCopyRecoveryConfirmation {
+                            Label("この端末内にコピーしました（最長10分で消去）", systemImage: "checkmark")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
-                        Label(
-                            "承認済み・新しいiPhoneでの完了待ち",
+                        Button {
+                            Task { await model.refreshDeviceRecovery() }
+                        } label: {
+                            primaryActionLabel(
+                                "復旧コードを読み直す",
+                                systemImage: "arrow.clockwise"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isWorking)
+                    }
+
+                    if let expiresAt = state.recoveryExpiresAt {
+                        LabeledContent(
+                            "有効期限",
+                            value: expiresAt.formatted(.dateTime.month().day().hour().minute())
+                        )
+                    }
+
+                    Button("新しいiPhoneが入力したか確認") {
+                        Task { await model.refreshDeviceRecovery() }
+                    }
+                    .font(.footnote)
+                    .disabled(model.isWorking)
+                } else if let phrase = state.recoveryVerificationPhrase,
+                          state.recoveryApprovalSubmittedAt == nil {
+                    Text(phrase)
+                        .font(.title3.weight(.semibold))
+                        .accessibilityLabel(
+                            "復旧の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
+                        )
+                    Toggle(
+                        "新しいiPhoneと同じ12語です",
+                        isOn: $model.hasConfirmedRecoveryPhrase
+                    )
+                    Button {
+                        Task { await model.approveDeviceRecoveryAfterPhraseConfirmation() }
+                    } label: {
+                        primaryActionLabel(
+                            "新しいiPhoneを承認する",
                             systemImage: "checkmark.shield"
                         )
-                        .foregroundStyle(.green)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.hasConfirmedRecoveryPhrase || model.isWorking)
+                } else {
+                    Label(
+                        "承認済み・新しいiPhoneでの完了待ち",
+                        systemImage: "checkmark.shield"
+                    )
+                    .foregroundStyle(.green)
+                    Button {
+                        Task { await model.refreshDeviceRecovery() }
+                    } label: {
+                        primaryActionLabel(
+                            "接続が完了したか確認",
+                            systemImage: "arrow.clockwise"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isWorking)
                 }
-
-                Button("復旧状態を確認") {
-                    Task { await model.refreshDeviceRecovery() }
-                }
-                .disabled(model.isWorking)
                 manualCheckResult
             } else {
                 Button {
                     Task { await model.createDeviceRecoveryInvitation() }
                 } label: {
-                    Label("相手側のiPhoneを置き換える", systemImage: "iphone.and.arrow.forward")
+                    primaryActionLabel(
+                        "新しいiPhone用の復旧コードを作る",
+                        systemImage: "iphone.and.arrow.forward"
+                    )
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking)
             }
         } header: {
+            Text("今すること")
+        } footer: {
+            Text("まどを解除せず、相手のiPhoneとして新しいiPhoneを承認します。復旧コードだけでは共有鍵を取得できず、12語の照合が必要です。")
+        }
+    }
+
+    private var deviceChangeStartSection: some View {
+        Section {
+            Button {
+                showsDeviceChangeFlow = true
+            } label: {
+                primaryActionLabel(
+                    "相手のiPhoneの機種変更を手伝う",
+                    systemImage: "iphone.and.arrow.forward"
+                )
+            }
+            .buttonStyle(.borderedProminent)
+        } header: {
             Text("機種変更・再インストール")
         } footer: {
-            Text("まどを解除せず、接続済みのこのiPhoneが相手側の新しい端末を承認します。復旧コードだけでは共有鍵を取得できず、12語の照合が必要です。")
+            Text("このiPhone自身を機種変更した場合は、新しいiPhone側で「以前のまどへ戻る」を選びます。")
         }
+    }
+
+    private func primaryActionLabel(
+        _ title: String,
+        systemImage: String
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.headline)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
     }
 
     private var cancelConfirmationButtonTitle: String {

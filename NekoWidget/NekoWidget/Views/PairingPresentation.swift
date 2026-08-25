@@ -19,8 +19,8 @@ struct PairingGuidancePresentation: Equatable, Sendable {
         case .unpaired:
             return Self(
                 roleTitle: "まだまどにつながっていません",
-                nextActionTitle: "はじめに、どちらをするか選んでください",
-                nextActionDetail: "新しいまどを作る、招待に参加する、または接続済みの相手から復旧コードを受け取ります。",
+                nextActionTitle: "はじめに、このiPhoneですることを選んでください",
+                nextActionDetail: "新しく作る、招待に参加する、機種変更後の接続を戻す、の3つから選びます。",
                 refreshButtonTitle: nil
             )
         case .creatingInvitation:
@@ -46,23 +46,23 @@ struct PairingGuidancePresentation: Equatable, Sendable {
             )
         case .claimingRecovery:
             return Self(
-                roleTitle: "以前のまどへ接続を戻します",
+                roleTitle: "この端末：新しいiPhone",
                 nextActionTitle: "復旧コードを確認しています",
-                nextActionDetail: "サーバー上のまどを解除せず、新しい端末の鍵を登録しています。",
+                nextActionDetail: "以前のiPhoneは操作せず、相手のiPhoneが作った復旧コードで接続を戻します。",
                 refreshButtonTitle: nil
             )
         case .pendingRecoveryApproval:
             return Self(
-                roleTitle: "以前のまどへ接続を戻します",
+                roleTitle: "この端末：新しいiPhone",
                 nextActionTitle: "接続済みの相手と12語を比べてください",
-                nextActionDetail: "12語が違う場合は承認せず、新しい復旧コードからやり直してください。",
+                nextActionDetail: "相手のiPhoneで同じ12語を確認してもらいます。以前のiPhoneは操作しません。",
                 refreshButtonTitle: "承認されたか確認"
             )
         case .recoveryAwaitingCompletion:
             return Self(
-                roleTitle: "以前のまどへ接続を戻します",
+                roleTitle: "この端末：新しいiPhone",
                 nextActionTitle: "端末の置き換えを完了しています",
-                nextActionDetail: "共有鍵は保存済みです。この画面を閉じずに少しお待ちください。",
+                nextActionDetail: "相手のiPhoneによる承認は済んでいます。この画面を閉じずに少しお待ちください。",
                 refreshButtonTitle: "完了したか確認"
             )
         case .pendingApproval:
@@ -103,6 +103,48 @@ struct PairingGuidancePresentation: Equatable, Sendable {
                 nextActionTitle: "画面の案内を確認してください",
                 nextActionDetail: "必要な場合は設定を取り消し、新しい招待からやり直せます。",
                 refreshButtonTitle: nil
+            )
+        }
+    }
+}
+
+/// Device labels shown during a peer-approved device replacement.
+///
+/// Recovery has three different phones in the user's mental model. Keeping
+/// these labels in one presentation type prevents the UI from calling both
+/// the replacement and the approving peer merely "the other iPhone".
+struct DeviceChangeGuidancePresentation: Equatable, Sendable {
+    enum CurrentDevice: Equatable, Sendable {
+        case newIPhone
+        case partnerIPhone
+    }
+
+    let newIPhoneTitle: String
+    let newIPhoneDetail: String
+    let previousIPhoneTitle: String
+    let previousIPhoneDetail: String
+    let partnerIPhoneTitle: String
+    let partnerIPhoneDetail: String
+
+    static func make(currentDevice: CurrentDevice) -> Self {
+        switch currentDevice {
+        case .newIPhone:
+            return Self(
+                newIPhoneTitle: "新しいiPhone（この端末）",
+                newIPhoneDetail: "相手のiPhoneから届いた復旧コードを入力します。",
+                previousIPhoneTitle: "以前のiPhone",
+                previousIPhoneDetail: "以前のiPhoneでは操作しません。",
+                partnerIPhoneTitle: "相手のiPhone",
+                partnerIPhoneDetail: "復旧コードを作り、12語を確認して新しいiPhoneを承認します。"
+            )
+        case .partnerIPhone:
+            return Self(
+                newIPhoneTitle: "新しいiPhone",
+                newIPhoneDetail: "この端末から届いた復旧コードを入力します。",
+                previousIPhoneTitle: "以前のiPhone",
+                previousIPhoneDetail: "以前のiPhoneでは操作しません。",
+                partnerIPhoneTitle: "相手のiPhone（この端末）",
+                partnerIPhoneDetail: "接続済みのこの端末から、新しいiPhoneの復旧を手伝います。"
             )
         }
     }

@@ -436,6 +436,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("moment-saved-memory-boundary") {
             try Self.testMomentSavedMemoryBoundary()
         })
+        results.append(run("moment-sent-delivery-receipt-boundary") {
+            try Self.testMomentSentDeliveryReceiptBoundary()
+        })
         results.append(run("moment-empty-cursor-normalization") {
             try Self.testMomentEmptyCursorNormalization()
         })
@@ -2625,6 +2628,90 @@ actor SharingRuntimeSelfTestRunner {
         guard expired.inbox.isEmpty,
               expired.savedMemories.isEmpty,
               remainingJPEGs.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testMomentSentDeliveryReceiptBoundary() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let createdAt = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970)
+        )
+        let committedAt = createdAt.addingTimeInterval(1)
+        let clientMomentID = UUID()
+        let context = MomentRequestContext(
+            spaceID: "space_sent_receipt_fixture",
+            senderParticipantID: "member_sent_receipt_fixture",
+            senderDeviceID: "device_sent_receipt_fixture",
+            clientRequestID: UUID(),
+            clientMomentID: clientMomentID,
+            kind: .live,
+            keyEpoch: 1
+        )
+        let committed = try MomentOutboxItem(
+            id: clientMomentID,
+            context: context,
+            phase: .committed,
+            ciphertextFileName: "\(clientMomentID.uuidString.lowercased()).ciphertext",
+            ciphertextSize: 128,
+            ciphertextSHA256: Data(repeating: 0x42, count: 32),
+            moderationVersion: MomentSharingProtocol.moderationVersion,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: createdAt,
+            serverMomentID: "moment_sent_receipt_fixture",
+            attemptCount: 1,
+            commitStartedAt: createdAt,
+            committedAt: committedAt,
+            unreceivedExpiresAt: committedAt.addingTimeInterval(30 * 24 * 60 * 60),
+            recipientCount: 1,
+            createdAt: createdAt,
+            updatedAt: committedAt
+        ).validated()
+
+        // Additive persistence must keep pre-feature committed metadata valid.
+        let encoded = try JSONEncoder().encode(committed)
+        guard var legacyJSON = try JSONSerialization.jsonObject(with: encoded)
+                as? [String: Any]
+        else { throw MomentSharingError.stateUnavailable }
+        legacyJSON.removeValue(forKey: "recipientDeliveryConfirmedAt")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyJSON)
+        let legacy = try JSONDecoder().decode(MomentOutboxItem.self, from: legacyData)
+        guard try legacy.validated().recipientDeliveryConfirmedAt == nil else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.outbox.append(committed)
+        }
+        guard !(try MomentSharingStateStore.markRecipientDeliveryConfirmed(
+            serverMomentID: "moment_unrelated_fixture",
+            clientMomentID: clientMomentID,
+            observedAt: committedAt.addingTimeInterval(2),
+            validating: lifecycleToken
+        )), (try MomentSharingStateStore.load().outbox[0])
+            .recipientDeliveryConfirmedAt == nil
+        else { throw MomentSharingError.stateUnavailable }
+
+        let firstObservation = committedAt.addingTimeInterval(3)
+        guard try MomentSharingStateStore.markRecipientDeliveryConfirmed(
+            serverMomentID: "moment_sent_receipt_fixture",
+            clientMomentID: clientMomentID,
+            observedAt: firstObservation,
+            validating: lifecycleToken
+        ) else { throw MomentSharingError.stateUnavailable }
+        let confirmed = try MomentSharingStateStore.load().outbox[0]
+        guard confirmed.recipientDeliveryConfirmedAt == firstObservation,
+              confirmed.updatedAt == firstObservation,
+              !(try MomentSharingStateStore.markRecipientDeliveryConfirmed(
+                serverMomentID: "moment_sent_receipt_fixture",
+                clientMomentID: clientMomentID,
+                observedAt: firstObservation.addingTimeInterval(30),
+                validating: lifecycleToken
+              )),
+              (try MomentSharingStateStore.load().outbox[0])
+                .recipientDeliveryConfirmedAt == firstObservation
         else { throw MomentSharingError.stateUnavailable }
     }
 

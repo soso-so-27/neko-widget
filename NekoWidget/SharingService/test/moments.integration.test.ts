@@ -777,6 +777,58 @@ describe("append-only encrypted moments", () => {
     expect((await ack.json<{ delivery: { state: string } }>()).delivery.state)
       .toBe("acknowledged");
 
+    const senderChangesResponse = await signedFetch(
+      "/v2/moments/changes",
+      "GET",
+      space.owner,
+    );
+    expect(senderChangesResponse.status).toBe(200);
+    const senderChanges = await senderChangesResponse.json<{
+      changes: Array<{
+        type: string;
+        moment: {
+          id: string;
+          clientMomentId: string;
+          deliveryState: string;
+        };
+      }>;
+      nextCursor: string;
+    }>();
+    expect(senderChanges.changes).toHaveLength(1);
+    expect(senderChanges.changes[0]?.type).toBe("momentCommitted");
+    expect(senderChanges.changes[0]?.moment.id)
+      .toBe(published.reservation.moment.id);
+    expect(senderChanges.changes[0]?.moment.clientMomentId)
+      .toBe(published.reservation.moment.clientMomentId);
+    expect(senderChanges.changes[0]?.moment.deliveryState).toBe("acknowledged");
+
+    const repeatedAck = await signedFetch(
+      `/v2/moments/${published.reservation.moment.id}/ack`,
+      "POST",
+      space.invitee,
+      {
+        protocolVersion: 2,
+        clientRequestId: crypto.randomUUID().toLowerCase(),
+        ciphertextSHA256: changes.changes[0]?.moment.ciphertextSHA256,
+      },
+    );
+    expect(repeatedAck.status).toBe(200);
+    const senderChangesAfterRepeatedAck = await signedFetch(
+      `/v2/moments/changes/${senderChanges.nextCursor}`,
+      "GET",
+      space.owner,
+    );
+    expect(senderChangesAfterRepeatedAck.status).toBe(200);
+    expect((await senderChangesAfterRepeatedAck.json<{ changes: unknown[] }>()).changes)
+      .toEqual([]);
+    expect((await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM moment_changes
+        WHERE participant_id = ? AND change_type = 'moment_committed' AND moment_id = ?`,
+    ).bind(
+      space.owner.id,
+      published.reservation.moment.id,
+    ).first<{ count: number }>())?.count).toBe(1);
+
     expect((await testEnv.DB.prepare(
       `SELECT COUNT(*) AS count FROM moment_deliveries
         WHERE moment_id = ? AND recipient_participant_id = ?`,

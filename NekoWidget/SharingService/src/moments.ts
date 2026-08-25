@@ -1385,7 +1385,21 @@ export async function getMomentChanges(
             moment.id, moment.client_moment_id, moment.sender_participant_id,
             moment.kind, moment.key_epoch, moment.ciphertext_size,
             moment.ciphertext_sha256, moment.committed_at,
-            delivery.access_expires_at, delivery.state AS delivery_state
+            CASE
+              WHEN moment.sender_participant_id = change.participant_id
+                THEN moment.unreceived_expires_at
+              ELSE delivery.access_expires_at
+            END AS access_expires_at,
+            CASE
+              WHEN moment.sender_participant_id = change.participant_id THEN
+                CASE WHEN EXISTS (
+                  SELECT 1
+                    FROM moment_deliveries AS sender_delivery
+                   WHERE sender_delivery.moment_id = moment.id
+                     AND sender_delivery.state = 'acknowledged'
+                ) THEN 'acknowledged' ELSE 'pending' END
+              ELSE delivery.state
+            END AS delivery_state
        FROM moment_changes AS change
        JOIN moments AS moment ON moment.id = change.moment_id
        LEFT JOIN moment_deliveries AS delivery
@@ -1583,6 +1597,7 @@ export async function acknowledgeMoment(
     );
   }
   const acknowledgedAt = delivery.acknowledged_at ?? member.now;
+  const shouldNotifySender = delivery.state === "pending";
   const accessExpiresAt = Math.min(
     delivery.access_expires_at,
     acknowledgedAt + MOMENT_ACKNOWLEDGED_TTL_SECONDS,
@@ -1614,6 +1629,36 @@ export async function acknowledgeMoment(
         accessExpiresAt,
       ),
       env.DB.prepare("DELETE FROM moment_ack_events WHERE id = ?").bind(eventID),
+      // The sender receives an opaque, image-free change only after a recipient
+      // device has durably acknowledged the delivery. The existing changes
+      // authorization keeps it scoped to the sender participant, and the
+      // client still treats this as device arrival rather than opened/read.
+      // The event timestamp is the already-visible commit time, not the
+      // recipient's exact activity time. Only one sender event is retained
+      // even when a moment has more than one recipient.
+      env.DB.prepare(
+        `INSERT INTO moment_changes(
+           cursor, participant_id, change_type, moment_id, created_at
+         )
+         SELECT lower(hex(randomblob(16))), moment.sender_participant_id,
+                'moment_committed', moment.id,
+                COALESCE(moment.committed_at, moment.created_at)
+           FROM moments AS moment
+          WHERE moment.id = ?
+            AND moment.sender_participant_id <> ?
+            AND ? = 1
+            AND NOT EXISTS (
+              SELECT 1
+                FROM moment_changes AS existing
+               WHERE existing.participant_id = moment.sender_participant_id
+                 AND existing.change_type = 'moment_committed'
+                 AND existing.moment_id = moment.id
+            )`,
+      ).bind(
+        momentID,
+        context.participant_id,
+        shouldNotifySender ? 1 : 0,
+      ),
       idempotencyStatement(
         env,
         "acknowledge-moment",

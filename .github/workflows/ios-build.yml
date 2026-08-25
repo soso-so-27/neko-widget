@@ -58,6 +58,7 @@ jobs:
           python3 ci/test-photo-permission-bootstrap.py
           python3 ci/test-diagnostic-log-privacy.py
           python3 ci/test-app-store-screenshot-workflow.py
+          python3 ci/test-background-moment-refresh.py
 
       - name: Verify Swift pairing protocol vectors
         working-directory: NekoWidget

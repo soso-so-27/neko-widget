@@ -20,6 +20,7 @@ REQUIRED_CASES = {
     "legacy-widget-cache-migration",
     "moment-report-only-terminal-gate",
     "moment-saved-memory-boundary",
+    "moment-sent-delivery-receipt-boundary",
     "moment-empty-cursor-normalization",
     "moment-expired-delivery-advances",
     "moment-install-bound-handoff",

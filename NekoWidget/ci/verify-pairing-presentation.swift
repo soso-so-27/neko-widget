@@ -11,7 +11,7 @@ enum PairingPresentationVerifier {
             phase: .unpaired,
             role: nil,
             roleText: "まだまどにつながっていません",
-            actionText: "はじめに、どちらをするか選んでください",
+            actionText: "はじめに、このiPhoneですることを選んでください",
             refreshText: nil
         )
         try verify(
@@ -31,21 +31,21 @@ enum PairingPresentationVerifier {
         try verify(
             phase: .claimingRecovery,
             role: .invitee,
-            roleText: "以前のまどへ接続を戻します",
+            roleText: "この端末：新しいiPhone",
             actionText: "復旧コードを確認しています",
             refreshText: nil
         )
         try verify(
             phase: .pendingRecoveryApproval,
             role: .invitee,
-            roleText: "以前のまどへ接続を戻します",
+            roleText: "この端末：新しいiPhone",
             actionText: "接続済みの相手と12語を比べてください",
             refreshText: "承認されたか確認"
         )
         try verify(
             phase: .recoveryAwaitingCompletion,
             role: .invitee,
-            roleText: "以前のまどへ接続を戻します",
+            roleText: "この端末：新しいiPhone",
             actionText: "端末の置き換えを完了しています",
             refreshText: "完了したか確認"
         )
@@ -70,6 +70,7 @@ enum PairingPresentationVerifier {
             actionText: "このまどは接続されています",
             refreshText: "接続状態を確認"
         )
+        try verifyDeviceChangeGuidance()
         try verifySafeError(
             PairingError.requestRejected(
                 status: 410,
@@ -86,6 +87,38 @@ enum PairingPresentationVerifier {
             ),
             expected: "復旧コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
         )
+    }
+
+    private static func verifyDeviceChangeGuidance() throws {
+        let replacement = DeviceChangeGuidancePresentation.make(
+            currentDevice: .newIPhone
+        )
+        guard replacement.newIPhoneTitle == "新しいiPhone（この端末）",
+              replacement.previousIPhoneTitle == "以前のiPhone",
+              replacement.partnerIPhoneTitle == "相手のiPhone",
+              !replacement.newIPhoneDetail.isEmpty,
+              !replacement.previousIPhoneDetail.isEmpty,
+              !replacement.partnerIPhoneDetail.isEmpty
+        else {
+            throw PairingPresentationVerificationError.failed(
+                "Unexpected guidance for the new iPhone"
+            )
+        }
+
+        let partner = DeviceChangeGuidancePresentation.make(
+            currentDevice: .partnerIPhone
+        )
+        guard partner.newIPhoneTitle == "新しいiPhone",
+              partner.previousIPhoneTitle == "以前のiPhone",
+              partner.partnerIPhoneTitle == "相手のiPhone（この端末）",
+              !partner.newIPhoneDetail.isEmpty,
+              !partner.previousIPhoneDetail.isEmpty,
+              !partner.partnerIPhoneDetail.isEmpty
+        else {
+            throw PairingPresentationVerificationError.failed(
+                "Unexpected guidance for the partner iPhone"
+            )
+        }
     }
 
     private static func verify(

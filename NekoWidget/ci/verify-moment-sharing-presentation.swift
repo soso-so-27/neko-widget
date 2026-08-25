@@ -10,6 +10,7 @@ enum MomentSharingPresentationVerifier {
         try verifiesMultipleDestinationsRemainGrouped()
         try verifiesTerminalPreparationOutcomes()
         try verifiesLatestServerAcceptanceDeterministically()
+        try verifiesSentRecordsAreBoundedAndPrivacySafe()
         try verifiesFamilyWindowSafetyAndOrdering()
         try verifiesFamilyWindowFreshnessBoundary()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
@@ -326,8 +327,108 @@ enum MomentSharingPresentationVerifier {
             "equal-time latest server acceptance was not deterministic"
         )
         try require(
+            presentation.sentRecords.map(\.serverAcceptedAt)
+                == [date(400), date(400), date(399)]
+                && presentation.sentRecords.map(\.id) == [0, 1, 2],
+            "sent records did not use deterministic acceptance ordering"
+        )
+        try require(
             presentation.hasActivity,
             "latest server acceptance was hidden as an empty state"
+        )
+    }
+
+    private static func verifiesSentRecordsAreBoundedAndPrivacySafe() throws {
+        var deliveries = (0..<25).map { index in
+            delivery(
+                "sent-\(String(format: "%02d", index))",
+                "space-\(index % 2)",
+                .committed,
+                updatedAt: TimeInterval(900 + index),
+                committedAt: TimeInterval(900 + index),
+                recipientDeliveryConfirmedAt: index == 24 ? 950 : nil
+            )
+        }
+        deliveries.append(
+            delivery(
+                "not-committed",
+                "space-a",
+                .uploaded,
+                updatedAt: 1_000,
+                recipientDeliveryConfirmedAt: 1_001
+            )
+        )
+
+        let presentation = MomentSharingPresentationPolicy.make(
+            preparations: [],
+            deliveries: deliveries,
+            now: date(2_000)
+        )
+        try require(
+            presentation.sentRecords.count == MomentSharingPresentationPolicy.sentRecordLimit,
+            "sent delivery ledger exceeded its presentation bound"
+        )
+        try require(
+            presentation.sentRecords.first?.serverAcceptedAt == date(924)
+                && presentation.sentRecords.last?.serverAcceptedAt == date(905),
+            "committed sent records were not ordered newest-first before bounding"
+        )
+        guard let arrived = presentation.sentRecords.first else {
+            throw VerificationError("missing recipient-arrival sent record")
+        }
+        try require(
+            arrived.deliveryState == .recipientDeviceArrivalConfirmed
+                && arrived.recipientDeliveryConfirmedAt == date(950),
+            "recipient device arrival was collapsed into server acceptance"
+        )
+        try require(
+            arrived.title.contains("端末へ到着")
+                && arrived.detail.contains("閲覧・既読の確認ではありません"),
+            "recipient arrival copy implied that the photo was viewed or read"
+        )
+        guard let acceptedOnly = presentation.sentRecords.dropFirst().first else {
+            throw VerificationError("missing server-accepted sent record")
+        }
+        try require(
+            acceptedOnly.deliveryState == .serverAccepted
+                && acceptedOnly.detail.contains("到着、閲覧、既読はまだ確認していません"),
+            "server acceptance was presented as recipient device arrival"
+        )
+        try require(
+            !presentation.sentRecords.contains { $0.serverAcceptedAt == date(1_000) },
+            "an uncommitted delivery leaked into the sent ledger"
+        )
+
+        let fieldNames = Mirror(reflecting: arrived).children.compactMap(\.label)
+        let forbiddenFragments = [
+            "image", "thumb", "photo", "media", "url", "path", "file",
+            "stable", "destination", "space"
+        ]
+        try require(
+            fieldNames.allSatisfy { fieldName in
+                let normalized = fieldName.lowercased()
+                return !forbiddenFragments.contains(where: normalized.contains)
+            },
+            "sent delivery presentation exposed image or thumbnail data"
+        )
+
+        let invalidConfirmation = MomentSharingPresentationPolicy.make(
+            preparations: [],
+            deliveries: [
+                delivery(
+                    "invalid-confirmation",
+                    "space-a",
+                    .committed,
+                    updatedAt: 1_100,
+                    committedAt: 1_100,
+                    recipientDeliveryConfirmedAt: 1_099
+                )
+            ],
+            now: date(1_200)
+        )
+        try require(
+            invalidConfirmation.sentRecords.first?.deliveryState == .serverAccepted,
+            "an impossible pre-acceptance arrival timestamp was shown as confirmed"
         )
     }
 
@@ -488,7 +589,8 @@ enum MomentSharingPresentationVerifier {
         error: String? = nil,
         committedAt: TimeInterval? = nil,
         unreceivedExpiresAt: TimeInterval? = nil,
-        recipientCount: Int? = nil
+        recipientCount: Int? = nil,
+        recipientDeliveryConfirmedAt: TimeInterval? = nil
     ) -> MomentDeliveryPresentationInput {
         MomentDeliveryPresentationInput(
             stableID: id,
@@ -499,7 +601,8 @@ enum MomentSharingPresentationVerifier {
             lastErrorCode: error,
             committedAt: committedAt.map { date($0) },
             unreceivedExpiresAt: unreceivedExpiresAt.map { date($0) },
-            recipientCount: recipientCount
+            recipientCount: recipientCount,
+            recipientDeliveryConfirmedAt: recipientDeliveryConfirmedAt.map { date($0) }
         )
     }
 

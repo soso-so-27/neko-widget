@@ -139,6 +139,15 @@ struct FamilyWindowView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
                 }
+                if let message = model.bookmarkActionMessage {
+                    Label(message, systemImage: "bookmark.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+                        .accessibilityIdentifier("family-window-bookmark-result")
+                }
 
                 if let latest = model.receivedMoments.first {
                     Text("いま届いている一枚")
@@ -362,11 +371,58 @@ struct FamilyWindowView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
-            if let acceptance = model.outgoingPresentation.latestServerAcceptance {
+            if model.outgoingPresentation.sentRecords.isEmpty,
+               let acceptance = model.outgoingPresentation.latestServerAcceptance {
                 latestServerAcceptanceCard(acceptance)
+            }
+
+            if !model.outgoingPresentation.sentRecords.isEmpty {
+                Divider()
+                    .padding(.vertical, 2)
+                Text("自分が届けた写真")
+                    .font(.headline)
+                Text("写真そのものや縮小画像はこの一覧に保存せず、配信の確認記録だけを表示します。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(model.outgoingPresentation.sentRecords) { record in
+                    sentRecordCard(record)
+                }
             }
         }
         .accessibilityIdentifier("family-window-outgoing-status")
+    }
+
+    private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
+        let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: arrived ? "checkmark.circle.fill" : "server.rack")
+                .foregroundStyle(arrived ? Color.green : Color.accentColor)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(record.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(record.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("受付 \(record.serverAcceptedAt.formatted(.dateTime.month().day().hour().minute()))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if let confirmedAt = record.recipientDeliveryConfirmedAt {
+                    Text("端末への到着確認 \(confirmedAt.formatted(.dateTime.month().day().hour().minute()))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            arrived
+                ? Color.green.opacity(0.1)
+                : Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .accessibilityIdentifier("family-window-sent-record-\(record.id)")
     }
 
     private func outgoingStatusCard(
@@ -511,6 +567,11 @@ struct FamilyWindowView: View {
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
+                    if model.isSavedMemory(item) {
+                        Label("しおり付き", systemImage: "bookmark.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tint)
+                    }
                 }
                 Spacer()
                 Menu {
@@ -553,7 +614,7 @@ struct FamilyWindowView: View {
                     .padding(13)
                 }
                 .buttonStyle(.plain)
-                .disabled(model.isPerformingAction)
+                .disabled(model.isWorking)
                 .accessibilityIdentifier("family-window-save-memory")
             } else if model.isSavedMemory(item) {
                 Label("しおり付き", systemImage: "bookmark.fill")

@@ -5,6 +5,11 @@ enum MomentSynchronizationNotice: Equatable, Sendable {
     case inboundModerationUnavailable
 }
 
+private struct MomentSynchronizationRunResult: Sendable {
+    let notice: MomentSynchronizationNotice?
+    let succeeded: Bool
+}
+
 /// The host app owns all relay I/O. Share Extension direct-send is hard
 /// disabled, so one process-wide queue serializes the AppViewModel and
 /// FamilyWindow coordinator instances. Every caller keeps its own cancellation
@@ -92,17 +97,17 @@ private let momentProcessSynchronizationGate = MomentProcessSynchronizationGate(
 
 private func runMomentProcessSynchronization(
     request: MomentSynchronizationRequest,
-    operation: @escaping @Sendable () async -> MomentSynchronizationNotice?
-) async -> MomentSynchronizationNotice? {
+    operation: @escaping @Sendable () async -> MomentSynchronizationRunResult
+) async -> MomentSynchronizationRunResult? {
     await momentProcessSynchronizationGate.acquire()
-    let notice: MomentSynchronizationNotice?
+    let result: MomentSynchronizationRunResult?
     if request.shouldBegin() {
-        notice = await operation()
+        result = await operation()
     } else {
-        notice = nil
+        result = nil
     }
     await momentProcessSynchronizationGate.release()
-    return notice
+    return result
 }
 
 private func runMomentProcessOperation<Value: Sendable>(
@@ -178,17 +183,22 @@ actor MomentSharingCoordinator {
         return try URLSessionMomentSharingAPIClient(configuration: configuration)
     }
 
-    func synchronize(trigger: String) async {
+    @discardableResult
+    func synchronize(trigger: String) async -> Bool {
         let request = MomentSynchronizationRequest()
-        let notice = await withTaskCancellationHandler {
+        let result = await withTaskCancellationHandler {
             await runMomentProcessSynchronization(request: request) { [self] in
-                await performSynchronization(trigger: trigger)
-                return await synchronizationNotice()
+                let succeeded = await performSynchronization(trigger: trigger)
+                return MomentSynchronizationRunResult(
+                    notice: await synchronizationNotice(),
+                    succeeded: succeeded
+                )
             }
         } onCancel: {
             request.cancel()
         }
-        latestSynchronizationNotice = notice
+        latestSynchronizationNotice = result?.notice
+        return result?.succeeded ?? false
     }
 
     /// Runs only the encrypted presentation-name exchange and reports relay
@@ -267,7 +277,7 @@ actor MomentSharingCoordinator {
         }
     }
 
-    private func performSynchronization(trigger: String) async {
+    private func performSynchronization(trigger: String) async -> Bool {
         latestSynchronizationNotice = nil
 
         // A local-only build must erase every capability and sharing artifact
@@ -279,14 +289,15 @@ actor MomentSharingCoordinator {
             do {
                 try await PairingInstallationGuard
                     .resetLocalSharingForDisabledConfigurationAsync()
+                return true
             } catch {
                 SharedLog.app.warning(
                     "moment-sharing",
                     "Disabled sharing purge deferred",
                     metadata: ["trigger": String(trigger.prefix(32))]
                 )
+                return false
             }
-            return
         }
 
         // Disabling media/handoff must also revoke any previously published
@@ -294,6 +305,7 @@ actor MomentSharingCoordinator {
         // Bootstrap first so a reinstall cleanup wins before App Group state
         // is inspected or retained.
         guard configuration.isMediaAvailable else {
+            var cleanupSucceeded = true
             do {
                 let bootstrap = try PairingInstallationGuard.bootstrap()
                 try handoffProcessor.revokeAdmissions(
@@ -304,6 +316,7 @@ actor MomentSharingCoordinator {
                 )
                 try MomentSharingStateStore.pruneLocalHistory()
             } catch {
+                cleanupSucceeded = false
                 SharedLog.app.warning(
                     "moment-sharing",
                     "Disabled moment handoff cleanup deferred",
@@ -313,7 +326,7 @@ actor MomentSharingCoordinator {
             if configuration.isAvailable {
                 await synchronizeWindowNameWithoutMedia(trigger: trigger)
             }
-            return
+            return cleanupSucceeded
         }
 
         var authorization: Authorization?
@@ -339,7 +352,7 @@ actor MomentSharingCoordinator {
                 guard let recoveredUntil = await recoverReportOnlyBoundary(
                     authorization: loadedAuthorization,
                     now: resumeNow
-                ) else { return }
+                ) else { return false }
                 markerUntil = recoveredUntil
             }
             if let markerUntil {
@@ -351,7 +364,7 @@ actor MomentSharingCoordinator {
                         authorization: loadedAuthorization,
                         reason: .reportOnlyWindowClosed
                     )
-                    return
+                    return true
                 }
                 // A transient disk error here leaves the already-durable
                 // marker in place. Defer and retry without deleting report
@@ -375,7 +388,7 @@ actor MomentSharingCoordinator {
                     authorization: loadedAuthorization,
                     reason: .reportOnlyWindowClosed
                 )
-                return
+                return true
             }
             let api = try makeNetworkClient()
             if let reportOnlyUntil = localSharingState.reportOnlyUntil {
@@ -389,7 +402,7 @@ actor MomentSharingCoordinator {
                     guard await establishReportOnlyBoundary(
                         until: reportOnlyUntil,
                         authorization: loadedAuthorization
-                    ) else { return }
+                    ) else { return false }
                     let reported = try await sendReportOutbox(
                         api: api,
                         authorization: loadedAuthorization
@@ -401,7 +414,7 @@ actor MomentSharingCoordinator {
                             metadata: ["reports": "\(reported)"]
                         )
                     }
-                    return
+                    return true
                 }
             }
             let reported = try await sendReportOutbox(
@@ -471,10 +484,11 @@ actor MomentSharingCoordinator {
                     "windowNameChanged": "\(windowNameChanged)"
                 ]
             )
+            return true
         } catch {
             latestSynchronizationNotice = Self.synchronizationNotice(for: error)
             if error is BackgroundSynchronizationTermination {
-                return
+                return true
             }
             if let authorization,
                let momentError = error as? MomentSharingError,
@@ -484,17 +498,22 @@ actor MomentSharingCoordinator {
                     authorization: authorization
                 )
             } else if let authorization, Self.requiresLocalRevocationReset(error) {
-                try? await resetLocalPairing(
-                    authorization: authorization,
-                    reason: .remoteAuthorizationTerminal
-                )
-                return
+                do {
+                    try await resetLocalPairing(
+                        authorization: authorization,
+                        reason: .remoteAuthorizationTerminal
+                    )
+                    return true
+                } catch {
+                    return false
+                }
             } else if let authorization,
                       let momentError = error as? MomentSharingError,
                       case .stateUnavailable = momentError {
                 await handleStateUnavailable(authorization: authorization)
             }
             Self.logSynchronizationDeferred(error: error, trigger: trigger)
+            return false
         }
     }
 
@@ -1539,6 +1558,19 @@ actor MomentSharingCoordinator {
                     try revokeInboxMoment(change, lifecycleToken: lifecycleToken)
                 case .download:
                     guard change.senderParticipantID != localMemberID else {
+                        if change.deliveryState == "acknowledged" {
+                            _ = try MomentSharingStateStore
+                                .markRecipientDeliveryConfirmed(
+                                    serverMomentID: change.momentID,
+                                    clientMomentID: change.clientMomentID,
+                                    // This is the sender device's local
+                                    // observation time. The relay deliberately
+                                    // does not expose the recipient's exact
+                                    // activity timestamp.
+                                    observedAt: .now,
+                                    validating: lifecycleToken
+                                )
+                        }
                         break
                     }
                     if try MomentSharingStateStore.load().inbox.contains(where: {
@@ -1639,16 +1671,18 @@ actor MomentSharingCoordinator {
         operation: @escaping @Sendable () async -> MomentSynchronizationNotice?
     ) async -> MomentSynchronizationNotice? {
         let request = MomentSynchronizationRequest()
-        let notice = await withTaskCancellationHandler {
-            await runMomentProcessSynchronization(
-                request: request,
-                operation: operation
-            )
+        let result = await withTaskCancellationHandler {
+            await runMomentProcessSynchronization(request: request) {
+                MomentSynchronizationRunResult(
+                    notice: await operation(),
+                    succeeded: true
+                )
+            }
         } onCancel: {
             request.cancel()
         }
-        latestSynchronizationNotice = notice
-        return notice
+        latestSynchronizationNotice = result?.notice
+        return result?.notice
     }
 
     func runtimeTestWaitUntilProcessSynchronizationIsPending(
