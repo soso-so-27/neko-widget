@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-const SHARING_BETA_BOUNDARY_PHRASE = "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。";
+const SHARING_BETA_BOUNDARY_PHRASE = "この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。";
 const PHOTO_ALBUM_DISCLOSURE_PHRASES = Object.freeze([
   "写真アプリに「うちの子」アルバムを作成・更新",
   "元写真のアルバム所属を追加・解除",
@@ -46,10 +46,9 @@ const SHARING_BETA_PAGES = Object.freeze([
     visibleRevision: false,
     requiredPhrases: Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
-      "名前を付けた1つの非公開なまど",
-      "作成者と信頼できる招待相手1人",
-      "それぞれ1台のiPhone",
-      "信頼できる招待相手1人",
+      "1台のiPhoneで最大20個の名前付き非公開なまど",
+      "1つのまどは作成者と信頼できる招待相手1人だけ",
+      "各参加者は、承認した最大4台のiPhone",
       "家族に限定しません",
       "公開フィード、検索、フォロー、匿名の出会いはありません",
     ]),

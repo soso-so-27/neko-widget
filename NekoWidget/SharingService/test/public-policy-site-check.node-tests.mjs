@@ -515,7 +515,7 @@ test("requires explicit export risk and submission blocker copy on every local-o
 });
 
 test("requires the internal TestFlight boundary on every sharing-beta page", async () => {
-  const boundary = "この共有仕様は、本人所有の2台で確認中の内部TestFlightベータです。App Storeで一般提供している版ではありません。";
+  const boundary = "この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。";
   for (const page of sharingBeta.definition.pages) {
     await assert.rejects(
       check(sharingBeta, new Map([[
