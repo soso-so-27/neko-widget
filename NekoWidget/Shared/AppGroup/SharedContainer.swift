@@ -592,6 +592,11 @@ enum PrivateWindowCatalogStore {
 /// the matching App Group entitlement. The fallback keeps local development
 /// deterministic, but it does not replace the entitlement.
 enum SharedContainer {
+    /// Legacy Share Extension handoff files were bounded by the v2 encrypted
+    /// object's 1 MiB ceiling. Keep this validation dependency-free because
+    /// `SharedContainer` is also compiled in isolation by extensions and CI.
+    private static let maximumLegacyMomentHandoffFileBytes = 1_024 * 1_024
+
     static var appGroupIdentifier: String {
         if let configured = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
            !configured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1033,9 +1038,7 @@ enum SharedContainer {
                 ) {
                     guard isProtectedNoBackupFile(
                         entry,
-                        maximumBytes:
-                            MomentSharingProtocol.maximumMediaCiphertextBytes
-                                + 96 * 1_024,
+                        maximumBytes: maximumLegacyMomentHandoffFileBytes,
                         protection: .whileUnlocked
                     ) else { return false }
                 } else {
@@ -1081,9 +1084,7 @@ enum SharedContainer {
             return hasCaptureName
                 && isProtectedNoBackupFile(
                     entry,
-                    maximumBytes:
-                        MomentSharingProtocol.maximumMediaCiphertextBytes
-                            + 96 * 1_024,
+                    maximumBytes: maximumLegacyMomentHandoffFileBytes,
                     protection: .whileUnlocked
                 )
         }
