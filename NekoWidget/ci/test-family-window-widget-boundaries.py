@@ -271,6 +271,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             normal_sync.index("received = try await receiveChanges("),
             normal_sync.index("synchronizeWindowNameBestEffort("),
         )
+        self.assertIn("inboundState.inbox != localSharingState.inbox", normal_sync)
+        self.assertIn(".momentSharingPresentationNeedsRefresh", normal_sync)
+        self.assertIn(".momentSharingContentNeedsReload", normal_sync)
+        self.assertLess(
+            normal_sync.index(".momentSharingPresentationNeedsRefresh"),
+            normal_sync.index("synchronizeWindowNameBestEffort("),
+        )
 
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
         publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
@@ -654,7 +661,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("family-window-manual-refresh-result", family_view)
         self.assertIn("manualRefreshSucceeded", family_model)
         self.assertIn("exclamationmark.triangle", family_view)
-        self.assertIn("現在このiPhoneで表示できる新しい写真はありません", family_model)
+        self.assertIn("更新しました。新しい写真はありません", family_model)
         self.assertNotIn("相手が見ました", family_model)
         self.assertNotIn("相手が受け取りました", family_model)
 
@@ -675,20 +682,63 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
         self.assertIn("自分が届けた写真", family)
-        self.assertIn("写真そのものや縮小画像はこの一覧に保存せず", family)
+        self.assertIn("この一覧には画像を保存せず、送信結果だけを表示します", family)
+        self.assertIn(
+            "record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt",
+            family,
+        )
 
-    def test_bookmark_action_has_visible_result_and_cannot_silently_overlap_sync(self) -> None:
+    def test_bookmark_action_has_visible_result_and_remains_available_during_sync(self) -> None:
         model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
         family = source("NekoWidget/Views/FamilyWindowView.swift")
 
         self.assertIn("bookmarkActionMessage", model)
-        self.assertIn("しおりを付けました。このiPhone内の目印", model)
+        self.assertIn("しおりを付けました", model)
         self.assertIn("family-window-bookmark-result", family)
         self.assertIn('Label("しおり付き", systemImage: "bookmark.fill")', family)
+        toggle = section(
+            model,
+            "func toggleSavedMemory(_ item: MomentInboxItem) async",
+            "private func showBookmarkActionMessage",
+        )
+        self.assertIn("guard !isPerformingAction, !isReportOnly", toggle)
+        self.assertNotIn("guard !isWorking", toggle)
         bookmark_button = family.split(
             "Task { await model.toggleSavedMemory(item) }", 1
         )[1].split('accessibilityIdentifier("family-window-save-memory")', 1)[0]
-        self.assertIn(".disabled(model.isWorking)", bookmark_button)
+        self.assertIn(".disabled(model.isPerformingAction)", bookmark_button)
+        self.assertNotIn(".disabled(model.isWorking)", bookmark_button)
+
+        for start, end in (
+            ("func discardFailedOutbox() async", "func discardPendingOutbox() async"),
+            ("func clearOutgoingOutcomes() async", "func imageURL(for item"),
+        ):
+            local_cleanup = section(model, start, end)
+            self.assertIn("guard !isPerformingAction", local_cleanup)
+            self.assertNotIn("guard !isWorking", local_cleanup)
+
+    def test_family_window_puts_photos_and_actions_before_settings_and_details(self) -> None:
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        paired = section(
+            family,
+            "private var pairedContent: some View",
+            "@ViewBuilder\n    private var manualRefreshResult",
+        )
+        self.assertLess(paired.index('Text("届いた写真")'), paired.index("primaryActions"))
+        self.assertLess(paired.index("primaryActions"), paired.index("sharingManagementLink"))
+        self.assertLess(paired.index("sharingManagementLink"), paired.index("privacyDisclosure"))
+        self.assertNotIn("statusCard", paired)
+        self.assertNotIn("howToSendCard", paired)
+        self.assertIn("family-window-send-guide", family)
+        self.assertIn("family-window-widget-guide", family)
+        self.assertIn("ウィジェットの表示設定", family)
+        self.assertIn("ウィジェットを編集", family)
+        privacy = section(
+            family,
+            "private var privacyDisclosure: some View",
+            "private var trustLinks: some View",
+        )
+        self.assertIn("DisclosureGroup", privacy)
 
     def test_retryable_pairing_bootstrap_is_retried_after_data_protection(self) -> None:
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
@@ -859,6 +909,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("capped.savedMemories.count == 497", saved_boundary)
         self.assertIn("revocationTombstone", saved_boundary)
         self.assertIn("expired.savedMemories.isEmpty", saved_boundary)
+        self.assertIn("acknowledged.savedMemories == saved.savedMemories", saved_boundary)
         migration = section(
             runtime,
             "private static func testMomentOutcomeLedgerAndMigration()",
@@ -869,12 +920,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("migratedSchema5.savedMemories.isEmpty", migration)
 
         family = source("NekoWidget/Views/FamilyWindowView.swift")
-        self.assertIn("しおりを付ける", family)
-        self.assertIn("しおりを外す", family)
-        self.assertIn("しおりは無料", family)
-        self.assertIn("保持上限内で優先して残す", family)
-        self.assertIn("写真を新しく保存する機能や長期保管ではなく", family)
-        self.assertIn("写真アプリやiCloudには追加されず", family)
+        self.assertIn('model.isSavedMemory(item) ? "しおり済み" : "しおり"', family)
+        self.assertIn("保持上限で優先して残す目印", family)
+        self.assertIn("保存期間は延びず", family)
+        self.assertIn("写真アプリやiCloudには追加されません", family)
+        self.assertIn("共有解除・ブロック・再インストールで写真としおりは消えます", family)
         self.assertIn("最長90日", family)
         self.assertNotIn("思い出に残す", family)
         self.assertNotIn("まど内の思い出", family)

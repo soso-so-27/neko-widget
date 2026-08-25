@@ -150,19 +150,29 @@ struct PairingView: View {
     private var privacySection: some View {
         Section {
             if model.isMediaSyncEnabled {
-                Label("共有シートで選び、届けると確認した1枚だけ送ります", systemImage: "photo")
-                Label("最大2,048pxへ縮小し、位置情報を除いて暗号化します", systemImage: "lock.shield")
-                Label("撮影日時は、分かる場合だけ暗号化した中に入ります", systemImage: "calendar.badge.clock")
+                Label("確認した1枚だけを届けます", systemImage: "photo")
+                DisclosureGroup("暗号化のしくみ") {
+                    Label("最大2,048pxへ縮小し、位置情報を除いて暗号化します", systemImage: "lock.shield")
+                    Label("撮影日時は、分かる場合だけ暗号化した中に入ります", systemImage: "calendar.badge.clock")
+                    Text("公開フィードや検索には表示されません。招待・復旧コードは、信頼できる相手にだけ送ってください。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             } else {
-                Label("共有鍵のペアリングだけを行います", systemImage: "key.horizontal")
-                Label("写真や縮小画像を保存・送信しません", systemImage: "photo.badge.checkmark")
+                Label("共有鍵だけを設定し、写真は送りません", systemImage: "key.horizontal")
+                DisclosureGroup("詳しく見る") {
+                    Label("写真や縮小画像を保存・送信しません", systemImage: "photo.badge.checkmark")
+                    Text("写真同期を有効にする時は、送信前に改めて同意を求めます。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("共有されるもの")
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "写真が自動送信されることはありません。肉球も共有の指示ではありません。招待・復旧コードは信頼できる相手にだけ送ってください。機種変更後は接続済みの相手の承認で復旧できます。"
-                : "写真同期を有効にするビルドでは、送信前に改めて同意を求めます。招待・復旧コードは信頼できる相手にだけ送り、機種変更後は接続済みの相手の承認で復旧してください。")
+                ? "写真は自動送信されません。肉球も共有の指示ではありません。"
+                : "このBuildでは、共有鍵のペアリングだけを行います。")
         }
     }
 
@@ -178,13 +188,15 @@ struct PairingView: View {
         } header: {
             Text("両方のiPhoneで必要")
         } footer: {
-            Text("送る側と受け取る側の両方でオンにしてください。オフの端末では写真を表示せず、オンにして「\(model.windowDisplayName)」を更新すると安全確認を再試行します。")
+            Text("オフの端末では写真を表示しません。両方でオンにしてください。")
         }
     }
 
     @ViewBuilder
     private func pairingContent(_ state: PairingState) -> some View {
-        guidanceSection(state)
+        if state.phase != .unpaired, state.phase != .paired {
+            guidanceSection(state)
+        }
         if state.phase != .unpaired,
            ![.claimingRecovery, .pendingRecoveryApproval, .recoveryAwaitingCompletion]
             .contains(state.phase) {
@@ -252,9 +264,12 @@ struct PairingView: View {
             phraseSection(state, title: "確認フレーズを照合")
             Section {
                 Toggle("相手の画面と同じフレーズです", isOn: $model.hasConfirmedPhrase)
-                Button("この相手を承認") {
+                Button {
                     Task { await model.approveAfterPhraseConfirmation() }
+                } label: {
+                    primaryActionLabel("この相手を承認", systemImage: "checkmark.shield")
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(!model.hasConfirmedPhrase || model.isWorking)
             } footer: {
                 Text("一致しない場合は承認せず、招待をやり直してください。確認前に写真の復号鍵は相手へ渡りません。")
@@ -305,13 +320,8 @@ struct PairingView: View {
         return Section {
             Label(guidance.roleTitle, systemImage: "person.crop.circle.badge.checkmark")
                 .font(.subheadline.weight(.semibold))
-            VStack(alignment: .leading, spacing: 5) {
-                Text(guidance.nextActionTitle)
-                    .font(.headline)
-                Text(guidance.nextActionDetail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            Text(guidance.nextActionTitle)
+                .font(.headline)
         } header: {
             Text("次にすること")
         }
@@ -346,43 +356,34 @@ struct PairingView: View {
             }
             .accessibilityHint("新しいiPhoneで、相手から届いたNWR1.で始まる復旧コードを使います")
         } header: {
-            Text("このiPhoneで何をしますか？")
+            Text("まどをつなぐ")
         } footer: {
-            Text("機種変更では新しいまどを作りません。新しいiPhoneを選び、接続済みの相手のiPhoneに手伝ってもらいます。以前のiPhoneは操作しません。")
+            Text("機種変更では「以前のまどへ戻る」を選びます。以前のiPhoneは操作しません。")
         }
     }
 
     private func selectedSetupSection(_ path: SetupPath) -> some View {
         let title: String
-        let detail: String
         let icon: String
         switch path {
         case .create:
-            title = "このiPhoneで、新しいまどを作ります"
-            detail = "まどの名前を付け、信頼できる相手へ招待コードを送ります。"
+            title = "新しいまどを作る"
             icon = "rectangle.badge.plus"
         case .join:
-            title = "このiPhoneで、招待されたまどに参加します"
-            detail = "相手から届いたNW1.で始まる招待コードを使います。"
+            title = "招待されたまどに参加"
             icon = "person.badge.plus"
         case .recover:
             // Device recovery has a dedicated three-device explanation.
-            title = "このiPhoneを、新しいiPhoneとして接続します"
-            detail = "相手のiPhoneが作った復旧コードを使います。"
+            title = "以前のまどへ戻る"
             icon = "iphone.and.arrow.forward"
         }
         return Section {
             Label(title, systemImage: icon)
-                .font(.headline)
-            Text(detail)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.subheadline.weight(.semibold))
             Button("別の操作を選ぶ") {
                 setupPath = nil
             }
             .font(.footnote)
-        } header: {
-            Text("選んだ操作")
         }
     }
 
@@ -431,11 +432,11 @@ struct PairingView: View {
             Text("まどの名前")
         } footer: {
             if state.role == .invitee, state.spaceID != nil {
-                Text("この名前は、まどを作った人から暗号化して共有されます。名前を変えてもらう場合は、作成者のiPhoneで変更します。")
+                Text("名前は暗号化して共有されています。変更は、まどを作った人のiPhoneで行います。")
             } else if state.spaceID == nil {
-                Text("まどを作ると、この名前を暗号化して招待した相手にも表示します。")
+                Text("名前は暗号化して、招待した相手にも表示します。")
             } else {
-                Text("名前は暗号化して相手にも表示します。変更しても、つながっている相手や届いた写真は変わりません。")
+                Text("名前は暗号化して相手にも表示します。変更しても、相手や届いた写真は変わりません。")
             }
         }
     }
@@ -454,13 +455,14 @@ struct PairingView: View {
                     await saveWindowNameIfPossible()
                 }
             } label: {
-                Label("この名前でまどを作る", systemImage: "person.badge.plus")
+                primaryActionLabel("この名前でまどを作る", systemImage: "person.badge.plus")
             }
+            .buttonStyle(.borderedProminent)
             .disabled(model.isWorking || !hasAcceptedPairingTerms)
         } header: {
             Text("新しいまどを作る")
         } footer: {
-            Text("非公開のまどを1つ作り、信頼できる相手を1人招待します。家族に限らず、公開フィードや検索にも表示されません。")
+            Text("非公開のまどに、信頼できる相手を1人招待します。")
         }
     }
 
@@ -486,8 +488,9 @@ struct PairingView: View {
                     await saveWindowNameIfPossible()
                 }
             } label: {
-                Label("招待コードで参加", systemImage: "person.2")
+                primaryActionLabel("招待コードで参加", systemImage: "person.2")
             }
+            .buttonStyle(.borderedProminent)
             .disabled(
                 model.isWorking
                     || !hasAcceptedPairingTerms
@@ -527,7 +530,7 @@ struct PairingView: View {
         } header: {
             Text("今すること")
         } footer: {
-            Text("相手のiPhoneがこの復旧を承認した場合だけ、既存のまどへ戻ります。新しいまどは作らず、サーバー上の共有を維持します。")
+            Text("相手のiPhoneで承認すると、以前のまどへ戻ります。")
         }
     }
 
@@ -548,8 +551,8 @@ struct PairingView: View {
             Text("まどを作る・参加する前の確認")
         } footer: {
             Text(model.isMediaSyncEnabled
-                ? "共有シートで送信を確定した1枚だけを、最大2,048pxへ縮小して暗号化します。位置情報は除き、撮影日時は暗号化した中だけに入ります。共有解除後も、相手が保存・スクリーンショットしたコピーは回収できません。"
-                : "この段階では鍵のペアリングだけを行い、写真はまだ送りません。写真同期を有効にするbuildでは改めて明示的な同意を求めます。共有解除後も、相手が保存・スクリーンショットしたコピーは回収できません。機種変更後は接続済みの相手の承認で復旧できます。")
+                ? "確認した1枚だけを暗号化して届け、位置情報は送りません。相手が保存したコピーは、共有解除後も回収できません。"
+                : "この段階では共有鍵だけを設定し、写真は送りません。相手が保存したコピーは、共有解除後も回収できません。")
         }
     }
 
@@ -568,6 +571,7 @@ struct PairingView: View {
                 guard model.recordMediaSharingConsent() else { return }
                 hasAcceptedPairingTerms = false
             }
+            .buttonStyle(.borderedProminent)
             .disabled(!hasAcceptedPairingTerms || model.isWorking)
         } header: {
             Text("1枚を届ける前の確認")
@@ -579,13 +583,13 @@ struct PairingView: View {
     private func invitationSection(_ state: PairingState) -> some View {
         Section {
             if let code = model.invitationCode {
-                Text(code)
-                    .font(.system(.caption2, design: .monospaced))
-                    .accessibilityLabel("招待コード")
-
                 ShareLink(item: code) {
-                    Label("招待コードを送る", systemImage: "square.and.arrow.up")
+                    primaryActionLabel(
+                        "招待コードを送る",
+                        systemImage: "square.and.arrow.up"
+                    )
                 }
+                .buttonStyle(.borderedProminent)
 
                 Button {
                     copyInvitationCode(code, expiresAt: state.invitationExpiresAt)
@@ -598,16 +602,26 @@ struct PairingView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                DisclosureGroup("招待コードを表示") {
+                    Text(code)
+                        .font(.system(.caption2, design: .monospaced))
+                        .accessibilityLabel("招待コード")
+
+                    if let expiresAt = state.invitationExpiresAt {
+                        LabeledContent(
+                            "有効期限",
+                            value: expiresAt.formatted(.dateTime.month().day().hour().minute())
+                        )
+                    }
+
+                    Text("コードだけでは写真を見られません。12語を照合して承認するまで、共有鍵は渡りません。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("招待コードを安全な保存領域から読み込めませんでした。")
                     .foregroundStyle(.secondary)
-            }
-
-            if let expiresAt = state.invitationExpiresAt {
-                LabeledContent(
-                    "有効期限",
-                    value: expiresAt.formatted(.dateTime.month().day().hour().minute())
-                )
             }
 
             Button(
@@ -622,9 +636,9 @@ struct PairingView: View {
 
             manualCheckResult
         } header: {
-            Text("招待コード")
+            Text("相手を招待")
         } footer: {
-            Text("コードには一回限りの参加用秘密が含まれます。写真の復号鍵は含まれず、確認フレーズを照合して承認するまで相手には渡りません。")
+            Text("コードは一度だけ使えます。信頼できる相手に送ってください。")
         }
     }
 
@@ -696,10 +710,20 @@ struct PairingView: View {
             role: state.role
         ).refreshButtonTitle ?? "接続状態を確認"
         return Section {
-            Button(title) {
-                Task { await model.refresh() }
+            if state.phase == .paired {
+                Button(title) {
+                    Task { await model.refresh() }
+                }
+                .disabled(model.isWorking)
+            } else {
+                Button {
+                    Task { await model.refresh() }
+                } label: {
+                    primaryActionLabel(title, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.isWorking)
             }
-            .disabled(model.isWorking)
             manualCheckResult
         }
     }
@@ -737,10 +761,6 @@ struct PairingView: View {
                 showsCancelConfirmation = true
             }
             .disabled(model.isWorking)
-        } footer: {
-            Text(model.isMediaSyncEnabled
-                ? "解除をサーバーで確認してから、このiPhoneの共有鍵・届いた写真・しおりを削除します。通信に失敗した場合は削除せず再試行できます。相手が端末外へ保存・スクリーンショットしたコピーは回収できません。"
-                : "現在は写真同期前のため、共有鍵とペアリング情報だけを解除します。写真同期を追加する段階では、サーバー上の縮小画像を削除する進捗表示もここへ追加します。")
         }
     }
 
@@ -750,22 +770,50 @@ struct PairingView: View {
         canCloseDeviceChangeFlow: Bool = false
     ) -> some View {
         let guidance = DeviceChangeGuidancePresentation.make(currentDevice: currentDevice)
+        let currentDeviceTitle: String
+        let currentDeviceDetail: String
+        switch currentDevice {
+        case .newIPhone:
+            currentDeviceTitle = "この端末：新しいiPhone"
+            currentDeviceDetail = "相手のiPhoneから復旧コードを受け取ります。"
+        case .partnerIPhone:
+            currentDeviceTitle = "この端末：相手のiPhone"
+            currentDeviceDetail = "新しいiPhoneの復旧を手伝います。"
+        }
         return Section {
-            deviceRoleRow(
-                title: guidance.newIPhoneTitle,
-                detail: guidance.newIPhoneDetail,
-                systemImage: "iphone.gen3"
-            )
-            deviceRoleRow(
-                title: guidance.previousIPhoneTitle,
-                detail: guidance.previousIPhoneDetail,
-                systemImage: "iphone"
-            )
-            deviceRoleRow(
-                title: guidance.partnerIPhoneTitle,
-                detail: guidance.partnerIPhoneDetail,
-                systemImage: "person.crop.circle.badge.checkmark"
-            )
+            Label {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(currentDeviceTitle)
+                        .font(.headline)
+                    Text(currentDeviceDetail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "iphone.gen3")
+            }
+            .accessibilityElement(children: .combine)
+
+            DisclosureGroup("機種変更で使う3台") {
+                deviceRoleRow(
+                    title: guidance.newIPhoneTitle,
+                    detail: guidance.newIPhoneDetail,
+                    systemImage: "iphone.gen3"
+                )
+                deviceRoleRow(
+                    title: guidance.previousIPhoneTitle,
+                    detail: guidance.previousIPhoneDetail,
+                    systemImage: "iphone"
+                )
+                deviceRoleRow(
+                    title: guidance.partnerIPhoneTitle,
+                    detail: guidance.partnerIPhoneDetail,
+                    systemImage: "person.crop.circle.badge.checkmark"
+                )
+                Text("復旧コードだけでは共有鍵を取得できません。12語の照合と相手の承認が必要です。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             if canChooseDifferentSetup {
                 Button("別の操作を選ぶ") {
                     setupPath = nil
@@ -779,7 +827,7 @@ struct PairingView: View {
                 .font(.footnote)
             }
         } header: {
-            Text("機種変更で使う3台")
+            Text("このiPhoneですること")
         }
     }
 
@@ -916,7 +964,7 @@ struct PairingView: View {
         } header: {
             Text("今すること")
         } footer: {
-            Text("まどを解除せず、相手のiPhoneとして新しいiPhoneを承認します。復旧コードだけでは共有鍵を取得できず、12語の照合が必要です。")
+            Text("復旧コードを送った後、12語が同じことを確認して承認します。")
         }
     }
 
@@ -956,7 +1004,10 @@ struct PairingView: View {
 
     private var cancelConfirmationMessage: String {
         if model.state?.phase == .paired {
-            return "相手との共有を停止できたことを確認してから、この端末の共有鍵と接続情報を削除します。通信に失敗した場合は鍵を残して再試行できます。"
+            if model.isMediaSyncEnabled {
+                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵・届いた写真・しおりを削除します。通信に失敗した場合は削除しません。相手が保存したコピーは削除できません。"
+            }
+            return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と接続情報を削除します。通信に失敗した場合は削除しません。"
         }
         return "サーバー側の参加状態を先に取り消し、確認できた場合だけこの端末の共有鍵を削除します。通信に失敗した場合は鍵を残して再試行できます。"
     }

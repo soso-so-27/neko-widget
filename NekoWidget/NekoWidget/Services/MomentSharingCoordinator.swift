@@ -464,6 +464,26 @@ actor MomentSharingCoordinator {
                     credential: loadedAuthorization.credential,
                     lifecycleToken: loadedAuthorization.lifecycleToken
                 )
+                // Do not make a safely committed inbound photo (or a revoke)
+                // wait for the independent window-name request before Home and
+                // Widget publication. `receiveChanges` has already processed
+                // the complete bounded change stream, including ACKs and
+                // revocation tombstones, at this point.
+                let inboundState = try MomentSharingStateStore.load(
+                    validating: loadedAuthorization.lifecycleToken
+                )
+                if inboundState.inbox != localSharingState.inbox {
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: .momentSharingPresentationNeedsRefresh,
+                            object: nil
+                        )
+                        NotificationCenter.default.post(
+                            name: .momentSharingContentNeedsReload,
+                            object: nil
+                        )
+                    }
+                }
             }
             // Keep presentation metadata behind safety reports and every
             // consented photo operation. A stalled or unavailable name

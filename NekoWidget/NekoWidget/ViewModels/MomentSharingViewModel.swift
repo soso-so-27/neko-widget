@@ -103,8 +103,8 @@ final class MomentSharingViewModel: ObservableObject {
                 manualRefreshCompletedAt = .now
                 manualRefreshSucceeded = errorMessage == nil
                 manualRefreshMessage = errorMessage == nil
-                    ? "確認処理が終わりました。表示が変わらない場合は、現在このiPhoneで表示できる新しい写真はありません。"
-                    : "確認処理が終わりました。画面の案内を確認してください。"
+                    ? "更新しました。新しい写真はありません。"
+                    : "更新しました。画面の案内を確認してください。"
             }
         }
         catch {
@@ -112,7 +112,7 @@ final class MomentSharingViewModel: ObservableObject {
             if isManual {
                 manualRefreshCompletedAt = .now
                 manualRefreshSucceeded = false
-                manualRefreshMessage = "確認を完了できませんでした。接続を確認して、もう一度お試しください。"
+                manualRefreshMessage = "更新できませんでした。接続を確認して、もう一度お試しください。"
             }
         }
     }
@@ -155,7 +155,10 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func toggleSavedMemory(_ item: MomentInboxItem) async {
-        guard !isWorking, !isReportOnly,
+        // A bookmark is a lifecycle-validated local ledger mutation. Network
+        // synchronization may continue while it changes; only another local
+        // action needs to serialize with it.
+        guard !isPerformingAction, !isReportOnly,
               item.state == .available || item.state == .acknowledged
         else { return }
         bookmarkActionMessage = nil
@@ -172,8 +175,8 @@ final class MomentSharingViewModel: ObservableObject {
             errorMessage = nil
             try reload()
             showBookmarkActionMessage(willSave
-                ? "しおりを付けました。このiPhone内の目印として表示します。"
-                : "しおりを外しました。写真そのものは削除していません。")
+                ? "しおりを付けました"
+                : "しおりを外しました")
         } catch {
             bookmarkActionMessage = nil
             errorMessage = "この写真の保存状態を変更できませんでした。時間をおいて、もう一度お試しください。"
@@ -197,7 +200,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func discardFailedOutbox() async {
-        guard !isWorking else { return }
+        guard !isPerformingAction else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -236,7 +239,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func clearOutgoingOutcomes() async {
-        guard !isWorking else { return }
+        guard !isPerformingAction else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {

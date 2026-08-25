@@ -9,6 +9,10 @@ struct FamilyWindowView: View {
     @State private var showsPendingCancelConfirmation = false
     @State private var showsPreparationCancelConfirmation = false
     @State private var showsTerminalResultDismissConfirmation = false
+    @State private var showsSendGuide = false
+    @State private var showsWidgetGuide = false
+    @State private var showsPrivacyDetails = false
+    @State private var showsAllSentRecords = false
 
     var body: some View {
         Group {
@@ -113,6 +117,16 @@ struct FamilyWindowView: View {
         } message: {
             Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
         }
+        .alert("写真を届ける", isPresented: $showsSendGuide) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text("写真アプリで1枚を開き、共有から「ねこのまど」を選びます。送る前に写真と届け先を確認できます。")
+        }
+        .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「写真源」で「\(model.windowDisplayName)」を選びます。")
+        }
     }
 
     private var pairedContent: some View {
@@ -120,51 +134,51 @@ struct FamilyWindowView: View {
             LazyVStack(alignment: .leading, spacing: 18) {
                 if model.isReportOnly {
                     reportOnlyCard
-                } else {
-                    statusCard
-                    manualRefreshResult
-                    howToSendCard
-                }
-
-                sharingManagementLink
-
-                if model.outgoingPresentation.hasActivity {
-                    outgoingStatusSection
-                }
-                if let message = model.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
-                }
-                if let message = model.bookmarkActionMessage {
-                    Label(message, systemImage: "bookmark.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.green)
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
-                        .accessibilityIdentifier("family-window-bookmark-result")
                 }
 
                 if let latest = model.receivedMoments.first {
-                    Text("いま届いている一枚")
+                    Text("届いた写真")
                         .font(.headline)
                     momentCard(latest)
                 } else {
                     ContentUnavailableView(
-                        "届いた写真はまだありません",
+                        "まだ写真は届いていません",
                         systemImage: "photo.on.rectangle.angled",
-                        description: Text("このまどにつながっている相手が共有シートから届けた写真が、ここに追加されます。")
+                        description: Text("相手から届くと、ここに表示されます。")
                     )
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
                 }
 
+                if !model.isReportOnly {
+                    primaryActions
+                    manualRefreshResult
+                }
+
+                if let message = model.bookmarkActionMessage {
+                    Label(message, systemImage: "bookmark.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                        .accessibilityIdentifier("family-window-bookmark-result")
+                }
+                if let message = model.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                }
+
+                if model.outgoingPresentation.hasActivity {
+                    outgoingStatusSection
+                }
+
                 if model.receivedMoments.count > 1 {
-                    Text("届いた写真")
+                    Text("以前に届いた写真")
                         .font(.headline)
                     ForEach(model.receivedMoments.dropFirst()) { item in
                         momentCard(item)
@@ -179,7 +193,8 @@ struct FamilyWindowView: View {
                     }
                 }
 
-                trustLinks
+                sharingManagementLink
+                privacyDisclosure
             }
             .padding(16)
         }
@@ -193,20 +208,6 @@ struct FamilyWindowView: View {
                     Image(systemName: "gearshape")
                 }
                 .accessibilityLabel("招待相手の確認と共有解除")
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await model.synchronize() }
-                } label: {
-                    if model.isWorking {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .disabled(model.isWorking)
-                .accessibilityLabel("\(model.windowDisplayName)を更新")
-                .accessibilityHint("新しい写真を今すぐ確認します")
             }
         }
     }
@@ -233,27 +234,30 @@ struct FamilyWindowView: View {
         }
     }
 
-    private var statusCard: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "rectangle.on.rectangle.angled")
-                .font(.title2)
-                .foregroundStyle(.tint)
-                .frame(width: 44, height: 44)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 13))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(model.windowDisplayName)
+    private var primaryActions: some View {
+        VStack(spacing: 10) {
+            Button {
+                showsSendGuide = true
+            } label: {
+                Label("写真を届ける", systemImage: "paperplane.fill")
                     .font(.headline)
-                    .lineLimit(1)
-                Text("信頼できる相手1人との非公開なまど・明示した1枚だけを届けます")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
             }
-            Spacer()
-            Image(systemName: "checkmark.seal.fill")
-                .foregroundStyle(.green)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .accessibilityIdentifier("family-window-send-guide")
+
+            Button {
+                showsWidgetGuide = true
+            } label: {
+                Label("ウィジェットの表示設定", systemImage: "rectangle.on.rectangle")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .accessibilityIdentifier("family-window-widget-guide")
         }
-        .padding(14)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var sharingManagementLink: some View {
@@ -267,11 +271,11 @@ struct FamilyWindowView: View {
                     .frame(width: 40, height: 40)
                     .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("共有の設定・解除")
+                    Text("まどの設定")
                         .font(.subheadline.weight(.semibold))
-                    Text("つながっている相手、写真共有の同意、共有解除を確認")
+                    Label("相手と接続済み", systemImage: "checkmark.circle.fill")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.green)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -305,27 +309,19 @@ struct FamilyWindowView: View {
         .accessibilityIdentifier("family-window-report-only")
     }
 
-    private var howToSendCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("今の一枚を届ける", systemImage: "paperplane.fill")
-                .font(.headline)
-            Text("カメラや写真アプリで1枚を開き、共有先から「ねこのまど」を選びます。一時保存したあと、このアプリを開くと安全確認して届けます。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Label("1日5枚まで・最大2,048px・原本と位置情報は送信しません", systemImage: "lock.shield")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 18))
-        .accessibilityIdentifier("family-window-send-instructions")
-    }
-
     private var outgoingStatusSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("送信状況")
-                .font(.headline)
+            HStack {
+                Text("自分が届けた写真")
+                    .font(.headline)
+                Spacer()
+                if canManageOutgoingPresentation {
+                    outgoingManagementMenu
+                }
+            }
+            Text("この一覧には画像を保存せず、送信結果だけを表示します。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             ForEach(model.outgoingPresentation.statuses) { status in
                 outgoingStatusCard(status)
@@ -335,65 +331,81 @@ struct FamilyWindowView: View {
                 outgoingOutcomeCard(outcome)
             }
 
-            if model.outgoingPresentation.outcomeCount > 0 {
-                Button("送信しなかった結果の表示を消す") {
-                    Task { await model.clearOutgoingOutcomes() }
-                }
-                .font(.caption)
-                .disabled(model.isWorking)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-
-            if model.outgoingPresentation.terminalDeliveryResultCount > 0 {
-                Button("送信結果の表示をすべて消す", role: .destructive) {
-                    showsTerminalResultDismissConfirmation = true
-                }
-                .font(.caption)
-                .disabled(model.isPerformingAction)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-
-            if !model.isReportOnly,
-               model.outgoingPresentation.cancellablePreparationCount > 0 {
-                Button("端末内で準備中の写真を取り消す", role: .destructive) {
-                    showsPreparationCancelConfirmation = true
-                }
-                .disabled(model.isPerformingAction)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-
-            if !model.isReportOnly,
-               model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 {
-                Button("暗号化済みの送信待ちを取り消す", role: .destructive) {
-                    showsPendingCancelConfirmation = true
-                }
-                .disabled(model.isPerformingAction)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-
             if model.outgoingPresentation.sentRecords.isEmpty,
                let acceptance = model.outgoingPresentation.latestServerAcceptance {
                 latestServerAcceptanceCard(acceptance)
             }
 
             if !model.outgoingPresentation.sentRecords.isEmpty {
-                Divider()
-                    .padding(.vertical, 2)
-                Text("自分が届けた写真")
-                    .font(.headline)
-                Text("写真そのものや縮小画像はこの一覧に保存せず、配信の確認記録だけを表示します。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(model.outgoingPresentation.sentRecords) { record in
+                ForEach(visibleSentRecords) { record in
                     sentRecordCard(record)
+                }
+                if model.outgoingPresentation.sentRecords.count > 3 {
+                    Button(showsAllSentRecords ? "表示を戻す" : "すべて見る") {
+                        withAnimation { showsAllSentRecords.toggle() }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
         .accessibilityIdentifier("family-window-outgoing-status")
     }
 
+    private var visibleSentRecords: [MomentSentRecordPresentation] {
+        if showsAllSentRecords {
+            return model.outgoingPresentation.sentRecords
+        }
+        return Array(model.outgoingPresentation.sentRecords.prefix(3))
+    }
+
+    private var canManageOutgoingPresentation: Bool {
+        model.outgoingPresentation.outcomeCount > 0
+            || model.outgoingPresentation.terminalDeliveryResultCount > 0
+            || (!model.isReportOnly
+                && model.outgoingPresentation.cancellablePreparationCount > 0)
+            || (!model.isReportOnly
+                && model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0)
+    }
+
+    private var outgoingManagementMenu: some View {
+        Menu {
+            if model.outgoingPresentation.outcomeCount > 0 {
+                Button("送信しなかった結果を消す") {
+                    Task { await model.clearOutgoingOutcomes() }
+                }
+                .disabled(model.isPerformingAction)
+            }
+            if model.outgoingPresentation.terminalDeliveryResultCount > 0 {
+                Button("送信結果をすべて消す", role: .destructive) {
+                    showsTerminalResultDismissConfirmation = true
+                }
+                .disabled(model.isPerformingAction)
+            }
+            if !model.isReportOnly,
+               model.outgoingPresentation.cancellablePreparationCount > 0 {
+                Button("準備中の写真を取り消す", role: .destructive) {
+                    showsPreparationCancelConfirmation = true
+                }
+                .disabled(model.isPerformingAction)
+            }
+            if !model.isReportOnly,
+               model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 {
+                Button("送信待ちを取り消す", role: .destructive) {
+                    showsPendingCancelConfirmation = true
+                }
+                .disabled(model.isPerformingAction)
+            }
+        } label: {
+            Label("整理", systemImage: "ellipsis.circle")
+                .font(.subheadline)
+        }
+        .accessibilityIdentifier("family-window-outgoing-management")
+    }
+
     private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
         let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
+        let displayedAt = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: arrived ? "checkmark.circle.fill" : "server.rack")
                 .foregroundStyle(arrived ? Color.green : Color.accentColor)
@@ -401,17 +413,15 @@ struct FamilyWindowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.title)
                     .font(.subheadline.weight(.semibold))
-                Text(record.detail)
+                Text(arrived ? "端末への到着を確認・既読ではありません" : "相手のiPhoneへの到着待ち")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("受付 \(record.serverAcceptedAt.formatted(.dateTime.month().day().hour().minute()))")
+                Text(
+                    "\(arrived ? "到着" : "受付") "
+                        + displayedAt.formatted(.dateTime.month().day().hour().minute())
+                )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                if let confirmedAt = record.recipientDeliveryConfirmedAt {
-                    Text("端末への到着確認 \(confirmedAt.formatted(.dateTime.month().day().hour().minute()))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
             Spacer(minLength: 0)
         }
@@ -441,9 +451,14 @@ struct FamilyWindowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(status.title)
                     .font(.subheadline.weight(.semibold))
-                Text(status.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if status.kind == .failed
+                    || status.kind == .resultUnknown
+                    || status.kind == .safetyCheckWaiting
+                    || status.kind == .preparationRetryWaiting {
+                    Text(status.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if status.destinationCount > 1 {
                     Text("\(status.destinationCount)個のまどへの送信があります")
                         .font(.caption2)
@@ -451,11 +466,6 @@ struct FamilyWindowView: View {
                 }
                 if let retryAt = status.nextRetryAt {
                     Text("再試行予定 \(retryAt.formatted(.dateTime.month().day().hour().minute()))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if let expiresAt = status.earliestExpiryAt {
-                    Text("端末内の一時データは、処理できない場合 \(expiresAt.formatted(.dateTime.month().day().hour().minute())) に削除されます")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -567,13 +577,25 @@ struct FamilyWindowView: View {
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
-                    if model.isSavedMemory(item) {
-                        Label("しおり付き", systemImage: "bookmark.fill")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tint)
-                    }
                 }
                 Spacer()
+                if !model.isReportOnly {
+                    Button {
+                        Task { await model.toggleSavedMemory(item) }
+                    } label: {
+                        Label(
+                            model.isSavedMemory(item) ? "しおり済み" : "しおり",
+                            systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
+                        )
+                        .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isPerformingAction)
+                    .accessibilityLabel(
+                        model.isSavedMemory(item) ? "しおりを外す" : "しおりを付ける"
+                    )
+                    .accessibilityIdentifier("family-window-save-memory")
+                }
                 Menu {
                     Button {
                         reportTarget = item
@@ -598,25 +620,7 @@ struct FamilyWindowView: View {
                 .accessibilityLabel("写真の安全メニュー")
             }
             .padding(13)
-
-            if !model.isReportOnly {
-                Divider()
-                    .padding(.horizontal, 13)
-                Button {
-                    Task { await model.toggleSavedMemory(item) }
-                } label: {
-                    Label(
-                        model.isSavedMemory(item) ? "しおりを外す" : "しおりを付ける",
-                        systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(13)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("family-window-save-memory")
-            } else if model.isSavedMemory(item) {
+            if model.isReportOnly, model.isSavedMemory(item) {
                 Label("しおり付き", systemImage: "bookmark.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -680,10 +684,23 @@ struct FamilyWindowView: View {
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
+    private var privacyDisclosure: some View {
+        DisclosureGroup(isExpanded: $showsPrivacyDetails) {
+            trustLinks
+        } label: {
+            Label("安全とプライバシー", systemImage: "lock.shield")
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(14)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .accessibilityIdentifier("family-window-privacy-details")
+    }
+
     private var trustLinks: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("安全とプライバシー")
-                .font(.headline)
             if let url = SharingAPIConfiguration.current.privacyURL {
                 Link("プライバシーポリシー", destination: url)
             }
@@ -696,7 +713,7 @@ struct FamilyWindowView: View {
             Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MBまで保持します。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("しおりは無料で、届いた写真をこのiPhone内の保持上限内で優先して残す目印です。写真を新しく保存する機能や長期保管ではなく、付けても期限と上限は延びません。写真アプリやiCloudには追加されず、共有解除・ブロック・再インストールで写真としおりが消えます。")
+            Text("しおりは、このiPhone内の保持上限で優先して残す目印です。保存期間は延びず、写真アプリやiCloudには追加されません。共有解除・ブロック・再インストールで写真としおりは消えます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

@@ -2445,6 +2445,21 @@ actor SharingRuntimeSelfTestRunner {
         likesBefore == likesAfter
         else { throw MomentSharingError.stateUnavailable }
 
+        // A relay acknowledgement can arrive while the user changes this
+        // local-only marker. The inbox state transition must not remove it.
+        let acknowledgedAt = baseDate.addingTimeInterval(2)
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.inbox.firstIndex(where: { $0.id == momentID })
+            else { throw MomentSharingError.stateUnavailable }
+            state.inbox[index].state = .acknowledged
+            state.inbox[index].acknowledgedAt = acknowledgedAt
+        }
+        let acknowledged = try MomentSharingStateStore.load()
+        guard acknowledged.savedMemories == saved.savedMemories,
+              acknowledged.inbox.first(where: { $0.id == momentID })?.state
+                == .acknowledged
+        else { throw MomentSharingError.stateUnavailable }
+
         let blockedMomentID = "moment_saved_then_blocked_fixture"
         let blockedItem = try MomentInboxItem(
             id: blockedMomentID,
