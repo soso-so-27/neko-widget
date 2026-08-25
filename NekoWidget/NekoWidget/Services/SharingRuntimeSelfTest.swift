@@ -3983,9 +3983,7 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
 
         let token = try SharingLifecycleGate.issueToken()
-        _ = try MomentSharingStateStore.mutate(validating: token) { state in
-            state.storageRevision += 1
-        }
+        _ = try MomentSharingStateStore.mutate(validating: token) { _ in }
         let roundTripped = try MomentSharingStateStore.load()
         guard roundTripped.storageRevision == 62,
               roundTripped.outbox == [sent],
