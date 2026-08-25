@@ -1052,13 +1052,44 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           set -euo pipefail
-          xcrun altool \
+
+          run_altool_stage() {
+            local stage="$1"
+            local success_marker="$2"
+            local log_path="$RUNNER_TEMP/altool-${stage}.log"
+            local -a statuses
+            shift 2
+
+            set +e
+            xcrun altool "$@" 2>&1 | tee "$log_path"
+            statuses=("${PIPESTATUS[@]}")
+            set -e
+
+            if (( statuses[0] != 0 )); then
+              echo "altool ${stage} exited with status ${statuses[0]}." >&2
+              exit "${statuses[0]}"
+            fi
+            if (( statuses[1] != 0 )); then
+              echo "Could not preserve the altool ${stage} log (tee status ${statuses[1]})." >&2
+              exit "${statuses[1]}"
+            fi
+            if grep -Eiq 'ERROR:|Failed to (validate|upload)|ENTITY_ERROR|UPLOAD FAILED|VALIDATION FAILED' "$log_path"; then
+              echo "altool ${stage} reported an App Store Connect error despite exiting successfully." >&2
+              exit 1
+            fi
+            if ! grep -Fq "$success_marker" "$log_path"; then
+              echo "altool ${stage} did not emit the required success marker: ${success_marker}" >&2
+              exit 1
+            fi
+          }
+
+          run_altool_stage validate "VERIFY SUCCEEDED with no errors" \
             --validate-app \
             -f "$IPA_PATH" \
             -t ios \
             --apiKey "$APP_STORE_CONNECT_KEY_ID" \
             --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
-          xcrun altool \
+          run_altool_stage upload "UPLOAD SUCCEEDED with no errors" \
             --upload-app \
             -f "$IPA_PATH" \
             -t ios \
@@ -1181,5 +1212,6 @@ jobs:
             ${{ runner.temp }}/Export/DistributionSummary.plist
             ${{ runner.temp }}/Export/ExportOptions.plist
             ${{ runner.temp }}/NekoWidgetArchive.xcresult
+            ${{ runner.temp }}/altool-*.log
           if-no-files-found: warn
           retention-days: 14
