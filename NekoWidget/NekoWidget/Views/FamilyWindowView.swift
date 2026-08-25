@@ -59,6 +59,10 @@ struct FamilyWindowView: View {
     }
 
     var body: some View {
+        guidanceDialogs
+    }
+
+    private var baseContent: some View {
         Group {
             if model.pairingState == nil {
                 VStack(spacing: 12) {
@@ -106,6 +110,10 @@ struct FamilyWindowView: View {
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()
         }
+    }
+
+    private var moderationDialogs: some View {
+        baseContent
         .confirmationDialog(
             "この写真を通報しますか？",
             isPresented: Binding(
@@ -138,6 +146,10 @@ struct FamilyWindowView: View {
         } message: { _ in
             Text("今後の送受信を止め、端末内の共有鍵と届いた写真を削除します。")
         }
+    }
+
+    private var cleanupDialogs: some View {
+        moderationDialogs
         .confirmationDialog(
             "この端末の暗号化済み送信待ちをすべて取り消しますか？",
             isPresented: $showsPendingCancelConfirmation,
@@ -174,6 +186,10 @@ struct FamilyWindowView: View {
         } message: {
             Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
         }
+    }
+
+    private var guidanceDialogs: some View {
+        cleanupDialogs
         .alert("写真を届ける", isPresented: $showsSendGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
