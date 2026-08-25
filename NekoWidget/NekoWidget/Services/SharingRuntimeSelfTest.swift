@@ -660,8 +660,14 @@ actor SharingRuntimeSelfTestRunner {
                 PairingError.stateUnavailable
               ) == .retryable(.pairingStateReadUnavailable),
               PairingInstallationGuard.pairingStateLoadFailureDisposition(
-                PairingStateStore.LoadError.invalidState
-              ) == .failClosed
+                  PairingStateStore.LoadError.invalidState
+              ) == .failClosed,
+              !PairingInstallationGuard
+                .runtimeTestRecoveryCandidateCountIsUnique(0),
+              PairingInstallationGuard
+                .runtimeTestRecoveryCandidateCountIsUnique(1),
+              !PairingInstallationGuard
+                .runtimeTestRecoveryCandidateCountIsUnique(2)
         else { throw PairingError.stateUnavailable }
 
         let malformedState = DecodingError.dataCorrupted(
@@ -672,6 +678,80 @@ actor SharingRuntimeSelfTestRunner {
         ) == .failClosed else {
             throw PairingError.stateUnavailable
         }
+
+        let fileManager = FileManager.default
+        let residueRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "pairing-bootstrap-residue-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        defer { try? fileManager.removeItem(at: residueRoot) }
+        let validResidue = residueRoot.appendingPathComponent(
+            ".sharing-secure-\(UUID().uuidString)",
+            isDirectory: false
+        )
+        try SharingSecureFile.write(Data(repeating: 0x41, count: 32), to: validResidue)
+        guard PairingInstallationGuard
+            .runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(residueRoot)
+        else { throw PairingError.stateUnavailable }
+
+        let unknownCommittedFile = residueRoot.appendingPathComponent(
+            "pairing-state.json",
+            isDirectory: false
+        )
+        try SharingSecureFile.write(Data("preserve".utf8), to: unknownCommittedFile)
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(residueRoot)
+        else { throw PairingError.stateUnavailable }
+        try fileManager.removeItem(at: unknownCommittedFile)
+
+        let malformedResidue = residueRoot.appendingPathComponent(
+            ".sharing-secure-not-a-uuid",
+            isDirectory: false
+        )
+        try SharingSecureFile.write(Data(), to: malformedResidue)
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(residueRoot)
+        else { throw PairingError.stateUnavailable }
+        try fileManager.removeItem(at: malformedResidue)
+
+        let unprotectedResidue = residueRoot.appendingPathComponent(
+            ".sharing-secure-\(UUID().uuidString)",
+            isDirectory: false
+        )
+        try Data("unprotected".utf8).write(to: unprotectedResidue)
+        var unprotectedValues = URLResourceValues()
+        unprotectedValues.isExcludedFromBackup = false
+        var mutableUnprotectedResidue = unprotectedResidue
+        try mutableUnprotectedResidue.setResourceValues(unprotectedValues)
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(residueRoot)
+        else { throw PairingError.stateUnavailable }
+        try fileManager.removeItem(at: unprotectedResidue)
+
+        let linkedResidue = residueRoot.appendingPathComponent(
+            ".sharing-secure-\(UUID().uuidString)",
+            isDirectory: false
+        )
+        try fileManager.createSymbolicLink(
+            at: linkedResidue,
+            withDestinationURL: validResidue
+        )
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(residueRoot)
+        else { throw PairingError.stateUnavailable }
+        try fileManager.removeItem(at: linkedResidue)
+
+        let oversizedResidue = residueRoot.appendingPathComponent(
+            ".sharing-secure-\(UUID().uuidString)",
+            isDirectory: false
+        )
+        try SharingSecureFile.write(
+            Data(repeating: 0x42, count: 4 * 1_024 * 1_024 + 1),
+            to: oversizedResidue
+        )
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(residueRoot)
+        else { throw PairingError.stateUnavailable }
     }
 
     private static func testPrivateWindowCatalogAuthorityUniqueness() throws {
@@ -1351,6 +1431,55 @@ actor SharingRuntimeSelfTestRunner {
         else {
             throw MomentSharingError.stateUnavailable
         }
+
+        // Build 41/61 could persist a recovered/additional device identity in
+        // PairingState before deviceID was backfilled into its Keychain
+        // credential. That valid legacy authority must remain recoverable.
+        guard localCredential.deviceID == nil,
+              PairingInstallationGuard
+                .runtimeTestCredentialMatchesRecoveryState(
+                    localCredential,
+                    state: migratedRecovery
+                )
+        else { throw MomentSharingError.stateUnavailable }
+
+        // recoveryCandidate* is mutable sponsor state. Once this installation
+        // starts helping a different iPhone, those keys belong to that new
+        // candidate and must neither grant nor revoke this local authority.
+        let sponsoredCredential = PairingCrypto.makeCredential(
+            installationMarker: installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        var sponsoringRecovery = migratedRecovery
+        sponsoringRecovery.recoveryCandidateAgreementPublicKey = try PairingCrypto
+            .agreementPublicKey(for: sponsoredCredential).base64URLEncodedString()
+        sponsoringRecovery.recoveryCandidateSigningPublicKey = try PairingCrypto
+            .signingPublicKey(for: sponsoredCredential).base64URLEncodedString()
+        guard PairingInstallationGuard
+            .runtimeTestCredentialMatchesRecoveryState(
+                localCredential,
+                state: sponsoringRecovery
+            )
+        else { throw MomentSharingError.stateUnavailable }
+
+        var wrongDeviceCredential = localCredential
+        wrongDeviceCredential.deviceID = "device_wrong_identity_fixture"
+        guard !PairingInstallationGuard
+            .runtimeTestCredentialMatchesRecoveryState(
+                wrongDeviceCredential,
+                state: migratedRecovery
+            )
+        else { throw MomentSharingError.stateUnavailable }
+
+        var missingRoomKeyCredential = localCredential
+        missingRoomKeyCredential.roomKey = nil
+        guard !PairingInstallationGuard
+            .runtimeTestCredentialMatchesRecoveryState(
+                missingRoomKeyCredential,
+                state: migratedRecovery
+            )
+        else { throw MomentSharingError.stateUnavailable }
 
         // Sponsoring a peer recovery must not change this installation's
         // relay device identity, even though recoveryDeviceID is reused by the
@@ -5911,7 +6040,6 @@ actor SharingRuntimeSelfTestRunner {
             expected: creating,
             lifecycleToken: snapshot.lifecycleToken
         )
-
         // A normal read may hide legacy diagnostic text in memory, but it must
         // never rewrite the full PairingState without the lifecycle flock. A
         // locked operation performs the physical scrub without changing the
@@ -6219,6 +6347,12 @@ actor SharingRuntimeSelfTestRunner {
               FileManager.default.fileExists(atPath: windowNameSyncURL.path)
         else { throw PairingError.stateUnavailable }
 
+        let recovered = try testQuarantinedPairedStateRecovery(
+            paired,
+            previousLifecycleToken: snapshot.lifecycleToken
+        )
+        paired = recovered.state
+
         // A benign mutable revision change must not prevent cleanup of the
         // exact same immutable pairing identity after authenticated revoke.
         var refreshed = paired
@@ -6227,14 +6361,14 @@ actor SharingRuntimeSelfTestRunner {
         refreshed = try PairingStateStore.save(
             refreshed,
             expected: paired,
-            lifecycleToken: snapshot.lifecycleToken
+            lifecycleToken: recovered.lifecycleToken
         )
         guard refreshed.storageRevision != paired.storageRevision else {
             throw PairingError.stateUnavailable
         }
         try PairingInstallationGuard.resetAfterRemoteRevocation(
             expectedState: paired,
-            lifecycleToken: snapshot.lifecycleToken
+            lifecycleToken: recovered.lifecycleToken
         )
         guard !FileManager.default.fileExists(atPath: sentinel.path),
               !FileManager.default.fileExists(atPath: windowPresentationURL.path),
@@ -6245,7 +6379,7 @@ actor SharingRuntimeSelfTestRunner {
             _ = try PrivateWindowNameSyncStore.recordAccepted(
                 synchronizedName,
                 pairing: paired,
-                validating: snapshot.lifecycleToken
+                validating: recovered.lifecycleToken
             )
             throw PairingError.stateUnavailable
         } catch PairingError.stateUnavailable {
@@ -6273,6 +6407,142 @@ actor SharingRuntimeSelfTestRunner {
         } catch SharingLifecycleGate.Error.unavailable {
             // The terminal purge invalidated every old media writer.
         }
+    }
+
+    /// Mirrors the Build 63 failure boundary without deleting any fixture
+    /// data: the valid paired directory is displaced to the protected migration
+    /// quarantine while the active slot contains a synthetic unpaired state.
+    /// Bootstrap must promote the sole marker+Keychain-authenticated candidate
+    /// and preserve the displaced empty slot for later privacy cleanup.
+    private static func testQuarantinedPairedStateRecovery(
+        _ expected: PairingState,
+        previousLifecycleToken: SharingLifecycleGate.Token
+    ) throws -> PairingInstallationGuard.BootstrapResult {
+        guard let activeDirectory = SharedContainer.sharingCacheDirectoryURL,
+              let quarantineRoot = SharedContainer
+                .privateWindowLegacySharingQuarantineDirectoryURL,
+              let credentialAccount = expected.credentialAccount,
+              let participantID = expected.participantID,
+              var mismatchedParticipant = Data(base64URLString: participantID)
+        else { throw PairingError.stateUnavailable }
+        let credential = try PairingKeychainStore.load(
+            account: credentialAccount,
+            installationMarker: expected.installationMarker
+        )
+        guard PairingInstallationGuard
+            .runtimeTestCredentialMatchesRecoveryState(
+                credential,
+                state: expected
+            )
+        else { throw PairingError.stateUnavailable }
+        mismatchedParticipant[0] ^= 0xff
+        var mismatchedState = expected
+        mismatchedState.participantID = mismatchedParticipant
+            .base64URLEncodedString()
+        guard !PairingInstallationGuard
+            .runtimeTestCredentialMatchesRecoveryState(
+                credential,
+                state: mismatchedState
+            )
+        else { throw PairingError.stateUnavailable }
+        let fileManager = FileManager.default
+        let quarantined = quarantineRoot.appendingPathComponent(
+            UUID().uuidString.lowercased(),
+            isDirectory: true
+        )
+        try SharingLifecycleGate.withExclusive {
+            guard let originalCatalog = try PrivateWindowCatalogStore.load(),
+                  originalCatalog.windows.count == 1,
+                  originalCatalog.activeWindowID
+                    == originalCatalog.windows.first?.localWindowID,
+                  let firstWindowID = originalCatalog.windows.first?.localWindowID
+            else { throw PairingError.stateUnavailable }
+
+            // An unrelated catalog slot with unreadable/mismatched authority
+            // must not decide whether a newly selected empty slot can
+            // initialize. This is a read-only preflight; no implicit switch is
+            // performed by the guard.
+            let second = try PrivateWindowCatalogStore
+                .createAndActivateWhileLifecycleLocked()
+            _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                localWindowID: firstWindowID
+            )
+            let unreadableAccount = UUID().uuidString.lowercased()
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                spaceID: "space_unrelated_runtime_fixture",
+                credentialAccount: unreadableAccount
+            )
+            var unrelatedState = expected
+            unrelatedState.credentialAccount = unreadableAccount
+            try PairingStateStore.saveWhileLifecycleLocked(unrelatedState)
+            _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                localWindowID: second.localWindowID
+            )
+            guard PairingInstallationGuard
+                .runtimeTestTargetCanInitializeUnpairedWhileLocked(
+                    localWindowID: second.localWindowID
+                )
+            else { throw PairingError.stateUnavailable }
+            _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                localWindowID: firstWindowID
+            )
+            try PairingStateStore.saveWhileLifecycleLocked(expected)
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                spaceID: expected.spaceID,
+                credentialAccount: expected.credentialAccount
+            )
+
+            try fileManager.createDirectory(
+                at: quarantineRoot,
+                withIntermediateDirectories: true
+            )
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(quarantineRoot)
+            guard fileManager.fileExists(atPath: activeDirectory.path),
+                  !fileManager.fileExists(atPath: quarantined.path)
+            else { throw PairingError.stateUnavailable }
+            try fileManager.moveItem(at: activeDirectory, to: quarantined)
+            try fileManager.createDirectory(
+                at: activeDirectory,
+                withIntermediateDirectories: true
+            )
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(activeDirectory)
+            try PairingStateStore.saveWhileLifecycleLocked(
+                .unpaired(installationMarker: expected.installationMarker)
+            )
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                spaceID: nil,
+                credentialAccount: nil
+            )
+        }
+
+        let result = try PairingInstallationGuard.bootstrap()
+        let recoveredCatalog = try PrivateWindowCatalogStore.load()
+        let previousTokenWasInvalidated: Bool
+        do {
+            try SharingLifecycleGate.validate(previousLifecycleToken)
+            previousTokenWasInvalidated = false
+        } catch SharingLifecycleGate.Error.unavailable {
+            previousTokenWasInvalidated = true
+        }
+        try SharingLifecycleGate.validate(result.lifecycleToken)
+        guard result.state.phase == .paired,
+              previousTokenWasInvalidated,
+              result.state.installationMarker == expected.installationMarker,
+              result.state.credentialAccount == expected.credentialAccount,
+              result.state.spaceID == expected.spaceID,
+              result.state.participantID == expected.participantID,
+              result.state.peerParticipantID == expected.peerParticipantID,
+              recoveredCatalog?.windows.count == 2,
+              recoveredCatalog?.activeWindowID
+                == recoveredCatalog?.windows.first?.localWindowID,
+              FileManager.default.fileExists(atPath: activeDirectory.path),
+              !FileManager.default.fileExists(atPath: quarantined.path),
+              (try? fileManager.contentsOfDirectory(
+                  at: quarantineRoot,
+                  includingPropertiesForKeys: nil
+              ).isEmpty) == false
+        else { throw PairingError.stateUnavailable }
+        return result
     }
 
     private static func opaque(_ byte: UInt8) -> String {

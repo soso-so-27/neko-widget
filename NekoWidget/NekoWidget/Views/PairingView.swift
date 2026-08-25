@@ -16,55 +16,56 @@ struct PairingView: View {
 
     var body: some View {
         Form {
-            if !model.isMediaSyncEnabled {
-                pairingOnlyBuildSection
-            }
-            if !model.privateWindows.isEmpty {
-                privateWindowSwitcherSection
-            }
-            if !model.isConfigured {
-                Section {
-                    ContentUnavailableView(
-                        "共有サーバー未接続",
-                        systemImage: "network.slash",
-                        description: Text(model.configurationMessage ?? "このビルドでは共有するまどを利用できません。")
-                    )
-                }
-            } else if let state = model.state {
-                pairingContent(state)
+            if let retryMessage = model.bootstrapRetryMessage {
+                temporarilyUnavailableSection(message: retryMessage)
             } else {
-                Section {
-                    HStack {
-                        ProgressView()
-                        Text("安全な保存領域を確認しています…")
+                if !model.isMediaSyncEnabled {
+                    pairingOnlyBuildSection
+                }
+                if !model.privateWindows.isEmpty {
+                    privateWindowSwitcherSection
+                }
+                if !model.isConfigured {
+                    Section {
+                        ContentUnavailableView(
+                            "共有サーバー未接続",
+                            systemImage: "network.slash",
+                            description: Text(model.configurationMessage ?? "このビルドでは共有するまどを利用できません。")
+                        )
                     }
-                }
-            }
-
-            privacySection
-            if model.isMediaSyncEnabled {
-                safetyCheckSettingSection
-            }
-
-            if let message = model.operationCompletionMessage {
-                Section {
-                    Label(message, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                }
-            }
-
-            if let message = model.userFacingStatusMessage,
-               model.isConfigured || model.state?.lastError != nil {
-                Section("確認してください") {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                    if model.bootstrapRetryMessage != nil {
-                        Button("もう一度確認する") {
-                            Task { await model.bootstrap() }
+                } else if let state = model.state {
+                    pairingContent(state)
+                } else {
+                    Section {
+                        HStack {
+                            ProgressView()
+                            Text("安全な保存領域を確認しています…")
                         }
                     }
                 }
+
+                privacySection
+                if model.isMediaSyncEnabled {
+                    safetyCheckSettingSection
+                }
+
+                if let message = model.operationCompletionMessage {
+                    Section {
+                        Label(message, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                if let message = model.userFacingStatusMessage,
+                   model.isConfigured || model.state?.lastError != nil {
+                    Section("確認してください") {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
+
+            buildIdentitySection
         }
         .navigationTitle(model.windowDisplayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -136,6 +137,41 @@ struct PairingView: View {
         } message: {
             Text("接続済みのまどや、すでに使っているiPhoneは解除されません。このiPhoneに作った未承認の追加情報だけを消します。")
         }
+    }
+
+    private func temporarilyUnavailableSection(message: String) -> some View {
+        let presentation = PairingAvailabilityPresentation
+            .temporarilyUnavailable(detail: message)
+        return Section {
+            ContentUnavailableView(
+                presentation.title,
+                systemImage: "arrow.triangle.2.circlepath",
+                description: Text(presentation.detail)
+            )
+            if model.isBootstrapping {
+                HStack {
+                    ProgressView()
+                    Text("接続情報を確認しています…")
+                }
+            } else {
+                Button("もう一度確認する") {
+                    Task { await model.bootstrap() }
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("pairing-bootstrap-retry")
+            }
+        }
+    }
+
+    private var buildIdentitySection: some View {
+        Section {
+            Text(PairingBuildPresentation.currentText)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityIdentifier("pairing-build-identity")
+        }
+        .listRowBackground(Color.clear)
     }
 
     private var pairingOnlyBuildSection: some View {
