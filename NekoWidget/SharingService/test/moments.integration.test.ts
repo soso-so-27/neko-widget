@@ -1048,6 +1048,75 @@ describe("append-only encrypted moments", () => {
     expect(currentEpochButBlocked.response.status).toBe(409);
   });
 
+  it("binds an additional reporting device to its member and signing key", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const primary = await testEnv.DB.prepare(
+      `SELECT participant.id AS participant_id, device.id AS device_id
+         FROM moment_participants AS participant
+         JOIN moment_devices AS device
+           ON device.participant_id = participant.id
+          AND device.legacy_member_id = ?
+        WHERE participant.legacy_member_id = ?`,
+    ).bind(space.invitee.id, space.invitee.id).first<{
+      participant_id: string;
+      device_id: string;
+    }>();
+    expect(primary).not.toBeNull();
+    if (primary === null) throw new Error("missing primary invitee device");
+
+    const additionalKeys = await signingKeys();
+    const additionalDeviceID = randomValue(16);
+    const now = Math.floor(Date.now() / 1_000);
+    await testEnv.DB.prepare(
+      `INSERT INTO moment_devices(
+         id, participant_id, legacy_member_id, agreement_public_key,
+         signing_public_key, state, created_at, activated_at
+       ) VALUES (?, ?, NULL, ?, ?, 'active', ?, ?)`,
+    ).bind(
+      additionalDeviceID,
+      primary.participant_id,
+      randomValue(32),
+      await signingPublicKey(additionalKeys),
+      now,
+      now,
+    ).run();
+
+    const reportCiphertext = crypto.getRandomValues(new Uint8Array(384));
+    const reportRequest = {
+      protocolVersion: 2,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      momentId: published.reservation.moment.id,
+      reasonCode: "privacy",
+      moderationKeyId: "moderation-v1",
+      ciphertextSize: reportCiphertext.length,
+      ciphertextSHA256: await sha256Base64url(reportCiphertext),
+      reporterConsent: { version: 1, acceptedAt: new Date().toISOString() },
+    };
+    const additionalDevice = {
+      id: space.invitee.id,
+      keys: additionalKeys,
+      deviceID: additionalDeviceID,
+    };
+    const reserved = await signedFetch(
+      "/v2/reports/reservations",
+      "POST",
+      additionalDevice,
+      reportRequest,
+    );
+    expect(reserved.status).toBe(201);
+
+    const wrongDevice = await signedFetch(
+      "/v2/reports/reservations",
+      "POST",
+      { ...additionalDevice, deviceID: primary.device_id },
+      { ...reportRequest, clientRequestId: crypto.randomUUID().toLowerCase() },
+    );
+    expect(wrongDevice.status).toBe(401);
+    expect((await wrongDevice.json<{ error: { code: string } }>()).error.code)
+      .toBe("invalid_authentication");
+  });
+
   it("stores a separately encrypted moderation report and removes it at its short TTL", async () => {
     const space = await seedActiveSpace();
     const published = await publish(space.owner);

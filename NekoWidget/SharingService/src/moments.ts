@@ -364,8 +364,15 @@ async function signedReportRequest(
   if (request.headers.get("neko-protocol-version") !== "1") {
     throw new ApiError(401, "invalid_authentication", "Signed request authentication failed.");
   }
-  const credentialID = request.headers.get("neko-member-id") ?? "";
-  if (!/^[A-Za-z0-9_-]{22}$/u.test(credentialID)) {
+  let credentialID: string;
+  let requestedDeviceID: string | null = null;
+  try {
+    credentialID = opaqueId(request.headers.get("neko-member-id") ?? "", "member");
+    const rawDeviceID = request.headers.get("neko-device-id");
+    if (rawDeviceID !== null) {
+      requestedDeviceID = opaqueId(rawDeviceID, "device");
+    }
+  } catch {
     throw new ApiError(401, "invalid_authentication", "Signed request authentication failed.");
   }
   const timestampValue = request.headers.get("neko-timestamp") ?? "";
@@ -385,7 +392,10 @@ async function signedReportRequest(
   if (Math.abs(now - timestamp) > 300) {
     throw new ApiError(401, "stale_request", "The signed request timestamp is outside the five-minute window.");
   }
-  const credential = await env.DB.prepare(
+  const devicePredicate = requestedDeviceID === null
+    ? "device.legacy_member_id = participant.legacy_member_id"
+    : "device.id = ?";
+  const credentialStatement = env.DB.prepare(
     `SELECT participant.id AS participant_id, device.id AS device_id,
             space.current_key_epoch, space.membership_revision, space.lineage_id,
             participant.space_id, participant.role,
@@ -398,10 +408,14 @@ async function signedReportRequest(
        FROM moment_devices AS device
        JOIN moment_participants AS participant ON participant.id = device.participant_id
        JOIN moment_spaces AS space ON space.space_id = participant.space_id
-      WHERE device.legacy_member_id = ? OR (device.legacy_member_id IS NULL AND device.id = ?)
-      ORDER BY CASE WHEN device.legacy_member_id = ? THEN 0 ELSE 1 END
-      LIMIT 1`,
-  ).bind(credentialID, credentialID, credentialID).first<ReportCredentialRow>();
+       WHERE participant.legacy_member_id = ?
+         AND ${devicePredicate}
+       LIMIT 1`,
+  );
+  const credential = await (requestedDeviceID === null
+    ? credentialStatement.bind(credentialID)
+    : credentialStatement.bind(credentialID, requestedDeviceID)
+  ).first<ReportCredentialRow>();
   if (credential === null) {
     throw new ApiError(401, "invalid_authentication", "Signed request authentication failed.");
   }
