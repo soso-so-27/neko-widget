@@ -387,7 +387,7 @@ struct MomentShareHandoffProcessor: Sendable {
               pairing.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
               pairing.mediaSharingConsentAcceptedAt != nil,
               pairing.spaceID != nil,
-              pairing.participantID != nil,
+              let participantID = pairing.participantID,
               pairing.credentialAccount == credential.account,
               pairing.installationMarker == credential.installationMarker,
               participantID == credential.participantIDString,
