@@ -153,7 +153,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         for page in (PAGES[1], PAGES[3]):
             text = "".join(self.parsed(page).text)
             for phrase in (
-                "「思い出に追加」",
+                "「思い出に残す」",
                 "「届いた写真」",
                 "明示的に選",
                 "位置情報を除いた最大2,048px",
@@ -315,7 +315,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             settings,
         )
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)
-        self.assertIn("「思い出に追加」を選んだ届いた写真", info)
+        self.assertIn("「思い出に残す」を選んだ届いた写真", info)
         self.assertIn("写真を自動で追加することはありません", info)
 
     def test_explicit_export_disclosure_stays_aligned_with_implementation(self):
