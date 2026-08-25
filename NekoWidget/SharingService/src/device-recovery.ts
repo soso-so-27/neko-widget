@@ -249,6 +249,10 @@ async function loadRecovery(env: Env, recoveryID: string): Promise<RecoveryRow |
         AND initiator_device.signing_public_key
               = recovery.initiator_signing_public_key
         AND initiator_device.state = 'active'
+        AND (
+          initiator.role <> 'owner'
+          OR initiator_device.legacy_member_id = initiator.id
+        )
        LEFT JOIN device_recovery_claim_events AS claim
          ON claim.recovery_id = recovery.id
        LEFT JOIN device_recovery_approval_events AS approval

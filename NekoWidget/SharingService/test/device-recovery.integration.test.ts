@@ -403,6 +403,8 @@ describe("device recovery", () => {
     const fixture = await pairedFixture();
     const additionalKeys = await signingKeyPair();
     const additionalDeviceID = randomValue(16);
+    const additionalAgreement = randomValue(32);
+    const additionalSigning = await publicKeyValue(additionalKeys);
     const now = Math.floor(Date.now() / 1_000);
     await testEnv.DB.prepare(
       `INSERT INTO moment_devices(
@@ -412,8 +414,8 @@ describe("device recovery", () => {
     ).bind(
       additionalDeviceID,
       fixture.owner.memberId,
-      randomValue(32),
-      await publicKeyValue(additionalKeys),
+      additionalAgreement,
+      additionalSigning,
       now,
       now,
     ).run();
@@ -450,12 +452,43 @@ describe("device recovery", () => {
       },
     ));
     expect(primaryResponse.status).toBe(201);
-    expect(await primaryResponse.json()).toMatchObject({
+    const primaryRecovery = await primaryResponse.json<RecoveryResponse>();
+    expect(primaryRecovery).toMatchObject({
       target: { memberId: fixture.invitee.memberId },
       peer: {
         memberId: fixture.owner.memberId,
         signingPublicKey: fixture.owner.signingPublicKey,
       },
+    });
+
+    // Simulate an open recovery admitted before this rollout. Its initiator
+    // keys identify the owner's additional device rather than the primary one.
+    await testEnv.DB.prepare(
+      `UPDATE device_recoveries
+          SET initiator_agreement_public_key = ?, initiator_signing_public_key = ?
+        WHERE id = ?`,
+    ).bind(
+      additionalAgreement,
+      additionalSigning,
+      primaryRecovery.recovery.id,
+    ).run();
+    const legacyRecovery = {
+      ...primaryRecovery,
+      peer: {
+        ...primaryRecovery.peer,
+        agreementPublicKey: additionalAgreement,
+        signingPublicKey: additionalSigning,
+      },
+    };
+    const legacyClaim = await claimRecovery(
+      fixture,
+      legacyRecovery,
+      proofKeys,
+      await signingKeyPair(),
+    );
+    expect(legacyClaim.response.status).toBe(410);
+    expect(await legacyClaim.response.json()).toMatchObject({
+      error: { code: "recovery_unavailable" },
     });
     for (const path of [
       "/v2/window-name",
