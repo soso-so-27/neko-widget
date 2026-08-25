@@ -602,6 +602,10 @@ enum MomentShareHandoffStore {
         now: Date = .now
     ) throws {
         try prepareMultiWindowStorageWhileLocked()
+        // Quarantine is non-authoritative and never user-visible. Remove only
+        // this window's scoped late-writer copies; another window can still
+        // have a valid pending capture in its own quarantine.
+        try purgeLegacyQuarantinesWhileLocked(localWindowID: localWindowID)
         guard let catalog = try loadCatalogWhileLocked() else { return }
         let removed = catalog.destinations.filter {
             $0.localWindowID == localWindowID
@@ -1573,10 +1577,81 @@ enum MomentShareHandoffStore {
         }
         let fileManager = FileManager.default
         var firstError: Error?
-        let directories = [directory]
+        var directories = [directory]
             + SharedContainer.legacyMomentShareHandoffDirectoryURLs
+        // A late Build 61 extension can leave plaintext captures inside either
+        // quarantine. Revoking handoff authority must physically remove those
+        // copies too; quarantine is never a retention exception.
+        directories.append(contentsOf: legacyQuarantineDirectories)
         for candidate in directories where fileManager.fileExists(atPath: candidate.path) {
             do { try fileManager.removeItem(at: candidate) }
+            catch { if firstError == nil { firstError = error } }
+        }
+        if let firstError { throw firstError }
+    }
+
+    private static var legacyQuarantineDirectories: [URL] {
+        [
+            SharedContainer.momentShareHandoffLegacyQuarantineDirectoryURL,
+            SharedContainer.privateWindowLegacySharingQuarantineDirectoryURL
+        ].compactMap { $0 }
+    }
+
+    private static func purgeLegacyQuarantinesWhileLocked(
+        localWindowID: String
+    ) throws {
+        guard let windowUUID = UUID(uuidString: localWindowID),
+              let catalog = try PrivateWindowCatalogStore.load()
+        else { throw MomentSharingError.stateUnavailable }
+        let canonicalWindowID = windowUUID.uuidString.lowercased()
+        let catalogWindowIDs = Set(catalog.windows.map {
+            $0.localWindowID.lowercased()
+        })
+        guard catalogWindowIDs.contains(canonicalWindowID) else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        let fileManager = FileManager.default
+        var firstError: Error?
+
+        if let handoffRoot = SharedContainer
+            .momentShareHandoffLegacyQuarantineDirectoryURL,
+           fileManager.fileExists(atPath: handoffRoot.path) {
+            // Build 63 stores one directory per catalog window. An unexpected
+            // direct child could be an older unscoped quarantine, whose owner
+            // cannot be proven. Fail the unlink rather than deleting another
+            // window's plaintext or falsely claiming complete privacy cleanup.
+            let entries = try fileManager.contentsOfDirectory(
+                at: handoffRoot,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: []
+            )
+            for entry in entries {
+                let values = try entry.resourceValues(
+                    forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+                )
+                guard values.isDirectory == true,
+                      values.isSymbolicLink != true,
+                      catalogWindowIDs.contains(entry.lastPathComponent.lowercased())
+                else { throw MomentSharingError.stateUnavailable }
+            }
+            let scopedDirectory = handoffRoot.appendingPathComponent(
+                canonicalWindowID,
+                isDirectory: true
+            )
+            if fileManager.fileExists(atPath: scopedDirectory.path) {
+                do { try fileManager.removeItem(at: scopedDirectory) }
+                catch { firstError = error }
+            }
+        }
+
+        // The complete Build-40 `sharing/` quarantine always belongs to the
+        // stable first catalog slot. Other slots must never delete it.
+        if catalog.windows.first?.localWindowID.lowercased() == canonicalWindowID,
+           let sharingRoot = SharedContainer
+            .privateWindowLegacySharingQuarantineDirectoryURL,
+           fileManager.fileExists(atPath: sharingRoot.path) {
+            do { try fileManager.removeItem(at: sharingRoot) }
             catch { if firstError == nil { firstError = error } }
         }
         if let firstError { throw firstError }
@@ -1593,6 +1668,50 @@ enum MomentShareHandoffStore {
         )
     }
 
+    private struct ScopedLegacyHandoffSource {
+        let url: URL
+        let localWindowID: String
+    }
+
+    private static func scopedLegacyHandoffSourcesWhileLocked() throws
+        -> [ScopedLegacyHandoffSource] {
+        guard let catalog = try PrivateWindowCatalogStore.load(),
+              let legacyOwner = catalog.windows.first
+        else { throw MomentSharingError.stateUnavailable }
+
+        var candidates: [ScopedLegacyHandoffSource] = []
+        if let legacy = SharedContainer.legacySharingCacheDirectoryURL {
+            candidates.append(
+                ScopedLegacyHandoffSource(
+                    url: legacy.appendingPathComponent(
+                        "moment-handoff",
+                        isDirectory: true
+                    ),
+                    localWindowID: legacyOwner.localWindowID.lowercased()
+                )
+            )
+        }
+        for entry in catalog.windows {
+            guard let sharing = SharedContainer.windowSharingDirectoryURL(
+                localWindowID: entry.localWindowID
+            ) else { throw MomentSharingError.stateUnavailable }
+            candidates.append(
+                ScopedLegacyHandoffSource(
+                    url: sharing.appendingPathComponent(
+                        "moment-handoff",
+                        isDirectory: true
+                    ),
+                    localWindowID: entry.localWindowID.lowercased()
+                )
+            )
+        }
+
+        var seen = Set<String>()
+        return candidates.filter {
+            seen.insert($0.url.standardizedFileURL.path).inserted
+        }
+    }
+
     /// Moves the one pre-multi-window handoff directory into stable shared
     /// storage. This runs only while the lifecycle flock is held. A global
     /// directory plus a legacy directory, or more than one legacy directory,
@@ -1602,15 +1721,30 @@ enum MomentShareHandoffStore {
         guard let destination = SharedContainer.momentShareHandoffDirectoryURL
         else { throw MomentSharingError.stateUnavailable }
         let fileManager = FileManager.default
-        let sources = SharedContainer.legacyMomentShareHandoffDirectoryURLs
-            .filter { fileManager.fileExists(atPath: $0.path) }
+        let sources = try scopedLegacyHandoffSourcesWhileLocked()
+            .filter { fileManager.fileExists(atPath: $0.url.path) }
+        if fileManager.fileExists(atPath: destination.path) {
+            guard SharedContainer
+                .legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(
+                    destination
+                ),
+                sources.allSatisfy({ source in
+                    SharedContainer
+                        .legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(
+                            source.url
+                        )
+                })
+            else { throw MomentSharingError.stateUnavailable }
+            try quarantineLegacyHandoffSourcesWhileLocked(sources)
+            return
+        }
         guard sources.count <= 1 else {
             throw MomentSharingError.stateUnavailable
         }
-        guard let source = sources.first else { return }
-        guard !fileManager.fileExists(atPath: destination.path) else {
-            throw MomentSharingError.stateUnavailable
-        }
+        guard let source = sources.first?.url else { return }
+        guard SharedContainer
+            .legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(source)
+        else { throw MomentSharingError.stateUnavailable }
         do {
             try fileManager.createDirectory(
                 at: destination.deletingLastPathComponent(),
@@ -1621,6 +1755,73 @@ enum MomentShareHandoffStore {
             throw MomentSharingError.stateUnavailable
         }
     }
+
+    /// A previous app/extension process can recreate its old handoff path
+    /// after v2 has committed. The v2 directory remains authoritative; each
+    /// validated old directory is atomically moved aside without merging or
+    /// deleting pending plaintext.
+    private static func quarantineLegacyHandoffSourcesWhileLocked(
+        _ sources: [ScopedLegacyHandoffSource],
+        quarantineRoot explicitQuarantineRoot: URL? = nil
+    ) throws {
+        guard !sources.isEmpty else { return }
+        guard let quarantineRoot = explicitQuarantineRoot
+            ?? SharedContainer.momentShareHandoffLegacyQuarantineDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(
+                at: quarantineRoot,
+                withIntermediateDirectories: true
+            )
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(
+                quarantineRoot
+            )
+            for source in sources {
+                guard let windowUUID = UUID(uuidString: source.localWindowID)
+                else { throw MomentSharingError.stateUnavailable }
+                let windowRoot = quarantineRoot.appendingPathComponent(
+                    windowUUID.uuidString.lowercased(),
+                    isDirectory: true
+                )
+                try fileManager.createDirectory(
+                    at: windowRoot,
+                    withIntermediateDirectories: true
+                )
+                try SharingSecureFile.enforceProtectionAndBackupExclusion(
+                    windowRoot
+                )
+                let quarantine = windowRoot.appendingPathComponent(
+                    UUID().uuidString.lowercased(),
+                    isDirectory: true
+                )
+                guard !fileManager.fileExists(atPath: quarantine.path) else {
+                    throw MomentSharingError.stateUnavailable
+                }
+                try fileManager.moveItem(at: source.url, to: quarantine)
+            }
+        } catch {
+            throw MomentSharingError.stateUnavailable
+        }
+    }
+
+#if DEBUG
+    static func runtimeTestQuarantineLegacyHandoffSources(
+        _ sources: [URL],
+        quarantineRoot: URL,
+        localWindowID: String
+    ) throws {
+        try quarantineLegacyHandoffSourcesWhileLocked(
+            sources.map {
+                ScopedLegacyHandoffSource(
+                    url: $0,
+                    localWindowID: localWindowID
+                )
+            },
+            quarantineRoot: quarantineRoot
+        )
+    }
+#endif
 
     private static func boundedData(from url: URL, maximumBytes: Int) throws -> Data {
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])

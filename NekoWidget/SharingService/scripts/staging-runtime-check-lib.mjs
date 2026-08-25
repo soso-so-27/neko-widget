@@ -17,6 +17,26 @@ const EXPECTATIONS = Object.freeze({
       errorCode: "invalid_authentication",
     }),
     Object.freeze({
+      name: "reaction",
+      path: "/v2/reactions/changes",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
+      name: "push-register",
+      method: "PUT",
+      path: "/v2/push-subscriptions/current",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
+      name: "push-delete",
+      method: "DELETE",
+      path: "/v2/push-subscriptions/current",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
       name: "window-name",
       path: "/v2/window-name",
       status: 401,
@@ -158,7 +178,7 @@ async function checkEndpoint({ origin, expectation, fetchImpl, timeoutMs }) {
 
   try {
     response = await fetchImpl(`${origin}${expectation.path}`, {
-      method: "GET",
+      method: expectation.method ?? "GET",
       headers: { Accept: "application/json" },
       redirect: "manual",
       signal: controller.signal,

@@ -67,6 +67,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedAssetIdentifier: String?
     @Published var selectedAssetShownAt: Date?
     @Published var isFamilyWindowPresented = false
+    @Published var pendingFamilyMomentSourceDigest: String?
     @Published private(set) var familyWindowPresentation: MomentFamilyWindowPresentation = .empty
     @Published private(set) var privateWindowDisplayName = PrivateWindowDisplayName.fallback
 
@@ -1903,7 +1904,7 @@ final class AppViewModel: ObservableObject {
                 localIdentifier: localIdentifier,
                 shownAt: link.shownAt
             )
-        case let .familyWindow(localWindowID):
+        case let .familyWindow(localWindowID, sourceDigest):
             guard SharingAPIConfiguration.current.isReviewVisible else {
                 SharedLog.app.info(
                     "deeplink",
@@ -1932,6 +1933,7 @@ final class AppViewModel: ObservableObject {
                         return
                     }
                 }
+                self.pendingFamilyMomentSourceDigest = sourceDigest
                 self.isFamilyWindowPresented = true
                 SharedLog.app.info("deeplink", "Opened private window from Widget")
             }

@@ -234,9 +234,10 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         app_model = (ROOT / "NekoWidget/ViewModels/AppViewModel.swift").read_text(
             encoding="utf-8"
         )
-        family_case = app_model.split("case let .familyWindow(localWindowID):", 1)[1].split(
-            "\n        }\n        guard let readyRoute", 1
-        )[0]
+        family_case = app_model.split(
+            "case let .familyWindow(localWindowID, sourceDigest):",
+            1,
+        )[1].split("\n        }\n        guard let readyRoute", 1)[0]
         self.assertIn("isReviewVisible", family_case)
         self.assertLess(
             family_case.index("guard SharingAPIConfiguration.current.isReviewVisible"),

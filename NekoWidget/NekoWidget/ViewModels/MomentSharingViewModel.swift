@@ -74,8 +74,13 @@ final class MomentSharingViewModel: ObservableObject {
         defer { isSynchronizing = false }
         // Capture the Share Extension handoff before the coordinator promotes
         // it, so the UI can truthfully show the local preparation boundary.
+        var preliminaryFailureMessage: String?
         do { try reload() }
-        catch { errorMessage = Self.userFacingMessage(for: error) }
+        catch {
+            let message = Self.userFacingMessage(for: error)
+            preliminaryFailureMessage = message
+            errorMessage = message
+        }
         // The coordinator crosses several durable boundaries while awaiting
         // moderation and network responses. Poll a bounded, sanitized snapshot
         // off the MainActor so those phases are visible without repeatedly
@@ -87,22 +92,38 @@ final class MomentSharingViewModel: ObservableObject {
                 await self?.refreshOutgoingPresentation()
             }
         }
-        await coordinator.synchronize(trigger: "family-window")
+        let synchronizationSucceeded = await coordinator.synchronize(
+            trigger: "family-window"
+        )
         let synchronizationNotice = await coordinator.synchronizationNotice()
         progressTask.cancel()
         await progressTask.value
         do {
             try reload()
-            errorMessage = Self.message(
+            let synchronizationMessage = Self.message(
                 for: synchronizationNotice,
                 windowDisplayName: windowDisplayName
             )
+            if let synchronizationMessage {
+                errorMessage = synchronizationMessage
+            } else if !synchronizationSucceeded {
+                errorMessage = preliminaryFailureMessage
+                    ?? "写真の共有状況を更新できませんでした。接続を確認して、もう一度お試しください。"
+            } else {
+                errorMessage = nil
+            }
             if isManual {
                 manualRefreshCompletedAt = .now
-                manualRefreshSucceeded = errorMessage == nil
-                manualRefreshMessage = errorMessage == nil
-                    ? "更新しました。新しい写真はありません。"
-                    : "更新しました。画面の案内を確認してください。"
+                manualRefreshSucceeded = synchronizationSucceeded
+                    && errorMessage == nil
+                if !synchronizationSucceeded {
+                    manualRefreshMessage =
+                        "更新できませんでした。接続を確認して、もう一度お試しください。"
+                } else {
+                    manualRefreshMessage = errorMessage == nil
+                        ? "更新しました。新しい写真はありません。"
+                        : "更新しました。画面の案内を確認してください。"
+                }
             }
         }
         catch {
@@ -238,7 +259,7 @@ final class MomentSharingViewModel: ObservableObject {
                         localIdentifier: existing.photoLocalIdentifier
                     )
                     showMemoryActionMessage(willSave
-                        ? "思い出に追加しました"
+                        ? "思い出に残しました"
                         : "思い出から外しました（写真アプリには残ります）")
                     return
                 case .confirmedMissing:
@@ -324,7 +345,7 @@ final class MomentSharingViewModel: ObservableObject {
             )
             errorMessage = nil
             try reload()
-            showMemoryActionMessage("写真を取り込み、思い出に追加しました")
+            showMemoryActionMessage("写真を取り込み、思い出に残しました")
         } catch {
             memoryActionMessage = nil
             errorMessage = photosWriteCompleted
@@ -486,9 +507,7 @@ final class MomentSharingViewModel: ObservableObject {
     private func reload(notifyPresentationChange: Bool = true) throws {
         let pairingSnapshot = try PairingStateStore.beginOperation()
         let nextPairingState = pairingSnapshot.state
-        let handoffSnapshot = configuration.isShareExtensionHandoffAvailable
-            ? try MomentShareHandoffStore.presentationSnapshot()
-            : MomentShareHandoffPresentationSnapshot(statuses: [], terminalOutcomes: [])
+        let handoffSnapshot = Self.bestEffortHandoffPresentationSnapshot(configuration: configuration)
         // Load the sharing ledger after handoff pruning. A host-side expiry
         // hook may append a privacy-safe terminal outcome while pruning.
         let nextSharingState = try MomentSharingStateStore.load()
@@ -522,12 +541,7 @@ final class MomentSharingViewModel: ObservableObject {
         let configuration = self.configuration
         do {
             let presentation = try await Task.detached(priority: .utility) {
-                let handoffSnapshot = configuration.isShareExtensionHandoffAvailable
-                    ? try MomentShareHandoffStore.presentationSnapshot()
-                    : MomentShareHandoffPresentationSnapshot(
-                        statuses: [],
-                        terminalOutcomes: []
-                    )
+                let handoffSnapshot = Self.bestEffortHandoffPresentationSnapshot(configuration: configuration)
                 // Handoff expiry may update its own image-free outcome ledger;
                 // load the sharing ledger after that pruning boundary.
                 let sharingState = try MomentSharingStateStore.load()
@@ -542,6 +556,35 @@ final class MomentSharingViewModel: ObservableObject {
             // The full synchronization and final reload remain authoritative.
             // A transient progress-snapshot failure must not replace them with
             // a misleading user-visible network error.
+        }
+    }
+
+    /// The Share Extension handoff ledger is presentation-only. A stale or
+    /// partially-written legacy handoff file must not prevent the paired
+    /// window, inbox, memories, or reactions from loading.
+    private nonisolated static func bestEffortHandoffPresentationSnapshot(
+        configuration: SharingAPIConfiguration
+    ) -> MomentShareHandoffPresentationSnapshot {
+        guard configuration.isShareExtensionHandoffAvailable else {
+            return MomentShareHandoffPresentationSnapshot(statuses: [], terminalOutcomes: [])
+        }
+
+        do {
+            return try MomentShareHandoffStore.presentationSnapshot()
+        } catch {
+            SharedLog.app.warning(
+                "moment-handoff",
+                "Moment handoff presentation unavailable",
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .momentSharing,
+                    additional: [
+                        "sharingFailureReason":
+                            "handoff-presentation-unavailable"
+                    ]
+                )
+            )
+            return MomentShareHandoffPresentationSnapshot(statuses: [], terminalOutcomes: [])
         }
     }
 
@@ -626,6 +669,10 @@ final class MomentSharingViewModel: ObservableObject {
         if let momentError = error as? MomentSharingError {
             return momentError.errorDescription
                 ?? "写真共有の処理を完了できませんでした。時間をおいて、もう一度お試しください。"
+        }
+        if let bootstrapError = error as? PairingInstallationGuard.RetryableBootstrapError {
+            return bootstrapError.errorDescription
+                ?? "共有の状態を一時的に確認できませんでした。時間をおいて、もう一度お試しください。"
         }
         if let pairingError = error as? PairingError {
             return pairingError.errorDescription

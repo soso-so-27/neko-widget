@@ -27,6 +27,8 @@ enum PairingInstallationGuard {
         case pairingStateProtectedDataUnavailable =
             "pairing-state-protected-data-unavailable"
         case pairingStateReadUnavailable = "pairing-state-read-unavailable"
+        case privateWindowMigrationUnavailable =
+            "private-window-migration-unavailable"
         case keychainProtectedDataUnavailable =
             "keychain-protected-data-unavailable"
         case keychainUnavailable = "keychain-unavailable"
@@ -36,7 +38,12 @@ enum PairingInstallationGuard {
         let reason: RetryableBootstrapReason
 
         var errorDescription: String? {
-            "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+            switch reason {
+            case .privateWindowMigrationUnavailable:
+                return "共有データの更新を完了できませんでした。データは削除せず保護しています。時間をおいて、もう一度お試しください。"
+            default:
+                return "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
+            }
         }
     }
 
@@ -283,7 +290,9 @@ enum PairingInstallationGuard {
             _ = try PrivateWindowCatalogStore
                 .bootstrapLegacyMigrationWhileLifecycleLocked()
         } catch {
-            throw deferredBootstrapError(reason: .pairingStateReadUnavailable)
+            throw deferredBootstrapError(
+                reason: .privateWindowMigrationUnavailable
+            )
         }
 
         let loadedState: PairingState?
@@ -525,6 +534,15 @@ enum PairingInstallationGuard {
                 "Pairing bootstrap deferred",
                 metadata: [
                     "sharingFailureReason": "pairing-state-read-unavailable"
+                ]
+            )
+        case .privateWindowMigrationUnavailable:
+            SharedLog.app.warning(
+                "pairing",
+                "Pairing bootstrap deferred",
+                metadata: [
+                    "sharingFailureReason":
+                        "private-window-migration-unavailable"
                 ]
             )
         case .keychainProtectedDataUnavailable:

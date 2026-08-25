@@ -399,7 +399,7 @@ struct CuratedAlbumDetailView: View {
                     .foregroundStyle(.white, Color.accentColor)
                     .padding(7)
             } else if photo.isLiked {
-                Image(systemName: "star.fill")
+                Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(7)
@@ -430,7 +430,7 @@ struct CuratedAlbumDetailView: View {
     private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         let date = photo.creationDate?.formatted(.dateTime.year().month().day().hour().minute())
             ?? "撮影日時不明"
-        return photo.isLiked ? "\(date)の猫の写真、思い出に追加済み" : "\(date)の猫の写真"
+        return photo.isLiked ? "\(date)の猫の写真、思い出に残した写真" : "\(date)の猫の写真"
     }
 }
 
@@ -459,11 +459,11 @@ struct LikedPhotosView: View {
                         Label {
                             Text("思い出はまだありません")
                         } icon: {
-                            Image(systemName: "star")
+                            Image(systemName: "photo.stack")
                                 .font(.system(size: 28, weight: .semibold))
                         }
                     } description: {
-                        Text("写真の「思い出に追加」を押すと、ここに溜まります。")
+                        Text("写真の「思い出に残す」を押すと、ここに溜まります。")
                     }
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .padding()
@@ -473,7 +473,7 @@ struct LikedPhotosView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 9) {
-                        Label("追加した順", systemImage: "star.fill")
+                        Label("残した順", systemImage: "photo.stack.fill")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
@@ -672,7 +672,7 @@ struct LikedPhotosView: View {
         .overlay(alignment: .bottomLeading) {
             if !isSelectingForExport, let likedAt = photo.likedAt {
                 HStack(spacing: 3) {
-                    Image(systemName: "star.fill")
+                    Image(systemName: "checkmark.circle.fill")
                     Text(likedAt.formatted(.dateTime.year().month().day()))
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
@@ -691,9 +691,9 @@ struct LikedPhotosView: View {
     private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         if let likedAt = photo.likedAt {
             let date = likedAt.formatted(.dateTime.year().month().day())
-            return "\(date)に思い出へ追加した猫の写真"
+            return "\(date)に思い出へ残した猫の写真"
         }
-        return "思い出へ追加した猫の写真"
+        return "思い出へ残した猫の写真"
     }
 
     private func startExportSelection() {
@@ -783,7 +783,7 @@ private struct LikedPhotoBookActivityView: UIViewControllerRepresentable {
 
 /// The destination shared by widget deep links and in-app photo links.
 /// Paging is gesture-only: there is deliberately no "next" button competing
-/// with the single private action, "思い出に追加".
+/// with the single private action, "思い出に残す".
 struct PhotoBrowserView: View {
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -921,9 +921,11 @@ struct PhotoBrowserView: View {
                             toggleLike(selectedPhoto.localIdentifier)
                         } label: {
                             HStack(spacing: 9) {
-                                Image(systemName: selectedPhoto.isLiked ? "star.fill" : "star")
+                                Image(systemName: selectedPhoto.isLiked
+                                    ? "checkmark.circle.fill"
+                                    : "photo.badge.plus")
                                     .font(.system(size: 20, weight: .semibold))
-                                Text(selectedPhoto.isLiked ? "思い出から外す" : "思い出に追加")
+                                Text(selectedPhoto.isLiked ? "思い出から外す" : "思い出に残す")
                             }
                             .font(.headline)
                             .frame(maxWidth: .infinity)
@@ -931,7 +933,7 @@ struct PhotoBrowserView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(selectedPhoto.isLiked ? Color.secondary : Color.accentColor)
                         .controlSize(.large)
-                        .accessibilityLabel(selectedPhoto.isLiked ? "思い出から外す" : "思い出に追加")
+                        .accessibilityLabel(selectedPhoto.isLiked ? "思い出から外す" : "思い出に残す")
 
                         widgetTiming
                     }

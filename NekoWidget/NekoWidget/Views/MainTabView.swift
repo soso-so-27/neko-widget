@@ -26,6 +26,7 @@ struct MainTabView: View {
     @Binding var deepLinkedPhotoIdentifier: String?
     @Binding var deepLinkedPhotoShownAt: Date?
     @Binding var deepLinkedFamilyWindowIsPresented: Bool
+    @Binding var deepLinkedFamilyMomentSourceDigest: String?
 
     let chooseMorePhotos: () -> Void
     let requestPhotoAccess: () -> Void
@@ -65,6 +66,7 @@ struct MainTabView: View {
                     familyWindowPresentation: familyWindowPresentation,
                     privateWindowDisplayName: privateWindowDisplayName,
                     showsFamilyWindow: $deepLinkedFamilyWindowIsPresented,
+                    pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
                     requestPhotoAccess: requestPhotoAccess,
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
@@ -105,10 +107,7 @@ struct MainTabView: View {
                     .navigationDestination(for: String.self, destination: detailView)
             }
             .tabItem {
-                // Tab bars on iOS 26 may discard a custom SwiftUI icon view.
-                // A standard symbol keeps the destination visible; the custom
-                // star remains the consistent private-memory action.
-                Label("思い出", systemImage: "star.fill")
+                Label("思い出", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-likes")
             }
             .tag(AppTab.likes)

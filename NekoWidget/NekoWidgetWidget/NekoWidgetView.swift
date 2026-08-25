@@ -79,16 +79,18 @@ struct NekoWidgetView: View {
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
             HStack(spacing: family == .systemSmall ? 6 : 8) {
-                if let photoURL = entry.photoURL {
-                    Link(destination: photoURL) {
-                        actionCircle {
-                            Image(systemName: entry.isBookmarked ? "star.fill" : "star")
-                                .font(.system(size: memoryIconSize, weight: .semibold))
-                                .foregroundStyle(.white)
-                        }
+                if let memoryActionURL = entry.memoryActionURL {
+                    Link(destination: memoryActionURL) {
+                        actionPill(
+                            entry.isBookmarked ? "残した" : "残す",
+                            systemImage: entry.isBookmarked
+                                ? "checkmark.circle.fill"
+                                : "photo.badge.plus",
+                            isActive: entry.isBookmarked
+                        )
                     }
                     .accessibilityLabel(
-                        entry.isBookmarked ? "思い出に追加済み" : "アプリで思い出に追加"
+                        entry.isBookmarked ? "思い出に残した写真" : "アプリで思い出に残す"
                     )
                     .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
                 }
@@ -105,15 +107,17 @@ struct NekoWidgetView: View {
                     fallbackIsLiked: entry.isLiked
                 )
             ) {
-                actionCircle {
-                    Image(systemName: entry.isLiked ? "star.fill" : "star")
-                        .font(.system(size: memoryIconSize, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .invalidatableContent()
-                }
+                actionPill(
+                    entry.isLiked ? "残した" : "残す",
+                    systemImage: entry.isLiked
+                        ? "checkmark.circle.fill"
+                        : "photo.badge.plus",
+                    isActive: entry.isLiked,
+                    invalidatesContent: true
+                )
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(entry.isLiked ? "思い出から外す" : "思い出に追加")
+            .accessibilityLabel(entry.isLiked ? "思い出から外す" : "思い出に残す")
             .accessibilityHint("アプリを開かず、自分の思い出一覧を更新します")
             .padding(actionButtonInset)
         }
@@ -124,32 +128,32 @@ struct NekoWidgetView: View {
         switch entry.familyHeartStatus {
         case .ready:
             Button(intent: SendFamilyWidgetHeartIntent(sourceDigest: sourceDigest)) {
-                actionCircle {
-                    Image(systemName: "heart")
-                        .font(.system(size: memoryIconSize, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .invalidatableContent()
-                }
+                actionPill(
+                    "ハート",
+                    systemImage: "heart",
+                    isActive: false,
+                    invalidatesContent: true
+                )
             }
             .buttonStyle(.plain)
             .accessibilityLabel("ハートを送信待ちに追加")
             .accessibilityHint("アプリの同期後、サーバー受付済みとして表示します")
         case .pending:
-            actionCircle {
-                Image(systemName: "clock.fill")
-                    .font(.system(size: memoryIconSize, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .invalidatableContent()
-            }
+            actionPill(
+                "送信中",
+                systemImage: "clock.fill",
+                isActive: false,
+                invalidatesContent: true
+            )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("ハートは送信待ちです")
         case .serverAccepted:
-            actionCircle {
-                Image(systemName: "heart.fill")
-                    .font(.system(size: memoryIconSize, weight: .semibold))
-                    .foregroundStyle(.pink)
-                    .invalidatableContent()
-            }
+            actionPill(
+                "送信済み",
+                systemImage: "heart.fill",
+                isActive: true,
+                invalidatesContent: true
+            )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("ハートはサーバー受付済みです")
         case .hidden:
@@ -157,16 +161,32 @@ struct NekoWidgetView: View {
         }
     }
 
-    private func actionCircle<Content: View>(
-        @ViewBuilder content: () -> Content
+    private func actionPill(
+        _ title: String,
+        systemImage: String,
+        isActive: Bool,
+        invalidatesContent: Bool = false
     ) -> some View {
-        ZStack {
-            Circle()
-                .fill(.black.opacity(0.52))
-            content()
+        HStack(spacing: 4) {
+            if invalidatesContent {
+                Image(systemName: systemImage)
+                    .invalidatableContent()
+            } else {
+                Image(systemName: systemImage)
+            }
+            Text(title)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .frame(width: actionButtonSize, height: actionButtonSize)
-        .contentShape(Circle())
+        .font(.caption2.bold())
+        .foregroundStyle(.white)
+        .padding(.horizontal, family == .systemSmall ? 7 : 9)
+        .frame(height: actionButtonSize)
+        .background(
+            isActive ? Color.accentColor.opacity(0.92) : Color.black.opacity(0.56),
+            in: Capsule()
+        )
+        .contentShape(Capsule())
     }
 
     @ViewBuilder
@@ -197,10 +217,6 @@ struct NekoWidgetView: View {
         default:
             return 42
         }
-    }
-
-    private var memoryIconSize: CGFloat {
-        family == .systemSmall ? 16 : 18
     }
 
     private var actionButtonInset: CGFloat {

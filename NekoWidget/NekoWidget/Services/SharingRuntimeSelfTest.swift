@@ -421,6 +421,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("private-window-catalog-authority-uniqueness") {
             try Self.testPrivateWindowCatalogAuthorityUniqueness()
         })
+        results.append(run("private-window-legacy-conflict-quarantine-policy") {
+            try Self.testPrivateWindowLegacyConflictQuarantinePolicy()
+        })
         results.append(await runAsync("moment-process-serialized-refresh") {
             try await Self.testMomentProcessSerializedRefresh()
         })
@@ -462,6 +465,9 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(run("moment-outbox-bounds-and-expiry") {
             try Self.testMomentOutboxBoundsAndExpiry()
+        })
+        results.append(run("moment-build61-schema7-migration") {
+            try Self.testBuild61NonEmptySchema7Migration()
         })
         results.append(run("moment-outcome-ledger-migration") {
             try Self.testMomentOutcomeLedgerAndMigration()
@@ -715,6 +721,254 @@ actor SharingRuntimeSelfTestRunner {
             throw MomentSharingError.stateUnavailable
         } catch PrivateWindowCatalogStore.Error.invalidCatalog {
             // Expected: one Keychain account may never authorize two slots.
+        }
+    }
+
+    private static func testPrivateWindowLegacyConflictQuarantinePolicy() throws {
+        guard PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([]),
+              PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([
+                  "family-widget-cache",
+                  "family-widget-cache-history.v1.json",
+                  "family-widget-manifest.v1.json",
+                  "moment-handoff",
+                  ".sharing-secure-runtime"
+              ]),
+              !PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([
+                  "moment-sharing-state.v1.json"
+              ]),
+              !PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([
+                  "pairing-state.json"
+              ]),
+              !PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([
+                  "moment-handoff-report-only.v1"
+              ])
+        else { throw PairingError.stateUnavailable }
+
+        var first = PairingState.unpaired(
+            installationMarker: UUID().uuidString.lowercased()
+        )
+        first.phase = .paired
+        first.role = .inviter
+        first.credentialAccount = UUID().uuidString.lowercased()
+        first.participantID = "participant_fixture"
+        first.spaceID = "space_fixture"
+        first.memberID = "member_fixture"
+        first.localMomentDeviceID = "device_fixture"
+        first.peerMemberID = "peer_member_fixture"
+        first.peerParticipantID = "peer_participant_fixture"
+        var sameIdentity = first
+        sameIdentity.storageRevision = 99
+        sameIdentity.lastError = "presentation-only mutable value"
+        let pairingEncoder = JSONEncoder()
+        pairingEncoder.dateEncodingStrategy = .iso8601
+        let encodedFirst = try pairingEncoder.encode(first)
+        var build61Object = try JSONSerialization.jsonObject(
+            with: encodedFirst
+        ) as? [String: Any]
+        // Build 61 predates the durable additional-device naming fields. The
+        // migration projection must decode that exact missing-key shape.
+        build61Object?.removeValue(forKey: "localDeviceIsAdditional")
+        build61Object?.removeValue(
+            forKey: "canonicalParticipantSigningPublicKey"
+        )
+        guard let build61Object else { throw PairingError.stateUnavailable }
+        let build61PairingData = try JSONSerialization.data(
+            withJSONObject: build61Object,
+            options: [.sortedKeys]
+        )
+        guard PrivateWindowCatalogStore.runtimeTestLegacyPairingIdentitiesMatch(
+            encodedFirst,
+            build61PairingData
+        ) else { throw PairingError.stateUnavailable }
+        guard PrivateWindowCatalogStore.runtimeTestLegacyPairingIdentitiesMatch(
+            encodedFirst,
+            try pairingEncoder.encode(sameIdentity)
+        ) else { throw PairingError.stateUnavailable }
+
+        var differentIdentity = sameIdentity
+        differentIdentity.spaceID = "other_space_fixture"
+        guard !PrivateWindowCatalogStore.runtimeTestLegacyPairingIdentitiesMatch(
+            try pairingEncoder.encode(first),
+            try pairingEncoder.encode(differentIdentity)
+        ) else { throw PairingError.stateUnavailable }
+
+        var incomplete = sameIdentity
+        incomplete.phase = .joining
+        guard !PrivateWindowCatalogStore.runtimeTestLegacyPairingIdentitiesMatch(
+            try pairingEncoder.encode(first),
+            try pairingEncoder.encode(incomplete)
+        ) else { throw PairingError.stateUnavailable }
+
+        let fileManager = FileManager.default
+        let fixtureRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "private-window-quarantine-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        defer { try? fileManager.removeItem(at: fixtureRoot) }
+        let legacy = fixtureRoot.appendingPathComponent(
+            "sharing",
+            isDirectory: true
+        )
+        let destination = fixtureRoot.appendingPathComponent(
+            "destination",
+            isDirectory: true
+        )
+        let quarantine = fixtureRoot.appendingPathComponent(
+            "quarantine",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: legacy.appendingPathComponent(
+                "family-widget-cache",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true
+        )
+        try fileManager.createDirectory(
+            at: destination,
+            withIntermediateDirectories: true
+        )
+        let legacyHandoff = legacy.appendingPathComponent(
+            "moment-handoff",
+            isDirectory: true
+        )
+        try SharingSecureFile.write(
+            Data("protected-admission-fixture".utf8),
+            to: legacyHandoff.appendingPathComponent(
+                "admissions.v1.plist",
+                isDirectory: false
+            )
+        )
+        let authorityMarker = destination.appendingPathComponent(
+            "authority-fixture",
+            isDirectory: false
+        )
+        try Data("destination".utf8).write(to: authorityMarker)
+        try PrivateWindowCatalogStore
+            .runtimeTestQuarantineLegacySharingIfSafe(
+                legacy,
+                authoritativeDestination: destination,
+                quarantineRoot: quarantine
+            )
+        let quarantineEntries = try fileManager.contentsOfDirectory(
+            at: quarantine,
+            includingPropertiesForKeys: nil
+        )
+        guard !fileManager.fileExists(atPath: legacy.path),
+              fileManager.fileExists(atPath: authorityMarker.path),
+              quarantineEntries.count == 1,
+              fileManager.fileExists(
+                  atPath: quarantineEntries[0]
+                      .appendingPathComponent(
+                          "family-widget-cache",
+                          isDirectory: true
+                      )
+                      .path
+              ),
+              fileManager.fileExists(
+                  atPath: quarantineEntries[0]
+                      .appendingPathComponent(
+                          "moment-handoff/admissions.v1.plist",
+                          isDirectory: false
+                      )
+                      .path
+              )
+        else { throw PairingError.stateUnavailable }
+
+        let globalHandoff = fixtureRoot.appendingPathComponent(
+            "moment-handoff.v2",
+            isDirectory: true
+        )
+        let reappearedHandoff = fixtureRoot.appendingPathComponent(
+            "reappeared-moment-handoff",
+            isDirectory: true
+        )
+        let handoffQuarantine = fixtureRoot.appendingPathComponent(
+            "handoff-quarantine",
+            isDirectory: true
+        )
+        let globalAdmission = globalHandoff.appendingPathComponent(
+            "admissions.v1.plist",
+            isDirectory: false
+        )
+        let legacyAdmission = reappearedHandoff.appendingPathComponent(
+            "admissions.v1.plist",
+            isDirectory: false
+        )
+        try SharingSecureFile.write(
+            Data("global-authority-fixture".utf8),
+            to: globalAdmission
+        )
+        try SharingSecureFile.write(
+            Data("late-legacy-fixture".utf8),
+            to: legacyAdmission
+        )
+        guard SharedContainer
+            .legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(
+                globalHandoff
+            ),
+            SharedContainer
+                .legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(
+                    reappearedHandoff
+                )
+        else { throw PairingError.stateUnavailable }
+        let handoffWindowID = "00000000-0000-4000-8000-000000000063"
+        try MomentShareHandoffStore.runtimeTestQuarantineLegacyHandoffSources(
+            [reappearedHandoff],
+            quarantineRoot: handoffQuarantine,
+            localWindowID: handoffWindowID
+        )
+        let handoffQuarantineEntries = try fileManager.contentsOfDirectory(
+            at: handoffQuarantine,
+            includingPropertiesForKeys: nil
+        )
+        let scopedHandoffEntries = try fileManager.contentsOfDirectory(
+            at: handoffQuarantine.appendingPathComponent(
+                handoffWindowID,
+                isDirectory: true
+            ),
+            includingPropertiesForKeys: nil
+        )
+        guard fileManager.fileExists(atPath: globalAdmission.path),
+              !fileManager.fileExists(atPath: reappearedHandoff.path),
+              handoffQuarantineEntries.count == 1,
+              handoffQuarantineEntries[0].lastPathComponent == handoffWindowID,
+              scopedHandoffEntries.count == 1,
+              fileManager.fileExists(
+                  atPath: scopedHandoffEntries[0]
+                      .appendingPathComponent(
+                          "admissions.v1.plist",
+                          isDirectory: false
+                      )
+                      .path
+              )
+        else { throw PairingError.stateUnavailable }
+
+        let unsafeLegacy = fixtureRoot.appendingPathComponent(
+            "unsafe-sharing",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: unsafeLegacy,
+            withIntermediateDirectories: true
+        )
+        let unsafeState = unsafeLegacy.appendingPathComponent(
+            "moment-sharing-state.v1.json",
+            isDirectory: false
+        )
+        try Data("preserve".utf8).write(to: unsafeState)
+        do {
+            try PrivateWindowCatalogStore
+                .runtimeTestQuarantineLegacySharingIfSafe(
+                    unsafeLegacy,
+                    authoritativeDestination: destination,
+                    quarantineRoot: quarantine
+                )
+            throw PairingError.stateUnavailable
+        } catch PrivateWindowCatalogStore.Error.conflictingLegacyMigration {
+            guard fileManager.fileExists(atPath: unsafeState.path),
+                  fileManager.fileExists(atPath: authorityMarker.path)
+            else { throw PairingError.stateUnavailable }
         }
     }
 
@@ -3622,6 +3876,121 @@ actor SharingRuntimeSelfTestRunner {
               }) == true,
               !FileManager.default.fileExists(atPath: crashCiphertext.path),
               !FileManager.default.fileExists(atPath: crashReceivedJPEG.path)
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testBuild61NonEmptySchema7Migration() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+        let baseDate = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970)
+        )
+        let sentContext = MomentRequestContext(
+            spaceID: "space_build61_fixture",
+            senderParticipantID: "participant_build61_sender_fixture",
+            senderDeviceID: "device_build61_sender_fixture",
+            clientRequestID: UUID(),
+            clientMomentID: UUID(),
+            kind: .live,
+            keyEpoch: 1
+        )
+        let sent = try MomentOutboxItem(
+            id: sentContext.clientMomentID,
+            context: sentContext,
+            phase: .committed,
+            ciphertextFileName:
+                "\(sentContext.clientMomentID.uuidString.lowercased()).ciphertext",
+            ciphertextSize: 128,
+            ciphertextSHA256: Data(repeating: 0x61, count: 32),
+            moderationVersion: MomentSharingProtocol.moderationVersion,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: baseDate,
+            serverMomentID: "moment_build61_sent_fixture",
+            attemptCount: 0,
+            createdAt: baseDate,
+            updatedAt: baseDate
+        ).validated()
+        let receivedMomentID = "moment_build61_received_fixture"
+        let received = MomentInboxItem(
+            id: receivedMomentID,
+            senderParticipantID: "participant_build61_peer_fixture",
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "\(receivedMomentID).jpg",
+            capturedAt: baseDate,
+            captureDateIsMissing: false,
+            committedAt: baseDate,
+            receivedAt: baseDate.addingTimeInterval(1),
+            state: .acknowledged,
+            acknowledgedAt: baseDate.addingTimeInterval(2),
+            accessExpiresAt: baseDate.addingTimeInterval(30 * 24 * 60 * 60)
+        )
+        let saved = MomentSavedMemoryRecord(
+            momentID: receivedMomentID,
+            savedAt: baseDate.addingTimeInterval(3)
+        )
+        let sentHeart = MomentPawOutboxItem(
+            clientRequestID: UUID(),
+            momentID: receivedMomentID,
+            phase: .sent,
+            serverReactionID: "reaction_build61_sent_fixture",
+            createdAt: baseDate.addingTimeInterval(4),
+            updatedAt: baseDate.addingTimeInterval(5)
+        )
+        let receivedHeart = MomentPawReceipt(
+            reactionID: "reaction_build61_received_fixture",
+            momentID: "moment_build61_sent_fixture",
+            observedAt: baseDate.addingTimeInterval(6)
+        )
+        let build61State = MomentSharingState(
+            storageRevision: 61,
+            changeCursor: "moment_cursor_build61_fixture",
+            reactionCursor: "reaction_cursor_build61_fixture",
+            outbox: [sent],
+            inbox: [received],
+            savedMemories: [saved],
+            pawOutbox: [sentHeart],
+            receivedPaws: [receivedHeart],
+            reportOutbox: []
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard var legacyObject = try JSONSerialization.jsonObject(
+            with: encoder.encode(build61State)
+        ) as? [String: Any],
+              let stateURL = SharedContainer.momentSharingStateURL
+        else { throw MomentSharingError.stateUnavailable }
+        legacyObject["schemaVersion"] = 7
+        legacyObject.removeValue(forKey: "importedMemories")
+        legacyObject.removeValue(forKey: "pendingMemoryImports")
+        try SharingSecureFile.write(
+            JSONSerialization.data(withJSONObject: legacyObject, options: [.sortedKeys]),
+            to: stateURL
+        )
+
+        let migrated = try MomentSharingStateStore.load()
+        guard migrated.schemaVersion == MomentSharingState.schemaVersion,
+              migrated.storageRevision == 61,
+              migrated.changeCursor == "moment_cursor_build61_fixture",
+              migrated.reactionCursor == "reaction_cursor_build61_fixture",
+              migrated.outbox == [sent],
+              migrated.inbox == [received],
+              migrated.savedMemories == [saved],
+              migrated.pawOutbox == [sentHeart],
+              migrated.receivedPaws == [receivedHeart],
+              migrated.importedMemories.isEmpty,
+              migrated.pendingMemoryImports.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+
+        let token = try SharingLifecycleGate.issueToken()
+        _ = try MomentSharingStateStore.mutate(validating: token) { _ in }
+        let roundTripped = try MomentSharingStateStore.load()
+        guard roundTripped.storageRevision == 62,
+              roundTripped.outbox == [sent],
+              roundTripped.inbox == [received],
+              roundTripped.savedMemories == [saved],
+              roundTripped.pawOutbox == [sentHeart],
+              roundTripped.receivedPaws == [receivedHeart]
         else { throw MomentSharingError.stateUnavailable }
     }
 
