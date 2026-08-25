@@ -236,7 +236,7 @@ enum PrivateWindowCatalogStore {
         now: Date = .now
     ) throws -> PrivateWindowCatalogEntry {
         guard var state = try load() else { throw Error.invalidCatalog }
-        guard recoveryLocationsWhileLifecycleLocked().contains(location) else {
+        guard try recoveryLocationsWhileLifecycleLocked().contains(location) else {
             throw Error.conflictingLegacyMigration
         }
         guard state.activeWindowID == targetLocalWindowID else {
