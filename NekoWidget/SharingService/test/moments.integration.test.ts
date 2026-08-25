@@ -96,6 +96,7 @@ describe("moment runtime kill switch", () => {
 interface TestMember {
   id: string;
   keys: KeyPair;
+  deviceID?: string;
 }
 
 interface TestSpace {
@@ -204,6 +205,9 @@ async function signedFetch(
     "Neko-Nonce": nonce,
     "Neko-Signature": signature,
   });
+  if (member.deviceID !== undefined) {
+    headers.set("Neko-Device-ID", member.deviceID);
+  }
   if (value !== undefined) {
     headers.set("Content-Type", binary ? "application/octet-stream" : "application/json");
   }
@@ -1341,6 +1345,22 @@ describe("bounded paw reactions", () => {
     expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toEqual({ ...first, alreadyReacted: true });
 
+    // Model an event created without any registered physical-device delivery.
+    // A successful cursor read may remove that empty event tomb, while the
+    // multi-device case below proves that another iPhone's delivery survives.
+    const now = Math.floor(Date.now() / 1_000);
+    await testEnv.DB.prepare(
+      `INSERT INTO notification_events(
+         id, kind, participant_id, moment_id, reaction_id, created_at, expires_at
+       ) VALUES (?, 'heart', ?, NULL, ?, ?, ?)`,
+    ).bind(
+      randomValue(16),
+      space.owner.id,
+      first.reaction.id,
+      now,
+      now + 86_400,
+    ).run();
+
     const senderChangesResponse = await signedFetch(
       "/v2/reactions/changes",
       "GET",
@@ -1366,6 +1386,9 @@ describe("bounded paw reactions", () => {
       .toEqual(["cursor", "reaction", "type"]);
     expect(Object.keys(senderChanges.changes[0]?.reaction ?? {}).sort())
       .toEqual(["id", "kind", "momentId"]);
+    expect(await testEnv.DB.prepare(
+      "SELECT 1 AS present FROM notification_events WHERE reaction_id = ?",
+    ).bind(first.reaction.id).first()).toBeNull();
 
     const emptySenderPage = await signedFetch(
       `/v2/reactions/changes/${senderChanges.nextCursor}`,
@@ -1406,6 +1429,227 @@ describe("bounded paw reactions", () => {
       `SELECT reaction_count FROM moment_reaction_daily_usage
         WHERE participant_id = ?`,
     ).bind(space.invitee.id).first<{ reaction_count: number }>())?.reaction_count).toBe(1);
+  });
+
+  it("acknowledges a heart alert only for the requesting physical device", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const created = await signedFetch(
+      `/v2/moments/${published.reservation.moment.id}/reactions`,
+      "POST",
+      space.invitee,
+      pawBody(),
+    );
+    expect(created.status).toBe(201);
+    const reactionID = (await created.json<{ reaction: { id: string } }>()).reaction.id;
+
+    const primary = await testEnv.DB.prepare(
+      `SELECT participant.id AS participant_id, device.id AS device_id
+         FROM moment_participants AS participant
+         JOIN moment_devices AS device
+           ON device.participant_id = participant.id
+          AND device.legacy_member_id = ?
+        WHERE participant.legacy_member_id = ?`,
+    ).bind(space.owner.id, space.owner.id).first<{
+      participant_id: string;
+      device_id: string;
+    }>();
+    expect(primary).not.toBeNull();
+
+    const now = Math.floor(Date.now() / 1_000);
+    const additionalKeys = await signingKeys();
+    const additionalDeviceID = randomValue(16);
+    const primaryDigest = randomValue(32);
+    const additionalDigest = randomValue(32);
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO moment_devices(
+           id, participant_id, legacy_member_id, agreement_public_key,
+           signing_public_key, state, created_at, activated_at
+         ) VALUES (?, ?, NULL, ?, ?, 'active', ?, ?)`,
+      ).bind(
+        additionalDeviceID,
+        primary?.participant_id,
+        randomValue(32),
+        await signingPublicKey(additionalKeys),
+        now,
+        now,
+      ),
+      ...[
+        [primary?.device_id, primaryDigest],
+        [additionalDeviceID, additionalDigest],
+      ].map(([deviceID, digest]) => testEnv.DB.prepare(
+        `INSERT INTO apns_subscriptions(
+           device_id, participant_id, environment,
+           token_ciphertext, token_nonce, token_digest, encryption_key_id,
+           created_at, updated_at, expires_at
+         ) VALUES (?, ?, 'production', ?, ?, ?, 'test-key', ?, ?, ?)`,
+      ).bind(
+        deviceID,
+        primary?.participant_id,
+        randomValue(48),
+        randomValue(12),
+        digest,
+        now,
+        now,
+        now + 86_400,
+      )),
+      testEnv.DB.prepare(
+        `INSERT INTO notification_events(
+           id, kind, participant_id, moment_id, reaction_id, created_at, expires_at
+         ) VALUES (?, 'heart', ?, NULL, ?, ?, ?)`,
+      ).bind(
+        randomValue(16),
+        primary?.participant_id,
+        reactionID,
+        now,
+        now + 86_400,
+      ),
+    ]);
+    expect(await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count
+         FROM notification_deliveries AS delivery
+         JOIN notification_events AS event ON event.id = delivery.event_id
+        WHERE event.reaction_id = ?`,
+    ).bind(reactionID).first<{ count: number }>()).toEqual({ count: 2 });
+
+    const additionalChanges = await signedFetch(
+      "/v2/reactions/changes",
+      "GET",
+      { id: space.owner.id, keys: additionalKeys, deviceID: additionalDeviceID },
+    );
+    expect(additionalChanges.status).toBe(200);
+    expect((await additionalChanges.json<{ changes: unknown[] }>()).changes).toHaveLength(1);
+    expect(await testEnv.DB.prepare(
+      `SELECT delivery.token_digest
+         FROM notification_deliveries AS delivery
+         JOIN notification_events AS event ON event.id = delivery.event_id
+        WHERE event.reaction_id = ?`,
+    ).bind(reactionID).all<{ token_digest: string }>()).toMatchObject({
+      results: [{ token_digest: primaryDigest }],
+    });
+    expect(await testEnv.DB.prepare(
+      "SELECT 1 AS present FROM notification_events WHERE reaction_id = ?",
+    ).bind(reactionID).first()).not.toBeNull();
+
+    const primaryChanges = await signedFetch(
+      "/v2/reactions/changes",
+      "GET",
+      space.owner,
+    );
+    expect(primaryChanges.status).toBe(200);
+    expect((await primaryChanges.json<{ changes: unknown[] }>()).changes).toHaveLength(1);
+    expect(await testEnv.DB.prepare(
+      "SELECT 1 AS present FROM notification_events WHERE reaction_id = ?",
+    ).bind(reactionID).first()).toBeNull();
+  });
+
+  it("acknowledges a moment alert only for the requesting physical device", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const momentID = published.reservation.moment.id;
+    const primary = await testEnv.DB.prepare(
+      `SELECT participant.id AS participant_id, device.id AS device_id
+         FROM moment_participants AS participant
+         JOIN moment_devices AS device
+           ON device.participant_id = participant.id
+          AND device.legacy_member_id = ?
+        WHERE participant.legacy_member_id = ?`,
+    ).bind(space.invitee.id, space.invitee.id).first<{
+      participant_id: string;
+      device_id: string;
+    }>();
+    expect(primary).not.toBeNull();
+
+    const now = Math.floor(Date.now() / 1_000);
+    const additionalKeys = await signingKeys();
+    const additionalDeviceID = randomValue(16);
+    const primaryDigest = randomValue(32);
+    const additionalDigest = randomValue(32);
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO moment_devices(
+           id, participant_id, legacy_member_id, agreement_public_key,
+           signing_public_key, state, created_at, activated_at
+         ) VALUES (?, ?, NULL, ?, ?, 'active', ?, ?)`,
+      ).bind(
+        additionalDeviceID,
+        primary?.participant_id,
+        randomValue(32),
+        await signingPublicKey(additionalKeys),
+        now,
+        now,
+      ),
+      ...[
+        [primary?.device_id, primaryDigest],
+        [additionalDeviceID, additionalDigest],
+      ].map(([deviceID, digest]) => testEnv.DB.prepare(
+        `INSERT INTO apns_subscriptions(
+           device_id, participant_id, environment,
+           token_ciphertext, token_nonce, token_digest, encryption_key_id,
+           created_at, updated_at, expires_at
+         ) VALUES (?, ?, 'production', ?, ?, ?, 'test-key', ?, ?, ?)`,
+      ).bind(
+        deviceID,
+        primary?.participant_id,
+        randomValue(48),
+        randomValue(12),
+        digest,
+        now,
+        now,
+        now + 86_400,
+      )),
+      testEnv.DB.prepare(
+        `INSERT INTO notification_events(
+           id, kind, participant_id, moment_id, reaction_id, created_at, expires_at
+         ) VALUES (?, 'new_moment', ?, ?, NULL, ?, ?)`,
+      ).bind(
+        randomValue(16),
+        primary?.participant_id,
+        momentID,
+        now,
+        now + 86_400,
+      ),
+    ]);
+    expect(await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count
+         FROM notification_deliveries AS delivery
+         JOIN notification_events AS event ON event.id = delivery.event_id
+        WHERE event.moment_id = ?`,
+    ).bind(momentID).first<{ count: number }>()).toEqual({ count: 2 });
+
+    const acknowledgeBody = {
+      protocolVersion: 2,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      ciphertextSHA256: published.reservation.moment.ciphertextSHA256,
+    };
+    expect((await signedFetch(
+      `/v2/moments/${momentID}/ack`,
+      "POST",
+      { id: space.invitee.id, keys: additionalKeys, deviceID: additionalDeviceID },
+      acknowledgeBody,
+    )).status).toBe(200);
+    expect(await testEnv.DB.prepare(
+      `SELECT delivery.token_digest
+         FROM notification_deliveries AS delivery
+         JOIN notification_events AS event ON event.id = delivery.event_id
+        WHERE event.moment_id = ?`,
+    ).bind(momentID).all<{ token_digest: string }>()).toMatchObject({
+      results: [{ token_digest: primaryDigest }],
+    });
+    expect(await testEnv.DB.prepare(
+      "SELECT 1 AS present FROM notification_events WHERE moment_id = ?",
+    ).bind(momentID).first()).not.toBeNull();
+
+    expect((await signedFetch(
+      `/v2/moments/${momentID}/ack`,
+      "POST",
+      space.invitee,
+      { ...acknowledgeBody, clientRequestId: crypto.randomUUID().toLowerCase() },
+    )).status).toBe(200);
+    expect(await testEnv.DB.prepare(
+      "SELECT 1 AS present FROM notification_events WHERE moment_id = ?",
+    ).bind(momentID).first()).toBeNull();
   });
 
   it("accepts an acknowledged delivery, rejects self and expired access, and consumes replayed nonces", async () => {

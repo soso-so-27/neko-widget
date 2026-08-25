@@ -52,7 +52,7 @@ struct NekoWidgetView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
-                        entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                        WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
                             ? "\(entry.windowDisplayName)に届いた写真"
                             : "このiPhoneで見つけた猫写真"
                     )
@@ -75,27 +75,23 @@ struct NekoWidgetView: View {
 
     @ViewBuilder
     private var photoActionButtons: some View {
-        if entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID,
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
             HStack(spacing: family == .systemSmall ? 6 : 8) {
-                Button(
-                    intent: ToggleFamilyWidgetBookmarkIntent(
-                        sourceDigest: sourceDigest
-                    )
-                ) {
-                    actionCircle {
-                        Image(systemName: entry.isBookmarked ? "star.fill" : "star")
-                            .font(.system(size: memoryIconSize, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .invalidatableContent()
+                if let photoURL = entry.photoURL {
+                    Link(destination: photoURL) {
+                        actionCircle {
+                            Image(systemName: entry.isBookmarked ? "star.fill" : "star")
+                                .font(.system(size: memoryIconSize, weight: .semibold))
+                                .foregroundStyle(.white)
+                        }
                     }
+                    .accessibilityLabel(
+                        entry.isBookmarked ? "思い出に追加済み" : "アプリで思い出に追加"
+                    )
+                    .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(
-                    entry.isBookmarked ? "思い出から外す" : "思い出に追加"
-                )
-                .accessibilityHint("自分だけの操作です。相手には送られません")
 
                 familyHeartControl(sourceDigest: sourceDigest)
             }
@@ -175,7 +171,7 @@ struct NekoWidgetView: View {
 
     @ViewBuilder
     private var familySourceLabel: some View {
-        if entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID,
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            entry.cacheFilename != nil {
             Text(entry.familyMomentIsFresh
                 ? "いま届いた・\(entry.windowDisplayName)"
@@ -224,7 +220,7 @@ struct NekoWidgetView: View {
                 )
                 .foregroundStyle(.orange)
 
-            Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+            Text(WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
                 ? "\(entry.windowDisplayName)にはまだ写真がありません"
                 : "猫の写真を追加")
                 .font(family == .systemSmall ? .headline : .title3.weight(.semibold))
@@ -232,13 +228,13 @@ struct NekoWidgetView: View {
                 .foregroundStyle(.white)
 
             if family == .systemSmall {
-                Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                Text(WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
                     ? "アプリで更新"
                     : "アプリでスキャン")
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
             } else {
-                Text(entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+                Text(WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
                     ? "アプリで\(entry.windowDisplayName)を開いて更新してください"
                     : "アプリで写真へのアクセスを確認し、スキャンしてください")
                     .font(.caption)

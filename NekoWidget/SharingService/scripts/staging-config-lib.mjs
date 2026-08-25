@@ -59,8 +59,22 @@ function reviewedMomentRuntime(options) {
   return expectedMomentRuntime;
 }
 
+function reviewedAPNSRuntime(options) {
+  const expectedAPNSRuntime = options?.expectedAPNSRuntime ?? "NO";
+  requireCondition(
+    expectedAPNSRuntime === "NO" || expectedAPNSRuntime === "YES",
+    "The expected APNs runtime must be exactly NO or YES.",
+  );
+  return expectedAPNSRuntime;
+}
+
 export function validateStagingConfig(config, options = {}) {
   const expectedMomentRuntime = reviewedMomentRuntime(options);
+  const expectedAPNSRuntime = reviewedAPNSRuntime(options);
+  requireCondition(
+    expectedAPNSRuntime !== "YES" || expectedMomentRuntime === "YES",
+    "The APNs runtime requires the reviewed private media runtimes to be ON.",
+  );
   requireCondition(isRecord(config), "The staging Wrangler configuration must be an object.");
   requireCondition(config.name === expectedWorkerName, "The staging Worker name is not isolated.");
   requireCondition(config.main === "src/index.ts", "The staging Worker entry point changed.");
@@ -88,6 +102,7 @@ export function validateStagingConfig(config, options = {}) {
       MOMENT_RUNTIME_ENABLED: expectedMomentRuntime,
       REACTION_RUNTIME_ENABLED: expectedMomentRuntime,
       WINDOW_NAME_RUNTIME_ENABLED: expectedMomentRuntime,
+      APNS_RUNTIME_ENABLED: expectedAPNSRuntime,
       LEGACY_SHARING_RUNTIME_ENABLED: "NO",
       INVITATION_TTL_SECONDS: "86400",
       CHALLENGE_TTL_SECONDS: "300",
@@ -101,6 +116,7 @@ export function validateStagingConfig(config, options = {}) {
     config.triggers,
     {
       crons: [
+        "* * * * *",
         "*/5 * * * *",
         "2,7,12,17,22,27,32,37,42,47,52,57 * * * *",
       ],
@@ -165,6 +181,11 @@ export function validateStagingConfig(config, options = {}) {
 
 export function renderStagingConfig(template, environment, options = {}) {
   const expectedMomentRuntime = reviewedMomentRuntime(options);
+  const expectedAPNSRuntime = reviewedAPNSRuntime(options);
+  requireCondition(
+    expectedAPNSRuntime !== "YES" || expectedMomentRuntime === "YES",
+    "The APNs runtime requires the reviewed private media runtimes to be ON.",
+  );
   let rendered = template;
   for (const [placeholder, variableName] of replacements) {
     const value = environment[variableName];
@@ -189,9 +210,14 @@ export function renderStagingConfig(template, environment, options = {}) {
     config?.vars?.WINDOW_NAME_RUNTIME_ENABLED === "NO",
     "The tracked staging template must keep the window-name runtime locked OFF.",
   );
+  requireCondition(
+    config?.vars?.APNS_RUNTIME_ENABLED === "NO",
+    "The tracked staging template must keep the APNs runtime locked OFF.",
+  );
   config.vars.MOMENT_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.REACTION_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.WINDOW_NAME_RUNTIME_ENABLED = expectedMomentRuntime;
-  validateStagingConfig(config, { expectedMomentRuntime });
+  config.vars.APNS_RUNTIME_ENABLED = expectedAPNSRuntime;
+  validateStagingConfig(config, { expectedMomentRuntime, expectedAPNSRuntime });
   return `${JSON.stringify(config, null, 2)}\n`;
 }

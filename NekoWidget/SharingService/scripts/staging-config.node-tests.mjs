@@ -28,6 +28,7 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(config.vars.MOMENT_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.REACTION_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.WINDOW_NAME_RUNTIME_ENABLED, "NO");
+  assert.equal(config.vars.APNS_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.LEGACY_SHARING_RUNTIME_ENABLED, "NO");
   assert.equal(config.limits, undefined);
   assert.equal(config.d1_databases[0].database_name, "neko-window-sharing-staging");
@@ -81,6 +82,27 @@ test("rejects a staging config that enables the moment runtime", () => {
   const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
   config.vars.MOMENT_RUNTIME_ENABLED = "YES";
   assert.throws(() => validateStagingConfig(config), /reviewed staging policy/u);
+});
+
+test("derives a notification window only with all private media runtimes enabled", () => {
+  const offConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
+  const onConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+    expectedAPNSRuntime: "YES",
+  }));
+  assert.equal(onConfig.vars.MOMENT_RUNTIME_ENABLED, "YES");
+  assert.equal(onConfig.vars.REACTION_RUNTIME_ENABLED, "YES");
+  assert.equal(onConfig.vars.WINDOW_NAME_RUNTIME_ENABLED, "YES");
+  assert.equal(onConfig.vars.APNS_RUNTIME_ENABLED, "YES");
+  onConfig.vars.MOMENT_RUNTIME_ENABLED = "NO";
+  onConfig.vars.REACTION_RUNTIME_ENABLED = "NO";
+  onConfig.vars.WINDOW_NAME_RUNTIME_ENABLED = "NO";
+  onConfig.vars.APNS_RUNTIME_ENABLED = "NO";
+  assert.deepEqual(onConfig, offConfig);
+  assert.throws(
+    () => renderStagingConfig(template, fixtureEnvironment, { expectedAPNSRuntime: "YES" }),
+    /requires the reviewed private media runtimes/u,
+  );
 });
 
 test("rejects a staging config that enables only reactions", () => {
@@ -147,6 +169,7 @@ test("keeps the generated staging config out of git", async () => {
   const ignore = await readFile(join(projectDirectory, ".gitignore"), "utf8");
   assert.match(ignore, /^wrangler\.staging\.jsonc$/mu);
   assert.match(ignore, /^wrangler\.media-staging-on\.jsonc$/mu);
+  assert.match(ignore, /^wrangler\.notification-staging-on\.jsonc$/mu);
   const repositoryIgnore = await readFile(join(projectDirectory, "..", "..", ".gitignore"), "utf8");
   assert.match(repositoryIgnore, /^\.wrangler\/$/mu);
 });
@@ -157,7 +180,12 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0002_daily_sharing.sql", 52],
     ["0003_append_only_moments.sql", 72],
     ["0004_encrypted_window_name.sql", 12],
+    ["0005_device_recovery.sql", 20],
     ["0006_paw_reactions.sql", 15],
+    ["0007_apns_notifications.sql", 19],
+    ["0008_additional_participant_devices.sql", 7],
+    ["0009_multi_window_apns_tokens.sql", 21],
+    ["0010_multi_device_shared_data.sql", 7],
   ]);
   for (const [name, expectedStatementCount] of expectedStatementCounts) {
     const migration = await readFile(join(projectDirectory, "migrations", name));

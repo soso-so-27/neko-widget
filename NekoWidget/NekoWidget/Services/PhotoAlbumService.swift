@@ -139,70 +139,144 @@ actor PhotoAlbumService {
     }
 }
 
-enum ReceivedPhotoLibraryCopyError: LocalizedError {
+enum ReceivedPhotoMemoryImportError: LocalizedError {
     case permissionDenied
-    case copyFailed
+    case recoveryRequiresFullAccess
+    case importFailed
 
     var errorDescription: String? {
         switch self {
         case .permissionDenied:
-            "写真アプリへの追加が許可されていません。iPhoneの設定で「ねこのまど」の写真への追加を許可してください。"
-        case .copyFailed:
-            "写真アプリへコピーできませんでした。時間をおいて、もう一度お試しください。"
+            "思い出へ取り込むには写真へのアクセスが必要です。iPhoneの設定で「ねこのまど」の写真アクセスを許可してください。"
+        case .recoveryRequiresFullAccess:
+            "前回の取り込み結果を安全に確認するため、写真アクセスを「すべての写真」に変更してから、もう一度お試しください。写真を重複して保存しないための確認です。"
+        case .importFailed:
+            "写真を思い出へ取り込めませんでした。時間をおいて、もう一度お試しください。"
         }
     }
 }
 
+enum ReceivedPhotoMemoryAssetVisibility: Equatable {
+    case visible
+    case confirmedMissing
+    case unknown
+}
+
 /// Writes one user-requested, already-resized and metadata-sanitized received
-/// JPEG into Photos. It does not change the private memory mark and never
-/// removes the created Photos asset during unlink, block, or app deletion.
+/// JPEG into Photos for the ordinary personal memory collection. It never
+/// removes the created Photos asset during unlike, unlink, block, or app deletion.
 @MainActor
-final class ReceivedPhotoLibraryCopyService {
-    func requestAddAuthorization() async throws {
+final class ReceivedPhotoMemoryImportService {
+    func requestMemoryImportAuthorization() async throws {
         let status: PHAuthorizationStatus
-        switch PHPhotoLibrary.authorizationStatus(for: .addOnly) {
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
         case .notDetermined:
-            status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         case let current:
             status = current
         }
         guard status == .authorized || status == .limited else {
-            throw ReceivedPhotoLibraryCopyError.permissionDenied
+            throw ReceivedPhotoMemoryImportError.permissionDenied
         }
     }
 
-    func copy(_ payload: MomentPhotoLibraryCopyPayload) async throws {
-        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+    /// Imports a received photo into Photos and returns PhotoKit's durable
+    /// local identifier for the newly created asset. The caller persists that
+    /// identifier before reporting success so retries remain idempotent.
+    func importMemory(
+        _ payload: MomentPhotoLibraryCopyPayload,
+        importToken: UUID
+    ) async throws -> String {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         guard status == .authorized || status == .limited else {
-            throw ReceivedPhotoLibraryCopyError.permissionDenied
+            throw ReceivedPhotoMemoryImportError.permissionDenied
         }
         do {
-            try await withCheckedThrowingContinuation {
-                (continuation: CheckedContinuation<Void, Error>) in
-                PHPhotoLibrary.shared().performChanges {
-                    let request = PHAssetCreationRequest.forAsset()
-                    request.creationDate = payload.capturedAt
-                    request.addResource(
-                        with: .photo,
-                        data: payload.jpegData,
-                        options: nil
-                    )
-                } completionHandler: { success, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else if success {
-                        continuation.resume(returning: ())
-                    } else {
-                        continuation.resume(
-                            throwing: ReceivedPhotoLibraryCopyError.copyFailed
-                        )
-                    }
-                }
-            }
-        } catch let error as ReceivedPhotoLibraryCopyError {
+            return try await createAsset(
+                from: payload,
+                originalFilename: Self.resourceFilename(for: importToken)
+            )
+        } catch let error as ReceivedPhotoMemoryImportError {
             throw error
         } catch {
-            throw ReceivedPhotoLibraryCopyError.copyFailed
+            throw ReceivedPhotoMemoryImportError.importFailed
         }
+    }
+
+    /// A missing fetch is authoritative only with full read access. Under
+    /// limited access it can also mean that the asset exists outside the
+    /// currently visible selection, so callers must never re-import it.
+    func assetVisibility(
+        localIdentifier: String
+    ) -> ReceivedPhotoMemoryAssetVisibility {
+        let isVisible = PHAsset.fetchAssets(
+            withLocalIdentifiers: [localIdentifier],
+            options: nil
+        ).firstObject != nil
+        if isVisible { return .visible }
+        return PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
+            ? .confirmedMissing
+            : .unknown
+    }
+
+    /// Recovers an asset created immediately before a crash or state-write
+    /// failure. The opaque filename is journaled before PhotoKit is called.
+    /// Full access is required because a limited fetch cannot prove absence.
+    func recoverImportedAsset(importToken: UUID) async throws -> String? {
+        guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized else {
+            throw ReceivedPhotoMemoryImportError.recoveryRequiresFullAccess
+        }
+        let originalFilename = Self.resourceFilename(for: importToken)
+        return await Task.detached(priority: .userInitiated) {
+            var match: String?
+            PHAsset.fetchAssets(with: .image, options: nil).enumerateObjects {
+                asset,
+                _,
+                stop in
+                guard PHAssetResource.assetResources(for: asset).contains(where: {
+                    $0.originalFilename == originalFilename
+                }) else { return }
+                match = asset.localIdentifier
+                stop.pointee = true
+            }
+            return match
+        }.value
+    }
+
+    private func createAsset(
+        from payload: MomentPhotoLibraryCopyPayload,
+        originalFilename: String
+    ) async throws -> String {
+        var placeholderIdentifier: String?
+        return try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<String, Error>) in
+            PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCreationRequest.forAsset()
+                request.creationDate = payload.capturedAt
+                let options = PHAssetResourceCreationOptions()
+                options.originalFilename = originalFilename
+                request.addResource(
+                    with: .photo,
+                    data: payload.jpegData,
+                    options: options
+                )
+                placeholderIdentifier = request.placeholderForCreatedAsset?.localIdentifier
+            } completionHandler: { success, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if success, let placeholderIdentifier,
+                          !placeholderIdentifier.isEmpty {
+                    continuation.resume(returning: placeholderIdentifier)
+                } else {
+                    continuation.resume(
+                        throwing: ReceivedPhotoMemoryImportError.importFailed
+                    )
+                }
+            }
+        }
+    }
+
+    private static func resourceFilename(for importToken: UUID) -> String {
+        "NekoMemory-\(importToken.uuidString.lowercased()).jpg"
     }
 }

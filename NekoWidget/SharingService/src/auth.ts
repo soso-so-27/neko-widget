@@ -10,6 +10,10 @@ export interface AuthenticatedMember {
   spaceId: string;
   role: "owner" | "invitee";
   participantId: string;
+  /// Participant primary key in the v2 moment model. `participantId` above is
+  /// the legacy pairing protocol identifier and must not be used as a D1 FK.
+  momentParticipantId: string;
+  deviceId: string;
   agreementPublicKey: string;
   signingPublicKey: string;
   state: "pending" | "active" | "revoked" | "expired";
@@ -23,6 +27,8 @@ interface MemberRow {
   space_id: string;
   role: "owner" | "invitee";
   participant_id: string;
+  moment_participant_id: string;
+  device_id: string;
   agreement_public_key: string;
   signing_public_key: string;
   state: "pending" | "active" | "revoked" | "expired";
@@ -38,8 +44,13 @@ export async function authenticateSignedRequest(
     throw new ApiError(401, "invalid_authentication", "Signed request authentication failed.");
   }
   let memberId: string;
+  let requestedDeviceId: string | null = null;
   try {
     memberId = opaqueId(request.headers.get("neko-member-id") ?? "", "member");
+    const rawDeviceId = request.headers.get("neko-device-id");
+    if (rawDeviceId !== null) {
+      requestedDeviceId = opaqueId(rawDeviceId, "device");
+    }
   } catch {
     throw new ApiError(401, "invalid_authentication", "Signed request authentication failed.");
   }
@@ -63,8 +74,12 @@ export async function authenticateSignedRequest(
     throw new ApiError(401, "stale_request", "The signed request timestamp is outside the five-minute window.");
   }
 
-  const member = await env.DB.prepare(
+  const devicePredicate = requestedDeviceId === null
+    ? "AND device.legacy_member_id = m.id"
+    : "AND device.id = ?";
+  const memberStatement = env.DB.prepare(
     `SELECT m.id, m.space_id, m.role, m.participant_id,
+            participant.id AS moment_participant_id, device.id AS device_id,
             device.agreement_public_key, device.signing_public_key,
             m.state, s.state AS space_state
        FROM members AS m
@@ -75,10 +90,14 @@ export async function authenticateSignedRequest(
         AND participant.state = m.state
        JOIN moment_devices AS device
          ON device.participant_id = participant.id
-        AND device.legacy_member_id = m.id
         AND device.state = m.state
+        ${devicePredicate}
       WHERE m.id = ?`,
-  ).bind(memberId).first<MemberRow>();
+  );
+  const member = await (requestedDeviceId === null
+    ? memberStatement.bind(memberId)
+    : memberStatement.bind(requestedDeviceId, memberId)
+  ).first<MemberRow>();
   if (member === null) {
     throw new ApiError(401, "invalid_authentication", "Signed request authentication failed.");
   }
@@ -101,6 +120,8 @@ export async function authenticateSignedRequest(
     spaceId: member.space_id,
     role: member.role,
     participantId: member.participant_id,
+    momentParticipantId: member.moment_participant_id,
+    deviceId: member.device_id,
     agreementPublicKey: member.agreement_public_key,
     signingPublicKey: member.signing_public_key,
     state: member.state,

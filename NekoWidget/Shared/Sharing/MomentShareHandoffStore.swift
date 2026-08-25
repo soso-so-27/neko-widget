@@ -10,14 +10,40 @@ struct MomentShareDestinationAdmission: Codable, Equatable, Identifiable, Sendab
     static let schemaVersion = 1
     var schemaVersion: Int = Self.schemaVersion
     let id: UUID
+    /// Stable device-local destination scope. Legacy single-window catalogs
+    /// decode this as nil and are rebound on the next host publication.
+    let localWindowID: String?
     let bindingSHA256: Data
     let displayName: String
     let issuedAt: Date
     let expiresAt: Date
 
+    init(
+        schemaVersion: Int = Self.schemaVersion,
+        id: UUID,
+        localWindowID: String? = nil,
+        bindingSHA256: Data,
+        displayName: String,
+        issuedAt: Date,
+        expiresAt: Date
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.localWindowID = localWindowID
+        self.bindingSHA256 = bindingSHA256
+        self.displayName = displayName
+        self.issuedAt = issuedAt
+        self.expiresAt = expiresAt
+    }
+
     func validated() throws -> Self {
         let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasValidWindowID = localWindowID.map {
+            guard let uuid = UUID(uuidString: $0) else { return false }
+            return uuid.uuidString.lowercased() == $0.lowercased()
+        } ?? true
         guard schemaVersion == Self.schemaVersion,
+              hasValidWindowID,
               bindingSHA256.count == 32,
               displayName == trimmedName,
               (1...64).contains(displayName.utf8.count),
@@ -48,7 +74,9 @@ struct MomentShareAdmissionCatalog: Codable, Equatable, Sendable {
               updatedAt > Date(timeIntervalSince1970: 0),
               destinations.count <= MomentShareHandoffStore.maximumAdmissionCount,
               Set(destinations.map(\.id)).count == destinations.count,
-              Set(destinations.map(\.bindingSHA256)).count == destinations.count
+              Set(destinations.map(\.bindingSHA256)).count == destinations.count,
+              Set(destinations.compactMap(\.localWindowID)).count
+                == destinations.compactMap(\.localWindowID).count
         else { throw MomentSharingError.stateUnavailable }
         _ = try destinations.map { try $0.validated() }
         guard destinations.allSatisfy({ destination in
@@ -71,10 +99,16 @@ struct MomentShareAdmissionCatalog: Codable, Equatable, Sendable {
 /// Codable so a raw construction request cannot accidentally become another
 /// persisted authority beside `MomentShareAdmissionCatalog`.
 struct MomentShareAdmissionInput: Equatable, Sendable {
+    let localWindowID: String?
     let bindingSHA256: Data
     let displayName: String
 
-    init(bindingSHA256: Data, displayName: String) {
+    init(
+        localWindowID: String? = nil,
+        bindingSHA256: Data,
+        displayName: String
+    ) {
+        self.localWindowID = localWindowID
         self.bindingSHA256 = bindingSHA256
         self.displayName = displayName
     }
@@ -406,9 +440,13 @@ enum MomentShareHandoffStore {
     static let captureLifetime: TimeInterval = 60 * 60
     static let maximumLocalClockSkew: TimeInterval = 5 * 60
     static let claimRecoveryInterval: TimeInterval = 5 * 60
-    static let maximumAdmissionCount = 8
+    static let maximumAdmissionCount = PrivateWindowCatalogState.maximumWindowCount
     static let maximumPendingCaptureCount = 3
     static let maximumPendingCaptureBytes = 3 * 1_024 * 1_024
+    private static let maximumGlobalPendingCaptureCount =
+        PrivateWindowCatalogState.maximumWindowCount * maximumPendingCaptureCount
+    private static let maximumGlobalPendingCaptureBytes =
+        PrivateWindowCatalogState.maximumWindowCount * maximumPendingCaptureBytes
     static let terminalOutcomeLifetime: TimeInterval = 7 * 24 * 60 * 60
     static let maximumTerminalOutcomeCount = 100
 
@@ -457,6 +495,7 @@ enum MomentShareHandoffStore {
         now: Date = .now
     ) throws -> MomentShareAdmissionCatalog {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try prepareMultiWindowStorageWhileLocked()
             guard now > Date(timeIntervalSince1970: 0),
                   inputs.count <= maximumAdmissionCount,
                   !isReportOnlyDisabledWhileLocked()
@@ -464,7 +503,12 @@ enum MomentShareHandoffStore {
 
             let validatedInputs = try inputs.map { input -> MomentShareAdmissionInput in
                 let name = input.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard input.bindingSHA256.count == 32,
+                let validWindowID = input.localWindowID.map {
+                    guard let uuid = UUID(uuidString: $0) else { return false }
+                    return uuid.uuidString.lowercased() == $0.lowercased()
+                } ?? true
+                guard validWindowID,
+                      input.bindingSHA256.count == 32,
                       name == input.displayName,
                       (1...64).contains(name.utf8.count),
                       !name.unicodeScalars.contains(where: {
@@ -474,6 +518,8 @@ enum MomentShareHandoffStore {
                 return input
             }
             guard Set(validatedInputs.map(\.bindingSHA256)).count == validatedInputs.count
+                    && Set(validatedInputs.compactMap(\.localWindowID)).count
+                        == validatedInputs.compactMap(\.localWindowID).count
             else { throw MomentSharingError.invalidPayload }
 
             if validatedInputs.isEmpty {
@@ -513,6 +559,7 @@ enum MomentShareHandoffStore {
                 let previous = existingByBinding[input.bindingSHA256]
                 return MomentShareDestinationAdmission(
                     id: previous?.id ?? UUID(),
+                    localWindowID: input.localWindowID,
                     bindingSHA256: input.bindingSHA256,
                     displayName: input.displayName,
                     issuedAt: previous?.issuedAt ?? now,
@@ -544,6 +591,31 @@ enum MomentShareHandoffStore {
     /// removal cannot commit while a cancelled analyzer input remains.
     static func revokeAdmissionsWhileLifecycleLocked() throws {
         try purgeAllWhileLocked()
+    }
+
+    /// Removes only one local window's Share Extension authority. Ordinary
+    /// unlink must not cancel another window's pending capture. The optional
+    /// binding also removes a Build-40 admission that predates localWindowID.
+    static func revokeAdmissionWhileLifecycleLocked(
+        localWindowID: String,
+        bindingSHA256: Data?,
+        now: Date = .now
+    ) throws {
+        try prepareMultiWindowStorageWhileLocked()
+        guard let catalog = try loadCatalogWhileLocked() else { return }
+        let removed = catalog.destinations.filter {
+            $0.localWindowID == localWindowID
+                || (bindingSHA256 != nil && $0.bindingSHA256 == bindingSHA256)
+        }
+        guard !removed.isEmpty else { return }
+        let removedIDs = Set(removed.map(\.id))
+        let retained = catalog.destinations.filter { !removedIDs.contains($0.id) }
+        let replacement = try MomentShareAdmissionCatalog(
+            destinations: retained,
+            updatedAt: max(now, catalog.updatedAt)
+        ).validated()
+        try writeCatalogWhileLocked(replacement)
+        try removeCapturesWhileLocked { removedIDs.contains($0.admissionID) }
     }
 
     /// Commits the fail-closed Extension boundary without purging captures.
@@ -666,10 +738,14 @@ enum MomentShareHandoffStore {
         }
     }
 
-    /// Extension-safe read of the sanitized destination catalog. Missing or
-    /// expired admission means the host app must be opened again.
+    /// Extension-safe read of the sanitized destination catalog. The current
+    /// host processor can promote only the active window's captures, so the
+    /// Extension must never advertise an inactive destination and leave its
+    /// plaintext waiting for a later manual window switch. Missing or expired
+    /// admission means the host app must be opened again.
     static func activeAdmissions(now: Date = .now) throws -> [MomentShareDestinationAdmission] {
         try SharingLifecycleGate.withExclusive {
+            try prepareMultiWindowStorageWhileLocked()
             guard !SharingLifecycleGate.isCleanupRequired else {
                 throw MomentSharingError.stateUnavailable
             }
@@ -683,8 +759,37 @@ enum MomentShareHandoffStore {
             try pruneCapturesWhileLocked(now: now)
             guard let catalog = try loadCurrentCatalogWhileLocked(now: now)
             else { return [] }
-            return catalog.destinations
-                .filter { $0.isActive(at: now) }
+            let active = catalog.destinations.filter { $0.isActive(at: now) }
+            let windowCatalog = try PrivateWindowCatalogStore.load()
+            let eligible: [MomentShareDestinationAdmission]
+            if let windowCatalog {
+                let scoped = active.filter {
+                    $0.localWindowID == windowCatalog.activeWindowID
+                }
+                if !scoped.isEmpty {
+                    eligible = scoped
+                } else if windowCatalog.windows.count == 1 {
+                    // Build 40 admissions had no localWindowID. They remain
+                    // unambiguous only before a second local window exists.
+                    let legacy = active.filter { $0.localWindowID == nil }
+                    guard legacy.count <= 1 else {
+                        throw MomentSharingError.stateUnavailable
+                    }
+                    eligible = legacy
+                } else {
+                    eligible = []
+                }
+            } else {
+                let legacy = active.filter { $0.localWindowID == nil }
+                guard legacy.count <= 1 else {
+                    throw MomentSharingError.stateUnavailable
+                }
+                eligible = legacy
+            }
+            guard eligible.count <= 1 else {
+                throw MomentSharingError.stateUnavailable
+            }
+            return eligible
                 .sorted { lhs, rhs in
                     if lhs.displayName == rhs.displayName {
                         return lhs.id.uuidString < rhs.id.uuidString
@@ -703,6 +808,7 @@ enum MomentShareHandoffStore {
         now: Date = .now
     ) throws -> MomentShareHandoffPresentationSnapshot {
         try SharingLifecycleGate.withExclusive {
+            try prepareMultiWindowStorageWhileLocked()
             guard !SharingLifecycleGate.isCleanupRequired else {
                 throw MomentSharingError.stateUnavailable
             }
@@ -785,6 +891,7 @@ enum MomentShareHandoffStore {
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            try prepareMultiWindowStorageWhileLocked()
             guard let url = SharedContainer.momentShareHandoffOutcomesURL else {
                 throw MomentSharingError.stateUnavailable
             }
@@ -909,9 +1016,19 @@ enum MomentShareHandoffStore {
             else { throw MomentSharingError.notPaired }
 
             let current = try loadCaptureRecordsWhileLocked()
-            let currentBytes = current.reduce(0) { $0 + $1.canonicalJPEGSize }
-            guard current.count < maximumPendingCaptureCount,
-                  currentBytes <= maximumPendingCaptureBytes - record.canonicalJPEGSize
+            let destinationRecords = current.filter {
+                $0.admissionID == admissionID
+            }
+            let destinationBytes = destinationRecords.reduce(0) {
+                $0 + $1.canonicalJPEGSize
+            }
+            let globalBytes = current.reduce(0) { $0 + $1.canonicalJPEGSize }
+            guard destinationRecords.count < maximumPendingCaptureCount,
+                  destinationBytes
+                    <= maximumPendingCaptureBytes - record.canonicalJPEGSize,
+                  current.count < maximumGlobalPendingCaptureCount,
+                  globalBytes
+                    <= maximumGlobalPendingCaptureBytes - record.canonicalJPEGSize
             else { throw MomentSharingError.outboxFull }
             let url = try captureURL(for: record.id)
             guard !FileManager.default.fileExists(atPath: url.path) else {
@@ -1124,6 +1241,7 @@ enum MomentShareHandoffStore {
     // MARK: - Locked storage
 
     private static func loadCatalogWhileLocked() throws -> MomentShareAdmissionCatalog? {
+        try prepareMultiWindowStorageWhileLocked()
         guard let url = SharedContainer.momentShareHandoffAdmissionsURL else {
             throw MomentSharingError.stateUnavailable
         }
@@ -1141,6 +1259,7 @@ enum MomentShareHandoffStore {
     private static func writeCatalogWhileLocked(
         _ catalog: MomentShareAdmissionCatalog
     ) throws {
+        try prepareMultiWindowStorageWhileLocked()
         guard let url = SharedContainer.momentShareHandoffAdmissionsURL else {
             throw MomentSharingError.stateUnavailable
         }
@@ -1154,6 +1273,7 @@ enum MomentShareHandoffStore {
     private static func loadTerminalOutcomesWhileLocked(
         now: Date
     ) throws -> [MomentShareHandoffTerminalOutcome] {
+        try prepareMultiWindowStorageWhileLocked()
         guard let url = SharedContainer.momentShareHandoffOutcomesURL else {
             throw MomentSharingError.stateUnavailable
         }
@@ -1204,6 +1324,7 @@ enum MomentShareHandoffStore {
     private static func writeTerminalOutcomesWhileLocked(
         _ outcomes: [MomentShareHandoffTerminalOutcome]
     ) throws {
+        try prepareMultiWindowStorageWhileLocked()
         guard let url = SharedContainer.momentShareHandoffOutcomesURL else {
             throw MomentSharingError.stateUnavailable
         }
@@ -1224,6 +1345,7 @@ enum MomentShareHandoffStore {
     }
 
     private static func loadCaptureRecordsWhileLocked() throws -> [MomentPendingCaptureRecord] {
+        try prepareMultiWindowStorageWhileLocked()
         guard let directory = SharedContainer.momentShareHandoffCapturesDirectoryURL else {
             throw MomentSharingError.stateUnavailable
         }
@@ -1449,11 +1571,19 @@ enum MomentShareHandoffStore {
         guard let directory = SharedContainer.momentShareHandoffDirectoryURL else {
             throw MomentSharingError.stateUnavailable
         }
-        guard FileManager.default.fileExists(atPath: directory.path) else { return }
-        try FileManager.default.removeItem(at: directory)
+        let fileManager = FileManager.default
+        var firstError: Error?
+        let directories = [directory]
+            + SharedContainer.legacyMomentShareHandoffDirectoryURLs
+        for candidate in directories where fileManager.fileExists(atPath: candidate.path) {
+            do { try fileManager.removeItem(at: candidate) }
+            catch { if firstError == nil { firstError = error } }
+        }
+        if let firstError { throw firstError }
     }
 
     private static func captureURL(for id: UUID) throws -> URL {
+        try prepareMultiWindowStorageWhileLocked()
         guard let directory = SharedContainer.momentShareHandoffCapturesDirectoryURL else {
             throw MomentSharingError.stateUnavailable
         }
@@ -1461,6 +1591,35 @@ enum MomentShareHandoffStore {
             "\(id.uuidString.lowercased())\(captureFileSuffix)",
             isDirectory: false
         )
+    }
+
+    /// Moves the one pre-multi-window handoff directory into stable shared
+    /// storage. This runs only while the lifecycle flock is held. A global
+    /// directory plus a legacy directory, or more than one legacy directory,
+    /// could contain independent plaintext authorities and therefore fails
+    /// closed instead of merging or guessing which one wins.
+    private static func prepareMultiWindowStorageWhileLocked() throws {
+        guard let destination = SharedContainer.momentShareHandoffDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        let fileManager = FileManager.default
+        let sources = SharedContainer.legacyMomentShareHandoffDirectoryURLs
+            .filter { fileManager.fileExists(atPath: $0.path) }
+        guard sources.count <= 1 else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard let source = sources.first else { return }
+        guard !fileManager.fileExists(atPath: destination.path) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        do {
+            try fileManager.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.moveItem(at: source, to: destination)
+        } catch {
+            throw MomentSharingError.stateUnavailable
+        }
     }
 
     private static func boundedData(from url: URL, maximumBytes: Int) throws -> Data {

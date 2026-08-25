@@ -150,28 +150,30 @@ class PublicPolicySiteTests(unittest.TestCase):
         ):
             self.assertIn(phrase, privacy)
 
-    def test_memory_mark_is_bounded_and_photo_copy_is_explicit(self):
+    def test_received_memory_import_is_explicit_and_permanent(self):
         for page in (PAGES[1], PAGES[3]):
             text = "".join(self.parsed(page).text)
             for phrase in (
                 "「思い出に追加」",
                 "「届いた写真」",
-                "無料・期限付き",
-                "memory mark",
-                "保持上限内なら優先して残す",
-                "写真アプリやiCloudへコピーせず",
-                "写真アプリへコピー",
-                "明示的に選んだ場合だけ",
+                "明示的に選",
+                "位置情報を除いた最大2,048px",
+                "写真アプリへ",
+                "通常の「思い出」と写真まとめ",
+                "相手には通知しません",
+                "iCloud写真",
                 "90日",
                 "500枚",
                 "256MiB",
-                "保持期限と上限を延長しません",
-                "expiry",
-                "unlink",
-                "block",
-                "reinstall",
+                "共有解除",
+                "ブロック",
+                "アプリ削除",
+                "写真アプリには残",
+                "ハート",
             ):
                 self.assertIn(phrase, text, f"{page}: {phrase}")
+            self.assertNotIn("memory mark", text, page)
+            self.assertNotIn("無料・期限付き", text, page)
             self.assertNotIn("まど内履歴", text, page)
 
     def test_release_safety_facts_are_present(self):
@@ -183,6 +185,10 @@ class PublicPolicySiteTests(unittest.TestCase):
             "通報専用公開鍵",
             "ACK後7日",
             "未受領の通常暗号文：commit後30日",
+            "通知用デバイストークン",
+            "暗号化して最大35日保持",
+            "Apple Push Notification service（APNs）",
+            "写真、まど名、相手名、撮影日時、写真ID、取得URL、暗号鍵を含めません",
             "写真を含まないサーバー側記録",
             "生成AIの学習に利用しません",
         ):
@@ -190,7 +196,14 @@ class PublicPolicySiteTests(unittest.TestCase):
         for phrase in ("通報", "ブロック", "48時間以内", "削除対象", "再試行"):
             self.assertIn(phrase, community)
         self.assertNotIn("7日の期限を超えて保持しません", community)
-        for phrase in ("GitHub Issues", "TestFlight", "招待コード", "緊急通報先ではありません"):
+        for phrase in (
+            "GitHub Issues",
+            "TestFlight",
+            "招待コード",
+            "緊急通報先ではありません",
+            "iOS 18",
+            "Widget更新はbest effort",
+        ):
             self.assertIn(phrase, support)
 
     def test_no_placeholder_or_personal_email_is_published(self):
@@ -303,8 +316,8 @@ class PublicPolicySiteTests(unittest.TestCase):
             settings,
         )
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)
-        self.assertIn("写真共有が使える場合", info)
-        self.assertIn("明示的に選んだときだけ追加", info)
+        self.assertIn("「思い出に追加」を選んだ届いた写真", info)
+        self.assertIn("写真を自動で追加することはありません", info)
 
     def test_explicit_export_disclosure_stays_aligned_with_implementation(self):
         liked_photos = LIKED_PHOTOS_VIEW.read_text(encoding="utf-8")
@@ -356,7 +369,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertIn('node-version: "22"', setup)
 
         gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
-        self.assertEqual(gate.count('policy_revision="2026-08-24"'), 1)
+        self.assertEqual(gate.count('policy_revision="2026-08-25"'), 1)
         disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
         self.assertIn('policy_profile="local-only"', disabled)
         self.assertIn(

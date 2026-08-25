@@ -346,7 +346,8 @@ enum MomentSharingPresentationVerifier {
                 .committed,
                 updatedAt: TimeInterval(900 + index),
                 committedAt: TimeInterval(900 + index),
-                recipientDeliveryConfirmedAt: index == 24 ? 950 : nil
+                recipientDeliveryConfirmedAt: index == 24 ? 950 : nil,
+                hasReceivedHeart: index == 24
             )
         }
         deliveries.append(
@@ -378,7 +379,8 @@ enum MomentSharingPresentationVerifier {
         }
         try require(
             arrived.deliveryState == .recipientDeviceArrivalConfirmed
-                && arrived.recipientDeliveryConfirmedAt == date(950),
+                && arrived.recipientDeliveryConfirmedAt == date(950)
+                && arrived.hasReceivedHeart,
             "recipient device arrival was collapsed into server acceptance"
         )
         try require(
@@ -391,8 +393,9 @@ enum MomentSharingPresentationVerifier {
         }
         try require(
             acceptedOnly.deliveryState == .serverAccepted
+                && !acceptedOnly.hasReceivedHeart
                 && acceptedOnly.detail.contains("到着、閲覧、既読はまだ確認していません"),
-            "server acceptance was presented as recipient device arrival"
+            "server acceptance or its per-photo heart state was misrepresented"
         )
         try require(
             !presentation.sentRecords.contains { $0.serverAcceptedAt == date(1_000) },
@@ -590,7 +593,8 @@ enum MomentSharingPresentationVerifier {
         committedAt: TimeInterval? = nil,
         unreceivedExpiresAt: TimeInterval? = nil,
         recipientCount: Int? = nil,
-        recipientDeliveryConfirmedAt: TimeInterval? = nil
+        recipientDeliveryConfirmedAt: TimeInterval? = nil,
+        hasReceivedHeart: Bool = false
     ) -> MomentDeliveryPresentationInput {
         MomentDeliveryPresentationInput(
             stableID: id,
@@ -602,7 +606,8 @@ enum MomentSharingPresentationVerifier {
             committedAt: committedAt.map { date($0) },
             unreceivedExpiresAt: unreceivedExpiresAt.map { date($0) },
             recipientCount: recipientCount,
-            recipientDeliveryConfirmedAt: recipientDeliveryConfirmedAt.map { date($0) }
+            recipientDeliveryConfirmedAt: recipientDeliveryConfirmedAt.map { date($0) },
+            hasReceivedHeart: hasReceivedHeart
         )
     }
 

@@ -418,6 +418,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("pairing-bootstrap-transient-preservation") {
             try Self.testPairingBootstrapTransientPreservation()
         })
+        results.append(run("private-window-catalog-authority-uniqueness") {
+            try Self.testPrivateWindowCatalogAuthorityUniqueness()
+        })
         results.append(await runAsync("moment-process-serialized-refresh") {
             try await Self.testMomentProcessSerializedRefresh()
         })
@@ -435,6 +438,9 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(run("moment-saved-memory-boundary") {
             try Self.testMomentSavedMemoryBoundary()
+        })
+        results.append(run("moment-imported-memory-boundary") {
+            try Self.testMomentImportedMemoryBoundary()
         })
         results.append(run("moment-sent-delivery-receipt-boundary") {
             try Self.testMomentSentDeliveryReceiptBoundary()
@@ -659,6 +665,56 @@ actor SharingRuntimeSelfTestRunner {
             malformedState
         ) == .failClosed else {
             throw PairingError.stateUnavailable
+        }
+    }
+
+    private static func testPrivateWindowCatalogAuthorityUniqueness() throws {
+        let now = Date()
+        let first = PrivateWindowCatalogEntry(
+            localWindowID: UUID().uuidString.lowercased(),
+            displayName: "一つ目のまど",
+            spaceID: "space_catalog_fixture",
+            credentialAccount: UUID().uuidString.lowercased(),
+            createdAt: now,
+            updatedAt: now
+        )
+        var second = PrivateWindowCatalogEntry(
+            localWindowID: UUID().uuidString.lowercased(),
+            displayName: "二つ目のまど",
+            spaceID: "space_catalog_fixture_second",
+            credentialAccount: UUID().uuidString.lowercased(),
+            createdAt: now,
+            updatedAt: now
+        )
+        _ = try PrivateWindowCatalogState(
+            activeWindowID: first.localWindowID,
+            windows: [first, second],
+            pendingLegacyMigrationWindowID: nil
+        ).validated()
+
+        second.spaceID = first.spaceID
+        do {
+            _ = try PrivateWindowCatalogState(
+                activeWindowID: first.localWindowID,
+                windows: [first, second],
+                pendingLegacyMigrationWindowID: nil
+            ).validated()
+            throw MomentSharingError.stateUnavailable
+        } catch PrivateWindowCatalogStore.Error.invalidCatalog {
+            // Expected: two slots may never claim the same relay room.
+        }
+
+        second.spaceID = "space_catalog_fixture_second"
+        second.credentialAccount = first.credentialAccount
+        do {
+            _ = try PrivateWindowCatalogState(
+                activeWindowID: first.localWindowID,
+                windows: [first, second],
+                pendingLegacyMigrationWindowID: nil
+            ).validated()
+            throw MomentSharingError.stateUnavailable
+        } catch PrivateWindowCatalogStore.Error.invalidCatalog {
+            // Expected: one Keychain account may never authorize two slots.
         }
     }
 
@@ -2678,6 +2734,117 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
     }
 
+    private static func testMomentImportedMemoryBoundary() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let baseDate = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970)
+        )
+        let momentID = "moment_imported_memory_fixture"
+        let item = try MomentInboxItem(
+            id: momentID,
+            senderParticipantID: "participant_imported_memory_fixture",
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "\(momentID).jpg",
+            capturedAt: baseDate,
+            captureDateIsMissing: false,
+            committedAt: baseDate,
+            receivedAt: baseDate,
+            state: .available,
+            accessExpiresAt: baseDate.addingTimeInterval(30 * 24 * 60 * 60)
+        ).validated()
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            item,
+            jpeg: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+            validating: lifecycleToken
+        )
+        try MomentSharingStateStore.setSavedMemory(
+            momentID: momentID,
+            isSaved: true,
+            now: baseDate,
+            validating: lifecycleToken
+        )
+
+        let preparation = try MomentSharingStateStore.prepareMemoryImport(
+            momentID: momentID,
+            now: baseDate.addingTimeInterval(1),
+            validating: lifecycleToken
+        )
+        guard !preparation.wasAlreadyPending else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let retriedPreparation = try MomentSharingStateStore.prepareMemoryImport(
+            momentID: momentID,
+            now: baseDate.addingTimeInterval(2),
+            validating: lifecycleToken
+        )
+        guard retriedPreparation.wasAlreadyPending,
+              retriedPreparation.record == preparation.record
+        else { throw MomentSharingError.stateUnavailable }
+
+        let localIdentifier = "photos-imported-memory-fixture/L0/001"
+        try MomentSharingStateStore.completeMemoryImport(
+            momentID: momentID,
+            importToken: preparation.record.importToken,
+            photoLocalIdentifier: localIdentifier,
+            importedAt: baseDate.addingTimeInterval(3),
+            validating: lifecycleToken
+        )
+        // Retrying the exact completion is idempotent and must not create a
+        // second mapping. A different Photos identifier for the same moment
+        // fails closed so a caller cannot silently lose duplicate evidence.
+        try MomentSharingStateStore.completeMemoryImport(
+            momentID: momentID,
+            importToken: preparation.record.importToken,
+            photoLocalIdentifier: localIdentifier,
+            importedAt: baseDate.addingTimeInterval(4),
+            validating: lifecycleToken
+        )
+        let imported = try MomentSharingStateStore.load()
+        guard imported.importedMemories == [
+            MomentImportedMemoryRecord(
+                momentID: momentID,
+                photoLocalIdentifier: localIdentifier,
+                importedAt: baseDate.addingTimeInterval(3)
+            )
+        ], imported.savedMemories.isEmpty,
+        imported.pendingMemoryImports.isEmpty,
+        try MomentSharingStateStore.importedMemoryRecord(
+            momentID: momentID,
+            validating: lifecycleToken
+        ) == imported.importedMemories.first
+        else { throw MomentSharingError.stateUnavailable }
+
+        do {
+            try MomentSharingStateStore.completeMemoryImport(
+                momentID: momentID,
+                importToken: preparation.record.importToken,
+                photoLocalIdentifier: "photos-imported-memory-fixture/L0/duplicate",
+                importedAt: baseDate.addingTimeInterval(5),
+                validating: lifecycleToken
+            )
+            throw MomentSharingError.stateUnavailable
+        } catch let error as MomentSharingError {
+            guard case .stateUnavailable = error else { throw error }
+        }
+
+        var revoked = item
+        revoked.state = .revoked
+        revoked.localJPEGFileName = nil
+        try MomentSharingStateStore.revokeInbox(
+            tombstone: try revoked.validated(),
+            validating: lifecycleToken
+        )
+        let revokedState = try MomentSharingStateStore.load()
+        guard revokedState.importedMemories.isEmpty,
+              revokedState.pendingMemoryImports.isEmpty else {
+            throw MomentSharingError.stateUnavailable
+        }
+    }
+
     private static func testMomentSentDeliveryReceiptBoundary() throws {
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
@@ -3542,11 +3709,21 @@ actor SharingRuntimeSelfTestRunner {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let currentEncoded = try encoder.encode(currentEncoding)
+        var schema8Object = try JSONSerialization.jsonObject(
+            with: encoder.encode(MomentSharingState.empty)
+        ) as? [String: Any]
+        schema8Object?["schemaVersion"] = 8
+        schema8Object?.removeValue(forKey: "pendingMemoryImports")
+        var schema7Object = schema8Object
+        schema7Object?["schemaVersion"] = 7
+        schema7Object?.removeValue(forKey: "importedMemories")
         var schema5Object = try JSONSerialization.jsonObject(
             with: encoder.encode(MomentSharingState.empty)
         ) as? [String: Any]
         schema5Object?["schemaVersion"] = 5
         schema5Object?.removeValue(forKey: "savedMemories")
+        schema5Object?.removeValue(forKey: "importedMemories")
+        schema5Object?.removeValue(forKey: "pendingMemoryImports")
         schema5Object?.removeValue(forKey: "reactionCursor")
         schema5Object?.removeValue(forKey: "pawOutbox")
         schema5Object?.removeValue(forKey: "receivedPaws")
@@ -3556,6 +3733,8 @@ actor SharingRuntimeSelfTestRunner {
         legacyObject?["schemaVersion"] = 3
         legacyObject?.removeValue(forKey: "outgoingOutcomes")
         legacyObject?.removeValue(forKey: "savedMemories")
+        legacyObject?.removeValue(forKey: "importedMemories")
+        legacyObject?.removeValue(forKey: "pendingMemoryImports")
         legacyObject?.removeValue(forKey: "reactionCursor")
         legacyObject?.removeValue(forKey: "pawOutbox")
         legacyObject?.removeValue(forKey: "receivedPaws")
@@ -3574,10 +3753,33 @@ actor SharingRuntimeSelfTestRunner {
             legacyReports[0].removeValue(forKey: "commitStartedAt")
             legacyObject?["reportOutbox"] = legacyReports
         }
-        guard let schema5Object,
+        guard let schema8Object,
+              let schema7Object,
+              let schema5Object,
               let legacyObject,
               let stateURL = SharedContainer.momentSharingStateURL
         else { throw MomentSharingError.stateUnavailable }
+        try SharingSecureFile.write(
+            JSONSerialization.data(withJSONObject: schema8Object, options: [.sortedKeys]),
+            to: stateURL
+        )
+        let migratedSchema8 = try MomentSharingStateStore.load()
+        guard migratedSchema8.schemaVersion == MomentSharingState.schemaVersion,
+              migratedSchema8.pendingMemoryImports.isEmpty,
+              migratedSchema8 == .empty
+        else { throw MomentSharingError.stateUnavailable }
+
+        try SharingSecureFile.write(
+            JSONSerialization.data(withJSONObject: schema7Object, options: [.sortedKeys]),
+            to: stateURL
+        )
+        let migratedSchema7 = try MomentSharingStateStore.load()
+        guard migratedSchema7.schemaVersion == MomentSharingState.schemaVersion,
+              migratedSchema7.importedMemories.isEmpty,
+              migratedSchema7.pendingMemoryImports.isEmpty,
+              migratedSchema7 == .empty
+        else { throw MomentSharingError.stateUnavailable }
+
         try SharingSecureFile.write(
             JSONSerialization.data(withJSONObject: schema5Object, options: [.sortedKeys]),
             to: stateURL
@@ -3585,6 +3787,8 @@ actor SharingRuntimeSelfTestRunner {
         let migratedSchema5 = try MomentSharingStateStore.load()
         guard migratedSchema5.schemaVersion == MomentSharingState.schemaVersion,
               migratedSchema5.savedMemories.isEmpty,
+              migratedSchema5.importedMemories.isEmpty,
+              migratedSchema5.pendingMemoryImports.isEmpty,
               migratedSchema5.reactionCursor == nil,
               migratedSchema5.pawOutbox.isEmpty,
               migratedSchema5.receivedPaws.isEmpty,
@@ -3599,6 +3803,8 @@ actor SharingRuntimeSelfTestRunner {
         let migrated = try MomentSharingStateStore.load()
         guard migrated.schemaVersion == MomentSharingState.schemaVersion,
               migrated.savedMemories.isEmpty,
+              migrated.importedMemories.isEmpty,
+              migrated.pendingMemoryImports.isEmpty,
               migrated.reactionCursor == nil,
               migrated.pawOutbox.isEmpty,
               migrated.receivedPaws.isEmpty,

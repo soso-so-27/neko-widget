@@ -6,6 +6,9 @@ struct SharedLikeRecord: Codable, Equatable, Sendable {
     var isLiked: Bool
     var likedAt: Date?
     var changedAt: Date
+    /// True only for a Photos asset created by the explicit received-memory
+    /// import. Optional keeps every pre-ADR-021 record byte-compatible.
+    var isReceivedMemoryImport: Bool? = nil
 }
 
 struct SharedLikeMutation: Equatable, Sendable {
@@ -288,6 +291,14 @@ enum SharedLikeStore {
         }
     }
 
+    /// Makes the v2 store independently writable before an irreversible
+    /// received-photo import. A later personal-library scan can still merge
+    /// every missing legacy record; existing imported records and explicit
+    /// unlike tombstones remain authoritative.
+    static func ensureInitialized(at date: Date = .now) throws {
+        _ = try mergeLegacyLikes([], at: date)
+    }
+
     @discardableResult
     static func set(
         localIdentifier: String,
@@ -342,7 +353,10 @@ enum SharedLikeStore {
                 localIdentifier: localIdentifier,
                 isLiked: isLiked,
                 likedAt: isLiked ? date : nil,
-                changedAt: date
+                changedAt: date,
+                isReceivedMemoryImport:
+                    previous?.isReceivedMemoryImport == true
+                        || source == "received-memory"
             )
             file.records[localIdentifier] = record
             if recordsMeasurementEvents,

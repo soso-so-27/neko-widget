@@ -234,7 +234,7 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         app_model = (ROOT / "NekoWidget/ViewModels/AppViewModel.swift").read_text(
             encoding="utf-8"
         )
-        family_case = app_model.split("case .familyWindow:", 1)[1].split(
+        family_case = app_model.split("case let .familyWindow(localWindowID):", 1)[1].split(
             "\n        }\n        guard let readyRoute", 1
         )[0]
         self.assertIn("isReviewVisible", family_case)
@@ -353,13 +353,15 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             cleanup.index("markCleanupRequired()"),
             cleanup.index("bumpEpochWhileLocked()"),
             cleanup.index("deleteAllSharingCredentials()"),
-            cleanup.index("purgeSharedCache()"),
+            cleanup.index("purgeSharedCache(removeAllWindows: removeAllWindows)"),
             cleanup.index("saveWhileLifecycleLocked(reset)"),
             cleanup.index("clearCleanupRequired()"),
         ]
         self.assertEqual(cleanup_order, sorted(cleanup_order))
 
-        cache_purge = guard_source.split("private static func purgeSharedCache()", 1)[1]
+        cache_purge = guard_source.split(
+            "private static func purgeSharedCache(removeAllWindows: Bool = false)", 1
+        )[1]
         self.assertIn("SharedContainer.sharingCacheDirectoryURL", cache_purge)
         self.assertNotIn("SharedContainer.containerURL", cache_purge)
 

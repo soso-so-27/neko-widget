@@ -209,12 +209,10 @@ enum PairingStateStore {
     static func beginOperation() throws -> OperationSnapshot {
         try SharingLifecycleGate.withExclusive {
             let state = try loadWhileLifecycleLockedMigratingDiagnostics()
-            if state?.phase == .unpaired, state?.credentialAccount == nil {
-                // Recover a crash/write-failure orphan before a same-process
-                // retry. This cleanup is serialized with the initial atomic
-                // credential+state publication below.
-                try PairingKeychainStore.deleteAllSharingCredentials()
-            }
+            // With multiple local windows, an unpaired active slot does not
+            // prove that every credential in this app-owned Keychain service
+            // is orphaned. Full service deletion is reserved for installation
+            // invalidation; ordinary window cleanup deletes its exact account.
             let token = try SharingLifecycleGate.issueTokenWhileLocked()
             return OperationSnapshot(lifecycleToken: token, state: state)
         }
@@ -224,6 +222,26 @@ enum PairingStateStore {
         return try decodedStateWithNormalizedDiagnostics().state
     }
 
+    /// Reads one catalog window without changing the process-wide active
+    /// window. This is intentionally read-only: background services use it to
+    /// reconcile every independently paired window while UI and Widget paths
+    /// continue to resolve through the active catalog entry.
+    static func load(localWindowID: String) throws -> PairingState? {
+        guard let catalog = try PrivateWindowCatalogStore.load(),
+              catalog.windows.contains(where: {
+                  $0.localWindowID == localWindowID
+              }),
+              let directory = SharedContainer.windowSharingDirectoryURL(
+                  localWindowID: localWindowID
+              )
+        else { throw PairingError.stateUnavailable }
+        let url = directory.appendingPathComponent(
+            "pairing-state.json",
+            isDirectory: false
+        )
+        return try decodedStateWithNormalizedDiagnostics(at: url).state
+    }
+
     private static func decodedStateWithNormalizedDiagnostics() throws -> (
         state: PairingState?,
         didNormalize: Bool
@@ -231,6 +249,12 @@ enum PairingStateStore {
         guard let url = SharedContainer.pairingStateURL else {
             throw PairingError.stateUnavailable
         }
+        return try decodedStateWithNormalizedDiagnostics(at: url)
+    }
+
+    private static func decodedStateWithNormalizedDiagnostics(
+        at url: URL
+    ) throws -> (state: PairingState?, didNormalize: Bool) {
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -310,11 +334,56 @@ enum PairingStateStore {
                   state.credentialAccount == credential.account,
                   state.installationMarker == credential.installationMarker
             else { throw PairingError.stateUnavailable }
-            try PairingKeychainStore.saveWhileLifecycleLocked(credential)
-            // Do not delete on an uncertain post-rename read failure: state may
-            // already durably reference this credential. A true pre-commit
-            // orphan is removed by beginOperation/bootstrap under this lock.
-            return try saveCASWhileLifecycleLocked(state, expected: expected)
+            // Reject a stale concurrent operation before it can replace this
+            // slot's catalog cleanup authority or create another secret.
+            guard try loadWhileLifecycleLockedMigratingDiagnostics() == expected
+            else { throw PairingError.stateUnavailable }
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let activeEntry = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  })
+            else { throw PairingError.stateUnavailable }
+
+            // A previous interrupted pre-commit may have left one exact
+            // candidate account in this active slot. Remove it before
+            // replacing the catalog binding so it cannot become unreachable.
+            if let previousCandidate = activeEntry.credentialAccount,
+               previousCandidate != credential.account {
+                try PairingKeychainStore.delete(account: previousCandidate)
+            }
+
+            // Persist the non-secret exact-account cleanup authority before
+            // the secret. A crash after the Keychain write but before the
+            // PairingState rename can then delete only this window's orphan,
+            // without issuing a broad service query that affects other rooms.
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                spaceID: state.spaceID,
+                credentialAccount: credential.account
+            )
+            do {
+                try PairingKeychainStore.saveWhileLifecycleLocked(credential)
+                return try saveCASWhileLifecycleLocked(state, expected: expected)
+            } catch {
+                // A post-rename read can fail even though PairingState already
+                // committed. Delete only when an authoritative reread still
+                // proves the old unpaired state; otherwise retain the catalog
+                // binding so bootstrap can safely reconcile it later.
+                if let current = try? loadWhileLifecycleLockedMigratingDiagnostics(),
+                   current == expected {
+                    do {
+                        try PairingKeychainStore.delete(account: credential.account)
+                        try PrivateWindowCatalogStore
+                            .updateActiveMetadataWhileLifecycleLocked(
+                                spaceID: expected.spaceID,
+                                credentialAccount: expected.credentialAccount
+                            )
+                    } catch {
+                        // Keep the exact catalog binding if cleanup is
+                        // unavailable; the next bootstrap retries it.
+                    }
+                }
+                throw error
+            }
         }
     }
 

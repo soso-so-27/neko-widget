@@ -11,6 +11,7 @@
     "MOMENT_RUNTIME_ENABLED": "YES",
     "REACTION_RUNTIME_ENABLED": "YES",
     "WINDOW_NAME_RUNTIME_ENABLED": "YES",
+    "APNS_RUNTIME_ENABLED": "NO",
     "LEGACY_SHARING_RUNTIME_ENABLED": "YES",
     "INVITATION_TTL_SECONDS": "86400",
     "CHALLENGE_TTL_SECONDS": "300",
@@ -20,6 +21,7 @@
   },
   "triggers": {
     "crons": [
+      "* * * * *",
       "*/5 * * * *",
       "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
     ]

@@ -244,7 +244,11 @@ async function loadRecovery(env: Env, recoveryID: string): Promise<RecoveryRow |
         AND initiator_participant.space_id = recovery.space_id
        JOIN moment_devices AS initiator_device
          ON initiator_device.participant_id = initiator_participant.id
-        AND initiator_device.legacy_member_id = initiator.id
+        AND initiator_device.agreement_public_key
+              = recovery.initiator_agreement_public_key
+        AND initiator_device.signing_public_key
+              = recovery.initiator_signing_public_key
+        AND initiator_device.state = 'active'
        LEFT JOIN device_recovery_claim_events AS claim
          ON claim.recovery_id = recovery.id
        LEFT JOIN device_recovery_approval_events AS approval
@@ -462,31 +466,22 @@ export async function createDeviceRecovery(request: Request, env: Env): Promise<
   }
   await expireDeviceRecoveries(env, member.now, { spaceID: member.spaceId });
   const target = await targetForRecovery(env, member, targetParticipantID);
-  if (target === null || target.active_device_count !== 1) {
+  if (target === null || target.active_device_count >= 4) {
     await consumeNonce(env, member);
     throw new ApiError(
       409,
       "recovery_target_unavailable",
-      "The peer does not have exactly one replaceable active device.",
+      "The peer cannot add another active device.",
     );
   }
   const recoveryID = randomBase64url(16);
   const expiresAt = member.now + DEVICE_RECOVERY_TTL_SECONDS;
   const provisional = await env.DB.prepare(
-    `SELECT space.daily_boundary_minute_utc,
-            device.agreement_public_key AS initiator_agreement_public_key,
-            device.signing_public_key AS initiator_signing_public_key
-       FROM spaces AS space
-       JOIN moment_participants AS participant
-         ON participant.legacy_member_id = ? AND participant.space_id = space.id
-       JOIN moment_devices AS device
-         ON device.participant_id = participant.id AND device.legacy_member_id = ?
-      WHERE space.id = ? AND space.state = 'active'
-        AND participant.state = 'active' AND device.state = 'active'`,
-  ).bind(member.id, member.id, member.spaceId).first<{
+    `SELECT daily_boundary_minute_utc
+       FROM spaces
+      WHERE id = ? AND state = 'active'`,
+  ).bind(member.spaceId).first<{
     daily_boundary_minute_utc: number;
-    initiator_agreement_public_key: string;
-    initiator_signing_public_key: string;
   }>();
   if (provisional === null) {
     await consumeNonce(env, member);
@@ -519,8 +514,8 @@ export async function createDeviceRecovery(request: Request, env: Env): Promise<
       memberId: member.id,
       participantId: member.participantId,
       role: member.role,
-      agreementPublicKey: provisional.initiator_agreement_public_key,
-      signingPublicKey: provisional.initiator_signing_public_key,
+      agreementPublicKey: member.agreementPublicKey,
+      signingPublicKey: member.signingPublicKey,
       state: "active",
     }),
   };
@@ -547,8 +542,8 @@ export async function createDeviceRecovery(request: Request, env: Env): Promise<
         target.key_epoch,
         target.agreement_public_key,
         target.signing_public_key,
-        provisional.initiator_agreement_public_key,
-        provisional.initiator_signing_public_key,
+        member.agreementPublicKey,
+        member.signingPublicKey,
         recoveryProofPublicKey,
         member.now,
         expiresAt,

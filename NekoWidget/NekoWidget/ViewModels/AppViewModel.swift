@@ -15,6 +15,9 @@ extension Notification.Name {
     static let momentSharingContentNeedsReload = Notification.Name(
         "jp.nekowidget.sharing.content-needs-reload"
     )
+    static let receivedMemoryImportNeedsRefresh = Notification.Name(
+        "jp.nekowidget.received-memory-import-needs-refresh"
+    )
 }
 
 enum AlbumUpdateStatus: Equatable {
@@ -96,7 +99,7 @@ final class AppViewModel: ObservableObject {
         presentationSnapshot.catAssets
     }
     var likedAssets: [AssetRecord] {
-        presentationSnapshot.likedAssets
+        snapshot.likedAssets
     }
     var visibleLibraryAssets: [AssetRecord] {
         presentationSnapshot.assets
@@ -230,6 +233,7 @@ final class AppViewModel: ObservableObject {
     private var sharedLikeRecords: [String: SharedLikeRecord] = [:]
     private var sharingSyncObserver: NSObjectProtocol?
     private var momentPresentationRefreshObserver: NSObjectProtocol?
+    private var receivedMemoryImportObserver: NSObjectProtocol?
     private var familyWindowRefreshSequence = 0
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
@@ -315,6 +319,18 @@ final class AppViewModel: ObservableObject {
                 await self?.refreshFamilyWindowOutputs(trigger: "local-state-change")
             }
         }
+        receivedMemoryImportObserver = NotificationCenter.default.addObserver(
+            forName: .receivedMemoryImportNeedsRefresh,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let localIdentifier = notification.object as? String
+            Task { @MainActor [weak self] in
+                await self?.refreshReceivedMemoryImport(
+                    localIdentifier: localIdentifier
+                )
+            }
+        }
     }
 
     deinit {
@@ -324,6 +340,69 @@ final class AppViewModel: ObservableObject {
         if let momentPresentationRefreshObserver {
             NotificationCenter.default.removeObserver(momentPresentationRefreshObserver)
         }
+        if let receivedMemoryImportObserver {
+            NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
+        }
+    }
+
+    /// Publishes a newly imported Photos asset into the ordinary "思い出"
+    /// immediately. A selected scan-source album must not hide an explicit
+    /// memory, so the durable snapshot keeps this record even before a later
+    /// Vision pass enriches its cat metadata.
+    private func refreshReceivedMemoryImport(localIdentifier: String?) async {
+        _ = synchronizeSharedLikes(
+            importLegacyLikes: false,
+            trigger: "received-memory-import"
+        )
+        guard let localIdentifier,
+              sharedLikeRecords[localIdentifier]?.isReceivedMemoryImport == true,
+              sharedLikeRecords[localIdentifier]?.isLiked == true,
+              !snapshot.assets.contains(where: {
+                  $0.localIdentifier == localIdentifier
+              })
+        else {
+            await saveSnapshot(reportErrors: false)
+            return
+        }
+
+        let result = PHAsset.fetchAssets(
+            withLocalIdentifiers: [localIdentifier],
+            options: nil
+        )
+        guard let asset = result.firstObject, asset.mediaType == .image,
+              let like = sharedLikeRecords[localIdentifier]
+        else { return }
+
+        let modificationDate = asset.modificationDate.map {
+            Date(timeIntervalSince1970: floor($0.timeIntervalSince1970))
+        }
+        var updated = snapshot
+        updated.assets.append(AssetRecord(
+            localIdentifier: localIdentifier,
+            creationDate: asset.creationDate,
+            sourceModificationDate: modificationDate,
+            sourceModificationDateWasCaptured: true,
+            isFavorite: asset.isFavorite,
+            isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot),
+            burstIdentifier: asset.burstIdentifier,
+            cat: .none,
+            // This sentinel means that cat analysis has not completed yet;
+            // the explicit memory remains displayable regardless.
+            analysisStatus: .unavailableLocally,
+            analysisFingerprint: settings.analysisFingerprint,
+            analyzedAt: .now,
+            albumAnalysisVersion: nil,
+            albumTraits: nil,
+            liked: true,
+            likedAt: like.likedAt,
+            lastShownAt: nil,
+            shownCount: 0
+        ))
+        updated.updatedAt = .now
+        snapshot = updated
+        libraryChangePending = true
+        refreshCurrentAsset()
+        await saveSnapshot(reportErrors: true)
     }
 
     func start() async {
@@ -1824,7 +1903,7 @@ final class AppViewModel: ObservableObject {
                 localIdentifier: localIdentifier,
                 shownAt: link.shownAt
             )
-        case .familyWindow:
+        case let .familyWindow(localWindowID):
             guard SharingAPIConfiguration.current.isReviewVisible else {
                 SharedLog.app.info(
                     "deeplink",
@@ -1832,8 +1911,30 @@ final class AppViewModel: ObservableObject {
                 )
                 return
             }
-            isFamilyWindowPresented = true
-            SharedLog.app.info("deeplink", "Opened family window from Widget")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let localWindowID {
+                    do {
+                        _ = try await PairingInstallationGuard.activatePrivateWindowAsync(
+                            localWindowID: localWindowID
+                        )
+                        await MomentPushSubscriptionService.shared
+                            .reconcileRegistration()
+                        await self.refreshFamilyWindowOutputs(
+                            trigger: "widget-window-selection"
+                        )
+                    } catch {
+                        Self.logError(
+                            error,
+                            category: "family-window",
+                            operation: "activate_widget_window"
+                        )
+                        return
+                    }
+                }
+                self.isFamilyWindowPresented = true
+                SharedLog.app.info("deeplink", "Opened private window from Widget")
+            }
             return
         }
         guard let readyRoute = candidatePhotoRouteGate.receive(
@@ -2664,11 +2765,47 @@ final class AppViewModel: ObservableObject {
         // A full scan can run while the user adds a photo to “思い出” or while the
         // quick-stage album/cache publication updates display history. Merge
         // those live mutations instead of replacing them with scan-start state.
+        let durableLikeRecords = sharedLikeRecords.isEmpty
+            ? ((try? SharedLikeStore.readAll()) ?? [:])
+            : sharedLikeRecords
+        let receivedImportIdentifiers = Set(durableLikeRecords.compactMap {
+            key,
+            value in
+            value.isReceivedMemoryImport == true ? key : nil
+        })
+        var currentlyVisibleImportIdentifiers = Set<String>()
+        if !receivedImportIdentifiers.isEmpty {
+            let result = PHAsset.fetchAssets(
+                withLocalIdentifiers: Array(receivedImportIdentifiers),
+                options: nil
+            )
+            result.enumerateObjects { asset, _, _ in
+                currentlyVisibleImportIdentifiers.insert(asset.localIdentifier)
+            }
+        }
+        let canConcludeImportedAssetWasDeleted =
+            PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
+        if canConcludeImportedAssetWasDeleted {
+            let confirmedDeleted = receivedImportIdentifiers
+                .subtracting(currentlyVisibleImportIdentifiers)
+            for identifier in confirmedDeleted {
+                if let mutation = try? SharedLikeStore.set(
+                    localIdentifier: identifier,
+                    isLiked: false,
+                    source: "received-memory-deleted"
+                ) {
+                    sharedLikeRecords[identifier] = mutation.record
+                }
+            }
+        }
         let liveByIdentifier = Dictionary(
             uniqueKeysWithValues: snapshot.assets.map { ($0.localIdentifier, $0) }
         )
         var merged = newSnapshot
-        merged.assets = newSnapshot.assets.map {
+        merged.assets = newSnapshot.assets.filter {
+            !receivedImportIdentifiers.contains($0.localIdentifier)
+                || currentlyVisibleImportIdentifiers.contains($0.localIdentifier)
+        }.map {
             var record = $0.preservingUserState(from: liveByIdentifier[$0.localIdentifier])
             if let sharedLike = sharedLikeRecords[record.localIdentifier] {
                 record.liked = sharedLike.isLiked
@@ -2676,6 +2813,17 @@ final class AppViewModel: ObservableObject {
             }
             return record
         }
+        // A selected scan-source album legitimately omits Photos assets that
+        // were explicitly imported from a private window. Those assets still
+        // belong to the person's global "思い出" collection. Preserve their
+        // latest local records instead of letting an unrelated scan erase
+        // them from the PDF/book source pool.
+        let scannedIdentifiers = Set(merged.assets.map(\.localIdentifier))
+        merged.assets.append(contentsOf: liveByIdentifier.values.filter {
+            !scannedIdentifiers.contains($0.localIdentifier)
+                && sharedLikeRecords[$0.localIdentifier]?.isReceivedMemoryImport == true
+                && currentlyVisibleImportIdentifiers.contains($0.localIdentifier)
+        }.sorted { $0.localIdentifier < $1.localIdentifier })
         if let liveAlbumIdentifier = snapshot.albumLocalIdentifier {
             merged.albumLocalIdentifier = liveAlbumIdentifier
         }

@@ -19,6 +19,9 @@ struct PairingView: View {
             if !model.isMediaSyncEnabled {
                 pairingOnlyBuildSection
             }
+            if !model.privateWindows.isEmpty {
+                privateWindowSwitcherSection
+            }
             if !model.isConfigured {
                 Section {
                     ContentUnavailableView(
@@ -122,16 +125,16 @@ struct PairingView: View {
             Text(cancelConfirmationMessage)
         }
         .confirmationDialog(
-            "このiPhoneの復旧をやめますか？",
+            "このiPhoneの追加をやめますか？",
             isPresented: $showsAbandonRecoveryConfirmation,
             titleVisibility: .visible
         ) {
-            Button("このiPhoneの復旧をやめる", role: .destructive) {
+            Button("このiPhoneの追加をやめる", role: .destructive) {
                 Task { await model.abandonLocalDeviceRecovery() }
             }
             Button("戻る", role: .cancel) {}
         } message: {
-            Text("接続済みの相手側のまどは解除されません。このiPhoneに作った未承認の復旧情報だけを消します。")
+            Text("接続済みのまどや、すでに使っているiPhoneは解除されません。このiPhoneに作った未承認の追加情報だけを消します。")
         }
     }
 
@@ -147,6 +150,67 @@ struct PairingView: View {
         }
     }
 
+    private var privateWindowSwitcherSection: some View {
+        Section {
+            ForEach(model.privateWindows) { window in
+                Button {
+                    Task {
+                        await model.activatePrivateWindow(
+                            localWindowID: window.localWindowID
+                        )
+                        setupPath = nil
+                        hasAcceptedPairingTerms = false
+                        windowDisplayNameDraft = model.windowDisplayName
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: window.localWindowID == model.activePrivateWindowID
+                            ? "checkmark.circle.fill"
+                            : "circle")
+                            .foregroundStyle(
+                                window.localWindowID == model.activePrivateWindowID
+                                    ? Color.accentColor
+                                    : Color.secondary
+                            )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(window.displayName)
+                                .foregroundStyle(.primary)
+                            Text(window.spaceID == nil ? "まだ相手を招待していません" : "相手1人と非公開")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isWorking)
+                .accessibilityHint(
+                    window.localWindowID == model.activePrivateWindowID
+                        ? "現在開いているまどです"
+                        : "このまどへ切り替えます"
+                )
+            }
+
+            Button {
+                Task {
+                    await model.createAnotherPrivateWindow()
+                    setupPath = nil
+                    hasAcceptedPairingTerms = false
+                    windowDisplayNameDraft = model.windowDisplayName
+                }
+            } label: {
+                Label("別のまどを追加", systemImage: "rectangle.stack.badge.plus")
+                    .font(.headline)
+            }
+            .disabled(model.isWorking || !model.canCreateAnotherPrivateWindow)
+        } header: {
+            Text("まどを選ぶ")
+        } footer: {
+            Text("まどごとに名前・相手・届いた写真が分かれます。1つのまどにつながる相手は1人です。")
+        }
+    }
+
     private var privacySection: some View {
         Section {
             if model.isMediaSyncEnabled {
@@ -154,7 +218,7 @@ struct PairingView: View {
                 DisclosureGroup("暗号化のしくみ") {
                     Label("最大2,048pxへ縮小し、位置情報を除いて暗号化します", systemImage: "lock.shield")
                     Label("撮影日時は、分かる場合だけ暗号化した中に入ります", systemImage: "calendar.badge.clock")
-                    Text("公開フィードや検索には表示されません。招待・復旧コードは、信頼できる相手にだけ送ってください。")
+                    Text("公開フィードや検索には表示されません。招待・端末追加コードは、信頼できる相手にだけ送ってください。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -244,17 +308,17 @@ struct PairingView: View {
                 await saveWindowNameIfPossible()
             }
         case .claimingRecovery:
-            progressSection("復旧コードを確認しています…")
-            retrySection("復旧を再試行") {
+            progressSection("追加コードを確認しています…")
+            retrySection("追加を再試行") {
                 await model.joinDeviceRecovery()
             }
             localRecoveryAbandonSection
         case .pendingRecoveryApproval:
-            recoveryPhraseSection(state, title: "復旧する端末を確認")
+            recoveryPhraseSection(state, title: "追加するiPhoneを確認")
             recoveryRefreshSection(state)
             localRecoveryAbandonSection
         case .recoveryAwaitingCompletion:
-            progressSection("以前のまどへ接続を戻しています…")
+            progressSection("このiPhoneをまどに追加しています…")
             recoveryRefreshSection(state)
         case .pendingApproval:
             phraseSection(state, title: "相手の承認を待っています")
@@ -349,16 +413,16 @@ struct PairingView: View {
                 setupPath = .recover
             } label: {
                 Label(
-                    "新しいiPhoneで、以前のまどへ戻る",
+                    "別のiPhoneをこのまどに追加",
                     systemImage: "iphone.and.arrow.forward"
                 )
                     .font(.headline)
             }
-            .accessibilityHint("新しいiPhoneで、相手から届いたNWR1.で始まる復旧コードを使います")
+            .accessibilityHint("追加するiPhoneで、相手から届いたNWR1.で始まる追加コードを使います")
         } header: {
             Text("まどをつなぐ")
         } footer: {
-            Text("機種変更では「以前のまどへ戻る」を選びます。以前のiPhoneは操作しません。")
+            Text("追加しても、すでに使っているiPhoneは解除されず、そのまま使えます。")
         }
     }
 
@@ -373,8 +437,8 @@ struct PairingView: View {
             title = "招待されたまどに参加"
             icon = "person.badge.plus"
         case .recover:
-            // Device recovery has a dedicated three-device explanation.
-            title = "以前のまどへ戻る"
+            // Additional-device enrollment has a dedicated explanation.
+            title = "このまどにiPhoneを追加"
             icon = "iphone.and.arrow.forward"
         }
         return Section {
@@ -389,7 +453,7 @@ struct PairingView: View {
 
     private func windowNameSection(_ state: PairingState) -> some View {
         Section {
-            if state.role == .invitee, state.spaceID != nil {
+            if state.spaceID != nil, !model.canEditWindowDisplayName {
                 LabeledContent("名前", value: model.windowDisplayName)
             } else {
                 TextField("例：しずくのまど", text: $windowDisplayNameDraft)
@@ -431,7 +495,9 @@ struct PairingView: View {
         } header: {
             Text("まどの名前")
         } footer: {
-            if state.role == .invitee, state.spaceID != nil {
+            if state.localDeviceIsAdditional == true, state.spaceID != nil {
+                Text("追加したiPhoneでは名前を変更できません。最初のiPhoneで変更すると、暗号化してこのiPhoneにも届きます。")
+            } else if state.role == .invitee, state.spaceID != nil {
                 Text("名前は暗号化して共有されています。変更は、まどを作った人のiPhoneで行います。")
             } else if state.spaceID == nil {
                 Text("名前は暗号化して、招待した相手にも表示します。")
@@ -504,7 +570,7 @@ struct PairingView: View {
     private var recoveryJoinSection: some View {
         Section {
             TextField(
-                "NWR1.から始まる復旧コード",
+                "NWR1.から始まる追加コード",
                 text: $model.enteredRecoveryCode,
                 axis: .vertical
             )
@@ -517,7 +583,7 @@ struct PairingView: View {
                 Task { await model.joinDeviceRecovery() }
             } label: {
                 primaryActionLabel(
-                    "この新しいiPhoneへ接続を戻す",
+                    "このiPhoneをまどに追加",
                     systemImage: "iphone.and.arrow.forward"
                 )
             }
@@ -530,7 +596,7 @@ struct PairingView: View {
         } header: {
             Text("今すること")
         } footer: {
-            Text("相手のiPhoneで承認すると、以前のまどへ戻ります。")
+            Text("相手のiPhoneで承認すると、このiPhoneでも同じまどを使えます。すでに使っているiPhoneは解除されません。")
         }
     }
 
@@ -664,7 +730,7 @@ struct PairingView: View {
                     .font(.title3.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(
-                        "復旧の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
+                        "端末追加の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
                     )
             }
         } header: {
@@ -678,7 +744,7 @@ struct PairingView: View {
         let title = PairingGuidancePresentation.make(
             phase: state.phase,
             role: state.role
-        ).refreshButtonTitle ?? "復旧状態を確認"
+        ).refreshButtonTitle ?? "追加状態を確認"
         return Section {
             Button {
                 Task { await model.refreshDeviceRecovery() }
@@ -695,12 +761,12 @@ struct PairingView: View {
 
     private var localRecoveryAbandonSection: some View {
         Section {
-            Button("このiPhoneの復旧をやめる", role: .destructive) {
+            Button("このiPhoneの追加をやめる", role: .destructive) {
                 showsAbandonRecoveryConfirmation = true
             }
             .disabled(model.isWorking)
         } footer: {
-            Text("接続済みの相手側のまどや共有は解除しません。")
+            Text("接続済みのまどや、ほかのiPhoneは解除しません。")
         }
     }
 
@@ -774,11 +840,11 @@ struct PairingView: View {
         let currentDeviceDetail: String
         switch currentDevice {
         case .newIPhone:
-            currentDeviceTitle = "この端末：新しいiPhone"
-            currentDeviceDetail = "相手のiPhoneから復旧コードを受け取ります。"
+            currentDeviceTitle = "この端末：追加するiPhone"
+            currentDeviceDetail = "相手のiPhoneから追加コードを受け取ります。"
         case .partnerIPhone:
             currentDeviceTitle = "この端末：相手のiPhone"
-            currentDeviceDetail = "新しいiPhoneの復旧を手伝います。"
+            currentDeviceDetail = "相手が使うiPhoneの追加を承認します。"
         }
         return Section {
             Label {
@@ -794,7 +860,7 @@ struct PairingView: View {
             }
             .accessibilityElement(children: .combine)
 
-            DisclosureGroup("機種変更で使う3台") {
+            DisclosureGroup("追加に関係するiPhone") {
                 deviceRoleRow(
                     title: guidance.newIPhoneTitle,
                     detail: guidance.newIPhoneDetail,
@@ -810,7 +876,7 @@ struct PairingView: View {
                     detail: guidance.partnerIPhoneDetail,
                     systemImage: "person.crop.circle.badge.checkmark"
                 )
-                Text("復旧コードだけでは共有鍵を取得できません。12語の照合と相手の承認が必要です。")
+                Text("追加コードだけでは共有鍵を取得できません。12語の照合と相手の承認が必要です。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -821,7 +887,7 @@ struct PairingView: View {
                 .font(.footnote)
             }
             if canCloseDeviceChangeFlow {
-                Button("機種変更の案内を閉じる") {
+                Button("iPhone追加の案内を閉じる") {
                     showsDeviceChangeFlow = false
                 }
                 .font(.footnote)
@@ -863,11 +929,11 @@ struct PairingView: View {
                     if let code = model.recoveryInvitationCode {
                         Text(code)
                             .font(.system(.caption2, design: .monospaced))
-                            .accessibilityLabel("端末の復旧コード")
+                            .accessibilityLabel("端末の追加コード")
 
                         ShareLink(item: code) {
                             primaryActionLabel(
-                                "新しいiPhoneへ復旧コードを送る",
+                                "追加するiPhoneへコードを送る",
                                 systemImage: "square.and.arrow.up"
                             )
                         }
@@ -890,7 +956,7 @@ struct PairingView: View {
                             Task { await model.refreshDeviceRecovery() }
                         } label: {
                             primaryActionLabel(
-                                "復旧コードを読み直す",
+                                "追加コードを読み直す",
                                 systemImage: "arrow.clockwise"
                             )
                         }
@@ -905,7 +971,7 @@ struct PairingView: View {
                         )
                     }
 
-                    Button("新しいiPhoneが入力したか確認") {
+                    Button("追加するiPhoneが入力したか確認") {
                         Task { await model.refreshDeviceRecovery() }
                     }
                     .font(.footnote)
@@ -915,17 +981,17 @@ struct PairingView: View {
                     Text(phrase)
                         .font(.title3.weight(.semibold))
                         .accessibilityLabel(
-                            "復旧の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
+                            "端末追加の確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))"
                         )
                     Toggle(
-                        "新しいiPhoneと同じ12語です",
+                        "追加するiPhoneと同じ12語です",
                         isOn: $model.hasConfirmedRecoveryPhrase
                     )
                     Button {
                         Task { await model.approveDeviceRecoveryAfterPhraseConfirmation() }
                     } label: {
                         primaryActionLabel(
-                            "新しいiPhoneを承認する",
+                            "このiPhoneの追加を承認",
                             systemImage: "checkmark.shield"
                         )
                     }
@@ -933,7 +999,7 @@ struct PairingView: View {
                     .disabled(!model.hasConfirmedRecoveryPhrase || model.isWorking)
                 } else {
                     Label(
-                        "承認済み・新しいiPhoneでの完了待ち",
+                        "承認済み・追加するiPhoneでの完了待ち",
                         systemImage: "checkmark.shield"
                     )
                     .foregroundStyle(.green)
@@ -954,7 +1020,7 @@ struct PairingView: View {
                     Task { await model.createDeviceRecoveryInvitation() }
                 } label: {
                     primaryActionLabel(
-                        "新しいiPhone用の復旧コードを作る",
+                        "iPhone追加コードを作る",
                         systemImage: "iphone.and.arrow.forward"
                     )
                 }
@@ -964,7 +1030,7 @@ struct PairingView: View {
         } header: {
             Text("今すること")
         } footer: {
-            Text("復旧コードを送った後、12語が同じことを確認して承認します。")
+            Text("追加コードを送った後、12語が同じことを確認して承認します。相手がすでに使っているiPhoneは解除されません。")
         }
     }
 
@@ -974,15 +1040,15 @@ struct PairingView: View {
                 showsDeviceChangeFlow = true
             } label: {
                 primaryActionLabel(
-                    "相手のiPhoneの機種変更を手伝う",
+                    "相手の別のiPhoneを追加",
                     systemImage: "iphone.and.arrow.forward"
                 )
             }
             .buttonStyle(.borderedProminent)
         } header: {
-            Text("機種変更・再インストール")
+            Text("使えるiPhoneを増やす")
         } footer: {
-            Text("このiPhone自身を機種変更した場合は、新しいiPhone側で「以前のまどへ戻る」を選びます。")
+            Text("追加しても既存のiPhoneは使い続けられます。このiPhone自身を追加する場合は、追加するiPhone側から始めます。")
         }
     }
 
@@ -1005,7 +1071,7 @@ struct PairingView: View {
     private var cancelConfirmationMessage: String {
         if model.state?.phase == .paired {
             if model.isMediaSyncEnabled {
-                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵・届いた写真・思い出の印を削除します。通信に失敗した場合は削除しません。相手が写真アプリへコピーした写真は削除できません。"
+                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「思い出に追加」で写真アプリへ保存した写真は削除できません。"
             }
             return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と接続情報を削除します。通信に失敗した場合は削除しません。"
         }

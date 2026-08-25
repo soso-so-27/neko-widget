@@ -37,13 +37,14 @@ Phase 1は写真、render plan、reactionを一切受け取りません。
 ## Phase 3で成立すること
 
 - 一送信を、不変で追記型の`moment`（`live | memory | bootstrap`）として扱う。今回の製品UIは`live`だけを使う。
-- `space → participant → device`と、`moment → recipient delivery`を分離する。最初は2人・各1台でも、複数端末や3人以上で暗号文形式を変えない。
+- `space → participant → device`と、`moment → recipient delivery`を分離する。1つのspaceは2人のまま、本人確認済みの追加deviceを参加者ごとに最大4台まで登録できる。3人以上は未実装だが、暗号文形式は変えない。
 - 一枚ごとに`reserve → private R2 upload → commit`し、commit時点のactive recipientをdeliveryへ固定する。受信はcursor差分、暗号文取得、端末内検証、ACKの順に行う。
 - 通常写真用`MEDIA`と、利用者が明示通報した暗号化copy用`MODERATION_MEDIA`を別の非公開bucketにする。Workerはどちらも復号できない。
 - 1 participantあたり1日5 moment。upload lease再予約は同じlogical moment・暗号文・送信枠を維持し、初回を含む3予約で停止する。
 - blockはdeliveryを相互に失効し、対象participantの通常APIを止める。対象側には既存受信の通報だけを24時間残し、通報証拠はcommit後7日で削除する。
 - ACK済み通常暗号文は7日、未受領は30日。期限・revoke後はAPI取得を先に止め、追跡delete queueとprefix sweepで物理削除を収束させる。
-- 家族3人以上、複数端末、memory、bootstrapは同じmodelで後続追加する。施設等から多数への一方向配信は別の脅威・費用モデルなので、このAPIへ混ぜない。
+- APNsは写真commitとハート登録のD1 transaction内で汎用通知eventだけをoutboxへ作る。写真、まど名、人物名、時刻、object URL、暗号鍵、source IDはpayloadへ入れない。APNs受付は端末到着の証明として扱わない。
+- 1人最大4台の本人確認済みiPhoneを同じparticipantに追加できる。まどは常に2人に限定し、3人以上や施設等から多数への一方向配信は別の脅威・費用モデルとして、このAPIへ混ぜない。
 
 ## API contract
 
@@ -90,6 +91,8 @@ Phase 3の追加APIは次のとおりです。署名headerはv1と同じで、JS
 | `POST` | `/v2/moments/{id}/ack` | 復号・端末内保存後の受領を記録する |
 | `POST` | `/v2/participants/{id}/block` | 双方向deliveryを止め、対象の通常accessを失効する |
 | `POST/PUT/POST` | `/v2/reports/...` | 通報copyを予約・upload・commitする |
+| `PUT` | `/v2/push-subscriptions/current` | 現在の署名済みdeviceへAPNs tokenを35日間登録・更新する |
+| `DELETE` | `/v2/push-subscriptions/current` | runtime OFF中でも現在deviceのAPNs登録を削除する |
 
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 
@@ -162,6 +165,10 @@ Consumed challenge rowはpending pairing中だけ残ります。Completion、pen
 
 ## Retention cleanup
 
+`* * * * *`のAPNs handlerは期限切れsubscription/eventを先に削除し、leased outboxを最大50件ずつ配送します。Subscriptionは最終登録から最大35日、通知eventは24時間です。Appは起動ごとに登録を更新します。初回登録時に過去eventをbackfillしないため、通知を新たに許可した直後に古い写真やハートをまとめて通知しません。Foreground同期でmomentがACKされた場合は未送信・retry中の通知eventを削除します。
+
+APNsのsecret、runtime switch、retry、失効token処理、staging smoke gateは[`APNS_OPERATIONS.md`](APNS_OPERATIONS.md)を正本にします。
+
 `*/5 * * * *`のscheduled handlerは、期限切れnonce、48時間を過ぎたidempotency response、30日間受理されたactivityがないPhase 1 space metadataをoldest-firstで削除します。1 runの上限はnonce 10,000 row、idempotency 2,500 row、daily freeze 1,000 rowです。IDを`IN`へbindするpairing expiry／inactive space／deletion jobは90 spaceに限定し、D1の100 bound parameter上限へ10枠を残します。各stageは小さいchunkをcommitしてから次へ進むため、途中で停止しても次のrunがDB上のoldest rowから再開します。
 
 ProductionはWorkers Paidを前提とし、設定でCPU 30秒、subrequest 1,200を上限にします。最悪構成でもD1 queryは900/invocation未満、R2 multi-delete/listは公式上限の1,000 key/call以下です。5分runは一日288回なので、nonceは最大288万row/day（想定約48万/day）、明示object deletionは最大691.2万key/day（10,000 publishing sourceが旧20 canonical + manifestを全交換する21万key/day）を処理できます。Production deploy gateではCron CPU 30秒未満、D1 query 1,000未満、残件数、最古`not_before`／expiry、実`rows_written`をload testと運用monitorで確認します。Workers Freeはrequest、D1 write、CPUのいずれもこの規模のProduction対象ではありません。
@@ -215,6 +222,6 @@ offline toolの存在だけではProduction gateを満たしません。
 [`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)を参照してください。
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 
-[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0004`を適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`と独立した`WINDOW_NAME_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要な方を`YES`へ変更します。OFFでも通報・block・cleanupは維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
+[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0010`を適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要なものを`YES`へ変更します。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
 
-両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、2本のCron、削除backlogの最古時刻をreviewします。
+両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、3本のCron、削除backlogの最古時刻をreviewします。

@@ -26,6 +26,7 @@ import {
 } from "./http";
 import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
 import { encodeCanonicalFields, signedRequestTranscript } from "./protocol";
+import { momentNotificationEventStatements } from "./push";
 import { REACTION_USAGE_RETENTION_DAYS } from "./reactions";
 import {
   asObject,
@@ -253,9 +254,13 @@ async function signedRequest(
         `SELECT MIN(participant.report_only_until, device.report_only_until) AS report_only_until
            FROM moment_participants AS participant
            JOIN moment_devices AS device ON device.participant_id = participant.id
-          WHERE participant.legacy_member_id = ? AND device.legacy_member_id = ?
+          WHERE participant.id = ? AND device.id = ?
             AND participant.space_id = ?`,
-      ).bind(member.id, member.id, member.spaceId).first<{ report_only_until: number | null }>();
+      ).bind(
+        member.momentParticipantId,
+        member.deviceId,
+        member.spaceId,
+      ).first<{ report_only_until: number | null }>();
       if (window?.report_only_until !== null && window?.report_only_until !== undefined
           && window.report_only_until > member.now) {
         throw new ApiError(
@@ -425,6 +430,8 @@ async function signedReportRequest(
     spaceId: credential.space_id,
     role: credential.role === "owner" ? "owner" : "invitee",
     participantId: credential.participant_id,
+    momentParticipantId: credential.participant_id,
+    deviceId: credential.device_id,
     agreementPublicKey: credential.agreement_public_key,
     signingPublicKey: credential.signing_public_key,
     state: credential.participant_state,
@@ -594,13 +601,17 @@ async function momentContext(
        FROM moment_participants AS participant
        JOIN moment_devices AS device ON device.participant_id = participant.id
        JOIN moment_spaces AS space ON space.space_id = participant.space_id
-      WHERE participant.legacy_member_id = ?
-        AND device.legacy_member_id = ?
+      WHERE participant.id = ?
+        AND device.id = ?
         AND participant.space_id = ?
         AND participant.state = 'active'
         AND device.state = 'active'
         AND space.state = 'active'`,
-  ).bind(member.id, member.id, member.spaceId).first<MomentContextRow>();
+  ).bind(
+    member.momentParticipantId,
+    member.deviceId,
+    member.spaceId,
+  ).first<MomentContextRow>();
   if (row === null) {
     throw new ApiError(503, "moment_identity_unavailable", "The sharing identity is temporarily unavailable.");
   }
@@ -1305,6 +1316,7 @@ export async function commitMoment(
           WHERE delivery.moment_id = ?
             AND delivery.recipient_participant_id <> ?`,
       ).bind(committedAt, momentID, firstRecipientID),
+      ...momentNotificationEventStatements(env, momentID, committedAt),
       env.DB.prepare("DELETE FROM moment_commit_events WHERE id = ?").bind(commitEventID),
       idempotencyStatement(
         env,
@@ -1630,6 +1642,39 @@ export async function acknowledgeMoment(
         accessExpiresAt,
       ),
       env.DB.prepare("DELETE FROM moment_ack_events WHERE id = ?").bind(eventID),
+      // A moment delivery is participant-scoped, but APNs work is physical
+      // device-scoped. A successful signed ACK proves only this device has the
+      // photo, so retain alerts for the participant's other enrolled iPhones.
+      env.DB.prepare(
+        `DELETE FROM notification_deliveries
+          WHERE token_digest = (
+                  SELECT token_digest
+                    FROM apns_subscriptions
+                   WHERE device_id = ? AND participant_id = ?
+                )
+            AND event_id IN (
+              SELECT event.id
+                FROM notification_events AS event
+               WHERE event.kind = 'new_moment'
+                 AND event.participant_id = ?
+                 AND event.moment_id = ?
+            )`,
+      ).bind(
+        member.deviceId,
+        context.participant_id,
+        context.participant_id,
+        momentID,
+      ),
+      env.DB.prepare(
+        `DELETE FROM notification_events
+          WHERE kind = 'new_moment'
+            AND participant_id = ? AND moment_id = ?
+            AND NOT EXISTS (
+              SELECT 1
+                FROM notification_deliveries AS delivery
+               WHERE delivery.event_id = notification_events.id
+            )`,
+      ).bind(context.participant_id, momentID),
       // The sender receives an opaque, image-free change only after a recipient
       // device has durably acknowledged the delivery. The existing changes
       // authorization keeps it scoped to the sender participant, and the

@@ -15,7 +15,7 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var manualRefreshSucceeded: Bool?
     @Published private(set) var memoryActionMessage: String?
     @Published private(set) var heartActionMessage: String?
-    @Published private(set) var photoCopyActionMessage: String?
+    @Published private(set) var importedMemoryMomentIDs = Set<String>()
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -49,11 +49,6 @@ final class MomentSharingViewModel: ObservableObject {
                 return $0.id < $1.id
             }
     }
-    var savedMemoryIDs: Set<String> {
-        Set(sharingState.savedMemories.map(\.momentID))
-    }
-    var receivedHeartCount: Int { sharingState.receivedPaws.count }
-
     func bootstrap() async {
         do {
             _ = try await PairingInstallationGuard.bootstrapAsync()
@@ -154,7 +149,11 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func isSavedMemory(_ item: MomentInboxItem) -> Bool {
-        savedMemoryIDs.contains(item.id)
+        importedMemoryMomentIDs.contains(item.id)
+    }
+
+    func hasImportedMemory(_ item: MomentInboxItem) -> Bool {
+        sharingState.importedMemories.contains { $0.momentID == item.id }
     }
 
     func heartOutboxItem(for item: MomentInboxItem) -> MomentPawOutboxItem? {
@@ -203,37 +202,148 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func toggleSavedMemory(_ item: MomentInboxItem) async {
-        // A bookmark is a lifecycle-validated local ledger mutation. Network
-        // synchronization may continue while it changes; only another local
-        // action needs to serialize with it.
+        // This explicit action imports the sanitized JPEG into Photos once,
+        // then uses the ordinary shared like ledger. It never contacts the
+        // relay or notifies the other participant.
         guard !isPerformingAction, !isReportOnly,
               item.state == .available || item.state == .acknowledged
         else { return }
         memoryActionMessage = nil
         isPerformingAction = true
         defer { isPerformingAction = false }
+        var photosWriteCompleted = false
         do {
-            let willSave = !isSavedMemory(item)
-            let bootstrap = try PairingInstallationGuard.bootstrap()
-            try MomentSharingStateStore.setSavedMemory(
+            let copyService = ReceivedPhotoMemoryImportService()
+            var bootstrap = try PairingInstallationGuard.bootstrap()
+            if let existing = try MomentSharingStateStore.importedMemoryRecord(
                 momentID: item.id,
-                isSaved: willSave,
+                validating: bootstrap.lifecycleToken
+            ) {
+                switch copyService.assetVisibility(
+                    localIdentifier: existing.photoLocalIdentifier
+                ) {
+                case .visible, .unknown:
+                    // Limited access cannot prove that an invisible asset was
+                    // deleted. Keep the durable mapping so a retry never makes
+                    // a second Photos copy.
+                    let willSave = !isSavedMemory(item)
+                    _ = try SharedLikeStore.set(
+                        localIdentifier: existing.photoLocalIdentifier,
+                        isLiked: willSave,
+                        source: "received-memory"
+                    )
+                    errorMessage = nil
+                    try reload()
+                    notifyPersonalMemoriesChanged(
+                        localIdentifier: existing.photoLocalIdentifier
+                    )
+                    showMemoryActionMessage(willSave
+                        ? "思い出に追加しました"
+                        : "思い出から外しました（写真アプリには残ります）")
+                    return
+                case .confirmedMissing:
+                    try MomentSharingStateStore.removeImportedMemoryRecord(
+                        momentID: item.id,
+                        expectedPhotoLocalIdentifier: existing.photoLocalIdentifier,
+                        validating: bootstrap.lifecycleToken
+                    )
+                }
+            }
+
+            try await copyService.requestMemoryImportAuthorization()
+            // Do not create a PhotoKit asset until its permanent personal
+            // collection can accept the matching record. This initialization
+            // is independent from the optional personal-library scan; that
+            // scan can merge missing legacy likes later without overwriting
+            // this imported memory.
+            try SharedLikeStore.ensureInitialized()
+            // The permission prompt can suspend. Journal the operation under
+            // the current lifecycle before the irreversible Photos write.
+            bootstrap = try PairingInstallationGuard.bootstrap()
+            let preparation = try MomentSharingStateStore.prepareMemoryImport(
+                momentID: item.id,
+                validating: bootstrap.lifecycleToken
+            )
+            let payload = try MomentSharingStateStore.photoLibraryCopyPayload(
+                momentID: item.id,
+                now: .now,
+                validating: bootstrap.lifecycleToken
+            )
+
+            var localIdentifier: String?
+            if preparation.wasAlreadyPending {
+                // A previous process may have stopped after PhotoKit committed
+                // but before our state mapping was written. Search by the
+                // opaque journal filename first; limited access must fail
+                // closed rather than create a duplicate.
+                localIdentifier = try await copyService.recoverImportedAsset(
+                    importToken: preparation.record.importToken
+                )
+            }
+            if localIdentifier == nil {
+                do {
+                    localIdentifier = try await copyService.importMemory(
+                        payload,
+                        importToken: preparation.record.importToken
+                    )
+                    photosWriteCompleted = true
+                } catch {
+                    if let current = try? PairingInstallationGuard.bootstrap() {
+                        try? MomentSharingStateStore.cancelMemoryImport(
+                            momentID: item.id,
+                            importToken: preparation.record.importToken,
+                            validating: current.lifecycleToken
+                        )
+                    }
+                    throw error
+                }
+            } else {
+                photosWriteCompleted = true
+            }
+            guard let localIdentifier else {
+                throw ReceivedPhotoMemoryImportError.importFailed
+            }
+
+            // Once Photos has committed, make the ordinary memory marker
+            // durable even if the sharing lifecycle changes immediately after.
+            _ = try SharedLikeStore.set(
+                localIdentifier: localIdentifier,
+                isLiked: true,
+                source: "received-memory"
+            )
+            notifyPersonalMemoriesChanged(localIdentifier: localIdentifier)
+
+            // Rebind to the current lifecycle, then atomically replace the
+            // pending journal with the durable moment-to-Photos mapping.
+            bootstrap = try PairingInstallationGuard.bootstrap()
+            try MomentSharingStateStore.completeMemoryImport(
+                momentID: item.id,
+                importToken: preparation.record.importToken,
+                photoLocalIdentifier: localIdentifier,
                 validating: bootstrap.lifecycleToken
             )
             errorMessage = nil
             try reload()
-            showMemoryActionMessage(willSave
-                ? "思い出に追加しました"
-                : "思い出から外しました")
+            showMemoryActionMessage("写真を取り込み、思い出に追加しました")
         } catch {
             memoryActionMessage = nil
-            errorMessage = "思い出の状態を変更できませんでした。時間をおいて、もう一度お試しください。"
+            errorMessage = photosWriteCompleted
+                ? "写真アプリへの保存は完了しました。思い出の登録確認に失敗したため、写真は再コピーせず次回に復旧確認します。"
+                : ((error as? LocalizedError)?.errorDescription
+                    ?? "思い出へ取り込めませんでした。時間をおいて、もう一度お試しください。")
             SharedLog.app.warning(
                 "saved-moment",
                 "Received moment bookmark could not be changed",
                 metadata: SharedLog.errorMetadata(error, category: .savedMoment)
             )
         }
+    }
+
+    private func notifyPersonalMemoriesChanged(localIdentifier: String) {
+        NotificationCenter.default.post(
+            name: .receivedMemoryImportNeedsRefresh,
+            object: localIdentifier
+        )
     }
 
     private func showMemoryActionMessage(_ message: String) {
@@ -255,52 +365,6 @@ final class MomentSharingViewModel: ObservableObject {
                   self?.heartActionMessage == message
             else { return }
             self?.heartActionMessage = nil
-        }
-    }
-
-    func copyToPhotoLibrary(_ item: MomentInboxItem) async {
-        guard !isPerformingAction, !isReportOnly,
-              item.state == .available || item.state == .acknowledged
-        else { return }
-        photoCopyActionMessage = nil
-        isPerformingAction = true
-        defer { isPerformingAction = false }
-        do {
-            let copyService = ReceivedPhotoLibraryCopyService()
-            try await copyService.requestAddAuthorization()
-
-            // Authorization may suspend while iOS presents its prompt. Issue
-            // a fresh lifecycle token only afterwards, then make this final
-            // state/file/90-day check the irreversible export commit point.
-            let bootstrap = try PairingInstallationGuard.bootstrap()
-            let payload = try MomentSharingStateStore.photoLibraryCopyPayload(
-                momentID: item.id,
-                now: .now,
-                validating: bootstrap.lifecycleToken
-            )
-            try await copyService.copy(payload)
-            errorMessage = nil
-            showPhotoCopyActionMessage("写真アプリへコピーしました")
-        } catch {
-            photoCopyActionMessage = nil
-            errorMessage = (error as? LocalizedError)?.errorDescription
-                ?? "写真アプリへコピーできませんでした。時間をおいて、もう一度お試しください。"
-            SharedLog.app.warning(
-                "photo-library-copy",
-                "Received photo copy failed",
-                metadata: SharedLog.errorMetadata(error, category: .savedMoment)
-            )
-        }
-    }
-
-    private func showPhotoCopyActionMessage(_ message: String) {
-        photoCopyActionMessage = message
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard !Task.isCancelled,
-                  self?.photoCopyActionMessage == message
-            else { return }
-            self?.photoCopyActionMessage = nil
         }
     }
 
@@ -437,6 +501,10 @@ final class MomentSharingViewModel: ObservableObject {
             )
         } ?? PrivateWindowDisplayName.fallback
         sharingState = nextSharingState
+        let likeRecords = (try? SharedLikeStore.readAll()) ?? [:]
+        importedMemoryMomentIDs = Set(nextSharingState.importedMemories.compactMap {
+            likeRecords[$0.photoLocalIdentifier]?.isLiked == true ? $0.momentID : nil
+        })
         outgoingPresentation = Self.makeOutgoingPresentation(
             handoffSnapshot: handoffSnapshot,
             sharingState: nextSharingState,
@@ -482,7 +550,10 @@ final class MomentSharingViewModel: ObservableObject {
         sharingState: MomentSharingState,
         now: Date
     ) -> MomentOutgoingPresentation {
-        MomentSharingPresentationPolicy.make(
+        let receivedHeartMomentIDs = Set(
+            sharingState.receivedPaws.map(\.momentID)
+        )
+        return MomentSharingPresentationPolicy.make(
             preparations: handoffSnapshot.statuses.map {
                 MomentPreparationPresentationInput(
                     destinationKey: $0.destinationKey,
@@ -505,7 +576,10 @@ final class MomentSharingViewModel: ObservableObject {
                     committedAt: $0.committedAt,
                     unreceivedExpiresAt: $0.unreceivedExpiresAt,
                     recipientCount: $0.recipientCount,
-                    recipientDeliveryConfirmedAt: $0.recipientDeliveryConfirmedAt
+                    recipientDeliveryConfirmedAt: $0.recipientDeliveryConfirmedAt,
+                    hasReceivedHeart: $0.serverMomentID.map {
+                        receivedHeartMomentIDs.contains($0)
+                    } ?? false
                 )
             },
             outcomes: sharingState.outgoingOutcomes.map {

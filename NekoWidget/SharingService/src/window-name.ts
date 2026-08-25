@@ -37,6 +37,7 @@ interface WindowNameContextRow {
   participant_role: "owner" | "member";
   current_key_epoch: number;
   is_blocked: number;
+  is_primary_device: number;
 }
 
 interface WindowNameRow {
@@ -107,6 +108,8 @@ async function context(
   const row = await env.DB.prepare(
     `SELECT participant.role AS participant_role,
             space.current_key_epoch,
+            CASE WHEN device.legacy_member_id IS NOT NULL
+              THEN 1 ELSE 0 END AS is_primary_device,
             CASE WHEN EXISTS (
               SELECT 1
                 FROM moment_blocks AS block
@@ -116,13 +119,17 @@ async function context(
        FROM moment_participants AS participant
        JOIN moment_devices AS device ON device.participant_id = participant.id
        JOIN moment_spaces AS space ON space.space_id = participant.space_id
-      WHERE participant.legacy_member_id = ?
-        AND device.legacy_member_id = ?
+      WHERE participant.id = ?
+        AND device.id = ?
         AND participant.space_id = ?
         AND participant.state = 'active'
         AND device.state = 'active'
         AND space.state = 'active'`,
-  ).bind(member.id, member.id, member.spaceId).first<WindowNameContextRow>();
+  ).bind(
+    member.momentParticipantId,
+    member.deviceId,
+    member.spaceId,
+  ).first<WindowNameContextRow>();
   if (row === null) {
     throw new ApiError(
       503,
@@ -283,6 +290,13 @@ export async function putWindowName(request: Request, env: Env): Promise<Respons
         403,
         "owner_required",
         "Only the active inviter can update the private window name.",
+      );
+    }
+    if (actor.is_primary_device !== 1) {
+      throw new ApiError(
+        403,
+        "primary_owner_device_required",
+        "The original owner device is required to update the private window name.",
       );
     }
     const ownerTranscript = encodeCanonicalFields([

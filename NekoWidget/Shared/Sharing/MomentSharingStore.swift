@@ -300,6 +300,79 @@ struct MomentSavedMemoryMutation: Equatable, Sendable {
     let isSaved: Bool
 }
 
+/// A durable, idempotency mapping for a received photo that the person
+/// explicitly imported into Photos and the app's ordinary "思い出" collection.
+/// The Photos local identifier never leaves this installation and is never
+/// sent to the relay. Keeping the mapping separate from the legacy 90-day
+/// bookmark prevents a retry from creating another Photos asset.
+struct MomentImportedMemoryRecord: Codable, Equatable, Identifiable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let momentID: String
+    let photoLocalIdentifier: String
+    let importedAt: Date
+
+    var id: String { momentID }
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              Self.isOpaqueIdentifier(momentID),
+              (1...1_024).contains(photoLocalIdentifier.utf8.count),
+              !photoLocalIdentifier.unicodeScalars.contains(where: {
+                  CharacterSet.controlCharacters.contains($0)
+              }),
+              importedAt > Date(timeIntervalSince1970: 0)
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+
+    private static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (1...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45 || $0 == 95
+        }
+    }
+}
+
+/// Crash-safe journal written before the irreversible PhotoKit change. The
+/// opaque token is used only as the imported resource filename so a retry can
+/// recover the exact asset instead of creating a duplicate.
+struct MomentPendingMemoryImportRecord: Codable, Equatable, Identifiable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let momentID: String
+    let importToken: UUID
+    let startedAt: Date
+
+    var id: String { momentID }
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              Self.isOpaqueIdentifier(momentID),
+              startedAt > Date(timeIntervalSince1970: 0)
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+
+    private static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (1...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45 || $0 == 95
+        }
+    }
+}
+
+struct MomentMemoryImportPreparation: Sendable {
+    let record: MomentPendingMemoryImportRecord
+    let wasAlreadyPending: Bool
+}
+
 /// One fail-closed snapshot for the two interactive controls shown over a
 /// received-photo Widget. The private memory mark and the outbound reaction
 /// remain separate even though both resolve the same currently published
@@ -390,7 +463,7 @@ struct MomentPawReceipt: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct MomentSharingState: Codable, Equatable, Sendable {
-    static let schemaVersion = 7
+    static let schemaVersion = 9
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int
     var changeCursor: String?
@@ -399,6 +472,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
     var outbox: [MomentOutboxItem]
     var inbox: [MomentInboxItem]
     var savedMemories: [MomentSavedMemoryRecord]
+    var importedMemories: [MomentImportedMemoryRecord]
+    var pendingMemoryImports: [MomentPendingMemoryImportRecord]
     var pawOutbox: [MomentPawOutboxItem]
     var receivedPaws: [MomentPawReceipt]
     var reportOutbox: [MomentReportOutboxItem]
@@ -413,6 +488,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         case outbox
         case inbox
         case savedMemories
+        case importedMemories
+        case pendingMemoryImports
         case pawOutbox
         case receivedPaws
         case reportOutbox
@@ -427,6 +504,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         outbox: [MomentOutboxItem],
         inbox: [MomentInboxItem],
         savedMemories: [MomentSavedMemoryRecord] = [],
+        importedMemories: [MomentImportedMemoryRecord] = [],
+        pendingMemoryImports: [MomentPendingMemoryImportRecord] = [],
         pawOutbox: [MomentPawOutboxItem] = [],
         receivedPaws: [MomentPawReceipt] = [],
         reportOutbox: [MomentReportOutboxItem],
@@ -439,6 +518,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         self.outbox = outbox
         self.inbox = inbox
         self.savedMemories = savedMemories
+        self.importedMemories = importedMemories
+        self.pendingMemoryImports = pendingMemoryImports
         self.pawOutbox = pawOutbox
         self.receivedPaws = receivedPaws
         self.reportOutbox = reportOutbox
@@ -502,6 +583,14 @@ struct MomentSharingState: Codable, Equatable, Sendable {
             [MomentSavedMemoryRecord].self,
             forKey: .savedMemories
         ) ?? []
+        importedMemories = try container.decodeIfPresent(
+            [MomentImportedMemoryRecord].self,
+            forKey: .importedMemories
+        ) ?? []
+        pendingMemoryImports = try container.decodeIfPresent(
+            [MomentPendingMemoryImportRecord].self,
+            forKey: .pendingMemoryImports
+        ) ?? []
         pawOutbox = try container.decodeIfPresent(
             [MomentPawOutboxItem].self,
             forKey: .pawOutbox
@@ -525,6 +614,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         outbox: [],
         inbox: [],
         savedMemories: [],
+        importedMemories: [],
+        pendingMemoryImports: [],
         pawOutbox: [],
         receivedPaws: [],
         reportOutbox: [],
@@ -538,10 +629,21 @@ struct MomentSharingState: Codable, Equatable, Sendable {
               Set(outbox.map(\.id)).count == outbox.count,
               Set(inbox.map(\.id)).count == inbox.count,
               Set(savedMemories.map(\.momentID)).count == savedMemories.count,
-              pawOutbox.count <= 100,
+              Set(importedMemories.map(\.momentID)).count == importedMemories.count,
+              Set(importedMemories.map(\.photoLocalIdentifier)).count
+                == importedMemories.count,
+              pendingMemoryImports.count <= 10,
+              Set(pendingMemoryImports.map(\.momentID)).count
+                == pendingMemoryImports.count,
+              Set(pendingMemoryImports.map(\.importToken)).count
+                == pendingMemoryImports.count,
+              Set(importedMemories.map(\.momentID)).isDisjoint(
+                with: Set(pendingMemoryImports.map(\.momentID))
+              ),
+              pawOutbox.count <= MomentSharingStateStore.maximumReactionHistoryCount,
               Set(pawOutbox.map(\.clientRequestID)).count == pawOutbox.count,
               Set(pawOutbox.map(\.momentID)).count == pawOutbox.count,
-              receivedPaws.count <= 100,
+              receivedPaws.count <= MomentSharingStateStore.maximumReactionHistoryCount,
               Set(receivedPaws.map(\.reactionID)).count == receivedPaws.count,
               Set(receivedPaws.map(\.momentID)).count == receivedPaws.count,
               Set(reportOutbox.map(\.id)).count == reportOutbox.count,
@@ -552,6 +654,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         _ = try outbox.map { try $0.validated() }
         _ = try inbox.map { try $0.validated() }
         _ = try savedMemories.map { try $0.validated() }
+        _ = try importedMemories.map { try $0.validated() }
+        _ = try pendingMemoryImports.map { try $0.validated() }
         _ = try pawOutbox.map { try $0.validated() }
         _ = try receivedPaws.map { try $0.validated() }
         let savableMomentIDs = Set(inbox.compactMap { item -> String? in
@@ -562,6 +666,11 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         })
         guard savedMemories.allSatisfy({ savableMomentIDs.contains($0.momentID) })
         else { throw MomentSharingError.stateUnavailable }
+        guard importedMemories.allSatisfy({ savableMomentIDs.contains($0.momentID) })
+        else { throw MomentSharingError.stateUnavailable }
+        guard pendingMemoryImports.allSatisfy({
+            savableMomentIDs.contains($0.momentID)
+        }) else { throw MomentSharingError.stateUnavailable }
         guard pawOutbox.allSatisfy({ savableMomentIDs.contains($0.momentID) })
         else { throw MomentSharingError.stateUnavailable }
         let sentMomentIDs = Set(outbox.compactMap { item in
@@ -597,18 +706,55 @@ enum MomentSharingStateStore {
         MomentSharingProtocol.commitReplayRetentionSeconds
     private static let maximumPendingReportSeconds: TimeInterval = 24 * 60 * 60
     static let maximumLocalHistoryCount = 500
+    /// Five received photos per day can each receive one heart throughout the
+    /// 30-day relay access window (150 records). Keep a bounded margin so the
+    /// oldest still-live photo never loses its per-photo heart association.
+    static let maximumReactionHistoryCount = 200
     private static let maximumLocalHistoryBytes = 256 * 1_024 * 1_024
     private static let maximumPendingOutboxCount = 10
     private static let maximumPendingOutboxBytes = 10 * 1_024 * 1_024
     private static let maximumPendingReportCount = 10
     private static let maximumPendingReportBytes = 10 * 1_024 * 1_024
     private static let completedOutboxMetadataSeconds: TimeInterval = 30 * 24 * 60 * 60
-    static let maximumTerminalOutboxMetadataCount = 100
+    /// Five photos per day over the 30-day delivery/heart window need 150
+    /// stable sent records. A bounded margin keeps every still-live photo's
+    /// delivery and heart status addressable without unbounded local growth.
+    static let maximumTerminalOutboxMetadataCount = 200
     private static let reportedMetadataSeconds: TimeInterval = 90 * 24 * 60 * 60
 
     static func load() throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
             try loadWhileLocked()
+        }
+    }
+
+    /// Read-only lookup for admission publication across every local window.
+    /// It never changes the catalog's active entry and therefore cannot make
+    /// an inactive room's outbox/inbox become the process-wide store.
+    static func load(localWindowID: String) throws -> MomentSharingState {
+        try SharingLifecycleGate.withExclusive {
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  catalog.windows.contains(where: {
+                      $0.localWindowID == localWindowID
+                  }),
+                  let sharing = SharedContainer.windowSharingDirectoryURL(
+                      localWindowID: localWindowID
+                  )
+            else { throw MomentSharingError.stateUnavailable }
+            let url = sharing.appendingPathComponent(
+                "moment-sharing-state.v1.json",
+                isDirectory: false
+            )
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                return .empty
+            }
+            do {
+                var state = try AtomicJSON.read(MomentSharingState.self, from: url)
+                state.normalizePersistedDiagnosticErrors()
+                return try state.validated()
+            } catch {
+                throw MomentSharingError.stateUnavailable
+            }
         }
     }
 
@@ -727,6 +873,10 @@ enum MomentSharingStateStore {
                 // already been replaced on disk.
                 if candidate.state == .blocked {
                     state.savedMemories.removeAll { $0.momentID == candidate.id }
+                    state.importedMemories.removeAll { $0.momentID == candidate.id }
+                    state.pendingMemoryImports.removeAll {
+                        $0.momentID == candidate.id
+                    }
                     state.pawOutbox.removeAll { $0.momentID == candidate.id }
                 }
                 state.inbox.append(candidate)
@@ -753,6 +903,10 @@ enum MomentSharingStateStore {
         else { throw MomentSharingError.invalidPayload }
         _ = try mutate(validating: lifecycleToken) { state in
             state.savedMemories.removeAll { $0.momentID == tombstone.id }
+            state.importedMemories.removeAll { $0.momentID == tombstone.id }
+            state.pendingMemoryImports.removeAll {
+                $0.momentID == tombstone.id
+            }
             state.pawOutbox.removeAll { $0.momentID == tombstone.id }
             if let index = state.inbox.firstIndex(where: { $0.id == tombstone.id }) {
                 guard state.inbox[index].senderParticipantID
@@ -812,19 +966,30 @@ enum MomentSharingStateStore {
         now: Date = .now,
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws -> MomentFamilyWidgetInteractionState {
-        try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
+        let snapshot = try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
             try validateSavedMemoryTarget(momentID: momentID, in: state)
             guard let item = state.inbox.first(where: { $0.id == momentID })
             else { throw MomentSharingError.stateUnavailable }
             let paw = state.pawOutbox.first { $0.momentID == momentID }
-            return MomentFamilyWidgetInteractionState(
-                isSavedMemory: state.savedMemories.contains {
+            return (
+                photoLocalIdentifier: state.importedMemories.first {
                     $0.momentID == momentID
-                },
+                }?.photoLocalIdentifier,
                 pawPhase: paw?.phase,
                 canQueuePaw: paw == nil && now < item.accessExpiresAt
             )
         }
+        // Never nest the sharing lifecycle lock and the ordinary-like store
+        // lock. Apart from avoiding lock-order coupling, this keeps the Photos
+        // identifier local to the extension process and out of the relay state.
+        let isInPersonalMemories = try snapshot.photoLocalIdentifier.flatMap {
+            try SharedLikeStore.record(for: $0)
+        }?.isLiked == true
+        return MomentFamilyWidgetInteractionState(
+            isSavedMemory: isInPersonalMemories,
+            pawPhase: snapshot.pawPhase,
+            canQueuePaw: snapshot.canQueuePaw
+        )
     }
 
     /// Copies only the already-sanitized received JPEG bytes out of the
@@ -856,6 +1021,132 @@ enum MomentSharingStateStore {
                 jpegData: data,
                 capturedAt: item.capturedAt
             )
+        }
+    }
+
+    /// Returns the Photos asset previously created for this received moment.
+    /// The target JPEG is revalidated so a stale Widget/deep-link cannot use a
+    /// mapping after the sharing lifecycle has revoked or hidden the moment.
+    static func importedMemoryRecord(
+        momentID: String,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentImportedMemoryRecord? {
+        try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            return state.importedMemories.first { $0.momentID == momentID }
+        }
+    }
+
+    /// Persists an opaque import journal before PhotoKit is allowed to write.
+    /// Returning an existing journal is intentional: the caller must recover
+    /// that operation instead of issuing another irreversible create request.
+    static func prepareMemoryImport(
+        momentID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentMemoryImportPreparation {
+        var result: MomentMemoryImportPreparation?
+        _ = try mutate(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            guard !state.importedMemories.contains(where: {
+                $0.momentID == momentID
+            }) else { throw MomentSharingError.stateUnavailable }
+            if let existing = state.pendingMemoryImports.first(where: {
+                $0.momentID == momentID
+            }) {
+                result = MomentMemoryImportPreparation(
+                    record: existing,
+                    wasAlreadyPending: true
+                )
+                return
+            }
+            guard state.pendingMemoryImports.count < 10 else {
+                throw MomentSharingError.stateUnavailable
+            }
+            let candidate = try MomentPendingMemoryImportRecord(
+                momentID: momentID,
+                importToken: UUID(),
+                startedAt: now
+            ).validated()
+            state.pendingMemoryImports.append(candidate)
+            result = MomentMemoryImportPreparation(
+                record: candidate,
+                wasAlreadyPending: false
+            )
+        }
+        guard let result else { throw MomentSharingError.stateUnavailable }
+        return result
+    }
+
+    /// Atomically converts the crash journal into the durable moment-to-Photos
+    /// mapping. A mismatched token or identifier fails closed.
+    static func completeMemoryImport(
+        momentID: String,
+        importToken: UUID,
+        photoLocalIdentifier: String,
+        importedAt: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        let candidate = try MomentImportedMemoryRecord(
+            momentID: momentID,
+            photoLocalIdentifier: photoLocalIdentifier,
+            importedAt: importedAt
+        ).validated()
+        _ = try mutate(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            if let existing = state.importedMemories.first(where: {
+                $0.momentID == momentID
+            }) {
+                guard existing.photoLocalIdentifier == photoLocalIdentifier else {
+                    throw MomentSharingError.stateUnavailable
+                }
+                state.pendingMemoryImports.removeAll {
+                    $0.momentID == momentID && $0.importToken == importToken
+                }
+                return
+            }
+            guard state.pendingMemoryImports.contains(where: {
+                $0.momentID == momentID && $0.importToken == importToken
+            }), !state.importedMemories.contains(where: {
+                $0.photoLocalIdentifier == photoLocalIdentifier
+            }) else { throw MomentSharingError.stateUnavailable }
+            state.pendingMemoryImports.removeAll {
+                $0.momentID == momentID && $0.importToken == importToken
+            }
+            state.importedMemories.append(candidate)
+            state.savedMemories.removeAll { $0.momentID == momentID }
+        }
+    }
+
+    /// Cancels only a PhotoKit operation that conclusively failed before an
+    /// asset was created. Ambiguous/crashed operations intentionally remain
+    /// journaled for full-library recovery.
+    static func cancelMemoryImport(
+        momentID: String,
+        importToken: UUID,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            state.pendingMemoryImports.removeAll {
+                $0.momentID == momentID && $0.importToken == importToken
+            }
+        }
+    }
+
+    /// Removes only a stale mapping after Photos confirms that its asset no
+    /// longer exists. It never deletes a Photos asset or received JPEG.
+    static func removeImportedMemoryRecord(
+        momentID: String,
+        expectedPhotoLocalIdentifier: String,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            state.importedMemories.removeAll {
+                $0.momentID == momentID
+                    && $0.photoLocalIdentifier == expectedPhotoLocalIdentifier
+            }
         }
     }
 
@@ -935,7 +1226,7 @@ enum MomentSharingStateStore {
                 queued = existing
                 return
             }
-            if state.pawOutbox.count >= 100 {
+            if state.pawOutbox.count >= maximumReactionHistoryCount {
                 let oldestSentID = state.pawOutbox
                     .filter { $0.phase == .sent }
                     .min(by: { $0.updatedAt < $1.updatedAt })?.id
@@ -943,7 +1234,7 @@ enum MomentSharingStateStore {
                     state.pawOutbox.removeAll { $0.id == oldestSentID }
                 }
             }
-            guard state.pawOutbox.count < 100 else {
+            guard state.pawOutbox.count < maximumReactionHistoryCount else {
                 throw MomentSharingError.stateUnavailable
             }
             let item = try MomentPawOutboxItem(
@@ -1057,14 +1348,16 @@ enum MomentSharingStateStore {
                     observedAt: observedAt
                 ).validated()
             )
-            if state.receivedPaws.count > 100 {
+            if state.receivedPaws.count > maximumReactionHistoryCount {
                 state.receivedPaws.sort {
                     if $0.observedAt != $1.observedAt {
                         return $0.observedAt > $1.observedAt
                     }
                     return $0.reactionID < $1.reactionID
                 }
-                state.receivedPaws = Array(state.receivedPaws.prefix(100))
+                state.receivedPaws = Array(
+                    state.receivedPaws.prefix(maximumReactionHistoryCount)
+                )
             }
             inserted = true
         }
@@ -1741,6 +2034,12 @@ enum MomentSharingStateStore {
             state.inbox = retainedInbox
             let retainedMomentIDs = Set(retainedInbox.map(\.id))
             state.savedMemories.removeAll {
+                !retainedMomentIDs.contains($0.momentID)
+            }
+            state.importedMemories.removeAll {
+                !retainedMomentIDs.contains($0.momentID)
+            }
+            state.pendingMemoryImports.removeAll {
                 !retainedMomentIDs.contains($0.momentID)
             }
             state.pawOutbox.removeAll {

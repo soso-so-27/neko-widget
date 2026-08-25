@@ -29,6 +29,36 @@ struct MomentShareHandoffProcessor: Sendable {
         }
     }
 
+    /// Cancels only the currently selected window. This is used for a local
+    /// authorization failure or ordinary unlink; product-wide media disable
+    /// continues to call `revokeAdmissions` and removes every destination.
+    func revokeCurrentAdmission(
+        pairing: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let catalog = try PrivateWindowCatalogStore.load() else {
+                throw MomentSharingError.stateUnavailable
+            }
+            let binding: Data?
+            if let spaceID = pairing.spaceID,
+               let participantID = pairing.participantID {
+                binding = try MomentShareHandoffStore.makeBindingSHA256(
+                    installationMarker: pairing.installationMarker,
+                    spaceID: spaceID,
+                    participantID: participantID
+                )
+            } else {
+                binding = nil
+            }
+            try purgeModerationTemporaryFiles()
+            try MomentShareHandoffStore.revokeAdmissionWhileLifecycleLocked(
+                localWindowID: catalog.activeWindowID,
+                bindingSHA256: binding
+            )
+        }
+    }
+
     @discardableResult
     func discardCancellableCaptures(
         destinationKey: String? = nil,
@@ -127,7 +157,10 @@ struct MomentShareHandoffProcessor: Sendable {
               pairing.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
               pairing.mediaSharingConsentAcceptedAt != nil
         else {
-            try revokeAdmissions(lifecycleToken: lifecycleToken)
+            _ = try refreshAdmissionCatalog(
+                lifecycleToken: lifecycleToken,
+                now: now
+            )
             throw MomentSharingError.consentRequired
         }
         guard let spaceID = pairing.spaceID,
@@ -140,7 +173,10 @@ struct MomentShareHandoffProcessor: Sendable {
               let roomKey = credential.roomKey,
               roomKey.count == 32
         else {
-            try revokeAdmissions(lifecycleToken: lifecycleToken)
+            _ = try refreshAdmissionCatalog(
+                lifecycleToken: lifecycleToken,
+                now: now
+            )
             throw MomentSharingError.notPaired
         }
         if let reportOnlyUntil = try MomentSharingStateStore.load().reportOnlyUntil {
@@ -158,16 +194,8 @@ struct MomentShareHandoffProcessor: Sendable {
             spaceID: spaceID,
             participantID: participantID
         )
-        let windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
-            pairing: pairing,
-            validating: lifecycleToken
-        )
-        let catalog = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(
-                bindingSHA256: binding,
-                displayName: windowDisplayName
-            )],
-            validating: lifecycleToken,
+        let catalog = try refreshAdmissionCatalog(
+            lifecycleToken: lifecycleToken,
             now: now
         )
         try purgeOrphanedModerationTemporaryFiles(lifecycleToken: lifecycleToken)
@@ -291,7 +319,9 @@ struct MomentShareHandoffProcessor: Sendable {
                     )
                     throw error
                 case .consentRequired, .notPaired:
-                    try? revokeAdmissions(lifecycleToken: lifecycleToken)
+                    _ = try? refreshAdmissionCatalog(
+                        lifecycleToken: lifecycleToken
+                    )
                     throw error
                 case .stateUnavailable:
                     // A cleanup/reinstall invalidates the token. Never turn a
@@ -356,8 +386,8 @@ struct MomentShareHandoffProcessor: Sendable {
         guard pairing.phase == .paired,
               pairing.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
               pairing.mediaSharingConsentAcceptedAt != nil,
-              let spaceID = pairing.spaceID,
-              let participantID = pairing.participantID,
+              pairing.spaceID != nil,
+              pairing.participantID != nil,
               pairing.credentialAccount == credential.account,
               pairing.installationMarker == credential.installationMarker,
               participantID == credential.participantIDString,
@@ -366,20 +396,94 @@ struct MomentShareHandoffProcessor: Sendable {
         else { return }
 
         try SharingLifecycleGate.validate(lifecycleToken)
-        let binding = try MomentShareHandoffStore.makeBindingSHA256(
-            installationMarker: pairing.installationMarker,
-            spaceID: spaceID,
-            participantID: participantID
+        _ = try refreshAdmissionCatalog(
+            lifecycleToken: lifecycleToken,
+            now: now
         )
-        let displayName = PrivateWindowPresentationStore.resolvedDisplayName(
-            pairing: pairing,
-            validating: lifecycleToken
-        )
-        _ = try MomentShareHandoffStore.publishAdmissions(
-            [MomentShareAdmissionInput(
+    }
+
+    /// Rebuilds the sanitized Share Extension destination snapshot from every
+    /// paired local window without switching the UI's active window. A
+    /// transient read/keychain failure aborts publication, preserving the
+    /// previous catalog and its captures rather than silently deleting one
+    /// destination. Unpaired, no-consent, or report-only windows are omitted.
+    @discardableResult
+    func refreshAdmissionCatalog(
+        lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> MomentShareAdmissionCatalog {
+        try SharingLifecycleGate.validate(lifecycleToken)
+        guard let catalog = try PrivateWindowCatalogStore.load() else {
+            throw MomentSharingError.stateUnavailable
+        }
+
+        var inputs: [MomentShareAdmissionInput] = []
+        inputs.reserveCapacity(catalog.windows.count)
+        for entry in catalog.windows {
+            let state: PairingState
+            do {
+                guard let loaded = try PairingStateStore.load(
+                    localWindowID: entry.localWindowID
+                ) else {
+                    guard entry.spaceID == nil,
+                          entry.credentialAccount == nil
+                    else { throw MomentSharingError.stateUnavailable }
+                    continue
+                }
+                state = loaded
+            } catch let error as MomentSharingError {
+                throw error
+            } catch {
+                throw MomentSharingError.stateUnavailable
+            }
+            guard state.phase == .paired else { continue }
+            guard state.mediaSharingConsentVersion
+                    == PairingMediaSharingConsent.currentVersion,
+                  state.mediaSharingConsentAcceptedAt != nil
+            else { continue }
+            guard let spaceID = state.spaceID,
+                  let participantID = state.participantID,
+                  let account = state.credentialAccount,
+                  entry.spaceID == nil || entry.spaceID == spaceID,
+                  entry.credentialAccount == nil
+                    || entry.credentialAccount == account
+            else { throw MomentSharingError.stateUnavailable }
+
+            let credential: PairingCredential
+            do {
+                credential = try PairingKeychainStore.load(
+                    account: account,
+                    installationMarker: state.installationMarker
+                )
+            } catch {
+                // Availability is not revocation evidence. Keep the existing
+                // admission/capture catalog unchanged and retry later.
+                throw MomentSharingError.stateUnavailable
+            }
+            guard credential.account == account,
+                  credential.installationMarker == state.installationMarker,
+                  credential.participantIDString == participantID,
+                  credential.roomKey?.count == 32
+            else { throw MomentSharingError.stateUnavailable }
+
+            let sharingState = try MomentSharingStateStore.load(
+                localWindowID: entry.localWindowID
+            )
+            guard sharingState.reportOnlyUntil == nil else { continue }
+            let binding = try MomentShareHandoffStore.makeBindingSHA256(
+                installationMarker: state.installationMarker,
+                spaceID: spaceID,
+                participantID: participantID
+            )
+            inputs.append(MomentShareAdmissionInput(
+                localWindowID: entry.localWindowID,
                 bindingSHA256: binding,
-                displayName: displayName
-            )],
+                displayName: entry.displayName
+            ))
+        }
+        try SharingLifecycleGate.validate(lifecycleToken)
+        return try MomentShareHandoffStore.publishAdmissions(
+            inputs,
             validating: lifecycleToken,
             now: now
         )

@@ -1,5 +1,318 @@
 import Foundation
 
+/// One device-local slot for an independently paired private window.
+///
+/// `localWindowID` is deliberately unrelated to the relay's opaque `spaceID`.
+/// The latter is filled only after pairing, while the local ID is safe to use
+/// in App Group paths and persisted Widget configuration before a peer joins.
+struct PrivateWindowCatalogEntry: Codable, Equatable, Identifiable, Sendable {
+    let localWindowID: String
+    var displayName: String
+    var spaceID: String?
+    var credentialAccount: String?
+    let createdAt: Date
+    var updatedAt: Date
+
+    var id: String { localWindowID }
+
+    func validated() throws -> Self {
+        guard let uuid = UUID(uuidString: localWindowID),
+              uuid.uuidString.lowercased() == localWindowID.lowercased(),
+              PrivateWindowDisplayName.isValid(displayName),
+              spaceID == nil || spaceID.map(Self.isOpaqueIdentifier) == true,
+              credentialAccount == nil
+                || credentialAccount.flatMap(UUID.init(uuidString:)) != nil,
+              createdAt > Date(timeIntervalSince1970: 0),
+              updatedAt >= createdAt
+        else { throw PrivateWindowCatalogStore.Error.invalidCatalog }
+        return self
+    }
+
+    private static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (8...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45
+                || $0 == 95
+        }
+    }
+}
+
+struct PrivateWindowCatalogState: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+    static let maximumWindowCount = 20
+
+    var schemaVersion: Int = Self.schemaVersion
+    var storageRevision: Int = 0
+    var activeWindowID: String
+    var windows: [PrivateWindowCatalogEntry]
+    /// Crash-resumable marker for the one-time Build 40 `sharing/` move. The
+    /// catalog is committed first; readers keep using the legacy directory
+    /// until the destination exists, then bootstrap clears this marker.
+    var pendingLegacyMigrationWindowID: String?
+
+    func validated() throws -> Self {
+        let pairedSpaceIDs = windows.compactMap(\.spaceID)
+        let credentialAccounts = windows.compactMap(\.credentialAccount)
+        guard schemaVersion == Self.schemaVersion,
+              storageRevision >= 0,
+              (1...Self.maximumWindowCount).contains(windows.count),
+              Set(windows.map(\.localWindowID)).count == windows.count,
+              Set(pairedSpaceIDs).count == pairedSpaceIDs.count,
+              Set(credentialAccounts).count == credentialAccounts.count,
+              windows.contains(where: { $0.localWindowID == activeWindowID }),
+              pendingLegacyMigrationWindowID == nil
+                || pendingLegacyMigrationWindowID == activeWindowID
+        else { throw PrivateWindowCatalogStore.Error.invalidCatalog }
+        _ = try windows.map { try $0.validated() }
+        return self
+    }
+}
+
+/// Device-local catalog for multiple private windows.
+///
+/// Mutations are performed only while the existing sharing lifecycle flock is
+/// held. Reads are atomic and fail closed: a present but malformed catalog can
+/// never silently fall back to Build 40's `sharing/` and expose another room.
+enum PrivateWindowCatalogStore {
+    enum Error: Swift.Error, Equatable, Sendable {
+        case invalidCatalog
+        case windowLimitReached
+        case unknownWindow
+        case conflictingLegacyMigration
+    }
+
+    static func load() throws -> PrivateWindowCatalogState? {
+        guard let url = SharedContainer.privateWindowCatalogURL else {
+            throw Error.invalidCatalog
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url, options: .mappedIfSafe)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
+                throw error
+            }
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            return try decoder.decode(PrivateWindowCatalogState.self, from: data)
+                .validated()
+        } catch let error as Error {
+            throw error
+        } catch {
+            throw Error.invalidCatalog
+        }
+    }
+
+    static func activeEntry() -> PrivateWindowCatalogEntry? {
+        guard let state = try? load() else { return nil }
+        return state.windows.first { $0.localWindowID == state.activeWindowID }
+    }
+
+    /// The first catalog slot owns the one Build 40 `sharing/` directory that
+    /// was migrated during bootstrap. Catalog entries are append-only during
+    /// ordinary window creation, so this is the only stable destination for a
+    /// legacy Widget configuration whose persisted source ID is just
+    /// `family-window`. Never substitute the currently active slot: doing so
+    /// would silently retarget an existing Home Screen Widget.
+    static func legacyWidgetEntry() -> PrivateWindowCatalogEntry? {
+        guard let state = try? load() else { return nil }
+        return state.windows.first
+    }
+
+    static func widgetEntries() -> [PrivateWindowCatalogEntry] {
+        guard let state = try? load() else { return [] }
+        return state.windows.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.localWindowID < $1.localWindowID
+        }
+    }
+
+    /// Called by installation bootstrap while it already owns the lifecycle
+    /// lock. The first commit makes the migration resumable; the subsequent
+    /// same-volume move is atomic and never merges two room directories.
+    @discardableResult
+    static func bootstrapLegacyMigrationWhileLifecycleLocked(
+        now: Date = .now
+    ) throws -> PrivateWindowCatalogState {
+        if var existing = try load() {
+            try resumeLegacyMigrationIfNeeded(&existing)
+            return existing
+        }
+
+        let localWindowID = UUID().uuidString.lowercased()
+        let legacyExists = SharedContainer.legacySharingCacheDirectoryURL.map {
+            FileManager.default.fileExists(atPath: $0.path)
+        } ?? false
+        let entry = PrivateWindowCatalogEntry(
+            localWindowID: localWindowID,
+            displayName: PrivateWindowDisplayName.fallback,
+            spaceID: nil,
+            credentialAccount: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        var state = PrivateWindowCatalogState(
+            activeWindowID: localWindowID,
+            windows: [entry],
+            pendingLegacyMigrationWindowID: legacyExists ? localWindowID : nil
+        )
+        try saveWhileLifecycleLocked(state)
+        try resumeLegacyMigrationIfNeeded(&state)
+        return state
+    }
+
+    @discardableResult
+    static func createAndActivateWhileLifecycleLocked(
+        now: Date = .now
+    ) throws -> PrivateWindowCatalogEntry {
+        var state = try bootstrapLegacyMigrationWhileLifecycleLocked(now: now)
+        guard state.windows.count < PrivateWindowCatalogState.maximumWindowCount else {
+            throw Error.windowLimitReached
+        }
+        let entry = PrivateWindowCatalogEntry(
+            localWindowID: UUID().uuidString.lowercased(),
+            displayName: PrivateWindowDisplayName.fallback,
+            spaceID: nil,
+            credentialAccount: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        state.windows.append(entry)
+        state.activeWindowID = entry.localWindowID
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+        guard let directory = SharedContainer.windowSharingDirectoryURL(
+            localWindowID: entry.localWindowID
+        ) else { throw Error.invalidCatalog }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return entry
+    }
+
+    @discardableResult
+    static func activateWhileLifecycleLocked(
+        localWindowID: String,
+        now: Date = .now
+    ) throws -> PrivateWindowCatalogEntry {
+        var state = try bootstrapLegacyMigrationWhileLifecycleLocked(now: now)
+        guard let index = state.windows.firstIndex(where: {
+            $0.localWindowID == localWindowID
+        }) else { throw Error.unknownWindow }
+        if state.activeWindowID != localWindowID {
+            state.activeWindowID = localWindowID
+            state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
+            state.storageRevision += 1
+            try saveWhileLifecycleLocked(state)
+        }
+        return state.windows[index]
+    }
+
+    static func updateActiveMetadataWhileLifecycleLocked(
+        displayName: String? = nil,
+        spaceID: String?,
+        credentialAccount: String?,
+        now: Date = .now
+    ) throws {
+        guard var state = try load(),
+              let index = state.windows.firstIndex(where: {
+                  $0.localWindowID == state.activeWindowID
+              })
+        else { throw Error.invalidCatalog }
+        if let displayName {
+            guard PrivateWindowDisplayName.isValid(displayName) else {
+                throw Error.invalidCatalog
+            }
+            state.windows[index].displayName = displayName
+        }
+        state.windows[index].spaceID = spaceID
+        state.windows[index].credentialAccount = credentialAccount
+        state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+    }
+
+    /// Full installation invalidation is the only operation that removes all
+    /// windows. Ordinary unlink/revoke clears only the active slot.
+    @discardableResult
+    static func resetAllWhileLifecycleLocked(now: Date = .now) throws
+        -> PrivateWindowCatalogState {
+        if let directory = SharedContainer.privateWindowsDirectoryURL,
+           FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.removeItem(at: directory)
+        }
+        if let legacy = SharedContainer.legacySharingCacheDirectoryURL,
+           FileManager.default.fileExists(atPath: legacy.path) {
+            try FileManager.default.removeItem(at: legacy)
+        }
+        if let catalog = SharedContainer.privateWindowCatalogURL,
+           FileManager.default.fileExists(atPath: catalog.path) {
+            try FileManager.default.removeItem(at: catalog)
+        }
+        return try bootstrapLegacyMigrationWhileLifecycleLocked(now: now)
+    }
+
+    private static func resumeLegacyMigrationIfNeeded(
+        _ state: inout PrivateWindowCatalogState
+    ) throws {
+        guard let pendingID = state.pendingLegacyMigrationWindowID,
+              let legacy = SharedContainer.legacySharingCacheDirectoryURL,
+              let destination = SharedContainer.windowSharingDirectoryURL(
+                  localWindowID: pendingID
+              )
+        else { return }
+        let fileManager = FileManager.default
+        let legacyExists = fileManager.fileExists(atPath: legacy.path)
+        let destinationExists = fileManager.fileExists(atPath: destination.path)
+        if legacyExists && destinationExists {
+            throw Error.conflictingLegacyMigration
+        }
+        if legacyExists {
+            try fileManager.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.moveItem(at: legacy, to: destination)
+        } else if !destinationExists {
+            try fileManager.createDirectory(
+                at: destination,
+                withIntermediateDirectories: true
+            )
+        }
+        state.pendingLegacyMigrationWindowID = nil
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+    }
+
+    private static func saveWhileLifecycleLocked(
+        _ value: PrivateWindowCatalogState
+    ) throws {
+        guard let url = SharedContainer.privateWindowCatalogURL else {
+            throw Error.invalidCatalog
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        do {
+            try SharingSecureFile.write(
+                try encoder.encode(try value.validated()),
+                to: url
+            )
+        } catch let error as Error {
+            throw error
+        } catch {
+            throw Error.invalidCatalog
+        }
+    }
+}
+
 /// URLs shared by the application and its WidgetKit extension.
 ///
 /// Both targets must carry the same `AppGroupIdentifier` Info.plist value and
@@ -82,7 +395,11 @@ enum SharedContainer {
     /// Keeping this below `sharing/` also makes unlink/reinstall cleanup remove
     /// the family Widget output together with every other sharing artifact.
     static var familyWidgetManifestURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
+        familyWidgetManifestURL(localWindowID: nil)
+    }
+
+    static func familyWidgetManifestURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
             "family-widget-manifest.v1.json",
             isDirectory: false
         )
@@ -92,9 +409,22 @@ enum SharedContainer {
     /// entity is compiled into both. The manifest is presentation-only; a
     /// missing, old, or malformed value always resolves to the neutral name.
     static func familyWidgetWindowDisplayName() -> String {
-        guard let url = familyWidgetManifestURL,
+        familyWidgetWindowDisplayName(localWindowID: nil)
+    }
+
+    static func familyWidgetWindowDisplayName(localWindowID: String?) -> String {
+        guard let url = familyWidgetManifestURL(localWindowID: localWindowID),
               let data = try? Data(contentsOf: url, options: .mappedIfSafe)
-        else { return PrivateWindowDisplayName.fallback }
+        else {
+            if let localWindowID,
+               let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
+                   $0.localWindowID == localWindowID
+               }) {
+                return PrivateWindowDisplayName.resolved(entry.displayName)
+            }
+            return PrivateWindowCatalogStore.activeEntry()?.displayName
+                ?? PrivateWindowDisplayName.fallback
+        }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let manifest = try? decoder.decode(FamilyWidgetManifest.self, from: data),
@@ -104,14 +434,22 @@ enum SharedContainer {
     }
 
     static var familyWidgetCacheHistoryURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
+        familyWidgetCacheHistoryURL(localWindowID: nil)
+    }
+
+    static func familyWidgetCacheHistoryURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
             "family-widget-cache-history.v1.json",
             isDirectory: false
         )
     }
 
     static var familyWidgetCacheDirectoryURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
+        familyWidgetCacheDirectoryURL(localWindowID: nil)
+    }
+
+    static func familyWidgetCacheDirectoryURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
             "family-widget-cache",
             isDirectory: true
         )
@@ -124,8 +462,7 @@ enum SharedContainer {
     /// Non-secret sharing state. Private keys and the room key live in the
     /// App Group-backed Keychain access group, never in this directory.
     static var pairingStateURL: URL? {
-        containerURL?
-            .appendingPathComponent("sharing", isDirectory: true)
+        sharingCacheDirectoryURL?
             .appendingPathComponent("pairing-state.json", isDirectory: false)
     }
 
@@ -151,7 +488,70 @@ enum SharedContainer {
     }
 
     static var sharingCacheDirectoryURL: URL? {
+        sharingCacheDirectoryURL(localWindowID: nil)
+    }
+
+    /// Build 40 and earlier stored exactly one room here. Keep this explicit
+    /// path for the crash-resumable migration and for old Widget readers that
+    /// run before the host app has created a catalog.
+    static var legacySharingCacheDirectoryURL: URL? {
         containerURL?.appendingPathComponent("sharing", isDirectory: true)
+    }
+
+    static var privateWindowsDirectoryURL: URL? {
+        containerURL?.appendingPathComponent("private-windows.v1", isDirectory: true)
+    }
+
+    static var privateWindowCatalogURL: URL? {
+        containerURL?.appendingPathComponent(
+            "private-window-catalog.v1.json",
+            isDirectory: false
+        )
+    }
+
+    static func windowDirectoryURL(localWindowID: String) -> URL? {
+        guard let uuid = UUID(uuidString: localWindowID),
+              uuid.uuidString.lowercased() == localWindowID.lowercased()
+        else { return nil }
+        return privateWindowsDirectoryURL?.appendingPathComponent(
+            uuid.uuidString.lowercased(),
+            isDirectory: true
+        )
+    }
+
+    static func windowSharingDirectoryURL(localWindowID: String) -> URL? {
+        windowDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
+            "sharing",
+            isDirectory: true
+        )
+    }
+
+    static func sharingCacheDirectoryURL(localWindowID: String?) -> URL? {
+        if let localWindowID {
+            return windowSharingDirectoryURL(localWindowID: localWindowID)
+        }
+        guard let catalogURL = privateWindowCatalogURL else { return nil }
+        guard FileManager.default.fileExists(atPath: catalogURL.path) else {
+            return legacySharingCacheDirectoryURL
+        }
+        guard let catalog = try? PrivateWindowCatalogStore.load(),
+              let destination = windowSharingDirectoryURL(
+                  localWindowID: catalog.activeWindowID
+              )
+        else {
+            // Present-but-invalid catalog is authority ambiguity. Never fall
+            // back to a potentially unrelated Build 40 room.
+            return nil
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            return destination
+        }
+        if catalog.pendingLegacyMigrationWindowID == catalog.activeWindowID,
+           let legacy = legacySharingCacheDirectoryURL,
+           FileManager.default.fileExists(atPath: legacy.path) {
+            return legacy
+        }
+        return destination
     }
 
     /// Stable synchronization metadata deliberately lives outside `sharing/`.
@@ -171,6 +571,13 @@ enum SharedContainer {
     static var sharingCleanupRequiredURL: URL? {
         sharingControlDirectoryURL?.appendingPathComponent(
             "cleanup-required.v1",
+            isDirectory: false
+        )
+    }
+
+    static var sharingCleanupScopeURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "cleanup-window-scope.v1.json",
             isDirectory: false
         )
     }
@@ -241,14 +648,45 @@ enum SharedContainer {
     }
 
     /// Short-lived, capture-only handoff from the Share Extension to the host
-    /// app. This deliberately lives below `sharing/` so installation cleanup,
-    /// unlink, and block remove every admission and pending capture without
-    /// touching personal photos, likes, or Widget cache files.
+    /// app. It is shared by all local windows so the extension can present a
+    /// verified destination picker without changing the app's active window.
+    /// Every capture remains bound to one admission/window binding, and full
+    /// installation cleanup removes the enclosing private-windows subtree.
     static var momentShareHandoffDirectoryURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
-            "moment-handoff",
+        privateWindowsDirectoryURL?.appendingPathComponent(
+            "moment-handoff.v2",
             isDirectory: true
         )
+    }
+
+    /// Build 40 and the first single-window catalog build stored handoff input
+    /// below that window's `sharing/` directory. The v2 store moves exactly
+    /// one such directory atomically before using the global multi-window
+    /// catalog. Multiple legacy sources are authority ambiguity and fail
+    /// closed rather than being merged.
+    static var legacyMomentShareHandoffDirectoryURLs: [URL] {
+        var candidates: [URL] = []
+        if let legacy = legacySharingCacheDirectoryURL {
+            candidates.append(
+                legacy.appendingPathComponent("moment-handoff", isDirectory: true)
+            )
+        }
+        if let catalog = try? PrivateWindowCatalogStore.load() {
+            for entry in catalog.windows {
+                if let sharing = windowSharingDirectoryURL(
+                    localWindowID: entry.localWindowID
+                ) {
+                    candidates.append(
+                        sharing.appendingPathComponent(
+                            "moment-handoff",
+                            isDirectory: true
+                        )
+                    )
+                }
+            }
+        }
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 
     /// A terminal, pairing-scoped fail-closed marker written before a

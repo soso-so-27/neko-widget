@@ -48,9 +48,16 @@ enum WidgetManifestReader {
         return cacheURL(for: filename, in: cacheDirectoryURL)
     }
 
-    static func familyItem(for variant: WidgetImageVariant) -> FamilyWidgetManifestItem? {
-        guard let manifestURL = SharedContainer.familyWidgetManifestURL,
-              let cacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL,
+    static func familyItem(
+        for variant: WidgetImageVariant,
+        localWindowID: String?
+    ) -> FamilyWidgetManifestItem? {
+        guard let manifestURL = SharedContainer.familyWidgetManifestURL(
+                  localWindowID: localWindowID
+              ),
+              let cacheDirectory = SharedContainer.familyWidgetCacheDirectoryURL(
+                  localWindowID: localWindowID
+              ),
               let manifest = readFamilyManifest(from: manifestURL),
               manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
               let item = manifest.item,
@@ -75,8 +82,8 @@ enum WidgetManifestReader {
     /// The name is presentation-only and remains available even when the
     /// paired window has not received a photo yet. Invalid or pre-naming
     /// manifests fall back without hiding an otherwise valid image.
-    static func familyWindowDisplayName() -> String {
-        SharedContainer.familyWidgetWindowDisplayName()
+    static func familyWindowDisplayName(localWindowID: String?) -> String {
+        SharedContainer.familyWidgetWindowDisplayName(localWindowID: localWindowID)
     }
 
     static func cacheURL(
@@ -86,8 +93,10 @@ enum WidgetManifestReader {
         switch photoSourceIdentifier {
         case WidgetPhotoSource.personalLibraryID:
             return cacheURL(for: filename)
-        case WidgetPhotoSource.familyWindowID:
-            guard let directory = SharedContainer.familyWidgetCacheDirectoryURL else {
+        case let identifier where WidgetPhotoSource.isFamilyWindowSourceID(identifier):
+            guard let directory = SharedContainer.familyWidgetCacheDirectoryURL(
+                localWindowID: WidgetPhotoSource.localWindowID(from: identifier)
+            ) else {
                 return nil
             }
             return cacheURL(for: filename, in: directory)

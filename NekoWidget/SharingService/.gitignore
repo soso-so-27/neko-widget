@@ -11,3 +11,4 @@ dist/
 *.log
 wrangler.staging.jsonc
 wrangler.media-staging-on.jsonc
+wrangler.notification-staging-on.jsonc

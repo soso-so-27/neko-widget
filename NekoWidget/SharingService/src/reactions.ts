@@ -19,6 +19,7 @@ import {
 } from "./http";
 import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
 import { encodeCanonicalFields } from "./protocol";
+import { reactionNotificationEventStatements } from "./push";
 import {
   exactKeys,
   opaqueId,
@@ -119,13 +120,17 @@ async function reactionContext(
        FROM moment_participants AS participant
        JOIN moment_devices AS device ON device.participant_id = participant.id
        JOIN moment_spaces AS space ON space.space_id = participant.space_id
-      WHERE participant.legacy_member_id = ?
-        AND device.legacy_member_id = ?
+      WHERE participant.id = ?
+        AND device.id = ?
         AND participant.space_id = ?
         AND participant.state = 'active'
         AND device.state = 'active'
         AND space.state = 'active'`,
-  ).bind(member.id, member.id, member.spaceId).first<ReactionContextRow>();
+  ).bind(
+    member.momentParticipantId,
+    member.deviceId,
+    member.spaceId,
+  ).first<ReactionContextRow>();
   if (row === null) {
     throw new ApiError(
       503,
@@ -454,6 +459,12 @@ export async function recordPawReaction(
         reaction.id,
         reaction.created_at,
       ),
+      ...reactionNotificationEventStatements(
+        env,
+        reaction.id,
+        reaction.recipient_participant_id,
+        reaction.created_at,
+      ),
       idempotencyStatement(
         env,
         reactionOperation,
@@ -548,6 +559,11 @@ export async function getReactionChanges(
       ORDER BY change.sequence ASC
       LIMIT 100`,
   ).bind(context.participant_id, afterSequence).all<ReactionChangeRow>();
+  // The cleanup must acknowledge exactly the immutable page returned above.
+  // A new heart can be committed between this read and the following batch;
+  // bounding by the returned maximum prevents that unseen heart's APNs
+  // delivery from being consumed by a second LIMIT query.
+  const returnedMaxSequence = rows.results.at(-1)?.sequence ?? afterSequence;
   const changes = rows.results.map((row) => ({
     cursor: row.cursor,
     type: "pawReceived",
@@ -557,7 +573,68 @@ export async function getReactionChanges(
       kind: row.kind,
     },
   }));
-  await consumeNonceAndTouch(env, member);
+  try {
+    await env.DB.batch([
+      ...nonceStatements(env, member),
+      // A successful signed cursor read proves that this physical device has
+      // synchronized these hearts. Remove only deliveries addressed to the
+      // APNs token currently registered by that device. Other enrolled
+      // iPhones must retain their own pending delivery.
+      env.DB.prepare(
+        `DELETE FROM notification_deliveries
+          WHERE token_digest = (
+                  SELECT token_digest
+                    FROM apns_subscriptions
+                   WHERE device_id = ? AND participant_id = ?
+                )
+            AND event_id IN (
+              SELECT event.id
+                FROM notification_events AS event
+               WHERE event.kind = 'heart' AND event.participant_id = ?
+                 AND event.reaction_id IN (
+                   SELECT reaction_id
+                     FROM reaction_changes
+                    WHERE participant_id = ? AND sequence > ? AND sequence <= ?
+                    ORDER BY sequence ASC
+                    LIMIT 100
+                 )
+            )`,
+      ).bind(
+        member.deviceId,
+        context.participant_id,
+        context.participant_id,
+        context.participant_id,
+        afterSequence,
+        returnedMaxSequence,
+      ),
+      // Events without any remaining physical-device delivery carry no work.
+      // Delete those tombs only after the requesting token was scoped above.
+      env.DB.prepare(
+        `DELETE FROM notification_events
+          WHERE kind = 'heart' AND participant_id = ?
+            AND reaction_id IN (
+              SELECT reaction_id
+                FROM reaction_changes
+               WHERE participant_id = ? AND sequence > ? AND sequence <= ?
+               ORDER BY sequence ASC
+               LIMIT 100
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM notification_deliveries AS delivery
+               WHERE delivery.event_id = notification_events.id
+            )`,
+      ).bind(
+        context.participant_id,
+        context.participant_id,
+        afterSequence,
+        returnedMaxSequence,
+      ),
+      activityStatement(env, member),
+    ]);
+  } catch {
+    throw new ApiError(409, "replayed_request", "This signed request nonce has already been used.");
+  }
   return jsonResponse({
     protocolVersion: REACTION_PROTOCOL_VERSION,
     changes,

@@ -1332,6 +1332,9 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             .base64URLEncodedString()
         request.setValue(String(protocolVersion), forHTTPHeaderField: "Neko-Protocol-Version")
         request.setValue(authentication.memberID, forHTTPHeaderField: "Neko-Member-ID")
+        if let deviceID = authentication.credential.deviceID {
+            request.setValue(deviceID, forHTTPHeaderField: "Neko-Device-ID")
+        }
         request.setValue(String(timestamp), forHTTPHeaderField: "Neko-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "Neko-Nonce")
         request.setValue(signature, forHTTPHeaderField: "Neko-Signature")

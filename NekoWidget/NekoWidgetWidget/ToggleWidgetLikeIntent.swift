@@ -90,12 +90,12 @@ struct ToggleWidgetLikeIntent: AppIntent {
 /// now matches the personal-library collection. It never creates a relay
 /// request or notifies the other participant.
 struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
-    static var title: LocalizedStringResource = "届いた写真の思い出状態を切り替える"
+    static var title: LocalizedStringResource = "届いた写真を思い出へ取り込む"
     static var description = IntentDescription(
-        "表示中の届いた写真を、このiPhoneの思い出に追加または解除します。"
+        "写真アプリへの取り込みを確認するため、ねこのまどを開きます。"
     )
     static var isDiscoverable = false
-    static var openAppWhenRun = false
+    static var openAppWhenRun = true
 
     @Parameter(title: "表示写真キー")
     var sourceDigest: String
@@ -117,38 +117,15 @@ struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
                 "Stale or invalid Family Widget bookmark action was ignored",
                 metadata: ["source": SharedLog.shortHash(sourceDigest)]
             )
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             return .result()
         }
 
-        do {
-            let lifecycleToken = try SharingLifecycleGate.issueToken()
-            let mutation = try MomentSharingStateStore.toggleSavedMemory(
-                momentID: momentID,
-                now: Date(),
-                validating: lifecycleToken
-            )
-            let action = mutation.isSaved ? "saved" : "removed"
-            SharedLog.widget.info(
-                "bookmark",
-                "Family Widget bookmark state changed locally",
-                metadata: [
-                    "action": action,
-                    "source": SharedLog.shortHash(sourceDigest),
-                ]
-            )
-            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-        } catch {
-            SharedLog.widget.error(
-                "bookmark",
-                "Family Widget bookmark state change failed",
-                metadata: SharedLog.errorMetadata(
-                    error,
-                    category: .widgetLike,
-                    additional: ["source": SharedLog.shortHash(sourceDigest)]
-                )
-            )
-            throw error
-        }
+        SharedLog.widget.info(
+            "bookmark",
+            "Family Widget opened the host app for memory import",
+            metadata: ["source": SharedLog.shortHash(sourceDigest)]
+        )
         return .result()
     }
 
@@ -187,6 +164,7 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
                 "Stale or invalid Family Widget heart action was ignored",
                 metadata: ["source": SharedLog.shortHash(sourceDigest)]
             )
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             return .result()
         }
 

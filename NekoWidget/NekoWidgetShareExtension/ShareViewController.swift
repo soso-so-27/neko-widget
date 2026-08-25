@@ -7,6 +7,7 @@ final class ShareViewController: UIViewController {
     private let titleLabel = UILabel()
     private let detailLabel = UILabel()
     private let destinationLabel = UILabel()
+    private let destinationButton = UIButton(type: .system)
     private let statusLabel = UILabel()
     private let continueButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
@@ -46,6 +47,18 @@ final class ShareViewController: UIViewController {
         destinationLabel.numberOfLines = 0
         destinationLabel.accessibilityLabel = "届け先、\(PrivateWindowDisplayName.fallback)"
         destinationLabel.accessibilityIdentifier = "moment-share-destination"
+
+        destinationButton.configuration = .bordered()
+        destinationButton.configuration?.title = "届け先を選ぶ"
+        destinationButton.configuration?.image = UIImage(
+            systemName: "chevron.up.chevron.down"
+        )
+        destinationButton.configuration?.imagePlacement = .trailing
+        destinationButton.configuration?.imagePadding = 8
+        destinationButton.contentHorizontalAlignment = .fill
+        destinationButton.showsMenuAsPrimaryAction = true
+        destinationButton.isHidden = true
+        destinationButton.accessibilityIdentifier = "moment-share-destination-picker"
 
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .secondaryLabel
@@ -87,6 +100,7 @@ final class ShareViewController: UIViewController {
             titleLabel,
             detailLabel,
             destinationLabel,
+            destinationButton,
             imageView,
             statusRow,
             buttonRow
@@ -229,19 +243,21 @@ final class ShareViewController: UIViewController {
             let admissions = try await ingressService.activeAdmissions()
             try Task.checkCancellation()
             if admissions.count == 1, let admission = admissions.first {
-                selectedAdmission = admission
-                destinationLabel.text = "届け先　\(admission.displayName)"
-                destinationLabel.accessibilityLabel = "届け先、\(admission.displayName)"
-                detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
+                destinationLabel.isHidden = false
+                destinationButton.isHidden = true
+                selectAdmission(admission)
                 statusLabel.textColor = .secondaryLabel
-                statusLabel.text = "この端末に一時保存します。保存後にアプリを開くと、安全確認して届けます。"
-                continueButton.isEnabled = true
+                statusLabel.text = "現在アプリで開いているまどへ一時保存します。保存後にアプリを開くと、安全確認して届けます。"
             } else if admissions.isEmpty {
                 statusLabel.textColor = .systemOrange
-                statusLabel.text = "先に「ねこのまど」アプリで共有するまどを設定してください。"
+                statusLabel.text = "先に「ねこのまど」アプリで届けたいまどを開いてください。"
             } else {
+                // The store must expose at most the one active destination.
+                // Multiple results are authority ambiguity, not a picker.
+                selectedAdmission = nil
+                continueButton.isEnabled = false
                 statusLabel.textColor = .systemOrange
-                statusLabel.text = "届け先をアプリで確認してから、もう一度選び直してください。"
+                statusLabel.text = "届け先を1つに確認できません。アプリを開いてから、もう一度お試しください。"
             }
         } catch is CancellationError {
             return
@@ -249,6 +265,22 @@ final class ShareViewController: UIViewController {
             statusLabel.textColor = .systemOrange
             statusLabel.text = "共有するまどを確認できません。アプリを開いてから、もう一度お試しください。"
         }
+    }
+
+    @MainActor
+    private func selectAdmission(
+        _ admission: MomentShareDestinationAdmission,
+        pickerTitle: String? = nil
+    ) {
+        selectedAdmission = admission
+        destinationLabel.text = "届け先　\(admission.displayName)"
+        destinationLabel.accessibilityLabel = "届け先、\(admission.displayName)"
+        destinationButton.configuration?.title = pickerTitle ?? admission.displayName
+        destinationButton.accessibilityLabel = "届け先、\(admission.displayName)"
+        detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
+        continueButton.isEnabled = preparedPhoto != nil
+        statusLabel.textColor = .secondaryLabel
+        statusLabel.text = "現在アプリで開いているまどへ一時保存します。保存後にアプリを開くと、安全確認して届けます。"
     }
 
     private func selectedImageProvider() throws -> NSItemProvider {

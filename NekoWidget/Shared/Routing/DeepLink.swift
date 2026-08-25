@@ -3,7 +3,7 @@ import Foundation
 struct DeepLink: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case photo(localIdentifier: String)
-        case familyWindow
+        case familyWindow(localWindowID: String?)
     }
 
     private static let scheme = "nekowidget"
@@ -31,10 +31,15 @@ struct DeepLink: Equatable, Sendable {
             }
             components.queryItems = queryItems
             return components.url
-        case .familyWindow:
+        case let .familyWindow(localWindowID):
             var components = URLComponents()
             components.scheme = Self.scheme
             components.host = "family-window"
+            if let localWindowID {
+                components.queryItems = [
+                    URLQueryItem(name: "window", value: localWindowID)
+                ]
+            }
             return components.url
         }
     }
@@ -47,7 +52,16 @@ struct DeepLink: Equatable, Sendable {
     }
 
     static func familyWindow() -> URL? {
-        DeepLink(destination: .familyWindow).url
+        DeepLink(destination: .familyWindow(localWindowID: nil)).url
+    }
+
+    static func familyWindow(localWindowID: String) -> URL? {
+        guard let uuid = UUID(uuidString: localWindowID),
+              uuid.uuidString.lowercased() == localWindowID.lowercased()
+        else { return nil }
+        return DeepLink(
+            destination: .familyWindow(localWindowID: localWindowID.lowercased())
+        ).url
     }
 
     init?(url: URL) {
@@ -56,11 +70,21 @@ struct DeepLink: Equatable, Sendable {
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else { return nil }
         if host == "family-window" {
-            guard components.path.isEmpty,
-                  components.queryItems?.isEmpty ?? true,
-                  components.fragment == nil
+            guard components.path.isEmpty, components.fragment == nil else { return nil }
+            let items = components.queryItems ?? []
+            guard items.count <= 1,
+                  items.isEmpty || items[0].name == "window"
             else { return nil }
-            self.init(destination: .familyWindow)
+            let localWindowID: String?
+            if let rawValue = items.first?.value {
+                guard let uuid = UUID(uuidString: rawValue),
+                      uuid.uuidString.lowercased() == rawValue.lowercased()
+                else { return nil }
+                localWindowID = rawValue.lowercased()
+            } else {
+                localWindowID = nil
+            }
+            self.init(destination: .familyWindow(localWindowID: localWindowID))
             return
         }
         guard host == "photo",

@@ -13,6 +13,14 @@ export interface Env {
   REACTION_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for encrypted private-window names.
   WINDOW_NAME_RUNTIME_ENABLED?: string;
+  /// Exact, independent switch for APNs registration and dispatch. Secrets
+  /// alone never enable push traffic.
+  APNS_RUNTIME_ENABLED?: string;
+  /// Secret JSON containing keyId, teamId, bundleId, environment and the
+  /// PKCS#8 .p8 private key. Never place this value in Wrangler vars.
+  APNS_PROVIDER_CREDENTIAL_JSON?: string;
+  /// Secret JSON AES-GCM keyring used to encrypt opaque APNs device tokens.
+  APNS_TOKEN_KEYRING_JSON?: string;
   /// Exact, server-side operational switch for the retired v1 daily-sharing
   /// transport. Pairing and revocation remain available when this is disabled.
   LEGACY_SHARING_RUNTIME_ENABLED?: string;
@@ -39,6 +47,12 @@ export function windowNameRuntimeEnabled(
   env: Pick<Env, "WINDOW_NAME_RUNTIME_ENABLED">,
 ): boolean {
   return env.WINDOW_NAME_RUNTIME_ENABLED === "YES";
+}
+
+export function apnsRuntimeEnabled(
+  env: Pick<Env, "APNS_RUNTIME_ENABLED">,
+): boolean {
+  return env.APNS_RUNTIME_ENABLED === "YES";
 }
 
 export function legacySharingRuntimeEnabled(

@@ -109,6 +109,7 @@ async function signedRequest(
   keyPair: KeyPair,
   payload?: unknown,
   nonce = randomValue(16),
+  deviceID?: string,
 ): Promise<Request> {
   const body = payload === undefined ? "" : JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1_000);
@@ -128,6 +129,7 @@ async function signedRequest(
     "Neko-Signature": signature,
     "CF-Connecting-IP": "192.0.2.40",
   });
+  if (deviceID !== undefined) headers.set("Neko-Device-ID", deviceID);
   if (payload !== undefined) headers.set("Content-Type", "application/json");
   const init: RequestInit = { method, headers };
   if (payload !== undefined) init.body = body;
@@ -376,7 +378,87 @@ async function claimRecovery(
 const testEnv = env as unknown as Env;
 
 describe("device recovery", () => {
-  it("atomically replaces one device while retaining participant history and rejecting old keys", async () => {
+  it("keeps participant-scoped data independent from one device closing", async () => {
+    for (const removedTrigger of [
+      "moment_window_names_delete_on_device_revoke",
+      "moment_window_names_cleanup_on_device_delete",
+      "moment_reactions_delete_on_device_close",
+    ]) {
+      expect(await testEnv.DB.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+      ).bind(removedTrigger).first()).toBeNull();
+    }
+    for (const retainedTrigger of [
+      "moment_window_names_delete_on_participant_revoke",
+      "moment_reactions_delete_on_participant_close",
+      "moment_reactions_delete_on_space_close",
+    ]) {
+      expect(await testEnv.DB.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+      ).bind(retainedTrigger).first()).toEqual({ name: retainedTrigger });
+    }
+  });
+
+  it("lets an explicitly selected additional device sponsor another enrollment", async () => {
+    const fixture = await pairedFixture();
+    const additionalKeys = await signingKeyPair();
+    const additionalDeviceID = randomValue(16);
+    const now = Math.floor(Date.now() / 1_000);
+    await testEnv.DB.prepare(
+      `INSERT INTO moment_devices(
+         id, participant_id, legacy_member_id, agreement_public_key,
+         signing_public_key, state, created_at, activated_at
+       ) VALUES (?, ?, NULL, ?, ?, 'active', ?, ?)`,
+    ).bind(
+      additionalDeviceID,
+      fixture.owner.memberId,
+      randomValue(32),
+      await publicKeyValue(additionalKeys),
+      now,
+      now,
+    ).run();
+    const proofKeys = await signingKeyPair();
+    const response = await SELF.fetch(await signedRequest(
+      "/v2/device-recoveries",
+      "POST",
+      fixture.owner.memberId,
+      additionalKeys,
+      {
+        protocolVersion: 2,
+        clientRequestId: crypto.randomUUID().toLowerCase(),
+        targetParticipantId: fixture.invitee.participantId,
+        recoveryProofPublicKey: await publicKeyValue(proofKeys),
+      },
+      undefined,
+      additionalDeviceID,
+    ));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      target: { memberId: fixture.invitee.memberId },
+      peer: {
+        memberId: fixture.owner.memberId,
+        signingPublicKey: await publicKeyValue(additionalKeys),
+      },
+    });
+    for (const path of [
+      "/v2/window-name",
+      "/v2/moments/changes",
+      "/v2/reactions/changes",
+    ]) {
+      const read = await SELF.fetch(await signedRequest(
+        path,
+        "GET",
+        fixture.owner.memberId,
+        additionalKeys,
+        undefined,
+        undefined,
+        additionalDeviceID,
+      ));
+      expect(read.status, path).toBe(200);
+    }
+  });
+
+  it("atomically adds one device while retaining participant history and old keys", async () => {
     const fixture = await pairedFixture();
     const proofKeys = await signingKeyPair();
     const replacementKeys = await signingKeyPair();
@@ -521,12 +603,25 @@ describe("device recovery", () => {
       fixture.invitee.memberId,
       fixture.inviteeKeys,
     ));
-    expect(oldStatus.status).toBe(401);
+    expect(oldStatus.status).toBe(200);
+    expect(await oldStatus.json()).toMatchObject({
+      member: { signingPublicKey: fixture.invitee.signingPublicKey },
+    });
+    const missingDeviceHeader = await SELF.fetch(await signedRequest(
+      "/v1/pairing/status",
+      "GET",
+      fixture.invitee.memberId,
+      replacementKeys,
+    ));
+    expect(missingDeviceHeader.status).toBe(401);
     const newStatus = await SELF.fetch(await signedRequest(
       "/v1/pairing/status",
       "GET",
       fixture.invitee.memberId,
       replacementKeys,
+      undefined,
+      undefined,
+      claimed.body.deviceId as string,
     ));
     expect(newStatus.status).toBe(200);
     const status = await newStatus.json<{
@@ -562,6 +657,8 @@ describe("device recovery", () => {
           acceptedAt: new Date().toISOString(),
         },
       },
+      undefined,
+      claimed.body.deviceId as string,
     ));
     expect(reserveResponse.status).toBe(201);
 
@@ -590,10 +687,10 @@ describe("device recovery", () => {
     }>();
     expect(database).toEqual({
       retained_member_key: fixture.originalInviteeAgreement,
-      old_state: "revoked",
-      old_legacy_id: null,
+      old_state: "active",
+      old_legacy_id: fixture.invitee.memberId,
       new_state: "active",
-      new_legacy_id: fixture.invitee.memberId,
+      new_legacy_id: null,
       key_envelope: null,
       approval_signature: null,
     });
@@ -772,6 +869,9 @@ describe("device recovery", () => {
       "GET",
       fixture.owner.memberId,
       replacementKeys,
+      undefined,
+      undefined,
+      claimed.body.deviceId as string,
     ));
     expect(ownerStatus.status).toBe(200);
     expect(await ownerStatus.json()).toMatchObject({

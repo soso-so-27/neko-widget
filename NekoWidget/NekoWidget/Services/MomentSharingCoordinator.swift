@@ -435,7 +435,7 @@ actor MomentSharingCoordinator {
                 // consent. Keep every media admission and operation disabled,
                 // but do not treat that media-only boundary as a reason to
                 // suppress the encrypted presentation-name exchange below.
-                try handoffProcessor.revokeAdmissions(
+                _ = try handoffProcessor.refreshAdmissionCatalog(
                     lifecycleToken: loadedAuthorization.lifecycleToken
                 )
                 handedOff = 0
@@ -1150,7 +1150,15 @@ actor MomentSharingCoordinator {
         )
 
         let ownerSigningPublicKey: Data
-        if role == .inviter {
+        if role == .inviter,
+           pairing.localDeviceIsAdditional == true,
+           let encoded = pairing.canonicalParticipantSigningPublicKey,
+           let decoded = Data(base64URLString: encoded),
+           decoded.count == 32 {
+            // Additional owner devices may deliver photos but the original
+            // owner's key remains canonical for the shared window name.
+            ownerSigningPublicKey = decoded
+        } else if role == .inviter {
             ownerSigningPublicKey = try PairingCrypto.signingPublicKey(for: credential)
         } else {
             guard let encoded = pairing.peerSigningPublicKey,
@@ -1161,6 +1169,7 @@ actor MomentSharingCoordinator {
         }
         let predecessorOwnerSigningPublicKey: Data?
         if role == .inviter,
+           pairing.localDeviceIsAdditional != true,
            pairing.recoveryWasLocalDeviceReplacement == true,
            let encoded = pairing.recoveryPreviousTargetSigningPublicKey,
            let decoded = Data(base64URLString: encoded),
@@ -2377,7 +2386,8 @@ actor MomentSharingCoordinator {
         reason: LocalSharingFailureReason
     ) {
         do {
-            try handoffProcessor.revokeAdmissions(
+            try handoffProcessor.revokeCurrentAdmission(
+                pairing: authorization.state,
                 lifecycleToken: authorization.lifecycleToken
             )
             SharedLog.app.warning(

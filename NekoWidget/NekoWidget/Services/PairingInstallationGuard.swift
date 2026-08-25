@@ -5,6 +5,19 @@ import Foundation
 /// app deletion, so the Keychain alone must never be treated as proof that the
 /// current installation is authorized to reuse a room key.
 enum PairingInstallationGuard {
+    private struct WindowCleanupScope: Codable {
+        static let schemaVersion = 1
+        var schemaVersion: Int = Self.schemaVersion
+        let localWindowID: String
+
+        func validated() throws -> Self {
+            guard schemaVersion == Self.schemaVersion,
+                  let uuid = UUID(uuidString: localWindowID),
+                  uuid.uuidString.lowercased() == localWindowID.lowercased()
+            else { throw PairingError.stateUnavailable }
+            return self
+        }
+    }
     private static let markerFileName = "sharing-installation-marker.v1"
 
     enum RetryableBootstrapReason: String, Equatable, Sendable {
@@ -71,13 +84,99 @@ enum PairingInstallationGuard {
             if existingMarker == nil {
                 try? writeLocalMarker(marker)
             }
-            return try performCleanupWhileLocked(marker: marker, message: nil)
+            return try performCleanupWhileLocked(
+                marker: marker,
+                message: nil,
+                removeAllWindows: true
+            )
         }
     }
 
     static func resetLocalSharingForDisabledConfigurationAsync() async throws {
         try await Task.detached(priority: .userInitiated) {
             _ = try resetLocalSharingForDisabledConfiguration()
+        }.value
+    }
+
+    /// Creates another independent local slot without touching the currently
+    /// paired window or its Keychain account. The global lifecycle epoch is
+    /// bumped first so a foreground/background result from the previous slot
+    /// cannot commit through the newly selected paths.
+    static func createAndActivatePrivateWindow() throws -> BootstrapResult {
+        try SharingLifecycleGate.withExclusive {
+            guard let marker = try readLocalMarker() else {
+                throw PairingError.installationChanged
+            }
+            _ = try PrivateWindowCatalogStore
+                .bootstrapLegacyMigrationWhileLifecycleLocked()
+            _ = try SharingLifecycleGate.bumpEpochWhileLocked()
+            try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
+            _ = try PrivateWindowCatalogStore.createAndActivateWhileLifecycleLocked()
+            let state = PairingState.unpaired(installationMarker: marker)
+            try PairingStateStore.saveWhileLifecycleLocked(state)
+            guard let committed = try PairingStateStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            return BootstrapResult(
+                state: committed,
+                lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
+                invalidatedPreviousInstallation: false
+            )
+        }
+    }
+
+    static func createAndActivatePrivateWindowAsync() async throws -> BootstrapResult {
+        try await Task.detached(priority: .userInitiated) {
+            try createAndActivatePrivateWindow()
+        }.value
+    }
+
+    /// Selects an existing catalog slot. Missing or malformed target state is
+    /// never substituted with another room; a genuinely new empty slot gets a
+    /// fresh unpaired state bound to the current installation marker.
+    static func activatePrivateWindow(localWindowID: String) throws -> BootstrapResult {
+        try SharingLifecycleGate.withExclusive {
+            guard let marker = try readLocalMarker() else {
+                throw PairingError.installationChanged
+            }
+            _ = try PrivateWindowCatalogStore
+                .bootstrapLegacyMigrationWhileLifecycleLocked()
+            _ = try SharingLifecycleGate.bumpEpochWhileLocked()
+            try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
+            _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                localWindowID: localWindowID
+            )
+            let state: PairingState
+            if let stored = try PairingStateStore.load() {
+                guard stored.installationMarker == marker else {
+                    throw PairingError.installationChanged
+                }
+                state = stored
+            } else {
+                let empty = PairingState.unpaired(installationMarker: marker)
+                try PairingStateStore.saveWhileLifecycleLocked(empty)
+                guard let committed = try PairingStateStore.load() else {
+                    throw PairingError.stateUnavailable
+                }
+                state = committed
+            }
+            try? PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                spaceID: state.spaceID,
+                credentialAccount: state.credentialAccount
+            )
+            return BootstrapResult(
+                state: state,
+                lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
+                invalidatedPreviousInstallation: false
+            )
+        }
+    }
+
+    static func activatePrivateWindowAsync(
+        localWindowID: String
+    ) async throws -> BootstrapResult {
+        try await Task.detached(priority: .userInitiated) {
+            try activatePrivateWindow(localWindowID: localWindowID)
         }.value
     }
 
@@ -97,9 +196,20 @@ enum PairingInstallationGuard {
             let existingMarker = try readLocalMarkerForBootstrap()
             let marker = existingMarker ?? UUID().uuidString
             if existingMarker == nil { try writeLocalMarker(marker) }
+            let cleanupScope = try readWindowCleanupScopeWhileLocked()
+            if let cleanupScope {
+                guard let catalog = try PrivateWindowCatalogStore.load(),
+                      catalog.activeWindowID == cleanupScope.localWindowID
+                else {
+                    throw deferredBootstrapError(
+                        reason: .pairingStateReadUnavailable
+                    )
+                }
+            }
             let reset = try performCleanupWhileLocked(
                 marker: marker,
-                message: "共有の削除処理を完了しました。もう一度招待できます。"
+                message: "共有の削除処理を完了しました。もう一度招待できます。",
+                removeAllWindows: cleanupScope == nil
             )
             return BootstrapResult(
                 state: reset,
@@ -119,7 +229,11 @@ enum PairingInstallationGuard {
             )
             let newMarker = UUID().uuidString
             try writeLocalMarker(newMarker)
-            let state = try performCleanupWhileLocked(marker: newMarker, message: nil)
+            let state = try performCleanupWhileLocked(
+                marker: newMarker,
+                message: nil,
+                removeAllWindows: true
+            )
             return BootstrapResult(
                 state: state,
                 lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
@@ -144,6 +258,16 @@ enum PairingInstallationGuard {
             // Availability is not proof of corruption. Preserve the credential
             // and retry after Data Protection/App Group access recovers.
             throw deferredBootstrapError(reason: .lifecycleStateUnavailable)
+        }
+
+        // Build 40 and earlier had one `sharing/` directory. Move it into the
+        // first catalog slot before resolving PairingState. The catalog commit
+        // and directory move are crash-resumable and never merge two rooms.
+        do {
+            _ = try PrivateWindowCatalogStore
+                .bootstrapLegacyMigrationWhileLifecycleLocked()
+        } catch {
+            throw deferredBootstrapError(reason: .pairingStateReadUnavailable)
         }
 
         let loadedState: PairingState?
@@ -190,7 +314,11 @@ enum PairingInstallationGuard {
                 "Pairing bootstrap reset",
                 metadata: ["sharingFailureReason": "installation-marker-mismatch"]
             )
-            let reset = try performCleanupWhileLocked(marker: marker, message: nil)
+            let reset = try performCleanupWhileLocked(
+                marker: marker,
+                message: nil,
+                removeAllWindows: true
+            )
             return BootstrapResult(
                 state: reset,
                 lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
@@ -198,18 +326,32 @@ enum PairingInstallationGuard {
             )
         }
 
-        if state.phase == .unpaired, state.credentialAccount == nil {
-            // create/join writes Keychain before publishing its state binding.
-            // A crash between those two writes can therefore leave an orphan;
-            // an explicitly unpaired state proves no sharing credential is live.
-            SharedLog.app.info(
-                "pairing",
-                "Pairing bootstrap cleanup",
-                metadata: [
-                    "sharingFailureReason": "unpaired-credential-orphan-cleanup"
-                ]
-            )
-            try PairingKeychainStore.deleteAllSharingCredentials()
+        // Initial pairing binds its candidate Keychain account into this exact
+        // catalog slot before writing the secret. If the process stopped before
+        // PairingState committed, an authoritative unpaired state proves only
+        // that exact candidate is orphaned. Reclaim it without issuing a broad
+        // service query that could delete credentials for another window.
+        if state.phase == .unpaired, state.credentialAccount == nil,
+           let catalog = try PrivateWindowCatalogStore.load(),
+           let activeEntry = catalog.windows.first(where: {
+               $0.localWindowID == catalog.activeWindowID
+           }),
+           let candidateAccount = activeEntry.credentialAccount {
+            do {
+                try PairingKeychainStore.delete(account: candidateAccount)
+                try PrivateWindowCatalogStore
+                    .updateActiveMetadataWhileLifecycleLocked(
+                        spaceID: state.spaceID,
+                        credentialAccount: nil
+                    )
+            } catch let error as PairingError {
+                switch error {
+                case .keychainUnavailable:
+                    throw deferredBootstrapError(reason: .keychainUnavailable)
+                default:
+                    throw error
+                }
+            }
         }
 
         if let account = state.credentialAccount {
@@ -268,6 +410,10 @@ enum PairingInstallationGuard {
                 throw deferredBootstrapError(reason: .keychainUnavailable)
             }
         }
+        try? PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+            spaceID: state.spaceID,
+            credentialAccount: state.credentialAccount
+        )
         return BootstrapResult(
             state: state,
             lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
@@ -453,26 +599,136 @@ enum PairingInstallationGuard {
     /// next renew/commit even if this cleanup is interrupted and later resumed.
     private static func performCleanupWhileLocked(
         marker: String,
-        message: String?
+        message: String?,
+        removeAllWindows: Bool = false
     ) throws -> PairingState {
-        // This is one crash-recoverable transaction. The tombstone is always
-        // first and is cleared only after an unpaired state is durable.
+        // This is one crash-recoverable transaction. A scoped intent is
+        // durable before the tombstone; no destructive mutation starts until
+        // the tombstone exists, and it is cleared only after unpaired state.
+        let scopedEntry: PrivateWindowCatalogEntry?
+        if removeAllWindows {
+            scopedEntry = nil
+            try deleteWindowCleanupScopeWhileLocked()
+        } else {
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let entry = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  })
+            else { throw PairingError.stateUnavailable }
+            scopedEntry = entry
+            try writeWindowCleanupScopeWhileLocked(
+                WindowCleanupScope(localWindowID: entry.localWindowID)
+            )
+        }
         try SharingLifecycleGate.markCleanupRequired()
         _ = try SharingLifecycleGate.bumpEpochWhileLocked()
         try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
-        try PairingKeychainStore.deleteAllSharingCredentials()
+        let activeState: PairingState?
+        let activeCredentialAccount: String?
+        if removeAllWindows {
+            activeState = nil
+            activeCredentialAccount = nil
+        } else {
+            // Read availability failures are retryable and never destructive.
+            // Positive schema/integrity corruption is different: the valid
+            // catalog still identifies one exact local slot and its exact
+            // Keychain account, so isolate that slot without re-reading the
+            // corrupt bytes forever or touching another window.
+            do {
+                activeState = try PairingStateStore.load()
+            } catch PairingStateStore.LoadError.invalidState {
+                activeState = nil
+            } catch {
+                throw error
+            }
+            activeCredentialAccount = activeState?.credentialAccount
+                ?? scopedEntry?.credentialAccount
+            guard let activeWindowID = scopedEntry?.localWindowID
+            else { throw PairingError.stateUnavailable }
+            let binding: Data?
+            if let activeState,
+               let spaceID = activeState.spaceID,
+               let participantID = activeState.participantID {
+                binding = try MomentShareHandoffStore.makeBindingSHA256(
+                    installationMarker: activeState.installationMarker,
+                    spaceID: spaceID,
+                    participantID: participantID
+                )
+            } else {
+                binding = nil
+            }
+            try MomentShareHandoffStore.revokeAdmissionWhileLifecycleLocked(
+                localWindowID: activeWindowID,
+                bindingSHA256: binding
+            )
+        }
+        if removeAllWindows {
+            try PairingKeychainStore.deleteAllSharingCredentials()
+        } else if let activeCredentialAccount {
+            try PairingKeychainStore.delete(account: activeCredentialAccount)
+        }
         try? PairingStateStore.delete()
-        try purgeSharedCache()
+        try purgeSharedCache(removeAllWindows: removeAllWindows)
+        if removeAllWindows {
+            _ = try PrivateWindowCatalogStore.resetAllWhileLifecycleLocked()
+        }
         var reset = PairingState.unpaired(installationMarker: marker)
         reset.lastError = message
         try PairingStateStore.saveWhileLifecycleLocked(reset)
+        try? PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+            spaceID: nil,
+            credentialAccount: nil
+        )
         try SharingLifecycleGate.clearCleanupRequired()
+        try deleteWindowCleanupScopeWhileLocked()
         // Return the exact decoded value (not the pre-encoding Date value), so
         // the first CAS after reset compares against the bytes on disk.
         guard let committed = try PairingStateStore.load() else {
             throw PairingError.stateUnavailable
         }
         return committed
+    }
+
+    private static func readWindowCleanupScopeWhileLocked() throws
+        -> WindowCleanupScope? {
+        guard let url = SharedContainer.sharingCleanupScopeURL else {
+            throw PairingError.stateUnavailable
+        }
+        do {
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            return try JSONDecoder().decode(WindowCleanupScope.self, from: data)
+                .validated()
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing
+            else { throw PairingError.stateUnavailable }
+            return nil
+        }
+    }
+
+    private static func writeWindowCleanupScopeWhileLocked(
+        _ scope: WindowCleanupScope
+    ) throws {
+        guard let url = SharedContainer.sharingCleanupScopeURL else {
+            throw PairingError.stateUnavailable
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        try SharingSecureFile.write(
+            try encoder.encode(try scope.validated()),
+            to: url
+        )
+    }
+
+    private static func deleteWindowCleanupScopeWhileLocked() throws {
+        guard let url = SharedContainer.sharingCleanupScopeURL else {
+            throw PairingError.stateUnavailable
+        }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing
+            else { throw error }
+        }
     }
 
     private static func markerURL() throws -> URL {
@@ -521,17 +777,22 @@ enum PairingInstallationGuard {
         try SharingSecureFile.write(Data(marker.utf8), to: url)
     }
 
-    private static func purgeSharedCache() throws {
+    private static func purgeSharedCache(removeAllWindows: Bool = false) throws {
         var firstError: Error?
-        if let directory = SharedContainer.sharingCacheDirectoryURL,
-           FileManager.default.fileExists(atPath: directory.path) {
-            // This directory is deliberately narrower than the App Group root.
-            // It cannot remove the photo scan, likes, logs, or widget cache.
-            do {
-                try FileManager.default.removeItem(at: directory)
-            } catch {
-                firstError = error
+        let directories: [URL] = {
+            if removeAllWindows {
+                return [
+                    SharedContainer.privateWindowsDirectoryURL,
+                    SharedContainer.legacySharingCacheDirectoryURL,
+                ].compactMap { $0 }
             }
+            return [SharedContainer.sharingCacheDirectoryURL].compactMap { $0 }
+        }()
+        for directory in directories where FileManager.default.fileExists(atPath: directory.path) {
+            // These directories are deliberately narrower than the App Group
+            // root. They cannot remove personal photo scans, likes, or logs.
+            do { try FileManager.default.removeItem(at: directory) }
+            catch { if firstError == nil { firstError = error } }
         }
         for name in [
             "NekoWidgetMomentHandoffModeration",

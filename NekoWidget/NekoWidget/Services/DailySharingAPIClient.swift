@@ -849,6 +849,9 @@ actor URLSessionDailySharingAPIClient: DailySharingAPIClientProtocol {
             .base64URLEncodedString()
         request.setValue(String(PairingProtocol.version), forHTTPHeaderField: "Neko-Protocol-Version")
         request.setValue(memberID, forHTTPHeaderField: "Neko-Member-ID")
+        if let deviceID = credential.deviceID {
+            request.setValue(deviceID, forHTTPHeaderField: "Neko-Device-ID")
+        }
         request.setValue(String(timestamp), forHTTPHeaderField: "Neko-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "Neko-Nonce")
         request.setValue(signature, forHTTPHeaderField: "Neko-Signature")

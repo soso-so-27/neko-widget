@@ -52,7 +52,12 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
-        if photoSourceIdentifier == WidgetPhotoSource.familyWindowID {
+        if WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier) {
+            if let localWindowID = WidgetPhotoSource.localWindowID(
+                from: photoSourceIdentifier
+            ) {
+                return DeepLink.familyWindow(localWindowID: localWindowID)
+            }
             return DeepLink.familyWindow()
         }
         guard let localIdentifier else { return nil }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// User-facing guidance for the one-window, one-invitee pairing flow.
+/// User-facing guidance for one selected window and its one peer.
 ///
 /// This type deliberately accepts only the public phase and role. It cannot
 /// accidentally expose relay identifiers, invitation secrets, Keychain
@@ -20,7 +20,7 @@ struct PairingGuidancePresentation: Equatable, Sendable {
             return Self(
                 roleTitle: "まだまどにつながっていません",
                 nextActionTitle: "はじめに、このiPhoneですることを選んでください",
-                nextActionDetail: "新しく作る、招待に参加する、機種変更後の接続を戻す、の3つから選びます。",
+                nextActionDetail: "新しく作る、招待に参加する、別のiPhoneを追加する、の3つから選びます。",
                 refreshButtonTitle: nil
             )
         case .creatingInvitation:
@@ -46,22 +46,22 @@ struct PairingGuidancePresentation: Equatable, Sendable {
             )
         case .claimingRecovery:
             return Self(
-                roleTitle: "この端末：新しいiPhone",
-                nextActionTitle: "復旧コードを確認しています",
-                nextActionDetail: "以前のiPhoneは操作せず、相手のiPhoneが作った復旧コードで接続を戻します。",
+                roleTitle: "この端末：追加するiPhone",
+                nextActionTitle: "追加コードを確認しています",
+                nextActionDetail: "相手のiPhoneが作った追加コードで、同じまどを使えるようにします。",
                 refreshButtonTitle: nil
             )
         case .pendingRecoveryApproval:
             return Self(
-                roleTitle: "この端末：新しいiPhone",
+                roleTitle: "この端末：追加するiPhone",
                 nextActionTitle: "接続済みの相手と12語を比べてください",
-                nextActionDetail: "相手のiPhoneで同じ12語を確認してもらいます。以前のiPhoneは操作しません。",
+                nextActionDetail: "相手のiPhoneで同じ12語を確認してもらいます。すでに使っているiPhoneは解除されません。",
                 refreshButtonTitle: "承認されたか確認"
             )
         case .recoveryAwaitingCompletion:
             return Self(
-                roleTitle: "この端末：新しいiPhone",
-                nextActionTitle: "端末の置き換えを完了しています",
+                roleTitle: "この端末：追加するiPhone",
+                nextActionTitle: "iPhoneの追加を完了しています",
                 nextActionDetail: "相手のiPhoneによる承認は済んでいます。この画面を閉じずに少しお待ちください。",
                 refreshButtonTitle: "完了したか確認"
             )
@@ -108,11 +108,11 @@ struct PairingGuidancePresentation: Equatable, Sendable {
     }
 }
 
-/// Device labels shown during a peer-approved device replacement.
+/// Device labels shown during peer-approved additional-device enrollment.
 ///
-/// Recovery has three different phones in the user's mental model. Keeping
+/// Enrollment has three different phones in the user's mental model. Keeping
 /// these labels in one presentation type prevents the UI from calling both
-/// the replacement and the approving peer merely "the other iPhone".
+/// the added phone and the approving peer merely "the other iPhone".
 struct DeviceChangeGuidancePresentation: Equatable, Sendable {
     enum CurrentDevice: Equatable, Sendable {
         case newIPhone
@@ -130,21 +130,21 @@ struct DeviceChangeGuidancePresentation: Equatable, Sendable {
         switch currentDevice {
         case .newIPhone:
             return Self(
-                newIPhoneTitle: "新しいiPhone（この端末）",
-                newIPhoneDetail: "相手のiPhoneから届いた復旧コードを入力します。",
-                previousIPhoneTitle: "以前のiPhone",
-                previousIPhoneDetail: "以前のiPhoneでは操作しません。",
+                newIPhoneTitle: "追加するiPhone（この端末）",
+                newIPhoneDetail: "相手のiPhoneから届いた追加コードを入力します。",
+                previousIPhoneTitle: "すでに使っているiPhone",
+                previousIPhoneDetail: "操作は不要です。そのまま使い続けられます。",
                 partnerIPhoneTitle: "相手のiPhone",
-                partnerIPhoneDetail: "復旧コードを作り、12語を確認して新しいiPhoneを承認します。"
+                partnerIPhoneDetail: "追加コードを作り、12語を確認してこのiPhoneを承認します。"
             )
         case .partnerIPhone:
             return Self(
-                newIPhoneTitle: "新しいiPhone",
-                newIPhoneDetail: "この端末から届いた復旧コードを入力します。",
-                previousIPhoneTitle: "以前のiPhone",
-                previousIPhoneDetail: "以前のiPhoneでは操作しません。",
+                newIPhoneTitle: "追加するiPhone",
+                newIPhoneDetail: "この端末から届いた追加コードを入力します。",
+                previousIPhoneTitle: "相手がすでに使っているiPhone",
+                previousIPhoneDetail: "操作は不要です。そのまま使い続けられます。",
                 partnerIPhoneTitle: "相手のiPhone（この端末）",
-                partnerIPhoneDetail: "接続済みのこの端末から、新しいiPhoneの復旧を手伝います。"
+                partnerIPhoneDetail: "接続済みのこの端末から、相手のiPhone追加を承認します。"
             )
         }
     }

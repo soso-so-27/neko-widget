@@ -12,6 +12,7 @@ struct WidgetPhotoSource: AppEntity {
     static let defaultQuery = WidgetPhotoSourceQuery()
 
     static let personalLibraryID = "personal-library"
+    static let familyWindowIDPrefix = "family-window:"
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
         name: "このiPhoneの猫写真",
@@ -19,11 +20,53 @@ struct WidgetPhotoSource: AppEntity {
     )
     static let familyWindowID = "family-window"
     static var familyWindow: WidgetPhotoSource {
-        WidgetPhotoSource(
+        let legacyEntry = PrivateWindowCatalogStore.legacyWidgetEntry()
+        return WidgetPhotoSource(
             id: familyWindowID,
-            name: SharedContainer.familyWidgetWindowDisplayName(),
+            name: legacyEntry?.displayName
+                ?? SharedContainer.familyWidgetWindowDisplayName(),
             detail: "このまどに届いた最新の一枚"
         )
+    }
+
+    static func familyWindow(_ entry: PrivateWindowCatalogEntry) -> WidgetPhotoSource {
+        WidgetPhotoSource(
+            id: familyWindowIDPrefix + entry.localWindowID,
+            name: entry.displayName,
+            detail: "このまどに届いた最新の一枚"
+        )
+    }
+
+    static func isFamilyWindowSourceID(_ id: String) -> Bool {
+        id == familyWindowID || localWindowID(from: id) != nil
+    }
+
+    /// `family-window` remains the Build 40 compatibility ID and resolves to
+    /// the first catalog slot that received Build 40's one legacy directory.
+    /// New widget instances persist a concrete local window ID. Neither form
+    /// follows the app's mutable active-window selection.
+    static func localWindowID(from sourceID: String) -> String? {
+        guard sourceID.hasPrefix(familyWindowIDPrefix) else {
+            return sourceID == familyWindowID
+                ? PrivateWindowCatalogStore.legacyWidgetEntry()?.localWindowID
+                : nil
+        }
+        let value = String(sourceID.dropFirst(familyWindowIDPrefix.count))
+        guard let uuid = UUID(uuidString: value),
+              uuid.uuidString.lowercased() == value.lowercased()
+        else { return nil }
+        return value.lowercased()
+    }
+
+    static func resolvedSource(id: String) -> WidgetPhotoSource? {
+        if id == personalLibraryID { return .personalLibrary }
+        if id == familyWindowID { return .familyWindow }
+        guard let localWindowID = localWindowID(from: id),
+              let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
+                  $0.localWindowID == localWindowID
+              })
+        else { return nil }
+        return familyWindow(entry)
     }
 
     /// Add future selectable sources here, or replace this with App Group data.
@@ -31,7 +74,12 @@ struct WidgetPhotoSource: AppEntity {
     static var availableSources: [WidgetPhotoSource] {
         var sources: [WidgetPhotoSource] = [.personalLibrary]
         if familyWindowSourceIsEnabled {
-            sources.append(.familyWindow)
+            let windows = PrivateWindowCatalogStore.widgetEntries()
+            if windows.isEmpty {
+                sources.append(.familyWindow)
+            } else {
+                sources.append(contentsOf: windows.map(familyWindow))
+            }
         }
         return sources
     }
@@ -64,7 +112,7 @@ struct WidgetPhotoSource: AppEntity {
 
 struct WidgetPhotoSourceQuery: EntityQuery {
     func entities(for identifiers: [WidgetPhotoSource.ID]) async throws -> [WidgetPhotoSource] {
-        WidgetPhotoSource.availableSources.filter { identifiers.contains($0.id) }
+        identifiers.compactMap(WidgetPhotoSource.resolvedSource(id:))
     }
 
     func suggestedEntities() async throws -> [WidgetPhotoSource] {

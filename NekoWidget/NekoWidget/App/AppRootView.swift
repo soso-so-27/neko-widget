@@ -1012,9 +1012,12 @@ private final class PhotoPresentationCache: ObservableObject {
                 catPhotos.append(presentation)
                 catAssets.append(asset)
             }
-            if asset.liked {
-                likedPhotos.append(presentation)
-            }
+        }
+        // "思い出" is a deliberate, global collection. A user's selected
+        // scan-source album filters automatic candidates, but must not hide a
+        // Photos asset explicitly imported from a private window.
+        likedPhotos = sourceSnapshot.assets.compactMap { asset in
+            asset.liked ? transform(asset) : nil
         }
         likedPhotos.sort { first, second in
             LikedPhotoOrderingPolicy.comesBefore(

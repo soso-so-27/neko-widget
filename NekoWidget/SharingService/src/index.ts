@@ -42,7 +42,18 @@ import {
   uploadMomentReportCiphertext,
 } from "./moments";
 import { getReactionChanges, recordPawReaction } from "./reactions";
-import { MOMENT_CLEANUP_CRON, runLegacyScheduledCleanup } from "./scheduled";
+import {
+  APNS_DRAIN_CRON,
+  deleteCurrentPushSubscription,
+  drainNotificationOutbox,
+  putCurrentPushSubscription,
+  scheduleNotificationDrain,
+} from "./push";
+import {
+  LEGACY_CLEANUP_CRON,
+  MOMENT_CLEANUP_CRON,
+  runLegacyScheduledCleanup,
+} from "./scheduled";
 import {
   commitGeneration,
   downloadManifest,
@@ -58,7 +69,11 @@ import {
 } from "./sharing";
 import { getWindowName, putWindowName } from "./window-name";
 
-export async function route(request: Request, env: Env): Promise<Response> {
+export async function route(
+  request: Request,
+  env: Env,
+  ctx?: ExecutionContext,
+): Promise<Response> {
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
@@ -178,6 +193,16 @@ export async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && pathname === "/v2/moments/reservations") {
     return reserveMoment(request, env);
   }
+  if (pathname === "/v2/push-subscriptions/current") {
+    if (request.method === "PUT") {
+      const response = await putCurrentPushSubscription(request, env);
+      if (response.ok && ctx !== undefined) scheduleNotificationDrain(env, ctx);
+      return response;
+    }
+    if (request.method === "DELETE") {
+      return deleteCurrentPushSubscription(request, env);
+    }
+  }
   if (pathname === "/v2/window-name" && !windowNameRuntimeEnabled(env)) {
     throw new ApiError(
       503,
@@ -214,14 +239,18 @@ export async function route(request: Request, env: Env): Promise<Response> {
   }
   const momentCommitMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/commit$/u);
   if (request.method === "POST" && momentCommitMatch?.[1] !== undefined) {
-    return commitMoment(request, env, momentCommitMatch[1]);
+    const response = await commitMoment(request, env, momentCommitMatch[1]);
+    if (response.ok && ctx !== undefined) scheduleNotificationDrain(env, ctx);
+    return response;
   }
   const momentAckMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/ack$/u);
   if (request.method === "POST" && momentAckMatch?.[1] !== undefined) {
     return acknowledgeMoment(request, env, momentAckMatch[1]);
   }
   if (request.method === "POST" && pawReactionMatch?.[1] !== undefined) {
-    return recordPawReaction(request, env, pawReactionMatch[1]);
+    const response = await recordPawReaction(request, env, pawReactionMatch[1]);
+    if (response.ok && ctx !== undefined) scheduleNotificationDrain(env, ctx);
+    return response;
   }
   const participantBlockMatch = pathname.match(/^\/v2\/participants\/([^/]+)\/block$/u);
   if (request.method === "POST" && participantBlockMatch?.[1] !== undefined) {
@@ -289,18 +318,20 @@ export async function route(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     try {
-      return await route(request, env);
+      return await route(request, env, ctx);
     } catch (error) {
       return errorResponse(error);
     }
   },
   async scheduled(controller, env, ctx): Promise<void> {
-    ctx.waitUntil(
-      controller.cron === MOMENT_CLEANUP_CRON
-        ? runMomentCleanup(env)
-        : runLegacyScheduledCleanup(env),
-    );
+    if (controller.cron === MOMENT_CLEANUP_CRON) {
+      ctx.waitUntil(runMomentCleanup(env));
+    } else if (controller.cron === APNS_DRAIN_CRON) {
+      ctx.waitUntil(drainNotificationOutbox(env));
+    } else if (controller.cron === LEGACY_CLEANUP_CRON) {
+      ctx.waitUntil(runLegacyScheduledCleanup(env));
+    }
   },
 } satisfies ExportedHandler<Env>;

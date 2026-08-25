@@ -17,26 +17,46 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.family_window = (
             ROOT / "NekoWidget/Views/FamilyWindowView.swift"
         ).read_text(encoding="utf-8")
+        self.api_client = (
+            ROOT / "NekoWidget/Services/MomentSharingAPIClient.swift"
+        ).read_text(encoding="utf-8")
+        self.project = (ROOT / "NekoWidget.xcodeproj/project.pbxproj").read_text(
+            encoding="utf-8"
+        )
         with (ROOT / "NekoWidget/Info.plist").open("rb") as handle:
             self.info = plistlib.load(handle)
         with (ROOT / "NekoWidget/NekoWidget.entitlements").open("rb") as handle:
             self.entitlements = plistlib.load(handle)
+        with (
+            ROOT / "NekoWidgetWidget/NekoWidgetWidget.entitlements"
+        ).open("rb") as handle:
+            self.widget_entitlements = plistlib.load(handle)
+        with (
+            ROOT / "NekoWidgetShareExtension/NekoWidgetShareExtension.entitlements"
+        ).open("rb") as handle:
+            self.share_entitlements = plistlib.load(handle)
 
     def test_app_refresh_registration_matches_plist(self) -> None:
         identifier = "jp.nekowidget.app.background-moment-refresh"
         self.assertEqual(
             self.info["BGTaskSchedulerPermittedIdentifiers"], [identifier]
         )
-        self.assertEqual(self.info["UIBackgroundModes"], ["fetch"])
+        self.assertEqual(
+            self.info["UIBackgroundModes"], ["fetch", "remote-notification"]
+        )
         self.assertIn("@UIApplicationDelegateAdaptor(NekoWidgetAppDelegate.self)", self.app)
         self.assertIn("BGAppRefreshTaskRequest", self.service)
         self.assertIn("scheduleNextRefresh()", self.service)
 
-    def test_no_remote_notification_capability_is_added(self) -> None:
-        self.assertNotIn("aps-environment", self.entitlements)
-        self.assertNotIn("remote-notification", self.info["UIBackgroundModes"])
-        self.assertNotIn("registerForRemoteNotifications", self.service)
-        self.assertNotIn("deviceToken", self.service)
+    def test_remote_notification_capability_is_host_only(self) -> None:
+        self.assertEqual(self.entitlements["aps-environment"], "$(APS_ENVIRONMENT)")
+        self.assertNotIn("aps-environment", self.widget_entitlements)
+        self.assertNotIn("aps-environment", self.share_entitlements)
+        self.assertIn("APS_ENVIRONMENT = development;", self.project)
+        self.assertIn("APS_ENVIRONMENT = production;", self.project)
+        self.assertIn("registerForRemoteNotifications", self.service)
+        self.assertIn("didRegisterForRemoteNotificationsWithDeviceToken", self.service)
+        self.assertIn("didReceiveRemoteNotification", self.service)
 
     def test_background_sync_is_eligible_and_fail_closed(self) -> None:
         eligibility = self.service.split(
@@ -54,15 +74,63 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("failed closed", self.service.lower())
 
     def test_widget_is_published_before_reload_and_notification(self) -> None:
-        refresh = self.service.split(
-            "func refresh(protectedDataAvailable: Bool) async -> Bool", 1
-        )[1].split("private func clearFamilyWidgetIfNeeded", 1)[0]
+        refresh = self.service.split("func refresh(", 1)[1].split(
+            "private func clearFamilyWidgetIfNeeded", 1
+        )[0]
         publication = refresh.index("widgetCacheBuilder.buildFamilyWindow(")
         reload = refresh.index("WidgetCenter.shared.reloadTimelines")
         notification = refresh.index("postPrivacyMinimizedNewMomentNotification()")
         self.assertLess(publication, reload)
         self.assertLess(reload, notification)
         self.assertIn("visibleMomentIDs(in: afterState)", refresh)
+
+    def test_remote_wake_reuses_sync_and_suppresses_duplicate_local_alert(self) -> None:
+        callback = self.service.split("didReceiveRemoteNotification", 1)[1].split(
+            "func userNotificationCenter", 1
+        )[0]
+        self.assertIn('trigger: "remote-notification"', callback)
+        self.assertIn("emitLocalNotifications: false", callback)
+        self.assertIn("result.didChange ? .newData : .noData", callback)
+        self.assertIn("result.succeeded", callback)
+        self.assertIn("WidgetCenter.shared.reloadTimelines", self.service)
+        self.assertIn("emitLocalNotifications && newVisibleCount", self.service)
+        self.assertIn("emitLocalNotifications && newPawCount", self.service)
+
+    def test_signed_push_subscription_contract_does_not_persist_token(self) -> None:
+        self.assertIn('path: "/v2/push-subscriptions/current"', self.api_client)
+        self.assertIn('method: "PUT"', self.api_client)
+        self.assertIn('method: "DELETE"', self.api_client)
+        self.assertIn("MomentSharingProtocol.version", self.api_client)
+        self.assertIn("deviceToken.base64URLEncodedString()", self.api_client)
+        self.assertIn("try authenticate(", self.api_client)
+        push_service = self.service.split("actor MomentPushSubscriptionService", 1)[1].split(
+            "actor MomentBackgroundRefreshService", 1
+        )[0]
+        for forbidden in (
+            "UserDefaults",
+            "AtomicJSON",
+            "KeychainStore.save",
+            "deviceToken.base64",
+            "metadata: [",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, push_service)
+        reconcile = push_service.split("func reconcileRegistration()", 1)[1].split(
+            "func register(deviceToken:", 1
+        )[0]
+        self.assertIn("authenticatedContextsForAllWindows(", reconcile)
+        self.assertIn("for context in contexts where !context.isActive", reconcile)
+        self.assertIn("contexts.first(where: { $0.isActive })", reconcile)
+        registration = push_service.split("func register(deviceToken:", 1)[1].split(
+            "private func deleteCurrentSubscriptionIfPossible", 1
+        )[0]
+        self.assertIn("contexts.first(where: { $0.isActive })", registration)
+        self.assertIn("for context in contexts where !context.isActive", registration)
+        self.assertIn("registrationTargetIsCurrent(", registration)
+        self.assertIn("continue registrationAttempt", registration)
+        self.assertIn("MomentBackgroundRefreshPolicy.isEligible(", registration)
+        self.assertIn("putPushSubscription(", registration)
+        self.assertIn("deletePushSubscription(", registration)
 
     def test_local_notification_contains_no_shared_identity_or_media(self) -> None:
         notification = self.service.split(
@@ -87,7 +155,7 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
     def test_visible_notification_authorization_requires_an_explicit_tap(self) -> None:
         request = self.service.split(
             "func requestVisibleNotificationAuthorization()", 1
-        )[1].split("/// Returns whether", 1)[0]
+        )[1].split("/// Separates execution success", 1)[0]
         self.assertIn("requestAuthorization(options: [.alert])", request)
         self.assertNotIn(".provisional", request)
         self.assertNotIn(".sound", request)
@@ -101,7 +169,9 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("目立つ通知にする", self.family_window)
 
     def test_notification_copy_does_not_claim_immediate_delivery(self) -> None:
-        self.assertIn("受信を確認できたときに通知します", self.family_window)
+        self.assertIn("選択中のまどの通知", self.family_window)
+        self.assertIn("このまどの新着を通知できます", self.family_window)
+        self.assertIn("iPhoneで許可済み", self.family_window)
         self.assertNotIn("写真やハートが届いたら必ずすぐ通知します", self.family_window)
 
     def test_heart_notification_is_text_only_and_privacy_minimized(self) -> None:

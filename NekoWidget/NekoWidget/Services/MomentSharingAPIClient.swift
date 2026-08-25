@@ -297,6 +297,21 @@ protocol MomentReactionAPIClientProtocol: Sendable {
     ) async throws -> MomentPawChangesResult
 }
 
+enum MomentPushSubscriptionEnvironment: String, Encodable, Sendable {
+    case development
+    case production
+
+    /// Debug builds use the APNs sandbox. App Store and TestFlight archives
+    /// are Release builds and must register the token against production APNs.
+    static var current: Self {
+#if DEBUG
+        .development
+#else
+        .production
+#endif
+    }
+}
+
 actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
     PrivateWindowNameAPIClientProtocol, MomentReactionAPIClientProtocol {
     private let baseURL: URL
@@ -320,6 +335,56 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
+    }
+
+    /// Registers only the opaque APNs token. The relay derives the current
+    /// participant, device and topic from the signed request and never accepts
+    /// those identifiers from the app. The token is deliberately not retained
+    /// by this client after the request finishes.
+    func putPushSubscription(
+        deviceToken: Data,
+        environment: MomentPushSubscriptionEnvironment = .current,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws {
+        guard (16...256).contains(deviceToken.count) else {
+            throw MomentSharingError.invalidPayload
+        }
+        let response: PushSubscriptionResponse = try await sendJSON(
+            path: "/v2/push-subscriptions/current",
+            method: "PUT",
+            body: PushSubscriptionPutRequest(
+                protocolVersion: MomentSharingProtocol.version,
+                token: deviceToken.base64URLEncodedString(),
+                environment: environment
+            ),
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentSharingProtocol.version,
+              response.subscription.state == "active"
+        else { throw MomentSharingError.invalidPayload }
+    }
+
+    /// Removes the subscription bound to the currently authenticated device.
+    /// No token is sent on deletion, which also makes notification-permission
+    /// revocation safe when the app no longer has a token in memory.
+    func deletePushSubscription(
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws {
+        let response: PushSubscriptionResponse = try await sendJSON(
+            path: "/v2/push-subscriptions/current",
+            method: "DELETE",
+            body: PushSubscriptionDeleteRequest(
+                protocolVersion: MomentSharingProtocol.version
+            ),
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentSharingProtocol.version,
+              response.subscription.state == "deleted"
+        else { throw MomentSharingError.invalidPayload }
     }
 
     func currentWindowName(
@@ -1005,6 +1070,9 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
             .base64URLEncodedString()
         request.setValue(String(PairingProtocol.version), forHTTPHeaderField: "Neko-Protocol-Version")
         request.setValue(memberID, forHTTPHeaderField: "Neko-Member-ID")
+        if let deviceID = credential.deviceID {
+            request.setValue(deviceID, forHTTPHeaderField: "Neko-Device-ID")
+        }
         request.setValue(String(timestamp), forHTTPHeaderField: "Neko-Timestamp")
         request.setValue(nonce, forHTTPHeaderField: "Neko-Nonce")
         request.setValue(signature, forHTTPHeaderField: "Neko-Signature")
@@ -1029,6 +1097,25 @@ private final class MomentNoRedirectSessionDelegate: NSObject, URLSessionTaskDel
     ) {
         completionHandler(nil)
     }
+}
+
+private struct PushSubscriptionPutRequest: Encodable {
+    let protocolVersion: Int
+    let token: String
+    let environment: MomentPushSubscriptionEnvironment
+}
+
+private struct PushSubscriptionDeleteRequest: Encodable {
+    let protocolVersion: Int
+}
+
+private struct PushSubscriptionResponse: Decodable {
+    struct Subscription: Decodable {
+        let state: String
+    }
+
+    let protocolVersion: Int
+    let subscription: Subscription
 }
 
 private struct ReservationRequest: Encodable {

@@ -125,7 +125,7 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
     def test_workflow_injects_only_protected_media_values_and_verifies_archive(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn(
-            '届いた写真は、あなたが「写真アプリへコピー」を明示的に選んだ場合だけ追加します',
+            '届いた写真は、あなたが「思い出に追加」を明示的に選んだ場合だけ、位置情報を除いて写真アプリへ保存します',
             workflow,
         )
         self.assertNotIn(
@@ -178,6 +178,12 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             '--expected-privacy-url "$RELEASE_SHARING_PRIVACY_URL"',
             '--expected-support-url "$RELEASE_SHARING_SUPPORT_URL"',
             '--expected-community-standards-url "$RELEASE_SHARING_COMMUNITY_STANDARDS_URL"',
+            'push_environment != "production"',
+            'requires_push=True',
+            'app_push_environment',
+            '[[ "$app_push_environment" == "production" ]]',
+            '[[ -z "$widget_push_environment" ]]',
+            '[[ -z "$share_push_environment" ]]',
         )
         for fragment in archive_and_preflight_fragments:
             with self.subTest(fragment=fragment):

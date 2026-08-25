@@ -12,6 +12,8 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var isSynchronizingWindowName = false
     @Published private(set) var windowNameStatusMessage: String?
     @Published private(set) var windowNameStatusIsError = false
+    @Published private(set) var privateWindows: [PrivateWindowCatalogEntry] = []
+    @Published private(set) var activePrivateWindowID: String?
     @Published private(set) var manualCheckMessage: String?
     @Published private(set) var manualCheckCompletedAt: Date?
     @Published private(set) var manualCheckSucceeded: Bool?
@@ -46,7 +48,9 @@ final class PairingViewModel: ObservableObject {
 
     var isConfigured: Bool { api != nil }
     var isMediaSyncEnabled: Bool { configuration.isMediaAvailable }
-    var canEditWindowDisplayName: Bool { state?.role != .invitee }
+    var canEditWindowDisplayName: Bool {
+        state?.role != .invitee && state?.localDeviceIsAdditional != true
+    }
     var userFacingStatusMessage: String? {
         if let operationErrorMessage { return operationErrorMessage }
         if let bootstrapRetryMessage { return bootstrapRetryMessage }
@@ -64,6 +68,9 @@ final class PairingViewModel: ObservableObject {
     }
     var hasPendingDeviceRecovery: Bool {
         state?.recoveryID != nil && state?.recoveryCompletedAt == nil
+    }
+    var canCreateAnotherPrivateWindow: Bool {
+        privateWindows.count < PrivateWindowCatalogState.maximumWindowCount
     }
 
     @discardableResult
@@ -124,6 +131,7 @@ final class PairingViewModel: ObservableObject {
                 pairing: current,
                 validating: lifecycleToken
             )
+            reloadPrivateWindowCatalog()
             bestEffortScrubConsumedInvitationSecret(
                 for: current,
                 lifecycleToken: lifecycleToken
@@ -171,7 +179,9 @@ final class PairingViewModel: ObservableObject {
     @discardableResult
     func updateWindowDisplayName(_ rawValue: String) async -> Bool {
         guard canEditWindowDisplayName else {
-            configurationMessage = "まどの名前は、まどを作った人が変更できます。"
+            configurationMessage = state?.localDeviceIsAdditional == true
+                ? "追加したiPhoneでは名前を変更できません。最初のiPhoneで変更してください。"
+                : "まどの名前は、まどを作った人が変更できます。"
             return false
         }
         guard !isSynchronizingWindowName, !isWorking else { return false }
@@ -188,6 +198,14 @@ final class PairingViewModel: ObservableObject {
                 validating: operation.lifecycleToken
             )
             windowDisplayName = saved.displayName
+            try? SharingLifecycleGate.withValidatedToken(operation.lifecycleToken) {
+                try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                    displayName: saved.displayName,
+                    spaceID: operation.expectedState.spaceID,
+                    credentialAccount: operation.expectedState.credentialAccount
+                )
+            }
+            reloadPrivateWindowCatalog()
             configurationMessage = nil
             windowNameStatusIsError = false
             windowNameStatusMessage = operation.expectedState.phase == .paired
@@ -252,6 +270,90 @@ final class PairingViewModel: ObservableObject {
             // Keep the last verified presentation value. Pairing/bootstrap
             // surfaces authority failures through its existing status path.
         }
+    }
+
+    func createAnotherPrivateWindow() async {
+        clearTransientOperationFeedback()
+        guard !isWorking, canCreateAnotherPrivateWindow else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let result = try await PairingInstallationGuard
+                .createAndActivatePrivateWindowAsync()
+            applyActivatedWindow(result)
+            operationCompletionMessage = "新しいまどを追加しました。名前を付けて相手を招待できます。"
+            NotificationCenter.default.post(
+                name: .momentSharingPresentationNeedsRefresh,
+                object: nil
+            )
+            Task {
+                await MomentPushSubscriptionService.shared.reconcileRegistration()
+            }
+        } catch {
+            record(error)
+        }
+    }
+
+    func activatePrivateWindow(localWindowID: String) async {
+        clearTransientOperationFeedback()
+        guard !isWorking, localWindowID != activePrivateWindowID else { return }
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            let result = try await PairingInstallationGuard.activatePrivateWindowAsync(
+                localWindowID: localWindowID
+            )
+            applyActivatedWindow(result)
+            NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+            NotificationCenter.default.post(
+                name: .momentSharingPresentationNeedsRefresh,
+                object: nil
+            )
+            Task {
+                await MomentPushSubscriptionService.shared.reconcileRegistration()
+            }
+        } catch {
+            record(error)
+        }
+    }
+
+    private func applyActivatedWindow(
+        _ result: PairingInstallationGuard.BootstrapResult
+    ) {
+        state = result.state
+        windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+            pairing: result.state,
+            validating: result.lifecycleToken
+        )
+        invitationCode = nil
+        recoveryInvitationCode = nil
+        enteredInvitationCode = ""
+        enteredRecoveryCode = ""
+        hasConfirmedPhrase = false
+        hasConfirmedRecoveryPhrase = false
+        setupResetAfterWindowSelection()
+        reloadPrivateWindowCatalog()
+    }
+
+    private func setupResetAfterWindowSelection() {
+        manualCheckMessage = nil
+        manualCheckCompletedAt = nil
+        manualCheckSucceeded = nil
+        windowNameStatusMessage = nil
+        windowNameStatusIsError = false
+    }
+
+    private func reloadPrivateWindowCatalog() {
+        guard let catalog = try? PrivateWindowCatalogStore.load() else {
+            privateWindows = []
+            activePrivateWindowID = nil
+            return
+        }
+        privateWindows = catalog.windows.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.localWindowID < $1.localWindowID
+        }
+        activePrivateWindowID = catalog.activeWindowID
     }
 
     func createInvitation(dailyBoundaryMinuteUTC: Int) async {
@@ -847,7 +949,7 @@ final class PairingViewModel: ObservableObject {
                 proofSecret: proofSecret
             ).code
             operationCompletionMessage =
-                "復旧コードを作りました。接続を戻すiPhoneへ送ってください。"
+                "追加コードを作りました。追加するiPhoneへ送ってください。"
         } catch {
             record(error, operation: operation)
         }
@@ -981,7 +1083,7 @@ final class PairingViewModel: ObservableObject {
             enteredRecoveryCode = ""
             hasConfirmedRecoveryPhrase = false
             operationCompletionMessage =
-                "復旧の確認を始めました。両方のiPhoneで12語を比べてください。"
+                "iPhone追加の確認を始めました。両方のiPhoneで12語を比べてください。"
         } catch {
             record(error, operation: operation)
         }
@@ -1019,7 +1121,7 @@ final class PairingViewModel: ObservableObject {
                         current = try persist(current, operation: operation)
                         hasConfirmedRecoveryPhrase = false
                         operationCompletionMessage =
-                            "新しいiPhoneから復旧の確認が届きました。12語を比べてください。"
+                            "追加するiPhoneから確認が届きました。12語を比べてください。"
                     } else if let expiresAt = current.recoveryExpiresAt,
                               Date() >= expiresAt.addingTimeInterval(
                                 PairingProtocol.maximumClockSkewSeconds
@@ -1031,11 +1133,11 @@ final class PairingViewModel: ObservableObject {
                         )
                         current = try persist(current, operation: operation)
                         operationCompletionMessage =
-                            "復旧コードの期限が切れました。相手側のまどは解除されていません。必要なら新しいコードを作れます。"
+                            "追加コードの期限が切れました。相手側のまどや既存のiPhoneは解除されていません。必要なら新しいコードを作れます。"
                     } else if isManual {
                         manualCheckSucceeded = true
                         manualCheckCompletedAt = .now
-                        manualCheckMessage = "まだ新しいiPhoneから復旧の確認は届いていません。"
+                        manualCheckMessage = "まだ追加するiPhoneから確認は届いていません。"
                     }
                     return
                 }
@@ -1051,10 +1153,13 @@ final class PairingViewModel: ObservableObject {
                       result.transcriptHash == current.recoveryTranscriptHash
                 else { throw PairingError.transcriptMismatch }
                 if result.state == "active" {
-                    current.peerMemberID = result.credential.memberID
-                    current.peerParticipantID = result.credential.participantID
-                    current.peerAgreementPublicKey = result.credential.agreementPublicKey
-                    current.peerSigningPublicKey = result.credential.signingPublicKey
+                    // Enrollment adds another device to the same participant.
+                    // Keep the participant's original naming identity as the
+                    // canonical key so every already-connected iPhone can
+                    // continue to verify the same encrypted window name.
+                    guard current.peerMemberID == result.credential.memberID,
+                          current.peerParticipantID == result.credential.participantID
+                    else { throw PairingError.transcriptMismatch }
                     current.recoveryCompletedAt = result.recoveredAt ?? .now
                     current.recoveryWasLocalDeviceReplacement = false
                     current.pendingClientRequestID = nil
@@ -1071,7 +1176,7 @@ final class PairingViewModel: ObservableObject {
                     current = try persist(current, operation: operation)
                     recoveryInvitationCode = nil
                     operationCompletionMessage =
-                        "新しいiPhoneへ接続を引き継ぎました。サーバー上の共有は維持されています。"
+                        "相手のiPhoneを追加しました。すでに使っているiPhoneも引き続き使えます。"
                     NotificationCenter.default.post(
                         name: .sharingMediaSyncRequested,
                         object: nil
@@ -1084,7 +1189,7 @@ final class PairingViewModel: ObservableObject {
                     )
                     current = try persist(current, operation: operation)
                     operationCompletionMessage =
-                        "復旧コードの期限が切れました。相手側のまどは解除されていません。必要なら新しいコードを作れます。"
+                        "追加コードの期限が切れました。相手側のまどや既存のiPhoneは解除されていません。必要なら新しいコードを作れます。"
                 } else if isManual {
                     if result.state == "approvedAwaitingCompletion" {
                         current.recoveryApprovalSubmittedAt =
@@ -1095,7 +1200,7 @@ final class PairingViewModel: ObservableObject {
                     manualCheckSucceeded = true
                     manualCheckCompletedAt = .now
                     manualCheckMessage = result.state == "approvedAwaitingCompletion"
-                        ? "承認済みです。新しいiPhoneで完了するのを待っています。"
+                        ? "承認済みです。追加するiPhoneで完了するのを待っています。"
                         : "まだ12語の確認と承認を待っています。"
                 }
                 return
@@ -1117,7 +1222,7 @@ final class PairingViewModel: ObservableObject {
                 if latest.state == "expired" {
                     try await resetLocalPairing(operation: operation)
                     operationCompletionMessage =
-                        "復旧を完了できなかったため、このiPhoneの復旧だけを取り消しました。接続済みの相手側のまどは解除されていません。"
+                        "追加を完了できなかったため、このiPhoneの追加だけを取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
                     return
                 }
                 let completed: PairingDeviceRecoveryStatusResult
@@ -1139,7 +1244,7 @@ final class PairingViewModel: ObservableObject {
                 current = try persist(current, operation: operation)
                 recoveryInvitationCode = nil
                 operationCompletionMessage =
-                    "まどを作り直さず接続を戻しました。サーバー上の共有は維持されています。"
+                    "このiPhoneをまどに追加しました。すでに使っているiPhoneも引き続き使えます。"
                 NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
                 return
             }
@@ -1193,6 +1298,7 @@ final class PairingViewModel: ObservableObject {
                 )
                 credential.roomKey = roomKey
                 credential.enrollmentSecret = nil
+                credential.deviceID = current.recoveryDeviceID
                 try PairingKeychainStore.save(
                     credential,
                     lifecycleToken: lifecycleToken
@@ -1217,12 +1323,12 @@ final class PairingViewModel: ObservableObject {
                 try finishLocalDeviceRecovery(completed, state: &current)
                 current = try persist(current, operation: operation)
                 operationCompletionMessage =
-                    "まどを作り直さず接続を戻しました。サーバー上の共有は維持されています。"
+                    "このiPhoneをまどに追加しました。すでに使っているiPhoneも引き続き使えます。"
                 NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
             } else if result.state == "expired" {
                 try await resetLocalPairing(operation: operation)
                 operationCompletionMessage =
-                    "復旧コードの期限が切れたため、このiPhoneの復旧だけを取り消しました。接続済みの相手側のまどは解除されていません。"
+                    "追加コードの期限が切れたため、このiPhoneの追加だけを取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
             } else if isManual {
                 manualCheckSucceeded = true
                 manualCheckCompletedAt = .now
@@ -1234,7 +1340,7 @@ final class PairingViewModel: ObservableObject {
                 manualCheckSucceeded = false
                 manualCheckCompletedAt = .now
                 manualCheckMessage =
-                    "復旧状態を確認できませんでした。接続情報は消さず、もう一度確認できます。"
+                    "追加状態を確認できませんでした。接続情報は消さず、もう一度確認できます。"
             }
         }
     }
@@ -1344,13 +1450,13 @@ final class PairingViewModel: ObservableObject {
             current.lastError = nil
             current = try persist(current, operation: operation)
             operationCompletionMessage =
-                "新しいiPhoneを承認しました。新しいiPhoneで更新してください。"
+                "iPhoneの追加を承認しました。追加するiPhoneで更新してください。"
         } catch {
             record(error, operation: operation)
         }
     }
 
-    /// Abandons only the not-yet-activated replacement credential on this
+    /// Abandons only the not-yet-activated additional credential on this
     /// iPhone. The existing space and the still-connected peer are untouched;
     /// the short-lived server capability expires independently.
     func abandonLocalDeviceRecovery() async {
@@ -1369,7 +1475,7 @@ final class PairingViewModel: ObservableObject {
         do {
             try await resetLocalPairing(operation: operation)
             operationCompletionMessage =
-                "このiPhoneの復旧を取り消しました。接続済みの相手側のまどは解除されていません。"
+                "このiPhoneの追加を取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
         } catch {
             record(error, operation: operation)
         }
@@ -1434,7 +1540,7 @@ final class PairingViewModel: ObservableObject {
             )
             try await resetLocalPairing(operation: operation)
             operationCompletionMessage =
-                "共有を解除しました。このiPhoneの共有鍵、届いた写真、思い出の印を削除しました。"
+                "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した思い出は残ります。"
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation
@@ -1726,6 +1832,9 @@ final class PairingViewModel: ObservableObject {
         current.recoveryCandidateSigningPublicKey = result.credential.signingPublicKey
         current.recoveryCompletedAt = recoveredAt
         current.recoveryWasLocalDeviceReplacement = true
+        current.localDeviceIsAdditional = true
+        current.canonicalParticipantSigningPublicKey =
+            current.recoveryPreviousTargetSigningPublicKey
         current.pendingClientRequestID = nil
         current.pendingOperation = nil
         current.pendingCancelRevokesWholeSpace = nil
@@ -1917,6 +2026,18 @@ final class PairingViewModel: ObservableObject {
         )
         operation.expectedState = committed
         state = committed
+        bestEffortBindCredentialDeviceID(
+            for: committed,
+            lifecycleToken: operation.lifecycleToken
+        )
+        try? SharingLifecycleGate.withValidatedToken(operation.lifecycleToken) {
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: windowDisplayName,
+                spaceID: committed.spaceID,
+                credentialAccount: committed.credentialAccount
+            )
+        }
+        reloadPrivateWindowCatalog()
         let becamePaired = previous.phase != .paired && committed.phase == .paired
         let acceptedMediaNow = previous.mediaSharingConsentVersion
             != PairingMediaSharingConsent.currentVersion
@@ -1926,6 +2047,10 @@ final class PairingViewModel: ObservableObject {
            committed.mediaSharingConsentVersion == PairingMediaSharingConsent.currentVersion,
            committed.mediaSharingConsentAcceptedAt != nil {
             NotificationCenter.default.post(name: .sharingMediaSyncRequested, object: nil)
+            Task {
+                await MomentPushSubscriptionService.shared
+                    .reconcileRegistration()
+            }
         }
         return committed
     }
@@ -1947,7 +2072,46 @@ final class PairingViewModel: ObservableObject {
         )
         operation.expectedState = committed
         state = committed
+        bestEffortBindCredentialDeviceID(
+            for: committed,
+            lifecycleToken: operation.lifecycleToken
+        )
+        try? SharingLifecycleGate.withValidatedToken(operation.lifecycleToken) {
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: windowDisplayName,
+                spaceID: committed.spaceID,
+                credentialAccount: committed.credentialAccount
+            )
+        }
+        reloadPrivateWindowCatalog()
         return committed
+    }
+
+    private func bestEffortBindCredentialDeviceID(
+        for state: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) {
+        guard state.phase == .paired,
+              let account = state.credentialAccount,
+              let deviceID = state.resolvedLocalMomentDeviceID
+        else { return }
+        do {
+            var credential = try PairingKeychainStore.load(
+                account: account,
+                installationMarker: state.installationMarker
+            )
+            guard credential.deviceID != deviceID else { return }
+            credential.deviceID = deviceID
+            try PairingKeychainStore.save(
+                credential,
+                lifecycleToken: lifecycleToken
+            )
+        } catch {
+            SharedLog.app.warning(
+                "pairing",
+                "Could not bind the local device selector to its credential"
+            )
+        }
     }
 
     private func restoreInvitationCodeIfAvailable(

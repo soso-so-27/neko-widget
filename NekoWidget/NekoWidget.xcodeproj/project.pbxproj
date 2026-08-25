@@ -1131,6 +1131,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F00000000000000000000001 /* Config.xcconfig */;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -1157,6 +1158,7 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = F00000000000000000000002 /* Config.Disabled.xcconfig */;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = NekoWidget/NekoWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;

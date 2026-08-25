@@ -29,14 +29,15 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         return AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)
 #endif
         let source = configuration.photoSource ?? .personalLibrary
-        if source.id == WidgetPhotoSource.familyWindowID {
+        if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
                 return .empty(at: now, imageVariant: variant)
             }
             return familySnapshot(
                 now: now,
                 variant: variant,
-                preview: context.isPreview
+                preview: context.isPreview,
+                photoSourceIdentifier: source.id
             )
         }
         let items = sortedItems(availableItems(for: source, variant: variant))
@@ -107,7 +108,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
 #endif
         let source = configuration.photoSource ?? .personalLibrary
-        if source.id == WidgetPhotoSource.familyWindowID {
+        if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
                 return Timeline(
                     entries: [.empty(at: now, imageVariant: variant)],
@@ -117,7 +118,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             return familyTimeline(
                 now: now,
                 variant: variant,
-                preview: context.isPreview
+                preview: context.isPreview,
+                photoSourceIdentifier: source.id
             )
         }
         let items = sortedItems(availableItems(for: source, variant: variant))
@@ -208,10 +210,19 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     private func familySnapshot(
         now: Date,
         variant: WidgetImageVariant,
-        preview: Bool
+        preview: Bool,
+        photoSourceIdentifier: String
     ) -> NekoWidgetEntry {
-        let windowDisplayName = WidgetManifestReader.familyWindowDisplayName()
-        guard let item = WidgetManifestReader.familyItem(for: variant) else {
+        let localWindowID = WidgetPhotoSource.localWindowID(
+            from: photoSourceIdentifier
+        )
+        let windowDisplayName = WidgetManifestReader.familyWindowDisplayName(
+            localWindowID: localWindowID
+        )
+        guard let item = WidgetManifestReader.familyItem(
+            for: variant,
+            localWindowID: localWindowID
+        ) else {
             SharedLog.widget.warning(
                 "timeline",
                 "Family snapshot requested without a safe cache item",
@@ -220,7 +231,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             return .empty(
                 at: now,
                 imageVariant: variant,
-                photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+                photoSourceIdentifier: photoSourceIdentifier,
                 windowDisplayName: windowDisplayName
             )
         }
@@ -229,17 +240,27 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             date: now,
             variant: variant,
             now: now,
-            windowDisplayName: windowDisplayName
+            windowDisplayName: windowDisplayName,
+            photoSourceIdentifier: photoSourceIdentifier
         )
     }
 
     private func familyTimeline(
         now: Date,
         variant: WidgetImageVariant,
-        preview: Bool
+        preview: Bool,
+        photoSourceIdentifier: String
     ) -> Timeline<NekoWidgetEntry> {
-        let windowDisplayName = WidgetManifestReader.familyWindowDisplayName()
-        guard let item = WidgetManifestReader.familyItem(for: variant) else {
+        let localWindowID = WidgetPhotoSource.localWindowID(
+            from: photoSourceIdentifier
+        )
+        let windowDisplayName = WidgetManifestReader.familyWindowDisplayName(
+            localWindowID: localWindowID
+        )
+        guard let item = WidgetManifestReader.familyItem(
+            for: variant,
+            localWindowID: localWindowID
+        ) else {
             SharedLog.widget.warning(
                 "timeline",
                 "Family timeline requested without a safe cache item",
@@ -250,7 +271,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     .empty(
                         at: now,
                         imageVariant: variant,
-                        photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+                        photoSourceIdentifier: photoSourceIdentifier,
                         windowDisplayName: windowDisplayName
                     )
                 ],
@@ -263,7 +284,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             date: now,
             variant: variant,
             now: now,
-            windowDisplayName: windowDisplayName
+            windowDisplayName: windowDisplayName,
+            photoSourceIdentifier: photoSourceIdentifier
         )]
         if now >= item.receivedAt, now < item.freshUntil {
             entries.append(
@@ -272,7 +294,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     date: item.freshUntil,
                     variant: variant,
                     now: item.freshUntil,
-                    windowDisplayName: windowDisplayName
+                    windowDisplayName: windowDisplayName,
+                    photoSourceIdentifier: photoSourceIdentifier
                 )
             )
         }
@@ -289,9 +312,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         date: Date,
         variant: WidgetImageVariant,
         now: Date,
-        windowDisplayName: String
+        windowDisplayName: String,
+        photoSourceIdentifier: String
     ) -> NekoWidgetEntry {
-        let interactionState = familyInteractionState(for: item, now: now)
+        let interactionState = familyInteractionState(
+            for: item,
+            now: now,
+            photoSourceIdentifier: photoSourceIdentifier
+        )
         let heartStatus: FamilyWidgetHeartStatus
         if let phase = interactionState?.pawPhase {
             heartStatus = phase == .sent ? .serverAccepted : .pending
@@ -305,7 +333,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             localIdentifier: nil,
             cacheFilename: item.cacheFilenames.filename(for: variant),
             imageVariant: variant,
-            photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+            photoSourceIdentifier: photoSourceIdentifier,
             familySourceDigest: item.sourceDigest,
             usesFamilySpecificImage: true,
             familyMomentIsFresh: now >= item.receivedAt && now < item.freshUntil,
@@ -320,8 +348,26 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
 
     private func familyInteractionState(
         for item: FamilyWidgetManifestItem,
-        now: Date
+        now: Date,
+        photoSourceIdentifier: String
     ) -> MomentFamilyWidgetInteractionState? {
+        if let boundWindowID = WidgetPhotoSource.localWindowID(
+            from: photoSourceIdentifier
+        ) {
+            // SharingLifecycleGate and MomentSharingStateStore intentionally
+            // operate on the active slot. An inactive Widget may keep showing
+            // its own cached photo, but all mutations stay hidden until that
+            // exact window is active.
+            guard boundWindowID
+                    == PrivateWindowCatalogStore.activeEntry()?.localWindowID
+            else { return nil }
+        } else {
+            // Before the host app creates the catalog, Build 40's generic ID
+            // may still read the one legacy directory. Every other unresolved
+            // family identifier fails closed.
+            guard photoSourceIdentifier == WidgetPhotoSource.familyWindowID
+            else { return nil }
+        }
         guard item.hasValidBookmarkTarget, let momentID = item.momentID else {
             return nil
         }

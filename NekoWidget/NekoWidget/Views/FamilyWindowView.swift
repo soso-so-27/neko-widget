@@ -28,7 +28,6 @@ struct FamilyWindowView: View {
     @State private var showsPrivacyDetails = false
     @State private var showsAllSentRecords = false
     @State private var receivedPhotoFilter: ReceivedPhotoFilter = .all
-    @State private var photoCopyTarget: MomentInboxItem?
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
 
@@ -139,23 +138,6 @@ struct FamilyWindowView: View {
         } message: {
             Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
         }
-        .confirmationDialog(
-            "写真アプリへコピーしますか？",
-            isPresented: Binding(
-                get: { photoCopyTarget != nil },
-                set: { if !$0 { photoCopyTarget = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: photoCopyTarget
-        ) { item in
-            Button("写真アプリへコピー") {
-                photoCopyTarget = nil
-                Task { await model.copyToPhotoLibrary(item) }
-            }
-            Button("キャンセル", role: .cancel) { photoCopyTarget = nil }
-        } message: { _ in
-            Text("位置情報を除いた受信写真を写真アプリへ追加します。iCloud写真がオンの場合はAppleの設定に従って同期されます。共有解除・ブロック・アプリ削除後も残り、このアプリからは削除できません。")
-        }
         .alert("写真を届ける", isPresented: $showsSendGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
@@ -231,15 +213,6 @@ struct FamilyWindowView: View {
                         .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                         .accessibilityIdentifier("family-window-paw-result")
                 }
-                if let message = model.photoCopyActionMessage {
-                    Label(message, systemImage: "photo.badge.checkmark")
-                        .font(.footnote)
-                        .foregroundStyle(.green)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
-                        .accessibilityIdentifier("family-window-photo-copy-result")
-                }
                 if let message = model.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
@@ -247,21 +220,6 @@ struct FamilyWindowView: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
-                }
-
-                if model.receivedHeartCount > 0 {
-                    Label(
-                        model.receivedHeartCount == 1
-                            ? "届けた写真にハートが届きました"
-                            : "届けた写真にハートが\(model.receivedHeartCount)件届きました",
-                        systemImage: "heart.fill"
-                    )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.green)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
-                    .accessibilityIdentifier("family-window-received-paws")
                 }
 
                 if model.outgoingPresentation.hasActivity {
@@ -373,7 +331,7 @@ struct FamilyWindowView: View {
                     in: RoundedRectangle(cornerRadius: 12)
                 )
             VStack(alignment: .leading, spacing: 2) {
-                Text("新着通知")
+                Text("選択中のまどの通知")
                     .font(.subheadline.weight(.semibold))
                 Text(notificationStatusText)
                     .font(.caption)
@@ -417,17 +375,17 @@ struct FamilyWindowView: View {
         case .enabled:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .accessibilityLabel("通知はオンです")
+                .accessibilityLabel("通知はiPhoneで許可済みです")
         }
     }
 
     private var notificationStatusText: String {
         switch notificationAuthorizationState {
         case .checking: "確認中"
-        case .notRequested: "受信を確認できたときに通知します"
-        case .enabled: "オン"
-        case .quiet: "現在はひかえめに通知"
-        case .denied: "オフ"
+        case .notRequested: "このまどの新着を通知できます"
+        case .enabled: "iPhoneで許可済み"
+        case .quiet: "このまどをひかえめに通知"
+        case .denied: "iPhoneの設定でオフ"
         }
     }
 
@@ -612,6 +570,11 @@ struct FamilyWindowView: View {
                 )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if record.hasReceivedHeart {
+                    Label("ハートが届きました", systemImage: "heart.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.pink)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -770,13 +733,6 @@ struct FamilyWindowView: View {
                 }
                 Spacer()
                 Menu {
-                    if !model.isReportOnly {
-                        Button {
-                            photoCopyTarget = item
-                        } label: {
-                            Label("写真アプリへコピー", systemImage: "square.and.arrow.down")
-                        }
-                    }
                     Button {
                         reportTarget = item
                     } label: {
@@ -813,7 +769,9 @@ struct FamilyWindowView: View {
                                 systemImage: model.isSavedMemory(item) ? "star.fill" : "star"
                             )
                             .font(.caption.weight(.semibold))
-                            Text("自分だけ・最長90日")
+                            Text(model.hasImportedMemory(item)
+                                ? "自分だけ・写真アプリに保存済み"
+                                : "自分だけ・写真アプリへ取り込み")
                                 .font(.caption2)
                         }
                         .frame(maxWidth: .infinity)
@@ -823,7 +781,7 @@ struct FamilyWindowView: View {
                     .accessibilityLabel(
                         model.isSavedMemory(item) ? "思い出から外す" : "思い出に追加"
                     )
-                    .accessibilityHint("自分だけの操作です。写真の保持期限は変わりません")
+                    .accessibilityHint("自分の写真アプリと通常の思い出へ追加します。相手には通知しません")
                     .accessibilityIdentifier("family-window-save-memory")
 
                     if model.canSendHeart(for: item) || heart != nil {
@@ -950,10 +908,10 @@ struct FamilyWindowView: View {
             Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MiBまで保持します。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("思い出に追加は、このiPhone内で最長90日・保持上限内の写真を見返すための印です。期限は延びず、相手へ通知しません。共有解除・ブロック・再インストールで写真と印は消えます。")
+            Text("思い出に追加した受信写真は、位置情報を除いて写真アプリへ取り込みます。通常の思い出と写真まとめに入り、相手へは通知しません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("写真アプリへコピーした写真は、iCloud写真の設定に従って同期される場合があり、共有解除やアプリ削除後も写真アプリに残ります。")
+            Text("取り込んだ写真はiCloud写真の設定に従って同期される場合があり、思い出から外す、共有解除、ブロック、アプリ削除のあとも写真アプリに残ります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

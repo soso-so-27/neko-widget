@@ -130,6 +130,11 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     let unreceivedExpiresAt: Date?
     let recipientCount: Int?
     let recipientDeliveryConfirmedAt: Date?
+    /// True only when the sender's reaction feed contains a receipt whose
+    /// opaque moment ID matches this committed delivery's relay moment ID.
+    /// No recipient identity or reaction timestamp crosses this presentation
+    /// boundary.
+    let hasReceivedHeart: Bool
 
     init(
         stableID: String,
@@ -141,7 +146,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         committedAt: Date?,
         unreceivedExpiresAt: Date?,
         recipientCount: Int?,
-        recipientDeliveryConfirmedAt: Date? = nil
+        recipientDeliveryConfirmedAt: Date? = nil,
+        hasReceivedHeart: Bool = false
     ) {
         self.stableID = stableID
         self.destinationKey = destinationKey
@@ -153,6 +159,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.unreceivedExpiresAt = unreceivedExpiresAt
         self.recipientCount = recipientCount
         self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
+        self.hasReceivedHeart = hasReceivedHeart
     }
 }
 
@@ -332,6 +339,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let id: Int
     let serverAcceptedAt: Date
     let recipientDeliveryConfirmedAt: Date?
+    let hasReceivedHeart: Bool
 
     var deliveryState: MomentSentRecordDeliveryState {
         recipientDeliveryConfirmedAt == nil
@@ -539,7 +547,8 @@ enum MomentSharingPresentationPolicy {
                 return MomentSentRecordPresentation(
                     id: index,
                     serverAcceptedAt: serverAcceptedAt,
-                    recipientDeliveryConfirmedAt: confirmedAt
+                    recipientDeliveryConfirmedAt: confirmedAt,
+                    hasReceivedHeart: delivery.hasReceivedHeart
                 )
             }
 

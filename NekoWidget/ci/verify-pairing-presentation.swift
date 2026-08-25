@@ -31,22 +31,22 @@ enum PairingPresentationVerifier {
         try verify(
             phase: .claimingRecovery,
             role: .invitee,
-            roleText: "この端末：新しいiPhone",
-            actionText: "復旧コードを確認しています",
+            roleText: "この端末：追加するiPhone",
+            actionText: "追加コードを確認しています",
             refreshText: nil
         )
         try verify(
             phase: .pendingRecoveryApproval,
             role: .invitee,
-            roleText: "この端末：新しいiPhone",
+            roleText: "この端末：追加するiPhone",
             actionText: "接続済みの相手と12語を比べてください",
             refreshText: "承認されたか確認"
         )
         try verify(
             phase: .recoveryAwaitingCompletion,
             role: .invitee,
-            roleText: "この端末：新しいiPhone",
-            actionText: "端末の置き換えを完了しています",
+            roleText: "この端末：追加するiPhone",
+            actionText: "iPhoneの追加を完了しています",
             refreshText: "完了したか確認"
         )
         try verify(
@@ -85,7 +85,7 @@ enum PairingPresentationVerifier {
                 code: "recovery_unavailable",
                 message: "relay-internal-detail-must-not-appear"
             ),
-            expected: "復旧コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
+            expected: "端末追加コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
         )
     }
 
@@ -93,8 +93,8 @@ enum PairingPresentationVerifier {
         let replacement = DeviceChangeGuidancePresentation.make(
             currentDevice: .newIPhone
         )
-        guard replacement.newIPhoneTitle == "新しいiPhone（この端末）",
-              replacement.previousIPhoneTitle == "以前のiPhone",
+        guard replacement.newIPhoneTitle == "追加するiPhone（この端末）",
+              replacement.previousIPhoneTitle == "すでに使っているiPhone",
               replacement.partnerIPhoneTitle == "相手のiPhone",
               !replacement.newIPhoneDetail.isEmpty,
               !replacement.previousIPhoneDetail.isEmpty,
@@ -108,8 +108,8 @@ enum PairingPresentationVerifier {
         let partner = DeviceChangeGuidancePresentation.make(
             currentDevice: .partnerIPhone
         )
-        guard partner.newIPhoneTitle == "新しいiPhone",
-              partner.previousIPhoneTitle == "以前のiPhone",
+        guard partner.newIPhoneTitle == "追加するiPhone",
+              partner.previousIPhoneTitle == "相手がすでに使っているiPhone",
               partner.partnerIPhoneTitle == "相手のiPhone（この端末）",
               !partner.newIPhoneDetail.isEmpty,
               !partner.previousIPhoneDetail.isEmpty,

@@ -100,6 +100,16 @@ struct PairingState: Codable, Equatable, Sendable {
     var recoveryApprovalSubmittedAt: Date?
     var recoveryCompletedAt: Date?
     var recoveryWasLocalDeviceReplacement: Bool?
+    /// True for a peer-approved additional iPhone. The historical
+    /// `recoveryWasLocalDeviceReplacement` field remains for Build 41 decode
+    /// and local device-ID normalization, but an additional device never
+    /// revokes or becomes the participant's canonical naming key.
+    var localDeviceIsAdditional: Bool?
+    /// The participant key that existed before this additional device joined.
+    /// Unlike the short-lived recovery fields, this survives later enrollment
+    /// ceremonies sponsored by this device and keeps owner window-name
+    /// signatures verifiable on every enrolled iPhone.
+    var canonicalParticipantSigningPublicKey: String?
     /// Local-only consent evidence. It is never included in a server request.
     /// Existing paired installs without the current version fail closed when
     /// media synchronization is enabled and must explicitly consent again.
@@ -158,7 +168,12 @@ struct PairingState: Codable, Equatable, Sendable {
                 || mediaSharingConsentVersion.map({ (1...10_000).contains($0) }) == true
         else { throw PairingError.stateUnavailable }
         guard localMomentDeviceID == nil
-                || localMomentDeviceID.map(PairingValidation.isOpaqueIdentifier) == true
+                || localMomentDeviceID.map(PairingValidation.isOpaqueIdentifier) == true,
+              canonicalParticipantSigningPublicKey == nil
+                || canonicalParticipantSigningPublicKey
+                    .flatMap({ Data(base64URLString: $0) })?.count == 32,
+              localDeviceIsAdditional != true
+                || canonicalParticipantSigningPublicKey != nil
         else { throw PairingError.stateUnavailable }
 
         switch phase {
@@ -211,6 +226,17 @@ struct PairingState: Codable, Equatable, Sendable {
             try validatePeerIdentity()
             if invitationID != nil || enrollmentID != nil {
                 try validatePairingCeremony()
+            } else if localDeviceIsAdditional == true {
+                // Once an additional device has completed the peer-approved
+                // ceremony, its exact device selector and preserved canonical
+                // participant key are the durable local binding. The recovery
+                // fields may later describe a new enrollment this device is
+                // sponsoring, so they cannot remain its only pairing proof.
+                guard let memberID,
+                      let localMomentDeviceID,
+                      localMomentDeviceID != memberID,
+                      canonicalParticipantSigningPublicKey != nil
+                else { throw PairingError.stateUnavailable }
             } else {
                 guard recoveryCompletedAt != nil else {
                     throw PairingError.stateUnavailable
@@ -327,6 +353,11 @@ struct PairingCredential: Codable, Equatable, Sendable {
     var signingPrivateKey: Data
     var roomKey: Data?
     var enrollmentSecret: Data?
+    /// Stable relay device identity used to select this exact signing key when
+    /// a participant has more than one active iPhone. Missing means a Build 40
+    /// legacy credential and deliberately uses the server's legacy-device
+    /// fallback.
+    var deviceID: String? = nil
 
     var participantIDString: String { participantID.base64URLEncodedString() }
 
@@ -337,7 +368,8 @@ struct PairingCredential: Codable, Equatable, Sendable {
               agreementPrivateKey.count == 32,
               signingPrivateKey.count == 32,
               roomKey == nil || roomKey?.count == 32,
-              enrollmentSecret == nil || enrollmentSecret?.count == 32
+              enrollmentSecret == nil || enrollmentSecret?.count == 32,
+              deviceID == nil || deviceID.map(PairingValidation.isOpaqueIdentifier) == true
         else {
             throw PairingError.malformedCredential
         }
@@ -665,7 +697,7 @@ enum PairingError: LocalizedError, Equatable {
         case .invalidInvitationCode:
             return "招待コードを確認できませんでした。コード全体を貼り付けてください。"
         case .invalidDeviceRecoveryCode:
-            return "復旧コードを確認できませんでした。NWR1.で始まるコード全体を貼り付けてください。"
+            return "端末追加コードを確認できませんでした。NWR1.で始まるコード全体を貼り付けてください。"
         case .keychainUnavailable:
             return "共有鍵を安全に保存できませんでした。iPhoneを再起動して、もう一度お試しください。"
         case .keychainAccessGroupUnavailable:
@@ -694,14 +726,14 @@ enum PairingError: LocalizedError, Equatable {
                 return "招待コードを確認できませんでした。新しいコードを相手に送ってもらってください。"
             case "invalid_recovery_proof", "invalid_recovery_signature",
                  "device_recovery_not_found", "recovery_already_claimed":
-                return "復旧コードを確認できませんでした。接続済みの相手から新しいコードを受け取ってください。"
+                return "端末追加コードを確認できませんでした。接続済みの相手から新しいコードを受け取ってください。"
             case "device_recovery_expired", "device_recovery_unavailable", "recovery_unavailable":
-                return "復旧コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
+                return "端末追加コードの期限が切れました。接続済みの相手に新しいコードを作ってもらってください。"
             case "recovery_already_pending":
-                return "以前の復旧コードがまだ有効です。期限が切れてから、新しいコードを作ってください。"
+                return "以前の端末追加コードがまだ有効です。期限が切れてから、新しいコードを作ってください。"
             case "device_recovery_conflict", "recovery_conflict", "invalid_recovery_state",
                  "recovery_target_unavailable", "membership_changed", "key_epoch_changed":
-                return "まどの状態が変わったため復旧を停止しました。現在の共有は解除せず、状態を確認してください。"
+                return "まどの状態が変わったため端末追加を停止しました。現在の共有は解除せず、状態を確認してください。"
             case "invalid_pairing_state":
                 return "まどの状態が変わりました。状態を確認して、もう一度お試しください。"
             case "rate_limited":
