@@ -3,7 +3,7 @@ import Foundation
 struct DeepLink: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case photo(localIdentifier: String)
-        case familyWindow(localWindowID: String?)
+        case familyWindow(localWindowID: String?, sourceDigest: String?)
     }
 
     private static let scheme = "nekowidget"
@@ -31,15 +31,18 @@ struct DeepLink: Equatable, Sendable {
             }
             components.queryItems = queryItems
             return components.url
-        case let .familyWindow(localWindowID):
+        case let .familyWindow(localWindowID, sourceDigest):
             var components = URLComponents()
             components.scheme = Self.scheme
             components.host = "family-window"
+            var queryItems: [URLQueryItem] = []
             if let localWindowID {
-                components.queryItems = [
-                    URLQueryItem(name: "window", value: localWindowID)
-                ]
+                queryItems.append(URLQueryItem(name: "window", value: localWindowID))
             }
+            if let sourceDigest {
+                queryItems.append(URLQueryItem(name: "source", value: sourceDigest))
+            }
+            components.queryItems = queryItems.isEmpty ? nil : queryItems
             return components.url
         }
     }
@@ -52,7 +55,7 @@ struct DeepLink: Equatable, Sendable {
     }
 
     static func familyWindow() -> URL? {
-        DeepLink(destination: .familyWindow(localWindowID: nil)).url
+        DeepLink(destination: .familyWindow(localWindowID: nil, sourceDigest: nil)).url
     }
 
     static func familyWindow(localWindowID: String) -> URL? {
@@ -60,7 +63,23 @@ struct DeepLink: Equatable, Sendable {
               uuid.uuidString.lowercased() == localWindowID.lowercased()
         else { return nil }
         return DeepLink(
-            destination: .familyWindow(localWindowID: localWindowID.lowercased())
+            destination: .familyWindow(
+                localWindowID: localWindowID.lowercased(),
+                sourceDigest: nil
+            )
+        ).url
+    }
+
+    static func familyWindow(localWindowID: String, sourceDigest: String) -> URL? {
+        guard let uuid = UUID(uuidString: localWindowID),
+              uuid.uuidString.lowercased() == localWindowID.lowercased(),
+              Self.isLowercaseSHA256(sourceDigest)
+        else { return nil }
+        return DeepLink(
+            destination: .familyWindow(
+                localWindowID: localWindowID.lowercased(),
+                sourceDigest: sourceDigest
+            )
         ).url
     }
 
@@ -72,11 +91,14 @@ struct DeepLink: Equatable, Sendable {
         if host == "family-window" {
             guard components.path.isEmpty, components.fragment == nil else { return nil }
             let items = components.queryItems ?? []
-            guard items.count <= 1,
-                  items.isEmpty || items[0].name == "window"
+            let names = items.map(\.name)
+            guard items.count <= 2,
+                  Set(names).count == names.count,
+                  names.allSatisfy({ $0 == "window" || $0 == "source" }),
+                  items.allSatisfy({ $0.value != nil })
             else { return nil }
             let localWindowID: String?
-            if let rawValue = items.first?.value {
+            if let rawValue = items.first(where: { $0.name == "window" })?.value {
                 guard let uuid = UUID(uuidString: rawValue),
                       uuid.uuidString.lowercased() == rawValue.lowercased()
                 else { return nil }
@@ -84,7 +106,14 @@ struct DeepLink: Equatable, Sendable {
             } else {
                 localWindowID = nil
             }
-            self.init(destination: .familyWindow(localWindowID: localWindowID))
+            let sourceDigest = items.first(where: { $0.name == "source" })?.value
+            guard sourceDigest == nil || localWindowID != nil,
+                  sourceDigest.map(Self.isLowercaseSHA256) ?? true
+            else { return nil }
+            self.init(destination: .familyWindow(
+                localWindowID: localWindowID,
+                sourceDigest: sourceDigest
+            ))
             return
         }
         guard host == "photo",
@@ -115,5 +144,11 @@ struct DeepLink: Equatable, Sendable {
         }
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.date(from: value)
+    }
+
+    private static func isLowercaseSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
     }
 }

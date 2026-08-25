@@ -48,7 +48,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>写真アプリの「うちの子」アルバムを更新し、あなたが「思い出に追加」を選んだ届いた写真を保存するため、写真ライブラリへの追加を許可してください。写真を自動で追加することはありません。</string>
+	<string>写真アプリの「うちの子」アルバムを更新し、あなたが「思い出に残す」を選んだ届いた写真を保存するため、写真ライブラリへの追加を許可してください。写真を自動で追加することはありません。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>$(PHOTO_LIBRARY_USAGE_DESCRIPTION)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>

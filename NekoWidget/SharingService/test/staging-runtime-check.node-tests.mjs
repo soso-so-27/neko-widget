@@ -18,6 +18,10 @@ function jsonResponse(status, body, headers = {}) {
 function runtimeFetch({
   momentStatus,
   momentCode,
+  reactionStatus = 401,
+  reactionCode = "invalid_authentication",
+  pushStatus = 401,
+  pushCode = "invalid_authentication",
   windowNameStatus,
   windowNameCode,
   legacyStatus = 503,
@@ -30,17 +34,30 @@ function runtimeFetch({
       : momentCode);
   return async (url, options) => {
     assert.equal(options.redirect, "manual");
-    assert.equal(options.method, "GET");
     switch (new URL(url).pathname) {
       case "/health":
+        assert.equal(options.method, "GET");
         return jsonResponse(200, { status: "ok", protocolVersion: 1 });
       case "/v2/moments/changes":
+        assert.equal(options.method, "GET");
         return jsonResponse(momentStatus, { error: { code: momentCode, message: "expected test response" } });
+      case "/v2/reactions/changes":
+        assert.equal(options.method, "GET");
+        return jsonResponse(reactionStatus, {
+          error: { code: reactionCode, message: "expected test response" },
+        });
+      case "/v2/push-subscriptions/current":
+        assert.ok(options.method === "PUT" || options.method === "DELETE");
+        return jsonResponse(pushStatus, {
+          error: { code: pushCode, message: "expected test response" },
+        });
       case "/v2/window-name":
+        assert.equal(options.method, "GET");
         return jsonResponse(resolvedWindowNameStatus, {
           error: { code: resolvedWindowNameCode, message: "expected test response" },
         });
       case "/v1/sharing/sources":
+        assert.equal(options.method, "GET");
         return jsonResponse(legacyStatus, { error: { code: legacyCode, message: "expected test response" } });
       default:
         throw new Error("unexpected URL");
@@ -57,6 +74,9 @@ test("accepts the expected ON runtime boundary", async () => {
   assert.deepEqual(result.checks.map(({ name, status }) => ({ name, status })), [
     { name: "health", status: 200 },
     { name: "moment", status: 401 },
+    { name: "reaction", status: 401 },
+    { name: "push-register", status: 401 },
+    { name: "push-delete", status: 401 },
     { name: "window-name", status: 401 },
     { name: "legacy", status: 503 },
   ]);

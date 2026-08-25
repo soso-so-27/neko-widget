@@ -5,7 +5,7 @@ import WidgetKit
 struct ToggleWidgetLikeIntent: AppIntent {
     static var title: LocalizedStringResource = "写真の思い出状態を切り替える"
     static var description = IntentDescription(
-        "表示中の写真を思い出に追加、または思い出から外します。"
+        "表示中の写真を思い出に残す、または思い出から外します。"
     )
     // Build 6 uses this intent only as the widget's private interaction. It is
     // deliberately not offered as a Siri or Shortcuts action.
@@ -90,7 +90,7 @@ struct ToggleWidgetLikeIntent: AppIntent {
 /// now matches the personal-library collection. It never creates a relay
 /// request or notifies the other participant.
 struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
-    static var title: LocalizedStringResource = "届いた写真を思い出へ取り込む"
+    static var title: LocalizedStringResource = "届いた写真を思い出に残す"
     static var description = IntentDescription(
         "写真アプリへの取り込みを確認するため、ねこのまどを開きます。"
     )

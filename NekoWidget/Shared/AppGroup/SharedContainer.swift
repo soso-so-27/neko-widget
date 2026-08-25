@@ -142,6 +142,7 @@ enum PrivateWindowCatalogStore {
     ) throws -> PrivateWindowCatalogState {
         if var existing = try load() {
             try resumeLegacyMigrationIfNeeded(&existing)
+            try quarantineReappearedLegacySharingIfNeeded(&existing)
             return existing
         }
 
@@ -269,10 +270,15 @@ enum PrivateWindowCatalogStore {
               )
         else { return }
         let fileManager = FileManager.default
-        let legacyExists = fileManager.fileExists(atPath: legacy.path)
-        let destinationExists = fileManager.fileExists(atPath: destination.path)
+        var legacyExists = fileManager.fileExists(atPath: legacy.path)
+        var destinationExists = fileManager.fileExists(atPath: destination.path)
         if legacyExists && destinationExists {
-            throw Error.conflictingLegacyMigration
+            try quarantineLegacySharingIfSafe(
+                legacy,
+                authoritativeDestination: destination
+            )
+            legacyExists = fileManager.fileExists(atPath: legacy.path)
+            destinationExists = fileManager.fileExists(atPath: destination.path)
         }
         if legacyExists {
             try fileManager.createDirectory(
@@ -290,6 +296,273 @@ enum PrivateWindowCatalogStore {
         state.storageRevision += 1
         try saveWhileLifecycleLocked(state)
     }
+
+    /// An older Widget or Share Extension can finish one already-started file
+    /// operation after the host app has atomically moved Build 40's `sharing/`
+    /// directory. That late writer recreates the legacy path even though the
+    /// catalog migration has already committed. Keeping both paths blocks all
+    /// future bootstrap attempts; merging them would be worse because they may
+    /// contain independent room authorities.
+    ///
+    /// Recover only when the destination is already authoritative and the
+    /// source is provably the same paired installation, or when the source has
+    /// no pairing state and contains only known replaceable cache/temporary
+    /// entries. The complete source is atomically moved to protected quarantine
+    /// storage. It is never merged into, or deleted in favour of, the active
+    /// window.
+    private static func quarantineReappearedLegacySharingIfNeeded(
+        _ state: inout PrivateWindowCatalogState
+    ) throws {
+        guard state.pendingLegacyMigrationWindowID == nil,
+              let legacyOwnerWindowID = state.windows.first?.localWindowID,
+              let legacy = SharedContainer.legacySharingCacheDirectoryURL,
+              let destination = SharedContainer.windowSharingDirectoryURL(
+                  localWindowID: legacyOwnerWindowID
+              )
+        else { return }
+        let fileManager = FileManager.default
+        let legacyExists = fileManager.fileExists(atPath: legacy.path)
+        let destinationExists = fileManager.fileExists(atPath: destination.path)
+        guard legacyExists else { return }
+        guard destinationExists else { throw Error.conflictingLegacyMigration }
+        try quarantineLegacySharingIfSafe(
+            legacy,
+            authoritativeDestination: destination
+        )
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+    }
+
+    /// Minimal JSON projection shared by the app, Widget, and Share Extension.
+    /// The extensions intentionally do not link host-only PairingCore/Keychain
+    /// code, so migration compares only the complete room-authority identity.
+    private struct LegacyPairingDocument: Decodable {
+        let schemaVersion: Int
+        let installationMarker: String
+        let phase: String
+        let role: String?
+        let credentialAccount: String?
+        let participantID: String?
+        let spaceID: String?
+        let memberID: String?
+        let localMomentDeviceID: String?
+        let peerMemberID: String?
+        let peerParticipantID: String?
+        let recoveryWasLocalDeviceReplacement: Bool?
+        let recoveryDeviceID: String?
+    }
+
+    private struct LegacyPairingIdentity: Equatable {
+        let installationMarker: String
+        let role: String
+        let credentialAccount: String
+        let participantID: String
+        let spaceID: String
+        let memberID: String
+        let localMomentDeviceID: String
+        let peerMemberID: String
+        let peerParticipantID: String
+
+        init?(_ state: LegacyPairingDocument) {
+            let resolvedLocalMomentDeviceID = state.localMomentDeviceID
+                ?? (state.recoveryWasLocalDeviceReplacement == true
+                    ? state.recoveryDeviceID
+                    : state.memberID)
+            guard state.schemaVersion == 1,
+                  UUID(uuidString: state.installationMarker) != nil,
+                  state.phase == "paired",
+                  let role = state.role,
+                  role == "inviter" || role == "invitee",
+                  let credentialAccount = state.credentialAccount,
+                  UUID(uuidString: credentialAccount) != nil,
+                  let participantID = state.participantID,
+                  let spaceID = state.spaceID,
+                  let memberID = state.memberID,
+                  let localMomentDeviceID = resolvedLocalMomentDeviceID,
+                  let peerMemberID = state.peerMemberID,
+                  let peerParticipantID = state.peerParticipantID,
+                  [participantID, spaceID, memberID, localMomentDeviceID,
+                   peerMemberID, peerParticipantID].allSatisfy(
+                      Self.isOpaqueIdentifier
+                   )
+            else { return nil }
+            installationMarker = state.installationMarker
+            self.role = role
+            self.credentialAccount = credentialAccount
+            self.participantID = participantID
+            self.spaceID = spaceID
+            self.memberID = memberID
+            self.localMomentDeviceID = localMomentDeviceID
+            self.peerMemberID = peerMemberID
+            self.peerParticipantID = peerParticipantID
+        }
+
+        private static func isOpaqueIdentifier(_ value: String) -> Bool {
+            guard (8...128).contains(value.utf8.count) else { return false }
+            return value.utf8.allSatisfy {
+                ($0 >= 48 && $0 <= 57)
+                    || ($0 >= 65 && $0 <= 90)
+                    || ($0 >= 97 && $0 <= 122)
+                    || $0 == 45
+                    || $0 == 95
+            }
+        }
+    }
+
+    private static let replaceableLegacyEntryNames: Set<String> = [
+        "family-widget-cache",
+        "family-widget-cache-history.v1.json",
+        "family-widget-manifest.v1.json",
+        "moment-handoff"
+    ]
+
+    private static func quarantineLegacySharingIfSafe(
+        _ legacy: URL,
+        authoritativeDestination destination: URL,
+        quarantineRoot explicitQuarantineRoot: URL? = nil
+    ) throws {
+        let sourcePairing = try validatedPairingIdentity(in: legacy)
+        let destinationPairing = try validatedPairingIdentity(in: destination)
+        let entryNames = try Set(
+            FileManager.default.contentsOfDirectory(
+                atPath: legacy.path
+            )
+        )
+
+        let identitiesMatch: Bool
+        if let sourcePairing, let destinationPairing {
+            identitiesMatch = sourcePairing == destinationPairing
+        } else {
+            identitiesMatch = false
+        }
+        let isReplaceableStray = sourcePairing == nil
+            && legacyEntriesAreReplaceable(entryNames)
+            && legacyTemporaryArtifactsAreSafelyQuarantinable(
+                in: legacy,
+                entryNames: entryNames
+            )
+        guard identitiesMatch || isReplaceableStray else {
+            throw Error.conflictingLegacyMigration
+        }
+
+        guard let quarantineRoot = explicitQuarantineRoot
+            ?? SharedContainer.privateWindowLegacySharingQuarantineDirectoryURL
+        else { throw Error.conflictingLegacyMigration }
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: quarantineRoot,
+            withIntermediateDirectories: true
+        )
+        // Enforce the same protection boundary before the atomic rename. The
+        // source already held sharing data, but re-validating it prevents a
+        // late writer from downgrading attributes before quarantine.
+        try SharingSecureFile.enforceProtectionAndBackupExclusion(legacy)
+        try SharingSecureFile.enforceProtectionAndBackupExclusion(quarantineRoot)
+        let quarantine = quarantineRoot.appendingPathComponent(
+            UUID().uuidString.lowercased(),
+            isDirectory: true
+        )
+        guard !fileManager.fileExists(atPath: quarantine.path) else {
+            throw Error.conflictingLegacyMigration
+        }
+        do {
+            try fileManager.moveItem(at: legacy, to: quarantine)
+        } catch {
+            throw Error.conflictingLegacyMigration
+        }
+    }
+
+    private static func validatedPairingIdentity(in directory: URL) throws
+        -> LegacyPairingIdentity? {
+        let url = directory.appendingPathComponent(
+            "pairing-state.json",
+            isDirectory: false
+        )
+        let data: Data
+        do {
+            data = try Data(contentsOf: url, options: .mappedIfSafe)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing
+            else { throw Error.conflictingLegacyMigration }
+            return nil
+        }
+        let decoder = JSONDecoder()
+        do {
+            let document = try decoder.decode(
+                LegacyPairingDocument.self,
+                from: data
+            )
+            guard let identity = LegacyPairingIdentity(document) else {
+                throw Error.conflictingLegacyMigration
+            }
+            return identity
+        } catch {
+            throw Error.conflictingLegacyMigration
+        }
+    }
+
+    private static func legacyEntriesAreReplaceable(_ entryNames: Set<String>)
+        -> Bool {
+        entryNames.allSatisfy {
+            replaceableLegacyEntryNames.contains($0)
+                || $0.hasPrefix(".sharing-secure-")
+        }
+    }
+
+    private static func legacyTemporaryArtifactsAreSafelyQuarantinable(
+        in legacy: URL,
+        entryNames: Set<String>
+    ) -> Bool {
+        if entryNames.contains("moment-handoff") {
+            let handoff = legacy.appendingPathComponent(
+                "moment-handoff",
+                isDirectory: true
+            )
+            guard SharedContainer
+                .legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(handoff)
+            else { return false }
+        }
+        return true
+    }
+
+#if DEBUG
+    static func runtimeTestLegacyEntriesAreReplaceable(
+        _ entryNames: Set<String>
+    ) -> Bool {
+        legacyEntriesAreReplaceable(entryNames)
+    }
+
+    static func runtimeTestLegacyPairingIdentitiesMatch(
+        _ lhs: Data,
+        _ rhs: Data
+    ) -> Bool {
+        let decoder = JSONDecoder()
+        guard let lhsDocument = try? decoder.decode(
+                  LegacyPairingDocument.self,
+                  from: lhs
+              ),
+              let rhsDocument = try? decoder.decode(
+                  LegacyPairingDocument.self,
+                  from: rhs
+              ),
+              let lhs = LegacyPairingIdentity(lhsDocument),
+              let rhs = LegacyPairingIdentity(rhsDocument)
+        else { return false }
+        return lhs == rhs
+    }
+
+    static func runtimeTestQuarantineLegacySharingIfSafe(
+        _ legacy: URL,
+        authoritativeDestination destination: URL,
+        quarantineRoot: URL
+    ) throws {
+        try quarantineLegacySharingIfSafe(
+            legacy,
+            authoritativeDestination: destination,
+            quarantineRoot: quarantineRoot
+        )
+    }
+#endif
 
     private static func saveWhileLifecycleLocked(
         _ value: PrivateWindowCatalogState
@@ -502,6 +775,16 @@ enum SharedContainer {
         containerURL?.appendingPathComponent("private-windows.v1", isDirectory: true)
     }
 
+    /// Preserves a conflicting late legacy writer without ever making it an
+    /// active room authority. Full installation cleanup removes the enclosing
+    /// private-windows subtree, including these bounded recovery artifacts.
+    static var privateWindowLegacySharingQuarantineDirectoryURL: URL? {
+        privateWindowsDirectoryURL?.appendingPathComponent(
+            "legacy-sharing-quarantine",
+            isDirectory: true
+        )
+    }
+
     static var privateWindowCatalogURL: URL? {
         containerURL?.appendingPathComponent(
             "private-window-catalog.v1.json",
@@ -659,6 +942,16 @@ enum SharedContainer {
         )
     }
 
+    /// Preserves a late handoff writer from an older app/extension process.
+    /// Quarantined plaintext is never merged into the active v2 ledger and is
+    /// removed by handoff revocation or full-installation sharing cleanup.
+    static var momentShareHandoffLegacyQuarantineDirectoryURL: URL? {
+        privateWindowsDirectoryURL?.appendingPathComponent(
+            "moment-handoff-legacy-quarantine",
+            isDirectory: true
+        )
+    }
+
     /// Build 40 and the first single-window catalog build stored handoff input
     /// below that window's `sharing/` directory. The v2 store moves exactly
     /// one such directory atomically before using the global multi-window
@@ -687,6 +980,155 @@ enum SharedContainer {
         }
         var seen = Set<String>()
         return candidates.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    /// A legacy handoff directory is eligible for quarantine only when it has
+    /// the closed, bounded on-disk shape produced by the Share Extension and
+    /// every file has the expected Data Protection and backup-exclusion
+    /// attributes. Contents are deliberately not trusted or promoted here.
+    static func legacyMomentShareHandoffDirectoryIsSafelyQuarantinable(
+        _ directory: URL
+    ) -> Bool {
+        guard isOrdinaryDirectory(directory),
+              let entries = try? FileManager.default.contentsOfDirectory(
+                  at: directory,
+                  includingPropertiesForKeys: [
+                      .isDirectoryKey,
+                      .isRegularFileKey,
+                      .isSymbolicLinkKey,
+                      .fileSizeKey,
+                      .isExcludedFromBackupKey
+                  ],
+                  options: []
+              ),
+              entries.count <= 12
+        else { return false }
+
+        for entry in entries {
+            switch entry.lastPathComponent {
+            case "admissions.v1.plist":
+                guard isProtectedNoBackupFile(
+                    entry,
+                    maximumBytes: 64 * 1_024,
+                    protection: .afterFirstUnlock
+                ) else { return false }
+            case "outcomes.v1.plist":
+                guard isProtectedNoBackupFile(
+                    entry,
+                    maximumBytes: 128 * 1_024,
+                    protection: .whileUnlocked
+                ) else { return false }
+            case "captures":
+                guard legacyMomentCaptureDirectoryIsSafelyQuarantinable(entry)
+                else { return false }
+            default:
+                if entry.lastPathComponent.hasPrefix(".sharing-secure-") {
+                    guard isProtectedNoBackupFile(
+                        entry,
+                        maximumBytes: 64 * 1_024,
+                        protection: .afterFirstUnlock
+                    ) else { return false }
+                } else if entry.lastPathComponent.hasPrefix(
+                    ".moment-handoff-secure-"
+                ) {
+                    guard isProtectedNoBackupFile(
+                        entry,
+                        maximumBytes:
+                            MomentSharingProtocol.maximumMediaCiphertextBytes
+                                + 96 * 1_024,
+                        protection: .whileUnlocked
+                    ) else { return false }
+                } else {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    private enum LegacyHandoffProtection {
+        case afterFirstUnlock
+        case whileUnlocked
+    }
+
+    private static func legacyMomentCaptureDirectoryIsSafelyQuarantinable(
+        _ directory: URL
+    ) -> Bool {
+        guard isOrdinaryDirectory(directory),
+              let entries = try? FileManager.default.contentsOfDirectory(
+                  at: directory,
+                  includingPropertiesForKeys: [
+                      .isRegularFileKey,
+                      .isSymbolicLinkKey,
+                      .fileSizeKey,
+                      .isExcludedFromBackupKey
+                  ],
+                  options: []
+              ),
+              entries.count <= 80
+        else { return false }
+        let suffix = ".capture.v1.plist"
+        return entries.allSatisfy { entry in
+            let name = entry.lastPathComponent
+            let hasCaptureName: Bool
+            if name.hasSuffix(suffix) {
+                hasCaptureName = UUID(
+                    uuidString: String(name.dropLast(suffix.count))
+                ) != nil
+            } else {
+                hasCaptureName = name.hasPrefix(".moment-handoff-secure-")
+            }
+            return hasCaptureName
+                && isProtectedNoBackupFile(
+                    entry,
+                    maximumBytes:
+                        MomentSharingProtocol.maximumMediaCiphertextBytes
+                            + 96 * 1_024,
+                    protection: .whileUnlocked
+                )
+        }
+    }
+
+    private static func isOrdinaryDirectory(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey
+        ]) else { return false }
+        return values.isDirectory == true && values.isSymbolicLink != true
+    }
+
+    private static func isProtectedNoBackupFile(
+        _ url: URL,
+        maximumBytes: Int,
+        protection: LegacyHandoffProtection
+    ) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+            .isExcludedFromBackupKey
+        ]),
+        values.isRegularFile == true,
+        values.isSymbolicLink != true,
+        values.isExcludedFromBackup == true,
+        let fileSize = values.fileSize,
+        (0...maximumBytes).contains(fileSize)
+        else { return false }
+#if targetEnvironment(simulator)
+        return true
+#else
+        guard let attributes = try? FileManager.default.attributesOfItem(
+            atPath: url.path
+        ),
+        let fileProtection = attributes[.protectionKey] as? FileProtectionType
+        else { return false }
+        switch protection {
+        case .afterFirstUnlock:
+            return fileProtection == .completeUntilFirstUserAuthentication
+        case .whileUnlocked:
+            return fileProtection == .complete
+        }
+#endif
     }
 
     /// A terminal, pairing-scoped fail-closed marker written before a

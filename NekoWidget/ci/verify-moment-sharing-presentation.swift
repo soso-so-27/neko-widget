@@ -558,12 +558,33 @@ enum MomentSharingPresentationVerifier {
         guard let url = DeepLink.familyWindow(),
               url.absoluteString == "nekowidget://family-window",
               let parsed = DeepLink(url: url),
-              parsed.destination == .familyWindow(localWindowID: nil),
+              parsed.destination == .familyWindow(
+                localWindowID: nil,
+                sourceDigest: nil
+              ),
               parsed.shownAt == nil
         else { throw VerificationError("family Widget deep link was not stable") }
+        let localWindowID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        let sourceDigest = String(repeating: "a", count: 64)
+        guard let exactURL = DeepLink.familyWindow(
+                localWindowID: localWindowID,
+                sourceDigest: sourceDigest
+              ),
+              let exact = DeepLink(url: exactURL),
+              exact.destination == .familyWindow(
+                localWindowID: localWindowID,
+                sourceDigest: sourceDigest
+              )
+        else { throw VerificationError("exact family Widget deep link was not stable") }
         try require(
             DeepLink(url: URL(string: "nekowidget://family-window?id=photo")!) == nil,
             "family Widget deep link accepted a photo identifier"
+        )
+        try require(
+            DeepLink(url: URL(string:
+                "nekowidget://family-window?window=\(localWindowID)&source=ABC"
+            )!) == nil,
+            "family Widget deep link accepted a malformed source digest"
         )
     }
 

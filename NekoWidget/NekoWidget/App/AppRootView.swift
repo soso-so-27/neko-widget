@@ -225,6 +225,7 @@ struct AppRootView: View {
             deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
             deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
             deepLinkedFamilyWindowIsPresented: $viewModel.isFamilyWindowPresented,
+            deepLinkedFamilyMomentSourceDigest: $viewModel.pendingFamilyMomentSourceDigest,
             chooseMorePhotos: presentLimitedLibraryPicker,
             requestPhotoAccess: requestOrOpenPhotoAccess,
             showWidgetPlacementGuide: {

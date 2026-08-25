@@ -467,7 +467,7 @@ jobs:
           exporter="NekoWidget/Services/PhotoBookPDFExporter.swift"
           grep -Fq 'options.isNetworkAccessAllowed = true' "$exporter"
           grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
-          grep -Fq 'Label("思い出", systemImage: "star.fill")' \
+          grep -Fq 'Label("思い出", systemImage: "photo.stack.fill")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("ホーム", systemImage: "house.fill")' \
             NekoWidget/Views/MainTabView.swift
@@ -486,12 +486,33 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'Label("写真を選んでまとめる"' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Label("追加した順", systemImage: "star.fill")' \
+          grep -Fq 'Label("残した順", systemImage: "photo.stack.fill")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift
-          grep -Fq 'に思い出へ追加した猫の写真' \
+          grep -Fq 'に思い出へ残した猫の写真' \
             NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq '.navigationDestination(isPresented: $showsFamilyWindow)' \
+            NekoWidget/Views/HomeView.swift
+          if grep -Fq '.sheet(isPresented: $showsFamilyWindow)' \
+            NekoWidget/Views/HomeView.swift; then
+            echo "The private window must not cover the main tab bar" >&2
+            exit 1
+          fi
+          grep -Fq 'Text("ハートは相手へ・思い出は自分だけ")' \
+            NekoWidget/Views/FamilyWindowView.swift
+          grep -Fq 'return canRetry ? "送信を再試行" : "送信できません"' \
+            NekoWidget/Views/FamilyWindowView.swift
+          grep -Fq 'heart?.phase == .sent' \
+            NekoWidget/Views/FamilyWindowView.swift
+          grep -Fq '"photo.badge.plus"' \
+            NekoWidgetWidget/NekoWidgetView.swift
+          if grep -Eq 'foregroundStyle\(\.pink\)|systemImage:.*star' \
+            NekoWidgetWidget/NekoWidgetView.swift \
+            NekoWidget/Views/FamilyWindowView.swift; then
+            echo "Private-window memory and heart controls must use one visual language" >&2
+            exit 1
+          fi
           if grep -Eq 'photoYearSections|LikedPhotoYearSection' \
             NekoWidget/Views/LikedPhotosView.swift; then
             echo "思い出 must remain one manually-added ordered collection" >&2

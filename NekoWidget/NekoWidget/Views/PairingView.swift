@@ -1089,7 +1089,7 @@ struct PairingView: View {
     private var cancelConfirmationMessage: String {
         if model.state?.phase == .paired {
             if model.isMediaSyncEnabled {
-                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「思い出に追加」で写真アプリへ保存した写真は削除できません。"
+                return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と一時的な届いた写真を削除します。通信に失敗した場合は削除しません。相手が「思い出に残す」で写真アプリへ保存した写真は削除できません。"
             }
             return "相手との共有を停止できたことを確認してから、このiPhoneの共有鍵と接続情報を削除します。通信に失敗した場合は削除しません。"
         }

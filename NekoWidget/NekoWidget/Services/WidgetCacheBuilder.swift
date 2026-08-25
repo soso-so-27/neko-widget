@@ -626,6 +626,89 @@ actor WidgetCacheBuilder {
         }
     }
 
+    /// Resolves an exact action URL emitted by a still-visible Widget entry.
+    /// The active manifest covers the current entry; the small, time-bounded
+    /// history covers an older WidgetKit timeline whose rendered photo is still
+    /// on screen. History grants no authority by itself: the digest must also
+    /// map uniquely to a lifecycle-safe inbox item and its canonical JPEG.
+    static func retainedFamilyMomentID(
+        forSourceDigest sourceDigest: String,
+        localWindowID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> String? {
+        guard let windowUUID = UUID(uuidString: localWindowID),
+              windowUUID.uuidString.lowercased() == localWindowID.lowercased(),
+              isLowercaseFamilySourceDigest(sourceDigest),
+              let manifestURL = SharedContainer.familyWidgetManifestURL(
+                localWindowID: localWindowID
+              ),
+              let historyURL = SharedContainer.familyWidgetCacheHistoryURL(
+                localWindowID: localWindowID
+              )
+        else { return nil }
+
+        let currentManifestMomentID: String? = {
+            guard let manifest = try? AtomicJSON.read(
+                    FamilyWidgetManifest.self,
+                    from: manifestURL
+                  ),
+                  manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
+                  let item = manifest.item,
+                  item.sourceDigest == sourceDigest,
+                  item.hasValidBookmarkTarget
+            else { return nil }
+            return item.momentID
+        }()
+
+        let retainedByHistory: Bool = {
+            guard let history = try? AtomicJSON.read(
+                    FamilyWidgetCacheHistory.self,
+                    from: historyURL
+                  ),
+                  history.generations.count <= maximumFamilyGenerationCount
+            else { return false }
+            let cutoff = now.addingTimeInterval(-12 * 60 * 60)
+            let futureLimit = now.addingTimeInterval(5 * 60)
+            let digests = history.generations.map(\.sourceDigest)
+            guard Set(digests).count == digests.count,
+                  history.generations.allSatisfy({ generation in
+                    isLowercaseFamilySourceDigest(generation.sourceDigest)
+                        && generation.cacheFilenames == familyCacheFilenames(
+                            sourceDigest: generation.sourceDigest
+                        )
+                        && generation.generatedAt >= cutoff
+                        && generation.generatedAt <= futureLimit
+                  })
+            else { return false }
+            return history.generations.contains { $0.sourceDigest == sourceDigest }
+        }()
+
+        guard currentManifestMomentID != nil || retainedByHistory else { return nil }
+        return try MomentSharingStateStore.withStateWhileLifecycleLocked(
+            validating: lifecycleToken
+        ) { state in
+            guard PrivateWindowCatalogStore.activeEntry()?.localWindowID
+                    == windowUUID.uuidString.lowercased()
+            else { return nil }
+            let identityMatches = state.inbox.filter {
+                Self.familySourceDigest(for: $0) == sourceDigest
+            }
+            guard identityMatches.count == 1,
+                  let target = identityMatches.first,
+                  currentManifestMomentID == nil
+                    || currentManifestMomentID == target.id
+                    || retainedByHistory,
+                  let snapshot = try? Self.familySourceSnapshot(
+                    for: target,
+                    in: state
+                  ),
+                  snapshot.sourceDigest == sourceDigest
+            else { return nil }
+            return target.id
+        }
+    }
+
     @discardableResult
     func clearFamilyWindow(
         validating lifecycleToken: SharingLifecycleGate.Token,
@@ -717,6 +800,12 @@ actor WidgetCacheBuilder {
         return SHA256.hash(data: Data(identity.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+
+    private static func isLowercaseFamilySourceDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
     }
 
     private static func familyCacheFilenames(

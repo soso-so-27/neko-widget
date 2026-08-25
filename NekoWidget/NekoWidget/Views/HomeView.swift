@@ -10,6 +10,7 @@ struct HomeView: View {
     let familyWindowPresentation: MomentFamilyWindowPresentation
     let privateWindowDisplayName: String
     @Binding var showsFamilyWindow: Bool
+    @Binding var pendingFamilyMomentSourceDigest: String?
     let requestPhotoAccess: () -> Void
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
@@ -64,18 +65,8 @@ struct HomeView: View {
                 .accessibilityIdentifier("window-settings-button")
             }
         }
-        .sheet(isPresented: $showsFamilyWindow) {
-            NavigationStack {
-                familyWindowDestination
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("閉じる") {
-                                showsFamilyWindow = false
-                            }
-                        }
-                    }
-            }
-            .presentationDragIndicator(.visible)
+        .navigationDestination(isPresented: $showsFamilyWindow) {
+            familyWindowDestination
         }
         .task(id: familyWindowPresentation.priorityUntil) {
             familyPriorityExpired = false
@@ -302,7 +293,9 @@ struct HomeView: View {
     @ViewBuilder
     private var familyWindowDestination: some View {
         if SharingAPIConfiguration.current.isMediaAvailable {
-            FamilyWindowView()
+            FamilyWindowView(
+                pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest
+            )
         } else if SharingAPIConfiguration.current.isAvailable {
             PairingView()
         } else if SharingAPIConfiguration.current.isReviewPreviewEnabled {
@@ -388,28 +381,28 @@ struct HomeView: View {
                             Button {
                                 toggleLike(currentPhoto.localIdentifier)
                             } label: {
-                                Image(systemName: currentPhoto.isLiked ? "star.fill" : "star")
+                                Image(systemName: currentPhoto.isLiked
+                                    ? "checkmark.circle.fill"
+                                    : "photo.badge.plus")
                                     .font(.system(size: 24, weight: .semibold))
-                                    .foregroundStyle(
-                                        currentPhoto.isLiked ? Color.white : Color.primary
-                                    )
+                                    .foregroundStyle(Color.white)
                                     .frame(width: 52, height: 52)
                                     .background(
                                         currentPhoto.isLiked
-                                            ? Color.pink
-                                            : Color(.systemBackground),
+                                            ? Color.accentColor
+                                            : Color.black.opacity(0.56),
                                         in: Circle()
                                     )
                                     .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
                             }
                             .padding(12)
                             .accessibilityLabel(
-                                currentPhoto.isLiked ? "思い出から外す" : "思い出に追加"
+                                currentPhoto.isLiked ? "思い出から外す" : "思い出に残す"
                             )
                             .accessibilityHint(
                                 currentPhoto.isLiked
                                     ? "タップすると自分の思い出一覧から外します"
-                                    : "タップすると自分の思い出一覧に追加します"
+                                    : "タップすると自分の思い出一覧に残します"
                             )
                         }
                     }
