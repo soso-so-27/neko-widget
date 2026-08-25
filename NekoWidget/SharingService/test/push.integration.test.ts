@@ -555,23 +555,40 @@ describe("APNs durable notification delivery", () => {
 
     const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
     const token = base64urlEncode(tokenBytes);
-    for (const [deviceID, keys] of [
-      [fixture.inviteeID, fixture.inviteeKeys],
-      [additionalDeviceID, additionalKeys],
-    ] as const) {
-      const response = await route(
-        await signedRequest(
-          "/v2/push-subscriptions/current",
-          "PUT",
-          fixture.inviteeID,
-          keys,
-          { protocolVersion: 2, token, environment: "production" },
-          deviceID === fixture.inviteeID ? undefined : deviceID,
-        ),
-        configuredEnv,
-      );
-      expect(response.status).toBe(200);
-    }
+    const firstResponse = await route(
+      await signedRequest(
+        "/v2/push-subscriptions/current",
+        "PUT",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        { protocolVersion: 2, token, environment: "production" },
+      ),
+      configuredEnv,
+    );
+    expect(firstResponse.status).toBe(200);
+    const replacedMomentID = await seedCommittedMoment(fixture, now + 1);
+    await databaseEnv.DB.batch(
+      momentNotificationEventStatements(configuredEnv, replacedMomentID, now + 1),
+    );
+    expect(await databaseEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM notification_events WHERE moment_id = ?",
+    ).bind(replacedMomentID).first<{ count: number }>()).toEqual({ count: 1 });
+
+    const replacementResponse = await route(
+      await signedRequest(
+        "/v2/push-subscriptions/current",
+        "PUT",
+        fixture.inviteeID,
+        additionalKeys,
+        { protocolVersion: 2, token, environment: "production" },
+        additionalDeviceID,
+      ),
+      configuredEnv,
+    );
+    expect(replacementResponse.status).toBe(200);
+    expect(await databaseEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM notification_events WHERE moment_id = ?",
+    ).bind(replacedMomentID).first<{ count: number }>()).toEqual({ count: 0 });
     const digest = await sha256Base64url(tokenBytes);
     expect(await databaseEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM apns_subscriptions WHERE token_digest = ?",
@@ -582,9 +599,9 @@ describe("APNs durable notification delivery", () => {
       device_id: additionalDeviceID,
     });
 
-    const momentID = await seedCommittedMoment(fixture, now + 1);
+    const momentID = await seedCommittedMoment(fixture, now + 2);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, momentID, now + 1),
+      momentNotificationEventStatements(configuredEnv, momentID, now + 2),
     );
     expect(await databaseEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM notification_deliveries WHERE token_digest = ?",
@@ -593,7 +610,7 @@ describe("APNs durable notification delivery", () => {
     let requests = 0;
     const invalidated = await drainNotificationOutbox(
       configuredEnv,
-      now + 1,
+      now + 2,
       async () => {
         requests += 1;
         return new Response(JSON.stringify({ reason: "Unregistered" }), {

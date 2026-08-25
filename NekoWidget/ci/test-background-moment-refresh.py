@@ -129,8 +129,39 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("registrationTargetIsCurrent(", registration)
         self.assertIn("continue registrationAttempt", registration)
         self.assertIn("MomentBackgroundRefreshPolicy.isEligible(", registration)
-        self.assertIn("putPushSubscription(", registration)
-        self.assertIn("deletePushSubscription(", registration)
+        self.assertIn("performRemoteMutation(", registration)
+        self.assertIn(".put(deviceToken: deviceToken)", registration)
+        self.assertIn(
+            "let latestSettings = await notificationCenter.notificationSettings()",
+            registration,
+        )
+        self.assertLess(
+            registration.index("let latestSettings = await"),
+            registration.index(".put(deviceToken: deviceToken)"),
+        )
+        self.assertIn("Self.allowsRemoteAlerts(latestSettings)", registration)
+        self.assertIn("await deleteCurrentSubscriptionIfPossible()", registration)
+        mutation_gate = push_service.split(
+            "private func performRemoteMutation(", 1
+        )[1].split("/// Produces one authenticated context", 1)[0]
+        self.assertIn("remoteMutationQueue.append", mutation_gate)
+        self.assertIn("drainRemoteMutationQueue()", mutation_gate)
+        self.assertIn("remoteMutationQueue.removeFirst()", mutation_gate)
+        self.assertIn("client.putPushSubscription(", mutation_gate)
+        self.assertIn("client.deletePushSubscription(", mutation_gate)
+        contexts = push_service.split(
+            "private func authenticatedContextsForAllWindows(", 1
+        )[1].split("private func registrationTargetIsCurrent(", 1)[0]
+        self.assertIn("SharingLifecycleGate.withValidatedToken(", contexts)
+        self.assertIn("bootstrap.lifecycleToken", contexts)
+        self.assertIn("activeEntry.spaceID == bootstrap.state.spaceID", contexts)
+        self.assertIn(
+            "activeEntry.credentialAccount\n                    == bootstrap.state.credentialAccount",
+            contexts,
+        )
+        self.assertIn("entry.spaceID == pairing.spaceID", contexts)
+        self.assertIn("entry.credentialAccount == account", contexts)
+        self.assertIn("SharingLifecycleGate.validate(bootstrap.lifecycleToken)", contexts)
 
     def test_local_notification_contains_no_shared_identity_or_media(self) -> None:
         notification = self.service.split(

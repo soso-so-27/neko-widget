@@ -558,7 +558,7 @@ enum MomentSharingPresentationVerifier {
         guard let url = DeepLink.familyWindow(),
               url.absoluteString == "nekowidget://family-window",
               let parsed = DeepLink(url: url),
-              parsed.destination == .familyWindow,
+              parsed.destination == .familyWindow(localWindowID: nil),
               parsed.shownAt == nil
         else { throw VerificationError("family Widget deep link was not stable") }
         try require(

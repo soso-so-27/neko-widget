@@ -347,8 +347,25 @@ export async function putCurrentPushSubscription(request: Request, env: Env): Pr
             AND device_id IN (
               SELECT device_id FROM apns_subscriptions
                WHERE token_digest = ?
-            )`,
+             )`,
       ).bind(member.deviceId, encrypted.digest),
+      // Replacing this physical token can remove the last delivery for an old
+      // selected window. Do not retain an undeliverable event until its TTL;
+      // scope cleanup to the participants that still own the replaced token
+      // rows, before those rows are deleted by the next statement.
+      env.DB.prepare(
+        `DELETE FROM notification_events
+          WHERE participant_id IN (
+                  SELECT participant_id
+                    FROM apns_subscriptions
+                   WHERE token_digest = ? AND device_id <> ?
+                )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM notification_deliveries AS delivery
+               WHERE delivery.event_id = notification_events.id
+            )`,
+      ).bind(encrypted.digest, member.deviceId),
       env.DB.prepare(
         `DELETE FROM apns_subscriptions
           WHERE token_digest = ? AND device_id <> ?`,

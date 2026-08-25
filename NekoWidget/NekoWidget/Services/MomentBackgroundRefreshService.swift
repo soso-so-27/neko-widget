@@ -208,6 +208,18 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
 actor MomentPushSubscriptionService {
     static let shared = MomentPushSubscriptionService()
 
+    private enum RemoteMutationKind {
+        case put(deviceToken: Data)
+        case delete
+    }
+
+    private struct QueuedRemoteMutation {
+        let kind: RemoteMutationKind
+        let pairing: PairingState
+        let credential: PairingCredential
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
     private struct AuthenticatedWindowContext: Sendable {
         let localWindowID: String
         let isActive: Bool
@@ -220,6 +232,12 @@ actor MomentPushSubscriptionService {
     /// catalog active ID prevent an older APNs callback from winning after a
     /// private-window switch.
     private var registrationGeneration: UInt64 = 0
+    /// Actor isolation is reentrant across URLSession awaits. A FIFO task gate
+    /// makes the server observe signed mutations in the same order in which
+    /// generations enqueue them: an old mutation already in flight finishes
+    /// before the newest generation's compensating DELETE/PUT can run.
+    private var remoteMutationQueue: [QueuedRemoteMutation] = []
+    private var remoteMutationWorker: Task<Void, Never>?
 
     init(notificationCenter: UNUserNotificationCenter = .current()) {
         self.notificationCenter = notificationCenter
@@ -280,7 +298,6 @@ actor MomentPushSubscriptionService {
                       localWindowID: activeWindowID,
                       generation: generation
                   ) else { return }
-            let client = try URLSessionMomentSharingAPIClient()
             // Background synchronization currently owns one explicit UI
             // destination: the selected window. Remove subscriptions for all
             // inactive windows before registering that destination so a
@@ -292,11 +309,16 @@ actor MomentPushSubscriptionService {
                           localWindowID: activeWindowID,
                           generation: generation
                       ) else { return }
-                try? await client.deletePushSubscription(
-                    pairingState: context.pairing,
+                // An inactive credential can already be expired or revoked.
+                // Its DELETE is best-effort; the active PUT atomically replaces
+                // every older binding for the same physical APNs token.
+                try? await performRemoteMutation(
+                    .delete,
+                    pairing: context.pairing,
                     credential: context.credential
                 )
-                guard registrationTargetIsCurrent(
+                guard !Task.isCancelled,
+                      registrationTargetIsCurrent(
                     localWindowID: activeWindowID,
                     generation: generation
                 ) else { return }
@@ -312,10 +334,20 @@ actor MomentPushSubscriptionService {
                     localWindowID: activeWindowID,
                     generation: generation
                 ) else { return }
-                try? await client.deletePushSubscription(
-                    pairingState: active.pairing,
-                    credential: active.credential
-                )
+                do {
+                    try await performRemoteMutation(
+                        .delete,
+                        pairing: active.pairing,
+                        credential: active.credential
+                    )
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled,
+                      registrationTargetIsCurrent(
+                        localWindowID: activeWindowID,
+                        generation: generation
+                      ) else { return }
                 return
             }
             guard !Task.isCancelled,
@@ -356,14 +388,14 @@ actor MomentPushSubscriptionService {
                     localWindowID: active.localWindowID,
                     generation: generation
                 ) else { continue registrationAttempt }
-                let client = try URLSessionMomentSharingAPIClient()
                 for context in contexts where !context.isActive {
                     guard registrationTargetIsCurrent(
                         localWindowID: active.localWindowID,
                         generation: generation
                     ) else { continue registrationAttempt }
-                    try? await client.deletePushSubscription(
-                        pairingState: context.pairing,
+                    try? await performRemoteMutation(
+                        .delete,
+                        pairing: context.pairing,
                         credential: context.credential
                     )
                     guard registrationTargetIsCurrent(
@@ -375,8 +407,9 @@ actor MomentPushSubscriptionService {
                     configuration: .current,
                     pairing: active.pairing
                 ) else {
-                    try? await client.deletePushSubscription(
-                        pairingState: active.pairing,
+                    try await performRemoteMutation(
+                        .delete,
+                        pairing: active.pairing,
                         credential: active.credential
                     )
                     guard registrationTargetIsCurrent(
@@ -389,9 +422,22 @@ actor MomentPushSubscriptionService {
                     )
                     return
                 }
-                try await client.putPushSubscription(
-                    deviceToken: deviceToken,
-                    pairingState: active.pairing,
+                // Permission can be turned off while an older APNs callback is
+                // waiting behind the FIFO gate. Re-read it immediately before
+                // enqueueing PUT; if it is no longer allowed, enqueue signed
+                // DELETEs instead so the final remote state is opt-out.
+                let latestSettings = await notificationCenter.notificationSettings()
+                guard registrationTargetIsCurrent(
+                    localWindowID: active.localWindowID,
+                    generation: generation
+                ) else { continue registrationAttempt }
+                guard Self.allowsRemoteAlerts(latestSettings) else {
+                    await deleteCurrentSubscriptionIfPossible()
+                    return
+                }
+                try await performRemoteMutation(
+                    .put(deviceToken: deviceToken),
+                    pairing: active.pairing,
                     credential: active.credential
                 )
                 guard registrationTargetIsCurrent(
@@ -417,15 +463,20 @@ actor MomentPushSubscriptionService {
     }
 
     private func deleteCurrentSubscriptionIfPossible() async {
+        let generation = registrationGeneration
         do {
             let contexts = try await authenticatedContextsForAllWindows()
-            let client = try URLSessionMomentSharingAPIClient()
+            guard generation == registrationGeneration else { return }
             for context in contexts {
-                guard !Task.isCancelled else { return }
-                try? await client.deletePushSubscription(
-                    pairingState: context.pairing,
+                guard !Task.isCancelled,
+                      generation == registrationGeneration else { return }
+                try await performRemoteMutation(
+                    .delete,
+                    pairing: context.pairing,
                     credential: context.credential
                 )
+                guard !Task.isCancelled,
+                      generation == registrationGeneration else { return }
             }
         } catch {
             // Device/space revocation cascades server-side and subscriptions
@@ -436,6 +487,55 @@ actor MomentPushSubscriptionService {
                 "Remote notification subscription removal deferred"
             )
         }
+    }
+
+    private func performRemoteMutation(
+        _ kind: RemoteMutationKind,
+        pairing: PairingState,
+        credential: PairingCredential
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            remoteMutationQueue.append(QueuedRemoteMutation(
+                kind: kind,
+                pairing: pairing,
+                credential: credential,
+                continuation: continuation
+            ))
+            startRemoteMutationWorkerIfNeeded()
+        }
+    }
+
+    private func startRemoteMutationWorkerIfNeeded() {
+        guard remoteMutationWorker == nil else { return }
+        remoteMutationWorker = Task { [weak self] in
+            await self?.drainRemoteMutationQueue()
+        }
+    }
+
+    private func drainRemoteMutationQueue() async {
+        while !remoteMutationQueue.isEmpty {
+            let mutation = remoteMutationQueue.removeFirst()
+            do {
+                let client = try URLSessionMomentSharingAPIClient()
+                switch mutation.kind {
+                case let .put(deviceToken):
+                    try await client.putPushSubscription(
+                        deviceToken: deviceToken,
+                        pairingState: mutation.pairing,
+                        credential: mutation.credential
+                    )
+                case .delete:
+                    try await client.deletePushSubscription(
+                        pairingState: mutation.pairing,
+                        credential: mutation.credential
+                    )
+                }
+                mutation.continuation.resume()
+            } catch {
+                mutation.continuation.resume(throwing: error)
+            }
+        }
+        remoteMutationWorker = nil
     }
 
     /// Produces one authenticated context per locally paired window without
@@ -451,24 +551,47 @@ actor MomentPushSubscriptionService {
         } else {
             bootstrap = try await PairingInstallationGuard.bootstrapAsync()
         }
-        guard let catalog = try PrivateWindowCatalogStore.load() else {
-            throw PairingError.stateUnavailable
+        // Capture the catalog and every window state under the lifecycle token
+        // returned with the active bootstrap. A window switch bumps that token,
+        // so the old active state can never be attached to a new active ID.
+        let snapshot = try SharingLifecycleGate.withValidatedToken(
+            bootstrap.lifecycleToken
+        ) { () -> (
+            catalog: PrivateWindowCatalogState,
+            pairings: [(entry: PrivateWindowCatalogEntry, state: PairingState?)]
+        ) in
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let activeEntry = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  }),
+                  activeEntry.spaceID == bootstrap.state.spaceID,
+                  activeEntry.credentialAccount
+                    == bootstrap.state.credentialAccount
+            else { throw PairingError.stateUnavailable }
+            let pairings = catalog.windows.map { entry in
+                let state: PairingState?
+                if entry.localWindowID == catalog.activeWindowID {
+                    state = bootstrap.state
+                } else {
+                    state = try? PairingStateStore.load(
+                        localWindowID: entry.localWindowID
+                    )
+                }
+                return (entry: entry, state: state)
+            }
+            return (catalog: catalog, pairings: pairings)
         }
         var contexts: [AuthenticatedWindowContext] = []
         var seenCredentialAccounts = Set<String>()
-        for entry in catalog.windows {
-            let pairing: PairingState?
-            if entry.localWindowID == catalog.activeWindowID {
-                pairing = bootstrap.state
-            } else {
-                pairing = try? PairingStateStore.load(
-                    localWindowID: entry.localWindowID
-                )
-            }
+        for candidate in snapshot.pairings {
+            let entry = candidate.entry
+            let pairing = candidate.state
             guard let pairing,
                   pairing.installationMarker == bootstrap.state.installationMarker,
                   pairing.phase == .paired,
                   let account = pairing.credentialAccount,
+                  entry.spaceID == pairing.spaceID,
+                  entry.credentialAccount == account,
                   seenCredentialAccounts.insert(account).inserted
             else { continue }
             guard let context = try? authenticatedContext(for: pairing) else {
@@ -476,11 +599,14 @@ actor MomentPushSubscriptionService {
             }
             contexts.append(AuthenticatedWindowContext(
                 localWindowID: entry.localWindowID,
-                isActive: entry.localWindowID == catalog.activeWindowID,
+                isActive: entry.localWindowID == snapshot.catalog.activeWindowID,
                 pairing: context.pairing,
                 credential: context.credential
             ))
         }
+        // Keychain resolution does not hold the lifecycle flock. Reject the
+        // complete snapshot if another thread selected a window meanwhile.
+        try SharingLifecycleGate.validate(bootstrap.lifecycleToken)
         return contexts
     }
 
