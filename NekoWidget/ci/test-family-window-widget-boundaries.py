@@ -659,6 +659,33 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("?? scopedEntry?.credentialAccount", cleanup)
         self.assertIn("let activeWindowID = scopedEntry?.localWindowID", cleanup)
 
+        create_window = section(
+            guard,
+            "static func createAndActivatePrivateWindow()",
+            "static func createAndActivatePrivateWindowAsync()",
+        )
+        self.assertLess(
+            create_window.index(
+                "finishPendingCleanupBeforeWindowSelectionWhileLocked()"
+            ),
+            create_window.index(
+                "PrivateWindowCatalogStore.createAndActivateWhileLifecycleLocked()"
+            ),
+        )
+        activate_window = section(
+            guard,
+            "static func activatePrivateWindow(localWindowID: String)",
+            "static func activatePrivateWindowAsync(",
+        )
+        self.assertLess(
+            activate_window.index(
+                "finishPendingCleanupBeforeWindowSelectionWhileLocked()"
+            ),
+            activate_window.index(
+                "PrivateWindowCatalogStore.activateWhileLifecycleLocked("
+            ),
+        )
+
         initial_commit = section(
             pairing_store,
             "static func saveInitialCredentialAndState(",
@@ -700,6 +727,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("credentialAccount: nil", bootstrap)
         self.assertNotIn("deleteAllSharingCredentials()", bootstrap)
+        self.assertIn("catalog.windows.contains(where:", bootstrap)
+        self.assertIn(
+            "catalog.activeWindowID != cleanupScope.localWindowID",
+            bootstrap,
+        )
+        self.assertIn(
+            "localWindowID: cleanupScope.localWindowID",
+            bootstrap,
+        )
+
+        pending_cleanup = section(
+            guard,
+            "private static func finishPendingCleanupBeforeWindowSelectionWhileLocked()",
+            "/// Pure failure classification.",
+        )
+        self.assertIn(
+            "SharingLifecycleGate.cleanupRequiredWhileLocked()",
+            pending_cleanup,
+        )
+        self.assertIn("_ = try bootstrapWhileLocked()", pending_cleanup)
 
         processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
         self.assertIn("displayName: entry.displayName", processor)
@@ -1112,6 +1159,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("すでに使っているiPhoneは解除されません", presentation)
         self.assertNotIn("相手側のiPhoneを置き換える", pairing)
         self.assertNotIn("相手側の新しいiPhoneへ置き換える", pairing)
+
+    def test_additional_owner_device_cannot_sponsor_an_invitee_enrollment(self) -> None:
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        eligibility = section(
+            pairing_model,
+            "var canCreateDeviceRecoveryInvitation: Bool",
+            "@discardableResult",
+        )
+        create_recovery = section(
+            pairing_model,
+            "func createDeviceRecoveryInvitation() async",
+            "func joinDeviceRecovery() async",
+        )
+        self.assertIn("state.role != .inviter", eligibility)
+        self.assertIn("state.localDeviceIsAdditional != true", eligibility)
+        self.assertIn("guard canCreateDeviceRecoveryInvitation", create_recovery)
+        self.assertIn("まどを最初に作ったiPhone", create_recovery)
+        self.assertIn("model.canCreateDeviceRecoveryInvitation", pairing)
+        self.assertIn("追加コードは最初のiPhoneで作れます", pairing)
 
     def test_manual_refresh_result_is_visible_without_claiming_read_receipt(self) -> None:
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")

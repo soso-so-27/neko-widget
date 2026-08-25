@@ -104,6 +104,7 @@ enum PairingInstallationGuard {
     /// cannot commit through the newly selected paths.
     static func createAndActivatePrivateWindow() throws -> BootstrapResult {
         try SharingLifecycleGate.withExclusive {
+            try finishPendingCleanupBeforeWindowSelectionWhileLocked()
             guard let marker = try readLocalMarker() else {
                 throw PairingError.installationChanged
             }
@@ -136,6 +137,7 @@ enum PairingInstallationGuard {
     /// fresh unpaired state bound to the current installation marker.
     static func activatePrivateWindow(localWindowID: String) throws -> BootstrapResult {
         try SharingLifecycleGate.withExclusive {
+            try finishPendingCleanupBeforeWindowSelectionWhileLocked()
             guard let marker = try readLocalMarker() else {
                 throw PairingError.installationChanged
             }
@@ -199,11 +201,25 @@ enum PairingInstallationGuard {
             let cleanupScope = try readWindowCleanupScopeWhileLocked()
             if let cleanupScope {
                 guard let catalog = try PrivateWindowCatalogStore.load(),
-                      catalog.activeWindowID == cleanupScope.localWindowID
+                      catalog.windows.contains(where: {
+                          $0.localWindowID == cleanupScope.localWindowID
+                      })
                 else {
                     throw deferredBootstrapError(
                         reason: .pairingStateReadUnavailable
                     )
+                }
+                // A previous build could commit another active-window choice
+                // after publishing this scoped cleanup intent but before the
+                // interrupted deletion resumed. Restore the exact scoped slot
+                // first so every path-based credential/cache mutation remains
+                // confined to that window. The durable tombstone and epoch
+                // continue to block network work throughout the recovery.
+                if catalog.activeWindowID != cleanupScope.localWindowID {
+                    _ = try PrivateWindowCatalogStore
+                        .activateWhileLifecycleLocked(
+                            localWindowID: cleanupScope.localWindowID
+                        )
                 }
             }
             let reset = try performCleanupWhileLocked(
@@ -419,6 +435,21 @@ enum PairingInstallationGuard {
             lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
             invalidatedPreviousInstallation: false
         )
+    }
+
+    /// Window selection must never move the active path away from a durable
+    /// scoped-cleanup intent. Resume the interrupted cleanup under the same
+    /// lifecycle lock before a create/switch operation is allowed to mutate
+    /// the catalog. This also heals the mismatch produced by older builds.
+    private static func finishPendingCleanupBeforeWindowSelectionWhileLocked()
+        throws {
+        guard try SharingLifecycleGate.cleanupRequiredWhileLocked() else {
+            return
+        }
+        _ = try bootstrapWhileLocked()
+        guard try !SharingLifecycleGate.cleanupRequiredWhileLocked() else {
+            throw deferredBootstrapError(reason: .lifecycleStateUnavailable)
+        }
     }
 
     /// Pure failure classification. Decode/validation failures prove that the
