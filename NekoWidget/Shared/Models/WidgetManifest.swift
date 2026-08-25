@@ -148,15 +148,34 @@ struct WidgetManifest: Codable, Equatable, Sendable {
     static let empty = WidgetManifest(items: [], generatedAt: .distantPast)
 }
 
-/// One privacy-minimized family Widget publication. It intentionally stores no
-/// moment, participant, room, or PhotoKit identifier. `sourceDigest` exists
-/// only to make cache generations stable and is never routed out of the App
-/// Group container.
+/// One privacy-minimized family Widget publication. `momentID` is the opaque
+/// local lookup key required by the interactive bookmark button. It never
+/// leaves the App Group container and is not a participant, room, PhotoKit, or
+/// cryptographic identifier. `sourceDigest` keeps cache generations stable and
+/// is the only value serialized into the Widget's private App Intent.
 struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
     var sourceDigest: String
+    /// Optional keeps manifests written before Widget bookmarks decodable. A
+    /// missing or malformed value hides the button without hiding the photo.
+    var momentID: String? = nil
     var cacheFilenames: WidgetCacheFilenames
     var receivedAt: Date
     var freshUntil: Date
+
+    var hasValidBookmarkTarget: Bool {
+        guard let momentID else { return false }
+        return Self.isOpaqueIdentifier(momentID)
+    }
+
+    static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (1...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45 || $0 == 95
+        }
+    }
 }
 
 /// Family output has a separate schema and file from the personal manifest so

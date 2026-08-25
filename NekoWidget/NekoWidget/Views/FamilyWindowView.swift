@@ -3,6 +3,7 @@ import ImageIO
 import UIKit
 
 struct FamilyWindowView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = MomentSharingViewModel()
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
@@ -13,6 +14,8 @@ struct FamilyWindowView: View {
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
     @State private var showsAllSentRecords = false
+    @State private var notificationAuthorizationState:
+        MomentNotificationAuthorizationState = .checking
 
     var body: some View {
         Group {
@@ -32,6 +35,10 @@ struct FamilyWindowView: View {
         .navigationTitle(model.windowDisplayName)
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.bootstrap() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await refreshNotificationAuthorizationState()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .sharingMediaSyncRequested)) { _ in
             Task { await model.bootstrap() }
         }
@@ -152,6 +159,7 @@ struct FamilyWindowView: View {
 
                 if !model.isReportOnly {
                     primaryActions
+                    notificationSettingsCard
                     manualRefreshResult
                 }
 
@@ -164,6 +172,15 @@ struct FamilyWindowView: View {
                         .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                         .accessibilityIdentifier("family-window-bookmark-result")
                 }
+                if let message = model.pawActionMessage {
+                    Label(message, systemImage: "pawprint.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                        .accessibilityIdentifier("family-window-paw-result")
+                }
                 if let message = model.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
@@ -171,6 +188,21 @@ struct FamilyWindowView: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                }
+
+                if model.receivedPawCount > 0 {
+                    Label(
+                        model.receivedPawCount == 1
+                            ? "届けた写真に肉球が届きました"
+                            : "届けた写真に肉球が\(model.receivedPawCount)件届きました",
+                        systemImage: "pawprint.fill"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityIdentifier("family-window-received-paws")
                 }
 
                 if model.outgoingPresentation.hasActivity {
@@ -258,6 +290,96 @@ struct FamilyWindowView: View {
             .controlSize(.large)
             .accessibilityIdentifier("family-window-widget-guide")
         }
+    }
+
+    private var notificationSettingsCard: some View {
+        HStack(spacing: 12) {
+            Image(systemName: notificationAuthorizationState == .enabled
+                ? "bell.fill"
+                : "bell")
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 40, height: 40)
+                .background(
+                    Color.accentColor.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+            VStack(alignment: .leading, spacing: 2) {
+                Text("新着通知")
+                    .font(.subheadline.weight(.semibold))
+                Text(notificationStatusText)
+                    .font(.caption)
+                    .foregroundStyle(notificationStatusColor)
+            }
+            Spacer()
+            notificationAction
+        }
+        .padding(14)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .accessibilityIdentifier("family-window-notification-settings")
+    }
+
+    @ViewBuilder
+    private var notificationAction: some View {
+        switch notificationAuthorizationState {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+        case .notRequested:
+            Button("オンにする") {
+                Task { await requestVisibleNotificationAuthorization() }
+            }
+            .font(.subheadline.weight(.semibold))
+            .accessibilityIdentifier("family-window-notification-enable")
+        case .quiet:
+            Button("目立つ通知にする") {
+                Task { await requestVisibleNotificationAuthorization() }
+            }
+            .font(.caption.weight(.semibold))
+            .accessibilityIdentifier("family-window-notification-enable")
+        case .denied:
+            Button("設定を開く") {
+                openSystemSettings()
+            }
+            .font(.subheadline.weight(.semibold))
+            .accessibilityIdentifier("family-window-notification-open-settings")
+        case .enabled:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .accessibilityLabel("通知はオンです")
+        }
+    }
+
+    private var notificationStatusText: String {
+        switch notificationAuthorizationState {
+        case .checking: "確認中"
+        case .notRequested: "受信を確認できたときに通知します"
+        case .enabled: "オン"
+        case .quiet: "現在はひかえめに通知"
+        case .denied: "オフ"
+        }
+    }
+
+    private var notificationStatusColor: Color {
+        notificationAuthorizationState == .enabled ? .green : .secondary
+    }
+
+    private func refreshNotificationAuthorizationState() async {
+        notificationAuthorizationState = await MomentBackgroundRefreshService.shared
+            .notificationAuthorizationState()
+    }
+
+    private func requestVisibleNotificationAuthorization() async {
+        notificationAuthorizationState = await MomentBackgroundRefreshService.shared
+            .requestVisibleNotificationAuthorization()
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 
     private var sharingManagementLink: some View {
@@ -579,23 +701,6 @@ struct FamilyWindowView: View {
                     }
                 }
                 Spacer()
-                if !model.isReportOnly {
-                    Button {
-                        Task { await model.toggleSavedMemory(item) }
-                    } label: {
-                        Label(
-                            model.isSavedMemory(item) ? "しおり済み" : "しおり",
-                            systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
-                        )
-                        .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isPerformingAction)
-                    .accessibilityLabel(
-                        model.isSavedMemory(item) ? "しおりを外す" : "しおりを付ける"
-                    )
-                    .accessibilityIdentifier("family-window-save-memory")
-                }
                 Menu {
                     Button {
                         reportTarget = item
@@ -620,6 +725,62 @@ struct FamilyWindowView: View {
                 .accessibilityLabel("写真の安全メニュー")
             }
             .padding(13)
+            if !model.isReportOnly {
+                Divider()
+                let paw = model.pawOutboxItem(for: item)
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await model.toggleSavedMemory(item) }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Label(
+                                model.isSavedMemory(item) ? "しおり済み" : "しおり",
+                                systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
+                            )
+                            .font(.caption.weight(.semibold))
+                            Text("自分だけ")
+                                .font(.caption2)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isPerformingAction)
+                    .accessibilityLabel(
+                        model.isSavedMemory(item) ? "しおりを外す" : "しおりを付ける"
+                    )
+                    .accessibilityIdentifier("family-window-save-memory")
+
+                    if model.canSendPaw(for: item) || paw != nil {
+                        Button {
+                            Task { await model.sendPaw(item) }
+                        } label: {
+                            VStack(spacing: 2) {
+                                Label(
+                                    paw == nil
+                                        ? "肉球を送る"
+                                        : (paw?.phase == .sent ? "肉球済み" : "送信待ち"),
+                                    systemImage: paw?.phase == .sent
+                                        ? "pawprint.fill"
+                                        : (paw == nil ? "pawprint" : "clock")
+                                )
+                                .font(.caption.weight(.semibold))
+                                Text("相手へ")
+                                    .font(.caption2)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isPerformingAction || paw != nil)
+                        .accessibilityLabel(
+                            paw == nil
+                                ? "相手に肉球を送る"
+                                : (paw?.phase == .sent ? "肉球を送りました" : "肉球は送信待ちです")
+                        )
+                        .accessibilityIdentifier("family-window-send-paw")
+                    }
+                }
+                .padding(13)
+            }
             if model.isReportOnly, model.isSavedMemory(item) {
                 Label("しおり付き", systemImage: "bookmark.fill")
                     .font(.caption)

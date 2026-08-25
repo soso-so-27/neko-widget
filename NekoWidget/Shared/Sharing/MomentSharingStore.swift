@@ -295,15 +295,97 @@ struct MomentSavedMemoryRecord: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+struct MomentSavedMemoryMutation: Equatable, Sendable {
+    let previousIsSaved: Bool
+    let isSaved: Bool
+}
+
+enum MomentPawOutboxPhase: String, Codable, Sendable {
+    case pending
+    case committing
+    case sent
+}
+
+/// One explicit, fixed reaction queued by the recipient. It contains no text,
+/// image, participant identifier, or file path. The stable client request ID
+/// makes an ambiguous network result safe to retry.
+struct MomentPawOutboxItem: Codable, Equatable, Identifiable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let clientRequestID: UUID
+    let momentID: String
+    var phase: MomentPawOutboxPhase
+    var serverReactionID: String?
+    let createdAt: Date
+    var updatedAt: Date
+
+    var id: UUID { clientRequestID }
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              Self.isOpaqueIdentifier(momentID),
+              createdAt > Date(timeIntervalSince1970: 0),
+              updatedAt >= createdAt,
+              (phase == .sent) == (serverReactionID != nil),
+              serverReactionID.map(Self.isOpaqueIdentifier) ?? true
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+
+    private static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (1...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45 || $0 == 95
+        }
+    }
+}
+
+/// A sender-side receipt from the dedicated reaction feed. `observedAt` is
+/// local observation time; the recipient's exact activity time is not kept.
+struct MomentPawReceipt: Codable, Equatable, Identifiable, Sendable {
+    static let schemaVersion = 1
+    var schemaVersion: Int = Self.schemaVersion
+    let reactionID: String
+    let momentID: String
+    let observedAt: Date
+
+    var id: String { reactionID }
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              Self.isOpaqueIdentifier(reactionID),
+              Self.isOpaqueIdentifier(momentID),
+              observedAt > Date(timeIntervalSince1970: 0)
+        else { throw MomentSharingError.stateUnavailable }
+        return self
+    }
+
+    private static func isOpaqueIdentifier(_ value: String) -> Bool {
+        guard (1...128).contains(value.utf8.count) else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57)
+                || ($0 >= 65 && $0 <= 90)
+                || ($0 >= 97 && $0 <= 122)
+                || $0 == 45 || $0 == 95
+        }
+    }
+}
+
 struct MomentSharingState: Codable, Equatable, Sendable {
-    static let schemaVersion = 6
+    static let schemaVersion = 7
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int
     var changeCursor: String?
+    var reactionCursor: String?
     var reportOnlyUntil: Date?
     var outbox: [MomentOutboxItem]
     var inbox: [MomentInboxItem]
     var savedMemories: [MomentSavedMemoryRecord]
+    var pawOutbox: [MomentPawOutboxItem]
+    var receivedPaws: [MomentPawReceipt]
     var reportOutbox: [MomentReportOutboxItem]
     var outgoingOutcomes: [MomentOutgoingOutcome]
 
@@ -311,10 +393,13 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         case schemaVersion
         case storageRevision
         case changeCursor
+        case reactionCursor
         case reportOnlyUntil
         case outbox
         case inbox
         case savedMemories
+        case pawOutbox
+        case receivedPaws
         case reportOutbox
         case outgoingOutcomes
     }
@@ -322,19 +407,25 @@ struct MomentSharingState: Codable, Equatable, Sendable {
     init(
         storageRevision: Int,
         changeCursor: String?,
+        reactionCursor: String? = nil,
         reportOnlyUntil: Date? = nil,
         outbox: [MomentOutboxItem],
         inbox: [MomentInboxItem],
         savedMemories: [MomentSavedMemoryRecord] = [],
+        pawOutbox: [MomentPawOutboxItem] = [],
+        receivedPaws: [MomentPawReceipt] = [],
         reportOutbox: [MomentReportOutboxItem],
         outgoingOutcomes: [MomentOutgoingOutcome] = []
     ) {
         self.storageRevision = storageRevision
         self.changeCursor = changeCursor
+        self.reactionCursor = reactionCursor
         self.reportOnlyUntil = reportOnlyUntil
         self.outbox = outbox
         self.inbox = inbox
         self.savedMemories = savedMemories
+        self.pawOutbox = pawOutbox
+        self.receivedPaws = receivedPaws
         self.reportOutbox = reportOutbox
         self.outgoingOutcomes = outgoingOutcomes
     }
@@ -348,6 +439,10 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         schemaVersion = Self.schemaVersion
         storageRevision = try container.decode(Int.self, forKey: .storageRevision)
         changeCursor = try container.decodeIfPresent(String.self, forKey: .changeCursor)
+        reactionCursor = try container.decodeIfPresent(
+            String.self,
+            forKey: .reactionCursor
+        )
         reportOnlyUntil = try container.decodeIfPresent(Date.self, forKey: .reportOnlyUntil)
         var decodedOutbox = try container.decode(
             [MomentOutboxItem].self,
@@ -392,6 +487,14 @@ struct MomentSharingState: Codable, Equatable, Sendable {
             [MomentSavedMemoryRecord].self,
             forKey: .savedMemories
         ) ?? []
+        pawOutbox = try container.decodeIfPresent(
+            [MomentPawOutboxItem].self,
+            forKey: .pawOutbox
+        ) ?? []
+        receivedPaws = try container.decodeIfPresent(
+            [MomentPawReceipt].self,
+            forKey: .receivedPaws
+        ) ?? []
         reportOutbox = decodedReportOutbox
         outgoingOutcomes = try container.decodeIfPresent(
             [MomentOutgoingOutcome].self,
@@ -402,10 +505,13 @@ struct MomentSharingState: Codable, Equatable, Sendable {
     static let empty = Self(
         storageRevision: 0,
         changeCursor: nil,
+        reactionCursor: nil,
         reportOnlyUntil: nil,
         outbox: [],
         inbox: [],
         savedMemories: [],
+        pawOutbox: [],
+        receivedPaws: [],
         reportOutbox: [],
         outgoingOutcomes: []
     )
@@ -417,6 +523,12 @@ struct MomentSharingState: Codable, Equatable, Sendable {
               Set(outbox.map(\.id)).count == outbox.count,
               Set(inbox.map(\.id)).count == inbox.count,
               Set(savedMemories.map(\.momentID)).count == savedMemories.count,
+              pawOutbox.count <= 100,
+              Set(pawOutbox.map(\.clientRequestID)).count == pawOutbox.count,
+              Set(pawOutbox.map(\.momentID)).count == pawOutbox.count,
+              receivedPaws.count <= 100,
+              Set(receivedPaws.map(\.reactionID)).count == receivedPaws.count,
+              Set(receivedPaws.map(\.momentID)).count == receivedPaws.count,
               Set(reportOutbox.map(\.id)).count == reportOutbox.count,
               Set(reportOutbox.map(\.momentID)).count == reportOutbox.count,
               outgoingOutcomes.count <= MomentOutgoingOutcome.maximumCount,
@@ -425,6 +537,8 @@ struct MomentSharingState: Codable, Equatable, Sendable {
         _ = try outbox.map { try $0.validated() }
         _ = try inbox.map { try $0.validated() }
         _ = try savedMemories.map { try $0.validated() }
+        _ = try pawOutbox.map { try $0.validated() }
+        _ = try receivedPaws.map { try $0.validated() }
         let savableMomentIDs = Set(inbox.compactMap { item -> String? in
             guard item.state == .available || item.state == .acknowledged,
                   item.localJPEGFileName != nil
@@ -432,6 +546,13 @@ struct MomentSharingState: Codable, Equatable, Sendable {
             return item.id
         })
         guard savedMemories.allSatisfy({ savableMomentIDs.contains($0.momentID) })
+        else { throw MomentSharingError.stateUnavailable }
+        guard pawOutbox.allSatisfy({ savableMomentIDs.contains($0.momentID) })
+        else { throw MomentSharingError.stateUnavailable }
+        let sentMomentIDs = Set(outbox.compactMap { item in
+            item.phase == .committed ? item.serverMomentID : nil
+        })
+        guard receivedPaws.allSatisfy({ sentMomentIDs.contains($0.momentID) })
         else { throw MomentSharingError.stateUnavailable }
         _ = try reportOutbox.map { try $0.validated() }
         _ = try outgoingOutcomes.map { try $0.validated() }
@@ -591,6 +712,7 @@ enum MomentSharingStateStore {
                 // already been replaced on disk.
                 if candidate.state == .blocked {
                     state.savedMemories.removeAll { $0.momentID == candidate.id }
+                    state.pawOutbox.removeAll { $0.momentID == candidate.id }
                 }
                 state.inbox.append(candidate)
                 state.storageRevision += 1
@@ -616,6 +738,7 @@ enum MomentSharingStateStore {
         else { throw MomentSharingError.invalidPayload }
         _ = try mutate(validating: lifecycleToken) { state in
             state.savedMemories.removeAll { $0.momentID == tombstone.id }
+            state.pawOutbox.removeAll { $0.momentID == tombstone.id }
             if let index = state.inbox.firstIndex(where: { $0.id == tombstone.id }) {
                 guard state.inbox[index].senderParticipantID
                         == tombstone.senderParticipantID,
@@ -643,26 +766,7 @@ enum MomentSharingStateStore {
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws {
         _ = try mutate(validating: lifecycleToken) { state in
-            guard state.reportOnlyUntil == nil else {
-                throw MomentSharingError.reportOnly(until: state.reportOnlyUntil!)
-            }
-            guard let item = state.inbox.first(where: { $0.id == momentID }),
-                  item.state == .available || item.state == .acknowledged,
-                  let fileName = item.localJPEGFileName,
-                  let directory = SharedContainer.momentSharingReceivedDirectoryURL
-            else { throw MomentSharingError.stateUnavailable }
-
-            let url = directory.appendingPathComponent(fileName, isDirectory: false)
-            let values = try url.resourceValues(
-                forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
-            )
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  let fileSize = values.fileSize,
-                  fileSize > 0,
-                  fileSize <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28
-            else { throw MomentSharingError.stateUnavailable }
-
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
             state.savedMemories.removeAll { $0.momentID == momentID }
             if isSaved {
                 state.savedMemories.append(
@@ -670,6 +774,246 @@ enum MomentSharingStateStore {
                 )
             }
         }
+    }
+
+    /// Reads the canonical local bookmark while applying the same lifecycle,
+    /// visible-state, and file checks as a mutation. Widget entries hide their
+    /// interactive button when this check cannot complete safely.
+    static func savedMemoryState(
+        momentID: String,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Bool {
+        try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            return state.savedMemories.contains { $0.momentID == momentID }
+        }
+    }
+
+    /// Atomically toggles the canonical local bookmark. This does not enqueue
+    /// an outbox item, call the relay, write Photos/iCloud, or create another
+    /// JPEG. Revocation and unlink continue to win through the lifecycle gate.
+    @discardableResult
+    static func toggleSavedMemory(
+        momentID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentSavedMemoryMutation {
+        var result: MomentSavedMemoryMutation?
+        _ = try mutate(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            let previousIsSaved = state.savedMemories.contains {
+                $0.momentID == momentID
+            }
+            state.savedMemories.removeAll { $0.momentID == momentID }
+            let isSaved = !previousIsSaved
+            if isSaved {
+                state.savedMemories.append(
+                    MomentSavedMemoryRecord(momentID: momentID, savedAt: now)
+                )
+            }
+            result = MomentSavedMemoryMutation(
+                previousIsSaved: previousIsSaved,
+                isSaved: isSaved
+            )
+        }
+        guard let result else { throw MomentSharingError.stateUnavailable }
+        return result
+    }
+
+    private static func validateSavedMemoryTarget(
+        momentID: String,
+        in state: MomentSharingState
+    ) throws {
+        guard state.reportOnlyUntil == nil else {
+            throw MomentSharingError.reportOnly(until: state.reportOnlyUntil!)
+        }
+        guard let item = state.inbox.first(where: { $0.id == momentID }),
+              item.state == .available || item.state == .acknowledged,
+              let fileName = item.localJPEGFileName,
+              fileName == "\(item.id).jpg",
+              fileName == (fileName as NSString).lastPathComponent,
+              let directory = SharedContainer.momentSharingReceivedDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+
+        let url = directory.appendingPathComponent(fileName, isDirectory: false)
+        let values = try url.resourceValues(
+            forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        )
+        guard values.isRegularFile == true,
+              values.isSymbolicLink != true,
+              let fileSize = values.fileSize,
+              fileSize > 0,
+              fileSize <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    /// Queues one explicit paw for a currently visible received photo. A paw
+    /// is separate from the local bookmark and is never created implicitly by
+    /// `setSavedMemory` or its Widget AppIntent.
+    @discardableResult
+    static func queuePaw(
+        momentID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentPawOutboxItem {
+        var queued: MomentPawOutboxItem?
+        _ = try mutate(validating: lifecycleToken) { state in
+            try validatePawTarget(momentID: momentID, now: now, in: state)
+            if let existing = state.pawOutbox.first(where: {
+                $0.momentID == momentID
+            }) {
+                queued = existing
+                return
+            }
+            if state.pawOutbox.count >= 100 {
+                let oldestSentID = state.pawOutbox
+                    .filter { $0.phase == .sent }
+                    .min(by: { $0.updatedAt < $1.updatedAt })?.id
+                if let oldestSentID {
+                    state.pawOutbox.removeAll { $0.id == oldestSentID }
+                }
+            }
+            guard state.pawOutbox.count < 100 else {
+                throw MomentSharingError.stateUnavailable
+            }
+            let item = try MomentPawOutboxItem(
+                clientRequestID: UUID(),
+                momentID: momentID,
+                phase: .pending,
+                serverReactionID: nil,
+                createdAt: now,
+                updatedAt: now
+            ).validated()
+            state.pawOutbox.append(item)
+            queued = item
+        }
+        guard let queued else { throw MomentSharingError.stateUnavailable }
+        return queued
+    }
+
+    private static func validatePawTarget(
+        momentID: String,
+        now: Date,
+        in state: MomentSharingState
+    ) throws {
+        try validateSavedMemoryTarget(momentID: momentID, in: state)
+        guard let item = state.inbox.first(where: { $0.id == momentID }),
+              now < item.accessExpiresAt
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    static func markPawCommitting(
+        clientRequestID: UUID,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard let index = state.pawOutbox.firstIndex(where: {
+                $0.clientRequestID == clientRequestID
+            }) else { throw MomentSharingError.stateUnavailable }
+            guard state.pawOutbox[index].phase != .sent else { return }
+            state.pawOutbox[index].phase = .committing
+            state.pawOutbox[index].updatedAt = max(
+                state.pawOutbox[index].updatedAt,
+                now
+            )
+        }
+    }
+
+    static func markPawSent(
+        clientRequestID: UUID,
+        momentID: String,
+        reactionID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard let index = state.pawOutbox.firstIndex(where: {
+                $0.clientRequestID == clientRequestID
+            }),
+            state.pawOutbox[index].momentID == momentID
+            else { throw MomentSharingError.stateUnavailable }
+            if let existing = state.pawOutbox[index].serverReactionID {
+                guard existing == reactionID else {
+                    throw MomentSharingError.stateUnavailable
+                }
+                return
+            }
+            state.pawOutbox[index].phase = .sent
+            state.pawOutbox[index].serverReactionID = reactionID
+            state.pawOutbox[index].updatedAt = max(
+                state.pawOutbox[index].updatedAt,
+                now
+            )
+        }
+    }
+
+    /// Removes a reaction request only after the relay has returned an
+    /// unambiguous, non-retryable rejection. Ambiguous network and server
+    /// failures keep the stable idempotency key in `.committing`.
+    static func discardRejectedPaw(
+        clientRequestID: UUID,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        _ = try mutate(validating: lifecycleToken) { state in
+            state.pawOutbox.removeAll {
+                $0.clientRequestID == clientRequestID && $0.phase != .sent
+            }
+        }
+    }
+
+    /// Records a paw only for a photo that this installation durably sent.
+    /// The sender sees local observation time, not the recipient's exact tap.
+    @discardableResult
+    static func recordReceivedPaw(
+        reactionID: String,
+        momentID: String,
+        observedAt: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Bool {
+        var inserted = false
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard state.outbox.contains(where: {
+                $0.phase == .committed && $0.serverMomentID == momentID
+            }) else { return }
+            guard !state.receivedPaws.contains(where: {
+                $0.reactionID == reactionID
+                    || $0.momentID == momentID
+            }) else { return }
+            state.receivedPaws.append(
+                try MomentPawReceipt(
+                    reactionID: reactionID,
+                    momentID: momentID,
+                    observedAt: observedAt
+                ).validated()
+            )
+            if state.receivedPaws.count > 100 {
+                state.receivedPaws.sort {
+                    if $0.observedAt != $1.observedAt {
+                        return $0.observedAt > $1.observedAt
+                    }
+                    return $0.reactionID < $1.reactionID
+                }
+                state.receivedPaws = Array(state.receivedPaws.prefix(100))
+            }
+            inserted = true
+        }
+        return inserted
+    }
+
+    @discardableResult
+    static func advanceReactionCursor(
+        expected: String?,
+        next: String?,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> Bool {
+        var advanced = false
+        _ = try mutate(validating: lifecycleToken) { state in
+            guard state.reactionCursor == expected else { return }
+            state.reactionCursor = next
+            advanced = true
+        }
+        return advanced
     }
 
     /// Records a sender-visible device-arrival receipt for a committed item.
@@ -1142,6 +1486,9 @@ enum MomentSharingStateStore {
             $0.phase == .prepared || $0.phase == .reserved
                 || $0.phase == .uploaded || $0.phase == .failed
         }
+        state.pawOutbox.removeAll()
+        state.receivedPaws.removeAll()
+        state.reactionCursor = nil
         pruneOutgoingOutcomes(&state, now: now)
         state.storageRevision += 1
         try writeWhileLocked(try state.validated())
@@ -1326,6 +1673,11 @@ enum MomentSharingStateStore {
             state.savedMemories.removeAll {
                 !retainedMomentIDs.contains($0.momentID)
             }
+            state.pawOutbox.removeAll {
+                !retainedMomentIDs.contains($0.momentID)
+                    || ($0.phase != .sent && $0.createdAt < pendingCutoff)
+                    || ($0.phase == .sent && $0.updatedAt < outboxMetadataCutoff)
+            }
 
             var expiredPending: [MomentOutboxItem] = []
             for index in state.outbox.indices where
@@ -1396,6 +1748,13 @@ enum MomentSharingStateStore {
                 let overflowIDs = Set(overflow.map(\.id))
                 removedOutbox.append(contentsOf: overflow)
                 state.outbox.removeAll { overflowIDs.contains($0.id) }
+            }
+            let retainedSentMomentIDs = Set(state.outbox.compactMap { item in
+                item.phase == .committed ? item.serverMomentID : nil
+            })
+            state.receivedPaws.removeAll {
+                !retainedSentMomentIDs.contains($0.momentID)
+                    || $0.observedAt < outboxMetadataCutoff
             }
             let removedReports = state.reportOutbox.filter {
                 ($0.phase == .committed || $0.phase == .deliveryResultUnknown)

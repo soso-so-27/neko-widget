@@ -107,6 +107,9 @@
 		200000000000000000000003 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010B /* DeepLink.swift */; };
 		200000000000000000000004 /* SharedLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010D /* SharedLog.swift */; };
 		20000000000000000000001C /* DiagnosticLogPrivacy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000113 /* DiagnosticLogPrivacy.swift */; };
+		20000000000000000000001D /* PairingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A0 /* PairingCore.swift */; };
+		20000000000000000000001E /* MomentSharingCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A3 /* MomentSharingCore.swift */; };
+		20000000000000000000001F /* MomentSharingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000001A4 /* MomentSharingStore.swift */; };
 		200000000000000000000005 /* AtomicJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010C /* AtomicJSON.swift */; };
 		200000000000000000000006 /* SharedLikeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010E /* SharedLikeStore.swift */; };
 		200000000000000000000007 /* CatPawMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000010F /* CatPawMark.swift */; };
@@ -946,6 +949,9 @@
 				200000000000000000000003 /* DeepLink.swift in Sources */,
 				200000000000000000000004 /* SharedLog.swift in Sources */,
 				20000000000000000000001C /* DiagnosticLogPrivacy.swift in Sources */,
+				20000000000000000000001D /* PairingCore.swift in Sources */,
+				20000000000000000000001E /* MomentSharingCore.swift in Sources */,
+				20000000000000000000001F /* MomentSharingStore.swift in Sources */,
 				200000000000000000000005 /* AtomicJSON.swift in Sources */,
 				200000000000000000000006 /* SharedLikeStore.swift in Sources */,
 				200000000000000000000007 /* CatPawMark.swift in Sources */,

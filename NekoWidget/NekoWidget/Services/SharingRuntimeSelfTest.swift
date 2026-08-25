@@ -439,6 +439,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("moment-sent-delivery-receipt-boundary") {
             try Self.testMomentSentDeliveryReceiptBoundary()
         })
+        results.append(run("moment-paw-reaction-boundary") {
+            try Self.testMomentPawReactionBoundary()
+        })
         results.append(run("moment-empty-cursor-normalization") {
             try Self.testMomentEmptyCursorNormalization()
         })
@@ -2460,6 +2463,35 @@ actor SharingRuntimeSelfTestRunner {
                 == .acknowledged
         else { throw MomentSharingError.stateUnavailable }
 
+        guard try MomentSharingStateStore.savedMemoryState(
+            momentID: momentID,
+            validating: lifecycleToken
+        ) else { throw MomentSharingError.stateUnavailable }
+        let removed = try MomentSharingStateStore.toggleSavedMemory(
+            momentID: momentID,
+            now: baseDate.addingTimeInterval(3),
+            validating: lifecycleToken
+        )
+        guard removed == MomentSavedMemoryMutation(
+            previousIsSaved: true,
+            isSaved: false
+        ),
+        !(try MomentSharingStateStore.savedMemoryState(
+            momentID: momentID,
+            validating: lifecycleToken
+        )) else { throw MomentSharingError.stateUnavailable }
+        let restored = try MomentSharingStateStore.toggleSavedMemory(
+            momentID: momentID,
+            now: baseDate.addingTimeInterval(1),
+            validating: lifecycleToken
+        )
+        guard restored == MomentSavedMemoryMutation(
+            previousIsSaved: false,
+            isSaved: true
+        ),
+        (try MomentSharingStateStore.load()).savedMemories == saved.savedMemories
+        else { throw MomentSharingError.stateUnavailable }
+
         let blockedMomentID = "moment_saved_then_blocked_fixture"
         let blockedItem = try MomentInboxItem(
             id: blockedMomentID,
@@ -2727,6 +2759,173 @@ actor SharingRuntimeSelfTestRunner {
               )),
               (try MomentSharingStateStore.load().outbox[0])
                 .recipientDeliveryConfirmedAt == firstObservation
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testMomentPawReactionBoundary() throws {
+        try clearMomentSharingFixture()
+        defer { try? clearMomentSharingFixture() }
+
+        let lifecycleToken = try SharingLifecycleGate.issueToken()
+        let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let incomingID = "moment_paw_incoming_fixture"
+        let incoming = try MomentInboxItem(
+            id: incomingID,
+            senderParticipantID: "participant_paw_sender_fixture",
+            kind: .live,
+            keyEpoch: 1,
+            localJPEGFileName: "\(incomingID).jpg",
+            capturedAt: nil,
+            captureDateIsMissing: true,
+            committedAt: now,
+            receivedAt: now,
+            state: .available,
+            accessExpiresAt: now.addingTimeInterval(7 * 24 * 60 * 60)
+        ).validated()
+        _ = try MomentSharingStateStore.publishReceivedJPEG(
+            incoming,
+            jpeg: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+            validating: lifecycleToken
+        )
+        let queued = try MomentSharingStateStore.queuePaw(
+            momentID: incomingID,
+            now: now.addingTimeInterval(1),
+            validating: lifecycleToken
+        )
+        let duplicate = try MomentSharingStateStore.queuePaw(
+            momentID: incomingID,
+            now: now.addingTimeInterval(2),
+            validating: lifecycleToken
+        )
+        guard queued == duplicate,
+              (try MomentSharingStateStore.load()).savedMemories.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+        var expiredPawWasRejected = false
+        do {
+            _ = try MomentSharingStateStore.queuePaw(
+                momentID: incomingID,
+                now: incoming.accessExpiresAt.addingTimeInterval(1),
+                validating: lifecycleToken
+            )
+        } catch MomentSharingError.stateUnavailable {
+            // Expected: history may remain visible after relay reaction access
+            // expires, but it must not create an outbox item that cannot send.
+            expiredPawWasRejected = true
+        }
+        guard expiredPawWasRejected else { throw MomentSharingError.stateUnavailable }
+        try MomentSharingStateStore.markPawCommitting(
+            clientRequestID: queued.clientRequestID,
+            now: now.addingTimeInterval(2),
+            validating: lifecycleToken
+        )
+        try MomentSharingStateStore.discardRejectedPaw(
+            clientRequestID: queued.clientRequestID,
+            validating: lifecycleToken
+        )
+        guard (try MomentSharingStateStore.load()).pawOutbox.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+        let retry = try MomentSharingStateStore.queuePaw(
+            momentID: incomingID,
+            now: now.addingTimeInterval(2),
+            validating: lifecycleToken
+        )
+        try MomentSharingStateStore.markPawCommitting(
+            clientRequestID: retry.clientRequestID,
+            now: now.addingTimeInterval(2),
+            validating: lifecycleToken
+        )
+        try MomentSharingStateStore.markPawSent(
+            clientRequestID: retry.clientRequestID,
+            momentID: incomingID,
+            reactionID: "reaction_paw_fixture",
+            now: now.addingTimeInterval(3),
+            validating: lifecycleToken
+        )
+        guard (try MomentSharingStateStore.load()).pawOutbox.first?.phase == .sent
+        else { throw MomentSharingError.stateUnavailable }
+
+        let tombstone = try MomentInboxItem(
+            id: incoming.id,
+            senderParticipantID: incoming.senderParticipantID,
+            kind: incoming.kind,
+            keyEpoch: incoming.keyEpoch,
+            localJPEGFileName: nil,
+            capturedAt: incoming.capturedAt,
+            captureDateIsMissing: incoming.captureDateIsMissing,
+            committedAt: incoming.committedAt,
+            receivedAt: incoming.receivedAt,
+            state: .revoked,
+            accessExpiresAt: incoming.accessExpiresAt
+        ).validated()
+        try MomentSharingStateStore.revokeInbox(
+            tombstone: tombstone,
+            validating: lifecycleToken
+        )
+        guard (try MomentSharingStateStore.load()).pawOutbox.isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+
+        try clearMomentSharingFixture()
+        let clientMomentID = UUID()
+        let context = MomentRequestContext(
+            spaceID: "space_paw_receipt_fixture",
+            senderParticipantID: "member_paw_receipt_fixture",
+            senderDeviceID: "device_paw_receipt_fixture",
+            clientRequestID: UUID(),
+            clientMomentID: clientMomentID,
+            kind: .live,
+            keyEpoch: 1
+        )
+        let committed = try MomentOutboxItem(
+            id: clientMomentID,
+            context: context,
+            phase: .committed,
+            ciphertextFileName: "\(clientMomentID.uuidString.lowercased()).ciphertext",
+            ciphertextSize: 128,
+            ciphertextSHA256: Data(repeating: 0x52, count: 32),
+            moderationVersion: MomentSharingProtocol.moderationVersion,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: now,
+            serverMomentID: "moment_paw_receipt_fixture",
+            attemptCount: 1,
+            commitStartedAt: now,
+            committedAt: now.addingTimeInterval(1),
+            unreceivedExpiresAt: now.addingTimeInterval(30 * 24 * 60 * 60),
+            recipientCount: 1,
+            createdAt: now,
+            updatedAt: now.addingTimeInterval(1)
+        ).validated()
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.outbox.append(committed)
+        }
+        guard try MomentSharingStateStore.recordReceivedPaw(
+            reactionID: "reaction_paw_received_fixture",
+            momentID: "moment_paw_receipt_fixture",
+            observedAt: now.addingTimeInterval(4),
+            validating: lifecycleToken
+        ),
+        !(try MomentSharingStateStore.recordReceivedPaw(
+            reactionID: "reaction_paw_received_fixture",
+            momentID: "moment_paw_receipt_fixture",
+            observedAt: now.addingTimeInterval(5),
+            validating: lifecycleToken
+        )),
+        try MomentSharingStateStore.advanceReactionCursor(
+            expected: nil,
+            next: "reaction_cursor_fixture",
+            validating: lifecycleToken
+        ),
+        (try MomentSharingStateStore.load()).receivedPaws.count == 1
+        else { throw MomentSharingError.stateUnavailable }
+
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: now.addingTimeInterval(60 * 60),
+            validating: lifecycleToken,
+            now: now
+        )
+        let reportOnly = try MomentSharingStateStore.load()
+        guard reportOnly.pawOutbox.isEmpty,
+              reportOnly.receivedPaws.isEmpty,
+              reportOnly.reactionCursor == nil
         else { throw MomentSharingError.stateUnavailable }
     }
 
@@ -3348,12 +3547,18 @@ actor SharingRuntimeSelfTestRunner {
         ) as? [String: Any]
         schema5Object?["schemaVersion"] = 5
         schema5Object?.removeValue(forKey: "savedMemories")
+        schema5Object?.removeValue(forKey: "reactionCursor")
+        schema5Object?.removeValue(forKey: "pawOutbox")
+        schema5Object?.removeValue(forKey: "receivedPaws")
         var legacyObject = try JSONSerialization.jsonObject(
             with: currentEncoded
         ) as? [String: Any]
         legacyObject?["schemaVersion"] = 3
         legacyObject?.removeValue(forKey: "outgoingOutcomes")
         legacyObject?.removeValue(forKey: "savedMemories")
+        legacyObject?.removeValue(forKey: "reactionCursor")
+        legacyObject?.removeValue(forKey: "pawOutbox")
+        legacyObject?.removeValue(forKey: "receivedPaws")
         if var legacyOutboxItems = legacyObject?["outbox"] as? [[String: Any]],
            !legacyOutboxItems.isEmpty {
             for index in legacyOutboxItems.indices {
@@ -3380,6 +3585,9 @@ actor SharingRuntimeSelfTestRunner {
         let migratedSchema5 = try MomentSharingStateStore.load()
         guard migratedSchema5.schemaVersion == MomentSharingState.schemaVersion,
               migratedSchema5.savedMemories.isEmpty,
+              migratedSchema5.reactionCursor == nil,
+              migratedSchema5.pawOutbox.isEmpty,
+              migratedSchema5.receivedPaws.isEmpty,
               migratedSchema5 == .empty
         else { throw MomentSharingError.stateUnavailable }
 
@@ -3391,6 +3599,9 @@ actor SharingRuntimeSelfTestRunner {
         let migrated = try MomentSharingStateStore.load()
         guard migrated.schemaVersion == MomentSharingState.schemaVersion,
               migrated.savedMemories.isEmpty,
+              migrated.reactionCursor == nil,
+              migrated.pawOutbox.isEmpty,
+              migrated.receivedPaws.isEmpty,
               migrated.outgoingOutcomes.isEmpty,
               migrated.outbox.count == 2,
               let migratedCommitted = migrated.outbox.first(where: {

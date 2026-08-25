@@ -424,6 +424,8 @@ actor MomentSharingCoordinator {
             let handedOff: Int
             let sent: Int
             let received: Int
+            var pawsSent = 0
+            var pawsReceived = 0
             let hasCurrentMediaConsent =
                 loadedAuthorization.state.mediaSharingConsentVersion
                     == PairingMediaSharingConsent.currentVersion
@@ -464,6 +466,28 @@ actor MomentSharingCoordinator {
                     credential: loadedAuthorization.credential,
                     lifecycleToken: loadedAuthorization.lifecycleToken
                 )
+                do {
+                    pawsSent = try await sendPawOutbox(
+                        api: api,
+                        pairing: loadedAuthorization.state,
+                        credential: loadedAuthorization.credential,
+                        lifecycleToken: loadedAuthorization.lifecycleToken
+                    )
+                } catch {
+                    if Self.requiresLocalRevocationReset(error) { throw error }
+                    Self.logNonterminalRequestRejection(error)
+                }
+                do {
+                    pawsReceived = try await receivePawChanges(
+                        api: api,
+                        pairing: loadedAuthorization.state,
+                        credential: loadedAuthorization.credential,
+                        lifecycleToken: loadedAuthorization.lifecycleToken
+                    )
+                } catch {
+                    if Self.requiresLocalRevocationReset(error) { throw error }
+                    Self.logNonterminalRequestRejection(error)
+                }
                 // Do not make a safely committed inbound photo (or a revoke)
                 // wait for the independent window-name request before Home and
                 // Widget publication. `receiveChanges` has already processed
@@ -472,7 +496,9 @@ actor MomentSharingCoordinator {
                 let inboundState = try MomentSharingStateStore.load(
                     validating: loadedAuthorization.lifecycleToken
                 )
-                if inboundState.inbox != localSharingState.inbox {
+                if inboundState.inbox != localSharingState.inbox
+                    || inboundState.pawOutbox != localSharingState.pawOutbox
+                    || inboundState.receivedPaws != localSharingState.receivedPaws {
                     await MainActor.run {
                         NotificationCenter.default.post(
                             name: .momentSharingPresentationNeedsRefresh,
@@ -501,6 +527,8 @@ actor MomentSharingCoordinator {
                     "handedOff": "\(handedOff)",
                     "sent": "\(sent)",
                     "received": "\(received)",
+                    "pawsSent": "\(pawsSent)",
+                    "pawsReceived": "\(pawsReceived)",
                     "windowNameChanged": "\(windowNameChanged)"
                 ]
             )
@@ -1532,6 +1560,134 @@ actor MomentSharingCoordinator {
             }
         }
         return sentCount
+    }
+
+    private func sendPawOutbox(
+        api: any MomentReactionAPIClientProtocol,
+        pairing: PairingState,
+        credential: PairingCredential,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) async throws -> Int {
+        try SharingLifecycleGate.validate(lifecycleToken)
+        let candidates = try MomentSharingStateStore.load(
+            validating: lifecycleToken
+        ).pawOutbox.filter { $0.phase == .pending || $0.phase == .committing }
+            .sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.clientRequestID.uuidString < $1.clientRequestID.uuidString
+            }
+        var sentCount = 0
+        for item in candidates {
+            try Task.checkCancellation()
+            try SharingLifecycleGate.validate(lifecycleToken)
+            try MomentSharingStateStore.markPawCommitting(
+                clientRequestID: item.clientRequestID,
+                validating: lifecycleToken
+            )
+            let result: MomentPawSendResult
+            do {
+                result = try await api.sendPaw(
+                    momentID: item.momentID,
+                    clientRequestID: item.clientRequestID,
+                    pairingState: pairing,
+                    credential: credential
+                )
+            } catch {
+                if Self.requiresLocalRevocationReset(error) { throw error }
+                if Self.isPermanentPawRejection(error) {
+                    try MomentSharingStateStore.discardRejectedPaw(
+                        clientRequestID: item.clientRequestID,
+                        validating: lifecycleToken
+                    )
+                    Self.logNonterminalRequestRejection(error)
+                    continue
+                }
+                throw error
+            }
+            try SharingLifecycleGate.validate(lifecycleToken)
+            try MomentSharingStateStore.markPawSent(
+                clientRequestID: item.clientRequestID,
+                momentID: result.momentID,
+                reactionID: result.reactionID,
+                validating: lifecycleToken
+            )
+            sentCount += 1
+        }
+        return sentCount
+    }
+
+    /// Discard only explicit, resource-specific rejections. Generic rate,
+    /// nonce, authentication, conflict, and unknown failures keep the stable
+    /// idempotency key because a fresh signed retry can still reconcile them.
+    private nonisolated static func isPermanentPawRejection(_ error: Error) -> Bool {
+        guard case let MomentSharingError.requestRejected(_, code, _) = error,
+              let code
+        else { return false }
+        switch code {
+        case "unsupported_protocol", "invalid_field", "invalid_content_length",
+             "body_too_large", "unsupported_media_type", "invalid_json",
+             "query_not_allowed", "active_member_required",
+             "self_reaction_not_allowed", "moment_not_found",
+             "reaction_not_allowed", "reaction_daily_quota_reached":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func receivePawChanges(
+        api: any MomentReactionAPIClientProtocol,
+        pairing: PairingState,
+        credential: PairingCredential,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) async throws -> Int {
+        try SharingLifecycleGate.validate(lifecycleToken)
+        var insertedCount = 0
+        var pageCount = 0
+        while pageCount < 5 {
+            pageCount += 1
+            let state = try MomentSharingStateStore.load(
+                validating: lifecycleToken
+            )
+            let requestedCursor = state.reactionCursor
+            var processedCursor = requestedCursor
+            let result = try await api.pawChanges(
+                after: requestedCursor,
+                pairingState: pairing,
+                credential: credential
+            )
+            try SharingLifecycleGate.validate(lifecycleToken)
+            if result.changes.isEmpty {
+                if result.nextCursor != requestedCursor {
+                    _ = try MomentSharingStateStore.advanceReactionCursor(
+                        expected: requestedCursor,
+                        next: result.nextCursor,
+                        validating: lifecycleToken
+                    )
+                }
+                break
+            }
+            for change in result.changes {
+                if try MomentSharingStateStore.recordReceivedPaw(
+                    reactionID: change.reactionID,
+                    momentID: change.momentID,
+                    observedAt: .now,
+                    validating: lifecycleToken
+                ) {
+                    insertedCount += 1
+                }
+                guard try MomentSharingStateStore.advanceReactionCursor(
+                    expected: processedCursor,
+                    next: change.cursor,
+                    validating: lifecycleToken
+                ) else { return insertedCount }
+                processedCursor = change.cursor
+            }
+            guard result.changes.count == 100,
+                  result.nextCursor != requestedCursor
+            else { break }
+        }
+        return insertedCount
     }
 
     private func receiveChanges(

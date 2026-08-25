@@ -14,6 +14,7 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var manualRefreshCompletedAt: Date?
     @Published private(set) var manualRefreshSucceeded: Bool?
     @Published private(set) var bookmarkActionMessage: String?
+    @Published private(set) var pawActionMessage: String?
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -50,6 +51,7 @@ final class MomentSharingViewModel: ObservableObject {
     var savedMemoryIDs: Set<String> {
         Set(sharingState.savedMemories.map(\.momentID))
     }
+    var receivedPawCount: Int { sharingState.receivedPaws.count }
 
     func bootstrap() async {
         do {
@@ -154,6 +156,51 @@ final class MomentSharingViewModel: ObservableObject {
         savedMemoryIDs.contains(item.id)
     }
 
+    func pawOutboxItem(for item: MomentInboxItem) -> MomentPawOutboxItem? {
+        sharingState.pawOutbox.first { $0.momentID == item.id }
+    }
+
+    func canSendPaw(for item: MomentInboxItem, now: Date = .now) -> Bool {
+        !isReportOnly
+            && (item.state == .available || item.state == .acknowledged)
+            && now < item.accessExpiresAt
+    }
+
+    func sendPaw(_ item: MomentInboxItem) async {
+        guard !isPerformingAction, canSendPaw(for: item)
+        else { return }
+        pawActionMessage = nil
+        isPerformingAction = true
+        defer { isPerformingAction = false }
+        do {
+            let bootstrap = try PairingInstallationGuard.bootstrap()
+            _ = try MomentSharingStateStore.queuePaw(
+                momentID: item.id,
+                validating: bootstrap.lifecycleToken
+            )
+            _ = await coordinator.synchronize(trigger: "explicit-paw")
+            try reload()
+            if pawOutboxItem(for: item)?.phase == .sent {
+                showPawActionMessage("肉球を届けました")
+            } else if pawOutboxItem(for: item) == nil {
+                errorMessage = "この写真には肉球を送れませんでした。"
+            } else {
+                showPawActionMessage("肉球は送信待ちです")
+            }
+            if pawOutboxItem(for: item) != nil {
+                errorMessage = nil
+            }
+        } catch {
+            pawActionMessage = nil
+            errorMessage = "肉球を送れませんでした。時間をおいて、もう一度お試しください。"
+            SharedLog.app.warning(
+                "moment-reaction",
+                "Paw reaction could not be queued",
+                metadata: SharedLog.errorMetadata(error, category: .savedMoment)
+            )
+        }
+    }
+
     func toggleSavedMemory(_ item: MomentInboxItem) async {
         // A bookmark is a lifecycle-validated local ledger mutation. Network
         // synchronization may continue while it changes; only another local
@@ -196,6 +243,17 @@ final class MomentSharingViewModel: ObservableObject {
                   self?.bookmarkActionMessage == message
             else { return }
             self?.bookmarkActionMessage = nil
+        }
+    }
+
+    private func showPawActionMessage(_ message: String) {
+        pawActionMessage = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled,
+                  self?.pawActionMessage == message
+            else { return }
+            self?.pawActionMessage = nil
         }
     }
 

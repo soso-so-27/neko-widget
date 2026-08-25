@@ -161,6 +161,8 @@ enum DiagnosticLogPrivacy {
         "postureTargetCats",
         "postureUnclassified",
         "profiles",
+        "pawsReceived",
+        "pawsSent",
         "quickLimit",
         "received",
         "records",
@@ -290,7 +292,7 @@ enum DiagnosticLogPrivacy {
     /// A caller-controlled value using one of these keys is still discarded
     /// unless it is exactly one of the values below.
     private static let finiteMetadataValues: [String: Set<String>] = [
-        "action": ["liked", "unliked"],
+        "action": ["liked", "removed", "saved", "unliked"],
         "algorithm": ["cat-aware-full-bleed-v6"],
         "authorization": [
             "authorized", "denied", "limited", "notDetermined", "restricted", "unknown",

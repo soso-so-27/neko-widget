@@ -17,14 +17,15 @@ try {
 
   const normalizedOn = structuredClone(onConfig);
   normalizedOn.vars.MOMENT_RUNTIME_ENABLED = "NO";
+  normalizedOn.vars.REACTION_RUNTIME_ENABLED = "NO";
   normalizedOn.vars.WINDOW_NAME_RUNTIME_ENABLED = "NO";
   if (JSON.stringify(normalizedOn) !== JSON.stringify(offConfig)) {
     throw new Error(
-      "The reviewed ON and OFF configs must differ only by both private media runtime flags.",
+      "The reviewed ON and OFF configs must differ only by the three private media runtime flags.",
     );
   }
 
-  console.log("media staging config preflight: PASS (two exact ON/OFF flag differences)");
+  console.log("media staging config preflight: PASS (three exact ON/OFF flag differences)");
   console.log("legacy sharing remains OFF; no Cloudflare deployment was performed");
 } catch (error) {
   console.error(

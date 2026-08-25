@@ -246,6 +246,42 @@ enum WidgetRenderPlanner {
         )
     }
 
+    /// Received-window photos deliberately carry no Vision/cat geometry. Use
+    /// a deterministic center aspect-fill crop so every Widget family is
+    /// edge-to-edge instead of falling back to the blurred fit composition.
+    /// This does not claim to preserve an off-center subject; the unmodified
+    /// received JPEG remains available in the app.
+    static func centeredFullBleedPlan(
+        sourcePixelSize: WidgetSourcePixelSize,
+        variant: WidgetImageVariant
+    ) -> WidgetFamilyRenderPlan {
+        guard sourcePixelSize.isValid else {
+            return WidgetFamilyRenderPlan(
+                sourceRect: .fullSource,
+                compositionMode: .blurredFitFallback
+            )
+        }
+        let imageAspectRatio = CGFloat(sourcePixelSize.width)
+            / CGFloat(sourcePixelSize.height)
+        let canvasAspectRatio = CGFloat(variant.pixelWidth)
+            / CGFloat(variant.pixelHeight)
+        let cropSize: CGSize
+        if imageAspectRatio > canvasAspectRatio {
+            cropSize = CGSize(width: canvasAspectRatio / imageAspectRatio, height: 1)
+        } else {
+            cropSize = CGSize(width: 1, height: imageAspectRatio / canvasAspectRatio)
+        }
+        return WidgetFamilyRenderPlan(
+            sourceRect: WidgetRenderRect(
+                clampedCropRect(
+                    centeredAt: CGPoint(x: 0.5, y: 0.5),
+                    cropSize: cropSize
+                )
+            ),
+            compositionMode: .catFullBleed
+        )
+    }
+
     private static func clampedCropRect(centeredAt focus: CGPoint, cropSize: CGSize) -> CGRect {
         CGRect(
             x: min(max(focus.x - cropSize.width / 2, 0), 1 - cropSize.width),

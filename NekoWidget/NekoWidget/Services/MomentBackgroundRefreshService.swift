@@ -130,6 +130,32 @@ actor MomentBackgroundRefreshService {
         self.notificationCenter = notificationCenter
     }
 
+    /// Returns a privacy-safe presentation state for the in-app notification
+    /// control. The app never needs to expose framework details to the view.
+    func notificationAuthorizationState() async -> MomentNotificationAuthorizationState {
+        let settings = await notificationCenter.notificationSettings()
+        return MomentNotificationAuthorizationState(
+            authorizationStatus: settings.authorizationStatus,
+            alertSetting: settings.alertSetting
+        )
+    }
+
+    /// Upgrades the existing quiet/provisional notification path only after an
+    /// explicit tap. Request alerts alone: no sound, badge, remote capability,
+    /// sender/window label, or shared image is introduced here.
+    func requestVisibleNotificationAuthorization() async
+        -> MomentNotificationAuthorizationState {
+        let settings = await notificationCenter.notificationSettings()
+        guard settings.authorizationStatus != .denied else {
+            return .denied
+        }
+        if settings.authorizationStatus != .authorized
+            && settings.authorizationStatus != .ephemeral {
+            _ = try? await notificationCenter.requestAuthorization(options: [.alert])
+        }
+        return await notificationAuthorizationState()
+    }
+
     /// Returns whether the scheduled task completed safely. A successful
     /// no-op (not paired, consent off, or no new change) is intentionally true;
     /// it tells iOS the task behaved correctly without claiming a delivery.
@@ -166,6 +192,7 @@ actor MomentBackgroundRefreshService {
                 validating: beforeBootstrap.lifecycleToken
             )
             let beforeVisibleIDs = Self.visibleMomentIDs(in: beforeState)
+            let beforePawIDs = Set(beforeState.receivedPaws.map(\.reactionID))
 
             let synchronizationSucceeded = await coordinator.synchronize(
                 trigger: "background-app-refresh"
@@ -193,6 +220,9 @@ actor MomentBackgroundRefreshService {
             let newVisibleCount = Self.visibleMomentIDs(in: afterState)
                 .subtracting(beforeVisibleIDs)
                 .count
+            let newPawCount = Set(afterState.receivedPaws.map(\.reactionID))
+                .subtracting(beforePawIDs)
+                .count
             let afterDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
                 pairing: afterBootstrap.state,
                 validating: afterBootstrap.lifecycleToken
@@ -218,6 +248,9 @@ actor MomentBackgroundRefreshService {
 
             if newVisibleCount > 0 {
                 await postPrivacyMinimizedNewMomentNotification()
+            }
+            if newPawCount > 0 {
+                await postPrivacyMinimizedPawNotification()
             }
             SharedLog.app.info(
                 "moment-background-refresh",
@@ -284,6 +317,25 @@ actor MomentBackgroundRefreshService {
         // media, sender/window label, counter, or audible signal.
         let request = UNNotificationRequest(
             identifier: "moment-arrival-\(UUID().uuidString.lowercased())",
+            content: content,
+            trigger: nil
+        )
+        try? await notificationCenter.add(request)
+    }
+
+    private func postPrivacyMinimizedPawNotification() async {
+        let settings = await notificationCenter.notificationSettings()
+        guard settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+                || settings.authorizationStatus == .ephemeral
+        else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "ねこのまど"
+        content.body = "届けた写真に肉球が届きました。"
+        // No photo, sender/window label, moment identifier, sound, or badge is
+        // attached. Opening the app performs the authenticated state lookup.
+        let request = UNNotificationRequest(
+            identifier: "moment-paw-\(UUID().uuidString.lowercased())",
             content: content,
             trigger: nil
         )
@@ -360,5 +412,31 @@ actor MomentBackgroundRefreshService {
               (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(height)
         else { return nil }
         return resolvedURL
+    }
+}
+
+enum MomentNotificationAuthorizationState: Equatable, Sendable {
+    case checking
+    case notRequested
+    case enabled
+    case quiet
+    case denied
+
+    init(
+        authorizationStatus: UNAuthorizationStatus,
+        alertSetting: UNNotificationSetting
+    ) {
+        switch authorizationStatus {
+        case .notDetermined:
+            self = .notRequested
+        case .authorized, .ephemeral:
+            self = alertSetting == .enabled ? .enabled : .denied
+        case .provisional:
+            self = .quiet
+        case .denied:
+            self = .denied
+        @unknown default:
+            self = .denied
+        }
     }
 }

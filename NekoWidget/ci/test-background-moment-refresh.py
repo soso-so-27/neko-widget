@@ -14,6 +14,9 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.app = (ROOT / "NekoWidget/App/NekoWidgetApp.swift").read_text(
             encoding="utf-8"
         )
+        self.family_window = (
+            ROOT / "NekoWidget/Views/FamilyWindowView.swift"
+        ).read_text(encoding="utf-8")
         with (ROOT / "NekoWidget/Info.plist").open("rb") as handle:
             self.info = plistlib.load(handle)
         with (ROOT / "NekoWidget/NekoWidget.entitlements").open("rb") as handle:
@@ -80,6 +83,42 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, notification)
         self.assertIn(".provisional", self.service)
+
+    def test_visible_notification_authorization_requires_an_explicit_tap(self) -> None:
+        request = self.service.split(
+            "func requestVisibleNotificationAuthorization()", 1
+        )[1].split("/// Returns whether", 1)[0]
+        self.assertIn("requestAuthorization(options: [.alert])", request)
+        self.assertNotIn(".provisional", request)
+        self.assertNotIn(".sound", request)
+        self.assertNotIn(".badge", request)
+        self.assertIn("settings.alertSetting", self.service)
+        self.assertIn("family-window-notification-enable", self.family_window)
+
+    def test_denied_notification_permission_links_to_ios_settings(self) -> None:
+        self.assertIn("family-window-notification-open-settings", self.family_window)
+        self.assertIn("UIApplication.openSettingsURLString", self.family_window)
+        self.assertIn("目立つ通知にする", self.family_window)
+
+    def test_notification_copy_does_not_claim_immediate_delivery(self) -> None:
+        self.assertIn("受信を確認できたときに通知します", self.family_window)
+        self.assertNotIn("写真や肉球が届いたらお知らせします", self.family_window)
+
+    def test_paw_notification_is_text_only_and_privacy_minimized(self) -> None:
+        notification = self.service.split(
+            "private func postPrivacyMinimizedPawNotification()", 1
+        )[1].split("private static func familyWidgetManifest", 1)[0]
+        self.assertIn("届けた写真に肉球が届きました。", notification)
+        self.assertIn("UNMutableNotificationContent", notification)
+        for forbidden in (
+            "UNNotificationAttachment",
+            "content.sound",
+            "content.badge",
+            "windowDisplayName",
+            "senderParticipant",
+            "momentID",
+        ):
+            self.assertNotIn(forbidden, notification)
 
 
 if __name__ == "__main__":

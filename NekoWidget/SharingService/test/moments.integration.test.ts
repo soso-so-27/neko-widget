@@ -12,6 +12,7 @@ import {
   runMomentCleanup,
 } from "../src/moments";
 import { encodeCanonicalFields, signedRequestTranscript } from "../src/protocol";
+import { REACTION_USAGE_RETENTION_DAYS } from "../src/reactions";
 import { runScheduledCleanup } from "../src/scheduled";
 
 interface KeyPair {
@@ -36,6 +37,39 @@ describe("moment runtime kill switch", () => {
         code: "moment_runtime_disabled",
       });
     }
+  });
+
+  it("fails closed for paw reaction routes unless the exact independent flag is enabled", async () => {
+    for (const value of [undefined, "NO", "true", "yes"]) {
+      const disabledEnv = {
+        ...env,
+        REACTION_RUNTIME_ENABLED: value,
+      } as Env;
+      for (const request of [
+        new Request("https://sharing.invalid/v2/reactions/changes"),
+        new Request(
+          "https://sharing.invalid/v2/moments/0000000000000000000000/reactions",
+          { method: "POST" },
+        ),
+      ]) {
+        await expect(route(request, disabledEnv)).rejects.toMatchObject({
+          status: 503,
+          code: "reaction_runtime_disabled",
+        });
+      }
+    }
+    const reactionOnlyEnv = {
+      ...env,
+      MOMENT_RUNTIME_ENABLED: "NO",
+      REACTION_RUNTIME_ENABLED: "YES",
+    } as Env;
+    await expect(route(
+      new Request(
+        "https://sharing.invalid/v2/moments/0000000000000000000000/reactions",
+        { method: "POST" },
+      ),
+      reactionOnlyEnv,
+    )).rejects.toMatchObject({ status: 401, code: "invalid_authentication" });
   });
 
   it("fails closed for window-name routes under their independent exact flag", async () => {
@@ -1247,5 +1281,304 @@ describe("append-only encrypted moments", () => {
     expect(duplicate.status).toBe(409);
     expect((await duplicate.json<{ error: { code: string } }>()).error.code)
       .toBe("already_reported");
+  });
+});
+
+describe("bounded paw reactions", () => {
+  function pawBody(clientRequestId = crypto.randomUUID().toLowerCase()): Record<string, unknown> {
+    return { protocolVersion: 2, clientRequestId, kind: "paw" };
+  }
+
+  it("records one paw, preserves exact idempotency, and exposes a separate sender-only feed", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const momentID = published.reservation.moment.id;
+    const body = pawBody();
+
+    const created = await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.invitee,
+      body,
+    );
+    expect(created.status).toBe(201);
+    const first = await created.json<{
+      protocolVersion: number;
+      reaction: { id: string; momentId: string; kind: string };
+      alreadyReacted: boolean;
+    }>();
+    expect(first).toEqual({
+      protocolVersion: 2,
+      reaction: {
+        id: first.reaction.id,
+        momentId: momentID,
+        kind: "paw",
+      },
+      alreadyReacted: false,
+    });
+    expect(Object.keys(first).sort()).toEqual([
+      "alreadyReacted",
+      "protocolVersion",
+      "reaction",
+    ]);
+    expect(Object.keys(first.reaction).sort()).toEqual(["id", "kind", "momentId"]);
+
+    const exactReplay = await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.invitee,
+      body,
+    );
+    expect(exactReplay.status).toBe(201);
+    expect(await exactReplay.json()).toEqual(first);
+
+    const duplicate = await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.invitee,
+      pawBody(),
+    );
+    expect(duplicate.status).toBe(200);
+    expect(await duplicate.json()).toEqual({ ...first, alreadyReacted: true });
+
+    const senderChangesResponse = await signedFetch(
+      "/v2/reactions/changes",
+      "GET",
+      space.owner,
+    );
+    expect(senderChangesResponse.status).toBe(200);
+    const senderChanges = await senderChangesResponse.json<{
+      protocolVersion: number;
+      changes: Array<{
+        cursor: string;
+        type: string;
+        reaction: { id: string; momentId: string; kind: string };
+      }>;
+      nextCursor: string;
+    }>();
+    expect(senderChanges.protocolVersion).toBe(2);
+    expect(senderChanges.changes).toEqual([{
+      cursor: senderChanges.nextCursor,
+      type: "pawReceived",
+      reaction: { id: first.reaction.id, momentId: momentID, kind: "paw" },
+    }]);
+    expect(Object.keys(senderChanges.changes[0] ?? {}).sort())
+      .toEqual(["cursor", "reaction", "type"]);
+    expect(Object.keys(senderChanges.changes[0]?.reaction ?? {}).sort())
+      .toEqual(["id", "kind", "momentId"]);
+
+    const emptySenderPage = await signedFetch(
+      `/v2/reactions/changes/${senderChanges.nextCursor}`,
+      "GET",
+      space.owner,
+    );
+    expect(emptySenderPage.status).toBe(200);
+    expect((await emptySenderPage.json<{ changes: unknown[] }>()).changes).toEqual([]);
+    const reactorFeed = await signedFetch(
+      "/v2/reactions/changes",
+      "GET",
+      space.invitee,
+    );
+    expect(reactorFeed.status).toBe(200);
+    expect((await reactorFeed.json<{ changes: unknown[] }>()).changes).toEqual([]);
+
+    const originalMomentFeed = await signedFetch(
+      "/v2/moments/changes",
+      "GET",
+      space.invitee,
+    );
+    expect(originalMomentFeed.status).toBe(200);
+    const momentChanges = await originalMomentFeed.json<{
+      changes: Array<{ type: string; moment: { id: string } }>;
+    }>();
+    expect(momentChanges.changes).toHaveLength(1);
+    expect(momentChanges.changes[0]).toMatchObject({
+      type: "momentCommitted",
+      moment: { id: momentID },
+    });
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM moment_reactions WHERE moment_id = ?",
+    ).bind(momentID).first<{ count: number }>())?.count).toBe(1);
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM reaction_changes WHERE reaction_id = ?",
+    ).bind(first.reaction.id).first<{ count: number }>())?.count).toBe(1);
+    expect((await testEnv.DB.prepare(
+      `SELECT reaction_count FROM moment_reaction_daily_usage
+        WHERE participant_id = ?`,
+    ).bind(space.invitee.id).first<{ reaction_count: number }>())?.reaction_count).toBe(1);
+  });
+
+  it("accepts an acknowledged delivery, rejects self and expired access, and consumes replayed nonces", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const momentID = published.reservation.moment.id;
+
+    const changesResponse = await signedFetch(
+      "/v2/moments/changes",
+      "GET",
+      space.invitee,
+    );
+    const changes = await changesResponse.json<{
+      changes: Array<{ moment: { ciphertextSHA256: string } }>;
+    }>();
+    expect((await signedFetch(
+      `/v2/moments/${momentID}/ack`,
+      "POST",
+      space.invitee,
+      {
+        protocolVersion: 2,
+        clientRequestId: crypto.randomUUID().toLowerCase(),
+        ciphertextSHA256: changes.changes[0]?.moment.ciphertextSHA256,
+      },
+    )).status).toBe(200);
+
+    const nonce = randomValue(16);
+    const body = pawBody();
+    expect((await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.invitee,
+      body,
+      nonce,
+    )).status).toBe(201);
+    const replayedNonce = await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.invitee,
+      body,
+      nonce,
+    );
+    expect(replayedNonce.status).toBe(409);
+    expect((await replayedNonce.json<{ error: { code: string } }>()).error.code)
+      .toBe("replayed_request");
+
+    const self = await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.owner,
+      pawBody(),
+    );
+    expect(self.status).toBe(403);
+    expect((await self.json<{ error: { code: string } }>()).error.code)
+      .toBe("self_reaction_not_allowed");
+
+    const expiredSpace = await seedActiveSpace();
+    const expired = await publish(expiredSpace.owner);
+    await testEnv.DB.prepare(
+      `UPDATE moment_deliveries SET access_expires_at = ?
+        WHERE moment_id = ? AND recipient_participant_id = ?`,
+    ).bind(
+      Math.floor(Date.now() / 1000) - 1,
+      expired.reservation.moment.id,
+      expiredSpace.invitee.id,
+    ).run();
+    const denied = await signedFetch(
+      `/v2/moments/${expired.reservation.moment.id}/reactions`,
+      "POST",
+      expiredSpace.invitee,
+      pawBody(),
+    );
+    expect(denied.status).toBe(410);
+    expect((await denied.json<{ error: { code: string } }>()).error.code)
+      .toBe("reaction_not_allowed");
+  });
+
+  it("enforces the daily quota without charging duplicates", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const now = Math.floor(Date.now() / 1000);
+    await testEnv.DB.prepare(
+      `INSERT INTO moment_reaction_daily_usage(
+         participant_id, day_key, reaction_count, updated_at
+       ) VALUES (?, ?, 30, ?)`,
+    ).bind(space.invitee.id, Math.floor(now / 86_400), now).run();
+    const denied = await signedFetch(
+      `/v2/moments/${published.reservation.moment.id}/reactions`,
+      "POST",
+      space.invitee,
+      pawBody(),
+    );
+    expect(denied.status).toBe(429);
+    expect((await denied.json<{ error: { code: string } }>()).error.code)
+      .toBe("reaction_daily_quota_reached");
+
+    const oldDay = Math.floor(now / 86_400) - REACTION_USAGE_RETENTION_DAYS - 1;
+    const boundaryDay = Math.floor(now / 86_400) - REACTION_USAGE_RETENTION_DAYS;
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO moment_reaction_daily_usage(
+           participant_id, day_key, reaction_count, updated_at
+         ) VALUES (?, ?, 1, ?)`,
+      ).bind(space.invitee.id, oldDay, now),
+      testEnv.DB.prepare(
+        `INSERT INTO moment_reaction_daily_usage(
+           participant_id, day_key, reaction_count, updated_at
+         ) VALUES (?, ?, 1, ?)`,
+      ).bind(space.invitee.id, boundaryDay, now),
+    ]);
+    await runMomentCleanup(testEnv, now);
+    expect(await testEnv.DB.prepare(
+      `SELECT day_key FROM moment_reaction_daily_usage
+        WHERE participant_id = ? AND day_key = ?`,
+    ).bind(space.invitee.id, oldDay).first()).toBeNull();
+    expect(await testEnv.DB.prepare(
+      `SELECT day_key FROM moment_reaction_daily_usage
+        WHERE participant_id = ? AND day_key = ?`,
+    ).bind(space.invitee.id, boundaryDay).first()).not.toBeNull();
+  });
+
+  it("removes reaction state and replay records when delivery trust is revoked", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const momentID = published.reservation.moment.id;
+    const created = await signedFetch(
+      `/v2/moments/${momentID}/reactions`,
+      "POST",
+      space.invitee,
+      pawBody(),
+    );
+    expect(created.status).toBe(201);
+    const reactionID = (await created.json<{ reaction: { id: string } }>()).reaction.id;
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM moment_reactions WHERE moment_id = ?",
+    ).bind(momentID).first<{ count: number }>())?.count).toBe(1);
+
+    const consumed = await signedFetch(
+      "/v2/reactions/changes",
+      "GET",
+      space.owner,
+    );
+    expect(consumed.status).toBe(200);
+    const consumedCursor = (await consumed.json<{ nextCursor: string }>()).nextCursor;
+    expect(consumedCursor).not.toBe("");
+
+    const block = await signedFetch(
+      `/v2/participants/${space.invitee.id}/block`,
+      "POST",
+      space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() },
+    );
+    expect(block.status).toBe(200);
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM moment_reactions WHERE moment_id = ?",
+    ).bind(momentID).first<{ count: number }>())?.count).toBe(0);
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM reaction_changes WHERE reaction_id = ?",
+    ).bind(reactionID).first<{ count: number }>())?.count).toBe(0);
+    expect((await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM reaction_changes
+        WHERE cursor = ? AND reaction_id IS NULL AND created_at IS NOT NULL`,
+    ).bind(consumedCursor).first<{ count: number }>())?.count).toBe(1);
+    expect((await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM idempotency_records
+        WHERE operation = 'post-paw-reaction' AND space_id = ?`,
+    ).bind(space.id).first<{ count: number }>())?.count).toBe(0);
+    const afterDeletedCursor = await signedFetch(
+      `/v2/reactions/changes/${consumedCursor}`,
+      "GET",
+      space.owner,
+    );
+    expect(afterDeletedCursor.status).toBe(200);
+    expect((await afterDeletedCursor.json<{ changes: unknown[] }>()).changes).toEqual([]);
   });
 });

@@ -82,11 +82,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             cacheFilename: item.cacheFilename(for: variant),
             imageVariant: variant,
             photoSourceIdentifier: source.id,
+            familySourceDigest: nil,
             usesFamilySpecificImage: item.cacheFilenames != nil,
             familyMomentIsFresh: false,
             windowDisplayName: PrivateWindowDisplayName.fallback,
             isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
-            isLikeInteractionEnabled: likeState.isInteractionReady
+            isLikeInteractionEnabled: likeState.isInteractionReady,
+            isBookmarked: false,
+            isBookmarkInteractionEnabled: false
         )
     }
 
@@ -163,11 +166,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 cacheFilename: item.cacheFilename(for: variant),
                 imageVariant: variant,
                 photoSourceIdentifier: source.id,
+                familySourceDigest: nil,
                 usesFamilySpecificImage: item.cacheFilenames != nil,
                 familyMomentIsFresh: false,
                 windowDisplayName: PrivateWindowDisplayName.fallback,
                 isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
-                isLikeInteractionEnabled: likeState.isInteractionReady
+                isLikeInteractionEnabled: likeState.isInteractionReady,
+                isBookmarked: false,
+                isBookmarkInteractionEnabled: false
             )
         }
 
@@ -283,18 +289,44 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         now: Date,
         windowDisplayName: String
     ) -> NekoWidgetEntry {
-        NekoWidgetEntry(
+        let bookmarkState = familyBookmarkState(for: item)
+        return NekoWidgetEntry(
             date: date,
             localIdentifier: nil,
             cacheFilename: item.cacheFilenames.filename(for: variant),
             imageVariant: variant,
             photoSourceIdentifier: WidgetPhotoSource.familyWindowID,
+            familySourceDigest: item.sourceDigest,
             usesFamilySpecificImage: true,
             familyMomentIsFresh: now >= item.receivedAt && now < item.freshUntil,
             windowDisplayName: windowDisplayName,
             isLiked: false,
-            isLikeInteractionEnabled: false
+            isLikeInteractionEnabled: false,
+            isBookmarked: bookmarkState ?? false,
+            isBookmarkInteractionEnabled: bookmarkState != nil
         )
+    }
+
+    private func familyBookmarkState(
+        for item: FamilyWidgetManifestItem
+    ) -> Bool? {
+        guard item.hasValidBookmarkTarget, let momentID = item.momentID else {
+            return nil
+        }
+        do {
+            let lifecycleToken = try SharingLifecycleGate.issueToken()
+            return try MomentSharingStateStore.savedMemoryState(
+                momentID: momentID,
+                validating: lifecycleToken
+            )
+        } catch {
+            SharedLog.widget.warning(
+                "bookmark",
+                "Family Widget bookmark state is unavailable",
+                metadata: ["source": SharedLog.shortHash(item.sourceDigest)]
+            )
+            return nil
+        }
     }
 
     private func availableItems(

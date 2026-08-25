@@ -38,7 +38,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("familyWidget", personal_clear)
         self.assertNotIn("family-widget", personal_clear)
 
-    def test_family_manifest_contains_no_routable_identity(self) -> None:
+    def test_family_manifest_exposes_only_a_local_opaque_bookmark_target(self) -> None:
         models = source("Shared/Models/WidgetManifest.swift")
         family_models = section(
             models,
@@ -46,9 +46,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "/// Each widget family records",
         )
         self.assertIn("sourceDigest", family_models)
-        self.assertNotIn("momentID", family_models)
+        self.assertIn("var momentID: String? = nil", family_models)
+        self.assertIn("hasValidBookmarkTarget", family_models)
+        self.assertIn("isOpaqueIdentifier", family_models)
         self.assertNotIn("participant", family_models.lower())
         self.assertNotIn("localIdentifier", family_models)
+        self.assertNotIn("room", family_models.lower())
 
     def test_family_publication_revalidates_lifecycle_and_state(self) -> None:
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
@@ -112,17 +115,158 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("localIdentifier: nil", family_entry)
         self.assertIn("isLiked: false", family_entry)
         self.assertIn("isLikeInteractionEnabled: false", family_entry)
+        self.assertIn("familySourceDigest: item.sourceDigest", family_entry)
+        self.assertIn("isBookmarked: bookmarkState ?? false", family_entry)
+        self.assertIn("isBookmarkInteractionEnabled: bookmarkState != nil", family_entry)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn(
             "entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID",
             view,
         )
+        self.assertIn("ToggleFamilyWidgetBookmarkIntent", view)
+        self.assertIn('entry.isBookmarked ? "bookmark.fill" : "bookmark"', view)
+        self.assertIn("このiPhoneだけのしおりです。相手には送られません", view)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
         self.assertIn('components.host = "family-window"', deep_link)
         entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
         self.assertIn("return DeepLink.familyWindow()", entry)
+
+    def test_family_widget_bookmark_is_local_atomic_and_fail_closed(self) -> None:
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        toggle = section(
+            store,
+            "static func toggleSavedMemory(",
+            "private static func validateSavedMemoryTarget(",
+        )
+        self.assertIn("mutate(validating: lifecycleToken)", toggle)
+        self.assertIn("state.savedMemories.removeAll", toggle)
+        self.assertIn("MomentSavedMemoryRecord", toggle)
+        self.assertNotIn("outbox", toggle.lower())
+        self.assertNotIn("URLSession", toggle)
+
+        intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
+        family_intent = section(
+            intent,
+            "struct ToggleFamilyWidgetBookmarkIntent",
+            "private static func bookmarkMomentID",
+        )
+        self.assertIn("static var isDiscoverable = false", family_intent)
+        self.assertIn("static var openAppWhenRun = false", family_intent)
+        self.assertIn("Self.bookmarkMomentID", family_intent)
+        self.assertIn("MomentSharingStateStore.toggleSavedMemory", family_intent)
+        self.assertIn('reloadTimelines(ofKind: "NekoWidget")', family_intent)
+        self.assertNotIn("URLSession", family_intent)
+        self.assertNotIn("MomentOutbox", family_intent)
+
+        models = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
+        resolver = section(
+            models,
+            "private static func bookmarkMomentID",
+            "\n}\n",
+        )
+        self.assertIn("item.sourceDigest == sourceDigest", resolver)
+        self.assertIn("item.hasValidBookmarkTarget", resolver)
+
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        widget_sources = section(
+            project,
+            "A00000000000000000000025 /* Sources */ = {",
+            "A00000000000000000000028 /* Sources */",
+        )
+        self.assertIn("MomentSharingCore.swift in Sources", widget_sources)
+        self.assertIn("MomentSharingStore.swift in Sources", widget_sources)
+
+    def test_paw_reaction_is_explicit_and_separate_from_bookmark(self) -> None:
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        bookmark = section(
+            store,
+            "static func toggleSavedMemory(",
+            "private static func validateSavedMemoryTarget(",
+        )
+        paw = section(
+            store,
+            "static func queuePaw(",
+            "static func markPawCommitting(",
+        )
+        self.assertNotIn("pawOutbox", bookmark)
+        self.assertNotIn("URLSession", bookmark)
+        self.assertIn("state.pawOutbox.append", paw)
+        self.assertIn("validatePawTarget", paw)
+
+        paw_target = section(
+            store,
+            "private static func validatePawTarget(",
+            "static func markPawCommitting(",
+        )
+        self.assertIn("validateSavedMemoryTarget", paw_target)
+        self.assertIn("now < item.accessExpiresAt", paw_target)
+        self.assertIn("discardRejectedPaw", store)
+
+        family_view = source("NekoWidget/Views/FamilyWindowView.swift")
+        self.assertIn("family-window-send-paw", family_view)
+        self.assertIn("相手に肉球を送る", family_view)
+        self.assertIn("family-window-save-memory", family_view)
+        self.assertIn('Text("自分だけ")', family_view)
+        self.assertIn('Text("相手へ")', family_view)
+
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        self.assertIn("sendPawOutbox", coordinator)
+        self.assertIn("receivePawChanges", coordinator)
+        self.assertIn("advanceReactionCursor", coordinator)
+        self.assertIn("isPermanentPawRejection", coordinator)
+        self.assertIn("discardRejectedPaw", coordinator)
+        permanent = section(
+            coordinator,
+            "private nonisolated static func isPermanentPawRejection",
+            "private func receivePawChanges(",
+        )
+        self.assertIn('"reaction_not_allowed"', permanent)
+        self.assertIn('"reaction_daily_quota_reached"', permanent)
+        for retryable_code in (
+            "rate_limited",
+            "stale_request",
+            "replayed_request",
+            "reaction_conflict",
+            "invalid_authentication",
+        ):
+            self.assertNotIn(f'"{retryable_code}"', permanent)
+
+        api = source("NekoWidget/Services/MomentSharingAPIClient.swift")
+        paw_change = section(api, "struct MomentPawChange", "struct MomentPawChangesResult")
+        paw_response = section(
+            api,
+            "private struct PawReactionChangesResponse",
+            "private struct BlockResponse",
+        )
+        self.assertNotIn("createdAt", paw_change)
+        self.assertNotIn("createdAt", paw_response)
+
+    def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
+        plans = source("Shared/Models/WidgetRenderPlan.swift")
+        centered = section(
+            plans,
+            "static func centeredFullBleedPlan(",
+            "private static func clampedCropRect",
+        )
+        self.assertIn("centeredAt: CGPoint(x: 0.5, y: 0.5)", centered)
+        self.assertIn("compositionMode: .catFullBleed", centered)
+
+        builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
+        publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
+        self.assertEqual(publication.count("centeredFullBleedPlan("), 3)
+        self.assertIn("family-widget-v2-full-bleed-bookmark", builder)
+        self.assertIn("momentID: source.item.id", publication)
+
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        family_image = section(
+            view,
+            "if entry.usesFamilySpecificImage",
+            "} else {\n                            // During an app/extension update",
+        )
+        self.assertIn(".scaledToFill()", family_image)
+        self.assertIn(".clipped()", family_image)
 
     def test_unknown_source_does_not_fall_back_to_personal(self) -> None:
         reader = source("NekoWidgetWidget/WidgetManifestReader.swift")
@@ -870,14 +1014,14 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         record = section(
             store,
             "struct MomentSavedMemoryRecord",
-            "struct MomentSharingState",
+            "struct MomentSavedMemoryMutation",
         )
         save = section(
             store,
             "static func setSavedMemory(",
             "/// Opaque relay cursors",
         )
-        self.assertIn("static let schemaVersion = 6", store)
+        self.assertIn("static let schemaVersion = 7", store)
         self.assertIn("momentID", record)
         self.assertIn("savedAt", record)
         self.assertNotIn("localJPEGFileName", record)

@@ -21,6 +21,7 @@ REQUIRED_CASES = {
     "moment-report-only-terminal-gate",
     "moment-saved-memory-boundary",
     "moment-sent-delivery-receipt-boundary",
+    "moment-paw-reaction-boundary",
     "moment-empty-cursor-normalization",
     "moment-expired-delivery-advances",
     "moment-install-bound-handoff",

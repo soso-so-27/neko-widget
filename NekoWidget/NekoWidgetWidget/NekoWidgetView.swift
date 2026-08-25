@@ -62,7 +62,7 @@ struct NekoWidgetView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            likeButton
+            photoActionButton
         }
         .overlay(alignment: .topLeading) {
             familySourceLabel
@@ -74,10 +74,34 @@ struct NekoWidgetView: View {
     }
 
     @ViewBuilder
-    private var likeButton: some View {
-        if let localIdentifier = entry.localIdentifier,
-           entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
-           entry.isLikeInteractionEnabled {
+    private var photoActionButton: some View {
+        if entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID,
+           let sourceDigest = entry.familySourceDigest,
+           entry.isBookmarkInteractionEnabled {
+            Button(
+                intent: ToggleFamilyWidgetBookmarkIntent(
+                    sourceDigest: sourceDigest
+                )
+            ) {
+                ZStack {
+                    Circle()
+                        .fill(.black.opacity(0.52))
+
+                    Image(systemName: entry.isBookmarked ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: bookmarkIconSize, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .invalidatableContent()
+                }
+                .frame(width: actionButtonSize, height: actionButtonSize)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(entry.isBookmarked ? "しおりを外す" : "しおりを付ける")
+            .accessibilityHint("このiPhoneだけのしおりです。相手には送られません")
+            .padding(actionButtonInset)
+        } else if let localIdentifier = entry.localIdentifier,
+                  entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
+                  entry.isLikeInteractionEnabled {
             Button(
                 intent: ToggleWidgetLikeIntent(
                     localIdentifier: localIdentifier,
@@ -93,13 +117,13 @@ struct NekoWidgetView: View {
                         .foregroundStyle(.white)
                         .invalidatableContent()
                 }
-                .frame(width: pawButtonSize, height: pawButtonSize)
+                .frame(width: actionButtonSize, height: actionButtonSize)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(entry.isLiked ? "好きを解除" : "これ好き")
             .accessibilityHint("アプリを開かずに、この写真の好き状態を切り替えます")
-            .padding(pawButtonInset)
+            .padding(actionButtonInset)
         }
     }
 
@@ -122,7 +146,7 @@ struct NekoWidgetView: View {
         }
     }
 
-    private var pawButtonSize: CGFloat {
+    private var actionButtonSize: CGFloat {
         switch family {
         case .systemSmall:
             return 38
@@ -142,7 +166,11 @@ struct NekoWidgetView: View {
         }
     }
 
-    private var pawButtonInset: CGFloat {
+    private var bookmarkIconSize: CGFloat {
+        family == .systemSmall ? 16 : 18
+    }
+
+    private var actionButtonInset: CGFloat {
         family == .systemSmall ? 8 : 10
     }
 
@@ -201,11 +229,14 @@ enum AppStoreWidgetPreviewFixture {
             cacheFilename: cacheFilename,
             imageVariant: variant,
             photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
+            familySourceDigest: nil,
             usesFamilySpecificImage: true,
             familyMomentIsFresh: false,
             windowDisplayName: PrivateWindowDisplayName.fallback,
             isLiked: false,
-            isLikeInteractionEnabled: false
+            isLikeInteractionEnabled: false,
+            isBookmarked: false,
+            isBookmarkInteractionEnabled: false
         )
     }
 

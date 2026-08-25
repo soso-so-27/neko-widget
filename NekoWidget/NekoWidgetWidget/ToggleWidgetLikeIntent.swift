@@ -85,3 +85,89 @@ struct ToggleWidgetLikeIntent: AppIntent {
         return formatter.string(from: date)
     }
 }
+
+/// The family-photo bookmark is a different action and namespace from the
+/// personal-library paw. It mutates only the lifecycle-protected local moment
+/// state; it never creates a relay request or notifies the other participant.
+struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
+    static var title: LocalizedStringResource = "届いた写真のしおりを切り替える"
+    static var description = IntentDescription(
+        "表示中の届いた写真に、このiPhoneだけのしおりを付け外しします。"
+    )
+    static var isDiscoverable = false
+    static var openAppWhenRun = false
+
+    @Parameter(title: "表示写真キー")
+    var sourceDigest: String
+
+    init() {
+        sourceDigest = ""
+    }
+
+    init(sourceDigest: String) {
+        self.sourceDigest = sourceDigest
+    }
+
+    func perform() async throws -> some IntentResult {
+        guard let momentID = Self.bookmarkMomentID(
+            forSourceDigest: sourceDigest
+        ) else {
+            SharedLog.widget.warning(
+                "bookmark",
+                "Stale or invalid Family Widget bookmark action was ignored",
+                metadata: ["source": SharedLog.shortHash(sourceDigest)]
+            )
+            return .result()
+        }
+
+        do {
+            let lifecycleToken = try SharingLifecycleGate.issueToken()
+            let mutation = try MomentSharingStateStore.toggleSavedMemory(
+                momentID: momentID,
+                now: Date(),
+                validating: lifecycleToken
+            )
+            let action = mutation.isSaved ? "saved" : "removed"
+            SharedLog.widget.info(
+                "bookmark",
+                "Family Widget bookmark state changed locally",
+                metadata: [
+                    "action": action,
+                    "source": SharedLog.shortHash(sourceDigest),
+                ]
+            )
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+        } catch {
+            SharedLog.widget.error(
+                "bookmark",
+                "Family Widget bookmark state change failed",
+                metadata: SharedLog.errorMetadata(
+                    error,
+                    category: .widgetLike,
+                    additional: ["source": SharedLog.shortHash(sourceDigest)]
+                )
+            )
+            throw error
+        }
+        return .result()
+    }
+
+    /// Resolves only the currently published family image. An intent from a
+    /// stale Widget generation fails closed instead of changing another
+    /// photo. The opaque moment ID stays in App Group storage and is never an
+    /// App Intent parameter.
+    private static func bookmarkMomentID(forSourceDigest sourceDigest: String) -> String? {
+        guard sourceDigest.utf8.count == 64,
+              sourceDigest.utf8.allSatisfy({
+                  ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+              }),
+              let url = SharedContainer.familyWidgetManifestURL,
+              let manifest = try? AtomicJSON.read(FamilyWidgetManifest.self, from: url),
+              manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
+              let item = manifest.item,
+              item.sourceDigest == sourceDigest,
+              item.hasValidBookmarkTarget
+        else { return nil }
+        return item.momentID
+    }
+}

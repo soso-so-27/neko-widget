@@ -26,6 +26,7 @@ import {
 } from "./http";
 import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
 import { encodeCanonicalFields, signedRequestTranscript } from "./protocol";
+import { REACTION_USAGE_RETENTION_DAYS } from "./reactions";
 import {
   asObject,
   binaryField,
@@ -3083,6 +3084,17 @@ export async function runMomentCleanup(
            ORDER BY day_key ASC, participant_id ASC LIMIT ?
         )`,
     ).bind(Math.floor(now / 86_400) - 90, cleanupRowLimit),
+    env.DB.prepare(
+      `DELETE FROM moment_reaction_daily_usage
+        WHERE rowid IN (
+          SELECT rowid FROM moment_reaction_daily_usage
+           WHERE day_key < ?
+           ORDER BY day_key ASC, participant_id ASC LIMIT ?
+        )`,
+    ).bind(
+      Math.floor(now / 86_400) - REACTION_USAGE_RETENTION_DAYS,
+      cleanupRowLimit,
+    ),
   ]);
 
   if (env.MEDIA === undefined && env.MODERATION_MEDIA === undefined) return;

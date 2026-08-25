@@ -10,11 +10,14 @@ struct NekoWidgetEntry: TimelineEntry {
     let cacheFilename: String?
     let imageVariant: WidgetImageVariant?
     let photoSourceIdentifier: String
+    let familySourceDigest: String?
     let usesFamilySpecificImage: Bool
     let familyMomentIsFresh: Bool
     let windowDisplayName: String
     let isLiked: Bool
     let isLikeInteractionEnabled: Bool
+    let isBookmarked: Bool
+    let isBookmarkInteractionEnabled: Bool
 
     static func empty(
         at date: Date,
@@ -28,11 +31,14 @@ struct NekoWidgetEntry: TimelineEntry {
             cacheFilename: nil,
             imageVariant: imageVariant,
             photoSourceIdentifier: photoSourceIdentifier,
+            familySourceDigest: nil,
             usesFamilySpecificImage: false,
             familyMomentIsFresh: false,
             windowDisplayName: windowDisplayName,
             isLiked: false,
-            isLikeInteractionEnabled: false
+            isLikeInteractionEnabled: false,
+            isBookmarked: false,
+            isBookmarkInteractionEnabled: false
         )
     }
 

@@ -501,6 +501,7 @@ actor WidgetCacheBuilder {
         if let active = try? AtomicJSON.read(FamilyWidgetManifest.self, from: manifestURL),
            active.schemaVersion == FamilyWidgetManifest.schemaVersion,
            active.item?.sourceDigest == source.sourceDigest,
+           active.item?.momentID == source.item.id,
            active.item?.receivedAt == source.item.receivedAt,
            active.item?.freshUntil == freshUntil,
            active.item?.cacheFilenames == filenames,
@@ -541,9 +542,19 @@ actor WidgetCacheBuilder {
                   sourcePixelSize.width <= MomentSharingProtocol.maximumCanonicalPixelDimension,
                   sourcePixelSize.height <= MomentSharingProtocol.maximumCanonicalPixelDimension
             else { throw MomentSharingError.invalidPayload }
-            let renderPlans = WidgetRenderPlanner.plans(
-                visionBoundingBox: nil,
-                sourcePixelSize: sourcePixelSize
+            let renderPlans = WidgetRenderPlans(
+                small: WidgetRenderPlanner.centeredFullBleedPlan(
+                    sourcePixelSize: sourcePixelSize,
+                    variant: .small
+                ),
+                medium: WidgetRenderPlanner.centeredFullBleedPlan(
+                    sourcePixelSize: sourcePixelSize,
+                    variant: .medium
+                ),
+                large: WidgetRenderPlanner.centeredFullBleedPlan(
+                    sourcePixelSize: sourcePixelSize,
+                    variant: .large
+                )
             )
             let ciContext = Self.makeCIContext()
             return try Self.RenderSpec.all.map { spec in
@@ -590,6 +601,7 @@ actor WidgetCacheBuilder {
             let manifest = FamilyWidgetManifest(
                 item: FamilyWidgetManifestItem(
                     sourceDigest: source.sourceDigest,
+                    momentID: source.item.id,
                     cacheFilenames: filenames,
                     receivedAt: source.item.receivedAt,
                     freshUntil: freshUntil
@@ -697,7 +709,7 @@ actor WidgetCacheBuilder {
 
     private static func familySourceDigest(for item: MomentInboxItem) -> String {
         let identity = [
-            "family-widget-v1",
+            "family-widget-v2-full-bleed-bookmark",
             item.id,
             String(item.committedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
             String(item.receivedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16)

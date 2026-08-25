@@ -40,6 +40,23 @@ struct MomentChangesResult: Sendable {
     let nextCursor: String?
 }
 
+struct MomentPawSendResult: Sendable {
+    let reactionID: String
+    let momentID: String
+    let alreadyReacted: Bool
+}
+
+struct MomentPawChange: Sendable {
+    let cursor: String
+    let reactionID: String
+    let momentID: String
+}
+
+struct MomentPawChangesResult: Sendable {
+    let changes: [MomentPawChange]
+    let nextCursor: String?
+}
+
 struct PrivateWindowNameRelayValue: Equatable, Sendable {
     let ownerMemberID: String
     let ownerRevision: Int
@@ -263,8 +280,25 @@ protocol PrivateWindowNameAPIClientProtocol: Sendable {
     ) async throws -> PrivateWindowNameRelayValue
 }
 
+/// A separate append-only feed keeps lightweight reactions from changing the
+/// encrypted photo-delivery protocol or its cursor compatibility boundary.
+protocol MomentReactionAPIClientProtocol: Sendable {
+    func sendPaw(
+        momentID: String,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentPawSendResult
+
+    func pawChanges(
+        after cursor: String?,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentPawChangesResult
+}
+
 actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
-    PrivateWindowNameAPIClientProtocol {
+    PrivateWindowNameAPIClientProtocol, MomentReactionAPIClientProtocol {
     private let baseURL: URL
     private let session: URLSession
     private let encoder: JSONEncoder
@@ -602,6 +636,75 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
                 timeIntervalSince1970: TimeInterval(response.delivery.accessExpiresAt)
             )
         )
+    }
+
+    func sendPaw(
+        momentID: String,
+        clientRequestID: UUID,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentPawSendResult {
+        let response: PawReactionResponse = try await sendJSON(
+            path: "/v2/moments/\(try safePath(momentID))/reactions",
+            method: "POST",
+            body: PawReactionRequest(
+                protocolVersion: MomentSharingProtocol.version,
+                clientRequestId: clientRequestID.uuidString.lowercased(),
+                kind: "paw"
+            ),
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentSharingProtocol.version,
+              response.reaction.momentId == momentID,
+              response.reaction.kind == "paw",
+              PairingValidation.isOpaqueIdentifier(response.reaction.id)
+        else { throw MomentSharingError.invalidPayload }
+        return MomentPawSendResult(
+            reactionID: response.reaction.id,
+            momentID: momentID,
+            alreadyReacted: response.alreadyReacted
+        )
+    }
+
+    func pawChanges(
+        after cursor: String?,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws -> MomentPawChangesResult {
+        let path: String
+        if let cursor {
+            path = "/v2/reactions/changes/\(try safePath(cursor))"
+        } else {
+            path = "/v2/reactions/changes"
+        }
+        let response: PawReactionChangesResponse = try await send(
+            path: path,
+            method: "GET",
+            body: Data(),
+            contentType: nil,
+            maximumResponseBytes: 64 * 1_024,
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentSharingProtocol.version else {
+            throw MomentSharingError.invalidPayload
+        }
+        let nextCursor = try MomentChangeCursorPolicy.normalize(response.nextCursor)
+        let changes = try response.changes.map { value -> MomentPawChange in
+            guard value.type == "pawReceived",
+                  value.reaction.kind == "paw",
+                  PairingValidation.isOpaqueIdentifier(value.cursor),
+                  PairingValidation.isOpaqueIdentifier(value.reaction.id),
+                  PairingValidation.isOpaqueIdentifier(value.reaction.momentId)
+            else { throw MomentSharingError.invalidPayload }
+            return MomentPawChange(
+                cursor: value.cursor,
+                reactionID: value.reaction.id,
+                momentID: value.reaction.momentId
+            )
+        }
+        return MomentPawChangesResult(changes: changes, nextCursor: nextCursor)
     }
 
     func block(
@@ -1049,6 +1152,39 @@ private struct AcknowledgementResponse: Decodable {
     }
     let protocolVersion: Int
     let delivery: Delivery
+}
+
+private struct PawReactionRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let kind: String
+}
+
+private struct PawReactionResponse: Decodable {
+    struct Reaction: Decodable {
+        let id: String
+        let momentId: String
+        let kind: String
+    }
+    let protocolVersion: Int
+    let reaction: Reaction
+    let alreadyReacted: Bool
+}
+
+private struct PawReactionChangesResponse: Decodable {
+    struct Change: Decodable {
+        struct Reaction: Decodable {
+            let id: String
+            let momentId: String
+            let kind: String
+        }
+        let cursor: String
+        let type: String
+        let reaction: Reaction
+    }
+    let protocolVersion: Int
+    let changes: [Change]
+    let nextCursor: String
 }
 
 private struct BlockResponse: Decodable {

@@ -2,6 +2,7 @@ import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {
   legacySharingRuntimeEnabled,
   momentRuntimeEnabled,
+  reactionRuntimeEnabled,
   windowNameRuntimeEnabled,
   type Env,
 } from "./env";
@@ -40,6 +41,7 @@ import {
   uploadMomentCiphertext,
   uploadMomentReportCiphertext,
 } from "./moments";
+import { getReactionChanges, recordPawReaction } from "./reactions";
 import { MOMENT_CLEANUP_CRON, runLegacyScheduledCleanup } from "./scheduled";
 import {
   commitGeneration,
@@ -148,7 +150,23 @@ export async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && recoveryCompleteMatch?.[1] !== undefined) {
     return completeDeviceRecovery(request, env, recoveryCompleteMatch[1]);
   }
-  if (pathname === "/v2/moments" || pathname.startsWith("/v2/moments/")) {
+  const pawReactionMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/reactions$/u);
+  if (
+    (pawReactionMatch?.[1] !== undefined
+      || pathname === "/v2/reactions/changes"
+      || pathname.startsWith("/v2/reactions/changes/"))
+    && !reactionRuntimeEnabled(env)
+  ) {
+    throw new ApiError(
+      503,
+      "reaction_runtime_disabled",
+      "Photo reactions are temporarily unavailable.",
+    );
+  }
+  if (
+    (pathname === "/v2/moments" || pathname.startsWith("/v2/moments/"))
+    && pawReactionMatch?.[1] === undefined
+  ) {
     if (!momentRuntimeEnabled(env)) {
       throw new ApiError(
         503,
@@ -176,6 +194,13 @@ export async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && pathname === "/v2/moments/changes") {
     return getMomentChanges(request, env);
   }
+  if (request.method === "GET" && pathname === "/v2/reactions/changes") {
+    return getReactionChanges(request, env);
+  }
+  const reactionChangesMatch = pathname.match(/^\/v2\/reactions\/changes\/([^/]+)$/u);
+  if (request.method === "GET" && reactionChangesMatch?.[1] !== undefined) {
+    return getReactionChanges(request, env, reactionChangesMatch[1]);
+  }
   const momentChangesMatch = pathname.match(/^\/v2\/moments\/changes\/([^/]+)$/u);
   if (request.method === "GET" && momentChangesMatch?.[1] !== undefined) {
     return getMomentChanges(request, env, momentChangesMatch[1]);
@@ -194,6 +219,9 @@ export async function route(request: Request, env: Env): Promise<Response> {
   const momentAckMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/ack$/u);
   if (request.method === "POST" && momentAckMatch?.[1] !== undefined) {
     return acknowledgeMoment(request, env, momentAckMatch[1]);
+  }
+  if (request.method === "POST" && pawReactionMatch?.[1] !== undefined) {
+    return recordPawReaction(request, env, pawReactionMatch[1]);
   }
   const participantBlockMatch = pathname.match(/^\/v2\/participants\/([^/]+)\/block$/u);
   if (request.method === "POST" && participantBlockMatch?.[1] !== undefined) {
