@@ -430,6 +430,32 @@ async function targetForRecovery(
   ).bind(member.spaceId, targetParticipantID, member.id).first<TargetRow>();
 }
 
+async function requirePermittedRecoverySponsor(
+  env: Env,
+  member: AuthenticatedMember,
+): Promise<void> {
+  if (member.role !== "owner") return;
+  const primaryOwnerDevice = await env.DB.prepare(
+    `SELECT 1 AS permitted
+       FROM moment_devices
+      WHERE id = ?
+        AND participant_id = ?
+        AND legacy_member_id = ?
+        AND state = 'active'`,
+  ).bind(
+    member.deviceId,
+    member.momentParticipantId,
+    member.id,
+  ).first<{ permitted: number }>();
+  if (primaryOwnerDevice === null) {
+    throw new ApiError(
+      403,
+      "primary_owner_device_required",
+      "The original owner device is required to sponsor an invitee device enrollment.",
+    );
+  }
+}
+
 export async function createDeviceRecovery(request: Request, env: Env): Promise<Response> {
   const { body, member } = await signedMemberRequest(request, env);
   let object: JsonRecord;
@@ -448,6 +474,7 @@ export async function createDeviceRecovery(request: Request, env: Env): Promise<
     clientRequestID = uuidField(object, "clientRequestId");
     targetParticipantID = binaryField(object, "targetParticipantId", 16);
     recoveryProofPublicKey = binaryField(object, "recoveryProofPublicKey", 32);
+    await requirePermittedRecoverySponsor(env, member);
   } catch (error) {
     await consumeNonce(env, member);
     throw error;

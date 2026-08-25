@@ -1015,7 +1015,7 @@ struct PairingView: View {
                     .disabled(model.isWorking)
                 }
                 manualCheckResult
-            } else {
+            } else if model.canCreateDeviceRecoveryInvitation {
                 Button {
                     Task { await model.createDeviceRecoveryInvitation() }
                 } label: {
@@ -1026,6 +1026,12 @@ struct PairingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.isWorking)
+            } else {
+                Label(
+                    "最初のiPhoneで追加コードを作ってください",
+                    systemImage: "iphone.and.arrow.forward"
+                )
+                .foregroundStyle(.secondary)
             }
         } header: {
             Text("今すること")
@@ -1036,19 +1042,31 @@ struct PairingView: View {
 
     private var deviceChangeStartSection: some View {
         Section {
-            Button {
-                showsDeviceChangeFlow = true
-            } label: {
-                primaryActionLabel(
-                    "相手の別のiPhoneを追加",
-                    systemImage: "iphone.and.arrow.forward"
+            if model.canCreateDeviceRecoveryInvitation {
+                Button {
+                    showsDeviceChangeFlow = true
+                } label: {
+                    primaryActionLabel(
+                        "相手の別のiPhoneを追加",
+                        systemImage: "iphone.and.arrow.forward"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Label(
+                    "追加コードは最初のiPhoneで作れます",
+                    systemImage: "iphone"
                 )
+                .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderedProminent)
         } header: {
             Text("使えるiPhoneを増やす")
         } footer: {
-            Text("追加しても既存のiPhoneは使い続けられます。このiPhone自身を追加する場合は、追加するiPhone側から始めます。")
+            if model.canCreateDeviceRecoveryInvitation {
+                Text("追加しても既存のiPhoneは使い続けられます。このiPhone自身を追加する場合は、追加するiPhone側から始めます。")
+            } else {
+                Text("まどを作った人のiPhoneを追加するときは、まどを最初に作ったiPhoneで追加コードを作ってください。")
+            }
         }
     }
 

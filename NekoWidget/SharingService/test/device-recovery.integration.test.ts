@@ -399,7 +399,7 @@ describe("device recovery", () => {
     }
   });
 
-  it("lets an explicitly selected additional device sponsor another enrollment", async () => {
+  it("requires the primary owner device to sponsor an invitee enrollment", async () => {
     const fixture = await pairedFixture();
     const additionalKeys = await signingKeyPair();
     const additionalDeviceID = randomValue(16);
@@ -432,12 +432,29 @@ describe("device recovery", () => {
       undefined,
       additionalDeviceID,
     ));
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({
+      error: { code: "primary_owner_device_required" },
+    });
+
+    const primaryResponse = await SELF.fetch(await signedRequest(
+      "/v2/device-recoveries",
+      "POST",
+      fixture.owner.memberId,
+      fixture.ownerKeys,
+      {
+        protocolVersion: 2,
+        clientRequestId: crypto.randomUUID().toLowerCase(),
+        targetParticipantId: fixture.invitee.participantId,
+        recoveryProofPublicKey: await publicKeyValue(proofKeys),
+      },
+    ));
+    expect(primaryResponse.status).toBe(201);
+    expect(await primaryResponse.json()).toMatchObject({
       target: { memberId: fixture.invitee.memberId },
       peer: {
         memberId: fixture.owner.memberId,
-        signingPublicKey: await publicKeyValue(additionalKeys),
+        signingPublicKey: fixture.owner.signingPublicKey,
       },
     });
     for (const path of [

@@ -72,6 +72,10 @@ final class PairingViewModel: ObservableObject {
     var canCreateAnotherPrivateWindow: Bool {
         privateWindows.count < PrivateWindowCatalogState.maximumWindowCount
     }
+    var canCreateDeviceRecoveryInvitation: Bool {
+        guard let state, state.phase == .paired else { return false }
+        return state.role != .inviter || state.localDeviceIsAdditional != true
+    }
 
     @discardableResult
     func recordMediaSharingConsent() -> Bool {
@@ -864,6 +868,11 @@ final class PairingViewModel: ObservableObject {
 
     func createDeviceRecoveryInvitation() async {
         clearTransientOperationFeedback()
+        guard canCreateDeviceRecoveryInvitation else {
+            operationErrorMessage =
+                "このiPhoneでは追加コードを作れません。まどを最初に作ったiPhoneで操作してください。"
+            return
+        }
         guard let api else {
             configurationMessage = Self.message(for: .apiNotConfigured)
             return
