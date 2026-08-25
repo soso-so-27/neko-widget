@@ -150,18 +150,18 @@ class PublicPolicySiteTests(unittest.TestCase):
         ):
             self.assertIn(phrase, privacy)
 
-    def test_bookmark_is_a_free_bounded_local_marker(self):
+    def test_memory_mark_is_bounded_and_photo_copy_is_explicit(self):
         for page in (PAGES[1], PAGES[3]):
             text = "".join(self.parsed(page).text)
             for phrase in (
-                "「しおり」",
+                "「思い出に追加」",
                 "「届いた写真」",
                 "無料・期限付き",
-                "bookmark",
+                "memory mark",
                 "保持上限内なら優先して残す",
-                "写真を新しく保存する機能や長期保管ではなく",
-                "JPEGを複製しません",
-                "写真アプリやiCloudへ保存せず",
+                "写真アプリやiCloudへコピーせず",
+                "写真アプリへコピー",
+                "明示的に選んだ場合だけ",
                 "90日",
                 "500枚",
                 "256MiB",
@@ -172,7 +172,6 @@ class PublicPolicySiteTests(unittest.TestCase):
                 "reinstall",
             ):
                 self.assertIn(phrase, text, f"{page}: {phrase}")
-            self.assertNotIn("思い出に残す", text, page)
             self.assertNotIn("まど内履歴", text, page)
 
     def test_release_safety_facts_are_present(self):
@@ -297,13 +296,15 @@ class PublicPolicySiteTests(unittest.TestCase):
             "request.removeAssets(removals)",
         ):
             self.assertIn(phrase, service)
-        self.assertNotIn("PHAssetCreationRequest", service)
+        self.assertIn("PHAssetCreationRequest.forAsset()", service)
+        self.assertIn("request.addResource", service)
         self.assertIn(
             "写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。",
             settings,
         )
         self.assertIn("NSPhotoLibraryAddUsageDescription", info)
-        self.assertIn("「うちの子」アルバムへ追加", info)
+        self.assertIn("写真共有が使える場合", info)
+        self.assertIn("明示的に選んだときだけ追加", info)
 
     def test_explicit_export_disclosure_stays_aligned_with_implementation(self):
         liked_photos = LIKED_PHOTOS_VIEW.read_text(encoding="utf-8")

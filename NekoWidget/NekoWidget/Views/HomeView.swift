@@ -342,7 +342,7 @@ struct HomeView: View {
         if let currentPhoto {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("思い出の一枚")
+                    Text("今日の一枚")
                         .font(.title3.bold())
                     Spacer()
                     Text("タップで写真をひらく")
@@ -388,8 +388,8 @@ struct HomeView: View {
                             Button {
                                 toggleLike(currentPhoto.localIdentifier)
                             } label: {
-                                CatPawMark(isFilled: currentPhoto.isLiked)
-                                    .frame(width: 27, height: 27)
+                                Image(systemName: currentPhoto.isLiked ? "star.fill" : "star")
+                                    .font(.system(size: 24, weight: .semibold))
                                     .foregroundStyle(
                                         currentPhoto.isLiked ? Color.white : Color.primary
                                     )
@@ -404,12 +404,12 @@ struct HomeView: View {
                             }
                             .padding(12)
                             .accessibilityLabel(
-                                currentPhoto.isLiked ? "好きを解除" : "これ好き"
+                                currentPhoto.isLiked ? "思い出から外す" : "思い出に追加"
                             )
                             .accessibilityHint(
                                 currentPhoto.isLiked
-                                    ? "タップすると好きを解除します"
-                                    : "タップすると好き一覧に追加します"
+                                    ? "タップすると自分の思い出一覧から外します"
+                                    : "タップすると自分の思い出一覧に追加します"
                             )
                         }
                     }
@@ -427,7 +427,7 @@ struct HomeView: View {
             return "ホームに表示中"
         }
         let year = Calendar.current.component(.year, from: creationDate)
-        return "思い出から・\(year)年"
+        return "アルバムから・\(year)年"
     }
 
     @ViewBuilder

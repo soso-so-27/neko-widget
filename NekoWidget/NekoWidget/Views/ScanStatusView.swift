@@ -36,7 +36,7 @@ struct InitialScanView: View {
                     ProgressView()
                         .controlSize(.large)
                     Text(scan.isPreparingGroupedAlbums
-                        ? "新しい思い出を準備しています"
+                        ? "新しいアルバムを準備しています"
                         : "このiPhoneの猫写真を探しています")
                         .font(.title3.weight(.semibold))
                     Text(scan.isPreparingGroupedAlbums
@@ -164,7 +164,7 @@ struct ScanProgressCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text(scan.isPreparingGroupedAlbums
-                    ? "新しい思い出を準備中"
+                    ? "新しいアルバムを準備中"
                     : "スキャン")
                     .font(.headline)
                 Spacer()

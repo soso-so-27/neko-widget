@@ -48,7 +48,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>選別した猫の写真を「うちの子」アルバムへ追加するため、写真ライブラリへの追加を許可してください。</string>
+	<string>写真アプリの「うちの子」アルバムを、あなたが選んだ写真で更新するため、写真ライブラリへの追加を許可してください。写真共有が使える場合、届いた写真は「写真アプリへコピー」を明示的に選んだときだけ追加します。自動では追加しません。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>$(PHOTO_LIBRARY_USAGE_DESCRIPTION)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>

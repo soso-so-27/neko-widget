@@ -155,7 +155,7 @@ final class PhotoPermissionUITests: XCTestCase {
         guard firstExistingButton(
             in: app,
             identifiers: ["main-tab-likes"],
-            labels: ["これ好き"],
+            labels: ["思い出"],
             timeout: 10
         ) != nil else {
             fail("The liked-photos tab disappeared from the tab bar.", app: app)

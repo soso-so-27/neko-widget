@@ -102,13 +102,13 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
 
     def test_notification_copy_does_not_claim_immediate_delivery(self) -> None:
         self.assertIn("受信を確認できたときに通知します", self.family_window)
-        self.assertNotIn("写真や肉球が届いたらお知らせします", self.family_window)
+        self.assertNotIn("写真やハートが届いたら必ずすぐ通知します", self.family_window)
 
-    def test_paw_notification_is_text_only_and_privacy_minimized(self) -> None:
+    def test_heart_notification_is_text_only_and_privacy_minimized(self) -> None:
         notification = self.service.split(
             "private func postPrivacyMinimizedPawNotification()", 1
         )[1].split("private static func familyWidgetManifest", 1)[0]
-        self.assertIn("届けた写真に肉球が届きました。", notification)
+        self.assertIn("届けた写真にハートが届きました。", notification)
         self.assertIn("UNMutableNotificationContent", notification)
         for forbidden in (
             "UNNotificationAttachment",

@@ -2,6 +2,19 @@ import SwiftUI
 import ImageIO
 import UIKit
 
+private enum ReceivedPhotoFilter: String, CaseIterable, Identifiable {
+    case all
+    case memories
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: "すべて"
+        case .memories: "思い出"
+        }
+    }
+}
+
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = MomentSharingViewModel()
@@ -14,6 +27,8 @@ struct FamilyWindowView: View {
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
     @State private var showsAllSentRecords = false
+    @State private var receivedPhotoFilter: ReceivedPhotoFilter = .all
+    @State private var photoCopyTarget: MomentInboxItem?
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
 
@@ -124,6 +139,23 @@ struct FamilyWindowView: View {
         } message: {
             Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
         }
+        .confirmationDialog(
+            "写真アプリへコピーしますか？",
+            isPresented: Binding(
+                get: { photoCopyTarget != nil },
+                set: { if !$0 { photoCopyTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: photoCopyTarget
+        ) { item in
+            Button("写真アプリへコピー") {
+                photoCopyTarget = nil
+                Task { await model.copyToPhotoLibrary(item) }
+            }
+            Button("キャンセル", role: .cancel) { photoCopyTarget = nil }
+        } message: { _ in
+            Text("位置情報を除いた受信写真を写真アプリへ追加します。iCloud写真がオンの場合はAppleの設定に従って同期されます。共有解除・ブロック・アプリ削除後も残り、このアプリからは削除できません。")
+        }
         .alert("写真を届ける", isPresented: $showsSendGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
@@ -143,10 +175,28 @@ struct FamilyWindowView: View {
                     reportOnlyCard
                 }
 
-                if let latest = model.receivedMoments.first {
+                if !model.receivedMoments.isEmpty {
                     Text("届いた写真")
                         .font(.headline)
-                    momentCard(latest)
+                    Picker("表示する写真", selection: $receivedPhotoFilter) {
+                        ForEach(ReceivedPhotoFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("family-window-photo-filter")
+
+                    if let latest = filteredReceivedMoments.first {
+                        momentCard(latest)
+                    } else {
+                        ContentUnavailableView(
+                            "思い出はまだありません",
+                            systemImage: "star",
+                            description: Text("写真の「思い出に追加」を押すと、ここで見返せます。")
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                    }
                 } else {
                     ContentUnavailableView(
                         "まだ写真は届いていません",
@@ -163,8 +213,8 @@ struct FamilyWindowView: View {
                     manualRefreshResult
                 }
 
-                if let message = model.bookmarkActionMessage {
-                    Label(message, systemImage: "bookmark.fill")
+                if let message = model.memoryActionMessage {
+                    Label(message, systemImage: "star.fill")
                         .font(.footnote)
                         .foregroundStyle(.green)
                         .padding(12)
@@ -172,14 +222,23 @@ struct FamilyWindowView: View {
                         .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                         .accessibilityIdentifier("family-window-bookmark-result")
                 }
-                if let message = model.pawActionMessage {
-                    Label(message, systemImage: "pawprint.fill")
+                if let message = model.heartActionMessage {
+                    Label(message, systemImage: "heart.fill")
                         .font(.footnote)
                         .foregroundStyle(.green)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                         .accessibilityIdentifier("family-window-paw-result")
+                }
+                if let message = model.photoCopyActionMessage {
+                    Label(message, systemImage: "photo.badge.checkmark")
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                        .accessibilityIdentifier("family-window-photo-copy-result")
                 }
                 if let message = model.errorMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -190,12 +249,12 @@ struct FamilyWindowView: View {
                         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
                 }
 
-                if model.receivedPawCount > 0 {
+                if model.receivedHeartCount > 0 {
                     Label(
-                        model.receivedPawCount == 1
-                            ? "届けた写真に肉球が届きました"
-                            : "届けた写真に肉球が\(model.receivedPawCount)件届きました",
-                        systemImage: "pawprint.fill"
+                        model.receivedHeartCount == 1
+                            ? "届けた写真にハートが届きました"
+                            : "届けた写真にハートが\(model.receivedHeartCount)件届きました",
+                        systemImage: "heart.fill"
                     )
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.green)
@@ -209,10 +268,10 @@ struct FamilyWindowView: View {
                     outgoingStatusSection
                 }
 
-                if model.receivedMoments.count > 1 {
-                    Text("以前に届いた写真")
+                if filteredReceivedMoments.count > 1 {
+                    Text(receivedPhotoFilter == .all ? "以前に届いた写真" : "ほかの思い出")
                         .font(.headline)
-                    ForEach(model.receivedMoments.dropFirst()) { item in
+                    ForEach(filteredReceivedMoments.dropFirst()) { item in
                         momentCard(item)
                     }
                 }
@@ -241,6 +300,15 @@ struct FamilyWindowView: View {
                 }
                 .accessibilityLabel("招待相手の確認と共有解除")
             }
+        }
+    }
+
+    private var filteredReceivedMoments: [MomentInboxItem] {
+        switch receivedPhotoFilter {
+        case .all:
+            model.receivedMoments
+        case .memories:
+            model.receivedMoments.filter { model.isSavedMemory($0) }
         }
     }
 
@@ -702,6 +770,13 @@ struct FamilyWindowView: View {
                 }
                 Spacer()
                 Menu {
+                    if !model.isReportOnly {
+                        Button {
+                            photoCopyTarget = item
+                        } label: {
+                            Label("写真アプリへコピー", systemImage: "square.and.arrow.down")
+                        }
+                    }
                     Button {
                         reportTarget = item
                     } label: {
@@ -727,18 +802,18 @@ struct FamilyWindowView: View {
             .padding(13)
             if !model.isReportOnly {
                 Divider()
-                let paw = model.pawOutboxItem(for: item)
+                let heart = model.heartOutboxItem(for: item)
                 HStack(spacing: 10) {
                     Button {
                         Task { await model.toggleSavedMemory(item) }
                     } label: {
                         VStack(spacing: 2) {
                             Label(
-                                model.isSavedMemory(item) ? "しおり済み" : "しおり",
-                                systemImage: model.isSavedMemory(item) ? "bookmark.fill" : "bookmark"
+                                model.isSavedMemory(item) ? "思い出に追加済み" : "思い出に追加",
+                                systemImage: model.isSavedMemory(item) ? "star.fill" : "star"
                             )
                             .font(.caption.weight(.semibold))
-                            Text("自分だけ")
+                            Text("自分だけ・最長90日")
                                 .font(.caption2)
                         }
                         .frame(maxWidth: .infinity)
@@ -746,22 +821,23 @@ struct FamilyWindowView: View {
                     .buttonStyle(.bordered)
                     .disabled(model.isPerformingAction)
                     .accessibilityLabel(
-                        model.isSavedMemory(item) ? "しおりを外す" : "しおりを付ける"
+                        model.isSavedMemory(item) ? "思い出から外す" : "思い出に追加"
                     )
+                    .accessibilityHint("自分だけの操作です。写真の保持期限は変わりません")
                     .accessibilityIdentifier("family-window-save-memory")
 
-                    if model.canSendPaw(for: item) || paw != nil {
+                    if model.canSendHeart(for: item) || heart != nil {
                         Button {
-                            Task { await model.sendPaw(item) }
+                            Task { await model.sendHeart(item) }
                         } label: {
                             VStack(spacing: 2) {
                                 Label(
-                                    paw == nil
-                                        ? "肉球を送る"
-                                        : (paw?.phase == .sent ? "肉球済み" : "送信待ち"),
-                                    systemImage: paw?.phase == .sent
-                                        ? "pawprint.fill"
-                                        : (paw == nil ? "pawprint" : "clock")
+                                    heart == nil
+                                        ? "ハートを送る"
+                                        : (heart?.phase == .sent ? "ハート送信済み" : "送信待ち"),
+                                    systemImage: heart?.phase == .sent
+                                        ? "heart.fill"
+                                        : (heart == nil ? "heart" : "clock")
                                 )
                                 .font(.caption.weight(.semibold))
                                 Text("相手へ")
@@ -770,11 +846,11 @@ struct FamilyWindowView: View {
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(model.isPerformingAction || paw != nil)
+                        .disabled(model.isPerformingAction || heart != nil)
                         .accessibilityLabel(
-                            paw == nil
-                                ? "相手に肉球を送る"
-                                : (paw?.phase == .sent ? "肉球を送りました" : "肉球は送信待ちです")
+                            heart == nil
+                                ? "写真を届けた相手にハートを送る"
+                                : (heart?.phase == .sent ? "ハートを送信済みです" : "ハートは送信待ちです")
                         )
                         .accessibilityIdentifier("family-window-send-paw")
                     }
@@ -782,7 +858,7 @@ struct FamilyWindowView: View {
                 .padding(13)
             }
             if model.isReportOnly, model.isSavedMemory(item) {
-                Label("しおり付き", systemImage: "bookmark.fill")
+                Label("思い出に追加済み", systemImage: "star.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(13)
@@ -871,10 +947,13 @@ struct FamilyWindowView: View {
             if let url = SharingAPIConfiguration.current.supportURL {
                 Link("問題を問い合わせる", destination: url)
             }
-            Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MBまで保持します。")
+            Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MiBまで保持します。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("しおりは、このiPhone内の保持上限で優先して残す目印です。保存期間は延びず、写真アプリやiCloudには追加されません。共有解除・ブロック・再インストールで写真としおりは消えます。")
+            Text("思い出に追加は、このiPhone内で最長90日・保持上限内の写真を見返すための印です。期限は延びず、相手へ通知しません。共有解除・ブロック・再インストールで写真と印は消えます。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("写真アプリへコピーした写真は、iCloud写真の設定に従って同期される場合があり、共有解除やアプリ削除後も写真アプリに残ります。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

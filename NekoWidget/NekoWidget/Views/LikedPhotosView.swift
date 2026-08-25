@@ -21,7 +21,7 @@ struct AlbumView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Label("一部の写真を読み込めませんでした", systemImage: "exclamationmark.triangle")
                             .font(.subheadline.weight(.semibold))
-                        Text("見つかった思い出は表示しています。もう一度確認したい場合は、設定から再スキャンできます。")
+                        Text("作成できたアルバムは表示しています。もう一度確認したい場合は、設定から再スキャンできます。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -38,7 +38,7 @@ struct AlbumView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("思い出")
+        .navigationTitle("アルバム")
         .background(Color(.systemGroupedBackground))
     }
 
@@ -86,7 +86,7 @@ struct AlbumView: View {
 
     private var profileScopeSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("猫ごとの思い出", systemImage: "pawprint.fill")
+            Label("猫ごとのアルバム", systemImage: "photo.on.rectangle.angled")
                 .font(.headline)
 
             Text("「みんな」には見つかった猫写真をまとめて表示します。猫を選ぶと、自分で指定した写真と、その子につないだ写真アルバムだけに切り替わります。")
@@ -132,7 +132,7 @@ struct AlbumView: View {
 
     private var groupedAlbumPreparationBanner: some View {
         VStack(alignment: .leading, spacing: 11) {
-            Label("新しい思い出を準備しています", systemImage: "sparkles.rectangle.stack")
+            Label("新しいアルバムを準備しています", systemImage: "sparkles.rectangle.stack")
                 .font(.headline)
 
             Text("人といっしょ・おでかけなどに必要な情報を端末内で確認し、準備できた写真から追加します。")
@@ -166,14 +166,14 @@ struct AlbumView: View {
     private var emptyState: some View {
         if scan.isPreparingGroupedAlbums || scan.isScanning {
             ContentUnavailableView(
-                "思い出を準備しています",
+                "アルバムを準備しています",
                 systemImage: "rectangle.stack.badge.plus",
                 description: Text("準備できた写真から、ここにまとまって表示されます。")
             )
             .frame(maxWidth: .infinity, minHeight: 320)
         } else {
             ContentUnavailableView(
-                "猫の思い出がまだありません",
+                "猫のアルバムがまだありません",
                 systemImage: "photo.on.rectangle",
                 description: Text("猫の写真が見つかると、成長や撮影年ごとにまとまります。")
             )
@@ -310,7 +310,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("ホーム、ウィジェット、思い出の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -399,8 +399,8 @@ struct CuratedAlbumDetailView: View {
                     .foregroundStyle(.white, Color.accentColor)
                     .padding(7)
             } else if photo.isLiked {
-                CatPawMark(isFilled: true)
-                    .frame(width: 15, height: 15)
+                Image(systemName: "star.fill")
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(7)
                     .background(.black.opacity(0.55), in: Circle())
@@ -430,13 +430,13 @@ struct CuratedAlbumDetailView: View {
     private func photoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         let date = photo.creationDate?.formatted(.dateTime.year().month().day().hour().minute())
             ?? "撮影日時不明"
-        return photo.isLiked ? "\(date)の猫の写真、これ好き" : "\(date)の猫の写真"
+        return photo.isLiked ? "\(date)の猫の写真、思い出に追加済み" : "\(date)の猫の写真"
     }
 }
 
-/// An uncapped collection of photos the user deliberately kept with the paw.
+/// An uncapped collection of photos the user deliberately kept as memories.
 /// It stays one continuous, liked-at-ordered grid so it does not resemble the
-/// automatically organized albums in "思い出". PDF export is optional.
+/// automatically organized "アルバム". PDF export is optional.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
@@ -457,13 +457,13 @@ struct LikedPhotosView: View {
                 if photos.isEmpty {
                     ContentUnavailableView {
                         Label {
-                            Text("まだ「これ好き」はありません")
+                            Text("思い出はまだありません")
                         } icon: {
-                            CatPawMark(isFilled: false)
-                                .frame(width: 28, height: 28)
+                            Image(systemName: "star")
+                                .font(.system(size: 28, weight: .semibold))
                         }
                     } description: {
-                        Text("写真の肉球ボタンを押すと、ここに溜まります。")
+                        Text("写真の「思い出に追加」を押すと、ここに溜まります。")
                     }
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .padding()
@@ -473,7 +473,7 @@ struct LikedPhotosView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 9) {
-                        Label("肉球を押した順", systemImage: "pawprint.fill")
+                        Label("追加した順", systemImage: "star.fill")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 16)
@@ -489,7 +489,7 @@ struct LikedPhotosView: View {
             }
             .padding(.vertical, 12)
         }
-        .navigationTitle("これ好き")
+        .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if !photos.isEmpty {
@@ -542,12 +542,12 @@ struct LikedPhotosView: View {
                 Text(photos.count.formatted())
                     .font(.system(size: 42, weight: .bold, design: .rounded))
                     .contentTransition(.numericText())
-                Text("枚の「これ好き」")
+                Text("枚の思い出")
                     .font(.headline)
                     .foregroundStyle(.secondary)
             }
 
-            Text("肉球を押して自分で残した写真です。自動で整理する「思い出」とは別に、何枚でも残せます。")
+            Text("自分で選んだ写真です。自動で整理する「アルバム」とは別に、何枚でも追加できます。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("photo-book-progress")
@@ -672,7 +672,7 @@ struct LikedPhotosView: View {
         .overlay(alignment: .bottomLeading) {
             if !isSelectingForExport, let likedAt = photo.likedAt {
                 HStack(spacing: 3) {
-                    Image(systemName: "pawprint.fill")
+                    Image(systemName: "star.fill")
                     Text(likedAt.formatted(.dateTime.year().month().day()))
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
@@ -691,9 +691,9 @@ struct LikedPhotosView: View {
     private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         if let likedAt = photo.likedAt {
             let date = likedAt.formatted(.dateTime.year().month().day())
-            return "\(date)にこれ好きへ残した猫の写真"
+            return "\(date)に思い出へ追加した猫の写真"
         }
-        return "これ好きへ残した猫の写真"
+        return "思い出へ追加した猫の写真"
     }
 
     private func startExportSelection() {
@@ -783,7 +783,7 @@ private struct LikedPhotoBookActivityView: UIViewControllerRepresentable {
 
 /// The destination shared by widget deep links and in-app photo links.
 /// Paging is gesture-only: there is deliberately no "next" button competing
-/// with the single measurement action, "これ好き".
+/// with the single private action, "思い出に追加".
 struct PhotoBrowserView: View {
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -921,9 +921,9 @@ struct PhotoBrowserView: View {
                             toggleLike(selectedPhoto.localIdentifier)
                         } label: {
                             HStack(spacing: 9) {
-                                CatPawMark(isFilled: selectedPhoto.isLiked)
-                                    .frame(width: 22, height: 22)
-                                Text(selectedPhoto.isLiked ? "好きを解除" : "これ好き")
+                                Image(systemName: selectedPhoto.isLiked ? "star.fill" : "star")
+                                    .font(.system(size: 20, weight: .semibold))
+                                Text(selectedPhoto.isLiked ? "思い出から外す" : "思い出に追加")
                             }
                             .font(.headline)
                             .frame(maxWidth: .infinity)
@@ -931,7 +931,7 @@ struct PhotoBrowserView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(selectedPhoto.isLiked ? Color.secondary : Color.accentColor)
                         .controlSize(.large)
-                        .accessibilityLabel(selectedPhoto.isLiked ? "好きを解除" : "これ好き")
+                        .accessibilityLabel(selectedPhoto.isLiked ? "思い出から外す" : "思い出に追加")
 
                         widgetTiming
                     }
@@ -988,7 +988,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("ホーム、ウィジェット、思い出の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(

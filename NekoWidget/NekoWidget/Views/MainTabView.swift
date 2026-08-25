@@ -92,7 +92,7 @@ struct MainTabView: View {
                     .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
             }
             .tabItem {
-                Label("思い出", systemImage: "square.grid.3x3.fill")
+                Label("アルバム", systemImage: "square.grid.3x3.fill")
                     .accessibilityIdentifier("main-tab-memories")
             }
             .tag(AppTab.memories)
@@ -107,8 +107,8 @@ struct MainTabView: View {
             .tabItem {
                 // Tab bars on iOS 26 may discard a custom SwiftUI icon view.
                 // A standard symbol keeps the destination visible; the custom
-                // paw remains inside the feature's own screens.
-                Label("これ好き", systemImage: "pawprint.fill")
+                // star remains the consistent private-memory action.
+                Label("思い出", systemImage: "star.fill")
                     .accessibilityIdentifier("main-tab-likes")
             }
             .tag(AppTab.likes)
@@ -411,9 +411,9 @@ struct MainTabView: View {
 
     private var missingAlbumView: some View {
         ContentUnavailableView(
-            "思い出を更新しています",
+            "アルバムを更新しています",
             systemImage: "rectangle.stack",
-            description: Text("スキャン結果が更新されました。思い出の一覧へ戻って、もう一度開いてください。")
+            description: Text("スキャン結果が更新されました。アルバムの一覧へ戻って、もう一度開いてください。")
         )
     }
 

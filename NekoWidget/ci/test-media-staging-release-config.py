@@ -125,11 +125,11 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
     def test_workflow_injects_only_protected_media_values_and_verifies_archive(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn(
-            '届いた写真の表示と「しおり」には写真アクセスを使わず',
+            '届いた写真は、あなたが「写真アプリへコピー」を明示的に選んだ場合だけ追加します',
             workflow,
         )
         self.assertNotIn(
-            '受信と共有履歴内の「思い出に残す」',
+            '受信した写真を自動的に写真アプリへ追加します',
             workflow,
         )
         variable_names = (

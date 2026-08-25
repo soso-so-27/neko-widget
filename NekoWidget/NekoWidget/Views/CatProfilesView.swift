@@ -96,7 +96,7 @@ struct CatProfilesView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("最初は「みんな」のままで使えます")
                         .font(.headline)
-                    Text("名前や写真を選ばなくても、これまで通り思い出とウィジェットを使えます。")
+                    Text("名前や写真を選ばなくても、これまで通りアルバムとウィジェットを使えます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

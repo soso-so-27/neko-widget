@@ -124,7 +124,7 @@ private func verifyLikedCollectionUsesPawOrder() throws {
         ordered.map(\.identifier) == [
             "newer", "same-a", "same-b", "older", "nil-a", "nil-z"
         ],
-        "これ好き stopped following stable paw-action order"
+        "思い出 stopped following stable manual-add order"
     )
 }
 

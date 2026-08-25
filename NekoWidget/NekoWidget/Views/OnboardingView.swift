@@ -411,9 +411,9 @@ private struct PawLocationDiagram: View {
             .frame(height: 210)
 
             HStack(spacing: 10) {
-                CatPawMark(isFilled: true)
-                    .frame(width: 24, height: 24)
-                Text("これ好き")
+                Image(systemName: "star.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("思い出に追加")
                     .font(.headline)
                 Spacer()
                 Image(systemName: "arrow.left")
@@ -432,7 +432,7 @@ private struct PawLocationDiagram: View {
                 .stroke(Color.accentColor.opacity(0.25), lineWidth: 2)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("写真の下にある「これ好き」の肉球ボタン")
+        .accessibilityLabel("写真の下にある「思い出に追加」の星ボタン")
         .accessibilityIdentifier("onboarding-paw-location-diagram")
     }
 }

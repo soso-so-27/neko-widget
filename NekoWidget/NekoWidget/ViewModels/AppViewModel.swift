@@ -2661,7 +2661,7 @@ final class AppViewModel: ObservableObject {
         _ newSnapshot: LibrarySnapshot,
         preservingLiveSettings: Bool = true
     ) {
-        // A full scan can run while the user presses “これ好き” or while the
+        // A full scan can run while the user adds a photo to “思い出” or while the
         // quick-stage album/cache publication updates display history. Merge
         // those live mutations instead of replacing them with scan-start state.
         let liveByIdentifier = Dictionary(
@@ -3099,9 +3099,9 @@ final class AppViewModel: ObservableObject {
         if let value = error as? SharedLikeStoreError {
             switch value {
             case .appGroupUnavailable:
-                return "「これ好き」の保存領域を利用できません。アプリを更新して、もう一度お試しください。"
+                return "「思い出」の保存領域を利用できません。アプリを更新して、もう一度お試しください。"
             case .lockOpenFailed, .lockFailed:
-                return "「これ好き」を安全に保存できませんでした。少し待って、もう一度お試しください。"
+                return "「思い出」を安全に保存できませんでした。少し待って、もう一度お試しください。"
             case .measurementNotInitialized:
                 return "アプリを一度開き直してから、もう一度お試しください。"
             }

@@ -95,7 +95,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         guard tapTab(
             application: app,
             identifier: "main-tab-likes",
-            fallbackLabel: "これ好き"
+            fallbackLabel: "思い出"
         ) else {
             fail("The Likes tab was not available.", application: app)
             return

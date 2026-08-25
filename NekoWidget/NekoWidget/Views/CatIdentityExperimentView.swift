@@ -222,7 +222,7 @@ struct CatIdentityExperimentView: View {
                     "使える確認済み写真がありません",
                     systemImage: "photo.badge.exclamationmark",
                     description: Text(
-                        "「思い出」から、この猫だけが写る写真を確認済みにしてください。"
+                        "「アルバム」から、この猫だけが写る写真を確認済みにしてください。"
                     )
                 )
             } else {

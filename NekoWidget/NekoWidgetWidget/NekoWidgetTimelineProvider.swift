@@ -89,7 +89,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
             isLikeInteractionEnabled: likeState.isInteractionReady,
             isBookmarked: false,
-            isBookmarkInteractionEnabled: false
+            isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden
         )
     }
 
@@ -173,7 +174,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
                 isLikeInteractionEnabled: likeState.isInteractionReady,
                 isBookmarked: false,
-                isBookmarkInteractionEnabled: false
+                isBookmarkInteractionEnabled: false,
+                familyHeartStatus: .hidden
             )
         }
 
@@ -289,7 +291,15 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         now: Date,
         windowDisplayName: String
     ) -> NekoWidgetEntry {
-        let bookmarkState = familyBookmarkState(for: item)
+        let interactionState = familyInteractionState(for: item, now: now)
+        let heartStatus: FamilyWidgetHeartStatus
+        if let phase = interactionState?.pawPhase {
+            heartStatus = phase == .sent ? .serverAccepted : .pending
+        } else if interactionState?.canQueuePaw == true {
+            heartStatus = .ready
+        } else {
+            heartStatus = .hidden
+        }
         return NekoWidgetEntry(
             date: date,
             localIdentifier: nil,
@@ -302,21 +312,24 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             windowDisplayName: windowDisplayName,
             isLiked: false,
             isLikeInteractionEnabled: false,
-            isBookmarked: bookmarkState ?? false,
-            isBookmarkInteractionEnabled: bookmarkState != nil
+            isBookmarked: interactionState?.isSavedMemory ?? false,
+            isBookmarkInteractionEnabled: interactionState != nil,
+            familyHeartStatus: heartStatus
         )
     }
 
-    private func familyBookmarkState(
-        for item: FamilyWidgetManifestItem
-    ) -> Bool? {
+    private func familyInteractionState(
+        for item: FamilyWidgetManifestItem,
+        now: Date
+    ) -> MomentFamilyWidgetInteractionState? {
         guard item.hasValidBookmarkTarget, let momentID = item.momentID else {
             return nil
         }
         do {
             let lifecycleToken = try SharingLifecycleGate.issueToken()
-            return try MomentSharingStateStore.savedMemoryState(
+            return try MomentSharingStateStore.familyWidgetInteractionState(
                 momentID: momentID,
+                now: now,
                 validating: lifecycleToken
             )
         } catch {

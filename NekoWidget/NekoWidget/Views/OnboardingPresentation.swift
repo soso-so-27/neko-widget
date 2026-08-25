@@ -111,9 +111,9 @@ enum OnboardingPresentationCopy {
 
     static let pawTitleLines = [
         "気に入った1枚は、",
-        "肉球を押しておいてください。"
+        "星を押して思い出に。"
     ]
-    static let pawBody = "押した写真は「これ好き」に溜まります。"
+    static let pawBody = "選んだ写真は「思い出」に溜まり、あとでまとめられます。"
     static let pawAction = "はじめる"
 }
 

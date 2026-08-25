@@ -300,6 +300,21 @@ struct MomentSavedMemoryMutation: Equatable, Sendable {
     let isSaved: Bool
 }
 
+/// One fail-closed snapshot for the two interactive controls shown over a
+/// received-photo Widget. The private memory mark and the outbound reaction
+/// remain separate even though both resolve the same currently published
+/// moment.
+struct MomentFamilyWidgetInteractionState: Equatable, Sendable {
+    let isSavedMemory: Bool
+    let pawPhase: MomentPawOutboxPhase?
+    let canQueuePaw: Bool
+}
+
+struct MomentPhotoLibraryCopyPayload: Sendable {
+    let jpegData: Data
+    let capturedAt: Date?
+}
+
 enum MomentPawOutboxPhase: String, Codable, Sendable {
     case pending
     case committing
@@ -786,6 +801,61 @@ enum MomentSharingStateStore {
         try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
             try validateSavedMemoryTarget(momentID: momentID, in: state)
             return state.savedMemories.contains { $0.momentID == momentID }
+        }
+    }
+
+    /// Reads both received-photo Widget actions from one lifecycle-protected
+    /// state snapshot. A reaction already queued remains visible after its
+    /// access deadline, while a new reaction is never offered after expiry.
+    static func familyWidgetInteractionState(
+        momentID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentFamilyWidgetInteractionState {
+        try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            guard let item = state.inbox.first(where: { $0.id == momentID })
+            else { throw MomentSharingError.stateUnavailable }
+            let paw = state.pawOutbox.first { $0.momentID == momentID }
+            return MomentFamilyWidgetInteractionState(
+                isSavedMemory: state.savedMemories.contains {
+                    $0.momentID == momentID
+                },
+                pawPhase: paw?.phase,
+                canQueuePaw: paw == nil && now < item.accessExpiresAt
+            )
+        }
+    }
+
+    /// Copies only the already-sanitized received JPEG bytes out of the
+    /// lifecycle-protected store for one explicit Photos action. No path or
+    /// participant identity crosses this boundary.
+    static func photoLibraryCopyPayload(
+        momentID: String,
+        now: Date = .now,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentPhotoLibraryCopyPayload {
+        try withStateWhileLifecycleLocked(validating: lifecycleToken) { state in
+            try validateSavedMemoryTarget(momentID: momentID, in: state)
+            guard let item = state.inbox.first(where: { $0.id == momentID }),
+                  let fileName = item.localJPEGFileName,
+                  let directory = SharedContainer.momentSharingReceivedDirectoryURL,
+                  item.receivedAt >= now.addingTimeInterval(-localHistorySeconds)
+            else { throw MomentSharingError.stateUnavailable }
+            let data = try Data(
+                contentsOf: directory.appendingPathComponent(
+                    fileName,
+                    isDirectory: false
+                ),
+                options: [.mappedIfSafe]
+            )
+            guard !data.isEmpty,
+                  data.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28
+            else { throw MomentSharingError.stateUnavailable }
+            return MomentPhotoLibraryCopyPayload(
+                jpegData: data,
+                capturedAt: item.capturedAt
+            )
         }
     }
 

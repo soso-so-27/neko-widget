@@ -467,11 +467,11 @@ jobs:
           exporter="NekoWidget/Services/PhotoBookPDFExporter.swift"
           grep -Fq 'options.isNetworkAccessAllowed = true' "$exporter"
           grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
-          grep -Fq 'Label("これ好き", systemImage: "pawprint.fill")' \
+          grep -Fq 'Label("思い出", systemImage: "star.fill")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("ホーム", systemImage: "house.fill")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Label("思い出", systemImage: "square.grid.3x3.fill")' \
+          grep -Fq 'Label("アルバム", systemImage: "square.grid.3x3.fill")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'accessibilityIdentifier("window-settings-button")' \
             NekoWidget/Views/HomeView.swift
@@ -486,15 +486,15 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'Label("写真を選んでまとめる"' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Label("肉球を押した順", systemImage: "pawprint.fill")' \
+          grep -Fq 'Label("追加した順", systemImage: "star.fill")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift
-          grep -Fq 'にこれ好きへ残した猫の写真' \
+          grep -Fq 'に思い出へ追加した猫の写真' \
             NekoWidget/Views/LikedPhotosView.swift
           if grep -Eq 'photoYearSections|LikedPhotoYearSection' \
             NekoWidget/Views/LikedPhotosView.swift; then
-            echo "これ好き must remain one liked-at-ordered collection" >&2
+            echo "思い出 must remain one manually-added ordered collection" >&2
             exit 1
           fi
           grep -Fq '"pager": "bounded-native-paging"' \

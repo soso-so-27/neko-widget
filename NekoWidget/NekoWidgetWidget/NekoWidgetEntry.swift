@@ -1,6 +1,13 @@
 import Foundation
 import WidgetKit
 
+enum FamilyWidgetHeartStatus: Equatable, Sendable {
+    case hidden
+    case ready
+    case pending
+    case serverAccepted
+}
+
 /// Timeline entries intentionally carry references only. WidgetKit may render
 /// every future entry while accepting a timeline, so the provider also bounds
 /// each timeline to two entries instead of relying on lazy view evaluation.
@@ -18,6 +25,7 @@ struct NekoWidgetEntry: TimelineEntry {
     let isLikeInteractionEnabled: Bool
     let isBookmarked: Bool
     let isBookmarkInteractionEnabled: Bool
+    let familyHeartStatus: FamilyWidgetHeartStatus
 
     static func empty(
         at date: Date,
@@ -38,7 +46,8 @@ struct NekoWidgetEntry: TimelineEntry {
             isLiked: false,
             isLikeInteractionEnabled: false,
             isBookmarked: false,
-            isBookmarkInteractionEnabled: false
+            isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden
         )
     }
 

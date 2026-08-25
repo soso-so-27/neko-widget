@@ -13,8 +13,9 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var manualRefreshMessage: String?
     @Published private(set) var manualRefreshCompletedAt: Date?
     @Published private(set) var manualRefreshSucceeded: Bool?
-    @Published private(set) var bookmarkActionMessage: String?
-    @Published private(set) var pawActionMessage: String?
+    @Published private(set) var memoryActionMessage: String?
+    @Published private(set) var heartActionMessage: String?
+    @Published private(set) var photoCopyActionMessage: String?
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
@@ -51,7 +52,7 @@ final class MomentSharingViewModel: ObservableObject {
     var savedMemoryIDs: Set<String> {
         Set(sharingState.savedMemories.map(\.momentID))
     }
-    var receivedPawCount: Int { sharingState.receivedPaws.count }
+    var receivedHeartCount: Int { sharingState.receivedPaws.count }
 
     func bootstrap() async {
         do {
@@ -68,7 +69,7 @@ final class MomentSharingViewModel: ObservableObject {
 
     func synchronize(isManual: Bool = true) async {
         guard !isSynchronizing, !isPerformingAction else { return }
-        bookmarkActionMessage = nil
+        memoryActionMessage = nil
         if isManual {
             manualRefreshMessage = nil
             manualRefreshCompletedAt = nil
@@ -156,20 +157,20 @@ final class MomentSharingViewModel: ObservableObject {
         savedMemoryIDs.contains(item.id)
     }
 
-    func pawOutboxItem(for item: MomentInboxItem) -> MomentPawOutboxItem? {
+    func heartOutboxItem(for item: MomentInboxItem) -> MomentPawOutboxItem? {
         sharingState.pawOutbox.first { $0.momentID == item.id }
     }
 
-    func canSendPaw(for item: MomentInboxItem, now: Date = .now) -> Bool {
+    func canSendHeart(for item: MomentInboxItem, now: Date = .now) -> Bool {
         !isReportOnly
             && (item.state == .available || item.state == .acknowledged)
             && now < item.accessExpiresAt
     }
 
-    func sendPaw(_ item: MomentInboxItem) async {
-        guard !isPerformingAction, canSendPaw(for: item)
+    func sendHeart(_ item: MomentInboxItem) async {
+        guard !isPerformingAction, canSendHeart(for: item)
         else { return }
-        pawActionMessage = nil
+        heartActionMessage = nil
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -180,19 +181,19 @@ final class MomentSharingViewModel: ObservableObject {
             )
             _ = await coordinator.synchronize(trigger: "explicit-paw")
             try reload()
-            if pawOutboxItem(for: item)?.phase == .sent {
-                showPawActionMessage("肉球を届けました")
-            } else if pawOutboxItem(for: item) == nil {
-                errorMessage = "この写真には肉球を送れませんでした。"
+            if heartOutboxItem(for: item)?.phase == .sent {
+                showHeartActionMessage("ハートを送りました")
+            } else if heartOutboxItem(for: item) == nil {
+                errorMessage = "この写真にはハートを送れませんでした。"
             } else {
-                showPawActionMessage("肉球は送信待ちです")
+                showHeartActionMessage("ハートは送信待ちです")
             }
-            if pawOutboxItem(for: item) != nil {
+            if heartOutboxItem(for: item) != nil {
                 errorMessage = nil
             }
         } catch {
-            pawActionMessage = nil
-            errorMessage = "肉球を送れませんでした。時間をおいて、もう一度お試しください。"
+            heartActionMessage = nil
+            errorMessage = "ハートを送れませんでした。時間をおいて、もう一度お試しください。"
             SharedLog.app.warning(
                 "moment-reaction",
                 "Paw reaction could not be queued",
@@ -208,7 +209,7 @@ final class MomentSharingViewModel: ObservableObject {
         guard !isPerformingAction, !isReportOnly,
               item.state == .available || item.state == .acknowledged
         else { return }
-        bookmarkActionMessage = nil
+        memoryActionMessage = nil
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -221,12 +222,12 @@ final class MomentSharingViewModel: ObservableObject {
             )
             errorMessage = nil
             try reload()
-            showBookmarkActionMessage(willSave
-                ? "しおりを付けました"
-                : "しおりを外しました")
+            showMemoryActionMessage(willSave
+                ? "思い出に追加しました"
+                : "思い出から外しました")
         } catch {
-            bookmarkActionMessage = nil
-            errorMessage = "この写真の保存状態を変更できませんでした。時間をおいて、もう一度お試しください。"
+            memoryActionMessage = nil
+            errorMessage = "思い出の状態を変更できませんでした。時間をおいて、もう一度お試しください。"
             SharedLog.app.warning(
                 "saved-moment",
                 "Received moment bookmark could not be changed",
@@ -235,25 +236,71 @@ final class MomentSharingViewModel: ObservableObject {
         }
     }
 
-    private func showBookmarkActionMessage(_ message: String) {
-        bookmarkActionMessage = message
+    private func showMemoryActionMessage(_ message: String) {
+        memoryActionMessage = message
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled,
-                  self?.bookmarkActionMessage == message
+                  self?.memoryActionMessage == message
             else { return }
-            self?.bookmarkActionMessage = nil
+            self?.memoryActionMessage = nil
         }
     }
 
-    private func showPawActionMessage(_ message: String) {
-        pawActionMessage = message
+    private func showHeartActionMessage(_ message: String) {
+        heartActionMessage = message
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled,
-                  self?.pawActionMessage == message
+                  self?.heartActionMessage == message
             else { return }
-            self?.pawActionMessage = nil
+            self?.heartActionMessage = nil
+        }
+    }
+
+    func copyToPhotoLibrary(_ item: MomentInboxItem) async {
+        guard !isPerformingAction, !isReportOnly,
+              item.state == .available || item.state == .acknowledged
+        else { return }
+        photoCopyActionMessage = nil
+        isPerformingAction = true
+        defer { isPerformingAction = false }
+        do {
+            let copyService = ReceivedPhotoLibraryCopyService()
+            try await copyService.requestAddAuthorization()
+
+            // Authorization may suspend while iOS presents its prompt. Issue
+            // a fresh lifecycle token only afterwards, then make this final
+            // state/file/90-day check the irreversible export commit point.
+            let bootstrap = try PairingInstallationGuard.bootstrap()
+            let payload = try MomentSharingStateStore.photoLibraryCopyPayload(
+                momentID: item.id,
+                now: .now,
+                validating: bootstrap.lifecycleToken
+            )
+            try await copyService.copy(payload)
+            errorMessage = nil
+            showPhotoCopyActionMessage("写真アプリへコピーしました")
+        } catch {
+            photoCopyActionMessage = nil
+            errorMessage = (error as? LocalizedError)?.errorDescription
+                ?? "写真アプリへコピーできませんでした。時間をおいて、もう一度お試しください。"
+            SharedLog.app.warning(
+                "photo-library-copy",
+                "Received photo copy failed",
+                metadata: SharedLog.errorMetadata(error, category: .savedMoment)
+            )
+        }
+    }
+
+    private func showPhotoCopyActionMessage(_ message: String) {
+        photoCopyActionMessage = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled,
+                  self?.photoCopyActionMessage == message
+            else { return }
+            self?.photoCopyActionMessage = nil
         }
     }
 

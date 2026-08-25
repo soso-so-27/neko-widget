@@ -118,7 +118,7 @@ struct SettingsView: View {
                 Text("写真")
             } footer: {
                 Text(hasPhotoAccess
-                    ? "出す範囲は、ホーム・ウィジェット・思い出の候補に共通で使います。"
+                    ? "出す範囲は、ホーム・ウィジェット・アルバムの候補に共通で使います。"
                     : "許可するまで写真のスキャンは行いません。ウィジェットの案内など、ほかの設定は利用できます。")
             }
 
@@ -205,7 +205,7 @@ struct SettingsView: View {
                 }
 
                 Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
-                    LabeledContent("思い出の枚数上限", value: "\(draft.albumLimit.formatted())枚")
+                    LabeledContent("アルバムの枚数上限", value: "\(draft.albumLimit.formatted())枚")
                 }
 
                 NavigationLink {
@@ -235,7 +235,7 @@ struct SettingsView: View {
                 }
                 .disabled(isSaving || draft == settings)
             } footer: {
-                Text("写真の範囲と、思い出に表示する枚数上限の変更を保存します。")
+                Text("写真の範囲と、アルバムに表示する枚数上限の変更を保存します。")
             }
 
             if SharingAPIConfiguration.current.isReviewVisible {
@@ -441,7 +441,7 @@ struct SettingsView: View {
             } header: {
                 Text("再スキャンと書き出し")
             } footer: {
-                Text("思い出は保存済みの撮影日と検出結果から作ります。表示を直すためだけに再スキャンする必要はありません。")
+                Text("アルバムは保存済みの撮影日と検出結果から作ります。表示を直すためだけに再スキャンする必要はありません。")
             }
 
             Section {

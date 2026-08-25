@@ -1,6 +1,6 @@
 import Foundation
 
-/// A local PDF is an optional export from the uncapped "これ好き" collection.
+/// A local PDF is an optional export from the uncapped private-memory collection.
 /// It never chooses a global prefix silently: the caller explicitly supplies
 /// one to thirty identifiers, and only currently liked photos can be exported.
 /// This policy has no notification, badge, Widget, PhotoKit, or UI side effects.
@@ -43,8 +43,8 @@ enum PhotoBookPolicy {
     }
 }
 
-/// "これ好き" is a manual collection, so its primary order follows the
-/// user's paw actions rather than the photo's capture year or album grouping.
+/// "思い出" is a manual collection, so its primary order follows the
+/// user's explicit additions rather than the photo's capture year or album grouping.
 enum LikedPhotoOrderingPolicy {
     static func comesBefore(
         firstIdentifier: String,

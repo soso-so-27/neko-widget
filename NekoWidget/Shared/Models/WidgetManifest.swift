@@ -149,14 +149,14 @@ struct WidgetManifest: Codable, Equatable, Sendable {
 }
 
 /// One privacy-minimized family Widget publication. `momentID` is the opaque
-/// local lookup key required by the interactive bookmark button. It never
+/// local lookup key required by the private-memory and heart controls. It never
 /// leaves the App Group container and is not a participant, room, PhotoKit, or
 /// cryptographic identifier. `sourceDigest` keeps cache generations stable and
 /// is the only value serialized into the Widget's private App Intent.
 struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
     var sourceDigest: String
-    /// Optional keeps manifests written before Widget bookmarks decodable. A
-    /// missing or malformed value hides the button without hiding the photo.
+    /// Optional keeps manifests written before Widget actions decodable. A
+    /// missing or malformed value hides both controls without hiding the photo.
     var momentID: String? = nil
     var cacheFilenames: WidgetCacheFilenames
     var receivedAt: Date

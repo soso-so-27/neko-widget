@@ -105,7 +105,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("familySourceSnapshot(for: candidate, in: state)", history)
         self.assertNotIn("FileManager.default.fileExists", history)
 
-    def test_widget_cannot_like_or_route_a_family_photo_identifier(self) -> None:
+    def test_widget_keeps_received_photo_actions_separate_and_fail_closed(self) -> None:
         provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
         family_entry = section(
             provider,
@@ -116,8 +116,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("isLiked: false", family_entry)
         self.assertIn("isLikeInteractionEnabled: false", family_entry)
         self.assertIn("familySourceDigest: item.sourceDigest", family_entry)
-        self.assertIn("isBookmarked: bookmarkState ?? false", family_entry)
-        self.assertIn("isBookmarkInteractionEnabled: bookmarkState != nil", family_entry)
+        self.assertIn("let interactionState = familyInteractionState", family_entry)
+        self.assertIn("isBookmarked: interactionState?.isSavedMemory ?? false", family_entry)
+        self.assertIn("isBookmarkInteractionEnabled: interactionState != nil", family_entry)
+        self.assertIn("familyHeartStatus: heartStatus", family_entry)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn(
@@ -125,8 +127,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             view,
         )
         self.assertIn("ToggleFamilyWidgetBookmarkIntent", view)
-        self.assertIn('entry.isBookmarked ? "bookmark.fill" : "bookmark"', view)
-        self.assertIn("このiPhoneだけのしおりです。相手には送られません", view)
+        self.assertIn('entry.isBookmarked ? "star.fill" : "star"', view)
+        self.assertIn("自分だけの操作です。相手には送られません", view)
+        self.assertIn("SendFamilyWidgetHeartIntent", view)
+        self.assertIn('Image(systemName: "heart")', view)
+        self.assertIn('Image(systemName: "clock.fill")', view)
+        self.assertIn("ハートを送信待ちに追加", view)
+        self.assertIn("ハートはサーバー受付済みです", view)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
         self.assertIn('components.host = "family-window"', deep_link)
@@ -150,11 +157,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         family_intent = section(
             intent,
             "struct ToggleFamilyWidgetBookmarkIntent",
-            "private static func bookmarkMomentID",
+            "struct SendFamilyWidgetHeartIntent",
         )
         self.assertIn("static var isDiscoverable = false", family_intent)
         self.assertIn("static var openAppWhenRun = false", family_intent)
-        self.assertIn("Self.bookmarkMomentID", family_intent)
+        self.assertIn("FamilyWidgetActionTargetResolver.momentID", family_intent)
         self.assertIn("MomentSharingStateStore.toggleSavedMemory", family_intent)
         self.assertIn('reloadTimelines(ofKind: "NekoWidget")', family_intent)
         self.assertNotIn("URLSession", family_intent)
@@ -163,11 +170,21 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         models = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
         resolver = section(
             models,
-            "private static func bookmarkMomentID",
+            "private enum FamilyWidgetActionTargetResolver",
             "\n}\n",
         )
         self.assertIn("item.sourceDigest == sourceDigest", resolver)
         self.assertIn("item.hasValidBookmarkTarget", resolver)
+
+        heart_intent = section(
+            intent,
+            "struct SendFamilyWidgetHeartIntent",
+            "private enum FamilyWidgetActionTargetResolver",
+        )
+        self.assertIn("static var openAppWhenRun = false", heart_intent)
+        self.assertIn("MomentSharingStateStore.queuePaw", heart_intent)
+        self.assertIn('reloadTimelines(ofKind: "NekoWidget")', heart_intent)
+        self.assertNotIn("URLSession", heart_intent)
 
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         widget_sources = section(
@@ -178,7 +195,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("MomentSharingCore.swift in Sources", widget_sources)
         self.assertIn("MomentSharingStore.swift in Sources", widget_sources)
 
-    def test_paw_reaction_is_explicit_and_separate_from_bookmark(self) -> None:
+    def test_heart_reaction_is_explicit_and_separate_from_private_memory(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")
         bookmark = section(
             store,
@@ -206,9 +223,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         family_view = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertIn("family-window-send-paw", family_view)
-        self.assertIn("相手に肉球を送る", family_view)
+        self.assertIn("写真を届けた相手にハートを送る", family_view)
         self.assertIn("family-window-save-memory", family_view)
-        self.assertIn('Text("自分だけ")', family_view)
+        self.assertIn('Text("自分だけ・最長90日")', family_view)
         self.assertIn('Text("相手へ")', family_view)
 
         coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
@@ -223,6 +240,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func receivePawChanges(",
         )
         self.assertIn('"reaction_not_allowed"', permanent)
+
         self.assertIn('"reaction_daily_quota_reached"', permanent)
         for retryable_code in (
             "rate_limited",
@@ -242,6 +260,68 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("createdAt", paw_change)
         self.assertNotIn("createdAt", paw_response)
+
+    def test_received_photo_copy_is_explicit_add_only_and_lifecycle_validated(self) -> None:
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        payload = section(
+            store,
+            "static func photoLibraryCopyPayload(",
+            "static func toggleSavedMemory(",
+        )
+        self.assertIn("withStateWhileLifecycleLocked", payload)
+        self.assertIn("validateSavedMemoryTarget", payload)
+        self.assertIn("MomentPhotoLibraryCopyPayload", payload)
+        self.assertIn("item.receivedAt >= now.addingTimeInterval(-localHistorySeconds)", payload)
+
+        service = source("NekoWidget/Services/PhotoAlbumService.swift")
+        copy_service = section(
+            service,
+            "final class ReceivedPhotoLibraryCopyService",
+            "\n}",
+        )
+        self.assertIn("@MainActor", service)
+        self.assertIn("authorizationStatus(for: .addOnly)", copy_service)
+        self.assertIn("requestAuthorization(for: .addOnly)", copy_service)
+        self.assertIn("PHAssetCreationRequest.forAsset()", copy_service)
+        self.assertIn("request.addResource", copy_service)
+        self.assertNotIn("createdIdentifier", copy_service)
+
+        model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        copy_action = section(
+            model,
+            "func copyToPhotoLibrary(_ item: MomentInboxItem) async",
+            "private func showPhotoCopyActionMessage",
+        )
+        self.assertIn("MomentSharingStateStore.photoLibraryCopyPayload", copy_action)
+        self.assertIn("copyService.requestAddAuthorization()", copy_action)
+        self.assertIn("copyService.copy(payload)", copy_action)
+        self.assertLess(
+            copy_action.index("requestAddAuthorization"),
+            copy_action.index("PairingInstallationGuard.bootstrap"),
+        )
+        self.assertLess(
+            copy_action.index("photoLibraryCopyPayload"),
+            copy_action.index("copyService.copy(payload)"),
+        )
+
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        self.assertIn('"写真アプリへコピーしますか？"', family)
+        self.assertIn("photoCopyTarget = item", family)
+        self.assertIn("共有解除・ブロック・アプリ削除後も残り", family)
+        self.assertIn("このアプリからは削除できません", family)
+
+        memory_action = section(
+            model,
+            "func toggleSavedMemory(_ item: MomentInboxItem) async",
+            "private func showMemoryActionMessage",
+        )
+        heart_action = section(
+            model,
+            "func sendHeart(_ item: MomentInboxItem) async",
+            "func toggleSavedMemory(_ item: MomentInboxItem) async",
+        )
+        self.assertNotIn("PhotoLibrary", memory_action)
+        self.assertNotIn("PhotoLibrary", heart_action)
 
     def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")
@@ -832,18 +912,18 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             family,
         )
 
-    def test_bookmark_action_has_visible_result_and_remains_available_during_sync(self) -> None:
+    def test_memory_action_has_visible_result_and_remains_available_during_sync(self) -> None:
         model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
         family = source("NekoWidget/Views/FamilyWindowView.swift")
 
-        self.assertIn("bookmarkActionMessage", model)
-        self.assertIn("しおりを付けました", model)
+        self.assertIn("memoryActionMessage", model)
+        self.assertIn("思い出に追加しました", model)
         self.assertIn("family-window-bookmark-result", family)
-        self.assertIn('Label("しおり付き", systemImage: "bookmark.fill")', family)
+        self.assertIn('Label("思い出に追加済み", systemImage: "star.fill")', family)
         toggle = section(
             model,
             "func toggleSavedMemory(_ item: MomentInboxItem) async",
-            "private func showBookmarkActionMessage",
+            "private func showMemoryActionMessage",
         )
         self.assertIn("guard !isPerformingAction, !isReportOnly", toggle)
         self.assertNotIn("guard !isWorking", toggle)
@@ -1064,14 +1144,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("migratedSchema5.savedMemories.isEmpty", migration)
 
         family = source("NekoWidget/Views/FamilyWindowView.swift")
-        self.assertIn('model.isSavedMemory(item) ? "しおり済み" : "しおり"', family)
-        self.assertIn("保持上限で優先して残す目印", family)
-        self.assertIn("保存期間は延びず", family)
-        self.assertIn("写真アプリやiCloudには追加されません", family)
-        self.assertIn("共有解除・ブロック・再インストールで写真としおりは消えます", family)
+        self.assertIn('model.isSavedMemory(item) ? "思い出に追加済み" : "思い出に追加"', family)
+        self.assertIn("写真の保持期限は変わりません", family)
+        self.assertIn("期限は延びず、相手へ通知しません", family)
+        self.assertIn("写真アプリへコピーした写真", family)
+        self.assertIn("共有解除・ブロック・再インストールで写真と印は消えます", family)
         self.assertIn("最長90日", family)
-        self.assertNotIn("思い出に残す", family)
-        self.assertNotIn("まど内の思い出", family)
+        self.assertIn('case .memories: "思い出"', family)
         for legacy_received_list_copy in (
             "受信履歴",
             "共有履歴",
@@ -1085,8 +1164,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         home = source("NekoWidget/Views/HomeView.swift")
         self.assertIn("相手と接続済み", pairing)
         self.assertNotIn("2人のまどを設定済み", pairing)
-        self.assertIn("届いた写真・しおり", pairing)
-        self.assertIn("届いた写真、しおり", pairing_model)
+        self.assertIn("届いた写真・思い出", pairing)
+        self.assertIn("届いた写真、思い出", pairing_model)
         self.assertIn("届いた写真を開きます", home)
         self.assertNotIn("届いた写真の履歴", home)
 

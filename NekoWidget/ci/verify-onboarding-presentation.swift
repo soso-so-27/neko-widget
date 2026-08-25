@@ -146,14 +146,14 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.pawTitleLines == [
                 "気に入った1枚は、",
-                "肉球を押しておいてください。"
+                "星を押して思い出に。"
             ],
-            "paw-page title changed"
+            "memory-page title changed"
         )
         try require(
             OnboardingPresentationCopy.pawBody
-                == "押した写真は「これ好き」に溜まります。",
-            "paw explanation changed"
+                == "選んだ写真は「思い出」に溜まり、あとでまとめられます。",
+            "memory explanation changed"
         )
         try require(
             OnboardingPresentationCopy.pawAction == "はじめる",

@@ -62,7 +62,7 @@ struct NekoWidgetView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            photoActionButton
+            photoActionButtons
         }
         .overlay(alignment: .topLeading) {
             familySourceLabel
@@ -74,30 +74,31 @@ struct NekoWidgetView: View {
     }
 
     @ViewBuilder
-    private var photoActionButton: some View {
+    private var photoActionButtons: some View {
         if entry.photoSourceIdentifier == WidgetPhotoSource.familyWindowID,
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
-            Button(
-                intent: ToggleFamilyWidgetBookmarkIntent(
-                    sourceDigest: sourceDigest
-                )
-            ) {
-                ZStack {
-                    Circle()
-                        .fill(.black.opacity(0.52))
-
-                    Image(systemName: entry.isBookmarked ? "bookmark.fill" : "bookmark")
-                        .font(.system(size: bookmarkIconSize, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .invalidatableContent()
+            HStack(spacing: family == .systemSmall ? 6 : 8) {
+                Button(
+                    intent: ToggleFamilyWidgetBookmarkIntent(
+                        sourceDigest: sourceDigest
+                    )
+                ) {
+                    actionCircle {
+                        Image(systemName: entry.isBookmarked ? "star.fill" : "star")
+                            .font(.system(size: memoryIconSize, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .invalidatableContent()
+                    }
                 }
-                .frame(width: actionButtonSize, height: actionButtonSize)
-                .contentShape(Circle())
+                .buttonStyle(.plain)
+                .accessibilityLabel(
+                    entry.isBookmarked ? "思い出から外す" : "思い出に追加"
+                )
+                .accessibilityHint("自分だけの操作です。相手には送られません")
+
+                familyHeartControl(sourceDigest: sourceDigest)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(entry.isBookmarked ? "しおりを外す" : "しおりを付ける")
-            .accessibilityHint("このiPhoneだけのしおりです。相手には送られません")
             .padding(actionButtonInset)
         } else if let localIdentifier = entry.localIdentifier,
                   entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
@@ -108,23 +109,68 @@ struct NekoWidgetView: View {
                     fallbackIsLiked: entry.isLiked
                 )
             ) {
-                ZStack {
-                    Circle()
-                        .fill(.black.opacity(0.48))
-
-                    CatPawMark(isFilled: entry.isLiked)
-                        .frame(width: pawIconSize, height: pawIconSize)
+                actionCircle {
+                    Image(systemName: entry.isLiked ? "star.fill" : "star")
+                        .font(.system(size: memoryIconSize, weight: .semibold))
                         .foregroundStyle(.white)
                         .invalidatableContent()
                 }
-                .frame(width: actionButtonSize, height: actionButtonSize)
-                .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(entry.isLiked ? "好きを解除" : "これ好き")
-            .accessibilityHint("アプリを開かずに、この写真の好き状態を切り替えます")
+            .accessibilityLabel(entry.isLiked ? "思い出から外す" : "思い出に追加")
+            .accessibilityHint("アプリを開かず、自分の思い出一覧を更新します")
             .padding(actionButtonInset)
         }
+    }
+
+    @ViewBuilder
+    private func familyHeartControl(sourceDigest: String) -> some View {
+        switch entry.familyHeartStatus {
+        case .ready:
+            Button(intent: SendFamilyWidgetHeartIntent(sourceDigest: sourceDigest)) {
+                actionCircle {
+                    Image(systemName: "heart")
+                        .font(.system(size: memoryIconSize, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .invalidatableContent()
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("ハートを送信待ちに追加")
+            .accessibilityHint("アプリの同期後、サーバー受付済みとして表示します")
+        case .pending:
+            actionCircle {
+                Image(systemName: "clock.fill")
+                    .font(.system(size: memoryIconSize, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .invalidatableContent()
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("ハートは送信待ちです")
+        case .serverAccepted:
+            actionCircle {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: memoryIconSize, weight: .semibold))
+                    .foregroundStyle(.pink)
+                    .invalidatableContent()
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("ハートはサーバー受付済みです")
+        case .hidden:
+            EmptyView()
+        }
+    }
+
+    private func actionCircle<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ZStack {
+            Circle()
+                .fill(.black.opacity(0.52))
+            content()
+        }
+        .frame(width: actionButtonSize, height: actionButtonSize)
+        .contentShape(Circle())
     }
 
     @ViewBuilder
@@ -157,16 +203,7 @@ struct NekoWidgetView: View {
         }
     }
 
-    private var pawIconSize: CGFloat {
-        switch family {
-        case .systemSmall:
-            return 18
-        default:
-            return 20
-        }
-    }
-
-    private var bookmarkIconSize: CGFloat {
+    private var memoryIconSize: CGFloat {
         family == .systemSmall ? 16 : 18
     }
 
@@ -236,7 +273,8 @@ enum AppStoreWidgetPreviewFixture {
             isLiked: false,
             isLikeInteractionEnabled: false,
             isBookmarked: false,
-            isBookmarkInteractionEnabled: false
+            isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden
         )
     }
 

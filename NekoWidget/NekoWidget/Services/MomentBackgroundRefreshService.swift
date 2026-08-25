@@ -331,7 +331,7 @@ actor MomentBackgroundRefreshService {
         else { return }
         let content = UNMutableNotificationContent()
         content.title = "ねこのまど"
-        content.body = "届けた写真に肉球が届きました。"
+        content.body = "届けた写真にハートが届きました。"
         // No photo, sender/window label, moment identifier, sound, or badge is
         // attached. Opening the app performs the authenticated state lookup.
         let request = UNNotificationRequest(
