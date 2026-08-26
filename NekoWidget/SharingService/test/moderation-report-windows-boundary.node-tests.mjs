@@ -317,7 +317,6 @@ test("Windows helper and wrapper contain the exact ACL, link, module, and fixed-
     "ReparsePoint",
     "Test-TrustedModerationNodeAcl",
     "Disable-InheritedModerationNodeEnvironment",
-    'StartsWith(\n                "NODE_"',
     "Node 22 or later is required",
   ]) {
     assert.ok(
@@ -325,6 +324,7 @@ test("Windows helper and wrapper contain the exact ACL, link, module, and fixed-
       `missing trusted Node boundary: ${requiredSource}`,
     );
   }
+  assert.match(trustedNode, /StartsWith\(\s*"NODE_"/u);
   assert.doesNotMatch(trustedNode, /Get-Command\s+node|where(?:\.exe)?\s+node/iu);
   for (const wrapperPath of WINDOWS_WRAPPERS) {
     const source = readFileSync(wrapperPath, "utf8");
