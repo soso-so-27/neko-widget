@@ -312,6 +312,12 @@ enum MomentPushSubscriptionEnvironment: String, Encodable, Sendable {
     }
 }
 
+enum MomentPushSubscriptionProtocol {
+    /// The additive endpoint is independently versioned from the encrypted
+    /// photo protocol. Version 3 requires target-bearing notification routes.
+    static let targetedVersion = 3
+}
+
 actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
     PrivateWindowNameAPIClientProtocol, MomentReactionAPIClientProtocol {
     private let baseURL: URL
@@ -366,6 +372,35 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         else { throw MomentSharingError.invalidPayload }
     }
 
+    /// Adds this signed device/window binding without replacing other
+    /// targeted bindings for the same physical APNs token. The v3 route is a
+    /// compatibility boundary: its notifications require an opaque target
+    /// and are rejected by clients that only understand the legacy v1 route.
+    func putTargetedPushSubscription(
+        deviceToken: Data,
+        environment: MomentPushSubscriptionEnvironment = .current,
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws {
+        guard (16...256).contains(deviceToken.count) else {
+            throw MomentSharingError.invalidPayload
+        }
+        let response: PushSubscriptionResponse = try await sendJSON(
+            path: "/v3/push-subscriptions/current",
+            method: "PUT",
+            body: PushSubscriptionPutRequest(
+                protocolVersion: MomentPushSubscriptionProtocol.targetedVersion,
+                token: deviceToken.base64URLEncodedString(),
+                environment: environment
+            ),
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentPushSubscriptionProtocol.targetedVersion,
+              response.subscription.state == "active"
+        else { throw MomentSharingError.invalidPayload }
+    }
+
     /// Removes the subscription bound to the currently authenticated device.
     /// No token is sent on deletion, which also makes notification-permission
     /// revocation safe when the app no longer has a token in memory.
@@ -383,6 +418,27 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
             credential: credential
         )
         guard response.protocolVersion == MomentSharingProtocol.version,
+              response.subscription.state == "deleted"
+        else { throw MomentSharingError.invalidPayload }
+    }
+
+    /// Removes only the targeted binding owned by this signed device/window.
+    /// Calling it for every locally authenticated window makes notification
+    /// opt-out complete without persisting the raw APNs token on the device.
+    func deleteTargetedPushSubscription(
+        pairingState: PairingState,
+        credential: PairingCredential
+    ) async throws {
+        let response: PushSubscriptionResponse = try await sendJSON(
+            path: "/v3/push-subscriptions/current",
+            method: "DELETE",
+            body: PushSubscriptionDeleteRequest(
+                protocolVersion: MomentPushSubscriptionProtocol.targetedVersion
+            ),
+            pairingState: pairingState,
+            credential: credential
+        )
+        guard response.protocolVersion == MomentPushSubscriptionProtocol.targetedVersion,
               response.subscription.state == "deleted"
         else { throw MomentSharingError.invalidPayload }
     }

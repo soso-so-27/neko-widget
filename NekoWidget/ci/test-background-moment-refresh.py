@@ -143,6 +143,8 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("reconcileRemoteNotificationRegistration()", mismatch)
         self.assertIn("completionHandler(.noData)", mismatch)
         self.assertIn("return", mismatch)
+        self.assertNotIn("MomentBackgroundRefreshService.shared.refresh", mismatch)
+        self.assertNotIn("coordinator.synchronize", mismatch)
 
         matcher = self.service.split(
             "private static func notificationTargetMatchesActiveWindow", 1
@@ -152,12 +154,50 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("active.spaceID == target.spaceID", matcher)
 
     def test_signed_push_subscription_contract_does_not_persist_token(self) -> None:
+        # v2 remains the exclusive active-window rollback boundary. New builds
+        # use v3 for additive, independently signed window bindings.
         self.assertIn('path: "/v2/push-subscriptions/current"', self.api_client)
+        self.assertIn('path: "/v3/push-subscriptions/current"', self.api_client)
+        self.assertIn("func putTargetedPushSubscription(", self.api_client)
+        self.assertIn("func deleteTargetedPushSubscription(", self.api_client)
+        self.assertIn("static let targetedVersion = 3", self.api_client)
         self.assertIn('method: "PUT"', self.api_client)
         self.assertIn('method: "DELETE"', self.api_client)
         self.assertIn("MomentSharingProtocol.version", self.api_client)
         self.assertIn("deviceToken.base64URLEncodedString()", self.api_client)
         self.assertIn("try authenticate(", self.api_client)
+        targeted_put = self.api_client.split(
+            "func putTargetedPushSubscription(", 1
+        )[1].split("func deletePushSubscription(", 1)[0]
+        targeted_delete = self.api_client.split(
+            "func deleteTargetedPushSubscription(", 1
+        )[1].split("func currentWindowName(", 1)[0]
+        self.assertIn('path: "/v3/push-subscriptions/current"', targeted_put)
+        self.assertIn('method: "PUT"', targeted_put)
+        self.assertIn(
+            "protocolVersion: MomentPushSubscriptionProtocol.targetedVersion",
+            targeted_put,
+        )
+        self.assertIn(
+            "response.protocolVersion == MomentPushSubscriptionProtocol.targetedVersion",
+            targeted_put,
+        )
+        self.assertIn('path: "/v3/push-subscriptions/current"', targeted_delete)
+        self.assertIn('method: "DELETE"', targeted_delete)
+        self.assertIn(
+            "protocolVersion: MomentPushSubscriptionProtocol.targetedVersion",
+            targeted_delete,
+        )
+        self.assertIn(
+            "response.protocolVersion == MomentPushSubscriptionProtocol.targetedVersion",
+            targeted_delete,
+        )
+        put_body = self.api_client.split(
+            "private struct PushSubscriptionPutRequest", 1
+        )[1].split("private struct PushSubscriptionDeleteRequest", 1)[0]
+        for server_derived_identity in ("spaceID", "participantID", "deviceID"):
+            with self.subTest(server_derived_identity=server_derived_identity):
+                self.assertNotIn(server_derived_identity, put_body)
         push_service = self.service.split("actor MomentPushSubscriptionService", 1)[1].split(
             "actor MomentBackgroundRefreshService", 1
         )[0]
@@ -174,25 +214,31 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
             "func register(deviceToken:", 1
         )[0]
         self.assertIn("authenticatedContextsForAllWindows(", reconcile)
-        self.assertIn("for context in contexts where !context.isActive", reconcile)
-        self.assertIn("contexts.first(where: { $0.isActive })", reconcile)
+        self.assertIn("for context in contexts where !MomentBackgroundRefreshPolicy.isEligible", reconcile)
+        self.assertIn("contexts.contains(where:", reconcile)
+        self.assertNotIn("for context in contexts where !context.isActive", reconcile)
         registration = push_service.split("func register(deviceToken:", 1)[1].split(
             "private func deleteCurrentSubscriptionIfPossible", 1
         )[0]
-        self.assertIn("contexts.first(where: { $0.isActive })", registration)
-        self.assertIn("for context in contexts where !context.isActive", registration)
-        self.assertIn("registrationTargetIsCurrent(", registration)
+        self.assertIn("for context in snapshot.contexts", registration)
+        self.assertNotIn("for context in contexts where !context.isActive", registration)
+        self.assertIn("registrationSnapshotIsCurrent(", registration)
         self.assertIn("continue registrationAttempt", registration)
         self.assertIn("MomentBackgroundRefreshPolicy.isEligible(", registration)
         self.assertIn("performRemoteMutation(", registration)
-        self.assertIn(".put(deviceToken: deviceToken)", registration)
-        self.assertIn(
-            "let latestSettings = await notificationCenter.notificationSettings()",
-            registration,
-        )
+        self.assertIn("legacyFallbackGuard: context.isActive", registration)
+        self.assertIn("fingerprint: snapshot.fingerprint", registration)
+        self.assertIn("generation: generation", registration)
+        self.assertIn("tokenCallbackEpoch: callbackEpoch", registration)
+        self.assertIn(".delete,", registration)
+        self.assertIn("let latestSettings = await notificationCenter", registration)
+        self.assertIn(".notificationSettings()", registration)
+        context_loop = registration.index("for context in snapshot.contexts")
+        permission_recheck = registration.index("let latestSettings = await", context_loop)
+        put_mutation = registration.index(".put(", permission_recheck)
         self.assertLess(
-            registration.index("let latestSettings = await"),
-            registration.index(".put(deviceToken: deviceToken)"),
+            permission_recheck,
+            put_mutation,
         )
         self.assertIn("Self.allowsRemoteAlerts(latestSettings)", registration)
         self.assertIn("await deleteCurrentSubscriptionIfPossible()", registration)
@@ -202,11 +248,13 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("remoteMutationQueue.append", mutation_gate)
         self.assertIn("drainRemoteMutationQueue()", mutation_gate)
         self.assertIn("remoteMutationQueue.removeFirst()", mutation_gate)
+        self.assertIn("client.putTargetedPushSubscription(", mutation_gate)
         self.assertIn("client.putPushSubscription(", mutation_gate)
         self.assertIn("client.deletePushSubscription(", mutation_gate)
+        self.assertNotIn("client.deleteTargetedPushSubscription(", mutation_gate)
         contexts = push_service.split(
             "private func authenticatedContextsForAllWindows(", 1
-        )[1].split("private func registrationTargetIsCurrent(", 1)[0]
+        )[1].split("private func registrationSnapshotIsCurrent(", 1)[0]
         self.assertIn("SharingLifecycleGate.withValidatedToken(", contexts)
         self.assertIn("bootstrap.lifecycleToken", contexts)
         self.assertIn("activeEntry.spaceID == bootstrap.state.spaceID", contexts)
@@ -217,6 +265,116 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("entry.spaceID == pairing.spaceID", contexts)
         self.assertIn("entry.credentialAccount == account", contexts)
         self.assertIn("SharingLifecycleGate.validate(bootstrap.lifecycleToken)", contexts)
+        # The first v3 PUT converts the legacy exclusive token binding. It must
+        # therefore always be the selected window, with deterministic ordering
+        # for all remaining independently authenticated windows.
+        self.assertIn("contexts.sort", contexts)
+        self.assertIn(
+            "if lhs.isActive != rhs.isActive { return lhs.isActive }", contexts
+        )
+        self.assertIn("lhs.localWindowID < rhs.localWindowID", contexts)
+        self.assertIn("AuthenticatedWindowSnapshot(", contexts)
+        self.assertIn("Self.catalogFingerprint(snapshot.catalog)", contexts)
+
+    def test_push_registration_race_and_rollback_boundaries(self) -> None:
+        delegate = self.service.split("final class NekoWidgetAppDelegate", 1)[1].split(
+            "actor MomentPushSubscriptionService", 1
+        )[0]
+        self.assertIn("private var tokenRegistrationEpoch: UInt64 = 0", delegate)
+        self.assertIn("tokenRegistrationEpoch &+= 1", delegate)
+        self.assertIn("let callbackEpoch = tokenRegistrationEpoch", delegate)
+        self.assertIn("callbackEpoch: callbackEpoch", delegate)
+
+        push_service = self.service.split(
+            "actor MomentPushSubscriptionService", 1
+        )[1].split("actor MomentBackgroundRefreshService", 1)[0]
+        registration = push_service.split(
+            "func register(deviceToken: Data, callbackEpoch: UInt64)", 1
+        )[1].split("private func deleteCurrentSubscriptionIfPossible", 1)[0]
+        self.assertIn("guard callbackEpoch >= latestTokenCallbackEpoch", registration)
+        self.assertIn("latestTokenCallbackEpoch = callbackEpoch", registration)
+        self.assertGreaterEqual(
+            registration.count("callbackEpoch == latestTokenCallbackEpoch"), 4
+        )
+        self.assertIn("tokenCallbackEpoch: callbackEpoch", registration)
+        self.assertIn("catch is CancellationError", registration)
+
+        mutation_gate = push_service.split(
+            "private func performRemoteMutation(", 1
+        )[1].split("/// Produces one authenticated context", 1)[0]
+        self.assertIn("let tokenCallbackEpoch: UInt64?", push_service)
+        self.assertIn("guard tokenCallbackIsCurrent(tokenCallbackEpoch)", mutation_gate)
+        self.assertIn(
+            "guard tokenCallbackIsCurrent(mutation.tokenCallbackEpoch)",
+            mutation_gate,
+        )
+        self.assertGreaterEqual(
+            mutation_gate.count("tokenCallbackIsCurrent(mutation.tokenCallbackEpoch)"),
+            2,
+        )
+
+        fingerprint = push_service.split("private struct CatalogFingerprint", 1)[
+            1
+        ].split("private struct AuthenticatedWindowSnapshot", 1)[0]
+        for field in (
+            "let activeWindowID: String",
+            "let localWindowID: String",
+            "let spaceID: String?",
+            "let credentialAccount: String?",
+        ):
+            with self.subTest(fingerprint_field=field):
+                self.assertIn(field, fingerprint)
+        cas = push_service.split("private func registrationSnapshotIsCurrent", 1)[
+            1
+        ].split("private func authenticatedContext", 1)[0]
+        self.assertIn("generation == registrationGeneration", cas)
+        self.assertIn("tokenCallbackIsCurrent(tokenCallbackEpoch)", cas)
+        self.assertIn("Self.catalogFingerprint(catalog) == fingerprint", cas)
+        self.assertIn("catalog.windows.map", cas)
+        self.assertIn(".sorted { $0.localWindowID < $1.localWindowID }", cas)
+
+        # Permission is checked inside the per-window loop, so revocation after
+        # an earlier PUT triggers a signed delete of every authenticated window.
+        context_loop = registration.split("for context in snapshot.contexts", 1)[1]
+        self.assertIn("let latestSettings = await notificationCenter", context_loop)
+        self.assertLess(
+            context_loop.index("let latestSettings = await notificationCenter"),
+            context_loop.index(".put("),
+        )
+        self.assertIn("await deleteCurrentSubscriptionIfPossible()", context_loop)
+        deletion = push_service.split(
+            "private func deleteCurrentSubscriptionIfPossible", 1
+        )[1].split("private func performRemoteMutation", 1)[0]
+        self.assertIn("for context in snapshot.contexts", deletion)
+        self.assertIn(".delete,", deletion)
+        self.assertIn("registrationSnapshotIsCurrent(", deletion)
+
+        # Rollback is deliberately narrow: exact generic route absence only,
+        # active context only, and DELETE always uses compatible v2.
+        fallback = mutation_gate.split(
+            "case let .put(deviceToken, legacyFallbackGuard):", 1
+        )[1].split("case .delete:", 1)[0]
+        self.assertIn(
+            "guard Self.targetedSubscriptionEndpointIsUnavailable(error)",
+            fallback,
+        )
+        self.assertIn("else { throw error }", fallback)
+        self.assertIn("guard let legacyFallbackGuard else { throw error }", fallback)
+        legacy_scope = fallback.split(
+            "guard let legacyFallbackGuard else { throw error }", 1
+        )[1]
+        self.assertGreaterEqual(
+            legacy_scope.count("registrationSnapshotIsCurrent("), 2
+        )
+        self.assertIn("legacyFallbackGuard.fingerprint", legacy_scope)
+        self.assertIn("generation: legacyFallbackGuard.generation", legacy_scope)
+        self.assertIn("client.putPushSubscription(", legacy_scope)
+        self.assertIn("try? await client.deletePushSubscription(", legacy_scope)
+        self.assertIn("client.deletePushSubscription(", mutation_gate)
+        unavailable = mutation_gate.split(
+            "private static func targetedSubscriptionEndpointIsUnavailable", 1
+        )[1]
+        self.assertIn("status == 404 && code == \"not_found\"", unavailable)
 
     def test_local_notification_contains_no_shared_identity_or_media(self) -> None:
         notification = self.service.split(
@@ -248,11 +406,15 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn('static let envelopeKey = "neko"', payload)
         self.assertIn('static let targetEnvelopeKey = "nekoTarget"', payload)
         self.assertIn("static let legacySchemaVersion = 1", payload)
+        self.assertIn("static let targetedSchemaVersion = 2", payload)
         self.assertIn("static let targetSchemaVersion = 1", payload)
         self.assertNotIn("static let schemaVersion", payload)
         self.assertIn('Set(envelope.keys) == Set(["v", "kind"])', payload)
         self.assertIn('envelope["v"] as? Int', payload)
-        self.assertIn("version == legacySchemaVersion", payload)
+        self.assertIn(
+            "version == legacySchemaVersion || version == targetedSchemaVersion",
+            payload,
+        )
         self.assertIn("MomentNotificationRouteKind(rawValue: rawKind)", payload)
         self.assertIn(
             'Set(targetEnvelope.keys) == Set(["v", "spaceId", "momentId"])',
@@ -298,7 +460,14 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         # versioned target is absent. A present but malformed target must not
         # silently navigate the currently selected window.
         self.assertIn("guard let rawTarget = userInfo[targetEnvelopeKey]", payload)
-        self.assertIn("return MomentNotificationRoute(kind: kind, target: nil)", payload)
+        missing_target = payload.split(
+            "guard let rawTarget = userInfo[targetEnvelopeKey]", 1
+        )[1].split("guard let targetEnvelope", 1)[0]
+        self.assertIn("return version == legacySchemaVersion", missing_target)
+        self.assertIn(
+            "? MomentNotificationRoute(kind: kind, target: nil)", missing_target
+        )
+        self.assertIn(": nil", missing_target)
         malformed_target = payload.split(
             "guard let rawTarget = userInfo[targetEnvelopeKey]", 1
         )[1]

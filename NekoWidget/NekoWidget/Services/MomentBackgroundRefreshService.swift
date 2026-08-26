@@ -66,6 +66,7 @@ enum MomentNotificationRoutePayload {
     // The legacy envelope is an installed-client compatibility boundary. The
     // separately versioned target may evolve without ever changing `neko` v1.
     static let legacySchemaVersion = 1
+    static let targetedSchemaVersion = 2
     static let targetSchemaVersion = 1
 
     static func userInfo(
@@ -91,13 +92,20 @@ enum MomentNotificationRoutePayload {
         guard let envelope = userInfo[envelopeKey] as? [String: Any],
               Set(envelope.keys) == Set(["v", "kind"]),
               let version = envelope["v"] as? Int,
-              version == legacySchemaVersion,
+              version == legacySchemaVersion || version == targetedSchemaVersion,
               let rawKind = envelope["kind"] as? String,
               let kind = MomentNotificationRouteKind(rawValue: rawKind)
         else { return nil }
 
-        guard let rawTarget = userInfo[targetEnvelopeKey]
-        else { return MomentNotificationRoute(kind: kind, target: nil) }
+        guard let rawTarget = userInfo[targetEnvelopeKey] else {
+            // Only the active-window legacy subscription may omit a target.
+            // Additive multi-window subscriptions always use v2 so an older
+            // client fails closed instead of synchronizing whichever window
+            // happens to be selected.
+            return version == legacySchemaVersion
+                ? MomentNotificationRoute(kind: kind, target: nil)
+                : nil
+        }
         guard let targetEnvelope = rawTarget as? [String: Any],
               Set(targetEnvelope.keys) == Set(["v", "spaceId", "momentId"]),
               let targetVersion = targetEnvelope["v"] as? Int,
@@ -149,6 +157,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
     private var activeRefresh: Task<Void, Never>?
     private var registrationReconciliation: Task<Void, Never>?
     private var tokenRegistration: Task<Void, Never>?
+    private var tokenRegistrationEpoch: UInt64 = 0
 
     func application(
         _ application: UIApplication,
@@ -202,9 +211,12 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // observing staleness and re-registering the newest selected window.
         // The generation/catalog CAS inside `register` makes both callbacks
         // converge instead.
+        tokenRegistrationEpoch &+= 1
+        let callbackEpoch = tokenRegistrationEpoch
         tokenRegistration = Task {
             await MomentPushSubscriptionService.shared.register(
-                deviceToken: deviceToken
+                deviceToken: deviceToken,
+                callbackEpoch: callbackEpoch
             )
         }
     }
@@ -360,7 +372,10 @@ actor MomentPushSubscriptionService {
     static let shared = MomentPushSubscriptionService()
 
     private enum RemoteMutationKind {
-        case put(deviceToken: Data)
+        case put(
+            deviceToken: Data,
+            legacyFallbackGuard: LegacyFallbackGuard?
+        )
         case delete
     }
 
@@ -368,6 +383,7 @@ actor MomentPushSubscriptionService {
         let kind: RemoteMutationKind
         let pairing: PairingState
         let credential: PairingCredential
+        let tokenCallbackEpoch: UInt64?
         let continuation: CheckedContinuation<Void, Error>
     }
 
@@ -378,11 +394,36 @@ actor MomentPushSubscriptionService {
         let credential: PairingCredential
     }
 
+    private struct CatalogFingerprint: Equatable, Sendable {
+        struct Entry: Equatable, Sendable {
+            let localWindowID: String
+            let spaceID: String?
+            let credentialAccount: String?
+        }
+
+        let activeWindowID: String
+        let entries: [Entry]
+    }
+
+    private struct LegacyFallbackGuard: Sendable {
+        let fingerprint: CatalogFingerprint
+        let generation: UInt64
+    }
+
+    private struct AuthenticatedWindowSnapshot: Sendable {
+        let fingerprint: CatalogFingerprint
+        let contexts: [AuthenticatedWindowContext]
+    }
+
     private let notificationCenter: UNUserNotificationCenter
     /// Actor methods are reentrant across network awaits. The generation and
-    /// catalog active ID prevent an older APNs callback from winning after a
-    /// private-window switch.
+    /// complete catalog fingerprint prevent a request from completing against
+    /// a stale private-window authorization map.
     private var registrationGeneration: UInt64 = 0
+    /// Assigned by the app delegate before each APNs callback task is created.
+    /// A lower epoch can never overwrite part of a newer token's all-window
+    /// registration batch.
+    private var latestTokenCallbackEpoch: UInt64 = 0
     /// Actor isolation is reentrant across URLSession awaits. A FIFO task gate
     /// makes the server observe signed mutations in the same order in which
     /// generations enqueue them: an old mutation already in flight finishes
@@ -405,13 +446,14 @@ actor MomentPushSubscriptionService {
             do {
                 let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
                 verifiedBootstrap = bootstrap
-                let contexts = try await authenticatedContextsForAllWindows(
+                let snapshot = try await authenticatedContextsForAllWindows(
                     verifiedBootstrap: bootstrap
                 )
-                guard generation == registrationGeneration,
-                      contexts.contains(where: {
-                    $0.isActive
-                        && MomentBackgroundRefreshPolicy.isEligible(
+                guard registrationSnapshotIsCurrent(
+                    snapshot.fingerprint,
+                    generation: generation
+                ), snapshot.contexts.contains(where: {
+                    MomentBackgroundRefreshPolicy.isEligible(
                             configuration: .current,
                             pairing: $0.pairing
                         )
@@ -419,9 +461,15 @@ actor MomentPushSubscriptionService {
                 _ = try? await notificationCenter.requestAuthorization(
                     options: [.alert, .provisional]
                 )
-                guard generation == registrationGeneration else { return }
+                guard registrationSnapshotIsCurrent(
+                    snapshot.fingerprint,
+                    generation: generation
+                ) else { return }
                 settings = await notificationCenter.notificationSettings()
-                guard generation == registrationGeneration else { return }
+                guard registrationSnapshotIsCurrent(
+                    snapshot.fingerprint,
+                    generation: generation
+                ) else { return }
             } catch {
                 return
             }
@@ -441,70 +489,51 @@ actor MomentPushSubscriptionService {
             } else {
                 bootstrap = try await PairingInstallationGuard.bootstrapAsync()
             }
-            let contexts = try await authenticatedContextsForAllWindows(
+            let snapshot = try await authenticatedContextsForAllWindows(
                 verifiedBootstrap: bootstrap
             )
-            guard let activeWindowID = try PrivateWindowCatalogStore.load()?.activeWindowID,
-                  registrationTargetIsCurrent(
-                      localWindowID: activeWindowID,
-                      generation: generation
-                  ) else { return }
-            // Background synchronization currently owns one explicit UI
-            // destination: the selected window. Remove subscriptions for all
-            // inactive windows before registering that destination so a
-            // generic APNs alert can never wake the app for a different room
-            // and then publish the selected room by mistake.
-            for context in contexts where !context.isActive {
+            let contexts = snapshot.contexts
+            guard registrationSnapshotIsCurrent(
+                snapshot.fingerprint,
+                generation: generation
+            ) else { return }
+            // A context that is still paired but no longer eligible must lose
+            // its own additive binding. Eligible inactive windows stay
+            // subscribed; their target-bearing alert is displayed, but the
+            // background callback below never synchronizes the active window
+            // for that different target.
+            for context in contexts where !MomentBackgroundRefreshPolicy.isEligible(
+                configuration: .current,
+                pairing: context.pairing
+            ) {
                 guard !Task.isCancelled,
-                      registrationTargetIsCurrent(
-                          localWindowID: activeWindowID,
-                          generation: generation
+                      registrationSnapshotIsCurrent(
+                        snapshot.fingerprint,
+                        generation: generation
                       ) else { return }
-                // An inactive credential can already be expired or revoked.
-                // Its DELETE is best-effort; the active PUT atomically replaces
-                // every older binding for the same physical APNs token.
                 try? await performRemoteMutation(
                     .delete,
                     pairing: context.pairing,
                     credential: context.credential
                 )
                 guard !Task.isCancelled,
-                      registrationTargetIsCurrent(
-                    localWindowID: activeWindowID,
-                    generation: generation
-                ) else { return }
-            }
-            guard let active = contexts.first(where: { $0.isActive }) else {
-                return
-            }
-            guard MomentBackgroundRefreshPolicy.isEligible(
-                configuration: .current,
-                pairing: active.pairing
-            ) else {
-                guard registrationTargetIsCurrent(
-                    localWindowID: activeWindowID,
-                    generation: generation
-                ) else { return }
-                do {
-                    try await performRemoteMutation(
-                        .delete,
-                        pairing: active.pairing,
-                        credential: active.credential
-                    )
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled,
-                      registrationTargetIsCurrent(
-                        localWindowID: activeWindowID,
+                      registrationSnapshotIsCurrent(
+                        snapshot.fingerprint,
                         generation: generation
                       ) else { return }
+            }
+            guard contexts.contains(where: {
+                MomentBackgroundRefreshPolicy.isEligible(
+                    configuration: .current,
+                    pairing: $0.pairing
+                )
+            }) else {
                 return
             }
             guard !Task.isCancelled,
-                  registrationTargetIsCurrent(
-                      localWindowID: activeWindowID,
-                      generation: generation
+                  registrationSnapshotIsCurrent(
+                    snapshot.fingerprint,
+                    generation: generation
                   ) else { return }
             await MainActor.run {
                 UIApplication.shared.registerForRemoteNotifications()
@@ -517,88 +546,123 @@ actor MomentPushSubscriptionService {
         }
     }
 
-    func register(deviceToken: Data) async {
+    func register(deviceToken: Data, callbackEpoch: UInt64) async {
         guard (16...256).contains(deviceToken.count) else { return }
+        guard callbackEpoch >= latestTokenCallbackEpoch else { return }
+        latestTokenCallbackEpoch = callbackEpoch
         let settings = await notificationCenter.notificationSettings()
+        guard callbackEpoch == latestTokenCallbackEpoch else { return }
         guard Self.allowsRemoteAlerts(settings) else {
             await deleteCurrentSubscriptionIfPossible()
             return
         }
         do {
             // A stale callback retains the raw token only in this stack frame
-            // and retries against the newest selected window. Bound rapid
+            // and retries against the newest complete catalog. Bound rapid
             // switching; a later app activation is the final retry path.
             registrationAttempt: for _ in 0..<4 {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      callbackEpoch == latestTokenCallbackEpoch else { return }
                 let generation = registrationGeneration
-                let contexts = try await authenticatedContextsForAllWindows()
-                guard let active = contexts.first(where: { $0.isActive }) else {
-                    return
-                }
-                guard registrationTargetIsCurrent(
-                    localWindowID: active.localWindowID,
-                    generation: generation
+                let snapshot = try await authenticatedContextsForAllWindows()
+                guard callbackEpoch == latestTokenCallbackEpoch else { return }
+                guard registrationSnapshotIsCurrent(
+                    snapshot.fingerprint,
+                    generation: generation,
+                    tokenCallbackEpoch: callbackEpoch
                 ) else { continue registrationAttempt }
-                for context in contexts where !context.isActive {
-                    guard registrationTargetIsCurrent(
-                        localWindowID: active.localWindowID,
-                        generation: generation
+
+                var mutationFailed = false
+                var registeredCount = 0
+                for context in snapshot.contexts {
+                    guard !Task.isCancelled else { return }
+                    guard callbackEpoch == latestTokenCallbackEpoch else { return }
+                    guard registrationSnapshotIsCurrent(
+                        snapshot.fingerprint,
+                        generation: generation,
+                        tokenCallbackEpoch: callbackEpoch
                     ) else { continue registrationAttempt }
-                    try? await performRemoteMutation(
-                        .delete,
-                        pairing: context.pairing,
-                        credential: context.credential
-                    )
-                    guard registrationTargetIsCurrent(
-                        localWindowID: active.localWindowID,
-                        generation: generation
+                    do {
+                        if MomentBackgroundRefreshPolicy.isEligible(
+                            configuration: .current,
+                            pairing: context.pairing
+                        ) {
+                            // Notification permission can change while earlier
+                            // contexts wait on the FIFO/network. Check it again
+                            // immediately before every PUT. Opt-out removes all
+                            // authenticated window bindings, including ones
+                            // already registered by this callback.
+                            let latestSettings = await notificationCenter
+                                .notificationSettings()
+                            guard callbackEpoch == latestTokenCallbackEpoch else {
+                                return
+                            }
+                            guard registrationSnapshotIsCurrent(
+                                snapshot.fingerprint,
+                                generation: generation,
+                                tokenCallbackEpoch: callbackEpoch
+                            ) else { continue registrationAttempt }
+                            guard Self.allowsRemoteAlerts(latestSettings) else {
+                                await deleteCurrentSubscriptionIfPossible()
+                                return
+                            }
+                            try await performRemoteMutation(
+                                .put(
+                                    deviceToken: deviceToken,
+                                    legacyFallbackGuard: context.isActive
+                                        ? LegacyFallbackGuard(
+                                            fingerprint: snapshot.fingerprint,
+                                            generation: generation
+                                        )
+                                        : nil
+                                ),
+                                pairing: context.pairing,
+                                credential: context.credential,
+                                tokenCallbackEpoch: callbackEpoch
+                            )
+                            registeredCount += 1
+                        } else {
+                            try await performRemoteMutation(
+                                .delete,
+                                pairing: context.pairing,
+                                credential: context.credential
+                            )
+                        }
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        // One revoked or temporarily unavailable credential
+                        // must not prevent other independent windows from
+                        // receiving their correctly targeted notifications.
+                        mutationFailed = true
+                    }
+                    guard callbackEpoch == latestTokenCallbackEpoch else { return }
+                    guard registrationSnapshotIsCurrent(
+                        snapshot.fingerprint,
+                        generation: generation,
+                        tokenCallbackEpoch: callbackEpoch
                     ) else { continue registrationAttempt }
                 }
-                guard MomentBackgroundRefreshPolicy.isEligible(
-                    configuration: .current,
-                    pairing: active.pairing
-                ) else {
-                    try await performRemoteMutation(
-                        .delete,
-                        pairing: active.pairing,
-                        credential: active.credential
+                guard callbackEpoch == latestTokenCallbackEpoch else { return }
+                guard registrationSnapshotIsCurrent(
+                    snapshot.fingerprint,
+                    generation: generation,
+                    tokenCallbackEpoch: callbackEpoch
+                ) else { continue registrationAttempt }
+                if mutationFailed {
+                    throw MomentSharingError.retryableServer(retryAfterSeconds: nil)
+                }
+                if registeredCount > 0 {
+                    SharedLog.app.info(
+                        "moment-push",
+                        "Remote notification subscriptions registered"
                     )
-                    guard registrationTargetIsCurrent(
-                        localWindowID: active.localWindowID,
-                        generation: generation
-                    ) else { continue registrationAttempt }
+                } else {
                     SharedLog.app.info(
                         "moment-push",
                         "Remote notification subscriptions removed"
                     )
-                    return
                 }
-                // Permission can be turned off while an older APNs callback is
-                // waiting behind the FIFO gate. Re-read it immediately before
-                // enqueueing PUT; if it is no longer allowed, enqueue signed
-                // DELETEs instead so the final remote state is opt-out.
-                let latestSettings = await notificationCenter.notificationSettings()
-                guard registrationTargetIsCurrent(
-                    localWindowID: active.localWindowID,
-                    generation: generation
-                ) else { continue registrationAttempt }
-                guard Self.allowsRemoteAlerts(latestSettings) else {
-                    await deleteCurrentSubscriptionIfPossible()
-                    return
-                }
-                try await performRemoteMutation(
-                    .put(deviceToken: deviceToken),
-                    pairing: active.pairing,
-                    credential: active.credential
-                )
-                guard registrationTargetIsCurrent(
-                    localWindowID: active.localWindowID,
-                    generation: generation
-                ) else { continue registrationAttempt }
-                SharedLog.app.info(
-                    "moment-push",
-                    "Remote notification subscription registered"
-                )
                 return
             }
             throw MomentSharingError.stateUnavailable
@@ -616,18 +680,27 @@ actor MomentPushSubscriptionService {
     private func deleteCurrentSubscriptionIfPossible() async {
         let generation = registrationGeneration
         do {
-            let contexts = try await authenticatedContextsForAllWindows()
-            guard generation == registrationGeneration else { return }
-            for context in contexts {
+            let snapshot = try await authenticatedContextsForAllWindows()
+            guard registrationSnapshotIsCurrent(
+                snapshot.fingerprint,
+                generation: generation
+            ) else { return }
+            for context in snapshot.contexts {
                 guard !Task.isCancelled,
-                      generation == registrationGeneration else { return }
+                      registrationSnapshotIsCurrent(
+                        snapshot.fingerprint,
+                        generation: generation
+                      ) else { return }
                 try await performRemoteMutation(
                     .delete,
                     pairing: context.pairing,
                     credential: context.credential
                 )
                 guard !Task.isCancelled,
-                      generation == registrationGeneration else { return }
+                      registrationSnapshotIsCurrent(
+                        snapshot.fingerprint,
+                        generation: generation
+                      ) else { return }
             }
         } catch {
             // Device/space revocation cascades server-side and subscriptions
@@ -643,13 +716,18 @@ actor MomentPushSubscriptionService {
     private func performRemoteMutation(
         _ kind: RemoteMutationKind,
         pairing: PairingState,
-        credential: PairingCredential
+        credential: PairingCredential,
+        tokenCallbackEpoch: UInt64? = nil
     ) async throws {
+        guard tokenCallbackIsCurrent(tokenCallbackEpoch) else {
+            throw CancellationError()
+        }
         try await withCheckedThrowingContinuation { continuation in
             remoteMutationQueue.append(QueuedRemoteMutation(
                 kind: kind,
                 pairing: pairing,
                 credential: credential,
+                tokenCallbackEpoch: tokenCallbackEpoch,
                 continuation: continuation
             ))
             startRemoteMutationWorkerIfNeeded()
@@ -667,19 +745,64 @@ actor MomentPushSubscriptionService {
         while !remoteMutationQueue.isEmpty {
             let mutation = remoteMutationQueue.removeFirst()
             do {
+                guard tokenCallbackIsCurrent(mutation.tokenCallbackEpoch) else {
+                    throw CancellationError()
+                }
                 let client = try URLSessionMomentSharingAPIClient()
                 switch mutation.kind {
-                case let .put(deviceToken):
-                    try await client.putPushSubscription(
-                        deviceToken: deviceToken,
-                        pairingState: mutation.pairing,
-                        credential: mutation.credential
-                    )
+                case let .put(deviceToken, legacyFallbackGuard):
+                    do {
+                        try await client.putTargetedPushSubscription(
+                            deviceToken: deviceToken,
+                            pairingState: mutation.pairing,
+                            credential: mutation.credential
+                        )
+                    } catch {
+                        guard Self.targetedSubscriptionEndpointIsUnavailable(error)
+                        else { throw error }
+                        // A legacy server can safely retain one exclusive
+                        // binding only. Contexts are active-first, so only the
+                        // selected window may cross this rollback boundary.
+                        guard let legacyFallbackGuard else { throw error }
+                        guard tokenCallbackIsCurrent(
+                            mutation.tokenCallbackEpoch
+                        ) else { throw CancellationError() }
+                        guard registrationSnapshotIsCurrent(
+                            legacyFallbackGuard.fingerprint,
+                            generation: legacyFallbackGuard.generation,
+                            tokenCallbackEpoch: mutation.tokenCallbackEpoch
+                        ) else { throw CancellationError() }
+                        try await client.putPushSubscription(
+                            deviceToken: deviceToken,
+                            pairingState: mutation.pairing,
+                            credential: mutation.credential
+                        )
+                        guard registrationSnapshotIsCurrent(
+                            legacyFallbackGuard.fingerprint,
+                            generation: legacyFallbackGuard.generation,
+                            tokenCallbackEpoch: mutation.tokenCallbackEpoch
+                        ) else {
+                            // A target-less legacy binding must not survive a
+                            // window switch that completed while the request
+                            // was in flight. Remove that exact signed device
+                            // binding before releasing the FIFO gate.
+                            try? await client.deletePushSubscription(
+                                pairingState: mutation.pairing,
+                                credential: mutation.credential
+                            )
+                            throw CancellationError()
+                        }
+                    }
                 case .delete:
+                    // DELETE semantics are identical in v2, making this the
+                    // safe opt-out/rollback boundary if a v3 relay is removed.
                     try await client.deletePushSubscription(
                         pairingState: mutation.pairing,
                         credential: mutation.credential
                     )
+                }
+                guard tokenCallbackIsCurrent(mutation.tokenCallbackEpoch) else {
+                    throw CancellationError()
                 }
                 mutation.continuation.resume()
             } catch {
@@ -689,13 +812,27 @@ actor MomentPushSubscriptionService {
         remoteMutationWorker = nil
     }
 
+    private func tokenCallbackIsCurrent(_ epoch: UInt64?) -> Bool {
+        guard let epoch else { return true }
+        return epoch == latestTokenCallbackEpoch
+    }
+
+    private static func targetedSubscriptionEndpointIsUnavailable(
+        _ error: Error
+    ) -> Bool {
+        guard let sharingError = error as? MomentSharingError,
+              case let .requestRejected(status, code, _) = sharingError
+        else { return false }
+        return status == 404 && code == "not_found"
+    }
+
     /// Produces one authenticated context per locally paired window without
-    /// switching the user's selected window. Registration uses the active
-    /// context and signed DELETEs for the rest until background synchronization
-    /// can safely run against an explicit non-active store scope.
+    /// switching the user's selected window. The raw token is then registered
+    /// independently through each context; this does not grant background
+    /// synchronization access to any inactive window's local stores.
     private func authenticatedContextsForAllWindows(
         verifiedBootstrap: PairingInstallationGuard.BootstrapResult? = nil
-    ) async throws -> [AuthenticatedWindowContext] {
+    ) async throws -> AuthenticatedWindowSnapshot {
         let bootstrap: PairingInstallationGuard.BootstrapResult
         if let verifiedBootstrap {
             bootstrap = verifiedBootstrap
@@ -758,17 +895,41 @@ actor MomentPushSubscriptionService {
         // Keychain resolution does not hold the lifecycle flock. Reject the
         // complete snapshot if another thread selected a window meanwhile.
         try SharingLifecycleGate.validate(bootstrap.lifecycleToken)
-        return contexts
+        contexts.sort { lhs, rhs in
+            if lhs.isActive != rhs.isActive { return lhs.isActive }
+            return lhs.localWindowID < rhs.localWindowID
+        }
+        return AuthenticatedWindowSnapshot(
+            fingerprint: Self.catalogFingerprint(snapshot.catalog),
+            contexts: contexts
+        )
     }
 
-    private func registrationTargetIsCurrent(
-        localWindowID: String,
-        generation: UInt64
+    private func registrationSnapshotIsCurrent(
+        _ fingerprint: CatalogFingerprint,
+        generation: UInt64,
+        tokenCallbackEpoch: UInt64? = nil
     ) -> Bool {
         guard generation == registrationGeneration,
+              tokenCallbackIsCurrent(tokenCallbackEpoch),
               let catalog = try? PrivateWindowCatalogStore.load()
         else { return false }
-        return catalog.activeWindowID == localWindowID
+        return Self.catalogFingerprint(catalog) == fingerprint
+    }
+
+    private static func catalogFingerprint(
+        _ catalog: PrivateWindowCatalogState
+    ) -> CatalogFingerprint {
+        CatalogFingerprint(
+            activeWindowID: catalog.activeWindowID,
+            entries: catalog.windows.map {
+                CatalogFingerprint.Entry(
+                    localWindowID: $0.localWindowID,
+                    spaceID: $0.spaceID,
+                    credentialAccount: $0.credentialAccount
+                )
+            }.sorted { $0.localWindowID < $1.localWindowID }
+        )
     }
 
     private func authenticatedContext(

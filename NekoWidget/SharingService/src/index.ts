@@ -44,8 +44,10 @@ import {
 import { getReactionChanges, recordPawReaction } from "./reactions";
 import {
   APNS_DRAIN_CRON,
+  deleteAdditivePushSubscription,
   deleteCurrentPushSubscription,
   drainNotificationOutbox,
+  putAdditivePushSubscription,
   putCurrentPushSubscription,
   scheduleNotificationDrain,
 } from "./push";
@@ -201,6 +203,16 @@ export async function route(
     }
     if (request.method === "DELETE") {
       return deleteCurrentPushSubscription(request, env);
+    }
+  }
+  if (pathname === "/v3/push-subscriptions/current") {
+    if (request.method === "PUT") {
+      const response = await putAdditivePushSubscription(request, env);
+      if (response.ok && ctx !== undefined) scheduleNotificationDrain(env, ctx);
+      return response;
+    }
+    if (request.method === "DELETE") {
+      return deleteAdditivePushSubscription(request, env);
     }
   }
   if (pathname === "/v2/window-name" && !windowNameRuntimeEnabled(env)) {

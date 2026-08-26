@@ -5,6 +5,7 @@ import { base64urlEncode, sha256Base64url } from "../src/encoding";
 import type { Env } from "../src/env";
 import worker, { route } from "../src/index";
 import {
+  APNS_ADDITIVE_PROTOCOL_VERSION,
   APNS_DRAIN_CRON,
   APNS_SUBSCRIPTION_TTL_SECONDS,
   drainNotificationOutbox,
@@ -223,6 +224,37 @@ async function seedCommittedMoment(
 }
 
 describe("APNs durable notification delivery", () => {
+  it("rejects legacy protocol bodies at the additive subscription boundary", async () => {
+    const fixture = await seedFixture();
+    const configuredEnv = await pushEnv();
+
+    await expect(route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "PUT",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        {
+          protocolVersion: 2,
+          token: randomValue(32),
+          environment: "production",
+        },
+      ),
+      configuredEnv,
+    )).rejects.toMatchObject({ status: 400, code: "unsupported_protocol" });
+
+    await expect(route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "DELETE",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        { protocolVersion: 2 },
+      ),
+      configuredEnv,
+    )).rejects.toMatchObject({ status: 400, code: "unsupported_protocol" });
+  });
+
   it("authenticates and consumes a signed registration nonce before failing closed", async () => {
     const fixture = await seedFixture();
     const configuredEnv = await pushEnv();
@@ -263,7 +295,7 @@ describe("APNs durable notification delivery", () => {
 
     const subscription = await databaseEnv.DB.prepare(
       `SELECT device_id, participant_id, token_ciphertext, token_digest,
-              updated_at, expires_at
+              updated_at, expires_at, route_schema_version
          FROM apns_subscriptions WHERE device_id = ?`,
     ).bind(fixture.inviteeID).first<{
       device_id: string;
@@ -272,12 +304,14 @@ describe("APNs durable notification delivery", () => {
       token_digest: string;
       updated_at: number;
       expires_at: number;
+      route_schema_version: number;
     }>();
     expect(subscription).not.toBeNull();
     expect(subscription?.device_id).toBe(fixture.inviteeID);
     expect(subscription?.participant_id).toBe(fixture.inviteeID);
     expect(subscription?.token_ciphertext).not.toContain(token);
     expect(subscription?.token_digest).toBe(await sha256Base64url(tokenBytes));
+    expect(subscription?.route_schema_version).toBe(1);
     expect((subscription?.expires_at ?? 0) - (subscription?.updated_at ?? 0))
       .toBe(APNS_SUBSCRIPTION_TTL_SECONDS);
 
@@ -640,6 +674,377 @@ describe("APNs durable notification delivery", () => {
     expect(await databaseEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM notification_deliveries WHERE token_digest = ?",
     ).bind(digest).first<{ count: number }>()).toEqual({ count: 0 });
+  });
+
+  it("keeps additive targeted bindings for every signed window and downgrades fail closed", async () => {
+    const first = await seedFixture();
+    const second = await seedFixture();
+    const configuredEnv = await pushEnv();
+    const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+    const token = base64urlEncode(tokenBytes);
+    const digest = await sha256Base64url(tokenBytes);
+
+    // Reproduce an installed v2 client. The first v3 registration removes
+    // this generic-route binding before any additive targeted rows coexist.
+    expect((await route(
+      await signedRequest(
+        "/v2/push-subscriptions/current",
+        "PUT",
+        first.inviteeID,
+        first.inviteeKeys,
+        { protocolVersion: 2, token, environment: "production" },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+    expect((await route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "PUT",
+        second.inviteeID,
+        second.inviteeKeys,
+        {
+          protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION,
+          token,
+          environment: "production",
+        },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+    expect(await databaseEnv.DB.prepare(
+      `SELECT device_id, route_schema_version
+         FROM apns_subscriptions WHERE token_digest = ?`,
+    ).bind(digest).all<{ device_id: string; route_schema_version: number }>())
+      .toMatchObject({
+        results: [{
+          device_id: second.inviteeID,
+          route_schema_version: 2,
+        }],
+      });
+
+    expect((await route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "PUT",
+        first.inviteeID,
+        first.inviteeKeys,
+        {
+          protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION,
+          token,
+          environment: "production",
+        },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+    expect(await databaseEnv.DB.prepare(
+      `SELECT COUNT(*) AS count, MIN(route_schema_version) AS minimum,
+              MAX(route_schema_version) AS maximum
+         FROM apns_subscriptions WHERE token_digest = ?`,
+    ).bind(digest).first<{
+      count: number;
+      minimum: number;
+      maximum: number;
+    }>()).toEqual({ count: 2, minimum: 2, maximum: 2 });
+
+    const now = Math.floor(Date.now() / 1_000);
+    const firstMomentID = await seedCommittedMoment(first, now);
+    const secondMomentID = await seedCommittedMoment(second, now + 1);
+    await databaseEnv.DB.batch([
+      ...momentNotificationEventStatements(configuredEnv, firstMomentID, now),
+      ...momentNotificationEventStatements(configuredEnv, secondMomentID, now + 1),
+    ]);
+    const payloads: Array<{
+      neko: { v: number; kind: string };
+      nekoTarget: { v: number; spaceId: string; momentId: string };
+    }> = [];
+    const drained = await drainNotificationOutbox(
+      configuredEnv,
+      now + 1,
+      async (_input, init) => {
+        payloads.push(JSON.parse(String(init?.body ?? "")) as typeof payloads[number]);
+        return new Response(null, { status: 200 });
+      },
+    );
+    expect(drained).toMatchObject({ leased: 2, accepted: 2 });
+    expect(payloads).toHaveLength(2);
+    expect(payloads.every((payload) => payload.neko.v === 2)).toBe(true);
+    expect(new Set(payloads.map((payload) => payload.nekoTarget.spaceId)))
+      .toEqual(new Set([first.spaceID, second.spaceID]));
+    expect(new Set(payloads.map((payload) => payload.nekoTarget.momentId)))
+      .toEqual(new Set([firstMomentID, secondMomentID]));
+
+    const deleted = await route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "DELETE",
+        first.inviteeID,
+        first.inviteeKeys,
+        { protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION },
+      ),
+      { ...configuredEnv, APNS_RUNTIME_ENABLED: "NO" },
+    );
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toEqual({
+      protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION,
+      subscription: { state: "deleted" },
+    });
+    expect(await databaseEnv.DB.prepare(
+      `SELECT device_id, route_schema_version
+         FROM apns_subscriptions WHERE token_digest = ?`,
+    ).bind(digest).first<{
+      device_id: string;
+      route_schema_version: number;
+    }>()).toEqual({
+      device_id: second.inviteeID,
+      route_schema_version: 2,
+    });
+
+    // A downgraded v2 client restores the original selected-window-only
+    // contract and its v1 route, removing every targeted sibling binding.
+    expect((await route(
+      await signedRequest(
+        "/v2/push-subscriptions/current",
+        "PUT",
+        first.inviteeID,
+        first.inviteeKeys,
+        { protocolVersion: 2, token, environment: "production" },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+    expect(await databaseEnv.DB.prepare(
+      `SELECT device_id, route_schema_version
+         FROM apns_subscriptions WHERE token_digest = ?`,
+    ).bind(digest).all<{
+      device_id: string;
+      route_schema_version: number;
+    }>()).toMatchObject({
+      results: [{
+        device_id: first.inviteeID,
+        route_schema_version: 1,
+      }],
+    });
+  });
+
+  it("normalizes a rolled-back Worker UPSERT and restores the targeted route on v3 renewal", async () => {
+    const fixture = await seedFixture();
+    const configuredEnv = await pushEnv();
+    const token = randomValue(32);
+    expect((await route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "PUT",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        {
+          protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION,
+          token,
+          environment: "production",
+        },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+
+    const row = await databaseEnv.DB.prepare(
+      `SELECT device_id, participant_id, environment,
+              token_ciphertext, token_nonce, token_digest, encryption_key_id,
+              created_at, updated_at, expires_at
+         FROM apns_subscriptions WHERE device_id = ?`,
+    ).bind(fixture.inviteeID).first<Record<string, string | number>>();
+    expect(row).not.toBeNull();
+    if (row === null) throw new Error("missing APNs fixture row");
+
+    // This is the pre-0011 Worker UPSERT shape: it cannot name or update the
+    // new route column. The migration trigger must still normalize the row.
+    await databaseEnv.DB.prepare(
+      `INSERT INTO apns_subscriptions(
+         device_id, participant_id, environment,
+         token_ciphertext, token_nonce, token_digest, encryption_key_id,
+         created_at, updated_at, expires_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(device_id) DO UPDATE SET
+         participant_id = excluded.participant_id,
+         environment = excluded.environment,
+         token_ciphertext = excluded.token_ciphertext,
+         token_nonce = excluded.token_nonce,
+         token_digest = excluded.token_digest,
+         encryption_key_id = excluded.encryption_key_id,
+         updated_at = excluded.updated_at,
+         expires_at = excluded.expires_at`,
+    ).bind(
+      row.device_id,
+      row.participant_id,
+      row.environment,
+      row.token_ciphertext,
+      row.token_nonce,
+      row.token_digest,
+      row.encryption_key_id,
+      row.created_at,
+      row.updated_at,
+      row.expires_at,
+    ).run();
+    expect(await databaseEnv.DB.prepare(
+      "SELECT route_schema_version FROM apns_subscriptions WHERE device_id = ?",
+    ).bind(fixture.inviteeID).first()).toEqual({ route_schema_version: 1 });
+
+    expect((await route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "PUT",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        {
+          protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION,
+          token,
+          environment: "production",
+        },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+    expect(await databaseEnv.DB.prepare(
+      "SELECT route_schema_version FROM apns_subscriptions WHERE device_id = ?",
+    ).bind(fixture.inviteeID).first()).toEqual({ route_schema_version: 2 });
+  });
+
+  it.each([
+    {
+      initialPath: "/v2/push-subscriptions/current",
+      initialVersion: 2,
+      replacementPath: "/v3/push-subscriptions/current",
+      replacementVersion: 3,
+    },
+    {
+      initialPath: "/v3/push-subscriptions/current",
+      initialVersion: 3,
+      replacementPath: "/v2/push-subscriptions/current",
+      replacementVersion: 2,
+    },
+  ])("does not send a leased row after its route schema changes ($initialVersion -> $replacementVersion)", async ({
+    initialPath,
+    initialVersion,
+    replacementPath,
+    replacementVersion,
+  }) => {
+    const fixture = await seedFixture();
+    const configuredEnv = await pushEnv();
+    const token = randomValue(32);
+    expect((await route(
+      await signedRequest(
+        initialPath,
+        "PUT",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        { protocolVersion: initialVersion, token, environment: "production" },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+
+    const now = Math.floor(Date.now() / 1_000);
+    const momentID = await seedCommittedMoment(fixture, now);
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    let requests = 0;
+    const drained = await drainNotificationOutbox(
+      configuredEnv,
+      now,
+      async () => {
+        requests += 1;
+        return new Response(null, { status: 200 });
+      },
+      {
+        afterLease: async () => {
+          expect((await route(
+            await signedRequest(
+              replacementPath,
+              "PUT",
+              fixture.inviteeID,
+              fixture.inviteeKeys,
+              {
+                protocolVersion: replacementVersion,
+                token,
+                environment: "production",
+              },
+            ),
+            configuredEnv,
+          )).status).toBe(200);
+        },
+      },
+    );
+    expect(drained).toMatchObject({ leased: 1, accepted: 0, skipped: 1 });
+    expect(requests).toBe(0);
+    expect(await databaseEnv.DB.prepare(
+      "SELECT route_schema_version FROM apns_subscriptions WHERE device_id = ?",
+    ).bind(fixture.inviteeID).first()).toEqual({
+      route_schema_version: replacementVersion === 3 ? 2 : 1,
+    });
+  });
+
+  it("retries with the current route when the schema changes during APNs I/O", async () => {
+    const fixture = await seedFixture();
+    const configuredEnv = await pushEnv();
+    const token = randomValue(32);
+    expect((await route(
+      await signedRequest(
+        "/v3/push-subscriptions/current",
+        "PUT",
+        fixture.inviteeID,
+        fixture.inviteeKeys,
+        {
+          protocolVersion: APNS_ADDITIVE_PROTOCOL_VERSION,
+          token,
+          environment: "production",
+        },
+      ),
+      configuredEnv,
+    )).status).toBe(200);
+
+    const now = Math.floor(Date.now() / 1_000);
+    const momentID = await seedCommittedMoment(fixture, now);
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    const routeVersions: number[] = [];
+    const first = await drainNotificationOutbox(
+      configuredEnv,
+      now,
+      async (_input, init) => {
+        const payload = JSON.parse(String(init?.body ?? "")) as {
+          neko: { v: number };
+        };
+        routeVersions.push(payload.neko.v);
+        expect((await route(
+          await signedRequest(
+            "/v2/push-subscriptions/current",
+            "PUT",
+            fixture.inviteeID,
+            fixture.inviteeKeys,
+            { protocolVersion: 2, token, environment: "production" },
+          ),
+          configuredEnv,
+        )).status).toBe(200);
+        return new Response(null, { status: 200 });
+      },
+    );
+    expect(first).toMatchObject({ leased: 1, accepted: 0, retried: 1 });
+    expect(await databaseEnv.DB.prepare(
+      `SELECT state, last_status, last_reason
+         FROM notification_deliveries AS delivery
+         JOIN notification_events AS event ON event.id = delivery.event_id
+        WHERE event.moment_id = ?`,
+    ).bind(momentID).first()).toEqual({
+      state: "pending",
+      last_status: 200,
+      last_reason: "RouteChanged",
+    });
+
+    const second = await drainNotificationOutbox(
+      configuredEnv,
+      now,
+      async (_input, init) => {
+        const payload = JSON.parse(String(init?.body ?? "")) as {
+          neko: { v: number };
+        };
+        routeVersions.push(payload.neko.v);
+        return new Response(null, { status: 200 });
+      },
+    );
+    expect(second).toMatchObject({ leased: 1, accepted: 1, retried: 0 });
+    expect(routeVersions).toEqual([2, 1]);
   });
 
   it("rechecks a leased delivery before APNs when foreground sync removes it", async () => {

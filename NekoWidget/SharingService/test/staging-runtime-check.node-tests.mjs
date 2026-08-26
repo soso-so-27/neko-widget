@@ -47,6 +47,7 @@ function runtimeFetch({
           error: { code: reactionCode, message: "expected test response" },
         });
       case "/v2/push-subscriptions/current":
+      case "/v3/push-subscriptions/current":
         assert.ok(options.method === "PUT" || options.method === "DELETE");
         return jsonResponse(pushStatus, {
           error: { code: pushCode, message: "expected test response" },
@@ -77,6 +78,8 @@ test("accepts the expected ON runtime boundary", async () => {
     { name: "reaction", status: 401 },
     { name: "push-register", status: 401 },
     { name: "push-delete", status: 401 },
+    { name: "targeted-push-register", status: 401 },
+    { name: "targeted-push-delete", status: 401 },
     { name: "window-name", status: 401 },
     { name: "legacy", status: 503 },
   ]);

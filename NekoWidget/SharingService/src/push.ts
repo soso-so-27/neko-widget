@@ -18,6 +18,7 @@ import { enforceRateLimit, parseJsonBody, readBody, transientNetworkKey } from "
 import { exactKeys, stringField, type JsonRecord } from "./validation";
 
 export const APNS_PROTOCOL_VERSION = 2 as const;
+export const APNS_ADDITIVE_PROTOCOL_VERSION = 3 as const;
 export const APNS_DRAIN_CRON = "* * * * *";
 export const APNS_SUBSCRIPTION_TTL_SECONDS = 35 * 86_400;
 export const APNS_EVENT_TTL_SECONDS = 24 * 60 * 60;
@@ -27,6 +28,7 @@ const maximumAPNsResponseBytes = 1_024;
 
 type APNsEnvironment = "development" | "production";
 type NotificationKind = "new_moment" | "heart";
+type NotificationRouteSchemaVersion = 1 | 2;
 
 interface ProviderCredential {
   keyId: string;
@@ -56,6 +58,7 @@ interface DispatchRow {
   token_nonce: string;
   encryption_key_id: string;
   environment: APNsEnvironment;
+  route_schema_version: NotificationRouteSchemaVersion;
 }
 
 interface APNsErrorBody {
@@ -259,13 +262,20 @@ async function decryptDeviceToken(
   return token;
 }
 
-function parseRegistrationBody(object: JsonRecord): {
+function parseRegistrationBody(
+  object: JsonRecord,
+  protocolVersion: number,
+): {
   token: Uint8Array;
   environment: APNsEnvironment;
 } {
   exactKeys(object, ["environment", "protocolVersion", "token"]);
-  if (object.protocolVersion !== APNS_PROTOCOL_VERSION) {
-    throw new ApiError(400, "unsupported_protocol", "protocolVersion must be 2.");
+  if (object.protocolVersion !== protocolVersion) {
+    throw new ApiError(
+      400,
+      "unsupported_protocol",
+      `protocolVersion must be ${protocolVersion}.`,
+    );
   }
   const environment = stringField(object, "environment");
   if (environment !== "development" && environment !== "production") {
@@ -283,10 +293,14 @@ function parseRegistrationBody(object: JsonRecord): {
   return { token, environment };
 }
 
-function parseDeleteBody(object: JsonRecord): void {
+function parseDeleteBody(object: JsonRecord, protocolVersion: number): void {
   exactKeys(object, ["protocolVersion"]);
-  if (object.protocolVersion !== APNS_PROTOCOL_VERSION) {
-    throw new ApiError(400, "unsupported_protocol", "protocolVersion must be 2.");
+  if (object.protocolVersion !== protocolVersion) {
+    throw new ApiError(
+      400,
+      "unsupported_protocol",
+      `protocolVersion must be ${protocolVersion}.`,
+    );
   }
 }
 
@@ -309,7 +323,12 @@ async function signedActiveRequest(
   return { body, member };
 }
 
-export async function putCurrentPushSubscription(request: Request, env: Env): Promise<Response> {
+async function putPushSubscription(
+  request: Request,
+  env: Env,
+  protocolVersion: number,
+  registrationMode: "exclusiveLegacy" | "additiveTargeted",
+): Promise<Response> {
   const { body, member } = await signedActiveRequest(request, env);
   if (!apnsRuntimeEnabled(env)) {
     await consumeNonce(env, member);
@@ -319,7 +338,7 @@ export async function putCurrentPushSubscription(request: Request, env: Env): Pr
   let encrypted: Awaited<ReturnType<typeof encryptDeviceToken>>;
   let credential: ProviderCredential;
   try {
-    parsed = parseRegistrationBody(parseJsonBody(request, body));
+    parsed = parseRegistrationBody(parseJsonBody(request, body), protocolVersion);
     credential = parseProviderCredential(env);
     if (parsed.environment !== credential.environment) {
       throw new ApiError(409, "apns_environment_mismatch", "This build does not match the configured notification environment.");
@@ -336,48 +355,87 @@ export async function putCurrentPushSubscription(request: Request, env: Env): Pr
     throw new ApiError(503, "push_configuration_unavailable", "Notifications are temporarily unavailable.");
   }
   try {
-    await env.DB.batch([
-      ...nonceStatements(env, member),
-      // Possession of the plaintext APNs token proves this signed device is
-      // the current destination for that physical app installation. Replace
-      // every older window/device binding for the same one-way digest before
-      // inserting the selected window. This keeps a failed client-side DELETE
-      // from leaving generic pushes pointed at an inactive local window.
-      env.DB.prepare(
-        `DELETE FROM notification_deliveries
-          WHERE device_id <> ?
-            AND device_id IN (
-              SELECT device_id FROM apns_subscriptions
-               WHERE token_digest = ?
-             )`,
-      ).bind(member.deviceId, encrypted.digest),
-      // Replacing this physical token can remove the last delivery for an old
-      // selected window. Do not retain an undeliverable event until its TTL;
-      // scope cleanup to the participants that still own the replaced token
-      // rows, before those rows are deleted by the next statement.
-      env.DB.prepare(
-        `DELETE FROM notification_events
-          WHERE participant_id IN (
-                  SELECT participant_id
-                    FROM apns_subscriptions
-                   WHERE token_digest = ? AND device_id <> ?
-                )
-            AND NOT EXISTS (
-              SELECT 1
-                FROM notification_deliveries AS delivery
-               WHERE delivery.event_id = notification_events.id
-            )`,
-      ).bind(encrypted.digest, member.deviceId),
-      env.DB.prepare(
-        `DELETE FROM apns_subscriptions
-          WHERE token_digest = ? AND device_id <> ?`,
-      ).bind(encrypted.digest, member.deviceId),
+    const statements = [...nonceStatements(env, member)];
+    if (registrationMode === "exclusiveLegacy") {
+      statements.push(
+        // Possession of the plaintext APNs token proves this signed device is
+        // the current destination for that physical app installation. Replace
+        // every older window/device binding for the same one-way digest before
+        // inserting the selected window. This keeps a failed client-side
+        // DELETE from leaving generic pushes pointed at an inactive window.
+        env.DB.prepare(
+          `DELETE FROM notification_deliveries
+            WHERE device_id <> ?
+              AND device_id IN (
+                SELECT device_id FROM apns_subscriptions
+                 WHERE token_digest = ?
+               )`,
+        ).bind(member.deviceId, encrypted.digest),
+        // Replacing this physical token can remove the last delivery for an
+        // old selected window. Do not retain an undeliverable event until its
+        // TTL; scope cleanup before the subscription rows are deleted below.
+        env.DB.prepare(
+          `DELETE FROM notification_events
+            WHERE participant_id IN (
+                    SELECT participant_id
+                      FROM apns_subscriptions
+                     WHERE token_digest = ? AND device_id <> ?
+                  )
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM notification_deliveries AS delivery
+                 WHERE delivery.event_id = notification_events.id
+              )`,
+        ).bind(encrypted.digest, member.deviceId),
+        env.DB.prepare(
+          `DELETE FROM apns_subscriptions
+            WHERE token_digest = ? AND device_id <> ?`,
+        ).bind(encrypted.digest, member.deviceId),
+      );
+    } else {
+      statements.push(
+        // The first additive registration removes only legacy bindings for
+        // this physical token. Their v1 route can wake an old client without
+        // an exact window scope. Targeted v2-route bindings from later v3
+        // calls coexist, one authenticated credential per private window.
+        env.DB.prepare(
+          `DELETE FROM notification_deliveries
+            WHERE device_id <> ?
+              AND device_id IN (
+                SELECT device_id FROM apns_subscriptions
+                 WHERE token_digest = ? AND route_schema_version = 1
+              )`,
+        ).bind(member.deviceId, encrypted.digest),
+        env.DB.prepare(
+          `DELETE FROM notification_events
+            WHERE participant_id IN (
+                    SELECT participant_id
+                      FROM apns_subscriptions
+                     WHERE token_digest = ? AND device_id <> ?
+                       AND route_schema_version = 1
+                  )
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM notification_deliveries AS delivery
+                 WHERE delivery.event_id = notification_events.id
+              )`,
+        ).bind(encrypted.digest, member.deviceId),
+        env.DB.prepare(
+          `DELETE FROM apns_subscriptions
+            WHERE token_digest = ? AND device_id <> ?
+              AND route_schema_version = 1`,
+        ).bind(encrypted.digest, member.deviceId),
+      );
+    }
+    const routeSchemaVersion: NotificationRouteSchemaVersion =
+      registrationMode === "exclusiveLegacy" ? 1 : 2;
+    statements.push(
       env.DB.prepare(
         `INSERT INTO apns_subscriptions(
            device_id, participant_id, environment,
            token_ciphertext, token_nonce, token_digest, encryption_key_id,
-           created_at, updated_at, expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           created_at, updated_at, expires_at, route_schema_version
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(device_id) DO UPDATE SET
            participant_id = excluded.participant_id,
            environment = excluded.environment,
@@ -386,7 +444,8 @@ export async function putCurrentPushSubscription(request: Request, env: Env): Pr
            token_digest = excluded.token_digest,
            encryption_key_id = excluded.encryption_key_id,
            updated_at = excluded.updated_at,
-           expires_at = excluded.expires_at`,
+           expires_at = excluded.expires_at,
+           route_schema_version = excluded.route_schema_version`,
       ).bind(
         member.deviceId,
         member.momentParticipantId,
@@ -398,23 +457,69 @@ export async function putCurrentPushSubscription(request: Request, env: Env): Pr
         member.now,
         member.now,
         member.now + APNS_SUBSCRIPTION_TTL_SECONDS,
+        routeSchemaVersion,
       ),
-      activityStatement(env, member),
-    ]);
+    );
+    if (registrationMode === "additiveTargeted") {
+      // Migration 0011 deliberately normalizes any token/timestamp UPSERT to
+      // route 1 so an older rolled-back Worker cannot leave a stale route-2
+      // marker. A v3 registration restores route 2 in a separate route-only
+      // statement, which that compatibility trigger does not match.
+      statements.push(
+        env.DB.prepare(
+          `UPDATE apns_subscriptions
+              SET route_schema_version = 2
+            WHERE device_id = ?`,
+        ).bind(member.deviceId),
+      );
+    }
+    statements.push(activityStatement(env, member));
+    await env.DB.batch(statements);
   } catch {
     await consumeNonce(env, member);
     throw new ApiError(409, "push_subscription_conflict", "The notification subscription could not be updated.");
   }
   return jsonResponse({
-    protocolVersion: APNS_PROTOCOL_VERSION,
+    protocolVersion,
     subscription: { state: "active" },
   });
 }
 
-export async function deleteCurrentPushSubscription(request: Request, env: Env): Promise<Response> {
+export async function putCurrentPushSubscription(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  return putPushSubscription(
+    request,
+    env,
+    APNS_PROTOCOL_VERSION,
+    "exclusiveLegacy",
+  );
+}
+
+// Registers this authenticated window/device without removing another window
+// credential that holds the same physical APNs token. The v2 endpoint above
+// deliberately keeps its exclusive behavior for already-shipped clients.
+export async function putAdditivePushSubscription(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  return putPushSubscription(
+    request,
+    env,
+    APNS_ADDITIVE_PROTOCOL_VERSION,
+    "additiveTargeted",
+  );
+}
+
+async function deletePushSubscription(
+  request: Request,
+  env: Env,
+  protocolVersion: number,
+): Promise<Response> {
   const { body, member } = await signedActiveRequest(request, env);
   try {
-    parseDeleteBody(parseJsonBody(request, body));
+    parseDeleteBody(parseJsonBody(request, body), protocolVersion);
   } catch (error) {
     await consumeNonce(env, member);
     throw error;
@@ -447,9 +552,23 @@ export async function deleteCurrentPushSubscription(request: Request, env: Env):
     throw new ApiError(409, "push_subscription_conflict", "The notification subscription could not be removed.");
   }
   return jsonResponse({
-    protocolVersion: APNS_PROTOCOL_VERSION,
+    protocolVersion,
     subscription: { state: "deleted" },
   });
+}
+
+export async function deleteCurrentPushSubscription(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  return deletePushSubscription(request, env, APNS_PROTOCOL_VERSION);
+}
+
+export async function deleteAdditivePushSubscription(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  return deletePushSubscription(request, env, APNS_ADDITIVE_PROTOCOL_VERSION);
 }
 
 export function momentNotificationEventStatements(
@@ -546,13 +665,15 @@ function notificationPayload(row: DispatchRow): string {
       "content-available": 1,
     },
     neko: {
-      v: 1,
+      // Additive bindings use a route schema that already-shipped clients
+      // reject, so downgrading cannot interpret an inactive-window alert as
+      // a generic wake for the selected window. v2 endpoint rows retain v1.
+      v: row.route_schema_version,
       kind: row.kind,
     },
-    // Keep the v1 `neko` envelope unchanged so installed clients that require
-    // its exact two-key shape continue to route the generic notification. New
-    // clients may separately validate these server-generated opaque IDs after
-    // completing authenticated synchronization; they are never display copy.
+    // Both route schemas keep the exact two-key `neko` shape. Only v2-aware
+    // clients accept the targeted version; v1-only clients reject it before
+    // reading the separately validated opaque IDs below.
     nekoTarget: {
       v: 1,
       spaceId: row.target_space_id,
@@ -596,16 +717,75 @@ function transientResponse(status: number, reason: string): boolean {
     || reason === "ExpiredProviderToken";
 }
 
-async function markAccepted(env: Env, row: DispatchRow, leaseID: string, now: number): Promise<void> {
-  await env.DB.prepare(
+async function markAccepted(
+  env: Env,
+  row: DispatchRow,
+  leaseID: string,
+  now: number,
+): Promise<boolean> {
+  const result = await env.DB.prepare(
     `UPDATE notification_deliveries
         SET state = 'accepted', attempts = attempts + 1,
             lease_id = NULL, lease_expires_at = NULL,
             last_status = 200, last_reason = NULL,
             accepted_at = ?, updated_at = ?
       WHERE event_id = ? AND device_id = ?
-        AND state = 'leased' AND lease_id = ?`,
-  ).bind(now, now, row.event_id, row.device_id, leaseID).run();
+        AND token_digest = ?
+        AND state = 'leased' AND lease_id = ?
+        AND EXISTS (
+          SELECT 1
+            FROM apns_subscriptions AS subscription
+           WHERE subscription.device_id = notification_deliveries.device_id
+             AND subscription.token_digest = notification_deliveries.token_digest
+             AND subscription.environment = ?
+             AND subscription.route_schema_version = ?
+        )`,
+  ).bind(
+    now,
+    now,
+    row.event_id,
+    row.device_id,
+    row.token_digest,
+    leaseID,
+    row.environment,
+    row.route_schema_version,
+  ).run();
+  return result.meta.changes === 1;
+}
+
+async function releaseAfterRouteChange(
+  env: Env,
+  row: DispatchRow,
+  leaseID: string,
+  now: number,
+): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `UPDATE notification_deliveries
+        SET state = 'pending', attempts = attempts + 1,
+            next_attempt_at = ?, lease_id = NULL, lease_expires_at = NULL,
+            last_status = 200, last_reason = 'RouteChanged', updated_at = ?
+      WHERE event_id = ? AND device_id = ?
+        AND token_digest = ?
+        AND state = 'leased' AND lease_id = ?
+        AND EXISTS (
+          SELECT 1
+            FROM apns_subscriptions AS subscription
+           WHERE subscription.device_id = notification_deliveries.device_id
+             AND subscription.token_digest = notification_deliveries.token_digest
+             AND subscription.environment = ?
+             AND subscription.route_schema_version <> ?
+        )`,
+  ).bind(
+    now,
+    now,
+    row.event_id,
+    row.device_id,
+    row.token_digest,
+    leaseID,
+    row.environment,
+    row.route_schema_version,
+  ).run();
+  return result.meta.changes === 1;
 }
 
 async function markRetry(
@@ -698,7 +878,8 @@ export async function drainNotificationOutbox(
              source_moment.id AS target_moment_id,
              event.created_at, event.expires_at,
              subscription.token_ciphertext, subscription.token_nonce,
-             subscription.encryption_key_id, subscription.environment
+             subscription.encryption_key_id, subscription.environment,
+             subscription.route_schema_version
        FROM notification_deliveries AS delivery
        JOIN notification_events AS event ON event.id = delivery.event_id
        LEFT JOIN moment_reactions AS source_reaction
@@ -789,7 +970,8 @@ export async function drainNotificationOutbox(
           AND delivery.state = 'leased' AND delivery.lease_id = ?
           AND event.expires_at > ?
           AND subscription.expires_at > ?
-          AND subscription.environment = ?`,
+          AND subscription.environment = ?
+          AND subscription.route_schema_version = ?`,
     ).bind(
       row.event_id,
       row.device_id,
@@ -798,6 +980,7 @@ export async function drainNotificationOutbox(
       now,
       now,
       credential.environment,
+      row.route_schema_version,
     ).first<{ present: number }>();
     if (stillCurrent === null) {
       summary.skipped += 1;
@@ -828,8 +1011,16 @@ export async function drainNotificationOutbox(
     }
 
     if (response.status === 200) {
-      await markAccepted(env, row, leaseID, now);
-      summary.accepted += 1;
+      if (await markAccepted(env, row, leaseID, now)) {
+        summary.accepted += 1;
+      } else if (await releaseAfterRouteChange(env, row, leaseID, now)) {
+        // APNs accepted a payload whose route was superseded while the
+        // network request was in flight. Keep the durable delivery pending so
+        // the next drain sends the current route instead of losing it forever.
+        summary.retried += 1;
+      } else {
+        summary.skipped += 1;
+      }
       continue;
     }
     const reason = await boundedReason(response);

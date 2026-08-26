@@ -79,7 +79,7 @@ Pairing成功responseの正本は[`pairing-api-v1-responses.json`](../ci/fixture
 | `GET` | `/v1/sharing/generations/{id}/manifest` | active member signed request | Current encrypted manifestだけをproxyする |
 | `GET` | `/v1/sharing/generations/{id}/media/{mediaId}` | active member signed request | Current canonical ciphertextだけをproxyする |
 
-Phase 3の追加APIは次のとおりです。署名headerはv1と同じで、JSON bodyの`protocolVersion`は`2`です。
+Phase 3の追加APIは次のとおりです。署名headerはv1と同じです。JSON bodyの`protocolVersion`は原則`2`で、複数まどを加算登録する通知APIだけ`3`です。
 
 | Method | Path | 用途 |
 |---|---|---|
@@ -93,6 +93,8 @@ Phase 3の追加APIは次のとおりです。署名headerはv1と同じで、JS
 | `POST/PUT/POST` | `/v2/reports/...` | 通報copyを予約・upload・commitする |
 | `PUT` | `/v2/push-subscriptions/current` | 現在の署名済みdeviceへAPNs tokenを35日間登録・更新する |
 | `DELETE` | `/v2/push-subscriptions/current` | runtime OFF中でも現在deviceのAPNs登録を削除する |
+| `PUT` | `/v3/push-subscriptions/current` | 同じ物理tokenの他のtargeted bindingを残し、現在の署名済みまどを通知対象へ加算する |
+| `DELETE` | `/v3/push-subscriptions/current` | runtime OFF中でも現在の署名済みまどのtargeted bindingだけを削除する |
 
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 
@@ -165,7 +167,7 @@ Consumed challenge rowはpending pairing中だけ残ります。Completion、pen
 
 ## Retention cleanup
 
-`* * * * *`のAPNs handlerは期限切れsubscription/eventを先に削除し、leased outboxを最大50件ずつ配送します。Subscriptionは最終登録から最大35日、通知eventは24時間です。Appは起動ごとに登録を更新します。初回登録時に過去eventをbackfillしないため、通知を新たに許可した直後に古い写真やハートをまとめて通知しません。Foreground同期でmomentがACKされた場合は未送信・retry中の通知eventを削除します。
+`* * * * *`のAPNs handlerは期限切れsubscription/eventを先に削除し、leased outboxを最大50件ずつ配送します。Subscriptionは最終登録から最大35日、通知eventは24時間です。Appは起動ごとに、通知対象にする各まどを`v3`で加算更新します。初回登録時に過去eventをbackfillしないため、通知を新たに許可した直後に古い写真やハートをまとめて通知しません。Foreground同期でmomentがACKされた場合は未送信・retry中の通知eventを削除します。旧clientの`v2`登録は同じ物理tokenを選択中1まどへ戻し、targeted bindingを安全に置き換えます。
 
 APNsのsecret、runtime switch、retry、失効token処理、staging smoke gateは[`APNS_OPERATIONS.md`](APNS_OPERATIONS.md)を正本にします。
 
@@ -222,6 +224,6 @@ offline toolの存在だけではProduction gateを満たしません。
 [`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)を参照してください。
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 
-[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0010`を適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要なものを`YES`へ変更します。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
+[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0011`を適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要なものを`YES`へ変更します。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。Deploy scriptも意図的に定義していません。
 
 両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、3本のCron、削除backlogの最古時刻をreviewします。

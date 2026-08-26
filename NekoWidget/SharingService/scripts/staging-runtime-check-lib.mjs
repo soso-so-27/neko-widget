@@ -37,6 +37,20 @@ const EXPECTATIONS = Object.freeze({
       errorCode: "invalid_authentication",
     }),
     Object.freeze({
+      name: "targeted-push-register",
+      method: "PUT",
+      path: "/v3/push-subscriptions/current",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
+      name: "targeted-push-delete",
+      method: "DELETE",
+      path: "/v3/push-subscriptions/current",
+      status: 401,
+      errorCode: "invalid_authentication",
+    }),
+    Object.freeze({
       name: "window-name",
       path: "/v2/window-name",
       status: 401,

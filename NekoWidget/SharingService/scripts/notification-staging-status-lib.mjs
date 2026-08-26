@@ -14,6 +14,22 @@ export const notificationStagingConfigName = "wrangler.notification-staging-on.j
 // provider reasons.
 export const notificationStatusQueries = Object.freeze([
   Object.freeze({
+    name: "route-schema",
+    // Referencing the column is intentional: Wrangler fails this read-only
+    // check when migration 0011 has not been applied to staging.
+    sql: `SELECT
+            (SELECT COUNT(*)
+               FROM apns_subscriptions
+              WHERE route_schema_version NOT IN (1, 2)) AS invalid_count,
+            (SELECT COUNT(*)
+               FROM sqlite_schema
+              WHERE type = 'trigger'
+                AND tbl_name = 'apns_subscriptions'
+                AND name = 'apns_subscriptions_normalize_legacy_route_update'
+                AND instr(sql, 'AFTER UPDATE OF participant_id, environment') > 0
+                AND instr(sql, 'SET route_schema_version = 1') > 0) AS normalizer_count`,
+  }),
+  Object.freeze({
     name: "subscriptions",
     sql: `SELECT environment, COUNT(*) AS count
             FROM apns_subscriptions
@@ -118,6 +134,21 @@ function validateSubscriptionRows(rows) {
   });
 }
 
+function validateRouteSchemaRows(rows) {
+  if (rows.length !== 1) {
+    throw new Error("notification route schema check returned an unexpected response");
+  }
+  const row = rows[0];
+  requireExactKeys(row, ["invalid_count", "normalizer_count"]);
+  if (requireCount(row.invalid_count) !== 0) {
+    throw new Error("notification route schema contains invalid rows");
+  }
+  if (requireCount(row.normalizer_count) !== 1) {
+    throw new Error("notification route schema normalizer is unavailable");
+  }
+  return Object.freeze([{ state: "ready" }]);
+}
+
 function validateEventRows(rows) {
   return rows.map((row) => {
     requireExactKeys(row, ["kind", "count"]);
@@ -154,6 +185,7 @@ function validateDeliveryRows(rows) {
 function validatedRows(name, output) {
   const rows = parseWranglerRows(output);
   switch (name) {
+    case "route-schema": return validateRouteSchemaRows(rows);
     case "subscriptions": return validateSubscriptionRows(rows);
     case "events": return validateEventRows(rows);
     case "deliveries": return validateDeliveryRows(rows);
@@ -253,6 +285,7 @@ function line(items, format) {
 export function formatNotificationStagingStatus(status) {
   return [
     "PASS notification staging status (read-only; no IDs, tokens, ciphertext, or raw provider reasons)",
+    `route_schema: ${status["route-schema"][0].state}`,
     `subscriptions: ${line(status.subscriptions, (row) => `${row.environment}=${row.count}`)}`,
     `events: ${line(status.events, (row) => `${row.kind}=${row.count}`)}`,
     `deliveries: ${line(status.deliveries, (row) => `${row.state}/${row.status}/${row.reason}=${row.count}`)}`,

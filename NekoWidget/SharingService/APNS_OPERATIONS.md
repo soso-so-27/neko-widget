@@ -9,13 +9,13 @@
 - Subscriptionは現在の認証済み`moment_devices.id`へserver側で結び、最終更新から35日で削除する。アプリは起動ごとにPUTして更新する。
 - Notification eventは24時間で削除する。最初のtoken登録で古いeventをbackfillしない。Moment ACK、revoke、expiry、block、device/participant/space失効では関連eventまたはsubscriptionを即時削除する。
 - APNsの表示本文は一般文だけとし、`aps.alert`と`content-available=1`を使う。sound、badge、写真、まど名、人物名、撮影日時、reaction/device ID、URL、鍵を含めない。
-- 互換用の`neko`は`{"v":1,"kind":"new_moment|heart"}`のexact 2-key envelopeのまま変更しない。新しいclientだけが、別のtop-level `nekoTarget`にある`{"v":1,"spaceId":"<opaque>","momentId":"<opaque>"}`を、通知タップを正しいまど・写真へ結ぶために使える。
+- 旧`v2` subscriptionの`neko`は`{"v":1,"kind":"new_moment|heart"}`のexact 2-key envelopeを維持する。新しい加算型`v3` subscriptionには、旧clientがfail closedで拒否する`{"v":2,"kind":"new_moment|heart"}`と、別top-levelの`nekoTarget`にある`{"v":1,"spaceId":"<opaque>","momentId":"<opaque>"}`を送る。新clientだけが通知タップを正しいまど・写真へ結ぶ。
 - `nekoTarget`の二つのIDは表示文、accessibility、診断log、analyticsへ出さず、端末内の認証済みまどと同期済み写真にexact一致した場合だけrouteへ使う。余分なkey、未知version、形式不正、一意に解決できないまどはfail closedとし、別のまどへfallbackしない。`nekoTarget`自体がない旧payloadだけは、従来どおり選択中のまどの`kind`に対応する区分を開く。
-- 1台のiPhoneでは選択中のまどだけを通知対象にする。同じtoken digestの署名PUTは、それ以前の別まど／device bindingと未完了deliveryを置き換える。非activeまどを明示scopeで同期できる版までは、複数まどへ同じ物理tokenを同時登録しない。
+- 旧`PUT /v2/push-subscriptions/current`は選択中のまどだけを通知対象にし、同じtoken digestの別まど／device bindingと未完了deliveryを置き換える。新`PUT /v3/push-subscriptions/current`は認証済みのまどを加算登録し、最初の`v3`登録時に同じtoken digestの旧route bindingだけを削除した後、targeted routeの複数まどを共存させる。`v2`へ戻すと同じtokenの加算bindingを削除して選択中1まどへ安全に戻る。
 
 ## Signed API
 
-`PUT /v2/push-subscriptions/current`のexact JSON:
+旧client向け`PUT /v2/push-subscriptions/current`のexact JSON（同じ物理tokenのbindingを1件へ置換）:
 
 ```json
 {"protocolVersion":2,"token":"<canonical base64url; decoded 16..256 bytes>","environment":"development|production"}
@@ -27,19 +27,43 @@
 {"protocolVersion":2,"subscription":{"state":"active"}}
 ```
 
-`DELETE /v2/push-subscriptions/current`のexact JSON:
+旧client向け`DELETE /v2/push-subscriptions/current`のexact JSON:
 
 ```json
 {"protocolVersion":2}
 ```
 
+新client向け`PUT /v3/push-subscriptions/current`のexact JSON（認証済みまどを加算）:
+
+```json
+{"protocolVersion":3,"token":"<canonical base64url; decoded 16..256 bytes>","environment":"development|production"}
+```
+
 成功response:
+
+```json
+{"protocolVersion":3,"subscription":{"state":"active"}}
+```
+
+新client向け`DELETE /v3/push-subscriptions/current`のexact JSON（署名したdevice bindingだけを解除）:
+
+```json
+{"protocolVersion":3}
+```
+
+DELETEの成功responseは、呼び出したrouteと同じprotocol versionを返す:
 
 ```json
 {"protocolVersion":2,"subscription":{"state":"deleted"}}
 ```
 
-どちらも通常member requestと同じEd25519署名、timestamp、nonceを必須にします。PUTは`APNS_RUNTIME_ENABLED=YES`でだけ成功し、OFF中も署名検証後にnonceを消費して`503 apns_runtime_disabled`へします。DELETEは緊急OFF中にも成功し、利用者がserver tokenを消せる状態を維持します。Client指定のdevice ID、participant ID、bundle ID、topicは受け取りません。
+または:
+
+```json
+{"protocolVersion":3,"subscription":{"state":"deleted"}}
+```
+
+全routeで通常member requestと同じEd25519署名、timestamp、nonceを必須にします。PUTは`APNS_RUNTIME_ENABLED=YES`でだけ成功し、OFF中も署名検証後にnonceを消費して`503 apns_runtime_disabled`へします。DELETEは緊急OFF中にも成功し、利用者がserver tokenを消せる状態を維持します。Client指定のdevice ID、participant ID、bundle ID、topic、route schemaは受け取らず、`v2`をlegacy route、`v3`をtargeted routeへserver側で固定します。
 
 ## Cloudflare Secrets
 
@@ -68,11 +92,22 @@
 ## Staging gate
 
 1. Apple Developerでアプリ本体App IDのPush Notificationsを有効にし、配布profileを再生成する。
-2. `0010_multi_device_shared_data.sql`までD1 migrationを順番に適用する。`0008`は1人の複数iPhone、`0009`は同じAPNs tokenを持つ旧bindingを安全に識別・置換する場合、`0010`は1台だけを解除しても同じ参加者の名前・ハート・再送防止情報を消さないために必要である。
+2. `0011_apns_route_schema.sql`までD1 migrationを順番に適用する。`0008`は1人の複数iPhone、`0009`は同じAPNs tokenを持つ複数binding、`0010`は1台だけを解除しても同じ参加者の名前・ハート・再送防止情報を消さないために必要である。`0011`は旧active-only routeと新targeted routeをserverで区別し、rollbackした旧clientが非選択まどの通知を誤解釈しないために必要である。migration後、Workerを更新する前に`npm run notification-staging:status`を実行する。このread-only確認は`route_schema_version`を直接参照するため、未適用なら失敗する。
 3. 上記二つのSecretを、development／productionを混同せず対象Workerへ登録する。TestFlightは`production`と`https://api.push.apple.com`を使う。
 4. `npm run notification-staging:config:render`でignored ON候補を作り、`npm run notification-staging:config:check`を通す。これはdeployしない。
 5. 明示承認後にだけ同じcandidateをdeployし、署名PUT、moment/heart各1件、APNs HTTP `200`、署名DELETE、`APNS_RUNTIME_ENABLED=NO`へのrollbackを実機で確認する。
 6. Cloudflare outbound `fetch`とAPNsの実接続はmock testでは証明できない。sandbox／productionの実`200`が取れなければ公開せず、APNs provider部分をHTTP/2対応serviceへ分離する。
+
+## 古いWorkerへ戻す場合
+
+加算型subscriptionが1件でも存在する状態で、`route_schema_version`を知らない古いWorkerへそのまま戻してAPNsを動かしてはいけません。古いWorkerはtargeted rowも旧routeとして送るため、旧clientが非選択中のまどを選択中のまどとして扱うおそれがあります。
+
+1. 先に`APNS_RUNTIME_ENABLED=NO`を配備し、cronと即時drainを停止する。
+2. 古いWorkerへ戻している間は原則としてAPNsをOFFのままにする。
+3. どうしても古いWorkerでAPNsを再開する場合は、別途明示承認を得て`notification_deliveries`、`notification_events`、`apns_subscriptions`を全削除し、加算bindingが0件になったことを件数だけ確認してからONにする。写真やハートの正本は削除せず、通知だけを捨てて各clientの次回v2登録からactive-only状態を作り直す。
+4. 新Workerへ戻すときもAPNsはOFFのまま、schema確認、Worker更新、v3再登録の順に進め、staging smokeが通った後だけONにする。
+
+`0011`のtriggerは、古いWorkerが更新した個々のsubscriptionをroute 1へ正規化する。ただし、古いWorkerに触れられていない既存の加算bindingまで安全に選別することはできないため、上記のOFF境界を省略しない。
 
 毎分cronは最大50 deliveryをleaseし、network／`429`／`5xx`をjitter付きbackoffで再試行します。`410 Unregistered`、`BadDeviceToken`、`DeviceTokenNotForTopic`は物理的に同じtoken digestを持つ全まどのsubscriptionをCAS相当で削除します。Provider key、topic、payload等の構成4xxではdevice tokenを削除せず、D1の`last_reason=configuration_error:*`へ残して1時間後に再試行します。request body、credential、tokenはconsoleへ出しません。
 
@@ -84,7 +119,7 @@ ON候補を作成・検証済みで、対象Workerへ既に配備されている
 npm run notification-staging:status
 ```
 
-このコマンドは、固定されたignored file `wrangler.notification-staging-on.jsonc`だけを読み、隔離済みstaging D1へ`SELECT`だけを実行します。任意のdatabase名・config path・SQL・shell引数は受け付けず、deploy、migration、secret変更、D1書き込みを行いません。表示するのは次の集計だけです。
+このコマンドは、固定されたignored file `wrangler.notification-staging-on.jsonc`だけを読み、隔離済みstaging D1へ`SELECT`だけを実行します。任意のdatabase名・config path・SQL・shell引数は受け付けず、deploy、migration、secret変更、D1書き込みを行いません。`0011`の列がなければ失敗し、存在するときだけ`route_schema: ready`を表示します。ほかに表示するのは次の集計だけです。
 
 - 有効subscription：`environment`ごとの件数
 - 未期限切れevent：`new_moment`／`heart`ごとの件数
@@ -98,7 +133,7 @@ eventとdeliveryは、受信側がアプリを開いて署名済み同期／ACK�
 
 一般公開前の実機確認は、別々の細かなテストに分けず一回にまとめます。
 
-1. 2台を同じrelease buildにし、通知を許可して、受信側の対象まどを一度前面で開く。上記集計で`production` subscriptionが2件であることだけを確認する。
+1. 2台を同じrelease buildにし、通知を許可して、各端末で通知対象にする全まどの登録を前面で完了する。上記集計では`production` subscriptionが「各物理端末×その端末の有効なまど資格」の件数になっていることだけを確認する。同じparticipantの同じ物理tokenは配送時に1件へまとめられる。
 2. 受信側を閉じ、送信側から**新しい**写真を一枚届ける。受信側を開く前に集計で`new_moment`の`accepted/200`を確認する。通知後に別のまどを選択してから通知をタップし、対象のまどへ切り替わって対象写真の詳細が開くこと、Widgetが対象まどの検証済みcacheへ更新されることを確認する。
 3. 受信側からその写真へ**新しい**ハートを一回送る。送信側を閉じたまま集計で`heart`の`accepted/200`を確認する。通知後に別のまどを選択してから通知をタップし、対象のまどへ切り替わって「自分が届けた写真」の対象行が示されることを確認する。
 

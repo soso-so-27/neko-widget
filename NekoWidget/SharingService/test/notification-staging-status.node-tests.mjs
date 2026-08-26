@@ -60,13 +60,14 @@ function successfulRows(rows) {
   return JSON.stringify([{ success: true, results: rows }]);
 }
 
-test("runs exactly the three reviewed read-only D1 queries through the isolated ON config", async () => {
+test("runs exactly the reviewed read-only D1 queries through the isolated ON config", async () => {
   const config = renderStagingConfig(template, fixtureEnvironment, {
     expectedMomentRuntime: "YES",
     expectedAPNSRuntime: "YES",
   });
   const commands = [];
   const responses = new Map([
+    ["route-schema", successfulRows([{ invalid_count: 0, normalizer_count: 1 }])],
     ["subscriptions", successfulRows([{ environment: "production", count: 2 }])],
     ["events", successfulRows([{ kind: "new_moment", count: 1 }])],
     ["deliveries", successfulRows([{ state: "accepted", status: "200", reason: "none", count: 1 }])],
@@ -97,13 +98,15 @@ test("runs exactly the three reviewed read-only D1 queries through the isolated 
       return responses.get(query.name);
     },
   });
-  assert.equal(commands.length, 3);
+  assert.equal(commands.length, 4);
   assert.deepEqual(status, {
+    "route-schema": [{ state: "ready" }],
     subscriptions: [{ environment: "production", count: 2 }],
     events: [{ kind: "new_moment", count: 1 }],
     deliveries: [{ state: "accepted", status: "200", reason: "none", count: 1 }],
   });
   const text = formatNotificationStagingStatus(status);
+  assert.match(text, /route_schema: ready/u);
   assert.match(text, /production=2/u);
   assert.match(text, /accepted\/200\/none=1/u);
   assert.doesNotMatch(text, /must-not-pass-through/u);
@@ -149,5 +152,47 @@ test("rejects malformed or raw provider output without rendering it", async () =
       }]),
     }),
     /unexpected response|unexpected category|unexpected fields/u,
+  );
+});
+
+test("fails closed when the applied route schema is missing or invalid", async () => {
+  const config = renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+    expectedAPNSRuntime: "YES",
+  });
+  await assert.rejects(
+    collectNotificationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => config,
+      runCommand: async (command) => {
+        const query = notificationStatusQueries.find((entry) => command.args.includes(entry.sql));
+        if (query?.name === "route-schema") {
+          return successfulRows([{ invalid_count: 1, normalizer_count: 1 }]);
+        }
+        throw new Error("later queries must not run after a schema failure");
+      },
+    }),
+    /route schema contains invalid rows/u,
+  );
+});
+
+test("fails closed when the rollback normalizer trigger is missing", async () => {
+  const config = renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+    expectedAPNSRuntime: "YES",
+  });
+  await assert.rejects(
+    collectNotificationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => config,
+      runCommand: async (command) => {
+        const query = notificationStatusQueries.find((entry) => command.args.includes(entry.sql));
+        if (query?.name === "route-schema") {
+          return successfulRows([{ invalid_count: 0, normalizer_count: 0 }]);
+        }
+        throw new Error("later queries must not run after a schema failure");
+      },
+    }),
+    /route schema normalizer is unavailable/u,
   );
 });
