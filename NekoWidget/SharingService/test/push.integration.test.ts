@@ -240,7 +240,7 @@ describe("APNs durable notification delivery", () => {
       .toMatchObject({ status: 409, code: "replayed_request" });
   });
 
-  it("binds an encrypted renewable token to the authenticated device and dispatches a generic alert", async () => {
+  it("binds an encrypted renewable token and dispatches a generic alert with an opaque target", async () => {
     const fixture = await seedFixture();
     const configuredEnv = await pushEnv();
     const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
@@ -314,9 +314,12 @@ describe("APNs durable notification delivery", () => {
         "content-available": 1,
       },
       neko: { v: 1, kind: "new_moment" },
+      nekoTarget: {
+        v: 1,
+        spaceId: fixture.spaceID,
+        momentId: momentID,
+      },
     });
-    expect(requestPayload).not.toContain(momentID);
-    expect(requestPayload).not.toContain(fixture.spaceID);
     expect(requestPayload).not.toContain(fixture.ownerID);
     expect(requestPayload).not.toContain(fixture.inviteeID);
     expect(requestPayload).not.toContain(token);
@@ -369,9 +372,16 @@ describe("APNs durable notification delivery", () => {
         "content-available": 1,
       },
       neko: { v: 1, kind: "heart" },
+      nekoTarget: {
+        v: 1,
+        spaceId: fixture.spaceID,
+        momentId: heartMomentID,
+      },
     });
     expect(heartPayload).not.toContain(reactionID);
-    expect(heartPayload).not.toContain(heartMomentID);
+    expect(heartPayload).not.toContain(fixture.ownerID);
+    expect(heartPayload).not.toContain(fixture.inviteeID);
+    expect(heartPayload).not.toContain(token);
 
     const acknowledgedMomentID = await seedCommittedMoment(fixture, now + 2);
     await databaseEnv.DB.batch(

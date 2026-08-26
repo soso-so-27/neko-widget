@@ -135,6 +135,10 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     /// No recipient identity or reaction timestamp crosses this presentation
     /// boundary.
     let hasReceivedHeart: Bool
+    /// Opaque relay identifier used only to match a notification target to its
+    /// local delivery row. It is never rendered or included in accessibility
+    /// copy.
+    let serverMomentID: String?
 
     init(
         stableID: String,
@@ -147,7 +151,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         unreceivedExpiresAt: Date?,
         recipientCount: Int?,
         recipientDeliveryConfirmedAt: Date? = nil,
-        hasReceivedHeart: Bool = false
+        hasReceivedHeart: Bool = false,
+        serverMomentID: String? = nil
     ) {
         self.stableID = stableID
         self.destinationKey = destinationKey
@@ -160,6 +165,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.recipientCount = recipientCount
         self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
         self.hasReceivedHeart = hasReceivedHeart
+        self.serverMomentID = serverMomentID
     }
 }
 
@@ -334,12 +340,29 @@ enum MomentSentRecordDeliveryState: Equatable, Sendable {
 }
 
 /// Privacy-safe delivery ledger entry. It deliberately contains no image,
-/// thumbnail, local path, URL, filename, or media identifier.
+/// thumbnail, local path, URL, filename, or user-visible identifier.
 struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let id: Int
+    /// Opaque relay identifier retained only for notification-target matching.
+    /// It is never shown to the person using the app.
+    let momentID: String?
     let serverAcceptedAt: Date
     let recipientDeliveryConfirmedAt: Date?
     let hasReceivedHeart: Bool
+
+    init(
+        id: Int,
+        momentID: String? = nil,
+        serverAcceptedAt: Date,
+        recipientDeliveryConfirmedAt: Date?,
+        hasReceivedHeart: Bool
+    ) {
+        self.id = id
+        self.momentID = momentID
+        self.serverAcceptedAt = serverAcceptedAt
+        self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
+        self.hasReceivedHeart = hasReceivedHeart
+    }
 
     var deliveryState: MomentSentRecordDeliveryState {
         recipientDeliveryConfirmedAt == nil
@@ -425,6 +448,7 @@ enum MomentSharingPresentationPolicy {
         preparations: [MomentPreparationPresentationInput],
         deliveries: [MomentDeliveryPresentationInput],
         outcomes: [MomentOutgoingOutcomePresentationInput] = [],
+        notificationTargetMomentID: String? = nil,
         now: Date
     ) -> MomentOutgoingPresentation {
         var groups: [MomentOutgoingStatusKind: Accumulator] = [:]
@@ -536,8 +560,29 @@ enum MomentSharingPresentationPolicy {
                 return $0.stableID < $1.stableID
             }
 
-        let sentRecords = committedDeliveries
-            .prefix(sentRecordLimit)
+        var presentedDeliveries = Array(committedDeliveries.prefix(sentRecordLimit))
+        if let notificationTargetMomentID {
+            let targetMatches = committedDeliveries.filter {
+                $0.serverMomentID == notificationTargetMomentID
+            }
+            if targetMatches.count != 1 {
+                // A duplicated opaque identifier is corrupt state. Remove any
+                // bounded copy as well so the caller cannot mistake it for a
+                // uniquely authenticated notification target.
+                presentedDeliveries.removeAll {
+                    $0.serverMomentID == notificationTargetMomentID
+                }
+            } else if !presentedDeliveries.contains(where: {
+                $0.serverMomentID == notificationTargetMomentID
+            }), let target = targetMatches.first {
+                // Keep the ordinary ledger bounded while admitting the one
+                // exact row named by a validated notification. FamilyWindow
+                // moves it to the front without exposing the opaque ID.
+                presentedDeliveries.append(target)
+            }
+        }
+
+        let sentRecords = presentedDeliveries
             .enumerated()
             .map { index, delivery in
                 let serverAcceptedAt = delivery.committedAt ?? delivery.updatedAt
@@ -546,6 +591,7 @@ enum MomentSharingPresentationPolicy {
                 }
                 return MomentSentRecordPresentation(
                     id: index,
+                    momentID: delivery.serverMomentID,
                     serverAcceptedAt: serverAcceptedAt,
                     recipientDeliveryConfirmedAt: confirmedAt,
                     hasReceivedHeart: delivery.hasReceivedHeart

@@ -12,8 +12,9 @@ APNsやiOSは配送・背景実行・Widget再読込を保証しない。製品�
 
 ## Privacy境界
 
-- payloadは一般文に加え、`v=1`と`kind=new_moment|heart`だけの閉じた遷移hintを持てる。未知version、未知kind、余分なkey、通知の独自actionは受理しない。
-- 写真、まど名、相手名、撮影日時、moment/reaction ID、URL、暗号鍵を入れない。
+- payloadの表示本文は一般文だけにする。互換用のtop-level `neko`は、`v=1`と`kind=new_moment|heart`だけのexact 2-key envelopeのまま維持する。旧clientがこの閉じたenvelopeを引き続き解釈できるよう、まどや写真のfieldを`neko`へ追加しない。
+- 新しいclient向けには、別のtop-level `nekoTarget`として、`v=1`、opaqueな`spaceId`、opaqueな`momentId`だけのexact 3-key envelopeを追加できる。これは通知タップを端末内の認証済みまど・同期済み写真へ結ぶroute専用であり、表示文、accessibility、診断log、analyticsへ出さない。
+- 写真そのもの、まど名、相手名、撮影日時、reaction/device ID、URL、暗号鍵を入れない。`nekoTarget`の余分なkey、未知version、形式不正、一意に解決できないspaceはfail closedとし、別のまどへ推測・fallbackしない。`nekoTarget`が存在しない旧payloadだけは、`neko`のkindに応じて選択中のまどの従来区分を開く。
 - APNs tokenはWorkerのSecret keyringでAES-GCM暗号化し、D1には暗号文、nonce、key versionと重複確認用SHA-256だけを置く。平文tokenをlog、API response、iPhoneの永続領域へ残さない。
 - Serverは署名済みrequestから現在のparticipant、device、bundle topicを決定し、client指定のIDやtopicを受け付けない。
 - subscriptionは最大35日のleaseとし、起動時に更新する。通知OFF、失効device、機種変更、unlink、block、APNsの無効token応答、期限到来で削除へ収束させる。
@@ -36,7 +37,8 @@ APNsやiOSは配送・背景実行・Widget再読込を保証しない。製品�
 - 通知許可済みかつ、ペアリング・写真共有同意が有効な選択中のまどだけへtokenを署名付き登録する。同じ物理tokenを別のまどからPUTした場合は以前のbindingと未完了deliveryを置き換え、非activeまどの通知でactiveまどを誤同期しない。
 - 通知拒否時は署名付きDELETEを試み、失敗時もpairingを破壊しない。Server側のcascadeとlease expiryを最終収束経路にする。
 - remote callbackでは既存refreshを使い、APNs alertと同じ内容のlocal notificationを重複生成しない。
-- 通知タップはcold launchでも一時mailboxへ保持し、`new_moment`は選択中のまどの「届いた」、`heart`は「届けた」を開く。payloadからまどや写真を推測せず、認証済みの端末内同期結果だけを表示する。
+- 通知タップはcold launchでも検証済みroute全体を一時mailboxへ保持する。`nekoTarget`がある場合はopaque `spaceId`と一意に一致する端末内まどへ先に切り替え、認証済み同期を完了してから、`new_moment`は対象の「届いた写真」、`heart`は「自分が届けた写真」の対象行を開く。対象まど・写真を解決できなければ開かず、現在のまどへfallbackしない。`nekoTarget`がない旧payloadだけは、選択中のまどで`new_moment`は「届いた」、`heart`は「届けた」を開く。
+- background remote callbackは、targetが選択中のまどと一致するときだけそのまどを同期する。別のまどをtargetとするpushで現在のまどを誤同期せず、利用者が通知をタップしたときにだけ明示的なまど切替と対象同期を行う。
 
 ## 外部release gate
 

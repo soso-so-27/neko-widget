@@ -26,8 +26,14 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.family_window = (
             ROOT / "NekoWidget/Views/FamilyWindowView.swift"
         ).read_text(encoding="utf-8")
+        self.presentation = (
+            ROOT / "NekoWidget/Views/MomentSharingPresentation.swift"
+        ).read_text(encoding="utf-8")
         self.api_client = (
             ROOT / "NekoWidget/Services/MomentSharingAPIClient.swift"
+        ).read_text(encoding="utf-8")
+        self.coordinator = (
+            ROOT / "NekoWidget/Services/MomentSharingCoordinator.swift"
         ).read_text(encoding="utf-8")
         self.project = (ROOT / "NekoWidget.xcodeproj/project.pbxproj").read_text(
             encoding="utf-8"
@@ -105,6 +111,45 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("WidgetCenter.shared.reloadTimelines", self.service)
         self.assertIn("emitLocalNotifications && newVisibleCount", self.service)
         self.assertIn("emitLocalNotifications && newPawCount", self.service)
+
+    def test_remote_wake_never_syncs_a_different_selected_window(self) -> None:
+        callback = self.service.split("didReceiveRemoteNotification", 1)[1].split(
+            "func userNotificationCenter", 1
+        )[0]
+        self.assertIn(
+            "guard let route = MomentNotificationRoutePayload.route(from: userInfo)",
+            callback,
+        )
+        malformed = callback.split(
+            "guard let route = MomentNotificationRoutePayload.route(from: userInfo)",
+            1,
+        )[1].split("if let target = route.target", 1)[0]
+        self.assertIn("reconcileRemoteNotificationRegistration()", malformed)
+        self.assertIn("completionHandler(.noData)", malformed)
+        self.assertIn("return", malformed)
+
+        # A valid legacy v1 route has no target and continues to the existing
+        # selected-window refresh. Only a target-bearing route enters the
+        # active-window check below.
+        self.assertIn("if let target = route.target", callback)
+        self.assertLess(
+            callback.index("if let target = route.target"),
+            callback.index("activeRefresh?.cancel()"),
+        )
+        self.assertIn("notificationTargetMatchesActiveWindow(target)", callback)
+        mismatch = callback.split(
+            "notificationTargetMatchesActiveWindow(target)", 1
+        )[1].split("activeRefresh?.cancel()", 1)[0]
+        self.assertIn("reconcileRemoteNotificationRegistration()", mismatch)
+        self.assertIn("completionHandler(.noData)", mismatch)
+        self.assertIn("return", mismatch)
+
+        matcher = self.service.split(
+            "private static func notificationTargetMatchesActiveWindow", 1
+        )[1].split("private func run(", 1)[0]
+        self.assertIn("PrivateWindowCatalogStore.load()", matcher)
+        self.assertIn("$0.localWindowID == catalog.activeWindowID", matcher)
+        self.assertIn("active.spaceID == target.spaceID", matcher)
 
     def test_signed_push_subscription_contract_does_not_persist_token(self) -> None:
         self.assertIn('path: "/v2/push-subscriptions/current"', self.api_client)
@@ -201,30 +246,77 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
             "struct MomentNotificationTap", 1
         )[0]
         self.assertIn('static let envelopeKey = "neko"', payload)
-        self.assertIn("static let schemaVersion = 1", payload)
+        self.assertIn('static let targetEnvelopeKey = "nekoTarget"', payload)
+        self.assertIn("static let legacySchemaVersion = 1", payload)
+        self.assertIn("static let targetSchemaVersion = 1", payload)
+        self.assertNotIn("static let schemaVersion", payload)
         self.assertIn('Set(envelope.keys) == Set(["v", "kind"])', payload)
+        self.assertIn('envelope["v"] as? Int', payload)
+        self.assertIn("version == legacySchemaVersion", payload)
         self.assertIn("MomentNotificationRouteKind(rawValue: rawKind)", payload)
-        for forbidden in (
-            "momentID",
-            "windowID",
-            "spaceID",
-            "participantID",
-            "deviceID",
-            "URL",
-        ):
-            self.assertNotIn(forbidden, payload)
+        self.assertIn(
+            'Set(targetEnvelope.keys) == Set(["v", "spaceId", "momentId"])',
+            payload,
+        )
+        self.assertIn('targetEnvelope["v"] as? Int', payload)
+        self.assertIn("targetVersion == targetSchemaVersion", payload)
+        self.assertIn('targetEnvelope["spaceId"] as? String', payload)
+        self.assertIn('targetEnvelope["momentId"] as? String', payload)
+        self.assertGreaterEqual(payload.count("isOpaqueIdentifier"), 2)
+
+        legacy_parser = payload.split("static func route(", 1)[1].split(
+            "guard let rawTarget", 1
+        )[0]
+        self.assertIn("else { return nil }", legacy_parser)
+
+        legacy_user_info = payload.split("static func userInfo(", 1)[1].split(
+            "static func routeKind", 1
+        )[0]
+        self.assertIn("envelopeKey:", legacy_user_info)
+        self.assertIn('"v": legacySchemaVersion', legacy_user_info)
+        self.assertNotIn("targetEnvelopeKey", legacy_user_info)
+
+        route = self.service.split(
+            "struct MomentNotificationRoute: Equatable", 1
+        )[1].split(
+            "struct MomentNotificationTap", 1
+        )[0]
+        self.assertIn("let kind: MomentNotificationRouteKind", route)
+        self.assertIn("let target: MomentNotificationRouteTarget?", route)
+        target = self.service.split(
+            "struct MomentNotificationRouteTarget", 1
+        )[1].split("struct MomentNotificationRoute", 1)[0]
+        self.assertIn("let spaceID: String", target)
+        self.assertIn("let momentID: String", target)
+        tap = self.service.split("struct MomentNotificationTap", 1)[1].split(
+            "final class MomentNotificationTapMailbox", 1
+        )[0]
+        self.assertIn("let route: MomentNotificationRoute", tap)
+        self.assertNotIn("let kind: MomentNotificationRouteKind", tap)
+
+        # The original exact v1 envelope remains valid when the separately
+        # versioned target is absent. A present but malformed target must not
+        # silently navigate the currently selected window.
+        self.assertIn("guard let rawTarget = userInfo[targetEnvelopeKey]", payload)
+        self.assertIn("return MomentNotificationRoute(kind: kind, target: nil)", payload)
+        malformed_target = payload.split(
+            "guard let rawTarget = userInfo[targetEnvelopeKey]", 1
+        )[1]
+        self.assertIn("else { return nil }", malformed_target)
 
         callback = self.service.split(
             "didReceive response: UNNotificationResponse", 1
         )[1].split("private func run(", 1)[0]
         self.assertIn("UNNotificationDefaultActionIdentifier", callback)
-        self.assertIn("MomentNotificationRoutePayload.routeKind", callback)
-        self.assertIn("MomentNotificationTapMailbox.shared.enqueue(kind)", callback)
+        self.assertIn("MomentNotificationRoutePayload.route", callback)
+        self.assertIn("MomentNotificationTapMailbox.shared.enqueue(route)", callback)
 
         mailbox = self.service.split("final class MomentNotificationTapMailbox", 1)[
             1
         ].split("final class NekoWidgetAppDelegate", 1)[0]
         self.assertIn("@Published private(set) var pendingTap", mailbox)
+        self.assertIn("func enqueue(_ route: MomentNotificationRoute)", mailbox)
+        self.assertIn("MomentNotificationTap(id: UUID(), route: route)", mailbox)
         self.assertIn("guard pendingTap?.id == id", mailbox)
         self.assertIn("pendingTap = nil", mailbox)
 
@@ -232,17 +324,142 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
             ".onChange(of: momentNotificationTapMailbox.pendingTap, initial: true)",
             self.app_root,
         )
-        self.assertIn("viewModel.handleMomentNotificationRoute(tap.kind)", self.app_root)
+        self.assertIn("viewModel.handleMomentNotificationRoute(tap.route)", self.app_root)
         self.assertIn("momentNotificationTapMailbox.consume(id: tap.id)", self.app_root)
-        self.assertIn("func handleMomentNotificationRoute(", self.app_view_model)
-        self.assertIn("pendingFamilyMomentSourceDigest = nil", self.app_view_model)
-        self.assertIn("pendingFamilyNotificationRouteKind = kind", self.app_view_model)
-        self.assertIn("selectedTab = .windows", self.main_tab)
-        self.assertIn("deepLinkedFamilyWindowIsPresented = true", self.main_tab)
-        self.assertIn("case .newMoment:", self.family_window)
-        self.assertIn("selectedSection = .received", self.family_window)
-        self.assertIn("case .heart:", self.family_window)
-        self.assertIn("selectedSection = .sent", self.family_window)
+
+    def test_targeted_notification_selects_its_window_before_opening_photo(self) -> None:
+        handler = self.app_view_model.split(
+            "func handleMomentNotificationRoute(", 1
+        )[1].split("private func openPendingDeepLinkIfNeeded", 1)[0]
+        self.assertIn("MomentNotificationRoute", handler)
+        self.assertIn("PrivateWindowCatalogStore.load()", handler)
+        self.assertIn("if let target = route.target", handler)
+        self.assertIn("$0.spaceID == target.spaceID", handler)
+        self.assertIn("matches.count == 1", handler)
+        self.assertIn("PairingInstallationGuard.activatePrivateWindowAsync", handler)
+        self.assertIn("localWindowID: targetWindow.localWindowID", handler)
+        self.assertIn('trigger: "notification-target"', handler)
+        self.assertIn("expectedSpaceID: target.spaceID", handler)
+        self.assertIn("pendingFamilyNotificationRoute = route", handler)
+        self.assertIn("isFamilyWindowPresented = true", handler)
+        self.assertNotIn("withoutTarget()", handler)
+        self.assertLess(
+            handler.index("PairingInstallationGuard.activatePrivateWindowAsync"),
+            handler.index("pendingFamilyNotificationRoute = route"),
+        )
+        self.assertLess(
+            handler.index("pendingFamilyNotificationRoute = route"),
+            handler.index("isFamilyWindowPresented = true"),
+        )
+        self.assertLess(
+            handler.index("isFamilyWindowPresented = true"),
+            handler.index('trigger: "notification-target"'),
+        )
+        self.assertIn("momentNotificationRoutingGate.acquire()", handler)
+        self.assertIn("momentNotificationRouteGeneration &+= 1", handler)
+        self.assertGreaterEqual(
+            handler.count("generation == momentNotificationRouteGeneration"),
+            3,
+        )
+
+        # A legacy kind-only payload intentionally has no target and reaches
+        # the common selected-window/section assignment below the target-only
+        # activation branch.
+        self.assertLess(
+            handler.index("if let target = route.target"),
+            handler.index("pendingFamilyNotificationRoute = route"),
+        )
+
+    def test_target_space_survives_bootstrap_and_process_queue_boundaries(self) -> None:
+        callback = self.service.split("didReceiveRemoteNotification", 1)[1].split(
+            "func userNotificationCenter", 1
+        )[0]
+        self.assertIn("expectedSpaceID: route.target?.spaceID", callback)
+
+        refresh = self.service.split("func refresh(", 1)[1].split(
+            "private func clearFamilyWidgetIfNeeded", 1
+        )[0]
+        self.assertIn("expectedSpaceID: String? = nil", refresh)
+        self.assertGreaterEqual(
+            refresh.count("state.spaceID == expectedSpaceID"),
+            2,
+        )
+        self.assertIn("expectedSpaceID: expectedSpaceID", refresh)
+
+        synchronize = self.coordinator.split(
+            "func synchronize(", 1
+        )[1].split("func synchronizeWindowNameForUser", 1)[0]
+        self.assertIn("expectedSpaceID: String? = nil", synchronize)
+        self.assertIn("expectedSpaceID: expectedSpaceID", synchronize)
+        perform = self.coordinator.split(
+            "private func performSynchronization(\n        trigger: String,", 1
+        )[1].split("func synchronizationNotice()", 1)[0]
+        self.assertIn("loadedAuthorization.state.spaceID == expectedSpaceID", perform)
+        self.assertLess(
+            perform.index("loadedAuthorization.state.spaceID == expectedSpaceID"),
+            perform.index("let api = try makeNetworkClient()"),
+        )
+
+    def test_notification_photo_target_reaches_received_and_sent_presentations(self) -> None:
+        self.assertIn(
+            "@Published var pendingFamilyNotificationRoute: MomentNotificationRoute?",
+            self.app_view_model,
+        )
+        self.assertIn(
+            "$viewModel.pendingFamilyNotificationRoute",
+            self.app_root,
+        )
+        self.assertIn(
+            "@Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?",
+            self.main_tab,
+        )
+        self.assertIn(
+            "pendingNotificationRoute: $pendingFamilyNotificationRoute",
+            self.main_tab,
+        )
+        self.assertIn(
+            "@Binding private var pendingNotificationRoute: MomentNotificationRoute?",
+            self.family_window,
+        )
+
+        consume = self.family_window.split(
+            "private func consumePendingNotificationRoute()", 1
+        )[1].split("private var pendingMemoryTargetBootstrapPhase", 1)[0]
+        self.assertIn("guard let route = pendingNotificationRoute", consume)
+        self.assertIn("route.target?.momentID", consume)
+        self.assertIn("case .newMoment:", consume)
+        self.assertIn("selectedSection = .received", consume)
+        self.assertIn("focusedMomentID = momentID", consume)
+        self.assertIn("case .heart:", consume)
+        self.assertIn("selectedSection = .sent", consume)
+        self.assertIn("focusedSentMomentID = momentID", consume)
+
+        # A target-bearing route is one atomic capability. It remains pending
+        # until both its authenticated window and exactly one photo resolve;
+        # only a legacy targetless v1 route may fall back to a section.
+        targeted = consume.split("if let target = route.target", 1)[1].split(
+            "// Legacy v1 notifications", 1
+        )[0]
+        self.assertIn("model.pairingState?.spaceID == target.spaceID", targeted)
+        self.assertEqual(targeted.count("guard matches.count == 1"), 2)
+        self.assertEqual(targeted.count("pendingNotificationRoute = nil"), 2)
+        first_resolution = targeted.index("guard matches.count == 1")
+        first_consume = targeted.index("pendingNotificationRoute = nil")
+        self.assertLess(first_resolution, first_consume)
+        legacy = consume.split("// Legacy v1 notifications", 1)[1]
+        self.assertIn("pendingNotificationRoute = nil", legacy)
+        self.assertIn("selectedSection = .received", legacy)
+        self.assertIn("selectedSection = .sent", legacy)
+
+        sent_record = self.presentation.split(
+            "struct MomentSentRecordPresentation", 1
+        )[1].split("struct MomentOutgoingPresentation", 1)[0]
+        self.assertIn("let momentID: String?", sent_record)
+        visible_sent = self.family_window.split(
+            "private var visibleSentRecords", 1
+        )[1].split("private var canManageOutgoingPresentation", 1)[0]
+        self.assertIn("focusedSentMomentID", visible_sent)
+        self.assertIn("$0.momentID == focusedSentMomentID", visible_sent)
 
     def test_visible_notification_authorization_requires_an_explicit_tap(self) -> None:
         request = self.service.split(

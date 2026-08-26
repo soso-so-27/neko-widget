@@ -34,6 +34,7 @@ final class MomentSharingViewModel: ObservableObject {
 
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
+    private var notificationTargetSentMomentID: String?
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
@@ -64,6 +65,22 @@ final class MomentSharingViewModel: ObservableObject {
                 return $0.id < $1.id
             }
     }
+
+    /// Makes one validated heart target available even when it is older than
+    /// the ordinary 20-row presentation bound. The opaque ID is used only for
+    /// local lookup and is never rendered.
+    func prepareSentNotificationTarget(momentID: String) {
+        notificationTargetSentMomentID = momentID
+        outgoingPresentation = Self.makeOutgoingPresentation(
+            handoffSnapshot: Self.bestEffortHandoffPresentationSnapshot(
+                configuration: configuration
+            ),
+            sharingState: sharingState,
+            notificationTargetMomentID: momentID,
+            now: .now
+        )
+    }
+
     func bootstrap() async {
         do {
             _ = try await PairingInstallationGuard.bootstrapAsync()
@@ -691,6 +708,7 @@ final class MomentSharingViewModel: ObservableObject {
         outgoingPresentation = Self.makeOutgoingPresentation(
             handoffSnapshot: handoffSnapshot,
             sharingState: nextSharingState,
+            notificationTargetMomentID: notificationTargetSentMomentID,
             now: .now
         )
         if notifyPresentationChange {
@@ -703,6 +721,7 @@ final class MomentSharingViewModel: ObservableObject {
 
     private func refreshOutgoingPresentation() async {
         let configuration = self.configuration
+        let notificationTargetMomentID = notificationTargetSentMomentID
         do {
             let presentation = try await Task.detached(priority: .utility) {
                 let handoffSnapshot = Self.bestEffortHandoffPresentationSnapshot(configuration: configuration)
@@ -712,6 +731,7 @@ final class MomentSharingViewModel: ObservableObject {
                 return Self.makeOutgoingPresentation(
                     handoffSnapshot: handoffSnapshot,
                     sharingState: sharingState,
+                    notificationTargetMomentID: notificationTargetMomentID,
                     now: .now
                 )
             }.value
@@ -755,6 +775,7 @@ final class MomentSharingViewModel: ObservableObject {
     private nonisolated static func makeOutgoingPresentation(
         handoffSnapshot: MomentShareHandoffPresentationSnapshot,
         sharingState: MomentSharingState,
+        notificationTargetMomentID: String? = nil,
         now: Date
     ) -> MomentOutgoingPresentation {
         let receivedHeartMomentIDs = Set(
@@ -786,7 +807,8 @@ final class MomentSharingViewModel: ObservableObject {
                     recipientDeliveryConfirmedAt: $0.recipientDeliveryConfirmedAt,
                     hasReceivedHeart: $0.serverMomentID.map {
                         receivedHeartMomentIDs.contains($0)
-                    } ?? false
+                    } ?? false,
+                    serverMomentID: $0.serverMomentID
                 )
             },
             outcomes: sharingState.outgoingOutcomes.map {
@@ -802,6 +824,7 @@ final class MomentSharingViewModel: ObservableObject {
                     expiresAt: $0.expiresAt
                 )
             },
+            notificationTargetMomentID: notificationTargetMomentID,
             now: now
         )
     }

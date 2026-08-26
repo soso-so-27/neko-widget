@@ -64,7 +64,7 @@ struct AppRootView: View {
         .onChange(of: momentNotificationTapMailbox.pendingTap, initial: true) { _, tap in
             guard let tap else { return }
             Task { @MainActor in
-                viewModel.handleMomentNotificationRoute(tap.kind)
+                await viewModel.handleMomentNotificationRoute(tap.route)
                 momentNotificationTapMailbox.consume(id: tap.id)
             }
         }
@@ -233,8 +233,8 @@ struct AppRootView: View {
             deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
             deepLinkedFamilyWindowIsPresented: $viewModel.isFamilyWindowPresented,
             deepLinkedFamilyMomentSourceDigest: $viewModel.pendingFamilyMomentSourceDigest,
-            pendingFamilyNotificationRouteKind:
-                $viewModel.pendingFamilyNotificationRouteKind,
+            pendingFamilyNotificationRoute:
+                $viewModel.pendingFamilyNotificationRoute,
             chooseMorePhotos: presentLimitedLibraryPicker,
             requestPhotoAccess: requestOrOpenPhotoAccess,
             showWidgetPlacementGuide: {

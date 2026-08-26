@@ -31,7 +31,7 @@ struct MainTabView: View {
     @Binding var deepLinkedPhotoShownAt: Date?
     @Binding var deepLinkedFamilyWindowIsPresented: Bool
     @Binding var deepLinkedFamilyMomentSourceDigest: String?
-    @Binding var pendingFamilyNotificationRouteKind: MomentNotificationRouteKind?
+    @Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?
 
     let chooseMorePhotos: () -> Void
     let requestPhotoAccess: () -> Void
@@ -88,8 +88,8 @@ struct MainTabView: View {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
                         pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                        pendingFamilyNotificationRouteKind:
-                            $pendingFamilyNotificationRouteKind
+                        pendingFamilyNotificationRoute:
+                            $pendingFamilyNotificationRoute
                     )
                 }
                 .tabItem {
@@ -142,8 +142,8 @@ struct MainTabView: View {
             showsSettings = false
             selectedTab = .windows
         }
-        .onChange(of: pendingFamilyNotificationRouteKind, initial: true) { _, kind in
-            guard kind != nil else { return }
+        .onChange(of: pendingFamilyNotificationRoute, initial: true) { _, route in
+            guard route != nil else { return }
             showsSettings = false
             selectedTab = .windows
             deepLinkedFamilyWindowIsPresented = true
@@ -486,7 +486,7 @@ private struct WindowListView: View {
 
     @Binding var opensActiveWindow: Bool
     @Binding var pendingFamilyMomentSourceDigest: String?
-    @Binding var pendingFamilyNotificationRouteKind: MomentNotificationRouteKind?
+    @Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?
 
     @State private var windows: [PrivateWindowCatalogEntry] = []
     @State private var activeWindowID: String?
@@ -865,7 +865,7 @@ private struct WindowListView: View {
         if SharingAPIConfiguration.current.isMediaAvailable {
             FamilyWindowView(
                 pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest,
-                pendingNotificationRouteKind: $pendingFamilyNotificationRouteKind
+                pendingNotificationRoute: $pendingFamilyNotificationRoute
             )
         } else if SharingAPIConfiguration.current.isAvailable {
             PairingView()

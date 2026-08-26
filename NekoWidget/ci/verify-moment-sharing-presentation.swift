@@ -11,6 +11,7 @@ enum MomentSharingPresentationVerifier {
         try verifiesTerminalPreparationOutcomes()
         try verifiesLatestServerAcceptanceDeterministically()
         try verifiesSentRecordsAreBoundedAndPrivacySafe()
+        try verifiesHeartNotificationTargetOutsideBoundIsAdmittedOnce()
         try verifiesFamilyWindowSafetyAndOrdering()
         try verifiesFamilyWindowFreshnessBoundary()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
@@ -435,6 +436,67 @@ enum MomentSharingPresentationVerifier {
         )
     }
 
+    private static func verifiesHeartNotificationTargetOutsideBoundIsAdmittedOnce() throws {
+        let deliveries = (0..<25).map { index in
+            delivery(
+                "sent-\(index)",
+                "space-a",
+                .committed,
+                updatedAt: TimeInterval(1_000 + index),
+                committedAt: TimeInterval(1_000 + index),
+                hasReceivedHeart: index == 0,
+                serverMomentID: "moment-\(index)"
+            )
+        }
+        let ordinary = MomentSharingPresentationPolicy.make(
+            preparations: [],
+            deliveries: deliveries,
+            now: date(2_000)
+        )
+        try require(
+            ordinary.sentRecords.count == MomentSharingPresentationPolicy.sentRecordLimit
+                && !ordinary.sentRecords.contains { $0.momentID == "moment-0" },
+            "ordinary sent history stopped honoring its presentation bound"
+        )
+
+        let targeted = MomentSharingPresentationPolicy.make(
+            preparations: [],
+            deliveries: deliveries,
+            notificationTargetMomentID: "moment-0",
+            now: date(2_000)
+        )
+        try require(
+            targeted.sentRecords.count == MomentSharingPresentationPolicy.sentRecordLimit + 1,
+            "an older heart target was not admitted beside the bounded history"
+        )
+        try require(
+            targeted.sentRecords.filter { $0.momentID == "moment-0" }.count == 1
+                && targeted.sentRecords.last?.hasReceivedHeart == true,
+            "the exact older heart target was not resolved uniquely"
+        )
+
+        let duplicateTarget = MomentSharingPresentationPolicy.make(
+            preparations: [],
+            deliveries: deliveries + [
+                delivery(
+                    "duplicate-target",
+                    "space-a",
+                    .committed,
+                    updatedAt: 3_000,
+                    committedAt: 3_000,
+                    hasReceivedHeart: true,
+                    serverMomentID: "moment-0"
+                )
+            ],
+            notificationTargetMomentID: "moment-0",
+            now: date(4_000)
+        )
+        try require(
+            !duplicateTarget.sentRecords.contains { $0.momentID == "moment-0" },
+            "a duplicated notification target was treated as a unique photo"
+        )
+    }
+
     private static func verifiesTerminalPreparationOutcomes() throws {
         let presentation = MomentSharingPresentationPolicy.make(
             preparations: [],
@@ -615,7 +677,8 @@ enum MomentSharingPresentationVerifier {
         unreceivedExpiresAt: TimeInterval? = nil,
         recipientCount: Int? = nil,
         recipientDeliveryConfirmedAt: TimeInterval? = nil,
-        hasReceivedHeart: Bool = false
+        hasReceivedHeart: Bool = false,
+        serverMomentID: String? = nil
     ) -> MomentDeliveryPresentationInput {
         MomentDeliveryPresentationInput(
             stableID: id,
@@ -628,7 +691,8 @@ enum MomentSharingPresentationVerifier {
             unreceivedExpiresAt: unreceivedExpiresAt.map { date($0) },
             recipientCount: recipientCount,
             recipientDeliveryConfirmedAt: recipientDeliveryConfirmedAt.map { date($0) },
-            hasReceivedHeart: hasReceivedHeart
+            hasReceivedHeart: hasReceivedHeart,
+            serverMomentID: serverMomentID
         )
     }
 

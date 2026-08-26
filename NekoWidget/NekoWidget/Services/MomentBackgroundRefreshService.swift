@@ -40,24 +40,40 @@ struct MomentBackgroundRefreshResult: Equatable, Sendable {
 }
 
 /// A privacy-minimized navigation hint shared by remote and local sharing
-/// notifications. The payload deliberately carries no photo, window, member,
-/// device, or relay identifier. Unknown schema versions and kinds are ignored
-/// instead of guessing a destination.
+/// notifications. Older notifications contain only the bounded kind. Newer
+/// remote notifications may add an independently versioned opaque target; no
+/// user-facing window name, participant identity, media, or local path crosses
+/// this boundary. Unknown or malformed envelopes are ignored instead of
+/// guessing a destination.
 enum MomentNotificationRouteKind: String, Equatable, Sendable {
     case newMoment = "new_moment"
     case heart
 }
 
+struct MomentNotificationRouteTarget: Equatable, Sendable {
+    let spaceID: String
+    let momentID: String
+}
+
+struct MomentNotificationRoute: Equatable, Sendable {
+    let kind: MomentNotificationRouteKind
+    let target: MomentNotificationRouteTarget?
+}
+
 enum MomentNotificationRoutePayload {
     static let envelopeKey = "neko"
-    static let schemaVersion = 1
+    static let targetEnvelopeKey = "nekoTarget"
+    // The legacy envelope is an installed-client compatibility boundary. The
+    // separately versioned target may evolve without ever changing `neko` v1.
+    static let legacySchemaVersion = 1
+    static let targetSchemaVersion = 1
 
     static func userInfo(
         for kind: MomentNotificationRouteKind
     ) -> [AnyHashable: Any] {
         [
             envelopeKey: [
-                "v": schemaVersion,
+                "v": legacySchemaVersion,
                 "kind": kind.rawValue
             ]
         ]
@@ -66,19 +82,44 @@ enum MomentNotificationRoutePayload {
     static func routeKind(
         from userInfo: [AnyHashable: Any]
     ) -> MomentNotificationRouteKind? {
+        route(from: userInfo)?.kind
+    }
+
+    static func route(
+        from userInfo: [AnyHashable: Any]
+    ) -> MomentNotificationRoute? {
         guard let envelope = userInfo[envelopeKey] as? [String: Any],
               Set(envelope.keys) == Set(["v", "kind"]),
               let version = envelope["v"] as? Int,
-              version == schemaVersion,
-              let rawKind = envelope["kind"] as? String
+              version == legacySchemaVersion,
+              let rawKind = envelope["kind"] as? String,
+              let kind = MomentNotificationRouteKind(rawValue: rawKind)
         else { return nil }
-        return MomentNotificationRouteKind(rawValue: rawKind)
+
+        guard let rawTarget = userInfo[targetEnvelopeKey]
+        else { return MomentNotificationRoute(kind: kind, target: nil) }
+        guard let targetEnvelope = rawTarget as? [String: Any],
+              Set(targetEnvelope.keys) == Set(["v", "spaceId", "momentId"]),
+              let targetVersion = targetEnvelope["v"] as? Int,
+              targetVersion == targetSchemaVersion,
+              let spaceID = targetEnvelope["spaceId"] as? String,
+              let momentID = targetEnvelope["momentId"] as? String,
+              PairingValidation.isOpaqueIdentifier(spaceID),
+              PairingValidation.isOpaqueIdentifier(momentID)
+        else { return nil }
+        return MomentNotificationRoute(
+            kind: kind,
+            target: MomentNotificationRouteTarget(
+                spaceID: spaceID,
+                momentID: momentID
+            )
+        )
     }
 }
 
 struct MomentNotificationTap: Equatable, Identifiable, Sendable {
     let id: UUID
-    let kind: MomentNotificationRouteKind
+    let route: MomentNotificationRoute
 }
 
 /// Keeps the latest validated tap in memory until SwiftUI has installed its
@@ -92,8 +133,8 @@ final class MomentNotificationTapMailbox: ObservableObject {
 
     private init() {}
 
-    func enqueue(_ kind: MomentNotificationRouteKind) {
-        pendingTap = MomentNotificationTap(id: UUID(), kind: kind)
+    func enqueue(_ route: MomentNotificationRoute) {
+        pendingTap = MomentNotificationTap(id: UUID(), route: route)
     }
 
     func consume(id: UUID) {
@@ -185,12 +226,31 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        guard let route = MomentNotificationRoutePayload.route(from: userInfo) else {
+            // A malformed or unknown envelope must never be interpreted as a
+            // generic wake for whichever private window happens to be active.
+            reconcileRemoteNotificationRegistration()
+            completionHandler(.noData)
+            return
+        }
+        // A stale APNs binding can briefly deliver a push for a window that is
+        // no longer selected. Never synchronize the active window in response
+        // to an explicitly different target. A target-less legacy push keeps
+        // the existing active-window behavior.
+        if let target = route.target {
+            guard Self.notificationTargetMatchesActiveWindow(target) else {
+                reconcileRemoteNotificationRegistration()
+                completionHandler(.noData)
+                return
+            }
+        }
         activeRefresh?.cancel()
         let operation = Task { @MainActor in
             let result = await MomentBackgroundRefreshService.shared.refresh(
                 protectedDataAvailable: application.isProtectedDataAvailable,
                 trigger: "remote-notification",
-                emitLocalNotifications: false
+                emitLocalNotifications: false,
+                expectedSpaceID: route.target?.spaceID
             )
             guard !Task.isCancelled, result.succeeded else {
                 completionHandler(.failed)
@@ -215,11 +275,26 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         didReceive response: UNNotificationResponse
     ) async {
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
-              let kind = MomentNotificationRoutePayload.routeKind(
+              let route = MomentNotificationRoutePayload.route(
                   from: response.notification.request.content.userInfo
               )
         else { return }
-        MomentNotificationTapMailbox.shared.enqueue(kind)
+        MomentNotificationTapMailbox.shared.enqueue(route)
+    }
+
+    private static func notificationTargetMatchesActiveWindow(
+        _ target: MomentNotificationRouteTarget
+    ) -> Bool {
+        do {
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let active = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  })
+            else { return false }
+            return active.spaceID == target.spaceID
+        } catch {
+            return false
+        }
     }
 
     private func run(_ backgroundTask: BGAppRefreshTask) {
@@ -756,7 +831,8 @@ actor MomentBackgroundRefreshService {
 
     /// Upgrades the existing quiet/provisional notification path only after an
     /// explicit tap. The subsequent APNs registration adds no sound, badge,
-    /// sender/window label, shared image, or routing identifier to the alert.
+    /// sender/window label, shared image, or user-visible routing detail to the
+    /// alert.
     func requestVisibleNotificationAuthorization() async
         -> MomentNotificationAuthorizationState {
         let settings = await notificationCenter.notificationSettings()
@@ -779,7 +855,8 @@ actor MomentBackgroundRefreshService {
     func refresh(
         protectedDataAvailable: Bool,
         trigger: String = "background-app-refresh",
-        emitLocalNotifications: Bool = true
+        emitLocalNotifications: Bool = true,
+        expectedSpaceID: String? = nil
     ) async -> MomentBackgroundRefreshResult {
         guard protectedDataAvailable else {
             SharedLog.app.debug(
@@ -792,6 +869,15 @@ actor MomentBackgroundRefreshService {
             try Task.checkCancellation()
             let configuration = SharingAPIConfiguration.current
             let beforeBootstrap = try await PairingInstallationGuard.bootstrapAsync()
+            guard expectedSpaceID == nil
+                    || beforeBootstrap.state.spaceID == expectedSpaceID
+            else {
+                SharedLog.app.info(
+                    "moment-background-refresh",
+                    "Background refresh skipped because the selected private window changed"
+                )
+                return .noData
+            }
             guard MomentBackgroundRefreshPolicy.isEligible(
                 configuration: configuration,
                 pairing: beforeBootstrap.state
@@ -818,7 +904,8 @@ actor MomentBackgroundRefreshService {
             let beforeManifest = Self.familyWidgetManifest()
 
             let synchronizationSucceeded = await coordinator.synchronize(
-                trigger: trigger
+                trigger: trigger,
+                expectedSpaceID: expectedSpaceID
             )
             try Task.checkCancellation()
 
@@ -826,6 +913,15 @@ actor MomentBackgroundRefreshService {
             // again and never reuse the earlier lifecycle token after network
             // suspension points.
             let afterBootstrap = try await PairingInstallationGuard.bootstrapAsync()
+            guard expectedSpaceID == nil
+                    || afterBootstrap.state.spaceID == expectedSpaceID
+            else {
+                SharedLog.app.info(
+                    "moment-background-refresh",
+                    "Background refresh result discarded because the selected private window changed"
+                )
+                return .noData
+            }
             guard MomentBackgroundRefreshPolicy.isEligible(
                 configuration: configuration,
                 pairing: afterBootstrap.state

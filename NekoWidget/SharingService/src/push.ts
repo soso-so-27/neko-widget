@@ -48,6 +48,8 @@ interface DispatchRow {
   state: "pending" | "leased";
   attempts: number;
   kind: NotificationKind;
+  target_space_id: string;
+  target_moment_id: string;
   created_at: number;
   expires_at: number;
   token_ciphertext: string;
@@ -534,8 +536,8 @@ function tokenHex(token: Uint8Array): string {
   return [...token].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function notificationPayload(kind: NotificationKind): string {
-  const body = kind === "new_moment"
+function notificationPayload(row: DispatchRow): string {
+  const body = row.kind === "new_moment"
     ? "新しい一枚が届きました。"
     : "届けた写真にハートが届きました。";
   return JSON.stringify({
@@ -545,7 +547,16 @@ function notificationPayload(kind: NotificationKind): string {
     },
     neko: {
       v: 1,
-      kind,
+      kind: row.kind,
+    },
+    // Keep the v1 `neko` envelope unchanged so installed clients that require
+    // its exact two-key shape continue to route the generic notification. New
+    // clients may separately validate these server-generated opaque IDs after
+    // completing authenticated synchronization; they are never display copy.
+    nekoTarget: {
+      v: 1,
+      spaceId: row.target_space_id,
+      momentId: row.target_moment_id,
     },
   });
 }
@@ -682,12 +693,18 @@ export async function drainNotificationOutbox(
 
   const candidates = await env.DB.prepare(
     `SELECT delivery.event_id, delivery.device_id, delivery.token_digest,
-            delivery.state, delivery.attempts,
-            event.kind, event.created_at, event.expires_at,
-            subscription.token_ciphertext, subscription.token_nonce,
-            subscription.encryption_key_id, subscription.environment
+             delivery.state, delivery.attempts,
+             event.kind, source_moment.space_id AS target_space_id,
+             source_moment.id AS target_moment_id,
+             event.created_at, event.expires_at,
+             subscription.token_ciphertext, subscription.token_nonce,
+             subscription.encryption_key_id, subscription.environment
        FROM notification_deliveries AS delivery
        JOIN notification_events AS event ON event.id = delivery.event_id
+       LEFT JOIN moment_reactions AS source_reaction
+         ON source_reaction.id = event.reaction_id
+       JOIN moments AS source_moment
+         ON source_moment.id = COALESCE(event.moment_id, source_reaction.moment_id)
        JOIN apns_subscriptions AS subscription
          ON subscription.device_id = delivery.device_id
         AND subscription.token_digest = delivery.token_digest
@@ -755,7 +772,7 @@ export async function drainNotificationOutbox(
       continue;
     }
 
-    const payload = notificationPayload(row.kind);
+    const payload = notificationPayload(row);
     // A foreground/background sync can delete this physical token's delivery
     // after candidate selection (or even after the lease is acquired). Check
     // the event, lease, token CAS, and live subscription immediately before

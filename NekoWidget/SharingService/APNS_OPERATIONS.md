@@ -8,7 +8,9 @@
 - D1には暗号文、12-byte nonce、鍵version、重複／失効CAS用SHA-256 digestだけを置く。平文tokenをresponseやlogへ出さない。
 - Subscriptionは現在の認証済み`moment_devices.id`へserver側で結び、最終更新から35日で削除する。アプリは起動ごとにPUTして更新する。
 - Notification eventは24時間で削除する。最初のtoken登録で古いeventをbackfillしない。Moment ACK、revoke、expiry、block、device/participant/space失効では関連eventまたはsubscriptionを即時削除する。
-- APNs payloadは`aps.alert`と`content-available=1`だけで、sound、badge、写真、まど名、人物名、時刻、moment/reaction/device/space ID、URL、鍵を含めない。
+- APNsの表示本文は一般文だけとし、`aps.alert`と`content-available=1`を使う。sound、badge、写真、まど名、人物名、撮影日時、reaction/device ID、URL、鍵を含めない。
+- 互換用の`neko`は`{"v":1,"kind":"new_moment|heart"}`のexact 2-key envelopeのまま変更しない。新しいclientだけが、別のtop-level `nekoTarget`にある`{"v":1,"spaceId":"<opaque>","momentId":"<opaque>"}`を、通知タップを正しいまど・写真へ結ぶために使える。
+- `nekoTarget`の二つのIDは表示文、accessibility、診断log、analyticsへ出さず、端末内の認証済みまどと同期済み写真にexact一致した場合だけrouteへ使う。余分なkey、未知version、形式不正、一意に解決できないまどはfail closedとし、別のまどへfallbackしない。`nekoTarget`自体がない旧payloadだけは、従来どおり選択中のまどの`kind`に対応する区分を開く。
 - 1台のiPhoneでは選択中のまどだけを通知対象にする。同じtoken digestの署名PUTは、それ以前の別まど／device bindingと未完了deliveryを置き換える。非activeまどを明示scopeで同期できる版までは、複数まどへ同じ物理tokenを同時登録しない。
 
 ## Signed API
@@ -97,7 +99,7 @@ eventとdeliveryは、受信側がアプリを開いて署名済み同期／ACK�
 一般公開前の実機確認は、別々の細かなテストに分けず一回にまとめます。
 
 1. 2台を同じrelease buildにし、通知を許可して、受信側の対象まどを一度前面で開く。上記集計で`production` subscriptionが2件であることだけを確認する。
-2. 受信側を閉じ、送信側から**新しい**写真を一枚届ける。受信側を開く前に集計で`new_moment`の`accepted/200`を確認し、その後に通知、アプリ内の写真、Widget更新を確認する。
-3. 受信側からその写真へ**新しい**ハートを一回送る。送信側を閉じたまま集計で`heart`の`accepted/200`を確認し、その後に送信側の通知とアプリ内表示を確認する。
+2. 受信側を閉じ、送信側から**新しい**写真を一枚届ける。受信側を開く前に集計で`new_moment`の`accepted/200`を確認する。通知後に別のまどを選択してから通知をタップし、対象のまどへ切り替わって対象写真の詳細が開くこと、Widgetが対象まどの検証済みcacheへ更新されることを確認する。
+3. 受信側からその写真へ**新しい**ハートを一回送る。送信側を閉じたまま集計で`heart`の`accepted/200`を確認する。通知後に別のまどを選択してから通知をタップし、対象のまどへ切り替わって「自分が届けた写真」の対象行が示されることを確認する。
 
 すでに同期済みの写真、すでに送ったハート、通知がOFFの端末ではeventが出ないかdeliveryが先に消えるため、このsmokeの証拠には使いません。失敗時はIDやpayloadを採取せず、上記の匿名集計、Cloudflareのcron実行時刻・error件数、iPhoneの診断コードだけを確認します。

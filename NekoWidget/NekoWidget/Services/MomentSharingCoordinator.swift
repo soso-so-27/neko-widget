@@ -184,11 +184,17 @@ actor MomentSharingCoordinator {
     }
 
     @discardableResult
-    func synchronize(trigger: String) async -> Bool {
+    func synchronize(
+        trigger: String,
+        expectedSpaceID: String? = nil
+    ) async -> Bool {
         let request = MomentSynchronizationRequest()
         let result = await withTaskCancellationHandler {
             await runMomentProcessSynchronization(request: request) { [self] in
-                let succeeded = await performSynchronization(trigger: trigger)
+                let succeeded = await performSynchronization(
+                    trigger: trigger,
+                    expectedSpaceID: expectedSpaceID
+                )
                 return MomentSynchronizationRunResult(
                     notice: await synchronizationNotice(),
                     succeeded: succeeded
@@ -278,6 +284,16 @@ actor MomentSharingCoordinator {
     }
 
     private func performSynchronization(trigger: String) async -> Bool {
+        await performSynchronization(
+            trigger: trigger,
+            expectedSpaceID: nil
+        )
+    }
+
+    private func performSynchronization(
+        trigger: String,
+        expectedSpaceID: String?
+    ) async -> Bool {
         latestSynchronizationNotice = nil
 
         // A local-only build must erase every capability and sharing artifact
@@ -332,6 +348,16 @@ actor MomentSharingCoordinator {
         var authorization: Authorization?
         do {
             let loadedAuthorization = try loadAuthorization()
+            guard expectedSpaceID == nil
+                    || loadedAuthorization.state.spaceID == expectedSpaceID
+            else {
+                SharedLog.app.info(
+                    "moment-sharing",
+                    "Synchronization skipped because the selected private window changed",
+                    metadata: ["trigger": String(trigger.prefix(32))]
+                )
+                return false
+            }
             authorization = loadedAuthorization
             try purgeInboundModerationTemporaryFiles(
                 validating: loadedAuthorization.lifecycleToken

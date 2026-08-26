@@ -33,6 +33,33 @@ private enum CatIdentityLoadState: Equatable {
     case failed
 }
 
+/// Notification taps can arrive while an earlier private-window activation is
+/// suspended in Keychain/App Group work. This gate makes activation and route
+/// publication one ordered operation; the generation check then drops every
+/// queued route except the newest one before it can mutate the selected window.
+private actor MomentNotificationRoutingGate {
+    private var isHeld = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        guard isHeld else {
+            isHeld = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        guard !waiters.isEmpty else {
+            isHeld = false
+            return
+        }
+        waiters.removeFirst().resume()
+    }
+}
+
+private let momentNotificationRoutingGate = MomentNotificationRoutingGate()
+
 struct LibraryPresentationVersion: Equatable {
     let snapshotUpdatedAt: Date
     let snapshotAssetCount: Int
@@ -68,7 +95,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedAssetShownAt: Date?
     @Published var isFamilyWindowPresented = false
     @Published var pendingFamilyMomentSourceDigest: String?
-    @Published var pendingFamilyNotificationRouteKind: MomentNotificationRouteKind?
+    @Published var pendingFamilyNotificationRoute: MomentNotificationRoute?
     @Published private(set) var familyWindowPresentation: MomentFamilyWindowPresentation = .empty
     @Published private(set) var privateWindowDisplayName = PrivateWindowDisplayName.fallback
 
@@ -237,6 +264,7 @@ final class AppViewModel: ObservableObject {
     private var momentPresentationRefreshObserver: NSObjectProtocol?
     private var receivedMemoryImportObserver: NSObjectProtocol?
     private var familyWindowRefreshSequence = 0
+    private var momentNotificationRouteGeneration = 0
     /// nil means no additional in-memory source filter. When an album is
     /// selected this is refreshed from PhotoKit before a scan, so old snapshot
     /// records outside that album disappear from candidate surfaces at once.
@@ -1701,6 +1729,16 @@ final class AppViewModel: ObservableObject {
     }
 
     private func synchronizeMomentSharing(trigger: String) async {
+        await synchronizeMomentSharing(
+            trigger: trigger,
+            expectedSpaceID: nil
+        )
+    }
+
+    private func synchronizeMomentSharing(
+        trigger: String,
+        expectedSpaceID: String?
+    ) async {
         guard UIApplication.shared.isProtectedDataAvailable else {
             // The room credential is intentionally WhenUnlockedThisDeviceOnly.
             // A launch/prewarm can reach this task before protected data is
@@ -1716,8 +1754,20 @@ final class AppViewModel: ObservableObject {
             )
             return
         }
-        await momentSharingCoordinator.synchronize(trigger: trigger)
+        await momentSharingCoordinator.synchronize(
+            trigger: trigger,
+            expectedSpaceID: expectedSpaceID
+        )
         guard !Task.isCancelled else { return }
+        if let expectedSpaceID {
+            guard Self.activePrivateWindowMatches(spaceID: expectedSpaceID) else {
+                SharedLog.app.info(
+                    "moment-notification",
+                    "Notification refresh stopped because the selected private window changed"
+                )
+                return
+            }
+        }
         await refreshFamilyWindowOutputs(trigger: trigger)
         guard !Task.isCancelled else { return }
         // FamilyWindowView owns a separate presentation model. Tell an open
@@ -1934,7 +1984,7 @@ final class AppViewModel: ObservableObject {
                         return
                     }
                 }
-                self.pendingFamilyNotificationRouteKind = nil
+                self.pendingFamilyNotificationRoute = nil
                 self.pendingFamilyMomentSourceDigest = sourceDigest
                 self.isFamilyWindowPresented = true
                 SharedLog.app.info("deeplink", "Opened private window from Widget")
@@ -1957,7 +2007,25 @@ final class AppViewModel: ObservableObject {
         openPhotoRoute(readyRoute)
     }
 
-    func handleMomentNotificationRoute(_ kind: MomentNotificationRouteKind) {
+    func handleMomentNotificationRoute(_ route: MomentNotificationRoute) async {
+        momentNotificationRouteGeneration &+= 1
+        let generation = momentNotificationRouteGeneration
+        await momentNotificationRoutingGate.acquire()
+        guard generation == momentNotificationRouteGeneration else {
+            await momentNotificationRoutingGate.release()
+            return
+        }
+        await handleSerializedMomentNotificationRoute(
+            route,
+            generation: generation
+        )
+        await momentNotificationRoutingGate.release()
+    }
+
+    private func handleSerializedMomentNotificationRoute(
+        _ route: MomentNotificationRoute,
+        generation: Int
+    ) async {
         guard SharingAPIConfiguration.current.isMediaAvailable else {
             SharedLog.app.info(
                 "moment-notification",
@@ -1965,17 +2033,97 @@ final class AppViewModel: ObservableObject {
             )
             return
         }
-        // A notification never carries a photo or window identifier. Open only
-        // the locally selected window, and let its authenticated synchronization
-        // resolve the latest received photo or sent-heart presentation.
+
+        if let target = route.target {
+            do {
+                guard let catalog = try PrivateWindowCatalogStore.load()
+                else {
+                    SharedLog.app.info(
+                        "moment-notification",
+                        "Ignored notification because its private window was unavailable",
+                        metadata: ["kind": route.kind.rawValue]
+                    )
+                    return
+                }
+                let matches = catalog.windows.filter { $0.spaceID == target.spaceID }
+                guard matches.count == 1, let targetWindow = matches.first else {
+                    SharedLog.app.info(
+                        "moment-notification",
+                        "Ignored notification because its private window could not be resolved",
+                        metadata: ["kind": route.kind.rawValue]
+                    )
+                    return
+                }
+
+                let switchesWindow = catalog.activeWindowID != targetWindow.localWindowID
+                if switchesWindow {
+                    _ = try await PairingInstallationGuard.activatePrivateWindowAsync(
+                        localWindowID: targetWindow.localWindowID
+                    )
+                    guard generation == momentNotificationRouteGeneration else { return }
+                    NotificationCenter.default.post(
+                        name: .momentSharingPresentationNeedsRefresh,
+                        object: nil
+                    )
+                }
+                // Open the verified destination immediately. FamilyWindowView
+                // keeps the route pending until synchronization materializes
+                // exactly one matching moment, so the tap never appears inert
+                // while the network is still running.
+                pendingFamilyMomentSourceDigest = nil
+                pendingFamilyNotificationRoute = route
+                isFamilyWindowPresented = true
+                // Synchronization reads only the now-active window. It never
+                // walks credentials for unrelated windows in response to this
+                // foreground notification tap.
+                await synchronizeMomentSharing(
+                    trigger: "notification-target",
+                    expectedSpaceID: target.spaceID
+                )
+                guard generation == momentNotificationRouteGeneration else { return }
+                if switchesWindow {
+                    await MomentPushSubscriptionService.shared.reconcileRegistration()
+                    guard generation == momentNotificationRouteGeneration else { return }
+                }
+                SharedLog.app.info(
+                    "moment-notification",
+                    "Opened targeted private window from notification",
+                    metadata: ["kind": route.kind.rawValue]
+                )
+                return
+            } catch {
+                Self.logError(
+                    error,
+                    category: "moment-notification",
+                    operation: "activate_notification_window"
+                )
+                return
+            }
+        }
+
         pendingFamilyMomentSourceDigest = nil
-        pendingFamilyNotificationRouteKind = kind
+        pendingFamilyNotificationRoute = route
         isFamilyWindowPresented = true
         SharedLog.app.info(
             "moment-notification",
             "Opened selected private window from notification",
-            metadata: ["kind": kind.rawValue]
+            metadata: ["kind": route.kind.rawValue]
         )
+    }
+
+    private nonisolated static func activePrivateWindowMatches(
+        spaceID: String
+    ) -> Bool {
+        do {
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let active = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  })
+            else { return false }
+            return active.spaceID == spaceID
+        } catch {
+            return false
+        }
     }
 
     private func openPendingDeepLinkIfNeeded() {

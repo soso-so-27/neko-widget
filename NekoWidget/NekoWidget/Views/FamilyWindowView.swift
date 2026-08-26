@@ -55,7 +55,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Binding private var pendingMemorySourceDigest: String?
-    @Binding private var pendingNotificationRouteKind: MomentNotificationRouteKind?
+    @Binding private var pendingNotificationRoute: MomentNotificationRoute?
     @StateObject private var model = MomentSharingViewModel()
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
@@ -73,6 +73,7 @@ struct FamilyWindowView: View {
     @State private var memoryResultMomentID: String?
     @State private var heartResultMomentID: String?
     @State private var focusedMomentID: String?
+    @State private var focusedSentMomentID: String?
     @State private var widgetMemoryTarget: MomentInboxItem?
     @State private var showsStaleWidgetPhotoAlert = false
     @State private var notificationAuthorizationState:
@@ -87,10 +88,10 @@ struct FamilyWindowView: View {
 
     init(
         pendingMemorySourceDigest: Binding<String?> = .constant(nil),
-        pendingNotificationRouteKind: Binding<MomentNotificationRouteKind?> = .constant(nil)
+        pendingNotificationRoute: Binding<MomentNotificationRoute?> = .constant(nil)
     ) {
         _pendingMemorySourceDigest = pendingMemorySourceDigest
-        _pendingNotificationRouteKind = pendingNotificationRouteKind
+        _pendingNotificationRoute = pendingNotificationRoute
     }
 
     var body: some View {
@@ -124,6 +125,7 @@ struct FamilyWindowView: View {
         .task {
             await model.bootstrap()
             consumePendingMemoryTargetIfReady()
+            consumePendingNotificationRoute()
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -133,6 +135,7 @@ struct FamilyWindowView: View {
             Task {
                 await model.bootstrap()
                 consumePendingMemoryTargetIfReady()
+                consumePendingNotificationRoute()
             }
         }
         .onReceive(
@@ -149,16 +152,18 @@ struct FamilyWindowView: View {
         ) { _ in
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()
+            consumePendingNotificationRoute()
         }
         .onChange(of: pendingMemorySourceDigest) { _, _ in
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()
         }
-        .onChange(of: pendingNotificationRouteKind, initial: true) { _, _ in
+        .onChange(of: pendingNotificationRoute, initial: true) { _, _ in
             consumePendingNotificationRoute()
         }
         .onChange(of: model.bootstrapPresentationState) { _, _ in
             consumePendingMemoryTargetIfReady()
+            consumePendingNotificationRoute()
         }
         .onChange(of: model.isShowingLastKnownState) { _, isShowingLastKnownState in
             guard isShowingLastKnownState else { return }
@@ -1029,10 +1034,20 @@ struct FamilyWindowView: View {
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
+        var records: [MomentSentRecordPresentation]
         if showsAllSentRecords {
-            return model.outgoingPresentation.sentRecords
+            records = model.outgoingPresentation.sentRecords
+        } else {
+            records = Array(model.outgoingPresentation.sentRecords.prefix(3))
         }
-        return Array(model.outgoingPresentation.sentRecords.prefix(3))
+        if let focusedSentMomentID,
+           let index = records.firstIndex(where: {
+               $0.momentID == focusedSentMomentID
+           }),
+           index != records.startIndex {
+            records.insert(records.remove(at: index), at: records.startIndex)
+        }
+        return records
     }
 
     private var canManageOutgoingPresentation: Bool {
@@ -1082,7 +1097,15 @@ struct FamilyWindowView: View {
 
     private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
         let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
+        let isNotificationTarget = focusedSentMomentID.map {
+            record.momentID == $0
+        } ?? false
         let displayedAt = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
+        let backgroundColor: Color = isNotificationTarget
+            ? Color.accentColor.opacity(0.12)
+            : (arrived
+                ? Color.green.opacity(0.1)
+                : Color(uiColor: .secondarySystemGroupedBackground))
         return HStack(alignment: .top, spacing: 12) {
             Image(systemName: arrived ? "checkmark.circle.fill" : "server.rack")
                 .foregroundStyle(arrived ? Color.green : Color.accentColor)
@@ -1109,11 +1132,15 @@ struct FamilyWindowView: View {
         }
         .padding(14)
         .background(
-            arrived
-                ? Color.green.opacity(0.1)
-                : Color(uiColor: .secondarySystemGroupedBackground),
+            backgroundColor,
             in: RoundedRectangle(cornerRadius: 16)
         )
+        .overlay {
+            if isNotificationTarget {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.accentColor, lineWidth: 2)
+            }
+        }
         .accessibilityIdentifier("family-window-sent-record-\(record.id)")
     }
 
@@ -1496,11 +1523,52 @@ struct FamilyWindowView: View {
     }
 
     private func consumePendingNotificationRoute() {
-        guard let kind = pendingNotificationRouteKind else { return }
-        pendingNotificationRouteKind = nil
+        guard case .ready = model.bootstrapPresentationState else { return }
+        guard let route = pendingNotificationRoute else { return }
+        let momentID = route.target?.momentID
+
+        // A targeted push is authoritative about both the window and moment.
+        // Keep it pending until the authenticated reload has materialized
+        // exactly one matching local item; never substitute a different photo
+        // or section merely because synchronization has not finished yet.
+        if let target = route.target, let momentID {
+            guard model.pairingState?.spaceID == target.spaceID else { return }
+            switch route.kind {
+            case .newMoment:
+                let matches = model.receivedMoments.filter { $0.id == momentID }
+                guard matches.count == 1, let target = matches.first else { return }
+                pendingNotificationRoute = nil
+                widgetMemoryTarget = nil
+                focusedSentMomentID = nil
+                selectedSection = .received
+                receivedPhotoFilter = .all
+                focusedMomentID = momentID
+                selectedMomentForDetail = target
+            case .heart:
+                model.prepareSentNotificationTarget(momentID: momentID)
+                let matches = model.outgoingPresentation.sentRecords.filter {
+                    $0.momentID == momentID
+                }
+                guard matches.count == 1 else { return }
+                pendingNotificationRoute = nil
+                widgetMemoryTarget = nil
+                focusedMomentID = nil
+                selectedMomentForDetail = nil
+                selectedSection = .sent
+                showsAllSentRecords = true
+                focusedSentMomentID = momentID
+            }
+            return
+        }
+
+        // Legacy v1 notifications intentionally contain only the kind. They
+        // retain the original selected-window section fallback.
+        pendingNotificationRoute = nil
         widgetMemoryTarget = nil
         focusedMomentID = nil
-        switch kind {
+        focusedSentMomentID = nil
+        selectedMomentForDetail = nil
+        switch route.kind {
         case .newMoment:
             selectedSection = .received
             receivedPhotoFilter = .all
