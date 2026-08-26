@@ -9,6 +9,7 @@ final class PhotoPermissionUITests: XCTestCase {
     @MainActor
     func testGrantFullPhotoLibraryAccess() {
         let app = XCUIApplication()
+        let expectsDisabledRelease = ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1"
         app.resetAuthorizationStatus(for: .photos)
         app.launchEnvironment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] = "1"
         app.launch()
@@ -167,14 +168,23 @@ final class PhotoPermissionUITests: XCTestCase {
             identifiers: ["main-tab-today"],
             labels: ["今日"],
             timeout: 10
-        ) != nil,
-              firstExistingButton(
+        ) != nil else {
+            fail("The primary Today tab was not available.", app: app)
+            return
+        }
+
+        if expectsDisabledRelease {
+            XCTAssertFalse(
+                app.buttons["main-tab-windows"].exists || app.tabBars.buttons["まど"].exists,
+                "The disabled build exposed the Windows tab."
+            )
+        } else if firstExistingButton(
                   in: app,
                   identifiers: ["main-tab-windows"],
                   labels: ["まど"],
                   timeout: 10
-              ) != nil else {
-            fail("The primary Today or Windows tab was not available.", app: app)
+              ) == nil {
+            fail("The primary Windows tab was not available.", app: app)
             return
         }
 
@@ -183,7 +193,7 @@ final class PhotoPermissionUITests: XCTestCase {
             return
         }
 
-        if ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1" {
+        if expectsDisabledRelease {
             XCTAssertFalse(
                 app.buttons["window-family-window-review"].exists,
                 "The disabled build exposed the pairing/sharing card."
@@ -214,7 +224,7 @@ final class PhotoPermissionUITests: XCTestCase {
             )
             return
         }
-        if ProcessInfo.processInfo.environment["NEKO_EXPECT_DISABLED_RELEASE"] == "1" {
+        if expectsDisabledRelease {
             XCTAssertFalse(
                 app.descendants(matching: .any)["settings-sharing-review"].exists,
                 "The disabled build exposed sharing settings."
