@@ -49,8 +49,12 @@ DB時刻だけで追加できる`review_started`、続いて`review_decided`と�
 
 既存tombstoneのbackfillでは、人手確認済みと推測できる根拠がないためeventを一件も作らない。したがって、
 過去caseは意図的に未着手、時刻によってはSLA超過として表示される。cleanup済み、local復号済み、画像削除済み
-という事実からreview開始または判断済みを補わない。現時点には認証済みoperator routeもoperator identityの
-access auditもなく、通常アプリやstatus commandからeventは書けない。このschemaは安全な保存先の基礎であり、
+という事実からreview開始または判断済みを補わない。Migration `0013`から`0015`は生のAccess identityを
+保存しないoperator、二人承認、case予約、DB時刻の証拠intentを追加するが、認証済みoperator route、完全な
+WebAuthn検証、operator access auditはまだ追加しない。通常アプリやstatus commandからeventは書けず、
+予約だけではreview開始にならない。未確定の証拠intentはDB時刻の2分で失効し、1人または1caseを
+永続占有できない。結果確定とcontent削除は未実装のcanonical evidenceとdomain outboxがそろうまで拒否する。
+このschemaは安全な保存先の基礎であり、
 実際の人手確認運用が完成した証明ではない。件数だけで個別caseを推測せず、異常な滞留またはcleanup待ちを
 見つけたときは新規受付を独立停止してから運用incidentとして調べる。
 

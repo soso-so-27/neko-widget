@@ -95,7 +95,7 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 
 ## 4. migrationの事前確認と適用
 
-D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0014_moderation_evidence_ledger.sql`までの14件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ14件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。過去のcleanupからreview済みとは推測しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0015_moderation_operator_routes.sql`までの15件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ15件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。`0015`は予約をreview開始と扱わず、DB時刻で作った証拠intentを2分以内にledgerへ確定した同じtransaction内でだけ`review_started`を追加する。1人または1caseに有効な未確定intentは1件だけで、期限後は新しい操作で安全に再開できる。結果確定とcontent削除はcanonical evidenceとdomain outboxが未完成のため拒否する。過去のcleanupやlegacy ledgerからreview済みとは推測しません。`0015`もHTTP route、WebAuthn verifier、R2削除、runtime ONを追加しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
 
 ```powershell
 npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remote --config wrangler.staging.jsonc --experimental-provision=false --experimental-auto-create=false
