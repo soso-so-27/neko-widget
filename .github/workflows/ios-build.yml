@@ -503,7 +503,12 @@ jobs:
             echo "The private window must not cover the main tab bar" >&2
             exit 1
           fi
-          grep -Fq 'Text("ハートは相手へ・思い出は自分だけ")' \
+          if grep -Fq 'Text("ハートは相手へ・思い出は自分だけ")' \
+            NekoWidget/Views/FamilyWindowView.swift; then
+            echo "The private-window photo actions must not repeat explanatory copy" >&2
+            exit 1
+          fi
+          grep -Fq 'Text(model.isSavedMemory(item) ? "思い出に残した" : "思い出に残す")' \
             NekoWidget/Views/FamilyWindowView.swift
           grep -Fq 'return canRetry ? "送信を再試行" : "送信できません"' \
             NekoWidget/Views/FamilyWindowView.swift
