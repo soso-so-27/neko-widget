@@ -310,7 +310,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("「今日」・ウィジェット・「写真を見つける」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -547,7 +547,7 @@ struct LikedPhotosView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("自分で選んだ写真です。自動で整理する「アルバム」とは別に、何枚でも追加できます。")
+            Text("自分で選んだ写真です。「今日」の「写真を見つける」とは別に、何枚でも追加できます。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("photo-book-progress")
@@ -990,7 +990,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("ホーム、ウィジェット、アルバムの候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("「今日」・ウィジェット・「写真を見つける」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(

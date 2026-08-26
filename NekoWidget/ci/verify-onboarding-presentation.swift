@@ -146,13 +146,13 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.pawTitleLines == [
                 "気に入った1枚は、",
-                "星を押して思い出に。"
+                "「思い出に残す」で残せます。"
             ],
             "memory-page title changed"
         )
         try require(
             OnboardingPresentationCopy.pawBody
-                == "選んだ写真は「思い出」に溜まり、あとでまとめられます。",
+                == "残した写真は「思い出」で見返し、あとでまとめられます。",
             "memory explanation changed"
         )
         try require(

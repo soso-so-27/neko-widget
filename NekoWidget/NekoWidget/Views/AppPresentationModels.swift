@@ -543,7 +543,7 @@ enum AlbumPresentationState: Equatable {
 }
 
 enum AppTab: Hashable {
-    case window
+    case today
+    case windows
     case memories
-    case likes
 }

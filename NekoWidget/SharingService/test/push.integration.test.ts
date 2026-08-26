@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { base64urlEncode, sha256Base64url } from "../src/encoding";
 import type { Env } from "../src/env";
-import { route } from "../src/index";
+import worker, { route } from "../src/index";
 import {
+  APNS_DRAIN_CRON,
   APNS_SUBSCRIPTION_TTL_SECONDS,
   drainNotificationOutbox,
   momentNotificationEventStatements,
@@ -761,5 +762,45 @@ describe("APNs durable notification delivery", () => {
     expect(await databaseEnv.DB.prepare(
       "SELECT 1 AS present FROM apns_subscriptions WHERE device_id = ?",
     ).bind(fixture.inviteeID).first()).toBeNull();
+  });
+
+  it("wires only the exact every-minute APNs cron to the durable drain", async () => {
+    const scheduled = worker.scheduled;
+    expect(scheduled).toBeDefined();
+    const scheduledEnv = {
+      ...databaseEnv,
+      APNS_RUNTIME_ENABLED: "NO",
+      DB: {
+        prepare() {
+          return { bind() { return {}; } };
+        },
+        async batch() { return []; },
+      },
+    } as unknown as Env;
+    const waits: Promise<unknown>[] = [];
+    const context = {
+      waitUntil(promise: Promise<unknown>) {
+        waits.push(promise);
+      },
+    } as unknown as ExecutionContext;
+    await scheduled?.(
+      { cron: APNS_DRAIN_CRON } as unknown as ScheduledController,
+      scheduledEnv,
+      context,
+    );
+    expect(waits).toHaveLength(1);
+    await Promise.all(waits);
+
+    const ignoredWaits: Promise<unknown>[] = [];
+    await scheduled?.(
+      { cron: "0 * * * *" } as unknown as ScheduledController,
+      scheduledEnv,
+      {
+        waitUntil(promise: Promise<unknown>) {
+          ignoredWaits.push(promise);
+        },
+      } as unknown as ExecutionContext,
+    );
+    expect(ignoredWaits).toHaveLength(0);
   });
 });

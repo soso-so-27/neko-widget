@@ -250,6 +250,11 @@ final class PairingViewModel: ObservableObject {
                 )
             }
             return true
+        } catch PrivateWindowCatalogStore.Error.duplicateWindowName {
+            configurationMessage = "同じ名前のまどがあります。区別できる名前を付けてください。"
+            windowNameStatusIsError = true
+            windowNameStatusMessage = "別のまどと同じ名前にはできません。"
+            return false
         } catch {
             configurationMessage = Self.userFacingMessage(for: error)
             windowNameStatusIsError = true
@@ -278,7 +283,12 @@ final class PairingViewModel: ObservableObject {
 
     func createAnotherPrivateWindow() async {
         clearTransientOperationFeedback()
-        guard !isWorking, canCreateAnotherPrivateWindow else { return }
+        guard !isWorking else { return }
+        // A Widget, deep link, or another view can switch/create a window
+        // without passing through this model. Re-read the authoritative
+        // catalog before using its count or active selection.
+        reloadPrivateWindowCatalog()
+        guard canCreateAnotherPrivateWindow else { return }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -300,7 +310,11 @@ final class PairingViewModel: ObservableObject {
 
     func activatePrivateWindow(localWindowID: String) async {
         clearTransientOperationFeedback()
-        guard !isWorking, localWindowID != activePrivateWindowID else { return }
+        guard !isWorking else { return }
+        // Do not let a cached active ID turn a legitimate switch-back into a
+        // no-op after another surface changed the catalog.
+        reloadPrivateWindowCatalog()
+        guard localWindowID != activePrivateWindowID else { return }
         isWorking = true
         defer { isWorking = false }
         do {

@@ -160,6 +160,15 @@ struct PairingView: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("pairing-bootstrap-retry")
             }
+            Text("保存済みの写真と接続情報は削除していません。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            NavigationLink {
+                LogView()
+            } label: {
+                Label("診断情報を確認・共有", systemImage: "stethoscope")
+            }
+            .accessibilityIdentifier("pairing-open-diagnostics")
         }
     }
 

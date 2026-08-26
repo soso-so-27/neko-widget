@@ -111,7 +111,7 @@ final class PhotoPermissionUITests: XCTestCase {
         let continueFromZero = firstExistingButton(
             in: app,
             identifiers: ["initial-scan-continue"],
-            labels: ["次へ", "ホームを見る"],
+            labels: ["次へ", "今日を見る"],
             timeout: 10
         )
         guard let continueFromZero else {
@@ -154,27 +154,27 @@ final class PhotoPermissionUITests: XCTestCase {
 
         guard firstExistingButton(
             in: app,
-            identifiers: ["main-tab-likes"],
+            identifiers: ["main-tab-memories"],
             labels: ["思い出"],
             timeout: 10
         ) != nil else {
-            fail("The liked-photos tab disappeared from the tab bar.", app: app)
+            fail("The Memories tab disappeared from the tab bar.", app: app)
             return
         }
 
         guard firstExistingButton(
             in: app,
-            identifiers: ["main-tab-window"],
-            labels: ["ホーム"],
+            identifiers: ["main-tab-today"],
+            labels: ["今日"],
             timeout: 10
         ) != nil,
               firstExistingButton(
                   in: app,
-                  identifiers: ["main-tab-memories"],
-                  labels: ["思い出"],
+                  identifiers: ["main-tab-windows"],
+                  labels: ["まど"],
                   timeout: 10
               ) != nil else {
-            fail("The primary Home or Memories tab was not available.", app: app)
+            fail("The primary Today or Windows tab was not available.", app: app)
             return
         }
 

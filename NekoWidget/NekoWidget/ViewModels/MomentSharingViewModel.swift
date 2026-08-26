@@ -22,6 +22,7 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var memoryActionMessage: String?
     @Published private(set) var heartActionMessage: String?
     @Published private(set) var importedMemoryMomentIDs = Set<String>()
+    @Published private(set) var isShowingLastKnownState = false
     @Published private(set) var bootstrapPresentationState:
         MomentSharingBootstrapPresentationState = .checking
 
@@ -62,6 +63,7 @@ final class MomentSharingViewModel: ObservableObject {
             _ = try await PairingInstallationGuard.bootstrapAsync()
             try reload()
             errorMessage = nil
+            isShowingLastKnownState = false
             bootstrapPresentationState = .ready
             if isPaired {
                 await synchronize(isManual: false)
@@ -69,17 +71,35 @@ final class MomentSharingViewModel: ObservableObject {
         } catch {
             let message = Self.userFacingMessage(for: error)
             errorMessage = message
-            bootstrapPresentationState = .temporarilyUnavailable(message: message)
+            if pairingState != nil {
+                // A transient Data Protection, Keychain, or migration read
+                // failure must not replace an already authenticated screen
+                // with a blank error page. Keep the last in-memory snapshot
+                // visible, but mark it read-only until bootstrap succeeds.
+                isShowingLastKnownState = true
+                bootstrapPresentationState = .ready
+            } else {
+                bootstrapPresentationState = .temporarilyUnavailable(message: message)
+            }
         }
     }
 
     func retryBootstrap() async {
-        bootstrapPresentationState = .checking
+        if pairingState == nil {
+            bootstrapPresentationState = .checking
+        }
         await bootstrap()
     }
 
     func synchronize(isManual: Bool = true) async {
         guard !isSynchronizing, !isPerformingAction else { return }
+        if isShowingLastKnownState {
+            // The cached presentation is deliberately read-only. Re-establish
+            // the protected lifecycle before any coordinator work; a
+            // successful bootstrap performs the ordinary synchronization.
+            await retryBootstrap()
+            return
+        }
         memoryActionMessage = nil
         if isManual {
             manualRefreshMessage = nil
@@ -144,6 +164,12 @@ final class MomentSharingViewModel: ObservableObject {
         }
         catch {
             errorMessage = Self.userFacingMessage(for: error)
+            if pairingState != nil {
+                // Keep the last authenticated snapshot visible, but never
+                // leave it interactive after the post-network secure reload
+                // failed.
+                isShowingLastKnownState = true
+            }
             if isManual {
                 manualRefreshCompletedAt = .now
                 manualRefreshSucceeded = false
@@ -156,7 +182,7 @@ final class MomentSharingViewModel: ObservableObject {
         _ item: MomentInboxItem,
         reason: MomentReportReason
     ) async {
-        guard !isWorking else { return }
+        guard !isWorking, !isShowingLastKnownState else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -173,7 +199,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func block(_ participantID: String) async {
-        guard !isWorking, !isReportOnly else { return }
+        guard !isWorking, !isShowingLastKnownState, !isReportOnly else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -204,7 +230,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func sendHeart(_ item: MomentInboxItem) async {
-        guard !isPerformingAction, canSendHeart(for: item)
+        guard !isPerformingAction, !isShowingLastKnownState, canSendHeart(for: item)
         else { return }
         heartActionMessage = nil
         isPerformingAction = true
@@ -242,7 +268,7 @@ final class MomentSharingViewModel: ObservableObject {
         // This explicit action imports the sanitized JPEG into Photos once,
         // then uses the ordinary shared like ledger. It never contacts the
         // relay or notifies the other participant.
-        guard !isPerformingAction, !isReportOnly,
+        guard !isPerformingAction, !isShowingLastKnownState, !isReportOnly,
               item.state == .available || item.state == .acknowledged
         else { return }
         memoryActionMessage = nil
@@ -406,7 +432,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func discardFailedOutbox() async {
-        guard !isPerformingAction else { return }
+        guard !isPerformingAction, !isShowingLastKnownState else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -419,7 +445,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func discardPendingOutbox() async {
-        guard !isPerformingAction else { return }
+        guard !isPerformingAction, !isShowingLastKnownState else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -432,7 +458,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func discardPendingPreparations() async {
-        guard !isPerformingAction else { return }
+        guard !isPerformingAction, !isShowingLastKnownState else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -445,7 +471,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func clearOutgoingOutcomes() async {
-        guard !isPerformingAction else { return }
+        guard !isPerformingAction, !isShowingLastKnownState else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -484,7 +510,9 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func canSubmitReport(_ item: MomentInboxItem) -> Bool {
-        !hasReported(item) && !reportDeliveryIsUnknown(item)
+        !isShowingLastKnownState
+            && !hasReported(item)
+            && !reportDeliveryIsUnknown(item)
     }
 
     func reportStatusText(_ item: MomentInboxItem) -> String? {
@@ -496,6 +524,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func reloadWindowDisplayName() {
+        guard !isShowingLastKnownState else { return }
         do {
             let snapshot = try PairingStateStore.beginOperation()
             guard let pairing = snapshot.state else {
@@ -518,7 +547,12 @@ final class MomentSharingViewModel: ObservableObject {
         } catch {
             let message = Self.userFacingMessage(for: error)
             errorMessage = message
-            bootstrapPresentationState = .temporarilyUnavailable(message: message)
+            if pairingState != nil {
+                isShowingLastKnownState = true
+                bootstrapPresentationState = .ready
+            } else {
+                bootstrapPresentationState = .temporarilyUnavailable(message: message)
+            }
         }
     }
 
@@ -531,6 +565,7 @@ final class MomentSharingViewModel: ObservableObject {
         let nextSharingState = try MomentSharingStateStore.load()
 
         pairingState = nextPairingState
+        isShowingLastKnownState = false
         windowDisplayName = nextPairingState.map {
             PrivateWindowPresentationStore.resolvedDisplayName(
                 pairing: $0,

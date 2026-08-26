@@ -327,6 +327,18 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertEqual(expected, marked_text(source, field))
 
+    def test_legacy_user_facing_vocabulary_is_rejected(self) -> None:
+        for legacy_term in ("肉球", "しおり", "これ好き", "星", "思い出に追加"):
+            value = json.loads(json.dumps(manifest(), ensure_ascii=False))
+            value["metadata"]["promotional_text"] += f" {legacy_term}"
+            with self.subTest(legacy_term=legacy_term):
+                self.assertTrue(
+                    any(
+                        "legacy user-facing term" in error and legacy_term in error
+                        for error in VALIDATOR.validate_copy(value)
+                    )
+                )
+
     def test_checked_in_examples_are_unanswered_and_fail_closed(self) -> None:
         owner = json.loads(OWNER_EXAMPLE.read_text(encoding="utf-8"))
         self.assertEqual(set(VALIDATOR.OWNER_KEYS), set(owner))

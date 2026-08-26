@@ -708,7 +708,7 @@ def validate_copy(manifest: dict[str, Any]) -> list[str]:
         for phrase in (
             "端末内で判定",
             "ウィジェット",
-            "肉球",
+            "思い出に残す",
             "1〜30枚",
             "写真送信、招待、受信",
             "ありません",
@@ -726,6 +726,12 @@ def validate_copy(manifest: dict[str, Any]) -> list[str]:
     ):
         if phrase not in notes:
             errors.append(f"review.notes: missing capability boundary {phrase!r}")
+
+    for legacy_term in ("肉球", "しおり", "これ好き", "星", "思い出に追加"):
+        if legacy_term in combined:
+            errors.append(
+                f"copy: legacy user-facing term {legacy_term!r} must use current vocabulary"
+            )
 
     expected_facts = {
         "photo_classification_on_device": True,

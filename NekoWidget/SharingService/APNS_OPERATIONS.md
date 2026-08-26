@@ -73,3 +73,31 @@
 6. Cloudflare outbound `fetch`とAPNsの実接続はmock testでは証明できない。sandbox／productionの実`200`が取れなければ公開せず、APNs provider部分をHTTP/2対応serviceへ分離する。
 
 毎分cronは最大50 deliveryをleaseし、network／`429`／`5xx`をjitter付きbackoffで再試行します。`410 Unregistered`、`BadDeviceToken`、`DeviceTokenNotForTopic`は物理的に同じtoken digestを持つ全まどのsubscriptionをCAS相当で削除します。Provider key、topic、payload等の構成4xxではdevice tokenを削除せず、D1の`last_reason=configuration_error:*`へ残して1時間後に再試行します。request body、credential、tokenはconsoleへ出しません。
+
+## 件数だけの運用確認
+
+ON候補を作成・検証済みで、対象Workerへ既に配備されているときだけ、次を実行できます。
+
+```powershell
+npm run notification-staging:status
+```
+
+このコマンドは、固定されたignored file `wrangler.notification-staging-on.jsonc`だけを読み、隔離済みstaging D1へ`SELECT`だけを実行します。任意のdatabase名・config path・SQL・shell引数は受け付けず、deploy、migration、secret変更、D1書き込みを行いません。表示するのは次の集計だけです。
+
+- 有効subscription：`environment`ごとの件数
+- 未期限切れevent：`new_moment`／`heart`ごとの件数
+- delivery：`state`、粗いHTTP status（`200`／`other`）、匿名化したreason区分ごとの件数
+
+ID、device ID、APNs token/digest/ciphertext、写真、まど名、暗号文、raw provider reasonは読み取りも表示もしません。`accepted/200`はAPNs受付の証拠ですが、端末の表示・background実行・Widget更新の証拠ではありません。
+
+eventとdeliveryは、受信側がアプリを開いて署名済み同期／ACKを行うと直ちに消えることがあります。APNsの確認時は、**受信側アプリを開く前**にこの集計を取り、写真送信後およそ30秒と70秒の二度で確認します。即時`waitUntil`配送または毎分cronのどちらでも、対象の写真は`new_moment`、ハートは`heart`として`accepted/200`を期待します。
+
+## 最終APNs smoke（手動確認は一度だけ）
+
+一般公開前の実機確認は、別々の細かなテストに分けず一回にまとめます。
+
+1. 2台を同じrelease buildにし、通知を許可して、受信側の対象まどを一度前面で開く。上記集計で`production` subscriptionが2件であることだけを確認する。
+2. 受信側を閉じ、送信側から**新しい**写真を一枚届ける。受信側を開く前に集計で`new_moment`の`accepted/200`を確認し、その後に通知、アプリ内の写真、Widget更新を確認する。
+3. 受信側からその写真へ**新しい**ハートを一回送る。送信側を閉じたまま集計で`heart`の`accepted/200`を確認し、その後に送信側の通知とアプリ内表示を確認する。
+
+すでに同期済みの写真、すでに送ったハート、通知がOFFの端末ではeventが出ないかdeliveryが先に消えるため、このsmokeの証拠には使いません。失敗時はIDやpayloadを採取せず、上記の匿名集計、Cloudflareのcron実行時刻・error件数、iPhoneの診断コードだけを確認します。

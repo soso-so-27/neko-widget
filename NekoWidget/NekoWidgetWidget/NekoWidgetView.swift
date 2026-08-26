@@ -140,7 +140,7 @@ struct NekoWidgetView: View {
             .accessibilityHint("アプリの同期後、サーバー受付済みとして表示します")
         case .pending:
             actionPill(
-                "送信中",
+                "送信待ち",
                 systemImage: "clock.fill",
                 isActive: false,
                 invalidatesContent: true
@@ -149,7 +149,7 @@ struct NekoWidgetView: View {
             .accessibilityLabel("ハートは送信待ちです")
         case .serverAccepted:
             actionPill(
-                "送信済み",
+                "受付済み",
                 systemImage: "heart.fill",
                 isActive: true,
                 invalidatesContent: true

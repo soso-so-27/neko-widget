@@ -121,6 +121,18 @@ struct FamilyWindowView: View {
         .onChange(of: model.bootstrapPresentationState) { _, _ in
             consumePendingMemoryTargetIfReady()
         }
+        .onChange(of: model.isShowingLastKnownState) { _, isShowingLastKnownState in
+            guard isShowingLastKnownState else { return }
+            // A dialog may already be open when the secure reload fails.
+            // Dismiss every pending mutation in addition to the ViewModel's
+            // fail-closed guards.
+            reportTarget = nil
+            blockTarget = nil
+            showsPendingCancelConfirmation = false
+            showsPreparationCancelConfirmation = false
+            showsTerminalResultDismissConfirmation = false
+            widgetMemoryTarget = nil
+        }
     }
 
     private func temporarilyUnavailableContent(message: String) -> some View {
@@ -140,6 +152,18 @@ struct FamilyWindowView: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("family-window-bootstrap-retry")
             }
+
+            Text("保存済みの写真と接続情報は削除していません。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            NavigationLink {
+                LogView()
+            } label: {
+                Label("診断情報を確認・共有", systemImage: "stethoscope")
+            }
+            .accessibilityIdentifier("family-window-open-diagnostics")
 
             buildIdentityText
         }
@@ -212,6 +236,7 @@ struct FamilyWindowView: View {
                 blockTarget = nil
                 Task { await model.block(item.senderParticipantID) }
             }
+            .disabled(model.isShowingLastKnownState || model.isReportOnly)
             Button("キャンセル", role: .cancel) { blockTarget = nil }
         } message: { _ in
             Text("今後の送受信を止め、端末内の共有鍵と届いた写真を削除します。")
@@ -228,6 +253,7 @@ struct FamilyWindowView: View {
             Button("この端末の送信待ちをすべて取り消す", role: .destructive) {
                 Task { await model.discardPendingOutbox() }
             }
+            .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
             Text("この端末にある全てのまどの配信確定前の送信を停止し、暗号化済みの一時データを削除対象にします。サーバーに一時保存済みの暗号文は期限で削除されます。配信結果を確認中の写真は、重複を防ぐため残します。")
@@ -240,6 +266,7 @@ struct FamilyWindowView: View {
             Button("この端末の準備中をすべて取り消す", role: .destructive) {
                 Task { await model.discardPendingPreparations() }
             }
+            .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
             Text("この端末にある全てのまどの準備中データを削除対象にします。すでに暗号化済みの送信待ちへ進んだ写真はこの操作の対象外で、送信状況に残ります。")
@@ -252,6 +279,7 @@ struct FamilyWindowView: View {
             Button("送信結果の表示をすべて消す", role: .destructive) {
                 Task { await model.discardFailedOutbox() }
             }
+            .disabled(model.isShowingLastKnownState)
             Button("戻る", role: .cancel) {}
         } message: {
             Text("「送信できなかった写真」と「届いた可能性はあるものの確認できない写真」の表示をすべて消します。写真を再送する操作ではありません。")
@@ -462,6 +490,7 @@ struct FamilyWindowView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
+        .disabled(model.isShowingLastKnownState)
         .accessibilityIdentifier("family-window-send-guide")
     }
 
@@ -470,6 +499,11 @@ struct FamilyWindowView: View {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(.orange)
+            if model.isShowingLastKnownState {
+                Text("最後に安全に確認できた内容を表示しています。更新が完了するまで、送信や変更は行いません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if !model.isReportOnly {
                 Button {
                     Task { await model.synchronize() }
@@ -739,32 +773,33 @@ struct FamilyWindowView: View {
                 Button("送信しなかった結果を消す") {
                     Task { await model.clearOutgoingOutcomes() }
                 }
-                .disabled(model.isPerformingAction)
+                .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
             if model.outgoingPresentation.terminalDeliveryResultCount > 0 {
                 Button("送信結果をすべて消す", role: .destructive) {
                     showsTerminalResultDismissConfirmation = true
                 }
-                .disabled(model.isPerformingAction)
+                .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
             if !model.isReportOnly,
                model.outgoingPresentation.cancellablePreparationCount > 0 {
                 Button("準備中の写真を取り消す", role: .destructive) {
                     showsPreparationCancelConfirmation = true
                 }
-                .disabled(model.isPerformingAction)
+                .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
             if !model.isReportOnly,
                model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 {
                 Button("送信待ちを取り消す", role: .destructive) {
                     showsPendingCancelConfirmation = true
                 }
-                .disabled(model.isPerformingAction)
+                .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
         } label: {
             Label("整理", systemImage: "ellipsis.circle")
                 .font(.subheadline)
         }
+        .disabled(model.isShowingLastKnownState)
         .accessibilityIdentifier("family-window-outgoing-management")
     }
 
@@ -971,9 +1006,10 @@ struct FamilyWindowView: View {
                         .font(.title3)
                 }
                 .accessibilityLabel("写真の安全メニュー")
+                .disabled(model.isShowingLastKnownState)
             }
             .padding(13)
-            if !model.isReportOnly {
+            if !model.isReportOnly, !model.isShowingLastKnownState {
                 Divider()
                 let heart = model.heartOutboxItem(for: item)
                 HStack(spacing: 10) {
@@ -1293,6 +1329,7 @@ struct FamilyWindowView: View {
                 Image(systemName: "ellipsis.circle")
                     .font(.title3)
             }
+            .disabled(model.isShowingLastKnownState)
             .accessibilityLabel("非表示にした受信の安全メニュー")
         }
         .padding(14)
@@ -1345,6 +1382,7 @@ struct FamilyWindowView: View {
             reportTarget = nil
             Task { await model.report(target, reason: reason) }
         }
+        .disabled(reportTarget.map { !model.canSubmitReport($0) } ?? true)
     }
 
     private func captureLabel(_ item: MomentInboxItem) -> String {

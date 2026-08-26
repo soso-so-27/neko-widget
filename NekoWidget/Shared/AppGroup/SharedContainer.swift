@@ -96,6 +96,7 @@ enum PrivateWindowCatalogStore {
         case invalidCatalog
         case windowLimitReached
         case unknownWindow
+        case duplicateWindowName
         case conflictingLegacyMigration
     }
 
@@ -534,9 +535,10 @@ enum PrivateWindowCatalogStore {
         guard state.windows.count < PrivateWindowCatalogState.maximumWindowCount else {
             throw Error.windowLimitReached
         }
+        let displayName = try nextDefaultDisplayName(in: state.windows)
         let entry = PrivateWindowCatalogEntry(
             localWindowID: UUID().uuidString.lowercased(),
-            displayName: PrivateWindowDisplayName.fallback,
+            displayName: displayName,
             spaceID: nil,
             credentialAccount: nil,
             createdAt: now,
@@ -554,6 +556,27 @@ enum PrivateWindowCatalogStore {
             withIntermediateDirectories: true
         )
         return entry
+    }
+
+    /// A newly created window must be distinguishable before pairing or
+    /// renaming. Reusing the same fallback name would make the Share Extension
+    /// ask the user to choose between visually identical destinations and can
+    /// therefore turn a harmless default into a misdelivery risk.
+    private static func nextDefaultDisplayName(
+        in windows: [PrivateWindowCatalogEntry]
+    ) throws -> String {
+        let usedNames = Set(windows.map(\.displayName))
+        if !usedNames.contains(PrivateWindowDisplayName.fallback) {
+            return PrivateWindowDisplayName.fallback
+        }
+        for ordinal in 2...PrivateWindowCatalogState.maximumWindowCount {
+            let candidate = "\(PrivateWindowDisplayName.fallback) \(ordinal)"
+            if PrivateWindowDisplayName.isValid(candidate),
+               !usedNames.contains(candidate) {
+                return candidate
+            }
+        }
+        throw Error.windowLimitReached
     }
 
     @discardableResult
@@ -589,6 +612,10 @@ enum PrivateWindowCatalogStore {
             guard PrivateWindowDisplayName.isValid(displayName) else {
                 throw Error.invalidCatalog
             }
+            try validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+                displayName,
+                catalog: state
+            )
             state.windows[index].displayName = displayName
         }
         state.windows[index].spaceID = spaceID
@@ -596,6 +623,25 @@ enum PrivateWindowCatalogStore {
         state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
         state.storageRevision += 1
         try saveWhileLifecycleLocked(state)
+    }
+
+    /// Renaming must not create two visually identical destinations. Existing
+    /// migrated duplicates remain readable so users can repair them, but no
+    /// local edit or synchronized owner name may create another one.
+    static func validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+        _ displayName: String,
+        catalog suppliedCatalog: PrivateWindowCatalogState? = nil
+    ) throws {
+        guard PrivateWindowDisplayName.isValid(displayName),
+              let catalog = try suppliedCatalog ?? load(),
+              catalog.windows.contains(where: {
+                  $0.localWindowID == catalog.activeWindowID
+              })
+        else { throw Error.invalidCatalog }
+        guard !catalog.windows.contains(where: {
+            $0.localWindowID != catalog.activeWindowID
+                && $0.displayName == displayName
+        }) else { throw Error.duplicateWindowName }
     }
 
     /// Full installation invalidation is the only operation that removes all

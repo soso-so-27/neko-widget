@@ -244,9 +244,19 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             family_case.index("isFamilyWindowPresented = true"),
         )
 
-        home = (ROOT / "NekoWidget/Views/HomeView.swift").read_text(encoding="utf-8")
-        destination = home.split("private var familyWindowDestination", 1)[1].split(
-            "private var familyWindowSubtitle", 1
+        main_tab = (ROOT / "NekoWidget/Views/MainTabView.swift").read_text(
+            encoding="utf-8"
+        )
+        tab_body = main_tab.split("var body: some View", 1)[1].split(
+            "private var settingsSheet", 1
+        )[0]
+        self.assertIn("if SharingAPIConfiguration.current.isReviewVisible", tab_body)
+        self.assertLess(
+            tab_body.index("if SharingAPIConfiguration.current.isReviewVisible"),
+            tab_body.index("WindowListView("),
+        )
+        destination = main_tab.split("private var activeWindowDestination", 1)[1].split(
+            "\n    }\n}", 1
         )[0]
         self.assertIn("isReviewPreviewEnabled", destination)
         self.assertIn("EmptyView()", destination)
@@ -261,17 +271,6 @@ class DisabledReleaseConfigTests(unittest.TestCase):
         self.assertLess(
             share.index("guard !SharingAPIConfiguration.current.isDisabledRelease"),
             share.index("selectedImageProvider()"),
-        )
-
-        home = (ROOT / "NekoWidget/Views/HomeView.swift").read_text(
-            encoding="utf-8"
-        )
-        body = home.split("var body: some View", 1)[1].split(
-            "private var emptyState", 1
-        )[0]
-        self.assertLess(
-            body.index("if SharingAPIConfiguration.current.isReviewVisible"),
-            body.index("familyWindowCard"),
         )
 
         pairing = (ROOT / "NekoWidget/ViewModels/PairingViewModel.swift").read_text(

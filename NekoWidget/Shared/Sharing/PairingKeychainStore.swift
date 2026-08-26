@@ -526,6 +526,10 @@ enum PrivateWindowPresentationStore {
                   currentPairing.role == .inviter else {
                 throw PairingError.stateUnavailable
             }
+            try PrivateWindowCatalogStore
+                .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+                    displayName
+                )
             let current = try? loadWhileLifecycleLocked()
             let revision: Int
             if let current,
@@ -584,6 +588,10 @@ enum PrivateWindowPresentationStore {
                   currentPairing.role == pairing.role else {
                 throw PairingError.stateUnavailable
             }
+            try PrivateWindowCatalogStore
+                .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+                    displayName
+                )
             let loaded = try? loadWhileLifecycleLocked()
             let current = loaded?.pairingBindingSHA256 == currentBinding ? loaded : nil
 

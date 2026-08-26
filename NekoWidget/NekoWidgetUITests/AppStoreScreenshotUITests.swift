@@ -68,16 +68,14 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "02-local-photo-window")
 
-        guard tapTab(
-            application: app,
-            identifier: "main-tab-memories",
-            fallbackLabel: "思い出"
-        ) else {
-            fail("The Memories tab was not available.", application: app)
+        let automaticAlbums = app.buttons["today-open-automatic-albums"]
+        guard automaticAlbums.waitForExistence(timeout: 10) else {
+            fail("The automatic-albums action was not available from Today.", application: app)
             return
         }
+        automaticAlbums.tap()
         guard app.staticTexts["成長・年ごと"].waitForExistence(timeout: 15) else {
-            fail("The deterministic Memories albums did not appear.", application: app)
+            fail("The deterministic automatic albums did not appear.", application: app)
             return
         }
         // The first two Memories cards both use the oldest deterministic
@@ -94,10 +92,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
 
         guard tapTab(
             application: app,
-            identifier: "main-tab-likes",
+            identifier: "main-tab-memories",
             fallbackLabel: "思い出"
         ) else {
-            fail("The Likes tab was not available.", application: app)
+            fail("The Memories tab was not available.", application: app)
             return
         }
         guard app.buttons["まとめる"].waitForExistence(timeout: 15) else {

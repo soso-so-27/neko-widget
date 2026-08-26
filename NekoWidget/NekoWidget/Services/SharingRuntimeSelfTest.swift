@@ -1812,6 +1812,155 @@ actor SharingRuntimeSelfTestRunner {
         ) else { throw MomentSharingError.stateUnavailable }
     }
 
+    /// Multiple Share Extension destinations must remain scoped to existing
+    /// local windows. The active UI window does not silently collapse the
+    /// picker, while a legacy unscoped admission is accepted only for a truly
+    /// unambiguous single-window catalog.
+    private static func testMomentShareExtensionDestinationAdmissionPolicy(
+        base: Date
+    ) throws {
+        let firstWindowID = UUID().uuidString.lowercased()
+        let secondWindowID = UUID().uuidString.lowercased()
+        let removedWindowID = UUID().uuidString.lowercased()
+        let firstAdmissionID = UUID()
+        let secondAdmissionID = UUID()
+        let legacyAdmissionID = UUID()
+        let secondLegacyAdmissionID = UUID()
+        let removedAdmissionID = UUID()
+        let expiresAt = base.addingTimeInterval(
+            MomentShareHandoffStore.admissionLifetime
+        )
+        let firstAdmission = MomentShareDestinationAdmission(
+            id: firstAdmissionID,
+            localWindowID: firstWindowID,
+            bindingSHA256: Data(repeating: 0x31, count: 32),
+            displayName: "ふたりのまど",
+            issuedAt: base,
+            expiresAt: expiresAt
+        )
+        let secondAdmission = MomentShareDestinationAdmission(
+            id: secondAdmissionID,
+            localWindowID: secondWindowID,
+            bindingSHA256: Data(repeating: 0x32, count: 32),
+            displayName: "ふたりのまど",
+            issuedAt: base,
+            expiresAt: expiresAt
+        )
+        let legacyAdmission = MomentShareDestinationAdmission(
+            id: legacyAdmissionID,
+            bindingSHA256: Data(repeating: 0x33, count: 32),
+            displayName: "以前のまど",
+            issuedAt: base,
+            expiresAt: expiresAt
+        )
+        let removedAdmission = MomentShareDestinationAdmission(
+            id: removedAdmissionID,
+            localWindowID: removedWindowID,
+            bindingSHA256: Data(repeating: 0x34, count: 32),
+            displayName: "削除済みのまど",
+            issuedAt: base,
+            expiresAt: expiresAt
+        )
+        let secondLegacyAdmission = MomentShareDestinationAdmission(
+            id: secondLegacyAdmissionID,
+            bindingSHA256: Data(repeating: 0x35, count: 32),
+            displayName: "別の以前のまど",
+            issuedAt: base,
+            expiresAt: expiresAt
+        )
+        let admissionCatalog = try MomentShareAdmissionCatalog(
+            destinations: [
+                firstAdmission,
+                secondAdmission,
+                legacyAdmission,
+                removedAdmission,
+            ],
+            updatedAt: base
+        ).validated()
+        let firstWindow = PrivateWindowCatalogEntry(
+            localWindowID: firstWindowID,
+            displayName: "ふたりのまど",
+            spaceID: nil,
+            credentialAccount: nil,
+            createdAt: base,
+            updatedAt: base
+        )
+        let secondWindow = PrivateWindowCatalogEntry(
+            localWindowID: secondWindowID,
+            displayName: "ふたりのまど",
+            spaceID: nil,
+            credentialAccount: nil,
+            createdAt: base,
+            updatedAt: base
+        )
+        let multiWindowCatalog = try PrivateWindowCatalogState(
+            activeWindowID: secondWindowID,
+            windows: [firstWindow, secondWindow],
+            pendingLegacyMigrationWindowID: nil
+        ).validated()
+        let eligible = try MomentShareHandoffStore.extensionEligibleAdmissions(
+            catalog: admissionCatalog,
+            windowCatalog: multiWindowCatalog,
+            now: base.addingTimeInterval(1)
+        )
+        let expectedIDs = [firstAdmissionID, secondAdmissionID].sorted {
+            $0.uuidString < $1.uuidString
+        }
+        guard eligible.map(\.id) == expectedIDs,
+              eligible.contains(where: { $0.localWindowID == firstWindowID }),
+              eligible.contains(where: { $0.localWindowID == secondWindowID }),
+              !eligible.contains(where: { $0.id == legacyAdmissionID }),
+              !eligible.contains(where: { $0.id == removedAdmissionID })
+        else { throw MomentSharingError.stateUnavailable }
+
+        let singleWindowCatalog = try PrivateWindowCatalogState(
+            activeWindowID: firstWindowID,
+            windows: [firstWindow],
+            pendingLegacyMigrationWindowID: nil
+        ).validated()
+        let legacyOnlyCatalog = try MomentShareAdmissionCatalog(
+            destinations: [legacyAdmission],
+            updatedAt: base
+        ).validated()
+        guard try MomentShareHandoffStore.extensionEligibleAdmissions(
+            catalog: legacyOnlyCatalog,
+            windowCatalog: singleWindowCatalog,
+            now: base.addingTimeInterval(1)
+        ).map(\.id) == [legacyAdmissionID],
+        try MomentShareHandoffStore.extensionEligibleAdmissions(
+            catalog: legacyOnlyCatalog,
+            windowCatalog: multiWindowCatalog,
+            now: base.addingTimeInterval(1)
+        ).isEmpty,
+        try MomentShareHandoffStore.extensionEligibleAdmissions(
+            catalog: admissionCatalog,
+            windowCatalog: multiWindowCatalog,
+            now: expiresAt
+        ).isEmpty
+        else { throw MomentSharingError.stateUnavailable }
+
+        let ambiguousLegacyCatalog = try MomentShareAdmissionCatalog(
+            destinations: [legacyAdmission, secondLegacyAdmission],
+            updatedAt: base
+        ).validated()
+        let rejectedAmbiguousLegacy: Bool
+        do {
+            _ = try MomentShareHandoffStore.extensionEligibleAdmissions(
+                catalog: ambiguousLegacyCatalog,
+                windowCatalog: nil,
+                now: base.addingTimeInterval(1)
+            )
+            rejectedAmbiguousLegacy = false
+        } catch MomentSharingError.stateUnavailable {
+            // Without a catalog, two legacy admissions cannot be attributed to
+            // an exact window and must never be presented as picker choices.
+            rejectedAmbiguousLegacy = true
+        }
+        guard rejectedAmbiguousLegacy else {
+            throw MomentSharingError.stateUnavailable
+        }
+    }
+
     /// The Share Extension may only leave a bounded, short-lived canonical
     /// input. A host-issued binding change and an installation reset must
     /// remove it before any room credential or network client is involved.
@@ -1826,6 +1975,7 @@ actor SharingRuntimeSelfTestRunner {
         let bootstrap = try PairingInstallationGuard.bootstrap()
         let token = bootstrap.lifecycleToken
         let base = Date(timeIntervalSince1970: 1_800_000_000)
+        try testMomentShareExtensionDestinationAdmissionPolicy(base: base)
         let acceptedAt = base.addingTimeInterval(-1)
         let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
         let privateMetadataJPEG = try momentJPEGWithSyntheticPrivateMetadata(preview.jpeg)
@@ -6758,6 +6908,19 @@ actor SharingRuntimeSelfTestRunner {
             // performed by the guard.
             let second = try PrivateWindowCatalogStore
                 .createAndActivateWhileLifecycleLocked()
+            guard second.displayName == "\(PrivateWindowDisplayName.fallback) 2"
+            else { throw PairingError.stateUnavailable }
+            do {
+                try PrivateWindowCatalogStore
+                    .updateActiveMetadataWhileLifecycleLocked(
+                        displayName: PrivateWindowDisplayName.fallback,
+                        spaceID: nil,
+                        credentialAccount: nil
+                    )
+                throw PairingError.stateUnavailable
+            } catch PrivateWindowCatalogStore.Error.duplicateWindowName {
+                // A name edit cannot make Share destinations ambiguous.
+            }
             _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
                 localWindowID: firstWindowID
             )

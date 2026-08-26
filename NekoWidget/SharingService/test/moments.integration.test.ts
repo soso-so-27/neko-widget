@@ -175,13 +175,13 @@ async function sign(keys: KeyPair, message: Uint8Array): Promise<string> {
   )));
 }
 
-async function signedFetch(
+async function signedRequest(
   path: string,
   method: "GET" | "POST" | "PUT",
   member: TestMember,
   value?: unknown | Uint8Array,
   nonce = randomValue(16),
-): Promise<Response> {
+): Promise<Request> {
   const binary = value instanceof Uint8Array;
   const bodyBytes = value === undefined
     ? new Uint8Array()
@@ -213,7 +213,17 @@ async function signedFetch(
   }
   const init: RequestInit = { method, headers };
   if (value !== undefined) init.body = binary ? bytes(bodyBytes) : new TextDecoder().decode(bodyBytes);
-  return SELF.fetch(new Request(`https://sharing.invalid${path}`, init));
+  return new Request(`https://sharing.invalid${path}`, init);
+}
+
+async function signedFetch(
+  path: string,
+  method: "GET" | "POST" | "PUT",
+  member: TestMember,
+  value?: unknown | Uint8Array,
+  nonce = randomValue(16),
+): Promise<Response> {
+  return SELF.fetch(await signedRequest(path, method, member, value, nonce));
 }
 
 async function addFutureParticipant(spaceID: string): Promise<string> {
@@ -1354,6 +1364,126 @@ describe("append-only encrypted moments", () => {
     expect(duplicate.status).toBe(409);
     expect((await duplicate.json<{ error: { code: string } }>()).error.code)
       .toBe("already_reported");
+  });
+});
+
+describe("notification outbox route wiring", () => {
+  it("creates recipient delivery rows from the real commit and new-heart routes", async () => {
+    const space = await seedActiveSpace();
+    const now = Math.floor(Date.now() / 1_000);
+    const participants = await testEnv.DB.prepare(
+      `SELECT member.id AS member_id, participant.id AS participant_id, device.id AS device_id
+         FROM members AS member
+         JOIN moment_participants AS participant ON participant.legacy_member_id = member.id
+         JOIN moment_devices AS device ON device.participant_id = participant.id
+        WHERE member.id IN (?, ?)
+        ORDER BY member.id ASC`,
+    ).bind(space.owner.id, space.invitee.id).all<{
+      member_id: string;
+      participant_id: string;
+      device_id: string;
+    }>();
+    expect(participants.results).toHaveLength(2);
+    await testEnv.DB.batch(participants.results.map((row) => testEnv.DB.prepare(
+      `INSERT INTO apns_subscriptions(
+         device_id, participant_id, environment,
+         token_ciphertext, token_nonce, token_digest, encryption_key_id,
+         created_at, updated_at, expires_at
+       ) VALUES (?, ?, 'production', ?, ?, ?, 'test-key', ?, ?, ?)`,
+    ).bind(
+      row.device_id,
+      row.participant_id,
+      randomValue(48),
+      randomValue(12),
+      randomValue(32),
+      now,
+      now,
+      now + 86_400,
+    )));
+
+    const notificationEnv = {
+      ...testEnv,
+      MOMENT_RUNTIME_ENABLED: "YES",
+      REACTION_RUNTIME_ENABLED: "YES",
+      APNS_RUNTIME_ENABLED: "YES",
+    } as Env;
+    const ciphertext = crypto.getRandomValues(new Uint8Array(768));
+    const reservationRequest = await signedRequest(
+      "/v2/moments/reservations",
+      "POST",
+      space.owner,
+      reserveBody(ciphertext, {
+        ciphertextSHA256: await sha256Base64url(ciphertext),
+      }),
+    );
+    const reservationResponse = await route(reservationRequest, notificationEnv);
+    expect(reservationResponse.status).toBe(201);
+    const reservation = await reservationResponse.json<ReservationResponse>();
+    expect((await route(
+      await signedRequest(
+        `/v2/moments/${reservation.moment.id}/ciphertext`,
+        "PUT",
+        space.owner,
+        ciphertext,
+      ),
+      notificationEnv,
+    )).status).toBe(200);
+    expect((await route(
+      await signedRequest(
+        `/v2/moments/${reservation.moment.id}/commit`,
+        "POST",
+        space.owner,
+        { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() },
+      ),
+      notificationEnv,
+    )).status).toBe(201);
+
+    const momentEvent = await testEnv.DB.prepare(
+      `SELECT event.kind, event.participant_id, COUNT(delivery.device_id) AS delivery_count
+         FROM notification_events AS event
+         LEFT JOIN notification_deliveries AS delivery ON delivery.event_id = event.id
+        WHERE event.moment_id = ?
+        GROUP BY event.id, event.kind, event.participant_id`,
+    ).bind(reservation.moment.id).first<{
+      kind: string;
+      participant_id: string;
+      delivery_count: number;
+    }>();
+    const invitee = participants.results.find((row) => row.member_id === space.invitee.id);
+    expect(momentEvent).toEqual({
+      kind: "new_moment",
+      participant_id: invitee?.participant_id,
+      delivery_count: 1,
+    });
+
+    const heartResponse = await route(
+      await signedRequest(
+        `/v2/moments/${reservation.moment.id}/reactions`,
+        "POST",
+        space.invitee,
+        { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), kind: "paw" },
+      ),
+      notificationEnv,
+    );
+    expect(heartResponse.status).toBe(201);
+    const heart = await heartResponse.json<{ reaction: { id: string } }>();
+    const heartEvent = await testEnv.DB.prepare(
+      `SELECT event.kind, event.participant_id, COUNT(delivery.device_id) AS delivery_count
+         FROM notification_events AS event
+         LEFT JOIN notification_deliveries AS delivery ON delivery.event_id = event.id
+        WHERE event.reaction_id = ?
+        GROUP BY event.id, event.kind, event.participant_id`,
+    ).bind(heart.reaction.id).first<{
+      kind: string;
+      participant_id: string;
+      delivery_count: number;
+    }>();
+    const owner = participants.results.find((row) => row.member_id === space.owner.id);
+    expect(heartEvent).toEqual({
+      kind: "heart",
+      participant_id: owner?.participant_id,
+      delivery_count: 1,
+    });
   });
 });
 

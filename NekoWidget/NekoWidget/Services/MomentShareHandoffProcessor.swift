@@ -194,14 +194,31 @@ struct MomentShareHandoffProcessor: Sendable {
             spaceID: spaceID,
             participantID: participantID
         )
-        let catalog = try refreshAdmissionCatalog(
-            lifecycleToken: lifecycleToken,
-            now: now
-        )
+        let admission: MomentShareDestinationAdmission
+        do {
+            let catalog = try refreshAdmissionCatalog(
+                lifecycleToken: lifecycleToken,
+                now: now
+            )
+            guard let refreshed = catalog.destinations.first(where: {
+                $0.bindingSHA256 == binding
+            }) else { throw MomentSharingError.stateUnavailable }
+            admission = refreshed
+        } catch {
+            // A different, inactive window may be temporarily unreadable
+            // (for example while Data Protection is unavailable). That must
+            // not block a healthy active window. Reuse only a still-current,
+            // host-issued admission whose immutable binding exactly matches
+            // the active pairing; never guess or fall back by display name.
+            let refreshError = error
+            let previousAdmissions = try? MomentShareHandoffStore
+                .activeAdmissions(now: now)
+            guard let existing = previousAdmissions?.first(where: {
+                $0.bindingSHA256 == binding
+            }) else { throw refreshError }
+            admission = existing
+        }
         try purgeOrphanedModerationTemporaryFiles(lifecycleToken: lifecycleToken)
-        guard let admission = catalog.destinations.first(where: {
-            $0.bindingSHA256 == binding
-        }) else { throw MomentSharingError.stateUnavailable }
 
         var promotedCount = 0
         while let pending = try MomentShareHandoffStore.nextPendingCapture(

@@ -742,11 +742,12 @@ enum MomentShareHandoffStore {
         }
     }
 
-    /// Extension-safe read of the sanitized destination catalog. The current
-    /// host processor can promote only the active window's captures, so the
-    /// Extension must never advertise an inactive destination and leave its
-    /// plaintext waiting for a later manual window switch. Missing or expired
-    /// admission means the host app must be opened again.
+    /// Extension-safe read of every sanitized destination currently owned by
+    /// the private-window catalog. The Extension receives only host-issued
+    /// opaque admission IDs and labels; Pairing state, relay identifiers, and
+    /// room credentials remain unavailable at this boundary. `stageCapture`
+    /// revalidates the selected admission under the lifecycle lock, so an
+    /// expired or revoked menu choice can never fall back to another window.
     static func activeAdmissions(now: Date = .now) throws -> [MomentShareDestinationAdmission] {
         try SharingLifecycleGate.withExclusive {
             try prepareMultiWindowStorageWhileLocked()
@@ -763,44 +764,57 @@ enum MomentShareHandoffStore {
             try pruneCapturesWhileLocked(now: now)
             guard let catalog = try loadCurrentCatalogWhileLocked(now: now)
             else { return [] }
-            let active = catalog.destinations.filter { $0.isActive(at: now) }
             let windowCatalog = try PrivateWindowCatalogStore.load()
-            let eligible: [MomentShareDestinationAdmission]
-            if let windowCatalog {
-                let scoped = active.filter {
-                    $0.localWindowID == windowCatalog.activeWindowID
-                }
-                if !scoped.isEmpty {
-                    eligible = scoped
-                } else if windowCatalog.windows.count == 1 {
-                    // Build 40 admissions had no localWindowID. They remain
-                    // unambiguous only before a second local window exists.
-                    let legacy = active.filter { $0.localWindowID == nil }
-                    guard legacy.count <= 1 else {
-                        throw MomentSharingError.stateUnavailable
-                    }
-                    eligible = legacy
-                } else {
-                    eligible = []
-                }
+            return try extensionEligibleAdmissions(
+                catalog: catalog,
+                windowCatalog: windowCatalog,
+                now: now
+            )
+        }
+    }
+
+    /// Pure policy shared with the runtime self-test. A scoped admission is
+    /// eligible only while its exact local window still exists. A Build-40
+    /// admission without a local window ID remains usable solely for an
+    /// unambiguous single-window installation; it is never guessed onto one of
+    /// several windows.
+    static func extensionEligibleAdmissions(
+        catalog: MomentShareAdmissionCatalog,
+        windowCatalog: PrivateWindowCatalogState?,
+        now: Date
+    ) throws -> [MomentShareDestinationAdmission] {
+        let validatedCatalog = try catalog.validated()
+        let active = validatedCatalog.destinations.filter { $0.isActive(at: now) }
+        let eligible: [MomentShareDestinationAdmission]
+        if let windowCatalog = try windowCatalog?.validated() {
+            let windowIDs = Set(windowCatalog.windows.map(\.localWindowID))
+            let scoped = active.filter { admission in
+                admission.localWindowID.map(windowIDs.contains) == true
+            }
+            if !scoped.isEmpty || windowCatalog.windows.count > 1 {
+                eligible = scoped
             } else {
+                // Build 40 admissions had no localWindowID. They remain
+                // unambiguous only before a second local window exists.
                 let legacy = active.filter { $0.localWindowID == nil }
                 guard legacy.count <= 1 else {
                     throw MomentSharingError.stateUnavailable
                 }
                 eligible = legacy
             }
-            guard eligible.count <= 1 else {
+        } else {
+            let legacy = active.filter { $0.localWindowID == nil }
+            guard legacy.count <= 1 else {
                 throw MomentSharingError.stateUnavailable
             }
-            return eligible
-                .sorted { lhs, rhs in
-                    if lhs.displayName == rhs.displayName {
-                        return lhs.id.uuidString < rhs.id.uuidString
-                    }
-                    return lhs.displayName.localizedStandardCompare(rhs.displayName)
-                        == .orderedAscending
-                }
+            eligible = legacy
+        }
+        return eligible.sorted { lhs, rhs in
+            if lhs.displayName == rhs.displayName {
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            return lhs.displayName.localizedStandardCompare(rhs.displayName)
+                == .orderedAscending
         }
     }
 

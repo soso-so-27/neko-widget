@@ -158,7 +158,7 @@ final class ShareViewController: UIViewController {
                 self.selectedAdmission = nil
                 spinner.stopAnimating()
                 statusLabel.textColor = .systemGreen
-                statusLabel.text = "保存しました。次に「ねこのまど」アプリを開いてください。"
+                statusLabel.text = "保存しました。アプリの「まど」から「\(selectedAdmission.displayName)」を開いてください。"
                 UIAccessibility.post(notification: .announcement, argument: statusLabel.text)
                 try? await Task.sleep(for: .milliseconds(900))
                 extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
@@ -168,11 +168,11 @@ final class ShareViewController: UIViewController {
                 if let sharingError = error as? MomentSharingError {
                     switch sharingError {
                     case .notPaired:
+                        resetDestinationSelection()
+                        detailLabel.text = "選んだ届け先の有効期限が切れたか、接続が解除されました。別のまどへ自動で切り替えることはありません。"
                         statusLabel.text = "届け先を確認できません。アプリを開いてまどを確認してください。"
-                        self.selectedAdmission = nil
                     case .outboxFull:
                         statusLabel.text = "送信準備中の写真が3枚あります。アプリを開いてから、もう一度試してください。"
-                        self.selectedAdmission = nil
                     case .stateUnavailable:
                         statusLabel.text = "この写真を一時保存できませんでした。空き容量を確認して、もう一度お試しください。"
                         continueButton.isEnabled = true
@@ -245,19 +245,16 @@ final class ShareViewController: UIViewController {
             if admissions.count == 1, let admission = admissions.first {
                 destinationLabel.isHidden = false
                 destinationButton.isHidden = true
+                destinationButton.menu = nil
                 selectAdmission(admission)
                 statusLabel.textColor = .secondaryLabel
-                statusLabel.text = "現在アプリで開いているまどへ一時保存します。保存後にアプリを開くと、安全確認して届けます。"
+                statusLabel.text = "このまどへ一時保存します。保存後はアプリの「まど」から「\(admission.displayName)」を開くと、安全確認して届けます。"
             } else if admissions.isEmpty {
+                resetDestinationSelection()
                 statusLabel.textColor = .systemOrange
-                statusLabel.text = "先に「ねこのまど」アプリで届けたいまどを開いてください。"
+                statusLabel.text = "届けられるまどがありません。「ねこのまど」アプリで接続状態を確認してください。"
             } else {
-                // The store must expose at most the one active destination.
-                // Multiple results are authority ambiguity, not a picker.
-                selectedAdmission = nil
-                continueButton.isEnabled = false
-                statusLabel.textColor = .systemOrange
-                statusLabel.text = "届け先を1つに確認できません。アプリを開いてから、もう一度お試しください。"
+                configureDestinationMenu(admissions)
             }
         } catch is CancellationError {
             return
@@ -280,7 +277,100 @@ final class ShareViewController: UIViewController {
         detailLabel.text = "この1枚を\(admission.displayName)へ届ける準備をします。最大2,048pxへ縮小し、位置情報を除きます。まだ送信されません。"
         continueButton.isEnabled = preparedPhoto != nil
         statusLabel.textColor = .secondaryLabel
-        statusLabel.text = "現在アプリで開いているまどへ一時保存します。保存後にアプリを開くと、安全確認して届けます。"
+        statusLabel.text = "選んだまどへだけ一時保存します。保存後はアプリの「まど」から「\(admission.displayName)」を開くと、安全確認して届けます。"
+    }
+
+    @MainActor
+    private func configureDestinationMenu(
+        _ admissions: [MomentShareDestinationAdmission]
+    ) {
+        resetDestinationSelection()
+        destinationLabel.text = "届け先　未選択"
+        destinationLabel.accessibilityLabel = "届け先、未選択"
+        destinationButton.configuration?.title = "届け先を選ぶ"
+        destinationButton.accessibilityLabel = "届け先を選ぶ"
+        destinationButton.isHidden = false
+
+        let ambiguousNames = duplicateDestinationNames(for: admissions)
+        let titles = destinationPickerTitles(
+            for: admissions,
+            ambiguousNames: ambiguousNames
+        )
+        configureDestinationMenuActions(
+            admissions,
+            titles: titles,
+            ambiguousNames: ambiguousNames
+        )
+        detailLabel.text = "この1枚を届けるまどを選んでください。選んだまど以外へ保存・送信することはありません。"
+        if ambiguousNames.isEmpty {
+            statusLabel.textColor = .secondaryLabel
+            statusLabel.text = "届け先を選ぶと、送信準備へ進めます。"
+        } else {
+            statusLabel.textColor = .systemOrange
+            statusLabel.text = "同じ名前のまどは選べません。アプリの「まど」で名前を変えてから、もう一度お試しください。"
+        }
+    }
+
+    @MainActor
+    private func configureDestinationMenuActions(
+        _ admissions: [MomentShareDestinationAdmission],
+        titles: [UUID: String],
+        ambiguousNames: Set<String>
+    ) {
+        let actions = admissions.map { admission in
+            let title = titles[admission.id] ?? admission.displayName
+            let isAmbiguous = ambiguousNames.contains(admission.displayName)
+            return UIAction(
+                title: title,
+                attributes: isAmbiguous ? .disabled : [],
+                state: selectedAdmission?.id == admission.id ? .on : .off
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.selectAdmission(admission, pickerTitle: title)
+                self.configureDestinationMenuActions(
+                    admissions,
+                    titles: titles,
+                    ambiguousNames: ambiguousNames
+                )
+            }
+        }
+        destinationButton.menu = UIMenu(
+            title: "届け先",
+            options: .displayInline,
+            children: actions
+        )
+    }
+
+    private func destinationPickerTitles(
+        for admissions: [MomentShareDestinationAdmission],
+        ambiguousNames: Set<String>
+    ) -> [UUID: String] {
+        Dictionary(uniqueKeysWithValues: admissions.map { admission in
+            let title = ambiguousNames.contains(admission.displayName)
+                ? "\(admission.displayName)（名前を変更してください）"
+                : admission.displayName
+            return (admission.id, title)
+        })
+    }
+
+    private func duplicateDestinationNames(
+        for admissions: [MomentShareDestinationAdmission]
+    ) -> Set<String> {
+        Set(
+            Dictionary(grouping: admissions, by: \.displayName)
+                .filter { $0.value.count > 1 }
+                .map(\.key)
+        )
+    }
+
+    @MainActor
+    private func resetDestinationSelection() {
+        selectedAdmission = nil
+        continueButton.isEnabled = false
+        destinationButton.isHidden = true
+        destinationButton.menu = nil
+        destinationLabel.text = "届け先　未選択"
+        destinationLabel.accessibilityLabel = "届け先、未選択"
     }
 
     private func selectedImageProvider() throws -> NSItemProvider {

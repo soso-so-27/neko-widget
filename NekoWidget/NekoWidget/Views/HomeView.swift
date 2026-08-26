@@ -7,10 +7,6 @@ struct HomeView: View {
     let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
     let shouldOfferWidgetPlacementGuide: Bool
-    let familyWindowPresentation: MomentFamilyWindowPresentation
-    let privateWindowDisplayName: String
-    @Binding var showsFamilyWindow: Bool
-    @Binding var pendingFamilyMomentSourceDigest: String?
     let requestPhotoAccess: () -> Void
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
@@ -18,15 +14,9 @@ struct HomeView: View {
     let toggleLike: (String) -> Void
     let rescan: () -> Void
 
-    @State private var familyPriorityExpired = false
-
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
-                if familyPhotoHasPriority {
-                    familyMomentCard
-                }
-
                 if hasPhotoAccess {
                     todayPhoto
                 } else {
@@ -37,24 +27,18 @@ struct HomeView: View {
                     widgetPlacementCard
                 }
 
-                if hasPhotoAccess, isLimitedAccess {
-                    LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
+                if hasPhotoAccess {
+                    automaticAlbumsCard
                 }
 
-                if SharingAPIConfiguration.current.isReviewVisible {
-                    if canShowFamilyMoment {
-                        if !familyPhotoHasPriority {
-                            familyMomentCard
-                        }
-                    } else {
-                        familyWindowCard
-                    }
+                if hasPhotoAccess, isLimitedAccess {
+                    LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("ホーム")
+        .navigationTitle("今日")
         .background(Color(.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -64,23 +48,6 @@ struct HomeView: View {
                 .accessibilityLabel("設定")
                 .accessibilityIdentifier("window-settings-button")
             }
-        }
-        .navigationDestination(isPresented: $showsFamilyWindow) {
-            familyWindowDestination
-        }
-        .task(id: familyWindowPresentation.priorityUntil) {
-            familyPriorityExpired = false
-            guard familyWindowPresentation.isPriority,
-                  let priorityUntil = familyWindowPresentation.priorityUntil
-            else { return }
-            let remaining = priorityUntil.timeIntervalSinceNow
-            guard remaining > 0 else {
-                familyPriorityExpired = true
-                return
-            }
-            try? await Task.sleep(for: .seconds(remaining))
-            guard !Task.isCancelled else { return }
-            familyPriorityExpired = true
         }
     }
 
@@ -141,193 +108,44 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
-    private var familyWindowCard: some View {
-        Button {
-            showsFamilyWindow = true
-        } label: {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    Image(systemName: "person.2.fill")
-                        .font(.system(size: 21, weight: .semibold))
-                        .foregroundStyle(.tint)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            Color.accentColor.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 13)
-                        )
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 7) {
-                            Text(privateWindowDisplayName)
-                                .font(.headline)
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            if !SharingAPIConfiguration.current.isMediaAvailable {
-                                Text(SharingAPIConfiguration.current.isAvailable
-                                    ? "ペアリングのみ"
-                                    : "プレビュー")
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(.tint)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(
-                                        Color.accentColor.opacity(0.12),
-                                        in: Capsule()
-                                    )
-                            }
-                        }
-                        Text(familyWindowSubtitle)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Image(systemName: "chevron.right")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                }
-
-                Divider()
-
-                Label(
-                    familyWindowScopeDescription,
-                    systemImage: "square.and.arrow.up"
-                )
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("window-family-window-review")
-        .accessibilityHint(familyWindowAccessibilityHint)
-    }
-
-    private var familyMomentCard: some View {
-        Button {
-            showsFamilyWindow = true
-        } label: {
-            VStack(alignment: .leading, spacing: 11) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Label(
-                        familyPhotoHasPriority
-                            ? "いま届いた・\(privateWindowDisplayName)"
-                            : "\(privateWindowDisplayName)に届いた一枚",
-                        systemImage: "person.2.fill"
+    private var automaticAlbumsCard: some View {
+        NavigationLink(value: TodayRoute.automaticAlbums) {
+            HStack(spacing: 14) {
+                Image(systemName: "square.grid.3x3.fill")
+                    .font(.system(size: 23, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .frame(width: 48, height: 48)
+                    .background(
+                        Color.accentColor.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 14)
                     )
-                    .font(.title3.bold())
-                    .foregroundStyle(.primary)
 
-                    Spacer(minLength: 4)
-
-                    if familyWindowPresentation.safeCount > 1 {
-                        Text("ほか \(familyWindowPresentation.safeCount - 1)枚")
-                            .font(.caption.bold())
-                            .foregroundStyle(.tint)
-                    }
-                }
-
-                if let url = familyWindowPresentation.latestImageURL {
-                    ZStack(alignment: .bottomLeading) {
-                        MomentLocalImageView(url: url)
-                            .frame(maxWidth: .infinity)
-                            .aspectRatio(1, contentMode: .fit)
-                            .clipped()
-
-                        LinearGradient(
-                            colors: [.clear, .black.opacity(0.62)],
-                            startPoint: .center,
-                            endPoint: .bottom
-                        )
-                        .allowsHitTesting(false)
-
-                        HStack(spacing: 6) {
-                            Image(systemName: "rectangle.on.rectangle.angled")
-                            Text("\(privateWindowDisplayName)をひらく")
-                        }
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.black.opacity(0.42), in: Capsule())
-                        .padding(14)
-                    }
-                    .aspectRatio(1, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 22))
-                }
-
-                if let receivedAt = familyWindowPresentation.latestReceivedAt {
-                    Text("届いた日 \(receivedAt.formatted(.dateTime.month().day().hour().minute()))")
-                        .font(.caption)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("写真を見つける")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text("成長・年ごとに自動でまとまった写真を見ます。")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
                 }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 24)
+                in: RoundedRectangle(cornerRadius: 20)
             )
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier("window-latest-family-photo")
-        .accessibilityHint("\(privateWindowDisplayName)に届いた写真を開きます")
-    }
-
-    private var familyPhotoHasPriority: Bool {
-        canShowFamilyMoment
-            && familyWindowPresentation.isPriority
-            && !familyPriorityExpired
-    }
-
-    private var canShowFamilyMoment: Bool {
-        SharingAPIConfiguration.current.isMediaAvailable
-            && familyWindowPresentation.latestImageURL != nil
-    }
-
-    @ViewBuilder
-    private var familyWindowDestination: some View {
-        if SharingAPIConfiguration.current.isMediaAvailable {
-            FamilyWindowView(
-                pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest
-            )
-        } else if SharingAPIConfiguration.current.isAvailable {
-            PairingView()
-        } else if SharingAPIConfiguration.current.isReviewPreviewEnabled {
-            SharingReviewPreviewView()
-        } else {
-            EmptyView()
-        }
-    }
-
-    private var familyWindowSubtitle: String {
-        let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable { return "\(privateWindowDisplayName)に届いた一枚を見る" }
-        if configuration.isAvailable { return "写真共有前のペアリングを確認する" }
-        return "今後追加する体験を先に確認できます"
-    }
-
-    private var familyWindowScopeDescription: String {
-        let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable {
-            return "今の一枚は、写真アプリで1枚を選び、アプリを開いて届けます"
-        }
-        if configuration.isAvailable {
-            return "このBuildでは写真を保存・送信しません"
-        }
-        return "今後は、写真アプリの共有から1枚を届けます"
-    }
-
-    private var familyWindowAccessibilityHint: String {
-        let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable { return "\(privateWindowDisplayName)を開きます" }
-        if configuration.isAvailable { return "共有鍵のペアリング画面を開きます" }
-        return "サーバーへ接続しない画面レビューを開きます"
+        .accessibilityIdentifier("today-open-automatic-albums")
+        .accessibilityHint("自動でまとまった猫写真を開きます")
     }
 
     @ViewBuilder
@@ -344,7 +162,7 @@ struct HomeView: View {
                 }
 
                 ZStack(alignment: .bottom) {
-                    NavigationLink(value: currentPhoto.localIdentifier) {
+                    NavigationLink(value: TodayRoute.photo(currentPhoto.localIdentifier)) {
                         PhotoAssetImageView(
                             localIdentifier: currentPhoto.localIdentifier,
                             catBoundingBox: currentPhoto.catBoundingBox,
@@ -364,7 +182,7 @@ struct HomeView: View {
                     )
                     .allowsHitTesting(false)
 
-                    Text(windowPhotoSourceLabel(currentPhoto))
+                    Text(todayPhotoSourceLabel(currentPhoto))
                         .font(.caption.bold())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 10)
@@ -381,19 +199,25 @@ struct HomeView: View {
                             Button {
                                 toggleLike(currentPhoto.localIdentifier)
                             } label: {
-                                Image(systemName: currentPhoto.isLiked
-                                    ? "checkmark.circle.fill"
-                                    : "photo.badge.plus")
-                                    .font(.system(size: 24, weight: .semibold))
-                                    .foregroundStyle(Color.white)
-                                    .frame(width: 52, height: 52)
-                                    .background(
-                                        currentPhoto.isLiked
-                                            ? Color.accentColor
-                                            : Color.black.opacity(0.56),
-                                        in: Circle()
-                                    )
-                                    .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
+                                HStack(spacing: 7) {
+                                    Image(systemName: currentPhoto.isLiked
+                                        ? "checkmark.circle.fill"
+                                        : "bookmark")
+                                    Text(currentPhoto.isLiked
+                                        ? "思い出に残した"
+                                        : "思い出に残す")
+                                }
+                                .font(.subheadline.bold())
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 48)
+                                .background(
+                                    currentPhoto.isLiked
+                                        ? Color.accentColor
+                                        : Color.black.opacity(0.62),
+                                    in: Capsule()
+                                )
+                                .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
                             }
                             .padding(12)
                             .accessibilityLabel(
@@ -415,12 +239,12 @@ struct HomeView: View {
         }
     }
 
-    private func windowPhotoSourceLabel(_ photo: PhotoPresentation) -> String {
+    private func todayPhotoSourceLabel(_ photo: PhotoPresentation) -> String {
         guard let creationDate = photo.creationDate else {
-            return "ホームに表示中"
+            return "このiPhoneの写真"
         }
         let year = Calendar.current.component(.year, from: creationDate)
-        return "アルバムから・\(year)年"
+        return "このiPhone・\(year)年"
     }
 
     @ViewBuilder

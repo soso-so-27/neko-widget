@@ -220,7 +220,6 @@ struct AppRootView: View {
             shouldOfferWidgetPlacementGuide: widgetInstallationChecker
                 .shouldOfferPlacementGuide,
             widgetIntervalMinutes: viewModel.settings.widgetEntryIntervalMinutes,
-            familyWindowPresentation: viewModel.familyWindowPresentation,
             privateWindowDisplayName: viewModel.privateWindowDisplayName,
             deepLinkedPhotoIdentifier: $viewModel.selectedAssetIdentifier,
             deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
