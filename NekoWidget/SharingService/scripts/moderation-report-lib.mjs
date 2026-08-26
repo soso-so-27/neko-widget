@@ -26,6 +26,11 @@ export const MODERATION_EXPORT_SCHEMA = "jp.nekowidget.moderation-export.v1";
 export const MODERATION_ENVELOPE_DOMAIN = "NW2.MODERATION-REPORT";
 export const MODERATION_ALGORITHM = "X25519-HKDF-SHA256-CHACHA20POLY1305";
 export const MODERATION_KEY_ID = "moderation-v1";
+export const MODERATION_NEXT_KEY_ID = "moderation-v2";
+export const MODERATION_KEY_IDS = Object.freeze([
+  MODERATION_KEY_ID,
+  MODERATION_NEXT_KEY_ID,
+]);
 export const MOMENT_PROTOCOL_VERSION = 2;
 export const MAXIMUM_REPORT_CIPHERTEXT_BYTES = 1_024 * 1_024;
 export const MAXIMUM_CANONICAL_JPEG_BYTES = (1_024 * 1_024) - (96 * 1_024) - 28;
@@ -53,6 +58,109 @@ export class ModerationToolError extends Error {
 
 function fail(message) {
   throw new ModerationToolError(message);
+}
+
+export function validateModerationKeyId(value) {
+  if (typeof value !== "string" || !MODERATION_KEY_IDS.includes(value)) {
+    fail("moderation key ID is unsupported");
+  }
+  return value;
+}
+
+export function validateExpectedPublicKeySHA256(value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/u.test(value)) {
+    fail("expected moderation public-key SHA-256 is not canonical lowercase hex");
+  }
+  return value;
+}
+
+export function deriveRawModerationPublicKey(privateKeyBytes) {
+  if (!Buffer.isBuffer(privateKeyBytes) || privateKeyBytes.length !== 32) {
+    fail("moderation private key must be exactly 32 raw bytes");
+  }
+  const privateDER = Buffer.concat([X25519_PKCS8_PREFIX, privateKeyBytes]);
+  let publicDER;
+  try {
+    const privateKey = createPrivateKey({ key: privateDER, format: "der", type: "pkcs8" });
+    publicDER = createPublicKey(privateKey).export({ format: "der", type: "spki" });
+    if (!Buffer.isBuffer(publicDER)
+        || publicDER.length !== X25519_SPKI_PREFIX.length + 32
+        || !publicDER.subarray(0, X25519_SPKI_PREFIX.length).equals(X25519_SPKI_PREFIX)) {
+      fail("moderation public key could not be derived safely");
+    }
+    return Buffer.from(publicDER.subarray(X25519_SPKI_PREFIX.length));
+  } catch (error) {
+    if (error instanceof ModerationToolError) throw error;
+    fail("moderation public key could not be derived safely");
+  } finally {
+    privateDER.fill(0);
+    publicDER?.fill(0);
+  }
+}
+
+export function moderationPublicKeySHA256(publicKeyBytes) {
+  if (!Buffer.isBuffer(publicKeyBytes) || publicKeyBytes.length !== 32) {
+    fail("moderation public key must be exactly 32 raw bytes");
+  }
+  return createHash("sha256").update(publicKeyBytes).digest("hex");
+}
+
+export function parseCanonicalModerationPublicKey(publicKeyBytes) {
+  if (!Buffer.isBuffer(publicKeyBytes) || publicKeyBytes.length !== 43
+      || publicKeyBytes.includes(0x0a) || publicKeyBytes.includes(0x0d)
+      || publicKeyBytes.some((byte) => byte > 0x7f)) {
+    fail("moderation public key must be exactly 43 ASCII bytes without a newline");
+  }
+  const text = publicKeyBytes.toString("ascii");
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(text)) {
+    fail("moderation public key is not canonical base64url");
+  }
+  const decoded = Buffer.from(text, "base64url");
+  if (decoded.length !== 32 || decoded.toString("base64url") !== text) {
+    decoded.fill(0);
+    fail("moderation public key is not canonical base64url");
+  }
+  return decoded;
+}
+
+export function verifyReviewedModerationPrivateKey({
+  reviewedKeyId,
+  metadataKeyId,
+  privateKeyBytes,
+  companionPublicKeyBytes,
+  expectedPublicKeySHA256,
+} = {}) {
+  const reviewed = validateModerationKeyId(reviewedKeyId);
+  const metadata = validateModerationKeyId(metadataKeyId);
+  if (reviewed !== metadata) {
+    fail("reviewed moderation key ID does not match metadata");
+  }
+  const expectedFingerprint = validateExpectedPublicKeySHA256(expectedPublicKeySHA256);
+  let derivedPublic;
+  let companionPublic;
+  let expectedDigest;
+  let actualDigest;
+  try {
+    derivedPublic = deriveRawModerationPublicKey(privateKeyBytes);
+    companionPublic = parseCanonicalModerationPublicKey(companionPublicKeyBytes);
+    if (!timingSafeEqual(derivedPublic, companionPublic)) {
+      fail("moderation private key does not match its companion public key");
+    }
+    expectedDigest = Buffer.from(expectedFingerprint, "hex");
+    actualDigest = createHash("sha256").update(derivedPublic).digest();
+    if (!timingSafeEqual(expectedDigest, actualDigest)) {
+      fail("moderation public-key fingerprint does not match the reviewed value");
+    }
+    return Object.freeze({
+      keyId: reviewed,
+      publicKeySHA256: expectedFingerprint,
+    });
+  } finally {
+    derivedPublic?.fill(0);
+    companionPublic?.fill(0);
+    expectedDigest?.fill(0);
+    actualDigest?.fill(0);
+  }
 }
 
 function isPlainObject(value) {
@@ -199,7 +307,7 @@ export function validateModerationMetadata(value, { enforceCurrentWindow = true 
   if (!["objectionable", "harassment", "privacy", "other"].includes(value.reasonCode)) {
     fail("report reason is unsupported");
   }
-  if (value.moderationKeyId !== MODERATION_KEY_ID) fail("moderation key ID is unsupported");
+  validateModerationKeyId(value.moderationKeyId);
   if (!Number.isSafeInteger(value.ciphertextSize)
       || value.ciphertextSize < 29
       || value.ciphertextSize > MAXIMUM_REPORT_CIPHERTEXT_BYTES) {
@@ -748,7 +856,10 @@ export function readBoundedRegularFile(
   path,
   maximumBytes,
   description,
-  { requireOwnerOnly = false } = {},
+  {
+    requireOwnerOnly = false,
+    readFileFromDescriptor = readFileSync,
+  } = {},
 ) {
   requireSafeLocalPath(path);
   let before;
@@ -766,6 +877,8 @@ export function readBoundedRegularFile(
     fail(`${description} permissions are not owner-only`);
   }
   let descriptor;
+  let value;
+  let ownershipTransferred = false;
   try {
     descriptor = openSync(path, fsConstants.O_RDONLY | noFollowFlag());
     const opened = fstatSync(descriptor, { bigint: true });
@@ -777,14 +890,24 @@ export function readBoundedRegularFile(
         || (requireOwnerOnly && process.platform !== "win32" && (opened.mode & 0o077n) !== 0n)) {
       fail(`${description} changed while opening`);
     }
-    const value = readFileSync(descriptor);
+    const readValue = readFileFromDescriptor(descriptor);
+    if (!Buffer.isBuffer(readValue)) fail(`${description} cannot be read safely`);
+    value = readValue;
     if (BigInt(value.length) !== opened.size) fail(`${description} changed while reading`);
+    // Complete descriptor cleanup before transferring Buffer ownership. If
+    // close itself fails, the catch/finally path still clears the read bytes.
+    closeSync(descriptor);
+    descriptor = undefined;
+    ownershipTransferred = true;
     return value;
   } catch (error) {
     if (error instanceof ModerationToolError) throw error;
     fail(`${description} cannot be read safely`);
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    if (!ownershipTransferred) value?.fill(0);
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch { /* retain the first safe failure */ }
+    }
   }
 }
 
@@ -870,7 +993,7 @@ function canonicalAuditEventLine(event) {
     "ciphertextSHA256",
   ]);
   if (!AUDIT_EVENT_NAMES.has(event.event)) fail("audit event is invalid");
-  if (event.moderationKeyId !== MODERATION_KEY_ID
+  if (!MODERATION_KEY_IDS.includes(event.moderationKeyId)
       || typeof event.at !== "string"
       || Number.isNaN(Date.parse(event.at))
       || new Date(event.at).toISOString() !== event.at) {

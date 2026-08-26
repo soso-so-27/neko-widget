@@ -21,6 +21,73 @@ private let roomKey = Data((0..<32).map(UInt8.init))
 private let capturedAt = Date(timeIntervalSince1970: 1_777_777_777.125)
 private let jpeg = Data([0xFF, 0xD8]) + Data(repeating: 0x61, count: 1_024) + Data([0xFF, 0xD9])
 
+private struct ModerationEnvelopeFixture: Decodable {
+    let protocolVersion: Int
+    let moderationKeyID: String
+    let ephemeralPublicKey: Data
+    let ciphertext: Data
+}
+
+private struct ModerationPlaintextFixture: Decodable {
+    let protocolVersion: Int
+    let momentID: String
+    let reporterParticipantID: String
+    let reason: MomentReportReason
+    let capturedAt: Date?
+    let reportedAt: Date
+    let canonicalJPEG: Data
+}
+
+private func moderationCanonicalData(_ fields: [String]) -> Data {
+    var value = Data()
+    for field in fields {
+        let bytes = Data(field.utf8)
+        var count = UInt32(bytes.count).bigEndian
+        withUnsafeBytes(of: &count) { value.append(contentsOf: $0) }
+        value.append(bytes)
+    }
+    return value
+}
+
+private func openModerationReport(
+    _ report: MomentPreparedReport,
+    privateKey: Curve25519.KeyAgreement.PrivateKey,
+    expectedKeyID: String
+) throws -> ModerationPlaintextFixture {
+    let envelope = try PropertyListDecoder().decode(
+        ModerationEnvelopeFixture.self,
+        from: report.ciphertext
+    )
+    require(envelope.protocolVersion == MomentSharingProtocol.version,
+            "moderation envelope protocol changed")
+    require(envelope.moderationKeyID == expectedKeyID,
+            "moderation envelope lost its exact key ID")
+    let ephemeral = try Curve25519.KeyAgreement.PublicKey(
+        rawRepresentation: envelope.ephemeralPublicKey
+    )
+    let shared = try privateKey.sharedSecretFromKeyAgreement(with: ephemeral)
+    let aad = moderationCanonicalData([
+        "NW2.MODERATION-REPORT",
+        String(MomentSharingProtocol.version),
+        "moment_fixture",
+        "member_reporter",
+        MomentReportReason.privacy.rawValue,
+        expectedKeyID
+    ])
+    let key = shared.hkdfDerivedSymmetricKey(
+        using: SHA256.self,
+        salt: Data(SHA256.hash(data: aad)),
+        sharedInfo: Data("jp.nekowidget.moment.report.v1".utf8),
+        outputByteCount: 32
+    )
+    let sealed = try ChaChaPoly.SealedBox(combined: envelope.ciphertext)
+    let plaintext = try ChaChaPoly.open(sealed, using: key, authenticating: aad)
+    return try PropertyListDecoder().decode(
+        ModerationPlaintextFixture.self,
+        from: plaintext
+    )
+}
+
 private struct WindowNameProtocolFixture: Decodable {
     struct Record: Decodable {
         struct Expected: Decodable {
@@ -262,6 +329,59 @@ require(report.ciphertextSHA256 == Data(SHA256.hash(data: report.ciphertext)), "
 require(report.ciphertext.count <= MomentSharingProtocol.maximumObjectCiphertextBytes, "report cap failed")
 require(report.ciphertext.range(of: jpeg) == nil, "reported photo escaped moderation encryption")
 require(report.ciphertext.range(of: Data("moment_fixture".utf8)) == nil, "report identity escaped encryption")
+let openedV1Report = try openModerationReport(
+    report,
+    privateKey: moderationPrivateKey,
+    expectedKeyID: "moderation-v1"
+)
+require(openedV1Report.protocolVersion == MomentSharingProtocol.version,
+        "v1 report protocol did not round trip")
+require(openedV1Report.momentID == "moment_fixture",
+        "v1 report moment did not round trip")
+require(openedV1Report.reporterParticipantID == "member_reporter",
+        "v1 report reporter did not round trip")
+require(openedV1Report.reason == .privacy, "v1 report reason did not round trip")
+require(openedV1Report.capturedAt == capturedAt, "v1 report capture date did not round trip")
+require(openedV1Report.canonicalJPEG == jpeg, "v1 report media did not round trip")
+
+let moderationV2PrivateKey = Curve25519.KeyAgreement.PrivateKey()
+let reportV2 = try MomentReportCrypto.prepare(
+    canonicalJPEG: jpeg,
+    momentID: "moment_fixture",
+    reporterParticipantID: "member_reporter",
+    reason: .privacy,
+    capturedAt: capturedAt,
+    reportedAt: Date(timeIntervalSince1970: 1_777_888_999),
+    moderationKeyID: "moderation-v2",
+    moderationPublicKey: moderationV2PrivateKey.publicKey.rawRepresentation
+)
+let openedV2Report = try openModerationReport(
+    reportV2,
+    privateKey: moderationV2PrivateKey,
+    expectedKeyID: "moderation-v2"
+)
+require(reportV2.moderationKeyID == "moderation-v2", "v2 prepared report lost key ID")
+require(openedV2Report.canonicalJPEG == jpeg, "v2 report media did not round trip")
+require(openedV2Report.reportedAt == Date(timeIntervalSince1970: 1_777_888_999),
+        "v2 report timestamp did not round trip")
+
+for rejectedKeyID in ["", "moderation-v3", " moderation-v2", "moderation-v2 "] {
+    do {
+        _ = try MomentReportCrypto.prepare(
+            canonicalJPEG: jpeg,
+            momentID: "moment_fixture",
+            reporterParticipantID: "member_reporter",
+            reason: .privacy,
+            capturedAt: capturedAt,
+            reportedAt: Date(timeIntervalSince1970: 1_777_888_999),
+            moderationKeyID: rejectedKeyID,
+            moderationPublicKey: moderationPrivateKey.publicKey.rawRepresentation
+        )
+        fatalError("unreviewed moderation key was accepted: \(rejectedKeyID)")
+    } catch MomentSharingError.invalidPayload {
+        // Expected: only the two exact reviewed IDs are accepted.
+    }
+}
 
 let ownerCredential = PairingCrypto.makeCredential(
     installationMarker: UUID().uuidString,

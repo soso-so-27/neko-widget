@@ -15,6 +15,8 @@ function usage() {
     "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-drill-windows.ps1 \\",
     "    -KeyDirectory <existing-restricted-staging-key-directory> \\",
     "    -OutputDirectory <absolute-new-restricted-drill-directory> \\",
+    "    -ModerationKeyId <moderation-v1|moderation-v2> \\",
+    "    -ExpectedPublicKeySHA256 <reviewed-lowercase-hex> \\",
     "    -ConfirmLocalEncryptedNoSync",
     "",
     "This generator accepts a public key only. Production, network, deploy, upload, and runtime changes are prohibited.",
@@ -23,6 +25,8 @@ function usage() {
 
 export function parseArguments(argv) {
   let publicKeyFile;
+  let moderationKeyId;
+  let expectedPublicKeySHA256;
   let outputDirectory;
   let confirmed = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -32,7 +36,8 @@ export function parseArguments(argv) {
       confirmed = true;
       continue;
     }
-    if (option !== "--public-key-file" && option !== "--output-dir") {
+    if (!["--public-key-file", "--output-dir", "--moderation-key-id",
+      "--expected-public-key-sha256"].includes(option)) {
       throw new ModerationStagingDrillError("an unsupported option was supplied");
     }
     const next = argv[index + 1];
@@ -44,18 +49,41 @@ export function parseArguments(argv) {
         throw new ModerationStagingDrillError("public-key file was supplied more than once");
       }
       publicKeyFile = next;
-    } else {
+    } else if (option === "--output-dir") {
       if (outputDirectory !== undefined) {
         throw new ModerationStagingDrillError("output directory was supplied more than once");
       }
       outputDirectory = next;
+    } else if (option === "--moderation-key-id") {
+      if (moderationKeyId !== undefined) {
+        throw new ModerationStagingDrillError("moderation key ID was supplied more than once");
+      }
+      moderationKeyId = next;
+    } else {
+      if (expectedPublicKeySHA256 !== undefined) {
+        throw new ModerationStagingDrillError(
+          "expected public-key SHA-256 was supplied more than once",
+        );
+      }
+      expectedPublicKeySHA256 = next;
     }
     index += 1;
   }
-  if (publicKeyFile === undefined || outputDirectory === undefined) {
-    throw new ModerationStagingDrillError("public-key file and output directory are required");
+  if (publicKeyFile === undefined || outputDirectory === undefined
+      || !["moderation-v1", "moderation-v2"].includes(moderationKeyId)
+      || typeof expectedPublicKeySHA256 !== "string"
+      || !/^[0-9a-f]{64}$/u.test(expectedPublicKeySHA256)) {
+    throw new ModerationStagingDrillError(
+      "public-key file, output directory, exact key ID, and reviewed fingerprint are required",
+    );
   }
-  return { publicKeyFile, outputDirectory, confirmed };
+  return {
+    publicKeyFile,
+    outputDirectory,
+    moderationKeyId,
+    expectedPublicKeySHA256,
+    confirmed,
+  };
 }
 
 export function runCLI(
@@ -68,6 +96,8 @@ export function runCLI(
   const options = parseArguments(argv);
   generate({
     publicKeyFile: options.publicKeyFile,
+    moderationKeyId: options.moderationKeyId,
+    expectedPublicKeySHA256: options.expectedPublicKeySHA256,
     outputDirectory: options.outputDirectory,
     confirmLocalEncryptedNoSync: options.confirmed,
   });

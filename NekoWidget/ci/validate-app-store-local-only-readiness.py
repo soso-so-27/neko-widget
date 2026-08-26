@@ -48,19 +48,29 @@ EXPECTED_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/app/support/"
 EXPECTED_REPOSITORY = "soso-so-27/neko-widget"
 EXPECTED_WORKFLOW = ".github/workflows/testflight.yml"
 EXPECTED_ARCHIVE_VALIDATOR = "NekoWidget/ci/validate-sharing-release.py"
+EXPECTED_AUTHENTICATION_SCHEMA = "jp.nekowidget.signed-artifact-authentication.v2"
+EXPECTED_AUTHENTICATION_ALGORITHM = (
+    "PBKDF2-HMAC-SHA256-200000-RANDOM-SALT/HMAC-SHA256"
+)
 EXPECTED_APP_BUNDLE_ID = "jp.nekowidget.app"
 EXPECTED_ARTIFACT_FILENAME = "NekoWidget-signed-artifacts.tar.gz.enc"
 EXPECTED_PROCESSED_INFO_FILENAME = "NekoWidget-processed-app-info.plist"
+EXPECTED_RELEASE_METADATA_FILENAME = "moderation-release-metadata.json"
+EXPECTED_AUTHENTICATION_FILENAME = "signed-artifact-authentication.json"
 EXPECTED_EVIDENCE_FILENAME = "local-only-release-evidence.json"
 EXPECTED_BUNDLE_MEMBERS = {
     EXPECTED_EVIDENCE_FILENAME,
     EXPECTED_PROCESSED_INFO_FILENAME,
     EXPECTED_ARTIFACT_FILENAME,
+    EXPECTED_RELEASE_METADATA_FILENAME,
+    EXPECTED_AUTHENTICATION_FILENAME,
 }
 MINIMUM_SIGNED_ARTIFACT_BYTES = 1_000_000
 MAXIMUM_EVIDENCE_ZIP_BYTES = 2_000_000_000
 MAXIMUM_EVIDENCE_MANIFEST_BYTES = 256_000
 MAXIMUM_PROCESSED_INFO_BYTES = 1_000_000
+MAXIMUM_RELEASE_METADATA_BYTES = 1_000_000
+MAXIMUM_AUTHENTICATION_MANIFEST_BYTES = 1_000_000
 CONTACT_APPROVAL_MAX_AGE_DAYS = 90
 GITHUB_API_VERSION = "2022-11-28"
 CONTACT_READY_MARKER = "neko-app-store-contact-ready"
@@ -1256,6 +1266,8 @@ def validate_release_evidence(
     evidence_path: Path,
     signed_artifact_path: Path | None = None,
     processed_app_info_path: Path | None = None,
+    release_metadata_path: Path | None = None,
+    artifact_authentication_path: Path | None = None,
 ) -> list[str]:
     """Bind readiness to one real signed disabled archive at repository HEAD."""
     blockers: list[str] = []
@@ -1271,14 +1283,16 @@ def validate_release_evidence(
         "validations",
         "signed_artifact",
         "processed_app_info",
+        "release_metadata",
+        "artifact_authentication",
     }
     actual_top_keys = set(evidence)
     for key in sorted(expected_top_keys - actual_top_keys):
         blockers.append(f"release_evidence.{key}: missing")
     for key in sorted(actual_top_keys - expected_top_keys):
         blockers.append(f"release_evidence.{key}: unexpected field")
-    if evidence.get("schema_version") != 1:
-        blockers.append("release_evidence.schema_version: expected 1")
+    if evidence.get("schema_version") != 2:
+        blockers.append("release_evidence.schema_version: expected 2")
     if evidence.get("repository") != EXPECTED_REPOSITORY:
         blockers.append(
             f"release_evidence.repository: expected {EXPECTED_REPOSITORY}"
@@ -1491,7 +1505,7 @@ def validate_release_evidence(
     if not isinstance(processed, dict):
         blockers.append("release_evidence.processed_app_info: missing object")
         processed = {}
-    if set(processed) != {"filename", "sha256"}:
+    if set(processed) != {"filename", "sha256", "size_bytes"}:
         blockers.append(
             "release_evidence.processed_app_info: exact field contract does not match"
         )
@@ -1508,6 +1522,11 @@ def validate_release_evidence(
     if not info_path.is_file():
         blockers.append(f"processed_app_info_path: missing {info_path}")
     else:
+        actual_info_size = info_path.stat().st_size
+        if processed.get("size_bytes") != actual_info_size:
+            blockers.append(
+                "release_evidence.processed_app_info.size_bytes: actual file mismatch"
+            )
         actual_info_sha = sha256_file(info_path)
         if processed.get("sha256") != actual_info_sha:
             blockers.append(
@@ -1547,6 +1566,114 @@ def validate_release_evidence(
                 blockers.append(
                     f"processed_app_info.{key}: expected exact value {expected!r}"
                 )
+
+    bound_files = (
+        (
+            "release_metadata",
+            EXPECTED_RELEASE_METADATA_FILENAME,
+            release_metadata_path,
+        ),
+        (
+            "artifact_authentication",
+            EXPECTED_AUTHENTICATION_FILENAME,
+            artifact_authentication_path,
+        ),
+    )
+    for field, expected_filename, explicit_path in bound_files:
+        record = evidence.get(field)
+        if not isinstance(record, dict):
+            blockers.append(f"release_evidence.{field}: missing object")
+            record = {}
+        if set(record) != {"filename", "sha256", "size_bytes"}:
+            blockers.append(
+                f"release_evidence.{field}: exact field contract does not match"
+            )
+        if record.get("filename") != expected_filename:
+            blockers.append(
+                f"release_evidence.{field}.filename: expected {expected_filename}"
+            )
+        path = explicit_path or (evidence_path.parent / expected_filename)
+        if path.name != expected_filename:
+            blockers.append(f"{field}_path: filename does not match evidence")
+        if not path.is_file():
+            blockers.append(f"{field}_path: missing {path}")
+            continue
+        actual_size = path.stat().st_size
+        if record.get("size_bytes") != actual_size:
+            blockers.append(
+                f"release_evidence.{field}.size_bytes: actual file mismatch"
+            )
+        if record.get("sha256") != sha256_file(path):
+            blockers.append(f"release_evidence.{field}.sha256: actual file mismatch")
+
+    metadata_path = release_metadata_path or (
+        evidence_path.parent / EXPECTED_RELEASE_METADATA_FILENAME
+    )
+    authentication_path = artifact_authentication_path or (
+        evidence_path.parent / EXPECTED_AUTHENTICATION_FILENAME
+    )
+    if artifact_path.is_file() and metadata_path.is_file() and authentication_path.is_file():
+        def strict_auth_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            value: dict[str, Any] = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError(f"duplicate JSON key: {key}")
+                value[key] = item
+            return value
+
+        try:
+            authentication = json.loads(
+                authentication_path.read_text(encoding="utf-8"),
+                object_pairs_hook=strict_auth_object,
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+            blockers.append(
+                f"artifact_authentication_path: invalid JSON manifest: {error}"
+            )
+            authentication = {}
+        expected_authentication_fields = {
+            "schema",
+            "algorithm",
+            "kdfSalt",
+            "ciphertextFileName",
+            "ciphertextSize",
+            "ciphertextSha256",
+            "releaseMetadataFileName",
+            "releaseMetadataSize",
+            "releaseMetadataSha256",
+            "authenticationTag",
+        }
+        if not isinstance(authentication, dict) or set(authentication) != expected_authentication_fields:
+            blockers.append(
+                "artifact_authentication_path: exact field contract does not match"
+            )
+            authentication = {}
+        if authentication:
+            if authentication.get("schema") != EXPECTED_AUTHENTICATION_SCHEMA:
+                blockers.append("artifact_authentication_path: unsupported schema")
+            if authentication.get("algorithm") != EXPECTED_AUTHENTICATION_ALGORITHM:
+                blockers.append("artifact_authentication_path: unsupported algorithm")
+            if authentication.get("ciphertextFileName") != EXPECTED_ARTIFACT_FILENAME:
+                blockers.append("artifact_authentication_path: ciphertext filename mismatch")
+            if authentication.get("releaseMetadataFileName") != EXPECTED_RELEASE_METADATA_FILENAME:
+                blockers.append("artifact_authentication_path: metadata filename mismatch")
+            authentication_checks = (
+                ("ciphertextSize", artifact_path.stat().st_size),
+                ("ciphertextSha256", sha256_file(artifact_path)),
+                ("releaseMetadataSize", metadata_path.stat().st_size),
+                ("releaseMetadataSha256", sha256_file(metadata_path)),
+            )
+            for field, expected in authentication_checks:
+                if authentication.get(field) != expected:
+                    blockers.append(
+                        f"artifact_authentication_path.{field}: bound file mismatch"
+                    )
+            salt = authentication.get("kdfSalt")
+            if not isinstance(salt, str) or re.fullmatch(r"[A-Za-z0-9_-]{43}", salt) is None:
+                blockers.append("artifact_authentication_path.kdfSalt: invalid")
+            tag = authentication.get("authenticationTag")
+            if not isinstance(tag, str) or re.fullmatch(r"[0-9a-f]{64}", tag) is None:
+                blockers.append("artifact_authentication_path.authenticationTag: invalid")
 
     return blockers
 
@@ -1807,6 +1934,22 @@ def validate_evidence_bundle_zip(
                     "release_bundle.NekoWidget-processed-app-info.plist: "
                     "plist size is outside the fixed bound"
                 )
+            if (
+                info.filename == EXPECTED_RELEASE_METADATA_FILENAME
+                and not 1 <= info.file_size <= MAXIMUM_RELEASE_METADATA_BYTES
+            ):
+                blockers.append(
+                    "release_bundle.moderation-release-metadata.json: "
+                    "metadata size is outside the fixed bound"
+                )
+            if (
+                info.filename == EXPECTED_AUTHENTICATION_FILENAME
+                and not 1 <= info.file_size <= MAXIMUM_AUTHENTICATION_MANIFEST_BYTES
+            ):
+                blockers.append(
+                    "release_bundle.signed-artifact-authentication.json: "
+                    "authentication manifest size is outside the fixed bound"
+                )
             if info.filename == EXPECTED_ARTIFACT_FILENAME and not (
                 MINIMUM_SIGNED_ARTIFACT_BYTES
                 <= info.file_size
@@ -1858,6 +2001,8 @@ def validate_evidence_bundle_zip(
             evidence_path,
             extraction_root / EXPECTED_ARTIFACT_FILENAME,
             extraction_root / EXPECTED_PROCESSED_INFO_FILENAME,
+            extraction_root / EXPECTED_RELEASE_METADATA_FILENAME,
+            extraction_root / EXPECTED_AUTHENTICATION_FILENAME,
         )
     )
     return evidence, blockers

@@ -59,6 +59,12 @@ struct AppPublicLinksConfiguration: Equatable, Sendable {
 /// an extension must never turn an App Group or Keychain remnant into network
 /// authorization after an app reinstall.
 struct SharingAPIConfiguration: Equatable, Sendable {
+    // Deliberately fixed: adding an ID requires a reviewed app release.
+    private static let reviewedModerationKeyIDs: Set<String> = [
+        "moderation-v1",
+        "moderation-v2"
+    ]
+
     let isEnabled: Bool
     let isMediaEnabled: Bool
     let isShareExtensionHandoffEnabled: Bool
@@ -103,7 +109,7 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     var isAvailable: Bool { isEnabled && baseURL != nil }
 
     var hasOperationalSafetyConfiguration: Bool {
-        moderationKeyID == "moderation-v1"
+        moderationKeyID.map { Self.reviewedModerationKeyIDs.contains($0) } == true
             && moderationPublicKey?.count == 32
             && privacyURL != nil
             && supportURL != nil
@@ -156,7 +162,9 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         let baseURL = URL(string: rawURL).flatMap {
             publicHTTPSURL($0, requiresRootPath: true) ? $0 : nil
         }
-        let moderationKeyID = nonemptyString(info["SharingModerationKeyID"] as? String)
+        let moderationKeyID = exactNonemptyString(
+            info["SharingModerationKeyID"] as? String
+        )
         let moderationPublicKey = nonemptyString(
             info["SharingModerationPublicKey"] as? String
         ).flatMap(decodeCanonicalBase64URL)
@@ -184,6 +192,14 @@ struct SharingAPIConfiguration: Equatable, Sendable {
     private static func nonemptyString(_ value: String?) -> String? {
         let value = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
+    }
+
+    private static func exactNonemptyString(_ value: String?) -> String? {
+        guard let value,
+              !value.isEmpty,
+              value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return nil }
+        return value
     }
 
     private static func explicitFlag(_ value: Any?) -> Bool {

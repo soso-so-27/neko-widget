@@ -9,12 +9,13 @@ import {
 
 function usage() {
   return [
-    "Staging-only offline moderation key generation",
+    "Staging-only offline moderation-v2 key generation",
     "",
     "Windows (required wrapper):",
     "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/moderation-staging-keygen-windows.ps1 \\",
     "    -OutputDirectory <absolute-new-directory> -ConfirmLocalEncryptedNoSync",
     "",
+    "This fixed ceremony only creates the next unused moderation-v2 identity.",
     "Operational key generation is Windows-only; do not invoke this Node helper directly.",
   ].join("\n");
 }
@@ -60,7 +61,7 @@ export function runCLI(
     outputDirectory: options.outputDirectory,
     confirmLocalEncryptedNoSync: options.confirmed,
   });
-  stdout.write("Staging moderation key files were created with restricted access.\n");
+  stdout.write("Staging moderation-v2 key files were created with restricted access.\n");
 }
 
 const invokedDirectly = process.argv[1] !== undefined

@@ -181,6 +181,10 @@ blockと共有解除はpairing、鍵、一時的な「届いた写真」を破�
 | 端末A / iOS | `【Connect確認】` |
 | 端末B / iOS | `【Connect確認】` |
 | Version / Build / commit | `【Connect確認】` |
+| Release mode / environment | `【artifact metadata確認】` |
+| Moderation key ID（境界Bのみ） | tracked rollout policyの`clientKeyId`（現policyは`moderation-v1`）。`【artifact metadata確認】` |
+| Moderation public key SHA-256（境界Bのみ） | raw 32-byte public keyに対するlowercase 64文字hex。`【artifact metadata確認】` |
+| Moderation trust manifest revision（境界Bのみ） | `【artifact metadata確認】` |
 | 通常送受信の時刻 | `【Connect確認】` |
 | Widget表示 | `【OK / NG】` |
 | 通報queueと初回確認 | `【OK / NG / 提出停止】` |
@@ -372,6 +376,10 @@ App targetとShare Extensionの`ITSAppUsesNonExemptEncryption`は現在`false`�
 | 項目 | 値 |
 | --- | --- |
 | Version / Build / commit | `【Connect確認】` |
+| Release mode / environment | `【artifact metadata確認】` |
+| Moderation key ID（境界Bのみ） | tracked rollout policyの`clientKeyId`（現policyは`moderation-v1`）。`【artifact metadata確認】` |
+| Moderation public key SHA-256（境界Bのみ） | raw 32-byte public keyに対するlowercase 64文字hex。`【artifact metadata確認】` |
+| Moderation trust manifest revision（境界Bのみ） | `【artifact metadata確認】` |
 | 配布する国・地域 | `【本人入力】` |
 | App Store Connect質問と回答 | `【Connect確認】` |
 | exemptionの根拠 | `【本人入力 / 法務確認】` |
@@ -381,7 +389,12 @@ App targetとShare Extensionの`ITSAppUsesNonExemptEncryption`は現在`false`�
 | Info.plist最終値 | `【Connect確認】` |
 | 確認者／確認日 | `【本人入力】` |
 
-回答画面、承認文書、根拠は公開repositoryではなく、アクセス制御したrelease記録へ保存する。
+回答画面、承認文書、根拠は公開repositoryではなく、アクセス制御したrelease記録へ保存する。実在しない
+`moderation-v2` public key／fingerprintを推測で記録しない。境界Bのv2 clientはServer／offline Toolのv1＋v2
+dual対応とreview済みv2 trust entryを先に完了した後だけ提出できる。v2 clientを一度でも配布した後はclientを
+v1へ戻してもServer／Toolをv1-onlyへ戻さず、v1 retirementは全v1 lifecycleがretention／削除まで完了した
+別承認にする。詳細は[moderation runbook](../SharingService/MODERATION_RUNBOOK.md#moderation-v2-rotationの順序)を
+正本とする。
 
 ## 7. App Store Connect入力チェックリスト
 
@@ -438,6 +451,8 @@ Guideline 1.2の公開連絡先として機能させる。公開GitHub Issueだ�
 - [ ] `【Connect確認】` Privacy Policy URLがHTTPSで開く
 - [ ] `【Connect確認】` export compliance質問
 - [ ] `【Connect確認】` 必要な暗号化文書をbuildへattach
+- [ ] `【境界Bのみ・artifact確認 / AはN/A】` Version／Build、tracked rollout policyが選ぶkey ID（現policyは`moderation-v1`）、archive public key、算出SHA-256、trust manifest revisionが同じ`moderation-release-metadata.json`と一致
+- [ ] `【境界Bのv2のみ・提出停止 / AはN/A】` Server／offline Toolのdual対応、review済みv2 fingerprint、rollback／retirement手順がclientより先に完了
 - [ ] `【境界Bのみ・提出停止 / AはN/A】` Guideline 1.2のfilter、report、timely response、block、公開連絡先
 - [ ] `【境界Bのみ・提出停止 / AはN/A】` production moderationと独立緊急OFF
 

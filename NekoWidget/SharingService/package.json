@@ -7,14 +7,16 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "npm run typecheck && npm run check:staging-config && npm run check:notification-staging-status && npm run check:moderation-case-lifecycle && npm run check:moderation-staging-status && npm run check:selective-staging-off && npm run check:staging-runtime && npm run check:public-policy-site && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test",
+    "check": "npm run typecheck && npm run check:staging-config && npm run check:notification-staging-status && npm run check:moderation-case-lifecycle && npm run check:moderation-operator-control-plane && npm run check:moderation-evidence-ledger && npm run check:moderation-staging-status && npm run check:selective-staging-off && npm run check:staging-runtime && npm run check:public-policy-site && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test",
     "check:staging-config": "node --test scripts/staging-config.node-tests.mjs",
     "check:staging-runtime": "node --test test/staging-runtime-check.node-tests.mjs",
     "check:public-policy-site": "node --test test/public-policy-site-check.node-tests.mjs",
-    "check:moderation-tool": "node --test test/moderation-report-tool.node-tests.mjs",
+    "check:moderation-tool": "node --test test/moderation-report-tool.node-tests.mjs test/moderation-report-windows-boundary.node-tests.mjs",
     "check:moderation-keygen": "node --test test/moderation-staging-keygen.node-tests.mjs",
     "check:moderation-drill": "node --test test/moderation-staging-drill.node-tests.mjs",
     "check:moderation-case-lifecycle": "node --test test/moderation-case-lifecycle.node-tests.mjs",
+    "check:moderation-operator-control-plane": "node --test test/moderation-operator-control-plane.node-tests.mjs",
+    "check:moderation-evidence-ledger": "node --test test/moderation-evidence-ledger.node-tests.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

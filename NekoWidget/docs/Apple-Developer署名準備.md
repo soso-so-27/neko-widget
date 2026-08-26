@@ -480,7 +480,7 @@ Build 36のActions artifact `nekowidget-signed-artifacts-32680522092-1`（ID `95
 - [x] PR24〜PR28をmainへ統合し、main `df7c7acf7747e9673f8269dd67763845ab9960e2`とCI run `32679594269`を記録
 - [x] Build 36を固定済みmain SHAから`release_mode = disabled`、`upload_to_testflight = false`、`retain_signed_artifacts = true`で署名dry runし、archive/privacy/entitlement検査を確認
 - [x] Build 36の暗号化artifactをprivate領域へdownloadし、20,142,112 bytesとSHA-256を確認して復号せず保管
-- [ ] 所有者gate完了後、最終`disabled` buildを`upload_to_testflight = true`で実行し、固定3 memberのlocal-only release evidenceを確認
+- [ ] 所有者gate完了後、最終`disabled` buildを`upload_to_testflight = true`で実行し、固定5 memberのlocal-only release evidenceを確認
 
 ## 公式資料
 

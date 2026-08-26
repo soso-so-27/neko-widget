@@ -733,6 +733,12 @@ struct MomentPreparedReport: Equatable, Sendable {
 /// Produces a separate, short-lived report copy for the moderation public key.
 /// The family room key and the Worker cannot decrypt this envelope.
 enum MomentReportCrypto {
+    // Deliberately fixed: the key ID is authenticated as part of the AAD.
+    private static let reviewedModerationKeyIDs: Set<String> = [
+        "moderation-v1",
+        "moderation-v2"
+    ]
+
     private struct Plaintext: Codable {
         var protocolVersion: Int = MomentSharingProtocol.version
         let momentID: String
@@ -764,7 +770,7 @@ enum MomentReportCrypto {
               canonicalJPEG.count <= MomentSharingProtocol.maximumMediaCiphertextBytes - 28,
               isOpaqueIdentifier(momentID),
               isOpaqueIdentifier(reporterParticipantID),
-              moderationKeyID == "moderation-v1",
+              reviewedModerationKeyIDs.contains(moderationKeyID),
               moderationPublicKey.count == 32
         else { throw MomentSharingError.invalidPayload }
 

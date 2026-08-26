@@ -185,25 +185,27 @@ DNSがprivate、loopback、link-local等へ解決される場合も`RED`にな�
 `release_mode=disabled`、`upload_to_testflight=true`、`retain_signed_artifacts=true`として完走させる。
 workflowはTestFlight upload成功後に、最終証拠を一つのActions artifact
 `nekowidget-local-only-release-evidence-<run>-<attempt>`へまとめる。そのartifact ZIPのrootは次の
-3 memberだけである。
+5 memberだけである。
 
 - `local-only-release-evidence.json`: workflow dispatch inputs、run／attempt／SHA、検証結果、各hash
 - `NekoWidget-processed-app-info.plist`: archive内Appの処理済みInfo.plist
 - `NekoWidget-signed-artifacts.tar.gz.enc`: 同じrunで生成した暗号化済み署名archive／IPA
+- `moderation-release-metadata.json`: archive／IPA、build、release modeを束縛するmetadata
+- `signed-artifact-authentication.json`: 暗号文とrelease metadataを一緒に認証するmanifest
 
 成功runでの`retain_signed_artifacts=true`のartifact matrixは次で固定する。
 
 | release mode | TestFlight upload | 生成するartifact | local-only提出証拠 |
 | --- | --- | --- | --- |
-| `disabled` | `true` | `nekowidget-local-only-release-evidence-<run>-<attempt>`だけ（上記3 member） | 候補。残りの全gateも必要 |
+| `disabled` | `true` | `nekowidget-local-only-release-evidence-<run>-<attempt>`だけ（上記5 member） | 候補。残りの全gateも必要 |
 | `disabled` | `false` | 従来の`nekowidget-signed-artifacts-<run>-<attempt>`だけ | 不可。Build dry-runの保管専用 |
 | `disabled`以外 | `true`または`false` | 従来の`nekowidget-signed-artifacts-<run>-<attempt>`だけ | 不可。別release境界 |
 
 `disabled`かつTestFlight uploadありのrunがupload、evidence writer、またはevidence artifact保存で失敗した
-場合は、復旧調査用として暗号化済みarchiveを
+場合は、復旧調査用として暗号化済みarchive、release metadata、authentication manifestの認証済み3点を
 `nekowidget-failed-local-only-signed-artifacts-<run>-<attempt>`へ保存するよう試みる。署名archive生成前の
-失敗ではfileが存在しないためwarningだけを残す。このfallback artifactは成功したTestFlight uploadと固定3
-memberの証拠bundleを示さず、validatorも最終提出証拠として受け付けない。
+失敗、3点の欠落、または認証不一致では何も保存せずwarningだけを残す。このfallback artifactは成功した
+TestFlight uploadと固定5 memberの証拠bundleを示さず、validatorも最終提出証拠として受け付けない。
 
 `retain_signed_artifacts=false`かつuploadなしではartifactを保存しない。TestFlight uploadを選んで
 `retain_signed_artifacts=false`にしたrunは、対応archiveを保存できないためworkflowが拒否する。
@@ -211,7 +213,7 @@ memberの証拠bundleを示さず、validatorも最終提出証拠として受�
 所有者はActions画面で最終runとartifactを選び、IDを`local-only-owner-input.json`の
 `selected_github_run_id`と`selected_github_artifact_id`へ記録する。validatorへ3つのlocal fileを渡す
 optionはない。validator自身がGitHub APIから選択済みartifact ZIPを認証downloadし、APIのsizeと
-SHA-256 digestをdownload byteへ照合してから、固定3 memberだけを安全に展開する。認証には
+SHA-256 digestをdownload byteへ照合してから、固定5 memberだけを安全に展開する。認証には
 `gh auth login`済みのGitHub CLI、またはActions artifactのreadに必要な最小権限だけを持つ
 `GH_TOKEN`／`GITHUB_TOKEN`を使う。tokenを文書、JSON、command line、repositoryへ保存しない。
 

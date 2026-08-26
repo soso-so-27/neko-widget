@@ -25,6 +25,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 REPOSITORY = PROJECT.parent
 SCRIPT = PROJECT / "ci" / "validate-app-store-local-only-readiness.py"
 WRITER = PROJECT / "ci" / "write-local-only-release-evidence.py"
+AUTHENTICATION_TOOL = PROJECT / "ci" / "signed-artifact-authentication.py"
 MANIFEST = PROJECT / "docs" / "app-store" / "local-only-ja.json"
 OWNER_EXAMPLE = PROJECT / "docs" / "app-store" / "local-only-owner-input.example.json"
 CONTACT_EXAMPLE = PROJECT / "docs" / "app-store" / "local-only-contact-approval.example.json"
@@ -157,9 +158,31 @@ def processed_info_bytes(build_number: str = "36") -> bytes:
     )
 
 
+def release_metadata_bytes() -> bytes:
+    return b'{"schema":"jp.nekowidget.moderation-release-metadata.v2"}\n'
+
+
+def authentication_manifest_bytes(encrypted: bytes, metadata: bytes) -> bytes:
+    value = {
+        "schema": "jp.nekowidget.signed-artifact-authentication.v2",
+        "algorithm": "PBKDF2-HMAC-SHA256-200000-RANDOM-SALT/HMAC-SHA256",
+        "kdfSalt": "A" * 43,
+        "ciphertextFileName": VALIDATOR.EXPECTED_ARTIFACT_FILENAME,
+        "ciphertextSize": len(encrypted),
+        "ciphertextSha256": hashlib.sha256(encrypted).hexdigest(),
+        "releaseMetadataFileName": VALIDATOR.EXPECTED_RELEASE_METADATA_FILENAME,
+        "releaseMetadataSize": len(metadata),
+        "releaseMetadataSha256": hashlib.sha256(metadata).hexdigest(),
+        "authenticationTag": "b" * 64,
+    }
+    return (json.dumps(value, sort_keys=True) + "\n").encode("utf-8")
+
+
 def evidence_fixture(source_commit: str, encrypted: bytes, info: bytes) -> dict:
+    metadata = release_metadata_bytes()
+    authentication = authentication_manifest_bytes(encrypted, metadata)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": "2026-08-23T12:00:00Z",
         "repository": "soso-so-27/neko-widget",
         "source_commit": source_commit,
@@ -200,6 +223,17 @@ def evidence_fixture(source_commit: str, encrypted: bytes, info: bytes) -> dict:
         "processed_app_info": {
             "filename": VALIDATOR.EXPECTED_PROCESSED_INFO_FILENAME,
             "sha256": hashlib.sha256(info).hexdigest(),
+            "size_bytes": len(info),
+        },
+        "release_metadata": {
+            "filename": VALIDATOR.EXPECTED_RELEASE_METADATA_FILENAME,
+            "sha256": hashlib.sha256(metadata).hexdigest(),
+            "size_bytes": len(metadata),
+        },
+        "artifact_authentication": {
+            "filename": VALIDATOR.EXPECTED_AUTHENTICATION_FILENAME,
+            "sha256": hashlib.sha256(authentication).hexdigest(),
+            "size_bytes": len(authentication),
         },
     }
 
@@ -219,6 +253,14 @@ def write_bundle(
         )
         archive.writestr(VALIDATOR.EXPECTED_PROCESSED_INFO_FILENAME, info)
         archive.writestr(VALIDATOR.EXPECTED_ARTIFACT_FILENAME, encrypted)
+        archive.writestr(
+            VALIDATOR.EXPECTED_RELEASE_METADATA_FILENAME,
+            release_metadata_bytes(),
+        )
+        archive.writestr(
+            VALIDATOR.EXPECTED_AUTHENTICATION_FILENAME,
+            authentication_manifest_bytes(encrypted, release_metadata_bytes()),
+        )
         if extra_member:
             archive.writestr("unrelated.txt", "not allowed")
     return output
@@ -1039,6 +1081,31 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
             inputs.mkdir()
             artifact = inputs / VALIDATOR.EXPECTED_ARTIFACT_FILENAME
             artifact.write_bytes(b"signed-encrypted-archive\0" * 50_000)
+            release_metadata = inputs / VALIDATOR.EXPECTED_RELEASE_METADATA_FILENAME
+            release_metadata.write_bytes(release_metadata_bytes())
+            authentication = inputs / VALIDATOR.EXPECTED_AUTHENTICATION_FILENAME
+            authentication_environment = dict(os.environ)
+            authentication_environment["SIGNED_ARTIFACT_ENCRYPTION_PASSWORD"] = (
+                "local-only-test-password-32-bytes"
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(AUTHENTICATION_TOOL),
+                    "create",
+                    "--ciphertext",
+                    str(artifact),
+                    "--metadata",
+                    str(release_metadata),
+                    "--output",
+                    str(authentication),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env=authentication_environment,
+            )
             source_info = inputs / "archive-app-info.plist"
             source_info.write_bytes(processed_info_bytes())
             event_path = inputs / "event.json"
@@ -1069,6 +1136,9 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
                     "GITHUB_REPOSITORY": "soso-so-27/neko-widget",
                     "GITHUB_REF": "refs/heads/main",
                     "GITHUB_EVENT_PATH": str(event_path),
+                    "SIGNED_ARTIFACT_ENCRYPTION_PASSWORD": (
+                        "local-only-test-password-32-bytes"
+                    ),
                 }
             )
             result = subprocess.run(
@@ -1081,6 +1151,10 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
                     str(source_info),
                     "--artifact",
                     str(artifact),
+                    "--release-metadata",
+                    str(release_metadata),
+                    "--artifact-authentication",
+                    str(authentication),
                     "--output-directory",
                     str(output),
                     "--source-commit",
@@ -1121,6 +1195,56 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
             self.assertEqual("36", evidence["ci_run"]["inputs"]["requested_build_number"])
             self.assertTrue(evidence["ci_run"]["inputs"]["upload_to_testflight"])
 
+            original_metadata = release_metadata.read_bytes()
+            release_metadata.write_bytes(original_metadata + b" ")
+            mismatched_authentication = subprocess.run(
+                [
+                    sys.executable,
+                    str(WRITER),
+                    "--repository",
+                    str(REPOSITORY),
+                    "--info-plist",
+                    str(source_info),
+                    "--artifact",
+                    str(artifact),
+                    "--release-metadata",
+                    str(release_metadata),
+                    "--artifact-authentication",
+                    str(authentication),
+                    "--output-directory",
+                    str(temporary / "rejected-authentication"),
+                    "--source-commit",
+                    head,
+                    "--version",
+                    "1.0",
+                    "--build-number",
+                    "36",
+                    "--release-mode",
+                    "disabled",
+                    "--run-id",
+                    "123456789",
+                    "--run-attempt",
+                    "1",
+                    "--event",
+                    "workflow_dispatch",
+                    "--upload-to-testflight",
+                    "true",
+                    "--retain-signed-artifacts",
+                    "true",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env=environment,
+            )
+            self.assertNotEqual(0, mismatched_authentication.returncode)
+            self.assertIn(
+                "Signed artifact authentication must pass",
+                mismatched_authentication.stderr,
+            )
+            release_metadata.write_bytes(original_metadata)
+
             event = json.loads(event_path.read_text(encoding="utf-8"))
             event["inputs"]["release_mode"] = "media-staging"
             event_path.write_text(json.dumps(event), encoding="utf-8")
@@ -1134,6 +1258,10 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
                     str(source_info),
                     "--artifact",
                     str(artifact),
+                    "--release-metadata",
+                    str(release_metadata),
+                    "--artifact-authentication",
+                    str(authentication),
                     "--output-directory",
                     str(temporary / "rejected"),
                     "--source-commit",
@@ -1177,6 +1305,10 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
                     str(source_info),
                     "--artifact",
                     str(artifact),
+                    "--release-metadata",
+                    str(release_metadata),
+                    "--artifact-authentication",
+                    str(authentication),
                     "--output-directory",
                     str(temporary / "rejected-upload"),
                     "--source-commit",
@@ -1217,6 +1349,10 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
                     str(source_info),
                     "--artifact",
                     str(artifact),
+                    "--release-metadata",
+                    str(release_metadata),
+                    "--artifact-authentication",
+                    str(authentication),
                     "--output-directory",
                     str(temporary / "rejected-dry-run"),
                     "--source-commit",
@@ -1276,12 +1412,16 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         upload_index = release_workflow.index("Validate and upload IPA to TestFlight")
         writer_index = release_workflow.index("Write local-only signed release evidence")
         final_bundle_index = release_workflow.index("Upload local-only signed release evidence")
+        failure_stage_index = release_workflow.index(
+            "Stage authenticated local-only evidence after failure"
+        )
         failure_archive_index = release_workflow.index(
-            "Preserve encrypted local-only archive after failure"
+            "Preserve authenticated local-only evidence after failure"
         )
         self.assertLess(upload_index, writer_index)
         self.assertLess(writer_index, final_bundle_index)
-        self.assertLess(final_bundle_index, failure_archive_index)
+        self.assertLess(final_bundle_index, failure_stage_index)
+        self.assertLess(failure_stage_index, failure_archive_index)
         self.assertIn(
             "if: ${{ failure() && inputs.retain_signed_artifacts && "
             "inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}",
@@ -1293,6 +1433,12 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
             release_workflow,
         )
         self.assertIn("if-no-files-found: warn", release_workflow)
+        self.assertIn(
+            "failed-local-only-authenticated-evidence/", release_workflow
+        )
+        self.assertIn(
+            '"$ciphertext" "$metadata" "$authentication"', release_workflow
+        )
         writer = WRITER.read_text(encoding="utf-8")
         self.assertIn('os.environ.get("GITHUB_EVENT_PATH")', writer)
         self.assertIn('"GITHUB_REF": "refs/heads/main"', writer)
@@ -1305,7 +1451,7 @@ class AppStoreLocalOnlyReadinessTests(unittest.TestCase):
         self.assertIn("selected_github_run_id", readme)
         self.assertIn("selected_github_artifact_id", readme)
         self.assertIn("validator自身がGitHub API", readme)
-        self.assertIn("固定3 member", readme)
+        self.assertIn("固定5 member", readme)
         self.assertIn("Build dry-runの保管専用", readme)
         self.assertIn("validatorも`nekowidget-signed-artifacts-*`", readme)
         self.assertIn("`<a href>`", readme)

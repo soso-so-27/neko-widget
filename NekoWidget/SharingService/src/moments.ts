@@ -77,7 +77,7 @@ const d1CASTupleChunkSize = 48;
 const allowedClientModerationVersions = new Set([1]);
 const allowedSenderPolicyVersions = new Set([1]);
 const allowedReporterConsentVersions = new Set([1]);
-const allowedModerationKeyIDs = new Set(["moderation-v1"]);
+const allowedModerationKeyIDs = new Set(["moderation-v1", "moderation-v2"]);
 
 type MomentKind = "live" | "memory" | "bootstrap";
 type MomentState = "reserved" | "uploaded" | "committed" | "expired" | "deleted";
@@ -2166,7 +2166,7 @@ export async function reserveMomentReport(request: Request, env: Env): Promise<R
     );
     moderationKeyID = stringField(object, "moderationKeyId");
     if (!allowedModerationKeyIDs.has(moderationKeyID)) {
-      throw new ApiError(409, "moderation_key_required", "The current moderation key is required.");
+      throw new ApiError(409, "moderation_key_required", "A reviewed moderation key is required.");
     }
     ciphertextSize = integerField(
       object,

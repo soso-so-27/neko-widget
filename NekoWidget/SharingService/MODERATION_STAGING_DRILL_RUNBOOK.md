@@ -1,6 +1,7 @@
 # staging通報鍵の合成復号・削除drill runbook
 
-この手順は、本人所有2台だけのstaging用`moderation-v1`鍵pairが、Swift互換の合成通報を
+この手順は、review済みstaging用`moderation-v1`または`moderation-v2`鍵pairが、選択したexact key IDと
+review済みpublic-key SHA-256へbindされた状態でSwift互換の合成通報を
 暗号化・復号でき、human review後にplaintext、receipt、ciphertextをdescriptor-boundで削除できることを
 確認するoffline drillである。Production鍵、第三者の写真、通常の家族共有写真には使用しない。
 
@@ -33,21 +34,25 @@ Networkを切断し、同期・browser・Codexを閉じる前に本手順を紙�
 `<...>`はoperatorが確認したabsolute pathへ置き換える。
 
 ```powershell
-& .\scripts\moderation-staging-drill-windows.ps1 -KeyDirectory '<existing-restricted-staging-key-directory>' -OutputDirectory '<absolute-new-restricted-drill-directory>' -ConfirmLocalEncryptedNoSync
+& .\scripts\moderation-staging-drill-windows.ps1 -KeyDirectory '<existing-restricted-staging-key-directory>' -OutputDirectory '<absolute-new-restricted-drill-directory>' -ModerationKeyId '<moderation-v1-or-moderation-v2>' -ExpectedPublicKeySHA256 '<reviewed-lowercase-64-hex>' -ConfirmLocalEncryptedNoSync
 ```
 
 Wrapperは最初に次をfail-closedで検証する。
 
 - 管理者、fixed local NTFS、BitLocker full／On／100%／Unlocked
-- 鍵directory、公開鍵file、秘密鍵fileのfixed name／size／single-link／属性／exact protected ACL
+- 鍵directory、公開鍵file、秘密鍵fileと、v2では追加のpublic fingerprint fileについて、selected IDに
+  対応するfixed name／size／single-link／属性／exact protected ACL
 - 全ancestorのowner／replacement rights、canonical実体path、repository／profile／TEMP／sync除外
 - 新規かつ別のdrill directoryとexact restricted ACL
 
 Windows検証は秘密鍵fileの**内容を読み取らず**、固定名、32-byte size、file identity、link count、属性、ACLだけを
-確認する。Node generatorへ渡すのは固定の公開鍵file pathだけで、Node generatorが内容を開くのも
-`moderation-v1.public.base64url`だけである。Private-key option、stdin、environment、network入力は存在しない。
+確認する。Node generatorへ渡すのはselected IDに対応する固定の公開鍵file path、exact key ID、明示した
+review済みfingerprintだけである。Node generatorが鍵file内容を開くのは`<key-id>.public.base64url`だけで、
+private-key option、stdin、environment、network入力は存在しない。Public keyから算出したSHA-256が明示値と
+一致しなければbundleを作らない。
 
-Generatorは固定の合成1x1 RGB JPEG、固定opaque fixture ID、`privacy` reason、現在の7日windowだけを使う。
+Generatorは固定の合成1x1 RGB JPEG、固定opaque fixture ID、`privacy` reason、selected moderation key ID、
+現在の7日windowだけを使う。
 撮影写真、thumbnail、EXIF、GPS、comment、ICC等を入力できない。毎回fresh ephemeral X25519 keyと12-byte nonceを
 作り、Swiftと同じlength-prefixed AAD、HKDF-SHA256、ChaChaPoly combined、binary plist envelopeを生成する。
 
@@ -69,11 +74,12 @@ Codex、remote support、screen share中の担当者に実行させず、鍵値�
 同じoffline・管理者Windows PowerShellで次を一行で実行する。
 
 ```powershell
-& .\scripts\moderation-staging-drill-review-windows.ps1 -Mode DecryptForHumanReview -KeyDirectory '<existing-restricted-staging-key-directory>' -DrillDirectory '<restricted-drill-directory>' -ConfirmLocalEncryptedNoSync -ConfirmSyntheticStagingOnly
+& .\scripts\moderation-staging-drill-review-windows.ps1 -Mode DecryptForHumanReview -ModerationKeyId '<moderation-v1-or-moderation-v2>' -PrivateKeyPath '<existing-restricted-key-directory>\<same-key-id>.private.raw' -ExpectedPublicKeySHA256 '<reviewed-lowercase-64-hex>' -DrillDirectory '<restricted-drill-directory>' -ConfirmLocalEncryptedNoSync -ConfirmSyntheticStagingOnly
 ```
 
-Wrapperは鍵directoryと2-file bundleを再検証し、既存
-Toolへ秘密鍵pathを渡す**前**に、manifestがfixed synthetic ID／`privacy`／`moderation-v1`／current windowであり、
+Wrapperはprivate-key filenameからselected IDと鍵directoryをexactに固定して鍵directoryと2-file bundleを
+再検証し、既存Toolへ秘密鍵pathを渡す**前**に、manifestがfixed synthetic ID／`privacy`／selected exact
+key ID／current windowであり、
 ciphertext size/hashと一致することをsemantic検証する。Fixed name／size／ACLだけではsyntheticと判定しない。
 その後に既存
 `scripts/moderation-report-tool.mjs decrypt`へ固定pathだけを渡す。Toolはmanifest、hash、retention、binary plist、
@@ -103,7 +109,7 @@ receiptがそのJPEGとdescriptorへbinding済み、auditがexact `decrypt_succe
 Human view完了後だけ、次を一行で実行する。
 
 ```powershell
-& .\scripts\moderation-staging-drill-review-windows.ps1 -Mode DeleteAfterHumanReview -DrillDirectory '<restricted-drill-directory>' -ConfirmLocalEncryptedNoSync -ConfirmHumanReviewCompleteAndDelete
+& .\scripts\moderation-staging-drill-review-windows.ps1 -Mode DeleteAfterHumanReview -ModerationKeyId '<same-key-id>' -PrivateKeyPath '<existing-restricted-key-directory>\<same-key-id>.private.raw' -ExpectedPublicKeySHA256 '<same-reviewed-lowercase-64-hex>' -DrillDirectory '<restricted-drill-directory>' -ConfirmLocalEncryptedNoSync -ConfirmHumanReviewCompleteAndDelete
 ```
 
 Wrapperは既存Toolの`delete`を二回使う。
@@ -123,7 +129,8 @@ ciphertextが存在せず、auditが次のexact順序・同一descriptor identit
 5. `local_ciphertext_deleted`
 
 残るmetadataとauditは画像や鍵を含まないdrill evidenceである。承認済みsecurity audit retentionに従い、
-同じ暗号化local volume上で保持または二人承認で閉じる。汎用delete commandへ秘密鍵を渡さない。
+同じ暗号化local volume上で保持または二人承認で閉じる。Delete時もToolはkey ID、固定名private path、companion
+public file、review済みfingerprintを再照合するが、秘密鍵file自体を削除対象にしない。
 
 ## 中断・失敗時
 

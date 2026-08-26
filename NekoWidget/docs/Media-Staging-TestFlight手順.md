@@ -25,13 +25,30 @@ Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネ�
 | Variable | 要件 |
 |---|---|
 | `SHARING_STAGING_API_ORIGIN` | 公開DNSで解決できるHTTPS origin。credential、path、query、fragmentなし |
-| `SHARING_STAGING_MODERATION_KEY_ID` | `moderation-v1`とexact一致 |
+| `SHARING_STAGING_MODERATION_KEY_ID` | 現在は`moderation-v1`とexact一致。v2 client releaseはrotation runbook完了後だけ |
 | `SHARING_STAGING_MODERATION_PUBLIC_KEY` | 32 byteのcanonical base64url public key |
+| `SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST` | review済み非secret JSON。`schema`、`environment=testflight`、正の整数`revision`、`keys` mapだけを持ち、`moderation-v1` entryを必須とする |
 | `SHARING_STAGING_PRIVACY_URL` | 公開HTTPSのprivacy policy URL |
 | `SHARING_STAGING_SUPPORT_URL` | 公開HTTPSのsupport URL |
 | `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | 公開HTTPSのcommunity standards URL |
 
-空欄、placeholder、localhost、IP直書き、HTTP、非canonical keyは署名処理前に失敗します。archive後はprocessed App/Share Extension `Info.plist`のmode、5つのflag、API origin、moderation設定、3つの公開URLをEnvironmentの入力とexact比較します。
+Fingerprintはcanonical base64urlをdecodeした32-byte raw X25519 public keyのSHA-256をlowercase 64文字hexで
+記録します。Manifestはbuild番号を含めず長期固定し、例えば値の形だけを示すと
+`{"schema":"jp.nekowidget.moderation-key-trust.v1","environment":"testflight","revision":1,"keys":{"moderation-v1":"<review済みlowercase 64文字hex>"}}`
+です。実在しないv2 public key／fingerprintを推測で追加しません。現在のTestFlight／App Store candidateは
+`moderation-v1`のままです。repositoryでreviewする`ci/moderation-client-rollout-policy.json`がkey ID、raw public
+key SHA-256、trust manifest revision／canonical hashを固定し、現policyはv2 client releaseを明示的に拒否します。
+EnvironmentのID／public key／manifestだけをv2へ揃えても署名前にfail closedします。
+
+空欄、前後空白、unsupported key ID、fingerprintの欠落／大文字／不一致、placeholder、localhost、IP直書き、
+HTTP、非canonical keyは署名処理前に失敗します。Archive後はprocessed App/Share Extension `Info.plist`のmode、
+5つのflag、API origin、moderation設定、3つの公開URL、Version／BuildをEnvironment入力とexact比較します。
+選択key ID、public key、算出fingerprint、manifest revision／canonical hash、rollout policy revision／canonical
+hash、GitHub run ID／attempt、xcarchive／IPA digestは非secret`moderation-release-metadata.json`へ記録されます。
+暗号化signed artifactは同じpasswordから別domainで導出したHMACでも認証し、ciphertext／metadataの片方だけが
+差し替わった場合はverificationをfail closedします。
+Rotation／rollback／retirementの順序は[moderation runbook](../SharingService/MODERATION_RUNBOOK.md#moderation-v2-rotationの順序)を
+正本とします。
 
 ## privacyと同意gate
 
@@ -156,7 +173,7 @@ PR24〜PR28はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`へ統合済みで�
 
 ## 次のrelease candidateでも残るもの（2026-08-25更新）
 
-1. production moderation鍵の複数人バックアップ・rotation・破棄、強い運用者認証、通報判断・異議申立て・早期削除を含む一般公開の安全運用。report-ingestionの独立flag／候補config／local dry-runと識別子を含まない集計statusまでは実装済みだが、少数件もexact表示する運用出力であり、事前固定versionをactive-version条件付きで切り替える外部実停止、production訓練、担当者運用は未完了
+1. production moderation鍵の複数人バックアップ・rotation・破棄、強い運用者認証、通報判断・異議申立て・早期削除を含む一般公開の安全運用。report-ingestionの独立flag／候補config／local dry-runと、既知の非secret key ID別を含むがreport／利用者／端末識別子を含まない集計statusまでは実装済みである。少数件もexact表示する運用出力であり、事前固定versionをactive-version条件付きで切り替える外部実停止、production訓練、担当者運用は未完了
 2. hostile imageの隔離decode／再encode、production D1/R2、負荷試験、監視、App Store ConnectのPrivacy回答・審査メモ・審査用導線
 3. 通常APNs通知は実装済み。Apple DeveloperのPush Notifications有効化、production APNs entitlement入り配布profile、APNs Auth Key、本人用staging WorkerのAPNs秘密値登録までは完了している。残るのは`0011`を含む対象D1 migration、新Worker deploy、識別子を含まない集計status確認、production APNs実機smoke、一般配布環境ごとの資格情報・停止訓練である。これらを満たすまでは一般向けTestFlightへ配布しない。iOS 18を含むWidget更新はbest effortであり、WidgetKit専用pushは後続releaseとする
 4. 複数まどの通常操作と、通知許可・共有同意が有効な認証済み全まどへの通常APNs登録は実装済み。非activeまどのpushはactiveまどを切り替えたり同期したりWidgetを更新したりせず、利用者が通知をタップした場合だけopaqueな宛先を照合して対象まどへ移動・同期する。通知をタップしなくても非activeまどを背景同期し、そのまどを選んだWidgetまで更新する処理は後続releaseとする

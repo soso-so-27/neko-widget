@@ -29,6 +29,7 @@ import {
   MODERATION_ALGORITHM,
   MODERATION_ENVELOPE_DOMAIN,
   MODERATION_EXPORT_SCHEMA,
+  readBoundedRegularFile,
 } from "../scripts/moderation-report-lib.mjs";
 
 // Synthetic test-only X25519 seeds. These are not production key material.
@@ -47,6 +48,16 @@ const FIXTURE_EPHEMERAL_PRIVATE_KEY = Buffer.from(
 const X25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 const TOOL = fileURLToPath(new URL("../scripts/moderation-report-tool.mjs", import.meta.url));
+const WINDOWS_PORTABLE_CLI_SKIP_REASON = [
+  "portable CLI fixtures use arbitrary temporary filenames and intentionally do not bypass",
+  "the mandatory Windows BitLocker/NTFS/exact-ACL boundary; Ubuntu CI runs this full suite",
+].join(" ");
+
+function portableCliTest(name, fn) {
+  return test(name, {
+    skip: process.platform === "win32" ? WINDOWS_PORTABLE_CLI_SKIP_REASON : false,
+  }, fn);
+}
 
 function byteWidth(value) {
   if (value <= 0xff) return 1;
@@ -187,6 +198,7 @@ function canonicalJPEG() {
 
 function createBundle({
   jpeg = canonicalJPEG(),
+  moderationKeyId = "moderation-v1",
   metadataOverrides = {},
   envelopeOverrides = {},
   plaintextOverrides = {},
@@ -195,7 +207,7 @@ function createBundle({
     momentId: "moment_fixture",
     reporterParticipantId: "member_reporter",
     reasonCode: "privacy",
-    moderationKeyId: "moderation-v1",
+    moderationKeyId,
   };
   const aad = canonicalFields([
     MODERATION_ENVELOPE_DOMAIN,
@@ -266,15 +278,21 @@ function workspace(bundle = createBundle(), key = FIXTURE_RECIPIENT_PRIVATE_KEY)
     directory,
     metadata: join(directory, "metadata.json"),
     ciphertext: join(directory, "report.ciphertext"),
-    key: join(directory, "fixture-private-key.bin"),
+    key: join(directory, `${bundle.metadata.moderationKeyId}.private.raw`),
+    publicKey: join(directory, `${bundle.metadata.moderationKeyId}.public.base64url`),
     output: join(directory, "review.jpg"),
     receipt: join(directory, "review.jpg.receipt"),
     audit: join(directory, "audit.jsonl"),
+    moderationKeyId: bundle.metadata.moderationKeyId,
   };
   writeFileSync(paths.metadata, `${JSON.stringify(bundle.metadata)}\n`, { mode: 0o600 });
   writeFileSync(paths.ciphertext, bundle.envelope, { mode: 0o600 });
   writeFileSync(paths.key, key, { mode: 0o600 });
+  const publicRaw = rawX25519Public(key);
+  paths.expectedPublicKeySHA256 = createHash("sha256").update(publicRaw).digest("hex");
+  writeFileSync(paths.publicKey, publicRaw.toString("base64url"), { mode: 0o600 });
   chmodSync(paths.key, 0o600);
+  chmodSync(paths.publicKey, 0o600);
   return { bundle, paths };
 }
 
@@ -284,7 +302,9 @@ function runDecrypt(paths, extra = []) {
     "decrypt",
     "--metadata", paths.metadata,
     "--ciphertext", paths.ciphertext,
+    "--moderation-key-id", paths.moderationKeyId,
     "--private-key", paths.key,
+    "--expected-public-key-sha256", paths.expectedPublicKeySHA256,
     "--output", paths.output,
     "--audit-log", paths.audit,
     ...extra,
@@ -303,6 +323,9 @@ function runDelete(paths, {
     "--metadata", paths.metadata,
     "--file", file,
     "--kind", kind,
+    "--moderation-key-id", paths.moderationKeyId,
+    "--private-key", paths.key,
+    "--expected-public-key-sha256", paths.expectedPublicKeySHA256,
     "--audit-log", audit,
     "--confirm-delete",
   ];
@@ -314,7 +337,38 @@ function cleanup(directory) {
   rmSync(directory, { recursive: true, force: true });
 }
 
-test("decrypts a synthetic Swift-compatible envelope without logging secrets", () => {
+test("zeros a bounded-read buffer on a post-read size failure but transfers it on success", () => {
+  const directory = mkdtempSync(join(tmpdir(), "neko-moderation-read-zero-"));
+  const path = join(directory, "moderation-v1.private.raw");
+  writeFileSync(path, Buffer.alloc(32, 0x11), { mode: 0o600 });
+  chmodSync(path, 0o600);
+
+  const failedRead = Buffer.alloc(31, 0xa5);
+  const successfulRead = Buffer.alloc(32, 0x5a);
+  try {
+    assert.throws(
+      () => readBoundedRegularFile(path, 32, "private key file", {
+        requireOwnerOnly: true,
+        readFileFromDescriptor: () => failedRead,
+      }),
+      /changed while reading/u,
+    );
+    assert.deepEqual(failedRead, Buffer.alloc(failedRead.length));
+
+    const returned = readBoundedRegularFile(path, 32, "private key file", {
+      requireOwnerOnly: true,
+      readFileFromDescriptor: () => successfulRead,
+    });
+    assert.strictEqual(returned, successfulRead);
+    assert.deepEqual(returned, Buffer.alloc(returned.length, 0x5a));
+  } finally {
+    failedRead.fill(0);
+    successfulRead.fill(0);
+    cleanup(directory);
+  }
+});
+
+portableCliTest("decrypts a synthetic Swift-compatible envelope without logging secrets", () => {
   const item = workspace();
   try {
     const result = runDecrypt(item.paths);
@@ -328,16 +382,7 @@ test("decrypts a synthetic Swift-compatible envelope without logging secrets", (
     assert.equal(audit.length, 1);
     assert.equal(audit[0].event, "decrypt_succeeded");
 
-    const deleted = spawnSync(process.execPath, [
-      TOOL,
-      "delete",
-      "--metadata", item.paths.metadata,
-      "--file", item.paths.output,
-      "--kind", "plaintext",
-      "--receipt", item.paths.receipt,
-      "--audit-log", item.paths.audit,
-      "--confirm-delete",
-    ], { encoding: "utf8" });
+    const deleted = runDelete(item.paths);
     assert.equal(deleted.status, 0, deleted.stderr);
     assert.equal(existsSync(item.paths.output), false);
     assert.equal(existsSync(item.paths.receipt), false);
@@ -356,7 +401,131 @@ test("decrypts a synthetic Swift-compatible envelope without logging secrets", (
   }
 });
 
-test("optionally deletes the downloaded ciphertext only after validated output", () => {
+portableCliTest("reviews and deletes an existing moderation-v2 artifact with an explicit key identity", () => {
+  const item = workspace(createBundle({ moderationKeyId: "moderation-v2" }));
+  try {
+    const decrypted = runDecrypt(item.paths);
+    assert.equal(decrypted.status, 0, decrypted.stderr);
+    assert.deepEqual(readFileSync(item.paths.output), item.bundle.jpeg);
+    const deleted = runDelete(item.paths);
+    assert.equal(deleted.status, 0, deleted.stderr);
+    assert.equal(existsSync(item.paths.output), false);
+  } finally {
+    cleanup(item.paths.directory);
+  }
+});
+
+portableCliTest("checks the reviewed key ID before any private-key path access", () => {
+  const item = workspace();
+  try {
+    const missingPrivate = join(item.paths.directory, "moderation-v2.private.raw");
+    const result = spawnSync(process.execPath, [
+      TOOL,
+      "decrypt",
+      "--metadata", item.paths.metadata,
+      "--ciphertext", item.paths.ciphertext,
+      "--moderation-key-id", "moderation-v2",
+      "--private-key", missingPrivate,
+      "--expected-public-key-sha256", "0".repeat(64),
+      "--output", item.paths.output,
+      "--audit-log", item.paths.audit,
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /reviewed moderation key ID does not match metadata/u);
+    assert.doesNotMatch(result.stderr, /private key file/u);
+  } finally {
+    cleanup(item.paths.directory);
+  }
+});
+
+portableCliTest("rejects unknown, whitespace, and non-canonical reviewed key inputs", async (suite) => {
+  for (const [name, option, value, pattern] of [
+    ["unknown ID", "--moderation-key-id", "moderation-v3", /key ID is unsupported/u],
+    ["whitespace ID", "--moderation-key-id", " moderation-v1", /key ID is unsupported/u],
+    ["uppercase fingerprint", "--expected-public-key-sha256", "A".repeat(64), /not canonical lowercase hex/u],
+  ]) {
+    await suite.test(name, () => {
+      const item = workspace();
+      try {
+        const args = [
+          TOOL,
+          "decrypt",
+          "--metadata", item.paths.metadata,
+          "--ciphertext", item.paths.ciphertext,
+          "--moderation-key-id", item.paths.moderationKeyId,
+          "--private-key", item.paths.key,
+          "--expected-public-key-sha256", item.paths.expectedPublicKeySHA256,
+          "--output", item.paths.output,
+          "--audit-log", item.paths.audit,
+        ];
+        const index = args.indexOf(option);
+        args[index + 1] = value;
+        const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, pattern);
+        assert.equal(existsSync(item.paths.output), false);
+      } finally {
+        cleanup(item.paths.directory);
+      }
+    });
+  }
+});
+
+portableCliTest("requires private, companion-public, and reviewed fingerprint identities to agree", async (suite) => {
+  await suite.test("reviewed fingerprint mismatch", () => {
+    const item = workspace();
+    try {
+      item.paths.expectedPublicKeySHA256 = "0".repeat(64);
+      const result = runDecrypt(item.paths);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /fingerprint does not match/u);
+      assert.equal(existsSync(item.paths.output), false);
+    } finally { cleanup(item.paths.directory); }
+  });
+  await suite.test("companion public key mismatch", () => {
+    const item = workspace();
+    try {
+      writeFileSync(
+        item.paths.publicKey,
+        rawX25519Public(FIXTURE_WRONG_PRIVATE_KEY).toString("base64url"),
+        { mode: 0o600 },
+      );
+      const result = runDecrypt(item.paths);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /does not match its companion public key/u);
+      assert.equal(existsSync(item.paths.output), false);
+    } finally { cleanup(item.paths.directory); }
+  });
+  await suite.test("replacing both local key files cannot replace the reviewed identity", () => {
+    const item = workspace();
+    try {
+      writeFileSync(item.paths.key, FIXTURE_WRONG_PRIVATE_KEY, { mode: 0o600 });
+      writeFileSync(
+        item.paths.publicKey,
+        rawX25519Public(FIXTURE_WRONG_PRIVATE_KEY).toString("base64url"),
+        { mode: 0o600 },
+      );
+      const result = runDecrypt(item.paths);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /fingerprint does not match/u);
+      assert.equal(existsSync(item.paths.output), false);
+    } finally { cleanup(item.paths.directory); }
+  });
+  await suite.test("delete fails closed on a reviewed fingerprint mismatch", () => {
+    const item = workspace();
+    try {
+      assert.equal(runDecrypt(item.paths).status, 0);
+      item.paths.expectedPublicKeySHA256 = "0".repeat(64);
+      const result = runDelete(item.paths);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /fingerprint does not match/u);
+      assert.equal(existsSync(item.paths.output), true);
+      assert.equal(existsSync(item.paths.receipt), true);
+    } finally { cleanup(item.paths.directory); }
+  });
+});
+
+portableCliTest("optionally deletes the downloaded ciphertext only after validated output", () => {
   const item = workspace();
   try {
     const result = runDecrypt(item.paths, ["--delete-ciphertext-after-success"]);
@@ -379,13 +548,13 @@ test("optionally deletes the downloaded ciphertext only after validated output",
   }
 });
 
-test("refuses to delete a private key even when a genuine review receipt is supplied", () => {
+portableCliTest("refuses to delete a private key even when a genuine review receipt is supplied", () => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
     const result = runDelete(item.paths, { file: item.paths.key });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /JPEG|review receipt/u);
+    assert.match(result.stderr, /JPEG|review receipt|paths must be distinct/u);
     assert.equal(existsSync(item.paths.key), true);
     assert.equal(existsSync(item.paths.output), true);
     assert.equal(existsSync(item.paths.receipt), true);
@@ -394,7 +563,7 @@ test("refuses to delete a private key even when a genuine review receipt is supp
   }
 });
 
-test("refuses to delete an arbitrary bounded file as ciphertext", () => {
+portableCliTest("refuses to delete an arbitrary bounded file as ciphertext", () => {
   const item = workspace();
   try {
     const result = runDelete(item.paths, {
@@ -403,7 +572,7 @@ test("refuses to delete an arbitrary bounded file as ciphertext", () => {
       receipt: undefined,
     });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /ciphertext (file size|SHA-256) does not match/u);
+    assert.match(result.stderr, /ciphertext (file size|SHA-256) does not match|paths must be distinct/u);
     assert.equal(existsSync(item.paths.key), true);
     assert.equal(existsSync(item.paths.ciphertext), true);
   } finally {
@@ -411,7 +580,7 @@ test("refuses to delete an arbitrary bounded file as ciphertext", () => {
   }
 });
 
-test("refuses plaintext deletion when its review receipt is altered", () => {
+portableCliTest("refuses plaintext deletion when its review receipt is altered", () => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -429,7 +598,7 @@ test("refuses plaintext deletion when its review receipt is altered", () => {
   }
 });
 
-test("does not delete an artifact when the deletion-start audit cannot be written", () => {
+portableCliTest("does not delete an artifact when the deletion-start audit cannot be written", () => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -443,7 +612,7 @@ test("does not delete an artifact when the deletion-start audit cannot be writte
   }
 });
 
-test("does not delete an artifact after a partial audit-log record", () => {
+portableCliTest("does not delete an artifact after a partial audit-log record", () => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -464,7 +633,7 @@ test("does not delete an artifact after a partial audit-log record", () => {
   }
 });
 
-test("does not create plaintext when receipt file creation fails", () => {
+portableCliTest("does not create plaintext when receipt file creation fails", () => {
   const item = workspace();
   try {
     // 250 bytes fits a normal filename component, while the appended
@@ -484,7 +653,7 @@ test("does not create plaintext when receipt file creation fails", () => {
   }
 });
 
-test("refuses automatic resume from an ambiguous receipt-only state", () => {
+portableCliTest("refuses automatic resume from an ambiguous receipt-only state", () => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -500,7 +669,7 @@ test("refuses automatic resume from an ambiguous receipt-only state", () => {
   }
 });
 
-test("refuses future output and audit paths that alias through a directory link", (context) => {
+portableCliTest("refuses future output and audit paths that alias through a directory link", (context) => {
   const item = workspace();
   try {
     const realDirectory = join(item.paths.directory, "real");
@@ -528,7 +697,7 @@ test("refuses future output and audit paths that alias through a directory link"
   }
 });
 
-test("refuses hidden Windows alternate-stream and reserved-device paths", (context) => {
+portableCliTest("refuses hidden Windows alternate-stream and reserved-device paths", (context) => {
   if (process.platform !== "win32") {
     context.skip("Windows path namespaces are not present on this platform");
     return;
@@ -555,7 +724,7 @@ test("refuses hidden Windows alternate-stream and reserved-device paths", (conte
   }
 });
 
-test("refuses deletion while the target has another hard link", (context) => {
+portableCliTest("refuses deletion while the target has another hard link", (context) => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -576,7 +745,7 @@ test("refuses deletion while the target has another hard link", (context) => {
   }
 });
 
-test("refuses deletion when the audit log has another hard link", (context) => {
+portableCliTest("refuses deletion when the audit log has another hard link", (context) => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -597,7 +766,7 @@ test("refuses deletion when the audit log has another hard link", (context) => {
   }
 });
 
-test("refuses a private key input that has an undisclosed hard link", (context) => {
+portableCliTest("refuses a private key input that has an undisclosed hard link", (context) => {
   const item = workspace();
   try {
     const alias = join(item.paths.directory, "key-copy.bin");
@@ -618,7 +787,7 @@ test("refuses a private key input that has an undisclosed hard link", (context) 
   }
 });
 
-test("rejects a ciphertext whose stored SHA-256 descriptor is wrong", () => {
+portableCliTest("rejects a ciphertext whose stored SHA-256 descriptor is wrong", () => {
   const item = workspace();
   try {
     item.bundle.envelope[20] ^= 0x01;
@@ -632,7 +801,7 @@ test("rejects a ciphertext whose stored SHA-256 descriptor is wrong", () => {
   }
 });
 
-test("rejects an expired or non-seven-day report export window", async (suite) => {
+portableCliTest("rejects an expired or non-seven-day report export window", async (suite) => {
   const now = Math.floor(Date.now() / 1_000);
   await suite.test("expired", () => {
     const committedAt = now - (8 * 86_400);
@@ -666,7 +835,7 @@ test("rejects an expired or non-seven-day report export window", async (suite) =
   });
 });
 
-test("still deletes a locally reviewed artifact after its server content window closes", () => {
+portableCliTest("still deletes a locally reviewed artifact after its server content window closes", () => {
   const item = workspace();
   try {
     assert.equal(runDecrypt(item.paths).status, 0);
@@ -683,7 +852,7 @@ test("still deletes a locally reviewed artifact after its server content window 
   }
 });
 
-test("rejects authenticated-envelope tampering even if metadata hash is replaced", () => {
+portableCliTest("rejects authenticated-envelope tampering even if metadata hash is replaced", () => {
   const bundle = createBundle();
   const nonceOffset = bundle.envelope.indexOf(Buffer.from("000102030405060708090a0b", "hex"));
   assert.ok(nonceOffset >= 0);
@@ -702,7 +871,7 @@ test("rejects authenticated-envelope tampering even if metadata hash is replaced
   }
 });
 
-test("rejects the wrong moderation private key", () => {
+portableCliTest("rejects the wrong moderation private key", () => {
   const item = workspace(createBundle(), FIXTURE_WRONG_PRIVATE_KEY);
   try {
     const result = runDecrypt(item.paths);
@@ -714,7 +883,7 @@ test("rejects the wrong moderation private key", () => {
   }
 });
 
-test("rejects an AAD identity mismatch even when the stored hash is valid", () => {
+portableCliTest("rejects an AAD identity mismatch even when the stored hash is valid", () => {
   const bundle = createBundle();
   bundle.metadata.reasonCode = "harassment";
   const item = workspace(bundle);
@@ -728,7 +897,7 @@ test("rejects an AAD identity mismatch even when the stored hash is valid", () =
   }
 });
 
-test("rejects envelope and plaintext protocol or key identifier changes", async (suite) => {
+portableCliTest("rejects envelope and plaintext protocol or key identifier changes", async (suite) => {
   await suite.test("envelope protocol", () => {
     const item = workspace(createBundle({ envelopeOverrides: { protocolVersion: 3 } }));
     try {
@@ -755,7 +924,7 @@ test("rejects envelope and plaintext protocol or key identifier changes", async 
   });
 });
 
-test("rejects APP metadata in a decrypted JPEG", () => {
+portableCliTest("rejects APP metadata in a decrypted JPEG", () => {
   const clean = canonicalJPEG();
   const privateAPP1 = Buffer.from([0xff, 0xe1, 0x00, 0x04, 0x01, 0x02]);
   const jpeg = Buffer.concat([clean.subarray(0, 2), privateAPP1, clean.subarray(2)]);
@@ -770,7 +939,7 @@ test("rejects APP metadata in a decrypted JPEG", () => {
   }
 });
 
-test("rejects an oversized downloaded object before parsing", () => {
+portableCliTest("rejects an oversized downloaded object before parsing", () => {
   const item = workspace();
   try {
     writeFileSync(item.paths.ciphertext, Buffer.alloc(MAXIMUM_REPORT_CIPHERTEXT_BYTES + 1, 0x41));
@@ -783,7 +952,7 @@ test("rejects an oversized downloaded object before parsing", () => {
   }
 });
 
-test("rejects duplicate manifest keys instead of accepting JSON last-write-wins", () => {
+portableCliTest("rejects duplicate manifest keys instead of accepting JSON last-write-wins", () => {
   const item = workspace();
   try {
     const metadata = readFileSync(item.paths.metadata, "utf8").trim();
@@ -799,7 +968,7 @@ test("rejects duplicate manifest keys instead of accepting JSON last-write-wins"
   }
 });
 
-test("refuses an audit path that aliases a sensitive input", (context) => {
+portableCliTest("refuses an audit path that aliases a sensitive input", (context) => {
   const item = workspace();
   try {
     try {
@@ -810,7 +979,7 @@ test("refuses an audit path that aliases a sensitive input", (context) => {
     }
     const result = runDecrypt(item.paths);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /must not be hard links/u);
+    assert.match(result.stderr, /must not be hard links|metadata file is not a bounded regular file/u);
     assert.equal(existsSync(item.paths.output), false);
   } finally {
     cleanup(item.paths.directory);
@@ -834,7 +1003,7 @@ test("synthetic fixture constants stay aligned with Swift and Worker contracts",
   assert.match(worker, /export const MOMENT_PROTOCOL_VERSION = 2 as const/u);
   assert.match(worker, /export const MAXIMUM_MOMENT_CIPHERTEXT_BYTES = 1024 \* 1024/u);
   assert.match(worker, /const minimumAEADCiphertextBytes = 29/u);
-  assert.match(worker, /const allowedModerationKeyIDs = new Set\(\["moderation-v1"\]\)/u);
+  assert.match(worker, /const allowedModerationKeyIDs = new Set\(\["moderation-v1", "moderation-v2"\]\)/u);
   assert.match(worker, /row\.ciphertext_size !== body\.length \|\| row\.ciphertext_sha256 !== digestValue/u);
   assert.match(
     toolSource,

@@ -67,13 +67,28 @@ Environment Variablesには次を置く。
 | --- | --- |
 | `SHARING_STAGING_API_ORIGIN` | `pairing-only`または`media-staging`だけに注入するstaging Workerの公開HTTPS origin。末尾path、query、placeholder、localhost、IP直書きは不可 |
 | `SHARING_EXPORT_REVIEWED` | pairing暗号を含むbuildの輸出コンプライアンス確認後だけ`YES` |
-| `SHARING_STAGING_MODERATION_KEY_ID` | `media-staging`用の公開moderation key ID |
+| `SHARING_STAGING_MODERATION_KEY_ID` | `media-staging`用の公開moderation key ID。現在の配布済み／提出候補buildは`moderation-v1`のまま |
 | `SHARING_STAGING_MODERATION_PUBLIC_KEY` | `media-staging`用の公開moderation key。秘密鍵はEnvironmentへ置かない |
+| `SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST` | review済み非secret JSON。exact `schema`、`environment=testflight`、正の整数`revision`、`keys` mapのみ。v1 entry必須、v2 entry任意 |
 | `SHARING_STAGING_PRIVACY_URL` | `media-staging`用の公開HTTPS Privacy Policy URL |
 | `SHARING_STAGING_SUPPORT_URL` | `media-staging`用の公開HTTPS Support URL |
 | `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | `media-staging`用の公開HTTPS Community Standards URL |
 
-これらのstaging値は`Config.xcconfig`やソースへ書かない。`testflight` Environmentを`main`だけに制限し、workflowが`pairing-only`または`media-staging`を選んだ場合だけ必要な値をarchiveへ注入する。未設定、不正な公開origin、placeholder URL、非canonical keyは署名処理前に失敗し、processed Info.plistでも再検査する。
+これらのstaging値は`Config.xcconfig`やソースへ書かない。Trust manifestのfingerprintはcanonical base64urlを
+decodeした32-byte raw X25519 public keyのSHA-256、lowercase 64文字hexであり、秘密値ではない。Manifestに
+build番号は入れない。v2の実在するreview済みpublic key／fingerprintがない現在はv2 entryを追加せず、v2選択を
+fail closedさせる。例に実fingerprintや推測値を書かない。さらにrepositoryでreviewする
+`ci/moderation-client-rollout-policy.json`が、選択key ID／raw public key SHA-256／trust manifest revision／
+canonical manifest SHA-256を固定する。現policyの`v2ClientReleaseAllowed`は`false`であり、Environment値だけを
+自己整合させてもv2 clientは作れない。新しいEnvironment variableを追加する方式ではない。
+
+`testflight` Environmentを`main`だけに制限し、workflowが`pairing-only`または`media-staging`を選んだ場合だけ
+必要な値をarchiveへ注入する。未設定、前後空白、unsupported key ID、fingerprint欠落／大文字／不一致、不正な
+公開origin、placeholder URL、非canonical keyは署名処理前に失敗し、processed Info.plistでも再検査する。
+各archiveではrelease environment、Version／Build、commit、選択key ID、public key、算出fingerprint、manifest
+revision／canonical hash、rollout policy revision／canonical hash、GitHub run ID／attempt、xcarchive content digest、
+IPA digestを`moderation-release-metadata.json`へ記録する。このmetadataは非secretだがrelease証跡としてsigned
+artifactと同じアクセス制御・retentionで保管する。
 
 macOSで改行なしのBase64文字列をクリップボードへ入れる例：
 
@@ -142,7 +157,13 @@ Build 28だけは`release_mode = pairing-only`、`build_number = 28`を明示す
 
 TestFlight自体は1つのbuildを端末台数で強制制限できないため、Build 28は2台を使う内部testerだけへ割り当て、他のtester groupへ追加しない。2台で「まどを作る → 招待コードを渡す → 12語を照合 → 承認 → ペアリング済み → 設定から解除」を確認する。このBuildでは写真を保存・送信しないため、共有シートからのhandoff、写真の送受信、R2 object作成は合格条件に含めず、発生した場合は失敗とする。
 
-Xcode result bundleとexport診断は14日間artifactへ保存する。`retain_signed_artifacts = true`の場合、IPAと、dSYMを内包するxcarchiveを1つのAES-256-CBC/PBKDF2暗号化artifactとして14日間保存する。復号パスワードはGitHubから後で表示できないため、必ず別のパスワードマネージャーに保存する。配布buildと一致するxcarchive／dSYMは14日以内に復号し、privateな保管場所へ退避する。無署名ビルドのresult bundleは7日間保存する。
+Xcode result bundleとexport診断は14日間artifactへ保存する。`retain_signed_artifacts = true`の場合、IPA、dSYMを
+内包するxcarchive、`moderation-release-metadata.json`を1つのAES-256-CBC/PBKDF2暗号化bundleとして14日間
+保存する。さらに同じpasswordから別domainで導出したHMAC-SHA256で暗号文と独立metadataを一緒に認証し、
+`signed-artifact-authentication.json`を同じartifactへ含める。復号や証跡利用の前にauthentication verifierを
+通す。同じartifactに非secret metadataも独立fileとして含める。復号パスワードはGitHubから後で表示できない
+ため、必ず別のパスワードマネージャーに保存する。配布buildと一致するxcarchive／dSYM／metadataは14日以内に
+privateな保管場所へ退避する。無署名ビルドのresult bundleは7日間保存する。
 
 現行の`altool`経路はIPAだけをAppleへ送るため、dSYMの明示uploadによるApple側自動symbolicationは保証しない。暗号化xcarchiveの保管を必須とし、必要時は復号してローカルsymbolicationに使う。
 

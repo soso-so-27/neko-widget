@@ -1,4 +1,5 @@
 import {
+  createHash,
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
@@ -34,9 +35,10 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const MODERATION_STAGING_KEY_ID = "moderation-v1";
-export const MODERATION_PRIVATE_FILENAME = "moderation-v1.private.raw";
-export const MODERATION_PUBLIC_FILENAME = "moderation-v1.public.base64url";
+export const MODERATION_STAGING_KEY_ID = "moderation-v2";
+export const MODERATION_PRIVATE_FILENAME = "moderation-v2.private.raw";
+export const MODERATION_PUBLIC_FILENAME = "moderation-v2.public.base64url";
+export const MODERATION_PUBLIC_FINGERPRINT_FILENAME = "moderation-v2.public.sha256";
 
 export const X25519_PKCS8_PREFIX = Buffer.from(
   "302e020100300506032b656e04220420",
@@ -50,6 +52,7 @@ export const X25519_SPKI_PREFIX = Buffer.from(
 const PROVIDER_COMPONENT = /^(?:onedrive(?:\s*-\s*.+)?|dropbox(?:\s*\(.+\))?|icloud(?:\s+drive)?|google\s*drive|googledrive|box(?:\s+sync)?|pcloud|nextcloud)$/iu;
 const WINDOWS_RESERVED_COMPONENT = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/iu;
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 
 export class ModerationKeygenError extends Error {
   constructor(message) {
@@ -142,6 +145,17 @@ export function canonicalPublicKeyText(publicRaw) {
   } finally {
     decoded?.fill(0);
   }
+}
+
+export function canonicalPublicKeyFingerprint(publicRaw) {
+  if (!Buffer.isBuffer(publicRaw) || publicRaw.length !== 32) {
+    fail("X25519 public key must be exactly 32 raw bytes");
+  }
+  const fingerprint = createHash("sha256").update(publicRaw).digest("hex");
+  if (!/^[0-9a-f]{64}$/u.test(fingerprint)) {
+    fail("X25519 public-key fingerprint is not canonical lowercase hex");
+  }
+  return fingerprint;
 }
 
 export function generateRawX25519KeyPair() {
@@ -573,15 +587,19 @@ export function createKeyFilesInValidatedDirectory(
   let directoryCreated = false;
   let privateFile;
   let publicFile;
+  let fingerprintFile;
   let pair;
   let privateReadback;
   let derivedReadbackPublic;
   let publicBytes;
+  let fingerprintBytes;
   let publicReadback;
+  let fingerprintReadback;
   let directoryIdentity;
   let success = false;
   const privatePath = join(outputDirectory, MODERATION_PRIVATE_FILENAME);
   const publicPath = join(outputDirectory, MODERATION_PUBLIC_FILENAME);
+  const fingerprintPath = join(outputDirectory, MODERATION_PUBLIC_FINGERPRINT_FILENAME);
   try {
     if (!validated.prepared) {
       mkdirSync(outputDirectory, { recursive: false, mode: 0o700 });
@@ -600,9 +618,11 @@ export function createKeyFilesInValidatedDirectory(
       fail("key directory must be a new empty real directory");
     }
 
-    // Reserve both names before generating any key material. This makes a
+    // Reserve every fixed name before generating any key material. This makes a
     // collision/race fail without ever creating a private key.
     publicFile = openExclusiveFile(publicPath, platform);
+    verifyDirectoryIdentity(outputDirectory, directoryIdentity);
+    fingerprintFile = openExclusiveFile(fingerprintPath, platform);
     verifyDirectoryIdentity(outputDirectory, directoryIdentity);
     privateFile = openExclusiveFile(privatePath, platform);
     verifyDirectoryIdentity(outputDirectory, directoryIdentity);
@@ -624,6 +644,11 @@ export function createKeyFilesInValidatedDirectory(
     if (publicBytes.length !== 43 || publicBytes.includes(0x0a) || publicBytes.includes(0x0d)) {
       fail("public key output is not exactly 43 bytes without a newline");
     }
+    fingerprintBytes = Buffer.from(canonicalPublicKeyFingerprint(pair.publicRaw), "ascii");
+    if (fingerprintBytes.length !== 64
+        || !/^[0-9a-f]{64}$/u.test(fingerprintBytes.toString("ascii"))) {
+      fail("public-key fingerprint output is not exactly 64 lowercase hex bytes");
+    }
 
     // Public first and private last: a crash cannot leave an apparently
     // usable public value unless the private write was the final data write.
@@ -632,37 +657,59 @@ export function createKeyFilesInValidatedDirectory(
       fail("public key output could not be written completely");
     }
     fsyncSync(publicFile.descriptor);
+    if (writeSync(
+      fingerprintFile.descriptor,
+      fingerprintBytes,
+      0,
+      fingerprintBytes.length,
+      0,
+    ) !== fingerprintBytes.length) {
+      fail("public-key fingerprint output could not be written completely");
+    }
+    fsyncSync(fingerprintFile.descriptor);
     if (writeSync(privateFile.descriptor, pair.privateRaw, 0, 32, 0) !== 32) {
       fail("private key output could not be written completely");
     }
     fsyncSync(privateFile.descriptor);
     verifyFile(publicFile.descriptor, 43, platform);
+    verifyFile(fingerprintFile.descriptor, 64, platform);
     verifyFile(privateFile.descriptor, 32, platform);
     verifyPathIdentity(publicPath, publicFile.identity);
+    verifyPathIdentity(fingerprintPath, fingerprintFile.identity);
     verifyPathIdentity(privatePath, privateFile.identity);
 
     publicReadback = Buffer.alloc(43);
+    fingerprintReadback = Buffer.alloc(64);
     privateReadback = Buffer.alloc(32);
     if (readSync(publicFile.descriptor, publicReadback, 0, 43, 0) !== 43
+        || readSync(fingerprintFile.descriptor, fingerprintReadback, 0, 64, 0) !== 64
         || readSync(privateFile.descriptor, privateReadback, 0, 32, 0) !== 32) {
       fail("generated key files could not be read back completely");
     }
     derivedReadbackPublic = deriveRawX25519PublicKey(privateReadback);
     const expectedText = Buffer.from(canonicalPublicKeyText(derivedReadbackPublic), "ascii");
+    const expectedFingerprint = Buffer.from(
+      canonicalPublicKeyFingerprint(derivedReadbackPublic),
+      "ascii",
+    );
     try {
-      if (!timingSafeEqual(publicReadback, expectedText)) {
-        fail("written public key does not match the private key");
+      if (!timingSafeEqual(publicReadback, expectedText)
+          || !timingSafeEqual(fingerprintReadback, expectedFingerprint)) {
+        fail("written public key identity does not match the private key");
       }
     } finally {
       expectedText.fill(0);
+      expectedFingerprint.fill(0);
     }
     fsyncDirectory(outputDirectory, platform);
     postWriteVerifier(Object.freeze({
       directory: outputDirectory,
       privatePath,
       publicPath,
+      fingerprintPath,
     }));
     verifyPathIdentity(publicPath, publicFile.identity);
+    verifyPathIdentity(fingerprintPath, fingerprintFile.identity);
     verifyPathIdentity(privatePath, privateFile.identity);
     verifyDirectoryIdentity(outputDirectory, directoryIdentity);
     success = true;
@@ -670,6 +717,7 @@ export function createKeyFilesInValidatedDirectory(
       directory: outputDirectory,
       privateFilename: MODERATION_PRIVATE_FILENAME,
       publicFilename: MODERATION_PUBLIC_FILENAME,
+      publicFingerprintFilename: MODERATION_PUBLIC_FINGERPRINT_FILENAME,
       keyId: MODERATION_STAGING_KEY_ID,
     });
   } catch (error) {
@@ -681,18 +729,28 @@ export function createKeyFilesInValidatedDirectory(
     privateReadback?.fill(0);
     derivedReadbackPublic?.fill(0);
     publicBytes?.fill(0);
+    fingerprintBytes?.fill(0);
     publicReadback?.fill(0);
+    fingerprintReadback?.fill(0);
     if (privateFile?.descriptor !== undefined) {
       try { closeSync(privateFile.descriptor); } catch { /* cleanup continues */ }
     }
     if (publicFile?.descriptor !== undefined) {
       try { closeSync(publicFile.descriptor); } catch { /* cleanup continues */ }
     }
+    if (fingerprintFile?.descriptor !== undefined) {
+      try { closeSync(fingerprintFile.descriptor); } catch { /* cleanup continues */ }
+    }
     if (!success) {
       const privateRemoved = safelyRemoveCreatedFile(privatePath, privateFile?.identity);
       const publicRemoved = safelyRemoveCreatedFile(publicPath, publicFile?.identity);
+      const fingerprintRemoved = safelyRemoveCreatedFile(
+        fingerprintPath,
+        fingerprintFile?.identity,
+      );
       try { fsyncDirectory(outputDirectory, platform); } catch { /* report original safe error */ }
-      if ((directoryCreated || validated.prepared) && privateRemoved && publicRemoved) {
+      if ((directoryCreated || validated.prepared)
+          && privateRemoved && publicRemoved && fingerprintRemoved) {
         try {
           verifyDirectoryIdentity(outputDirectory, directoryIdentity);
           if (readdirSync(outputDirectory).length === 0) {
@@ -706,32 +764,35 @@ export function createKeyFilesInValidatedDirectory(
 }
 
 export function windowsPowerShellExecutable() {
-  const systemRoot = process.env.SystemRoot;
-  if (typeof systemRoot !== "string"
-      || !/^[A-Za-z]:[\\/][^\0]*$/u.test(systemRoot)
-      || systemRoot.slice(3).includes(":")) {
-    fail("the trusted Windows PowerShell location could not be determined");
-  }
-  const executable = join(
-    systemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  );
   let entry;
   try {
-    entry = lstatSync(executable, { bigint: true });
+    entry = lstatSync(WINDOWS_POWERSHELL, { bigint: true });
   } catch {
     fail("the trusted Windows PowerShell executable is unavailable");
   }
   if (!entry.isFile() || entry.isSymbolicLink()) {
     fail("the trusted Windows PowerShell executable is invalid");
   }
-  return executable;
+  return WINDOWS_POWERSHELL;
 }
 
-export function runWindowsSecurityPhase(mode, outputDirectory) {
+function windowsSecurityEnvironment() {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "psmodulepath"),
+    ),
+    SystemRoot: "C:\\Windows",
+  };
+}
+
+export function runWindowsSecurityPhase(
+  mode,
+  outputDirectory,
+  moderationKeyId = MODERATION_STAGING_KEY_ID,
+) {
+  if (moderationKeyId !== "moderation-v1" && moderationKeyId !== "moderation-v2") {
+    fail("moderation key ID is unsupported");
+  }
   const securityScript = fileURLToPath(
     new URL("./moderation-staging-keygen-windows-security.ps1", import.meta.url),
   );
@@ -750,6 +811,8 @@ export function runWindowsSecurityPhase(mode, outputDirectory) {
       mode,
       "-OutputDirectory",
       outputDirectory,
+      "-ModerationKeyId",
+      moderationKeyId,
       "-ConfirmLocalEncryptedNoSync",
     ],
     {
@@ -759,6 +822,7 @@ export function runWindowsSecurityPhase(mode, outputDirectory) {
       timeout: 30_000,
       maxBuffer: 8 * 1_024,
       stdio: ["ignore", "pipe", "pipe"],
+      env: windowsSecurityEnvironment(),
     },
   );
   if (result.status !== 0 || result.signal !== null

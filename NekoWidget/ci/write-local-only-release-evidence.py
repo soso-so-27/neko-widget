@@ -11,15 +11,20 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 EXPECTED_ARTIFACT_FILENAME = "NekoWidget-signed-artifacts.tar.gz.enc"
 EXPECTED_INFO_FILENAME = "NekoWidget-processed-app-info.plist"
+EXPECTED_RELEASE_METADATA_FILENAME = "moderation-release-metadata.json"
+EXPECTED_AUTHENTICATION_FILENAME = "signed-artifact-authentication.json"
 EXPECTED_EVIDENCE_FILENAME = "local-only-release-evidence.json"
 EXPECTED_REPOSITORY = "soso-so-27/neko-widget"
 MINIMUM_ARTIFACT_BYTES = 1_000_000
+MAXIMUM_JSON_EVIDENCE_BYTES = 1_000_000
+AUTHENTICATION_TOOL = Path(__file__).with_name("signed-artifact-authentication.py")
 
 
 def sha256_file(path: Path) -> str:
@@ -53,6 +58,8 @@ def main() -> int:
     parser.add_argument("--repository", type=Path, required=True)
     parser.add_argument("--info-plist", type=Path, required=True)
     parser.add_argument("--artifact", type=Path, required=True)
+    parser.add_argument("--release-metadata", type=Path, required=True)
+    parser.add_argument("--artifact-authentication", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--version", required=True)
@@ -148,6 +155,46 @@ def main() -> int:
     artifact_size = args.artifact.stat().st_size
     if artifact_size < MINIMUM_ARTIFACT_BYTES:
         raise SystemExit("Encrypted signed artifact is implausibly small.")
+    evidence_inputs = (
+        (
+            args.release_metadata,
+            EXPECTED_RELEASE_METADATA_FILENAME,
+            "Moderation release metadata",
+        ),
+        (
+            args.artifact_authentication,
+            EXPECTED_AUTHENTICATION_FILENAME,
+            "Artifact authentication manifest",
+        ),
+    )
+    for path, expected_name, label in evidence_inputs:
+        if path.name != expected_name or not path.is_file():
+            raise SystemExit(f"{label} is missing or has the wrong filename.")
+        size = path.stat().st_size
+        if not 1 <= size <= MAXIMUM_JSON_EVIDENCE_BYTES:
+            raise SystemExit(f"{label} size is outside the fixed bound.")
+    authentication_check = subprocess.run(
+        [
+            sys.executable,
+            str(AUTHENTICATION_TOOL),
+            "verify",
+            "--ciphertext",
+            str(args.artifact),
+            "--metadata",
+            str(args.release_metadata),
+            "--authentication",
+            str(args.artifact_authentication),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if authentication_check.returncode != 0:
+        detail = authentication_check.stderr.strip() or "verification failed"
+        raise SystemExit(
+            f"Signed artifact authentication must pass before evidence is written: {detail}"
+        )
     if not args.info_plist.is_file():
         raise SystemExit("Processed App Info.plist is missing.")
     try:
@@ -184,10 +231,14 @@ def main() -> int:
     args.output_directory.mkdir(parents=True, exist_ok=True)
     processed_output = args.output_directory / EXPECTED_INFO_FILENAME
     artifact_output = args.output_directory / EXPECTED_ARTIFACT_FILENAME
+    metadata_output = args.output_directory / EXPECTED_RELEASE_METADATA_FILENAME
+    authentication_output = args.output_directory / EXPECTED_AUTHENTICATION_FILENAME
     shutil.copyfile(args.info_plist, processed_output)
     shutil.copyfile(args.artifact, artifact_output)
+    shutil.copyfile(args.release_metadata, metadata_output)
+    shutil.copyfile(args.artifact_authentication, authentication_output)
     evidence = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "repository": EXPECTED_REPOSITORY,
         "source_commit": args.source_commit,
@@ -230,6 +281,17 @@ def main() -> int:
         "processed_app_info": {
             "filename": EXPECTED_INFO_FILENAME,
             "sha256": sha256_file(processed_output),
+            "size_bytes": processed_output.stat().st_size,
+        },
+        "release_metadata": {
+            "filename": EXPECTED_RELEASE_METADATA_FILENAME,
+            "sha256": sha256_file(metadata_output),
+            "size_bytes": metadata_output.stat().st_size,
+        },
+        "artifact_authentication": {
+            "filename": EXPECTED_AUTHENTICATION_FILENAME,
+            "sha256": sha256_file(authentication_output),
+            "size_bytes": authentication_output.stat().st_size,
         },
     }
     output = args.output_directory / EXPECTED_EVIDENCE_FILENAME

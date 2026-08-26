@@ -14,7 +14,8 @@ const moderationStatusOutputLimitBytes = 1024 * 1024;
 
 // These fixed queries expose aggregate operations data only. They never select
 // report IDs, participant/device IDs, object keys, hashes, ciphertext, URLs,
-// names, reason codes, or report content.
+// names, reason codes, or report content. The moderation key ID is a reviewed
+// non-secret operational configuration value, not a report/user identifier.
 export const moderationStatusQueries = Object.freeze([
   Object.freeze({
     name: "schema",
@@ -34,6 +35,13 @@ export const moderationStatusQueries = Object.freeze([
             FROM moment_reports
            GROUP BY state
            ORDER BY state ASC`,
+  }),
+  Object.freeze({
+    name: "key-lifecycle",
+    sql: `SELECT moderation_key_id AS key_id, state, COUNT(*) AS count
+            FROM moment_reports
+           GROUP BY moderation_key_id, state
+           ORDER BY moderation_key_id ASC, state ASC`,
   }),
   Object.freeze({
     name: "committed-age",
@@ -181,6 +189,31 @@ function validateLifecycleRows(rows) {
   });
 }
 
+function validateKeyLifecycleRows(rows) {
+  const allowedKeyIDs = new Set(["moderation-v1", "moderation-v2"]);
+  const allowedStates = new Set(["reserved", "uploaded", "committed", "expired", "deleted"]);
+  const seenPairs = new Set();
+  return Object.freeze(rows.map((row) => {
+    requireExactKeys(row, ["key_id", "state", "count"]);
+    if (typeof row.key_id !== "string" || !allowedKeyIDs.has(row.key_id)) {
+      throw new Error("moderation key-lifecycle query returned an unsupported key ID");
+    }
+    if (typeof row.state !== "string" || !allowedStates.has(row.state)) {
+      throw new Error("moderation key-lifecycle query returned an unexpected lifecycle category");
+    }
+    const pair = `${row.key_id}\0${row.state}`;
+    if (seenPairs.has(pair)) {
+      throw new Error("moderation key-lifecycle query returned a duplicate key/lifecycle pair");
+    }
+    seenPairs.add(pair);
+    return Object.freeze({
+      keyId: row.key_id,
+      state: row.state,
+      count: requireCount(row.count),
+    });
+  }));
+}
+
 function validateCommittedAgeRows(rows) {
   if (rows.length !== 1) {
     throw new Error("moderation committed-age query returned an unexpected response");
@@ -255,6 +288,7 @@ function validatedRows(name, output) {
   switch (name) {
     case "schema": return validateSchemaRows(rows);
     case "lifecycle": return validateLifecycleRows(rows);
+    case "key-lifecycle": return validateKeyLifecycleRows(rows);
     case "committed-age": return validateCommittedAgeRows(rows);
     case "review-lifecycle": return validateReviewLifecycleRows(rows);
     case "cleanup": return validateCleanupRows(rows);
@@ -408,6 +442,17 @@ export async function collectModerationStagingStatus({
     const command = moderationStatusCommand({ projectDirectory, databaseName, sql: query.sql });
     result[query.name] = validatedRows(query.name, await runCommand(command));
   }
+  const lifecycleCounts = new Map(result.lifecycle.map((row) => [row.state, row.count]));
+  const keyedCounts = new Map();
+  for (const row of result["key-lifecycle"]) {
+    keyedCounts.set(row.state, (keyedCounts.get(row.state) ?? 0) + row.count);
+  }
+  const states = new Set([...lifecycleCounts.keys(), ...keyedCounts.keys()]);
+  if ([...states].some(
+    (state) => (lifecycleCounts.get(state) ?? 0) !== (keyedCounts.get(state) ?? 0)
+  )) {
+    throw new Error("moderation key-lifecycle query returned counts inconsistent with lifecycle totals");
+  }
   return Object.freeze(result);
 }
 
@@ -417,9 +462,10 @@ function line(items, format) {
 
 export function formatModerationStagingStatus(status) {
   return [
-    "PASS moderation staging status (read-only aggregates; no IDs, names, object keys, hashes, ciphertext, URLs, secrets, reason codes, or report content)",
+    "PASS moderation staging status (read-only aggregates; exact operational moderation key IDs only; no report/user/device IDs, names, object keys, hashes, ciphertext, URLs, secrets, reason codes, or report content)",
     `schema: ${status.schema[0].state}`,
     `lifecycle: ${line(status.lifecycle, (row) => `${row.state}=${row.count}`)}`,
+    `key_lifecycle: ${line(status["key-lifecycle"], (row) => `${row.keyId}/${row.state}=${row.count}`)}`,
     `committed_report_age (content age, not review SLA): under_24h=${status["committed-age"].under24h}, 24h_to_48h=${status["committed-age"].from24hTo48h}, over_48h=${status["committed-age"].over48h}`,
     `review_lifecycle: unreviewed=${status["review-lifecycle"].unreviewed}, in_review=${status["review-lifecycle"].inReview}, decided=${status["review-lifecycle"].decided}, sla_exceeded=${status["review-lifecycle"].slaExceeded}`,
     `cleanup: expired_upload=${status.cleanup.expiredUploadReports}, expired_content=${status.cleanup.expiredContentReports}, pending_report_deletions=${status.cleanup.pendingReportDeletions}, due_report_deletions=${status.cleanup.dueReportDeletions}`,

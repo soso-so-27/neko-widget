@@ -14,7 +14,7 @@ export function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const option = argv[index];
     const value = argv[index + 1];
-    if (!["--phase", "--drill-dir"].includes(option) || values.has(option)
+    if (!["--phase", "--drill-dir", "--moderation-key-id"].includes(option) || values.has(option)
         || typeof value !== "string" || value.length === 0 || value.startsWith("--")) {
       throw new ModerationStagingDrillError("one explicit phase and drill directory are required");
     }
@@ -22,23 +22,28 @@ export function parseArguments(argv) {
   }
   const phase = values.get("--phase");
   const drillDirectory = values.get("--drill-dir");
+  const moderationKeyId = values.get("--moderation-key-id");
   if (!["bundle", "review", "deleted"].includes(phase)
-      || typeof drillDirectory !== "string" || values.size !== 2) {
-    throw new ModerationStagingDrillError("one explicit phase and drill directory are required");
+      || typeof drillDirectory !== "string"
+      || !["moderation-v1", "moderation-v2"].includes(moderationKeyId)
+      || values.size !== 3) {
+    throw new ModerationStagingDrillError(
+      "one explicit phase, drill directory, and moderation key ID are required",
+    );
   }
-  return { phase, drillDirectory };
+  return { phase, drillDirectory, moderationKeyId };
 }
 
 export function runCLI(argv = process.argv.slice(2), { stdout = process.stdout } = {}) {
   const options = parseArguments(argv);
   if (options.phase === "bundle") {
-    verifySyntheticDrillBundleDirectory(options.drillDirectory);
+    verifySyntheticDrillBundleDirectory(options.drillDirectory, options.moderationKeyId);
     stdout.write("Fixed synthetic staging bundle identity and descriptor verified before private-key use.\n");
   } else if (options.phase === "review") {
-    verifySyntheticDrillReviewDirectory(options.drillDirectory);
+    verifySyntheticDrillReviewDirectory(options.drillDirectory, options.moderationKeyId);
     stdout.write("Fixed synthetic review bytes, receipt binding, and initial audit transition verified.\n");
   } else {
-    verifyCompletedSyntheticDrillDirectory(options.drillDirectory);
+    verifyCompletedSyntheticDrillDirectory(options.drillDirectory, options.moderationKeyId);
     stdout.write("Synthetic staging moderation decrypt/delete drill completion verified; no review, receipt, or ciphertext artifact remains.\n");
   }
 }

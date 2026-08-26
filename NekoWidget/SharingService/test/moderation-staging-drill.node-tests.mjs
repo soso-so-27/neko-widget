@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  createHash,
   createPrivateKey,
   createPublicKey,
 } from "node:crypto";
@@ -39,7 +40,6 @@ import {
   reportReferenceSHA256,
 } from "../scripts/moderation-report-lib.mjs";
 import {
-  MODERATION_PUBLIC_FILENAME,
   X25519_PKCS8_PREFIX,
   X25519_SPKI_PREFIX,
   validateExistingRestrictedFile,
@@ -75,14 +75,15 @@ function cleanup(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
-function workspace() {
+function workspace(keyId = "moderation-v1") {
   const root = mkdtempSync(join(tmpdir(), "neko-moderation-drill-test-"));
   const keyDirectory = join(root, "keys");
   const outputDirectory = join(root, "drill");
   mkdirSync(keyDirectory);
   mkdirSync(outputDirectory);
-  const publicPath = join(keyDirectory, MODERATION_PUBLIC_FILENAME);
+  const publicPath = join(keyDirectory, `${keyId}.public.base64url`);
   const publicRaw = fixturePublicRaw();
+  const expectedPublicKeySHA256 = createHash("sha256").update(publicRaw).digest("hex");
   writeFileSync(publicPath, publicRaw.toString("base64url"), { mode: 0o600 });
   publicRaw.fill(0);
   const publicEntry = lstatSync(publicPath, { bigint: true });
@@ -91,6 +92,8 @@ function workspace() {
     keyDirectory,
     outputDirectory,
     publicPath,
+    keyId,
+    expectedPublicKeySHA256,
     validatedDirectory: Object.freeze({ path: outputDirectory, prepared: true }),
     validatedPublic: Object.freeze({
       path: publicPath,
@@ -99,6 +102,14 @@ function workspace() {
       inode: publicEntry.ino,
       bytes: 43,
     }),
+  };
+}
+
+function drillOptions(item, overrides = {}) {
+  return {
+    moderationKeyId: item.keyId,
+    expectedPublicKeySHA256: item.expectedPublicKeySHA256,
+    ...overrides,
   };
 }
 
@@ -248,7 +259,11 @@ test("fixed synthetic JPEG fully decodes in the Windows platform decoder", {
 test("creates only the fixed O_EXCL outputs and they decrypt compatibly", () => {
   const item = workspace();
   try {
-    createDrillFilesInValidatedDirectory(item.validatedDirectory, item.validatedPublic);
+    createDrillFilesInValidatedDirectory(
+      item.validatedDirectory,
+      item.validatedPublic,
+      drillOptions(item),
+    );
     assert.deepEqual(readdirSync(item.outputDirectory).sort(), [
       MODERATION_STAGING_DRILL_CIPHERTEXT_FILENAME,
       MODERATION_STAGING_DRILL_METADATA_FILENAME,
@@ -271,13 +286,69 @@ test("creates only the fixed O_EXCL outputs and they decrypt compatibly", () => 
   }
 });
 
+test("creates a moderation-v2 drill only when the explicit ID and fingerprint agree", () => {
+  const item = workspace("moderation-v2");
+  try {
+    createDrillFilesInValidatedDirectory(
+      item.validatedDirectory,
+      item.validatedPublic,
+      drillOptions(item),
+    );
+    const metadataBytes = readFileSync(
+      join(item.outputDirectory, MODERATION_STAGING_DRILL_METADATA_FILENAME),
+    );
+    try {
+      const metadata = parseModerationMetadata(metadataBytes.toString("utf8"));
+      assert.equal(metadata.moderationKeyId, "moderation-v2");
+      assert.deepEqual(
+        verifySyntheticDrillBundleDirectory(item.outputDirectory, "moderation-v2"),
+        { verified: true },
+      );
+      assert.throws(
+        () => verifySyntheticDrillBundleDirectory(item.outputDirectory, "moderation-v1"),
+        /fixed synthetic fixture/u,
+      );
+    } finally {
+      metadataBytes.fill(0);
+    }
+  } finally {
+    cleanup(item.root);
+  }
+});
+
+test("refuses an unreviewed public-key fingerprint before bundle generation", () => {
+  const item = workspace();
+  let called = false;
+  try {
+    assert.throws(
+      () => createDrillFilesInValidatedDirectory(
+        item.validatedDirectory,
+        item.validatedPublic,
+        drillOptions(item, {
+          expectedPublicKeySHA256: "0".repeat(64),
+          bundleFactory: () => { called = true; },
+        }),
+      ),
+      /fingerprint does not match/u,
+    );
+    assert.equal(called, false);
+    assert.equal(existsSync(item.outputDirectory), false);
+  } finally {
+    cleanup(item.root);
+  }
+});
+
 test("refuses an existing output without overwrite", () => {
   const item = workspace();
   const collision = join(item.outputDirectory, MODERATION_STAGING_DRILL_METADATA_FILENAME);
   writeFileSync(collision, "do-not-overwrite", { mode: 0o600 });
   try {
     assert.throws(
-      () => createDrillFilesInValidatedDirectory(item.validatedDirectory, item.validatedPublic),
+      () => createDrillFilesInValidatedDirectory(
+        item.validatedDirectory,
+        item.validatedPublic,
+        drillOptions(item),
+      ),
       /empty real directory/u,
     );
     assert.equal(readFileSync(collision, "utf8"), "do-not-overwrite");
@@ -296,6 +367,7 @@ test("rejects key-directory child or ancestor output before creating any drill f
       () => createDrillFilesInValidatedDirectory(
         { path: child, prepared: true },
         item.validatedPublic,
+        drillOptions(item),
       ),
       /canonically disjoint/u,
     );
@@ -305,6 +377,7 @@ test("rejects key-directory child or ancestor output before creating any drill f
       () => createDrillFilesInValidatedDirectory(
         { path: item.root, prepared: true },
         item.validatedPublic,
+        drillOptions(item),
       ),
       /canonically disjoint/u,
     );
@@ -324,7 +397,7 @@ test("refuses a hard-linked public key before bundle generation", () => {
       () => createDrillFilesInValidatedDirectory(
         item.validatedDirectory,
         item.validatedPublic,
-        { bundleFactory: () => { called = true; } },
+        drillOptions(item, { bundleFactory: () => { called = true; } }),
       ),
       /identity changed/u,
     );
@@ -343,7 +416,7 @@ test("detects an output hard-link race and never reports success", () => {
       () => createDrillFilesInValidatedDirectory(
         item.validatedDirectory,
         item.validatedPublic,
-        {
+        drillOptions(item, {
           bundleFactory: () => {
             linkSync(
               join(item.outputDirectory, MODERATION_STAGING_DRILL_CIPHERTEXT_FILENAME),
@@ -351,7 +424,7 @@ test("detects an output hard-link race and never reports success", () => {
             );
             return createSyntheticModerationBundle(publicRaw);
           },
-        },
+        }),
       ),
       /identity, size, link, or permission/u,
     );
@@ -379,7 +452,7 @@ test("existing public-file validator shares restricted-root and single-link poli
     // separate alias fixtures continue to assert fail-closed behavior.
     const canonicalPublicPath = realpathSync.native(item.publicPath);
     const validated = validateExistingRestrictedFile(canonicalPublicPath, {
-      expectedFilename: MODERATION_PUBLIC_FILENAME,
+      expectedFilename: `${item.keyId}.public.base64url`,
       expectedBytes: 43,
       currentDirectory,
       repositoryRoot,
@@ -390,7 +463,7 @@ test("existing public-file validator shares restricted-root and single-link poli
     assert.equal(validated.path, canonicalPublicPath);
     assert.throws(
       () => validateExistingRestrictedFile(canonicalPublicPath, {
-        expectedFilename: MODERATION_PUBLIC_FILENAME,
+        expectedFilename: `${item.keyId}.public.base64url`,
         expectedBytes: 43,
         currentDirectory: item.root,
         repositoryRoot,
@@ -441,14 +514,21 @@ test("completion verifier requires exact successful audit transitions", () => {
 test("pre-private-key preflight rejects a descriptor with non-fixture identity", () => {
   const item = workspace();
   try {
-    createDrillFilesInValidatedDirectory(item.validatedDirectory, item.validatedPublic);
-    assert.deepEqual(verifySyntheticDrillBundleDirectory(item.outputDirectory), { verified: true });
+    createDrillFilesInValidatedDirectory(
+      item.validatedDirectory,
+      item.validatedPublic,
+      drillOptions(item),
+    );
+    assert.deepEqual(
+      verifySyntheticDrillBundleDirectory(item.outputDirectory, "moderation-v1"),
+      { verified: true },
+    );
     const metadataPath = join(item.outputDirectory, MODERATION_STAGING_DRILL_METADATA_FILENAME);
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     metadata.reportId = "not_the_fixed_synthetic_fixture";
     writeFileSync(metadataPath, `${JSON.stringify(metadata)}\n`, { mode: 0o600 });
     assert.throws(
-      () => verifySyntheticDrillBundleDirectory(item.outputDirectory),
+      () => verifySyntheticDrillBundleDirectory(item.outputDirectory, "moderation-v1"),
       /fixed synthetic fixture/u,
     );
   } finally {
@@ -456,34 +536,47 @@ test("pre-private-key preflight rejects a descriptor with non-fixture identity",
   }
 });
 
-test("pre-human-view verifier requires byte-exact JPEG, bound receipt, and one decrypt audit", () => {
+test("pre-human-view verifier requires byte-exact JPEG, bound receipt, and one decrypt audit", {
+  skip: process.platform === "win32"
+    ? "portable temp-directory CLI fixture cannot bypass the mandatory Windows BitLocker/ACL boundary; Ubuntu CI runs it"
+    : false,
+}, () => {
   const item = workspace();
-  const privatePath = join(item.keyDirectory, "synthetic-test-private.raw");
+  const privatePath = join(item.keyDirectory, "moderation-v1.private.raw");
   const metadataPath = join(item.outputDirectory, MODERATION_STAGING_DRILL_METADATA_FILENAME);
   const ciphertextPath = join(item.outputDirectory, MODERATION_STAGING_DRILL_CIPHERTEXT_FILENAME);
   const reviewPath = join(item.outputDirectory, "synthetic-review.jpg");
   const auditPath = join(item.outputDirectory, MODERATION_STAGING_DRILL_AUDIT_FILENAME);
   const tool = fileURLToPath(new URL("../scripts/moderation-report-tool.mjs", import.meta.url));
   try {
-    createDrillFilesInValidatedDirectory(item.validatedDirectory, item.validatedPublic);
+    createDrillFilesInValidatedDirectory(
+      item.validatedDirectory,
+      item.validatedPublic,
+      drillOptions(item),
+    );
     writeFileSync(privatePath, FIXTURE_RECIPIENT_PRIVATE_KEY, { mode: 0o600 });
     const result = spawnSync(process.execPath, [
       tool,
       "decrypt",
       "--metadata", metadataPath,
       "--ciphertext", ciphertextPath,
+      "--moderation-key-id", "moderation-v1",
       "--private-key", privatePath,
+      "--expected-public-key-sha256", item.expectedPublicKeySHA256,
       "--output", reviewPath,
       "--audit-log", auditPath,
     ], { encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 8 * 1_024 });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(verifySyntheticDrillReviewDirectory(item.outputDirectory), { verified: true });
+    assert.deepEqual(
+      verifySyntheticDrillReviewDirectory(item.outputDirectory, "moderation-v1"),
+      { verified: true },
+    );
     const changed = readFileSync(reviewPath);
     changed[changed.length - 10] ^= 0x01;
     writeFileSync(reviewPath, changed, { mode: 0o600 });
     changed.fill(0);
     assert.throws(
-      () => verifySyntheticDrillReviewDirectory(item.outputDirectory),
+      () => verifySyntheticDrillReviewDirectory(item.outputDirectory, "moderation-v1"),
       /byte-exact fixed synthetic content/u,
     );
   } finally {
@@ -496,12 +589,28 @@ test("CLI has no private-key input and logs no key or operator path", () => {
     () => parseArguments(["--private-key", "secret", "--output-dir", "out"]),
     /unsupported option/u,
   );
+  assert.throws(
+    () => parseArguments([
+      "--public-key-file", "key",
+      "--moderation-key-id", " moderation-v1",
+      "--expected-public-key-sha256", "1".repeat(64),
+      "--output-dir", "out",
+    ]),
+    /exact key ID/u,
+  );
   let received;
   let output = "";
   const keyPath = "C:\\restricted\\staging-key\\moderation-v1.public.base64url";
   const drillPath = "C:\\restricted\\staging-drill";
+  const fingerprint = "1".repeat(64);
   runCLI(
-    ["--public-key-file", keyPath, "--output-dir", drillPath, "--confirm-local-encrypted-nosync"],
+    [
+      "--public-key-file", keyPath,
+      "--moderation-key-id", "moderation-v1",
+      "--expected-public-key-sha256", fingerprint,
+      "--output-dir", drillPath,
+      "--confirm-local-encrypted-nosync",
+    ],
     {
       generate: (value) => { received = value; },
       stdout: { write: (value) => { output += value; } },
@@ -509,6 +618,8 @@ test("CLI has no private-key input and logs no key or operator path", () => {
   );
   assert.deepEqual(received, {
     publicKeyFile: keyPath,
+    moderationKeyId: "moderation-v1",
+    expectedPublicKeySHA256: fingerprint,
     outputDirectory: drillPath,
     confirmLocalEncryptedNoSync: true,
   });
@@ -555,19 +666,22 @@ test("Windows operator wrappers preserve the human-view boundary and exact delet
     new URL("../scripts/moderation-staging-keygen-windows-security.ps1", import.meta.url),
     "utf8",
   );
-  assert.doesNotMatch(generation, /moderation-v1\.private\.raw|--private-key/u);
+  assert.doesNotMatch(generation, /\.private\.raw|--private-key/u);
+  assert.match(generation, /--moderation-key-id \$ModerationKeyId/u);
+  assert.match(generation, /--expected-public-key-sha256 \$ExpectedPublicKeySHA256/u);
   assert.match(generation, /-Mode PrepareDrillDirectory[\s\S]*?-DisjointDirectory \$KeyDirectory/su);
   assert.match(review, /DecryptForHumanReview/u);
   assert.match(review, /DeleteAfterHumanReview/u);
-  assert.match(review, /--private-key\s+\$privateKey/u);
-  assert.match(review, /--phase bundle --drill-dir \$DrillDirectory[\s\S]*?--private-key/su);
-  assert.match(review, /HardenDrillReviewFiles[\s\S]*?--phase review --drill-dir \$DrillDirectory/su);
+  assert.match(review, /--private-key \$PrivateKeyPath/u);
+  assert.match(review, /--expected-public-key-sha256 \$ExpectedPublicKeySHA256/u);
+  assert.match(review, /--phase bundle[\s\S]*?--private-key/su);
+  assert.match(review, /HardenDrillReviewFiles[\s\S]*?--phase review/su);
   assert.doesNotMatch(review, /--delete-ciphertext-after-success/u);
   assert.match(review, /--kind plaintext[\s\S]*?--receipt \$receipt/su);
   assert.match(review, /--kind ciphertext/su);
   assert.match(review, /ValidateDrillAfterDelete/u);
   assert.match(review, /verify-moderation-staging-drill-completion\.mjs/u);
-  assert.match(review, /--phase deleted --drill-dir \$DrillDirectory/u);
+  assert.match(review, /--phase deleted[\s\S]*?--moderation-key-id \$ModerationKeyId/u);
   for (const mode of [
     "ValidateKeyDirectory",
     "PrepareDrillDirectory",

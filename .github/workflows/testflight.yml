@@ -67,6 +67,7 @@ jobs:
           SHARING_STAGING_API_ORIGIN: ${{ vars.SHARING_STAGING_API_ORIGIN }}
           SHARING_STAGING_MODERATION_KEY_ID: ${{ vars.SHARING_STAGING_MODERATION_KEY_ID }}
           SHARING_STAGING_MODERATION_PUBLIC_KEY: ${{ vars.SHARING_STAGING_MODERATION_PUBLIC_KEY }}
+          SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST: ${{ vars.SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST }}
           SHARING_STAGING_PRIVACY_URL: ${{ vars.SHARING_STAGING_PRIVACY_URL }}
           SHARING_STAGING_SUPPORT_URL: ${{ vars.SHARING_STAGING_SUPPORT_URL }}
           SHARING_STAGING_COMMUNITY_STANDARDS_URL: ${{ vars.SHARING_STAGING_COMMUNITY_STANDARDS_URL }}
@@ -74,6 +75,12 @@ jobs:
           set -euo pipefail
           release_moderation_key_id=""
           release_moderation_public_key=""
+          release_moderation_public_key_sha256=""
+          release_moderation_trust_revision=""
+          release_moderation_trust_manifest_sha256=""
+          release_moderation_rollout_policy_revision=""
+          release_moderation_rollout_policy_sha256=""
+          release_environment="testflight"
           release_app_privacy_url=""
           release_app_support_url=""
           release_privacy_url=""
@@ -166,19 +173,24 @@ jobs:
               raise SystemExit("Enabled test mode did not select the one-image Share Extension plist.")
           PY
 
-          python3 - \
-            "$SELECTED_RELEASE_MODE" \
-            "$release_origin" \
-            "$release_app_privacy_url" \
-            "$release_app_support_url" \
-            "$release_moderation_key_id" \
-            "$release_moderation_public_key" \
-            "$release_privacy_url" \
-            "$release_support_url" \
-            "$release_community_standards_url" <<'PY'
+          moderation_binding="$(
+            python3 - \
+              "$SELECTED_RELEASE_MODE" \
+              "$release_origin" \
+              "$release_app_privacy_url" \
+              "$release_app_support_url" \
+              "$release_moderation_key_id" \
+              "$release_moderation_public_key" \
+              "$release_privacy_url" \
+              "$release_support_url" \
+              "$release_community_standards_url" \
+              "$SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST" \
+              "$PROJECT_DIRECTORY/ci/moderation-client-rollout-policy.json" <<'PY'
           import base64
           import binascii
+          import hashlib
           import ipaddress
+          import json
           import re
           import socket
           import sys
@@ -194,7 +206,77 @@ jobs:
               privacy_url,
               support_url,
               community_url,
+              trust_manifest_text,
+              rollout_policy_path,
           ) = sys.argv[1:]
+
+          selected_fingerprint = ""
+          selected_manifest_revision = ""
+          selected_manifest_sha256 = ""
+
+          def strict_object(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError(f"duplicate JSON key: {key}")
+                  value[key] = item
+              return value
+
+          def canonical_json(value):
+              return json.dumps(
+                  value,
+                  ensure_ascii=True,
+                  separators=(",", ":"),
+                  sort_keys=True,
+              ).encode("ascii")
+
+          try:
+              with open(rollout_policy_path, "r", encoding="utf-8") as stream:
+                  rollout_policy = json.load(stream, object_pairs_hook=strict_object)
+          except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as error:
+              raise SystemExit(
+                  "Tracked moderation client rollout policy is unavailable or invalid."
+              ) from error
+          expected_policy_fields = {
+              "schema", "environment", "revision", "clientKeyId",
+              "clientPublicKeySha256", "trustManifestRevision",
+              "trustManifestSha256", "v2ClientReleaseAllowed",
+          }
+          if not isinstance(rollout_policy, dict) or set(rollout_policy) != expected_policy_fields:
+              raise SystemExit(
+                  "Tracked moderation client rollout policy has unexpected or missing fields."
+              )
+          if rollout_policy["schema"] != "jp.nekowidget.moderation-client-rollout-policy.v1":
+              raise SystemExit("Tracked moderation client rollout policy schema is unsupported.")
+          if rollout_policy["environment"] != "testflight":
+              raise SystemExit("Tracked moderation client rollout policy environment must be testflight.")
+          for field in ("revision", "trustManifestRevision"):
+              value = rollout_policy[field]
+              if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                  raise SystemExit(f"Tracked moderation client rollout policy {field} is invalid.")
+          supported_key_ids = {"moderation-v1", "moderation-v2"}
+          if rollout_policy["clientKeyId"] not in supported_key_ids:
+              raise SystemExit("Tracked moderation client rollout policy key ID is unsupported.")
+          for field in ("clientPublicKeySha256", "trustManifestSha256"):
+              value = rollout_policy[field]
+              if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                  raise SystemExit(f"Tracked moderation client rollout policy {field} is invalid.")
+          if not isinstance(rollout_policy["v2ClientReleaseAllowed"], bool):
+              raise SystemExit(
+                  "Tracked moderation client rollout policy v2ClientReleaseAllowed is invalid."
+              )
+          if rollout_policy["v2ClientReleaseAllowed"]:
+              raise SystemExit(
+                  "machine-verifiable server and drill readiness evidence is not implemented; "
+                  "v2ClientReleaseAllowed must remain false."
+              )
+          if rollout_policy["clientKeyId"] == "moderation-v2":
+              raise SystemExit(
+                  "machine-verifiable server and drill readiness evidence is not implemented; "
+                  "moderation-v2 client selection remains blocked independently of policy."
+              )
+          rollout_policy_revision = str(rollout_policy["revision"])
+          rollout_policy_sha256 = hashlib.sha256(canonical_json(rollout_policy)).hexdigest()
 
           reserved = (
               ".example", ".invalid", ".local", ".localhost", ".test",
@@ -296,9 +378,17 @@ jobs:
               raise SystemExit("pairing-only must not receive media safety configuration.")
 
           if mode == "media-staging":
-              if moderation_key_id != "moderation-v1":
+              if moderation_key_id != moderation_key_id.strip():
                   raise SystemExit(
-                      "SHARING_STAGING_MODERATION_KEY_ID must be exactly moderation-v1."
+                      "SHARING_STAGING_MODERATION_KEY_ID must not contain surrounding whitespace."
+                  )
+              if moderation_key_id not in supported_key_ids:
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_KEY_ID is not explicitly supported."
+                  )
+              if moderation_public_key != moderation_public_key.strip():
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_PUBLIC_KEY must not contain surrounding whitespace."
                   )
               try:
                   if re.fullmatch(r"[A-Za-z0-9_-]{43}", moderation_public_key) is None:
@@ -333,6 +423,82 @@ jobs:
                   raise SystemExit(
                       "SHARING_STAGING_MODERATION_PUBLIC_KEY must not be a small-order X25519 point."
                   )
+
+              try:
+                  trust_manifest = json.loads(
+                      trust_manifest_text,
+                      object_pairs_hook=strict_object,
+                  )
+              except (TypeError, ValueError, json.JSONDecodeError) as error:
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST must be strict JSON without duplicate keys."
+                  ) from error
+              if not isinstance(trust_manifest, dict) or set(trust_manifest) != {
+                  "schema", "environment", "revision", "keys"
+              }:
+                  raise SystemExit(
+                      "SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST has unexpected or missing top-level fields."
+                  )
+              if trust_manifest["schema"] != "jp.nekowidget.moderation-key-trust.v1":
+                  raise SystemExit("Moderation key trust manifest schema is unsupported.")
+              if trust_manifest["environment"] != "testflight":
+                  raise SystemExit("Moderation key trust manifest environment must be exactly testflight.")
+              revision = trust_manifest["revision"]
+              if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
+                  raise SystemExit("Moderation key trust manifest revision must be a positive integer.")
+              trusted_keys = trust_manifest["keys"]
+              if not isinstance(trusted_keys, dict):
+                  raise SystemExit("Moderation key trust manifest keys must be an object.")
+              if "moderation-v1" not in trusted_keys:
+                  raise SystemExit("Moderation key trust manifest must retain moderation-v1.")
+              if not set(trusted_keys).issubset(supported_key_ids):
+                  raise SystemExit("Moderation key trust manifest contains an unsupported key ID.")
+              for key_id, fingerprint in trusted_keys.items():
+                  if key_id != key_id.strip():
+                      raise SystemExit("Moderation key trust manifest key IDs must not contain whitespace.")
+                  if not isinstance(fingerprint, str) or re.fullmatch(
+                      r"[0-9a-f]{64}", fingerprint
+                  ) is None:
+                      raise SystemExit(
+                          "Moderation public-key fingerprints must be exactly 64 lowercase hexadecimal characters."
+                      )
+              if len(set(trusted_keys.values())) != len(trusted_keys):
+                  raise SystemExit("Moderation key trust manifest fingerprints must be unique.")
+              if moderation_key_id not in trusted_keys:
+                  raise SystemExit(
+                      "Selected moderation key ID is absent from the reviewed trust manifest."
+                  )
+              calculated_fingerprint = hashlib.sha256(decoded_key).hexdigest()
+              selected_fingerprint = trusted_keys[moderation_key_id]
+              if calculated_fingerprint != selected_fingerprint:
+                  raise SystemExit(
+                      "Selected moderation public key does not match its reviewed SHA-256 fingerprint."
+                  )
+              selected_manifest_revision = str(revision)
+              selected_manifest_sha256 = hashlib.sha256(
+                  canonical_json(trust_manifest)
+              ).hexdigest()
+              if moderation_key_id == "moderation-v2":
+                  raise SystemExit(
+                      "moderation-v2 client releases remain blocked because machine-verifiable "
+                      "server and drill readiness evidence is not implemented."
+                  )
+              if moderation_key_id != rollout_policy["clientKeyId"]:
+                  raise SystemExit(
+                      "Selected moderation key ID does not match the tracked rollout policy."
+                  )
+              if calculated_fingerprint != rollout_policy["clientPublicKeySha256"]:
+                  raise SystemExit(
+                      "Selected moderation public key does not match the tracked rollout policy."
+                  )
+              if revision != rollout_policy["trustManifestRevision"]:
+                  raise SystemExit(
+                      "Moderation trust manifest revision does not match the tracked rollout policy."
+                  )
+              if selected_manifest_sha256 != rollout_policy["trustManifestSha256"]:
+                  raise SystemExit(
+                      "Canonical moderation trust manifest does not match the tracked rollout policy."
+                  )
               for policy_url, label in (
                   (privacy_url, "SHARING_STAGING_PRIVACY_URL"),
                   (support_url, "SHARING_STAGING_SUPPORT_URL"),
@@ -343,7 +509,69 @@ jobs:
               ):
                   host, port = public_https(policy_url, label, origin_only=False)
                   require_public_dns(host, port, label)
+          print(
+              f"{rollout_policy_revision}:{rollout_policy_sha256}:"
+              f"{selected_fingerprint}:{selected_manifest_revision}:"
+              f"{selected_manifest_sha256}"
+          )
           PY
+
+          )"
+          if [[ "$SELECTED_RELEASE_MODE" == "media-staging" ]]; then
+            if [[ ! "$moderation_binding" =~ ^[1-9][0-9]*:[0-9a-f]{64}:[0-9a-f]{64}:[1-9][0-9]*:[0-9a-f]{64}$ ]]; then
+              echo "Moderation key trust binding output is malformed." >&2
+              exit 1
+            fi
+            IFS=: read -r \
+              release_moderation_rollout_policy_revision \
+              release_moderation_rollout_policy_sha256 \
+              release_moderation_public_key_sha256 \
+              release_moderation_trust_revision \
+              release_moderation_trust_manifest_sha256 <<< "$moderation_binding"
+            release_moderation_trust_manifest_path="$RUNNER_TEMP/moderation-key-trust-manifest.json"
+            rm -f "$release_moderation_trust_manifest_path"
+            python3 - \
+              "$SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST" \
+              "$release_moderation_trust_manifest_path" \
+              "$release_moderation_trust_manifest_sha256" <<'PY'
+          import hashlib
+          import json
+          import sys
+
+          def strict_object(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError(f"duplicate JSON key: {key}")
+                  value[key] = item
+              return value
+
+          try:
+              manifest = json.loads(sys.argv[1], object_pairs_hook=strict_object)
+              canonical = json.dumps(
+                  manifest,
+                  ensure_ascii=True,
+                  separators=(",", ":"),
+                  sort_keys=True,
+              ).encode("ascii")
+          except (TypeError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+              raise SystemExit(f"Could not canonicalize moderation trust manifest: {error}")
+          if hashlib.sha256(canonical).hexdigest() != sys.argv[3]:
+              raise SystemExit("Canonical trust manifest digest changed before evidence staging.")
+          with open(sys.argv[2], "xb") as stream:
+              stream.write(canonical + b"\n")
+          PY
+            test -s "$release_moderation_trust_manifest_path"
+          elif [[ ! "$moderation_binding" =~ ^[1-9][0-9]*:[0-9a-f]{64}:::$ ]]; then
+            echo "A non-media release unexpectedly produced moderation key trust metadata." >&2
+            exit 1
+          else
+            release_moderation_trust_manifest_path=""
+            IFS=: read -r \
+              release_moderation_rollout_policy_revision \
+              release_moderation_rollout_policy_sha256 \
+              _ _ _ <<< "$moderation_binding"
+          fi
 
           plutil -lint "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
           {
@@ -357,6 +585,13 @@ jobs:
             echo "RELEASE_SHARING_API_ORIGIN=$release_origin"
             echo "RELEASE_SHARING_MODERATION_KEY_ID=$release_moderation_key_id"
             echo "RELEASE_SHARING_MODERATION_PUBLIC_KEY=$release_moderation_public_key"
+            echo "RELEASE_SHARING_MODERATION_PUBLIC_KEY_SHA256=$release_moderation_public_key_sha256"
+            echo "RELEASE_SHARING_MODERATION_TRUST_REVISION=$release_moderation_trust_revision"
+            echo "RELEASE_SHARING_MODERATION_TRUST_MANIFEST_SHA256=$release_moderation_trust_manifest_sha256"
+            echo "RELEASE_SHARING_MODERATION_TRUST_MANIFEST_PATH=$release_moderation_trust_manifest_path"
+            echo "RELEASE_SHARING_MODERATION_ROLLOUT_POLICY_REVISION=$release_moderation_rollout_policy_revision"
+            echo "RELEASE_SHARING_MODERATION_ROLLOUT_POLICY_SHA256=$release_moderation_rollout_policy_sha256"
+            echo "RELEASE_ENVIRONMENT=$release_environment"
             echo "RELEASE_APP_PRIVACY_URL=$release_app_privacy_url"
             echo "RELEASE_APP_SUPPORT_URL=$release_app_support_url"
             echo "RELEASE_SHARING_PRIVACY_URL=$release_privacy_url"
@@ -848,6 +1083,10 @@ jobs:
             --expected-api-origin "$RELEASE_SHARING_API_ORIGIN" \
             --expected-moderation-key-id "$RELEASE_SHARING_MODERATION_KEY_ID" \
             --expected-moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
+            --expected-moderation-public-key-sha256 "$RELEASE_SHARING_MODERATION_PUBLIC_KEY_SHA256" \
+            --expected-moderation-trust-manifest-revision "$RELEASE_SHARING_MODERATION_TRUST_REVISION" \
+            --expected-release-environment "$RELEASE_ENVIRONMENT" \
+            --expected-build-number "$RELEASE_BUILD_NUMBER" \
             --expected-app-privacy-url "$RELEASE_APP_PRIVACY_URL" \
             --expected-app-support-url "$RELEASE_APP_SUPPORT_URL" \
             --expected-privacy-url "$RELEASE_SHARING_PRIVACY_URL" \
@@ -980,6 +1219,32 @@ jobs:
           fi
           echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
 
+      - name: Generate build-bound moderation release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_info="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist"
+          python3 "$PROJECT_DIRECTORY/ci/write-moderation-release-metadata.py" \
+            --info-plist "$app_info" \
+            --output "$RUNNER_TEMP/moderation-release-metadata.json" \
+            --archive "$RUNNER_TEMP/NekoWidget.xcarchive" \
+            --ipa "$IPA_PATH" \
+            --rollout-policy "$PROJECT_DIRECTORY/ci/moderation-client-rollout-policy.json" \
+            --release-environment "$RELEASE_ENVIRONMENT" \
+            --source-commit "$GITHUB_SHA" \
+            --release-mode "$SHARING_EXPECTED_MODE" \
+            --moderation-key-id "$RELEASE_SHARING_MODERATION_KEY_ID" \
+            --moderation-public-key "$RELEASE_SHARING_MODERATION_PUBLIC_KEY" \
+            --moderation-public-key-sha256 "$RELEASE_SHARING_MODERATION_PUBLIC_KEY_SHA256" \
+            --moderation-trust-manifest-revision "$RELEASE_SHARING_MODERATION_TRUST_REVISION" \
+            --moderation-trust-manifest-sha256 "$RELEASE_SHARING_MODERATION_TRUST_MANIFEST_SHA256" \
+            --expected-rollout-policy-revision "$RELEASE_SHARING_MODERATION_ROLLOUT_POLICY_REVISION" \
+            --expected-rollout-policy-sha256 "$RELEASE_SHARING_MODERATION_ROLLOUT_POLICY_SHA256" \
+            --expected-build-number "$RELEASE_BUILD_NUMBER" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --github-run-attempt "$GITHUB_RUN_ATTEMPT"
+          test -s "$RUNNER_TEMP/moderation-release-metadata.json"
+
       - name: Package archive and symbols
         if: ${{ inputs.retain_signed_artifacts }}
         shell: bash
@@ -989,12 +1254,21 @@ jobs:
           set -euo pipefail
           test -d "$RUNNER_TEMP/NekoWidget.xcarchive"
           test -f "$IPA_PATH"
+          test -s "$RUNNER_TEMP/moderation-release-metadata.json"
           ipa_directory="$(dirname "$IPA_PATH")"
           ipa_filename="$(basename "$IPA_PATH")"
+          runner_members=(NekoWidget.xcarchive moderation-release-metadata.json)
+          if [[ "$SHARING_EXPECTED_MODE" == "media-staging" ]]; then
+            test -s "$RELEASE_SHARING_MODERATION_TRUST_MANIFEST_PATH"
+            runner_members+=(moderation-key-trust-manifest.json)
+          elif [[ -n "$RELEASE_SHARING_MODERATION_TRUST_MANIFEST_PATH" ]]; then
+            echo "Non-media release unexpectedly retained a trust manifest path." >&2
+            exit 1
+          fi
           tar \
             -C "$RUNNER_TEMP" \
             -czf - \
-            NekoWidget.xcarchive \
+            "${runner_members[@]}" \
             -C "$ipa_directory" \
             "$ipa_filename" \
             | openssl enc \
@@ -1005,6 +1279,17 @@ jobs:
                 -pass env:SIGNED_ARTIFACT_ENCRYPTION_PASSWORD \
                 -out "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc"
           test -s "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc"
+          python3 "$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" create \
+            --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+            --output "$RUNNER_TEMP/signed-artifact-authentication.json"
+          python3 "$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
+            --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+            --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
+          verification_bundle="$RUNNER_TEMP/signed-artifact-verification.tar.gz"
+          rm -f "$verification_bundle"
+          trap 'rm -f "$verification_bundle"' EXIT
           openssl enc \
             -d \
             -aes-256-cbc \
@@ -1012,10 +1297,23 @@ jobs:
             -iter 200000 \
             -pass env:SIGNED_ARTIFACT_ENCRYPTION_PASSWORD \
             -in "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
-            | tar -tzf - \
-            | tee "$RUNNER_TEMP/signed-artifact-contents.txt"
-          grep -q '^NekoWidget.xcarchive/' "$RUNNER_TEMP/signed-artifact-contents.txt"
-          grep -Fxq "$ipa_filename" "$RUNNER_TEMP/signed-artifact-contents.txt"
+            -out "$verification_bundle"
+          verification_arguments=(
+            --bundle "$verification_bundle"
+            --external-metadata "$RUNNER_TEMP/moderation-release-metadata.json"
+            --external-ipa "$IPA_PATH"
+            --release-mode "$SHARING_EXPECTED_MODE"
+          )
+          if [[ "$SHARING_EXPECTED_MODE" == "media-staging" ]]; then
+            verification_arguments+=(
+              --external-trust-manifest "$RELEASE_SHARING_MODERATION_TRUST_MANIFEST_PATH"
+              --expected-trust-manifest-sha256 "$RELEASE_SHARING_MODERATION_TRUST_MANIFEST_SHA256"
+            )
+          fi
+          python3 "$PROJECT_DIRECTORY/ci/verify-signed-artifact-contents.py" \
+            "${verification_arguments[@]}"
+          rm -f "$verification_bundle"
+          trap - EXIT
 
       - name: Upload encrypted signed app and symbols
         if: ${{ inputs.retain_signed_artifacts && (inputs.release_mode != 'disabled' || !inputs.upload_to_testflight) }}
@@ -1024,6 +1322,8 @@ jobs:
           name: nekowidget-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/NekoWidget-signed-artifacts.tar.gz.enc
+            ${{ runner.temp }}/moderation-release-metadata.json
+            ${{ runner.temp }}/signed-artifact-authentication.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -1050,8 +1350,25 @@ jobs:
         env:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
+
+          # Re-authenticate the retained evidence immediately before checking the
+          # exact IPA bytes that altool will receive. Authentication must precede
+          # digest comparison so a rewritten metadata file cannot bless a new IPA.
+          python3 "$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
+            --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+            --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
+          python3 "$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
+            --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+            --ipa "$IPA_PATH" \
+            --expected-source-commit "$GITHUB_SHA" \
+            --expected-build-number "$RELEASE_BUILD_NUMBER" \
+            --expected-github-run-id "$GITHUB_RUN_ID" \
+            --expected-github-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --expected-release-mode "$SHARING_EXPECTED_MODE"
 
           run_altool_stage() {
             local stage="$1"
@@ -1103,6 +1420,7 @@ jobs:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
           UPLOAD_TO_TESTFLIGHT: ${{ inputs.upload_to_testflight }}
           RETAIN_SIGNED_ARTIFACTS: ${{ inputs.retain_signed_artifacts }}
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
         run: |
           set -euo pipefail
           processed_info="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app/Info.plist"
@@ -1113,6 +1431,8 @@ jobs:
             --repository "$GITHUB_WORKSPACE" \
             --info-plist "$processed_info" \
             --artifact "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
+            --release-metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
+            --artifact-authentication "$RUNNER_TEMP/signed-artifact-authentication.json" \
             --output-directory "$RUNNER_TEMP/local-only-release-evidence" \
             --source-commit "$GITHUB_SHA" \
             --version "$release_version" \
@@ -1134,12 +1454,40 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-      - name: Preserve encrypted local-only archive after failure
+      - name: Stage authenticated local-only evidence after failure
+        if: ${{ failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
+        shell: bash
+        env:
+          SIGNED_ARTIFACT_ENCRYPTION_PASSWORD: ${{ secrets.SIGNED_ARTIFACT_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ciphertext="$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc"
+          metadata="$RUNNER_TEMP/moderation-release-metadata.json"
+          authentication="$RUNNER_TEMP/signed-artifact-authentication.json"
+          for evidence_file in "$ciphertext" "$metadata" "$authentication"; do
+            if [[ ! -s "$evidence_file" ]]; then
+              echo "Authenticated failure evidence is incomplete; preserving none of the three files." >&2
+              exit 0
+            fi
+          done
+          python3 "$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
+            --ciphertext "$ciphertext" \
+            --metadata "$metadata" \
+            --authentication "$authentication"
+          evidence_directory="$RUNNER_TEMP/failed-local-only-authenticated-evidence"
+          if [[ -e "$evidence_directory" ]]; then
+            echo "Failure evidence staging directory must not already exist." >&2
+            exit 1
+          fi
+          mkdir "$evidence_directory"
+          /bin/cp "$ciphertext" "$metadata" "$authentication" "$evidence_directory/"
+
+      - name: Preserve authenticated local-only evidence after failure
         if: ${{ failure() && inputs.retain_signed_artifacts && inputs.release_mode == 'disabled' && inputs.upload_to_testflight }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nekowidget-failed-local-only-signed-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/NekoWidget-signed-artifacts.tar.gz.enc
+          path: ${{ runner.temp }}/failed-local-only-authenticated-evidence/
           if-no-files-found: warn
           compression-level: 0
           retention-days: 14

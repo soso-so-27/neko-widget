@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import plistlib
 import subprocess
 import sys
@@ -21,6 +22,19 @@ PRODUCT_INTERACTION = "NSPrivacyCollectedDataTypeProductInteraction"
 PURPOSE = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 MODERATION_KEY_ID = "moderation-v1"
 MODERATION_PUBLIC_KEY = "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo"
+MODERATION_PUBLIC_KEY_SHA256 = hashlib.sha256(
+    base64.urlsafe_b64decode(MODERATION_PUBLIC_KEY + "=")
+).hexdigest()
+SYNTHETIC_V2_PUBLIC_KEY_BYTES = bytes(range(32))
+SYNTHETIC_V2_PUBLIC_KEY = base64.urlsafe_b64encode(
+    SYNTHETIC_V2_PUBLIC_KEY_BYTES
+).decode("ascii").rstrip("=")
+SYNTHETIC_V2_PUBLIC_KEY_SHA256 = hashlib.sha256(
+    SYNTHETIC_V2_PUBLIC_KEY_BYTES
+).hexdigest()
+MODERATION_TRUST_MANIFEST_REVISION = "1"
+RELEASE_ENVIRONMENT = "testflight"
+BUILD_NUMBER = "35"
 PRIVACY_URL = "https://nekonomado.jp/privacy"
 SUPPORT_URL = "https://nekonomado.jp/support"
 COMMUNITY_URL = "https://nekonomado.jp/community"
@@ -126,6 +140,7 @@ def info(
         app_privacy_url = ""
         app_support_url = ""
     return {
+        "CFBundleVersion": BUILD_NUMBER,
         "AppPrivacyURL": app_privacy_url,
         "AppSupportURL": app_support_url,
         "SharingReleaseMode": release_mode,
@@ -208,6 +223,10 @@ class SharingReleasePreflightTests(unittest.TestCase):
         expected_api_origin: str | None = None,
         expected_moderation_key_id: str | None = None,
         expected_moderation_public_key: str | None = None,
+        expected_moderation_public_key_sha256: str | None = None,
+        expected_moderation_trust_manifest_revision: str | None = None,
+        expected_release_environment: str = RELEASE_ENVIRONMENT,
+        expected_build_number: str = BUILD_NUMBER,
         expected_app_privacy_url: str | None = None,
         expected_app_support_url: str | None = None,
         expected_privacy_url: str | None = None,
@@ -301,6 +320,24 @@ class SharingReleasePreflightTests(unittest.TestCase):
                         "SharingModerationPublicKey",
                         expected_moderation_public_key,
                     ),
+                    "--expected-moderation-public-key-sha256",
+                    (
+                        MODERATION_PUBLIC_KEY_SHA256
+                        if exact_media_configuration
+                        and expected_moderation_public_key_sha256 is None
+                        else (expected_moderation_public_key_sha256 or "")
+                    ),
+                    "--expected-moderation-trust-manifest-revision",
+                    (
+                        MODERATION_TRUST_MANIFEST_REVISION
+                        if exact_media_configuration
+                        and expected_moderation_trust_manifest_revision is None
+                        else (expected_moderation_trust_manifest_revision or "")
+                    ),
+                    "--expected-release-environment",
+                    expected_release_environment,
+                    "--expected-build-number",
+                    expected_build_number,
                     "--expected-app-privacy-url",
                     (
                         str(info_value.get("AppPrivacyURL", ""))
@@ -697,6 +734,103 @@ class SharingReleasePreflightTests(unittest.TestCase):
         result = self.run_preflight(no_handoff, manifest)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Expected media-staging flags", result.stderr)
+
+    def test_media_staging_binds_reviewed_key_fingerprint_and_build(self) -> None:
+        app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+
+        result = self.run_preflight(app, manifest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        invalid_bindings = (
+            (
+                {"expected_moderation_public_key_sha256": ""},
+                "SHA-256",
+            ),
+            (
+                {
+                    "expected_moderation_public_key_sha256":
+                        MODERATION_PUBLIC_KEY_SHA256.upper()
+                },
+                "64 lowercase hexadecimal",
+            ),
+            (
+                {"expected_moderation_public_key_sha256": "0" * 64},
+                "does not match its reviewed SHA-256 fingerprint",
+            ),
+            (
+                {"expected_moderation_trust_manifest_revision": ""},
+                "trust manifest revision",
+            ),
+            (
+                {"expected_release_environment": " testflight"},
+                "release environment",
+            ),
+            (
+                {"expected_build_number": "036"},
+                "build number",
+            ),
+        )
+        for arguments, message in invalid_bindings:
+            with self.subTest(arguments=arguments):
+                result = self.run_preflight(app, manifest, **arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+        changed_build = dict(app)
+        changed_build["CFBundleVersion"] = "36"
+        result = self.run_preflight(changed_build, manifest)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CFBundleVersion", result.stderr)
+
+    def test_media_staging_rejects_unreviewed_or_malformed_key_ids(self) -> None:
+        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        for key_id in ("moderation-v3", " moderation-v1", "", "MODERATION-V1"):
+            with self.subTest(key_id=key_id):
+                app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+                app["SharingModerationKeyID"] = key_id
+                result = self.run_preflight(
+                    app,
+                    manifest,
+                    expected_moderation_key_id=key_id,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("moderation key ID", result.stderr)
+
+        future_key = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+        future_key["SharingModerationKeyID"] = "moderation-v2"
+        result = self.run_preflight(
+            future_key,
+            manifest,
+            expected_moderation_key_id="moderation-v2",
+            expected_moderation_public_key_sha256="",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SHA-256", result.stderr)
+
+    def test_media_staging_lower_level_validator_accepts_reviewed_synthetic_v2(self) -> None:
+        app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+        app["SharingModerationKeyID"] = "moderation-v2"
+        app["SharingModerationPublicKey"] = SYNTHETIC_V2_PUBLIC_KEY
+        result = self.run_preflight(
+            app,
+            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            expected_moderation_key_id="moderation-v2",
+            expected_moderation_public_key=SYNTHETIC_V2_PUBLIC_KEY,
+            expected_moderation_public_key_sha256=SYNTHETIC_V2_PUBLIC_KEY_SHA256,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_media_staging_rejects_public_key_whitespace(self) -> None:
+        app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
+        app["SharingModerationPublicKey"] = f" {MODERATION_PUBLIC_KEY}"
+        result = self.run_preflight(
+            app,
+            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            expected_moderation_public_key=f" {MODERATION_PUBLIC_KEY}",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("public key must not contain surrounding whitespace", result.stderr)
 
     def test_media_staging_rejects_small_order_x25519_public_keys(self) -> None:
         small_order_keys = (

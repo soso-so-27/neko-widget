@@ -10,14 +10,30 @@ param(
         "HardenDrillFiles",
         "ValidateDrillForReview",
         "HardenDrillReviewFiles",
+        "HardenDrillReviewFilesWithoutCiphertext",
         "ValidateDrillForDelete",
-        "ValidateDrillAfterDelete"
+        "HardenDrillAfterPlaintextDelete",
+        "ValidateDrillAfterPlaintextDelete",
+        "HardenDrillAfterDelete",
+        "ValidateDrillAfterDelete",
+        "PrepareModerationCaseDirectory",
+        "HardenModerationDecryptInput",
+        "ValidateModerationDecryptInput",
+        "HardenModerationDecryptOutput",
+        "HardenModerationDecryptOutputWithoutCiphertext",
+        "ValidateModerationPlaintextDeleteInput",
+        "HardenModerationAfterPlaintextDelete",
+        "ValidateModerationCiphertextDeleteInput",
+        "HardenModerationAfterCiphertextDelete"
     )]
     [string]$Mode,
 
     [string]$OutputDirectory,
 
     [string]$DisjointDirectory,
+
+    [ValidateSet("moderation-v1", "moderation-v2")]
+    [string]$ModerationKeyId = "moderation-v2",
 
     [switch]$ConfirmLocalEncryptedNoSync,
 
@@ -35,6 +51,24 @@ function Test-Administrator {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Initialize-FixedWindowsSecurityModules {
+    # Do not let PSModulePath or another inherited environment variable select
+    # the commands that attest the filesystem and BitLocker state.
+    $storageManifest = Join-Path $PSHOME "Modules\Storage\Storage.psd1"
+    $bitLockerManifest = Join-Path $PSHOME "Modules\BitLocker\BitLocker.psd1"
+    foreach ($manifest in @($storageManifest, $bitLockerManifest)) {
+        $manifestFull = [System.IO.Path]::GetFullPath($manifest)
+        $trustedRoot = [System.IO.Path]::GetFullPath($PSHOME).TrimEnd('\') + "\"
+        if (-not $manifestFull.StartsWith(
+                $trustedRoot,
+                [System.StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $manifestFull -PathType Leaf)) {
+            Stop-SecurityCheck "a fixed Windows security module is unavailable"
+        }
+        Import-Module -Name $manifestFull -Force -ErrorAction Stop
+    }
 }
 
 function Initialize-FileIdentityHelper {
@@ -183,8 +217,8 @@ function Test-ExactAcl(
         if ($expected -notcontains $rule.IdentityReference.Value -or
             $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
             $rule.IsInherited -or
-            (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne
-             [System.Security.AccessControl.FileSystemRights]::FullControl)) {
+            $rule.FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl -or
+            $rule.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None) {
             return $false
         }
         if ($Directory) {
@@ -452,8 +486,11 @@ function Invoke-PolicySelfTest {
     }
 
     $testDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("neko-keygen-acl-test-" + [guid]::NewGuid().ToString("N"))
-    $privateFile = Join-Path $testDirectory "moderation-v1.private.raw"
-    $publicFile = Join-Path $testDirectory "moderation-v1.public.base64url"
+    $privateFile = Join-Path $testDirectory "moderation-v2.private.raw"
+    $publicFile = Join-Path $testDirectory "moderation-v2.public.base64url"
+    $fingerprintFile = Join-Path $testDirectory "moderation-v2.public.sha256"
+    $unexpectedFile = Join-Path $testDirectory "unexpected.txt"
+    $hardLinkFile = Join-Path ([System.IO.Path]::GetTempPath()) ("neko-keygen-hardlink-test-" + [guid]::NewGuid().ToString("N"))
     try {
         [void][System.IO.Directory]::CreateDirectory($testDirectory)
         if (-not (Test-CanonicalSingleLinkPath -LiteralPath $testDirectory -Directory $true)) {
@@ -488,15 +525,57 @@ function Invoke-PolicySelfTest {
         }
         [System.IO.File]::WriteAllBytes($privateFile, [byte[]]::new(32))
         [System.IO.File]::WriteAllBytes($publicFile, [byte[]]::new(43))
+        [System.IO.File]::WriteAllBytes($fingerprintFile, [byte[]]::new(64))
         if (-not (Test-CanonicalSingleLinkPath -LiteralPath $privateFile -Directory $false) -or
-            -not (Test-CanonicalSingleLinkPath -LiteralPath $publicFile -Directory $false)) {
+            -not (Test-CanonicalSingleLinkPath -LiteralPath $publicFile -Directory $false) -or
+            -not (Test-CanonicalSingleLinkPath -LiteralPath $fingerprintFile -Directory $false)) {
             throw "file identity fixture failed"
         }
         Set-ExactAcl -LiteralPath $privateFile -CurrentUserSid $currentSid -Directory $false
         Set-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false
+        Set-ExactAcl -LiteralPath $fingerprintFile -CurrentUserSid $currentSid -Directory $false
         if (-not (Test-ExactAcl -LiteralPath $privateFile -CurrentUserSid $currentSid -Directory $false) -or
-            -not (Test-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false)) {
+            -not (Test-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false) -or
+            -not (Test-ExactAcl -LiteralPath $fingerprintFile -CurrentUserSid $currentSid -Directory $false)) {
             throw "file ACL round-trip failed"
+        }
+        $fixedFileContract = @{
+            "moderation-v2.private.raw" = @(32L, 32L)
+            "moderation-v2.public.base64url" = @(43L, 43L)
+            "moderation-v2.public.sha256" = @(64L, 64L)
+        }
+        if (-not (Test-ExactFixedFiles `
+                -LiteralDirectory $testDirectory `
+                -Contract $fixedFileContract `
+                -CurrentUserSid $currentSid `
+                -Harden $false)) {
+            throw "exact fixed file contract fixture failed"
+        }
+        [System.IO.File]::WriteAllText($unexpectedFile, "x")
+        if (Test-ExactFixedFiles `
+                -LiteralDirectory $testDirectory `
+                -Contract $fixedFileContract `
+                -CurrentUserSid $currentSid `
+                -Harden $false) {
+            throw "unexpected file fixture was accepted"
+        }
+        Remove-Item -LiteralPath $unexpectedFile -Force
+
+        $inheritedFileSecurity = [System.IO.File]::GetAccessControl($publicFile)
+        $inheritedFileSecurity.SetAccessRuleProtection($false, $true)
+        [System.IO.File]::SetAccessControl($publicFile, $inheritedFileSecurity)
+        if (Test-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false) {
+            throw "inherited file ACL fixture was accepted"
+        }
+        Set-ExactAcl -LiteralPath $publicFile -CurrentUserSid $currentSid -Directory $false
+
+        [void](New-Item -ItemType HardLink -Path $hardLinkFile -Target $privateFile)
+        if (Test-CanonicalSingleLinkPath -LiteralPath $privateFile -Directory $false) {
+            throw "hard-linked fixed file fixture was accepted"
+        }
+        Remove-Item -LiteralPath $hardLinkFile -Force
+        if (-not (Test-CanonicalSingleLinkPath -LiteralPath $privateFile -Directory $false)) {
+            throw "single-link file identity was not restored"
         }
         $everyone = New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")
         foreach ($dangerousRight in @(
@@ -600,7 +679,7 @@ function Invoke-PolicySelfTest {
             throw "trusted owner fixture was rejected"
         }
     } finally {
-        foreach ($file in @($privateFile, $publicFile)) {
+        foreach ($file in @($unexpectedFile, $hardLinkFile, $privateFile, $publicFile, $fingerprintFile)) {
             if (Test-Path -LiteralPath $file -PathType Leaf) {
                 Remove-Item -LiteralPath $file -Force
             }
@@ -633,6 +712,7 @@ try {
     if (-not (Test-Administrator)) {
         Stop-SecurityCheck "an elevated Windows administrator session is required"
     }
+    Initialize-FixedWindowsSecurityModules
     $fullOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
     if ($fullOutput -notmatch '^[A-Za-z]:\\' -or $fullOutput.Substring(3).Contains(":")) {
         Stop-SecurityCheck "UNC, device, extended, and alternate-stream paths are not allowed"
@@ -657,8 +737,8 @@ try {
     }
 
     $driveLetter = $fullOutput.Substring(0, 1)
-    $volume = Get-Volume -DriveLetter $driveLetter
-    $bitLocker = Get-BitLockerVolume -MountPoint "$driveLetter`:"
+    $volume = Storage\Get-Volume -DriveLetter $driveLetter
+    $bitLocker = BitLocker\Get-BitLockerVolume -MountPoint "$driveLetter`:"
     if (-not (Test-VolumeProtection -Volume $volume -BitLocker $bitLocker)) {
         Stop-SecurityCheck "the volume must be fixed local NTFS with BitLocker fully encrypted, On, 100 percent, and unlocked"
     }
@@ -668,16 +748,44 @@ try {
         Stop-SecurityCheck "an output ancestor permits untrusted path-component replacement"
     }
 
-    if ($Mode -eq "PrepareDrillDirectory" -and
-        ([string]::IsNullOrWhiteSpace($DisjointDirectory) -or
-         -not (Test-CanonicalSingleLinkPath -LiteralPath $DisjointDirectory -Directory $true) -or
-         -not (Test-DisjointOperationalDirectories `
-            -ExistingDirectory $DisjointDirectory `
-            -ProspectiveDirectory $fullOutput))) {
-        Stop-SecurityCheck "the key and drill directories must be canonically disjoint before creation"
+    $productionCaseModes = @(
+        "PrepareModerationCaseDirectory",
+        "HardenModerationDecryptInput",
+        "ValidateModerationDecryptInput",
+        "HardenModerationDecryptOutput",
+        "HardenModerationDecryptOutputWithoutCiphertext",
+        "ValidateModerationPlaintextDeleteInput",
+        "HardenModerationAfterPlaintextDelete",
+        "ValidateModerationCiphertextDeleteInput",
+        "HardenModerationAfterCiphertextDelete"
+    )
+    $optionalDisjointDrillModes = @(
+        "HardenDrillFiles",
+        "ValidateDrillForReview",
+        "HardenDrillReviewFiles",
+        "HardenDrillReviewFilesWithoutCiphertext",
+        "ValidateDrillForDelete",
+        "HardenDrillAfterPlaintextDelete",
+        "ValidateDrillAfterPlaintextDelete",
+        "HardenDrillAfterDelete",
+        "ValidateDrillAfterDelete"
+    )
+    $requiresDisjointDirectory = $Mode -eq "PrepareDrillDirectory" -or
+        $productionCaseModes -contains $Mode
+    $checksDisjointDirectory = $requiresDisjointDirectory -or
+        $optionalDisjointDrillModes -contains $Mode
+    if (($requiresDisjointDirectory -and [string]::IsNullOrWhiteSpace($DisjointDirectory)) -or
+        ($checksDisjointDirectory -and
+         -not [string]::IsNullOrWhiteSpace($DisjointDirectory) -and
+         (-not (Test-CanonicalSingleLinkPath -LiteralPath $DisjointDirectory -Directory $true) -or
+          -not (Test-DisjointOperationalDirectories `
+             -ExistingDirectory $DisjointDirectory `
+             -ProspectiveDirectory $fullOutput)))) {
+        Stop-SecurityCheck "the key and operational directories must be canonically disjoint"
     }
 
-    if ($Mode -eq "PrepareDirectory" -or $Mode -eq "PrepareDrillDirectory") {
+    if ($Mode -eq "PrepareDirectory" -or $Mode -eq "PrepareDrillDirectory" -or
+        $Mode -eq "PrepareModerationCaseDirectory") {
         if (Test-Path -LiteralPath $fullOutput) {
             Stop-SecurityCheck "the output directory must not already exist"
         }
@@ -698,9 +806,17 @@ try {
         }
     }
 
-    $keyContract = @{
-        "moderation-v1.private.raw" = @(32L, 32L)
-        "moderation-v1.public.base64url" = @(43L, 43L)
+    $keyContract = if ($ModerationKeyId -eq "moderation-v1") {
+        @{
+            "moderation-v1.private.raw" = @(32L, 32L)
+            "moderation-v1.public.base64url" = @(43L, 43L)
+        }
+    } else {
+        @{
+            "moderation-v2.private.raw" = @(32L, 32L)
+            "moderation-v2.public.base64url" = @(43L, 43L)
+            "moderation-v2.public.sha256" = @(64L, 64L)
+        }
     }
     $drillContract = @{
         "synthetic-export.json" = @(1L, 16384L)
@@ -713,13 +829,51 @@ try {
         "synthetic-review.jpg.receipt" = @(107L, 107L)
         "synthetic-audit.jsonl" = @(1L, 4194304L)
     }
+    $reviewWithoutCiphertextContract = @{
+        "synthetic-export.json" = @(1L, 16384L)
+        "synthetic-review.jpg" = @(1L, 950244L)
+        "synthetic-review.jpg.receipt" = @(107L, 107L)
+        "synthetic-audit.jsonl" = @(1L, 4194304L)
+    }
+    $afterPlaintextDeleteContract = @{
+        "synthetic-export.json" = @(1L, 16384L)
+        "synthetic-report.ciphertext" = @(29L, 1048576L)
+        "synthetic-audit.jsonl" = @(1L, 4194304L)
+    }
     $postDeleteContract = @{
         "synthetic-export.json" = @(1L, 16384L)
         "synthetic-audit.jsonl" = @(1L, 4194304L)
     }
+    $moderationDecryptInputContract = @{
+        "moderation-export.json" = @(1L, 16384L)
+        "moderation-report.ciphertext" = @(29L, 1048576L)
+    }
+    $moderationReviewContract = @{
+        "moderation-export.json" = @(1L, 16384L)
+        "moderation-report.ciphertext" = @(29L, 1048576L)
+        "moderation-review.jpg" = @(1L, 950244L)
+        "moderation-review.jpg.receipt" = @(107L, 107L)
+        "moderation-audit.jsonl" = @(1L, 4194304L)
+    }
+    $moderationReviewWithoutCiphertextContract = @{
+        "moderation-export.json" = @(1L, 16384L)
+        "moderation-review.jpg" = @(1L, 950244L)
+        "moderation-review.jpg.receipt" = @(107L, 107L)
+        "moderation-audit.jsonl" = @(1L, 4194304L)
+    }
+    $moderationAfterPlaintextDeleteContract = @{
+        "moderation-export.json" = @(1L, 16384L)
+        "moderation-report.ciphertext" = @(29L, 1048576L)
+        "moderation-audit.jsonl" = @(1L, 4194304L)
+    }
+    $moderationAfterDeleteContract = @{
+        "moderation-export.json" = @(1L, 16384L)
+        "moderation-audit.jsonl" = @(1L, 4194304L)
+    }
 
     if ($Mode -eq "PrepareDirectory" -or $Mode -eq "VerifyDirectory" -or
-        $Mode -eq "PrepareDrillDirectory" -or $Mode -eq "VerifyDrillDirectory") {
+        $Mode -eq "PrepareDrillDirectory" -or $Mode -eq "VerifyDrillDirectory" -or
+        $Mode -eq "PrepareModerationCaseDirectory") {
         if (@(Get-ChildItem -LiteralPath $fullOutput -Force).Count -ne 0) {
             Stop-SecurityCheck "the prepared output directory is not empty"
         }
@@ -748,15 +902,97 @@ try {
             -CurrentUserSid $currentSid -Harden $true)) {
             Stop-SecurityCheck "the fixed drill review artifacts could not be hardened"
         }
+    } elseif ($Mode -eq "HardenDrillReviewFilesWithoutCiphertext") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $reviewWithoutCiphertextContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed drill review artifacts without ciphertext could not be hardened"
+        }
     } elseif ($Mode -eq "ValidateDrillForDelete") {
         if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $reviewContract `
-            -CurrentUserSid $currentSid -Harden $false)) {
+                -CurrentUserSid $currentSid -Harden $false) -and
+            -not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+                -Contract $reviewWithoutCiphertextContract `
+                -CurrentUserSid $currentSid -Harden $false)) {
             Stop-SecurityCheck "the fixed drill review artifacts are not exact and restricted"
+        }
+    } elseif ($Mode -eq "HardenDrillAfterPlaintextDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+                -Contract $afterPlaintextDeleteContract `
+                -CurrentUserSid $currentSid -Harden $true) -and
+            -not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $postDeleteContract `
+                -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed drill post-plaintext file set could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateDrillAfterPlaintextDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $afterPlaintextDeleteContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the fixed drill plaintext or receipt remains before ciphertext deletion"
+        }
+    } elseif ($Mode -eq "HardenDrillAfterDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $postDeleteContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed drill post-delete file set could not be hardened"
         }
     } elseif ($Mode -eq "ValidateDrillAfterDelete") {
         if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput -Contract $postDeleteContract `
             -CurrentUserSid $currentSid -Harden $false)) {
             Stop-SecurityCheck "plaintext, receipt, or ciphertext remains after the drill deletion boundary"
+        }
+    } elseif ($Mode -eq "HardenModerationDecryptInput") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $moderationDecryptInputContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed moderation decrypt input could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateModerationDecryptInput") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $moderationDecryptInputContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the fixed moderation decrypt input is not exact and restricted"
+        }
+    } elseif ($Mode -eq "HardenModerationDecryptOutput") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $moderationReviewContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed moderation review output could not be hardened"
+        }
+    } elseif ($Mode -eq "HardenModerationDecryptOutputWithoutCiphertext") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $moderationReviewWithoutCiphertextContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed moderation review output without ciphertext could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateModerationPlaintextDeleteInput") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+                -Contract $moderationReviewContract `
+                -CurrentUserSid $currentSid -Harden $false) -and
+            -not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+                -Contract $moderationReviewWithoutCiphertextContract `
+                -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the fixed moderation plaintext deletion input is not exact and restricted"
+        }
+    } elseif ($Mode -eq "HardenModerationAfterPlaintextDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+                -Contract $moderationAfterPlaintextDeleteContract `
+                -CurrentUserSid $currentSid -Harden $true) -and
+            -not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+                -Contract $moderationAfterDeleteContract `
+                -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed moderation post-plaintext file set could not be hardened"
+        }
+    } elseif ($Mode -eq "ValidateModerationCiphertextDeleteInput") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $moderationAfterPlaintextDeleteContract `
+            -CurrentUserSid $currentSid -Harden $false)) {
+            Stop-SecurityCheck "the fixed moderation ciphertext deletion input is not exact and restricted"
+        }
+    } elseif ($Mode -eq "HardenModerationAfterCiphertextDelete") {
+        if (-not (Test-ExactFixedFiles -LiteralDirectory $fullOutput `
+            -Contract $moderationAfterDeleteContract `
+            -CurrentUserSid $currentSid -Harden $true)) {
+            Stop-SecurityCheck "the fixed moderation post-delete file set could not be hardened"
         }
     } else {
         Stop-SecurityCheck "the requested security mode is unsupported"

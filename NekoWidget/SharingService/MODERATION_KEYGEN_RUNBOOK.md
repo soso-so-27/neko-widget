@@ -1,7 +1,9 @@
 # staging通報鍵のオフライン生成runbook
 
-このrunbookは、本人所有2台だけの`media-staging`で使うX25519通報鍵を、同期対象外の
-BitLockerで完全暗号化されたWindows local NTFS volumeへ一度だけ生成するためのものです。
+このrunbookは、将来のdual-key rotationで使う次の未使用`moderation-v2` X25519通報鍵を、同期対象外の
+BitLockerで完全暗号化されたWindows local NTFS volumeへ一度だけ生成するためのものです。生成だけでは
+現在のTestFlight／App Store candidateの`moderation-v1`、Server、offline Tool、GitHub Environmentを
+変更しません。
 実運用helperはWindows専用であり、Production鍵の生成手順ではありません。
 この手順はCloudflare deploy、GitHub Environment変更、TestFlight署名／upload、runtime flag変更を
 一切行いません。`MOMENT_RUNTIME_ENABLED`と`LEGACY_SHARING_RUNTIME_ENABLED`は`NO`のままです。
@@ -60,7 +62,7 @@ Windows wrapperは鍵生成前に次をfail closedで確認します。
 Wrapperは静的PowerShell/.NET APIと引数配列だけを使い、command文字列を組み立てて
 `Invoke-Expression`や`cmd /c`へ渡しません。BitLocker cmdletの不足、権限不足、読取不能、想定外の
 状態は全て生成前に停止します。`--skip-bitlocker`や`--force`はありません。
-Node helperも同じ静的security scriptを鍵生成直前に独立して再実行し、書込後は両fileの継承を切って
+Node helperも同じ静的security scriptを鍵生成直前に独立して再実行し、書込後は3 fileの継承を切って
 exact ACLを再検証してから成功にします。環境変数や追加CLI markerをpreflightの証明として信頼しません。
 
 ## 非Windowsでは実行しない
@@ -72,17 +74,19 @@ unit testであり、POSIXで実鍵を生成できるという運用保証では
 ## 固定出力と検証境界
 
 利用者がfilename、key ID、private valueを引数、環境変数、標準入力で指定する機能はありません。
-出力は新規directory内の次の2fileだけです。
+このceremonyは次の未使用ID `moderation-v2`へ固定され、出力は新規directory内の次の3fileだけです。
 
 | File | 内容 |
 |---|---|
-| `moderation-v1.private.raw` | X25519 raw private key、exact 32 bytes |
-| `moderation-v1.public.base64url` | X25519 raw public keyのcanonical base64url、exact 43 ASCII bytes、改行なし |
+| `moderation-v2.private.raw` | X25519 raw private key、exact 32 bytes |
+| `moderation-v2.public.base64url` | X25519 raw public keyのcanonical base64url、exact 43 ASCII bytes、改行なし |
+| `moderation-v2.public.sha256` | decode後の32-byte raw public keyに対するSHA-256、lowercase 64 ASCII hex、改行なし |
 
 Windows wrapperから呼ばれたhelperはNode/OpenSSLの`generateKeyPairSync('x25519')`で生成し、PKCS8 prefix
 `302e020100300506032b656e04220420`とSPKI prefix `302a300506032b656e032100`をexact検査します。
-Raw privateからpublicを再導出し、生成public、file readbackの3者が一致するまで成功にしません。
-両filenameを`O_EXCL`で空予約してから鍵を生成し、publicをfsyncした後、privateを最後に書いてfsyncします。
+Raw privateからpublicを再導出し、生成public、public file、fingerprint fileのreadbackが一致するまで成功に
+しません。3 filenameを`O_EXCL`で空予約してから鍵を生成し、publicとfingerprintをfsyncした後、privateを
+最後に書いてfsyncします。
 Private DER、raw private、private readbackのBufferは全経路でzero fillします。KeyObject内のnative memoryは
 Node/OpenSSLが管理するため、process終了を追加の境界とします。
 
@@ -92,7 +96,7 @@ Success／error consoleへ鍵、公開鍵、出力pathを表示しません。�
 ## 中断・失敗時
 
 既存directoryや既存fileを上書きせず、自動再開もしません。通常の失敗では、同じprocessが作成した
-固定fileをfile identityとlink countで照合して削除し、空なら新規directoryも削除します。電源断などで
+固定3 fileをfile identityとlink countで照合して削除し、空なら新規directoryも削除します。電源断などで
 zero-length placeholder、public-only、またはpartial directoryが残った場合、そのdirectoryを成功品として
 使わず隔離します。Private fileやpublic fileの内容をconsoleで調べません。
 
@@ -102,14 +106,18 @@ zero-length placeholder、public-only、またはpartial directoryが残った�
 
 ## 成功後
 
-1. Directoryと両fileのACLをwrapperの終了結果で確認する。秘密鍵を開いたりBase64化しない。
-2. `moderation-v1.private.raw`は隔離端末だけに保持し、GitHub、Cloudflare、repository、chat、ticket、
+1. Directoryと3 fileのACLをwrapperの終了結果で確認する。秘密鍵を開いたりBase64化しない。
+2. `moderation-v2.private.raw`は隔離端末だけに保持し、GitHub、Cloudflare、repository、chat、ticket、
    password managerの自由記述欄へ置かない。
 3. 封印・暗号化backup、二人承認、復元訓練、rotation／廃棄台帳は別の承認済み作業で用意する。
-4. Public fileの43文字だけを`SHARING_STAGING_MODERATION_PUBLIC_KEY`へ登録する作業は、対象Environmentと
-   `main`保護ruleを再確認した別の明示承認で行う。
+4. `moderation-v2.public.sha256`がlowercase 64文字hexであり、companion public fileから独立再計算した値と
+   一致することを二人でreviewする。この非secret値もrepository、chat、runbookへ貼らず鍵台帳で管理する。
 5. [staging通報鍵の合成復号・削除drill](MODERATION_STAGING_DRILL_RUNBOOK.md)が成功するまで
    写真runtimeやTestFlight uploadを有効にしない。
+6. Serverとoffline Toolのv1＋v2 dual対応を先に配備・検証してから、別承認でv2 fingerprintをprotected trust
+   manifestへ追加する。さらにその後のclient releaseでだけ`SHARING_STAGING_MODERATION_KEY_ID`と
+   `SHARING_STAGING_MODERATION_PUBLIC_KEY`をv2へ切り替える。順序とrollbackは
+   [moderation runbook](MODERATION_RUNBOOK.md#moderation-v2-rotationの順序)に従う。
 
 CIの`check:moderation-keygen`は固定の合成鍵と使い捨てtest directoryだけを使います。Random X25519 pairの
 試験はmemory内の導出一致だけで、鍵fileを永続化しません。CIがgreenでも実鍵生成、BitLocker、backup、

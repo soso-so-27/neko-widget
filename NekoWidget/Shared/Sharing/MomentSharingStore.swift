@@ -175,6 +175,12 @@ enum MomentReportOutboxPhase: String, Codable, Sendable {
 
 struct MomentReportOutboxItem: Codable, Equatable, Identifiable, Sendable {
     static let schemaVersion = 1
+    // Persist only reports prepared for an explicitly reviewed key ID.
+    private static let reviewedModerationKeyIDs: Set<String> = [
+        "moderation-v1",
+        "moderation-v2"
+    ]
+
     var schemaVersion: Int = Self.schemaVersion
     let id: UUID
     let momentID: String
@@ -197,7 +203,7 @@ struct MomentReportOutboxItem: Codable, Equatable, Identifiable, Sendable {
               ciphertextFileName == "report-\(id.uuidString.lowercased()).ciphertext",
               (29...MomentSharingProtocol.maximumObjectCiphertextBytes).contains(ciphertextSize),
               ciphertextSHA256.count == 32,
-              moderationKeyID == "moderation-v1",
+              Self.reviewedModerationKeyIDs.contains(moderationKeyID),
               createdAt <= updatedAt,
               commitStartedAt.map { $0 >= createdAt && $0 <= updatedAt } ?? true,
               (phase != .committing && phase != .deliveryResultUnknown)

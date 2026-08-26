@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import ipaddress
 import plistlib
 import re
@@ -71,6 +72,8 @@ EXPECTED_MODE_FLAGS = {
     "pairing-only": (True, False, False, False, False),
     "media-staging": (True, True, True, False, False),
 }
+SUPPORTED_MODERATION_KEY_IDS = {"moderation-v1", "moderation-v2"}
+MODERATION_PUBLIC_KEY_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 # X25519 small-order Montgomery u-coordinates, normalized by clearing the
 # unused high bit as required by RFC 7748. Keep the release gate aligned with
@@ -301,8 +304,10 @@ def validate_enabled_release(
         moderation_key_id = raw_moderation_key_id.strip()
         if raw_moderation_key_id != moderation_key_id:
             failures.append("SharingModerationKeyID must not contain surrounding whitespace.")
-        if moderation_key_id != "moderation-v1":
-            failures.append("SharingModerationKeyID must be moderation-v1.")
+        if moderation_key_id not in SUPPORTED_MODERATION_KEY_IDS:
+            failures.append(
+                "SharingModerationKeyID must be an explicitly supported moderation key ID."
+            )
         raw_moderation_public_key = str(info.get("SharingModerationPublicKey", ""))
         moderation_public_key = raw_moderation_public_key.strip()
         if raw_moderation_public_key != moderation_public_key:
@@ -484,6 +489,10 @@ def validate_expected_mode(
     expected_api_origin: str,
     expected_moderation_key_id: str,
     expected_moderation_public_key: str,
+    expected_moderation_public_key_sha256: str,
+    expected_moderation_trust_manifest_revision: str,
+    expected_release_environment: str,
+    expected_build_number: str,
     expected_app_privacy_url: str,
     expected_app_support_url: str,
     expected_privacy_url: str,
@@ -522,6 +531,31 @@ def validate_expected_mode(
         )
     if share_mode != app_mode:
         failures.append("App and Share Extension SharingReleaseMode do not match.")
+
+    release_binding_supplied = bool(
+        expected_release_environment or expected_build_number
+    )
+    if expected_mode == "media-staging" and not release_binding_supplied:
+        failures.append(
+            "media-staging requires an explicit release environment and build number."
+        )
+    if release_binding_supplied:
+        if expected_release_environment != "testflight":
+            failures.append(
+                "Expected release environment must be exactly testflight."
+            )
+        if re.fullmatch(r"[1-9][0-9]*", expected_build_number) is None:
+            failures.append(
+                "Expected build number must be a positive canonical decimal integer."
+            )
+        archived_build_number = app_info.get("CFBundleVersion")
+        if (
+            not isinstance(archived_build_number, str)
+            or archived_build_number != expected_build_number
+        ):
+            failures.append(
+                "Processed CFBundleVersion does not exactly match the selected release build number."
+            )
 
     if expected_mode == "disabled":
         required_app_privacy_url = LOCAL_APP_PRIVACY_URL
@@ -594,6 +628,77 @@ def validate_expected_mode(
                 f"Processed {key} does not exactly match the value supplied "
                 "by the protected release environment."
             )
+
+    if expected_mode == "media-staging":
+        if expected_moderation_key_id != expected_moderation_key_id.strip():
+            failures.append(
+                "Expected SharingModerationKeyID (moderation key ID) must not contain surrounding whitespace."
+            )
+        if expected_moderation_key_id not in SUPPORTED_MODERATION_KEY_IDS:
+            failures.append(
+                "Expected SharingModerationKeyID (moderation key ID) is not explicitly supported."
+            )
+        if expected_moderation_public_key != expected_moderation_public_key.strip():
+            failures.append(
+                "Expected SharingModerationPublicKey public key must not contain surrounding whitespace."
+            )
+        try:
+            if re.fullmatch(
+                r"[A-Za-z0-9_-]{43}", expected_moderation_public_key
+            ) is None:
+                raise ValueError("non-canonical base64url")
+            expected_decoded_key = base64.b64decode(
+                expected_moderation_public_key.replace("-", "+").replace("_", "/")
+                + "=",
+                validate=True,
+            )
+            if (
+                len(expected_decoded_key) != 32
+                or base64.urlsafe_b64encode(expected_decoded_key)
+                .decode("ascii")
+                .rstrip("=")
+                != expected_moderation_public_key
+            ):
+                raise ValueError("non-canonical base64url")
+        except (ValueError, binascii.Error):
+            expected_decoded_key = b""
+            failures.append(
+                "Expected SharingModerationPublicKey public key must be a canonical 32-byte base64url key."
+            )
+        if (
+            expected_decoded_key
+            and is_x25519_small_order_public_key(expected_decoded_key)
+        ):
+            failures.append(
+                "Expected SharingModerationPublicKey public key must not be a small-order X25519 point."
+            )
+        if MODERATION_PUBLIC_KEY_SHA256_PATTERN.fullmatch(
+            expected_moderation_public_key_sha256
+        ) is None:
+            failures.append(
+                "Expected moderation public-key SHA-256 must be exactly 64 lowercase hexadecimal characters."
+            )
+        elif expected_decoded_key and not is_x25519_small_order_public_key(
+            expected_decoded_key
+        ):
+            calculated_fingerprint = hashlib.sha256(expected_decoded_key).hexdigest()
+            if calculated_fingerprint != expected_moderation_public_key_sha256:
+                failures.append(
+                    "Expected moderation public key does not match its reviewed SHA-256 fingerprint."
+                )
+        if re.fullmatch(
+            r"[1-9][0-9]*", expected_moderation_trust_manifest_revision
+        ) is None:
+            failures.append(
+                "Expected moderation trust manifest revision must be a positive canonical decimal integer."
+            )
+    elif (
+        expected_moderation_public_key_sha256
+        or expected_moderation_trust_manifest_revision
+    ):
+        failures.append(
+            f"{expected_mode} must not receive a moderation key fingerprint or trust manifest revision."
+        )
 
     archived_photo_description = app_info.get("NSPhotoLibraryUsageDescription")
     if (
@@ -711,6 +816,10 @@ def main() -> int:
     )
     parser.add_argument("--expected-moderation-key-id", default="")
     parser.add_argument("--expected-moderation-public-key", default="")
+    parser.add_argument("--expected-moderation-public-key-sha256", default="")
+    parser.add_argument("--expected-moderation-trust-manifest-revision", default="")
+    parser.add_argument("--expected-release-environment", default="")
+    parser.add_argument("--expected-build-number", default="")
     parser.add_argument("--expected-app-privacy-url", default="")
     parser.add_argument("--expected-app-support-url", default="")
     parser.add_argument("--expected-privacy-url", default="")
@@ -748,6 +857,10 @@ def main() -> int:
         args.expected_api_origin,
         args.expected_moderation_key_id,
         args.expected_moderation_public_key,
+        args.expected_moderation_public_key_sha256,
+        args.expected_moderation_trust_manifest_revision,
+        args.expected_release_environment,
+        args.expected_build_number,
         args.expected_app_privacy_url,
         args.expected_app_support_url,
         args.expected_privacy_url,

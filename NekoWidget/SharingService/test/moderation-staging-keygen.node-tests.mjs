@@ -18,11 +18,14 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import {
   MODERATION_PRIVATE_FILENAME,
+  MODERATION_PUBLIC_FINGERPRINT_FILENAME,
   MODERATION_PUBLIC_FILENAME,
+  MODERATION_STAGING_KEY_ID,
   ModerationKeygenError,
   X25519_PKCS8_PREFIX,
   X25519_SPKI_PREFIX,
   canonicalPublicKeyText,
+  canonicalPublicKeyFingerprint,
   createKeyFilesInValidatedDirectory,
   deriveRawX25519PublicKey,
   extractRawX25519PrivateKey,
@@ -384,25 +387,43 @@ test("writes only fixed synthetic key files with exact sizes and no newline", ()
     );
     assert.deepEqual(
       readdirSync(output).sort(),
-      [MODERATION_PRIVATE_FILENAME, MODERATION_PUBLIC_FILENAME].sort(),
+      [
+        MODERATION_PRIVATE_FILENAME,
+        MODERATION_PUBLIC_FILENAME,
+        MODERATION_PUBLIC_FINGERPRINT_FILENAME,
+      ].sort(),
     );
     const privateBytes = readFileSync(join(output, MODERATION_PRIVATE_FILENAME));
     const publicBytes = readFileSync(join(output, MODERATION_PUBLIC_FILENAME));
+    const fingerprintBytes = readFileSync(
+      join(output, MODERATION_PUBLIC_FINGERPRINT_FILENAME),
+    );
     try {
       assert.equal(privateBytes.length, 32);
       assert.equal(publicBytes.length, 43);
       assert.equal(publicBytes.includes(0x0a), false);
       assert.equal(publicBytes.includes(0x0d), false);
+      assert.equal(fingerprintBytes.length, 64);
+      assert.match(fingerprintBytes.toString("ascii"), /^[0-9a-f]{64}$/u);
       expectedPublic = deriveRawX25519PublicKey(privateBytes);
       assert.equal(publicBytes.toString("ascii"), canonicalPublicKeyText(expectedPublic));
+      assert.equal(
+        fingerprintBytes.toString("ascii"),
+        canonicalPublicKeyFingerprint(expectedPublic),
+      );
       if (process.platform !== "win32") {
         assert.equal(statSync(output).mode & 0o077, 0);
         assert.equal(statSync(join(output, MODERATION_PRIVATE_FILENAME)).mode & 0o077, 0);
         assert.equal(statSync(join(output, MODERATION_PUBLIC_FILENAME)).mode & 0o077, 0);
+        assert.equal(
+          statSync(join(output, MODERATION_PUBLIC_FINGERPRINT_FILENAME)).mode & 0o077,
+          0,
+        );
       }
     } finally {
       privateBytes.fill(0);
       publicBytes.fill(0);
+      fingerprintBytes.fill(0);
       expectedPublic?.fill(0);
     }
   } finally {
@@ -469,7 +490,7 @@ test("CLI success output never includes private fixture representations or a pat
     output,
   ];
   for (const form of forms) assert.equal(text.includes(form), false);
-  assert.equal(text, "Staging moderation key files were created with restricted access.\n");
+  assert.equal(text, "Staging moderation-v2 key files were created with restricted access.\n");
 });
 
 test("implementation keeps the ceremony static and staging-only", () => {
@@ -486,6 +507,20 @@ test("implementation keeps the ceremony static and staging-only", () => {
     "utf8",
   );
   assert.match(library, /generateKeyPairSync\("x25519"\)/u);
+  assert.equal(MODERATION_STAGING_KEY_ID, "moderation-v2");
+  assert.equal(MODERATION_PRIVATE_FILENAME, "moderation-v2.private.raw");
+  assert.equal(MODERATION_PUBLIC_FILENAME, "moderation-v2.public.base64url");
+  assert.equal(MODERATION_PUBLIC_FINGERPRINT_FILENAME, "moderation-v2.public.sha256");
+  assert.match(wrapper, /-ModerationKeyId moderation-v2/u);
+  assert.match(
+    windowsSecurity,
+    /\[ValidateSet\("moderation-v1", "moderation-v2"\)\]/u,
+  );
+  assert.match(windowsSecurity, /"moderation-v1\.private\.raw" = @\(32L, 32L\)/u);
+  assert.match(windowsSecurity, /"moderation-v1\.public\.base64url" = @\(43L, 43L\)/u);
+  assert.match(windowsSecurity, /"moderation-v2\.private\.raw" = @\(32L, 32L\)/u);
+  assert.match(windowsSecurity, /"moderation-v2\.public\.base64url" = @\(43L, 43L\)/u);
+  assert.match(windowsSecurity, /"moderation-v2\.public\.sha256" = @\(64L, 64L\)/u);
   assert.match(library, /O_EXCL/u);
   assert.match(library, /privateRaw\?\.fill\(0\)/u);
   assert.doesNotMatch(library, /wrangler|CLOUDFLARE|SHARING_STAGING_MODERATION_PUBLIC_KEY/u);

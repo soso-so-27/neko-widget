@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   moderation-keygen-windows-policy:
-    name: Windows moderation key and drill policy fixtures
+    name: Windows moderation key, drill, and report policy fixtures
     runs-on: windows-2022
     timeout-minutes: 10
 
@@ -56,6 +56,8 @@ jobs:
             "scripts/moderation-staging-keygen-windows-security.ps1",
             "scripts/moderation-staging-drill-windows.ps1",
             "scripts/moderation-staging-drill-review-windows.ps1",
+            "scripts/moderation-windows-trusted-node.ps1",
+            "scripts/moderation-report-tool-windows.ps1",
             "scripts/personal-staging-emergency-off-windows.ps1"
           )
           foreach ($file in $files) {
@@ -87,6 +89,7 @@ jobs:
           }
           npm run check:moderation-keygen
           npm run check:moderation-drill
+          npm run check:moderation-tool
 
   check:
     name: Typecheck, test, and bundle Worker
@@ -119,7 +122,7 @@ jobs:
       - name: Run Worker, D1, staging, moderation, and key ceremony tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm run check:staging-config && npm run check:staging-runtime && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test
+        run: npm run check:staging-config && npm run check:staging-runtime && npm run check:moderation-operator-control-plane && npm run check:moderation-evidence-ledger && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService

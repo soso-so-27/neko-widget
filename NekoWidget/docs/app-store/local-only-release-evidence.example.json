@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_at_utc": null,
   "repository": "soso-so-27/neko-widget",
   "source_commit": null,
@@ -39,6 +39,17 @@
   },
   "processed_app_info": {
     "filename": "NekoWidget-processed-app-info.plist",
-    "sha256": null
+    "sha256": null,
+    "size_bytes": null
+  },
+  "release_metadata": {
+    "filename": "moderation-release-metadata.json",
+    "sha256": null,
+    "size_bytes": null
+  },
+  "artifact_authentication": {
+    "filename": "signed-artifact-authentication.json",
+    "sha256": null,
+    "size_bytes": null
   }
 }

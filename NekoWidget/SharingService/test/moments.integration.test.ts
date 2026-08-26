@@ -1455,6 +1455,103 @@ describe("append-only encrypted moments", () => {
     ).bind(report.report.id).first()).not.toBeNull();
   });
 
+  it("accepts both reviewed moderation keys and binds retries and tombstones to the exact key", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const evidence = crypto.getRandomValues(new Uint8Array(256));
+    const request = {
+      protocolVersion: 2,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      momentId: published.reservation.moment.id,
+      reasonCode: "privacy",
+      moderationKeyId: "moderation-v2",
+      ciphertextSize: evidence.length,
+      ciphertextSHA256: await sha256Base64url(evidence),
+      reporterConsent: { version: 1, acceptedAt: new Date().toISOString() },
+    };
+
+    for (const moderationKeyId of ["moderation-v3", " moderation-v2", "moderation-v2 "]) {
+      const rejected = await signedFetch(
+        "/v2/reports/reservations",
+        "POST",
+        space.invitee,
+        { ...request, clientRequestId: crypto.randomUUID().toLowerCase(), moderationKeyId },
+      );
+      expect(rejected.status).toBe(409);
+      expect((await rejected.json<{ error: { code: string } }>()).error.code)
+        .toBe("moderation_key_required");
+    }
+    const { moderationKeyId: _omitted, ...missingKeyRequest } = request;
+    const missing = await signedFetch(
+      "/v2/reports/reservations",
+      "POST",
+      space.invitee,
+      { ...missingKeyRequest, clientRequestId: crypto.randomUUID().toLowerCase() },
+    );
+    expect(missing.status).toBe(400);
+    expect((await missing.json<{ error: { code: string } }>()).error.code)
+      .toBe("invalid_fields");
+
+    const reserved = await signedFetch(
+      "/v2/reports/reservations",
+      "POST",
+      space.invitee,
+      request,
+    );
+    expect(reserved.status).toBe(201);
+    const report = await reserved.json<{
+      report: { id: string; moderationKeyId: string };
+    }>();
+    expect(report.report.moderationKeyId).toBe("moderation-v2");
+
+    const changedKeyReplay = await signedFetch(
+      "/v2/reports/reservations",
+      "POST",
+      space.invitee,
+      { ...request, moderationKeyId: "moderation-v1" },
+    );
+    expect(changedKeyReplay.status).toBe(409);
+    expect((await changedKeyReplay.json<{ error: { code: string } }>()).error.code)
+      .toBe("idempotency_conflict");
+
+    const changedKeyRetry = await signedFetch(
+      "/v2/reports/reservations",
+      "POST",
+      space.invitee,
+      {
+        ...request,
+        clientRequestId: crypto.randomUUID().toLowerCase(),
+        moderationKeyId: "moderation-v1",
+      },
+    );
+    expect(changedKeyRetry.status).toBe(409);
+    expect((await changedKeyRetry.json<{ error: { code: string } }>()).error.code)
+      .toBe("already_reported");
+
+    expect((await signedFetch(
+      `/v2/reports/${report.report.id}/ciphertext`,
+      "PUT",
+      space.invitee,
+      evidence,
+    )).status).toBe(200);
+    expect((await signedFetch(
+      `/v2/reports/${report.report.id}/commit`,
+      "POST",
+      space.invitee,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() },
+    )).status).toBe(201);
+    expect(await testEnv.DB.prepare(
+      `SELECT report.moderation_key_id AS report_key,
+              tombstone.moderation_key_id AS tombstone_key
+         FROM moment_reports AS report
+         JOIN moment_report_tombstones AS tombstone ON tombstone.report_id = report.id
+        WHERE report.id = ?`,
+    ).bind(report.report.id).first()).toEqual({
+      report_key: "moderation-v2",
+      tombstone_key: "moderation-v2",
+    });
+  });
+
   it("minimizes committed report metadata after evidence deletion while retaining opaque dedupe", async () => {
     const space = await seedActiveSpace();
     const published = await publish(space.owner);

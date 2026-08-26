@@ -153,6 +153,11 @@ const validResponses = Object.freeze({
     { state: "committed", count: 3 },
     { state: "reserved", count: 1 },
   ]),
+  "key-lifecycle": successfulRows([
+    { key_id: "moderation-v1", state: "committed", count: 2 },
+    { key_id: "moderation-v1", state: "reserved", count: 1 },
+    { key_id: "moderation-v2", state: "committed", count: 1 },
+  ]),
   "committed-age": successfulRows([{
     under_24h: 1,
     from_24h_to_48h: 1,
@@ -211,10 +216,15 @@ test("runs exactly the reviewed aggregate-only queries through report-ingestion 
     },
   });
 
-  assert.equal(commands.length, 5);
+  assert.equal(commands.length, 6);
   assert.deepEqual(status, {
     schema: [{ state: "ready" }],
     lifecycle: [{ state: "committed", count: 3 }, { state: "reserved", count: 1 }],
+    "key-lifecycle": [
+      { keyId: "moderation-v1", state: "committed", count: 2 },
+      { keyId: "moderation-v1", state: "reserved", count: 1 },
+      { keyId: "moderation-v2", state: "committed", count: 1 },
+    ],
     "committed-age": { under24h: 1, from24hTo48h: 1, over48h: 1 },
     "review-lifecycle": {
       unreviewed: 2,
@@ -231,6 +241,8 @@ test("runs exactly the reviewed aggregate-only queries through report-ingestion 
   });
   const text = formatModerationStagingStatus(status);
   assert.match(text, /read-only aggregates/u);
+  assert.match(text, /moderation-v1\/committed=2/u);
+  assert.match(text, /moderation-v2\/committed=1/u);
   assert.match(text, /not review SLA/u);
   assert.match(text, /over_48h=1/u);
   assert.match(text, /unreviewed=2/u);
@@ -283,6 +295,62 @@ test("rejects unexpected fields and categories without rendering them", async ()
       },
     }),
     /unexpected fields|unexpected category/u,
+  );
+});
+
+test("fails closed for unknown, whitespace, duplicate, or inconsistent moderation key aggregates", async () => {
+  for (const keyID of ["moderation-v3", " moderation-v1", "", "MODERATION-V1"]) {
+    await assert.rejects(
+      collectModerationStagingStatus({
+        projectDirectory,
+        readFileImpl: async () => renderedConfig(),
+        runCommand: async (command) => {
+          const query = queryForCommand(command);
+          if (query?.name === "key-lifecycle") {
+            return successfulRows([{ key_id: keyID, state: "committed", count: 3 }]);
+          }
+          return validResponses[query.name];
+        },
+      }),
+      /unsupported key ID/u,
+    );
+  }
+
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "key-lifecycle") {
+          return successfulRows([
+            { key_id: "moderation-v1", state: "committed", count: 3 },
+            { key_id: "moderation-v1", state: "committed", count: 0 },
+            { key_id: "moderation-v1", state: "reserved", count: 1 },
+          ]);
+        }
+        return validResponses[query.name];
+      },
+    }),
+    /duplicate key\/lifecycle pair/u,
+  );
+
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "key-lifecycle") {
+          return successfulRows([
+            { key_id: "moderation-v1", state: "committed", count: 2 },
+            { key_id: "moderation-v1", state: "reserved", count: 1 },
+          ]);
+        }
+        return validResponses[query.name];
+      },
+    }),
+    /counts inconsistent with lifecycle totals/u,
   );
 });
 

@@ -436,6 +436,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(await runAsync("moment-install-bound-handoff") {
             try await Self.testMomentInstallBoundHandoff()
         })
+        results.append(run("moderation-dual-key-configuration") {
+            try Self.testModerationDualKeyConfiguration()
+        })
         results.append(await runAsync("disabled-upgrade-purge") {
             try await Self.testDisabledUpgradePurge()
         })
@@ -2682,6 +2685,34 @@ actor SharingRuntimeSelfTestRunner {
             !FileManager.default.fileExists(atPath: $0.path)
         }) == true
         else { throw MomentSharingError.stateUnavailable }
+    }
+
+    private static func testModerationDualKeyConfiguration() throws {
+        func configuration(_ keyID: String?) -> SharingAPIConfiguration {
+            SharingAPIConfiguration(
+                isEnabled: true,
+                isMediaEnabled: true,
+                isShareExtensionHandoffEnabled: true,
+                isShareExtensionSendEnabled: false,
+                isReviewPreviewEnabled: false,
+                baseURL: URL(string: "https://sharing.nekonomado.jp")!,
+                moderationKeyID: keyID,
+                moderationPublicKey: Data(repeating: 0xA5, count: 32),
+                supportURL: URL(string: "https://nekonomado.jp/support")!,
+                communityStandardsURL: URL(string: "https://nekonomado.jp/community")!,
+                privacyURL: URL(string: "https://nekonomado.jp/privacy")!,
+                releaseMode: "media-staging"
+            )
+        }
+
+        guard configuration("moderation-v1").hasOperationalSafetyConfiguration,
+              configuration("moderation-v2").hasOperationalSafetyConfiguration
+        else { throw MomentSharingError.stateUnavailable }
+        for rejected in [nil, "", "moderation-v3", " moderation-v2", "moderation-v2 "] {
+            guard !configuration(rejected).hasOperationalSafetyConfiguration,
+                  !configuration(rejected).isMediaAvailable
+            else { throw MomentSharingError.stateUnavailable }
+        }
     }
 
     /// Installing a fully-disabled build over a previously paired media build
@@ -4947,21 +4978,72 @@ actor SharingRuntimeSelfTestRunner {
         let lifecycleToken = try SharingLifecycleGate.issueToken()
         let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
 
-        func prepared(index: Int) -> MomentPreparedReport {
+        func prepared(
+            index: Int,
+            moderationKeyID: String = "moderation-v1"
+        ) -> MomentPreparedReport {
             let ciphertext = Data(repeating: UInt8(0x70 + index), count: 128)
             return MomentPreparedReport(
                 ciphertext: ciphertext,
                 ciphertextSHA256: PairingCrypto.sha256(ciphertext),
-                moderationKeyID: "moderation-v1"
+                moderationKeyID: moderationKeyID
             )
         }
+
+        for rejectedKeyID in ["", "moderation-v3", " moderation-v2", "moderation-v2 "] {
+            do {
+                _ = try MomentSharingStateStore.enqueueReport(
+                    momentID: "moment_rejected_key_fixture",
+                    reason: .privacy,
+                    prepared: prepared(index: 0, moderationKeyID: rejectedKeyID),
+                    reporterConsentAcceptedAt: baseDate,
+                    validating: lifecycleToken,
+                    now: baseDate
+                )
+                throw MomentSharingError.invalidPayload
+            } catch MomentSharingError.stateUnavailable {
+                // Expected: persisted outbox items accept only exact reviewed IDs.
+            }
+        }
+
+        let missingKeyID = UUID()
+        let missingKeyFixture = MomentReportOutboxItem(
+            id: missingKeyID,
+            momentID: "moment_missing_key_fixture",
+            reason: .privacy,
+            ciphertextFileName:
+                "report-\(missingKeyID.uuidString.lowercased()).ciphertext",
+            ciphertextSize: 128,
+            ciphertextSHA256: Data(repeating: 0x44, count: 32),
+            moderationKeyID: "moderation-v2",
+            reporterConsentAcceptedAt: baseDate,
+            commitRequestID: UUID(),
+            phase: .prepared,
+            createdAt: baseDate,
+            updatedAt: baseDate
+        )
+        var missingKeyObject = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(missingKeyFixture)
+        ) as? [String: Any]
+        missingKeyObject?.removeValue(forKey: "moderationKeyID")
+        let missingKeyData = try JSONSerialization.data(withJSONObject: missingKeyObject ?? [:])
+        var missingKeyRejected = false
+        do {
+            _ = try JSONDecoder().decode(MomentReportOutboxItem.self, from: missingKeyData)
+        } catch {
+            missingKeyRejected = true
+        }
+        guard missingKeyRejected else { throw MomentSharingError.stateUnavailable }
 
         var first: MomentReportOutboxItem?
         for index in 0..<10 {
             let item = try MomentSharingStateStore.enqueueReport(
                 momentID: "moment_report_fixture_\(index)",
                 reason: .privacy,
-                prepared: prepared(index: index),
+                prepared: prepared(
+                    index: index,
+                    moderationKeyID: index == 0 ? "moderation-v2" : "moderation-v1"
+                ),
                 reporterConsentAcceptedAt: baseDate,
                 validating: lifecycleToken,
                 now: baseDate
@@ -5014,6 +5096,7 @@ actor SharingRuntimeSelfTestRunner {
         let retained = try MomentSharingStateStore.load().reportOutbox
         guard retained.count == 1,
               retained[0].id == first.id,
+              retained[0].moderationKeyID == "moderation-v2",
               retained[0].phase == .committing,
               let directory = SharedContainer.momentSharingCiphertextDirectoryURL,
               FileManager.default.fileExists(

@@ -32,6 +32,7 @@ CASES = {
     "moment-imported-memory-boundary",
     "moment-inbound-moderation-retry-policy",
     "moment-inbound-moderation-flow",
+    "moderation-dual-key-configuration",
     "moment-commit-ack-metadata",
     "moment-build61-schema7-migration",
     "moment-outbox-bounds-and-expiry",
