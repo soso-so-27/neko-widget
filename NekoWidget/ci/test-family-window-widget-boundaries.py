@@ -836,6 +836,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "enum PrivateWindowNameCrypto",
             "enum MomentKind",
         )
+
         self.assertIn("jp.nekowidget.private-window-name.v1", name_crypto)
         self.assertIn("ownerMemberID", name_crypto)
         self.assertNotIn("ownerParticipantID", name_crypto)
@@ -941,6 +942,23 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("PrivateWindowCatalogStore.widgetEntries()", configuration)
         self.assertIn("familyWindowIDPrefix + entry.localWindowID", configuration)
         self.assertNotIn("WidgetManifestReader", configuration)
+
+    def test_synchronized_window_name_verifies_stable_committed_fields(self) -> None:
+        store = source("Shared/Sharing/PairingKeychainStore.swift")
+        apply_name = section(
+            store,
+            "static func applySynchronizedOwnerName(",
+            "private static func binding(for pairing: PairingState)",
+        )
+        self.assertIn("return try mirrorCatalog(committed)", apply_name)
+        self.assertIn("committed.schemaVersion == next.schemaVersion", apply_name)
+        self.assertIn("committed.storageRevision == next.storageRevision", apply_name)
+        self.assertIn(
+            "committed.pairingBindingSHA256 == next.pairingBindingSHA256",
+            apply_name,
+        )
+        self.assertIn("committed.displayName == next.displayName", apply_name)
+        self.assertNotIn("committed == next", apply_name)
 
     def test_legacy_family_widget_stays_bound_to_migrated_first_window(self) -> None:
         configuration = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")

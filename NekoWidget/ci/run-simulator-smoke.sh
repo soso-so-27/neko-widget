@@ -984,7 +984,6 @@ if not report["match"]:
     raise SystemExit("App and Widget App Group entitlements do not match.")
 PY
 
-xcrun simctl install "$SIMULATOR_UDID" "$APP_PATH"
 xcrun simctl help privacy > "$ARTIFACT_DIRECTORY/simctl-privacy-help.txt" 2>&1
 
 # `simctl privacy grant photos` writes a legacy TCC row on current GitHub
@@ -995,6 +994,9 @@ xcrun simctl help privacy > "$ARTIFACT_DIRECTORY/simctl-privacy-help.txt" 2>&1
 # Xcode forwards TEST_RUNNER_-prefixed variables to the Simulator's XCTest
 # runner after removing that prefix. Keep this expectation scoped to this one
 # test command instead of mutating the booted Simulator's global environment.
+# `xcodebuild test` owns installation of the application-under-test. Installing
+# the same bundle immediately beforehand can leave LaunchServices reporting it
+# as busy while XCTest tries to launch it.
 TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     -project NekoWidget.xcodeproj \
     -scheme NekoWidget \

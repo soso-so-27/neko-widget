@@ -654,7 +654,10 @@ enum PrivateWindowPresentationStore {
             ).validated()
             try writeWhileLifecycleLocked(next)
             guard let committed = try loadWhileLifecycleLocked(),
-                  committed == next
+                  committed.schemaVersion == next.schemaVersion,
+                  committed.storageRevision == next.storageRevision,
+                  committed.pairingBindingSHA256 == next.pairingBindingSHA256,
+                  committed.displayName == next.displayName
             else { throw PairingError.stateUnavailable }
             return try mirrorCatalog(committed)
         }
