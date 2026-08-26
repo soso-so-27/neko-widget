@@ -307,6 +307,9 @@ struct AppStoreScreenshotFixtureRootView: View {
             exportPhotoBook: { _ in
                 throw CocoaError(.fileWriteUnknown)
             },
+            exportMemoryPhoto: { _ in
+                throw CocoaError(.fileWriteUnknown)
+            },
             albumOpened: { _, _ in },
             updateAlbum: {},
             rescan: {},

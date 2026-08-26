@@ -38,6 +38,7 @@ struct MainTabView: View {
     let showWidgetPlacementGuide: () -> Void
     let toggleLike: (String) -> Void
     let exportPhotoBook: ([String]) async throws -> URL
+    let exportMemoryPhoto: (String) async throws -> MemoryPhotoJPEGExport
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void
@@ -104,7 +105,7 @@ struct MainTabView: View {
                     photos: likedPhotos,
                     exportPhotoBook: exportPhotoBook
                 )
-                    .navigationDestination(for: String.self, destination: detailView)
+                    .navigationDestination(for: String.self, destination: memoryDetailView)
             }
             .tabItem {
                 Label("思い出", systemImage: "photo.stack.fill")
@@ -250,6 +251,31 @@ struct MainTabView: View {
             widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
             widgetIntervalMinutes: widgetIntervalMinutes,
             toggleLike: toggleLike,
+            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+            excludeFromCatCandidates: { identifiers in
+                Task { await excludeFromCatCandidates(identifiers) }
+            },
+            restoreCatCandidates: { identifiers in
+                Task { await restoreCatCandidates(identifiers) }
+            },
+            profiles: catProfilesPresentation.profiles,
+            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+            replaceProfileAssignments: { values in
+                Task { await catProfilesActions.replacePhotoAssignments(values) }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func memoryDetailView(for localIdentifier: String) -> some View {
+        PhotoBrowserView(
+            photos: likedPhotos,
+            libraryPhotos: libraryPhotos,
+            initialPhoto: photo(for: localIdentifier),
+            widgetShownAt: nil,
+            widgetIntervalMinutes: widgetIntervalMinutes,
+            toggleLike: toggleLike,
+            exportMemoryPhoto: exportMemoryPhoto,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
             excludeFromCatCandidates: { identifiers in
                 Task { await excludeFromCatCandidates(identifiers) }

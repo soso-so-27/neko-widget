@@ -18,6 +18,7 @@ struct MomentCanonicalPreview: Sendable {
 /// Extension execute the exact same small image contract.
 enum MomentCanonicalPreviewBuilder {
     static func build(image: UIImage) throws -> MomentCanonicalPreview {
+        try Task.checkCancellation()
         guard image.imageOrientation == .up, let source = image.cgImage else {
             throw MomentSharingError.invalidPayload
         }
@@ -32,6 +33,7 @@ enum MomentCanonicalPreviewBuilder {
         var encounteredCanonicalizationFailure = false
 
         for scale in scales {
+            try Task.checkCancellation()
             let width = max(1, Int((CGFloat(source.width) * scale).rounded(.down)))
             let height = max(1, Int((CGFloat(source.height) * scale).rounded(.down)))
             guard width <= MomentSharingProtocol.maximumCanonicalPixelDimension,
@@ -44,6 +46,7 @@ enum MomentCanonicalPreviewBuilder {
             }
 
             for quality in qualities {
+                try Task.checkCancellation()
                 guard let data = jpegData(normalized, quality: quality) else {
                     encounteredCanonicalizationFailure = true
                     continue

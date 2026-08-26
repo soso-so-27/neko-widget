@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct AlbumView: View {
     let sections: [CuratedAlbumSectionPresentation]
@@ -846,6 +847,35 @@ private struct LikedPhotoBookActivityView: UIViewControllerRepresentable {
     ) {}
 }
 
+private struct MemoryPhotoJPEGSharePayload: Identifiable {
+    let id = UUID()
+    let jpeg: Data
+}
+
+private struct MemoryPhotoJPEGActivityView: UIViewControllerRepresentable {
+    let payload: MemoryPhotoJPEGSharePayload
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let jpeg = payload.jpeg
+        let itemProvider = NSItemProvider()
+        itemProvider.suggestedName = "neko-memory.jpg"
+        itemProvider.registerDataRepresentation(
+            forTypeIdentifier: UTType.jpeg.identifier,
+            visibility: .all
+        ) { completion in
+            completion(jpeg, nil)
+            return nil
+        }
+        let configuration = UIActivityItemsConfiguration(itemProviders: [itemProvider])
+        return UIActivityViewController(activityItemsConfiguration: configuration)
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIActivityViewController,
+        context: Context
+    ) {}
+}
+
 /// The destination shared by widget deep links and in-app photo links.
 /// Paging is gesture-only: there is deliberately no "next" button competing
 /// with the single private action, "思い出に残す".
@@ -861,6 +891,7 @@ struct PhotoBrowserView: View {
     /// cadence change keeps the explanation aligned with generated timelines.
     let widgetIntervalMinutes: Int
     let toggleLike: (String) -> Void
+    let exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)?
     let excludedCatCandidateIdentifiers: Set<String>
     let excludeFromCatCandidates: ([String]) -> Void
     let restoreCatCandidates: ([String]) -> Void
@@ -878,6 +909,10 @@ struct PhotoBrowserView: View {
     @State private var pendingExclusionIdentifier: String?
     @State private var showsExclusionConfirmation = false
     @State private var showsAssignmentSheet = false
+    @State private var isExportingMemoryPhoto = false
+    @State private var memoryPhotoExportTask: Task<Void, Never>?
+    @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
+    @State private var memoryPhotoExportErrorMessage: String?
 
     init(
         photos: [PhotoPresentation],
@@ -886,6 +921,7 @@ struct PhotoBrowserView: View {
         widgetShownAt: Date?,
         widgetIntervalMinutes: Int,
         toggleLike: @escaping (String) -> Void,
+        exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)? = nil,
         excludedCatCandidateIdentifiers: Set<String>,
         excludeFromCatCandidates: @escaping ([String]) -> Void,
         restoreCatCandidates: @escaping ([String]) -> Void,
@@ -909,6 +945,7 @@ struct PhotoBrowserView: View {
         self.widgetShownAt = widgetShownAt
         self.widgetIntervalMinutes = widgetIntervalMinutes
         self.toggleLike = toggleLike
+        self.exportMemoryPhoto = exportMemoryPhoto
         self.excludedCatCandidateIdentifiers = excludedCatCandidateIdentifiers
         self.excludeFromCatCandidates = excludeFromCatCandidates
         self.restoreCatCandidates = restoreCatCandidates
@@ -998,7 +1035,25 @@ struct PhotoBrowserView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(selectedPhoto.isLiked ? Color.secondary : Color.accentColor)
                         .controlSize(.large)
+                        .disabled(isExportingMemoryPhoto)
                         .accessibilityLabel(selectedPhoto.isLiked ? "思い出から外す" : "思い出に残す")
+
+                        if isExportingMemoryPhoto {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("写真を準備しています…")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer(minLength: 8)
+                                Button("キャンセル", role: .cancel) {
+                                    cancelMemoryPhotoExport()
+                                }
+                                .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                            .accessibilityElement(children: .contain)
+                        }
 
                         widgetTiming
                     }
@@ -1014,6 +1069,25 @@ struct PhotoBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if exportMemoryPhoto != nil,
+                       selectedPhoto?.isLiked == true {
+                        if isExportingMemoryPhoto {
+                            Button(role: .cancel) {
+                                cancelMemoryPhotoExport()
+                            } label: {
+                                Label("書き出しをキャンセル", systemImage: "xmark.circle")
+                            }
+                        } else {
+                            Button {
+                                beginMemoryPhotoExport(selectedPhotoIdentifier)
+                            } label: {
+                                Label("写真を書き出す", systemImage: "square.and.arrow.up")
+                            }
+                            .accessibilityHint("位置情報などを除いた画像を共有します")
+                        }
+                        Divider()
+                    }
+
                     if !profiles.isEmpty,
                        !excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
                         Button {
@@ -1069,11 +1143,31 @@ struct PhotoBrowserView: View {
                 excludeFromHousehold: excludeFromCatCandidates
             )
         }
+        .sheet(item: $memoryPhotoSharePayload, onDismiss: clearMemoryPhotoSharePayload) {
+            payload in
+            MemoryPhotoJPEGActivityView(payload: payload)
+        }
+        .alert(
+            "写真を書き出せませんでした",
+            isPresented: Binding(
+                get: { memoryPhotoExportErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        memoryPhotoExportErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text(memoryPhotoExportErrorMessage ?? "もう一度お試しください。")
+        }
         .onAppear {
             performanceProbe.recordContainerAppearance()
             updatePhotoPreheating()
         }
         .onChange(of: selectedPhotoIdentifier) { _, _ in
+            cancelMemoryPhotoExport()
             updatePhotoPreheating()
         }
         .onChange(of: browserPhotoIdentifiers) { _, identifiers in
@@ -1084,6 +1178,8 @@ struct PhotoBrowserView: View {
             updatePhotoPreheating()
         }
         .onDisappear {
+            cancelMemoryPhotoExport()
+            clearMemoryPhotoSharePayload()
             PhotoAssetImagePipeline.stopCachingFullImages(
                 localIdentifiers: Array(preheatedPhotoIdentifiers),
                 targetPixelSize: Self.imageTargetPixelSize
@@ -1107,6 +1203,39 @@ struct PhotoBrowserView: View {
                 explicitlyPreheatedPageCount: preheatedPhotoIdentifiers.count
             )
         }
+    }
+
+    private func beginMemoryPhotoExport(_ localIdentifier: String) {
+        guard let exportMemoryPhoto, !isExportingMemoryPhoto else { return }
+
+        memoryPhotoExportTask?.cancel()
+        memoryPhotoExportErrorMessage = nil
+        isExportingMemoryPhoto = true
+        memoryPhotoExportTask = Task { @MainActor in
+            defer {
+                isExportingMemoryPhoto = false
+                memoryPhotoExportTask = nil
+            }
+
+            do {
+                let export = try await exportMemoryPhoto(localIdentifier)
+                try Task.checkCancellation()
+                memoryPhotoSharePayload = MemoryPhotoJPEGSharePayload(jpeg: export.jpeg)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                memoryPhotoExportErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelMemoryPhotoExport() {
+        memoryPhotoExportTask?.cancel()
+    }
+
+    private func clearMemoryPhotoSharePayload() {
+        memoryPhotoSharePayload = nil
     }
 
     private static func makeBrowserPhotos(

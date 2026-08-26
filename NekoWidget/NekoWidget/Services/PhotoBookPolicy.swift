@@ -15,13 +15,23 @@ enum PhotoBookPolicy {
         selectedIdentifiers: [String]
     ) -> [PhotoBookPhotoCandidate] {
         let requestedIdentifiers = Set(selectedIdentifiers)
-        guard requestedIdentifiers.count >= minimumPhotosPerExport,
+        guard requestedIdentifiers.count == selectedIdentifiers.count,
+              requestedIdentifiers.count >= minimumPhotosPerExport,
               requestedIdentifiers.count <= maximumPhotosPerExport else {
             return []
         }
-        return candidates
+        let matchingCandidates = candidates.filter {
+            requestedIdentifiers.contains($0.localIdentifier)
+        }
+        guard Set(matchingCandidates.map(\.localIdentifier)).count
+                == matchingCandidates.count else {
+            // A corrupted snapshot with the same PhotoKit identifier more
+            // than once must not satisfy a multi-photo export by count alone.
+            return []
+        }
+        return matchingCandidates
             .filter {
-                $0.isLiked && requestedIdentifiers.contains($0.localIdentifier)
+                $0.isLiked
             }
             .sorted(by: selectionOrder)
     }
@@ -40,6 +50,27 @@ enum PhotoBookPolicy {
         default:
             return first.localIdentifier < second.localIdentifier
         }
+    }
+}
+
+/// Selects the sole currently liked local record for an explicit one-photo
+/// export. Missing, unliked, or duplicate records fail closed; callers must
+/// never substitute another photo.
+enum MemoryPhotoExportPolicy {
+    static func selection(
+        from candidates: [PhotoBookPhotoCandidate],
+        localIdentifier: String
+    ) -> PhotoBookPhotoCandidate? {
+        guard !localIdentifier.isEmpty else { return nil }
+        let matchingCandidates = candidates.filter {
+            $0.localIdentifier == localIdentifier
+        }
+        guard matchingCandidates.count == 1,
+              let selected = matchingCandidates.first,
+              selected.isLiked else {
+            return nil
+        }
+        return selected
     }
 }
 

@@ -249,6 +249,12 @@ struct AppRootView: View {
                     selectedIdentifiers: identifiers
                 )
             },
+            exportMemoryPhoto: { identifier in
+                try await MemoryPhotoJPEGExporter().export(
+                    from: viewModel.likedAssets,
+                    localIdentifier: identifier
+                )
+            },
             albumOpened: { key, group in
                 Task {
                     await viewModel.recordAlbumOpened(key: key, group: group)

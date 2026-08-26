@@ -190,6 +190,10 @@ class PublicPolicySiteTests(unittest.TestCase):
             "写真、まど名、相手名、撮影日時、写真ID、取得URL、暗号鍵を含めません",
             "写真を含まないサーバー側記録",
             "生成AIの学習に利用しません",
+            "「思い出」に残した一枚で「写真を書き出す」を明示的に選んだ場合だけ",
+            "長辺2,048px以下のJPEG",
+            "アプリ自身が管理する書き出し用の一時ファイルは作りません",
+            "iOSまたは共有先が処理のためにデータのコピーを作成・保持する場合があります",
         ):
             self.assertIn(phrase, privacy)
         for phrase in ("通報", "ブロック", "48時間以内", "削除対象", "再試行"):
@@ -202,6 +206,8 @@ class PublicPolicySiteTests(unittest.TestCase):
             "緊急通報先ではありません",
             "iOS 18",
             "Widget更新はbest effort",
+            "「思い出」の写真を書き出す",
+            "共有先は利用者が選び、そのサービスとポリシーが適用されます",
         ):
             self.assertIn(phrase, support)
 
@@ -236,8 +242,8 @@ class PublicPolicySiteTests(unittest.TestCase):
     def test_local_only_revision_is_visible_and_fixed(self):
         for page in LOCAL_ONLY_PAGES:
             parser = self.parsed(page)
-            self.assertEqual("2026-08-24", parser.meta.get("neko-policy-revision"), page)
-            self.assertIn("最終更新日：2026年8月24日", "".join(parser.text), page)
+            self.assertEqual("2026-08-26", parser.meta.get("neko-policy-revision"), page)
+            self.assertIn("最終更新日：2026年8月26日", "".join(parser.text), page)
 
     def test_local_only_capability_boundary_is_consistent(self):
         required = (
@@ -257,8 +263,12 @@ class PublicPolicySiteTests(unittest.TestCase):
             "アプリを削除しても、「うちの子」アルバムやその構成が写真アプリに残ることがあります",
             "アプリとWidgetの専用領域にあるデータはiOSにより削除されます",
             "本アプリが写真やデータを自動で開発者のサーバーへアップロードすることはありません",
-            "PDF、検証JSON、診断ログの書き出しを明示的に選ぶと、iOSの共有シートが開きます",
+            "「思い出」の一枚のJPEG、写真PDF、検証JSON、診断ログの書き出しを明示的に選ぶと、iOSの共有シートが開きます",
             "共有先のサービスとポリシーが適用されます",
+            "単写真JPEGは長辺2,048px以下",
+            "位置情報、撮影日時、元のファイル名",
+            "アプリ自身が管理する書き出し用の一時ファイルを作らず",
+            "iOSまたは共有先が処理のためにコピーを作成・保持する場合があります",
             "写真PDFには利用者が選んだ写真が含まれます",
             "識別子や診断情報が含まれる場合があります",
             "内容と共有先を確認してから共有してください",
@@ -324,9 +334,37 @@ class PublicPolicySiteTests(unittest.TestCase):
         log_view = LOG_VIEW.read_text(encoding="utf-8")
         photo_book = PHOTO_BOOK_EXPORTER.read_text(encoding="utf-8")
         json_exporter = JSON_EXPORTER.read_text(encoding="utf-8")
+        memory_jpeg_exporter = photo_book.split("enum PhotoBookPDFExportError", 1)[0]
         self.assertIn("explicitly selected", photo_book)
         self.assertIn("image.draw", photo_book)
+        self.assertIn(
+            "uniqueSelection.count == selectedIdentifiers.count",
+            photo_book,
+        )
+        for phrase in (
+            "struct MemoryPhotoJPEGExporter",
+            "MemoryPhotoExportPolicy.selection",
+            "WidgetSourceImageNormalizer.normalizedUIImage",
+            "MomentCanonicalPreviewBuilder.build(image: normalized)",
+            "options.version = .current",
+            "options.resizeMode = .exact",
+            "options.deliveryMode = .highQualityFormat",
+            "options.isNetworkAccessAllowed = true",
+            "jpeg: preview.jpeg",
+        ):
+            self.assertIn(phrase, memory_jpeg_exporter)
+        self.assertNotIn("PHAssetResource", memory_jpeg_exporter)
+        self.assertNotIn("temporaryDirectory", memory_jpeg_exporter)
         self.assertIn("UIActivityViewController", liked_photos)
+        for phrase in (
+            'Label("写真を書き出す", systemImage: "square.and.arrow.up")',
+            "NSItemProvider()",
+            'itemProvider.suggestedName = "neko-memory.jpg"',
+            "UTType.jpeg.identifier",
+            "UIActivityItemsConfiguration(itemProviders: [itemProvider])",
+            "UIActivityViewController(activityItemsConfiguration: configuration)",
+        ):
+            self.assertIn(phrase, liked_photos)
         self.assertIn("検証データをJSONで書き出す", settings)
         self.assertIn("UIActivityViewController", settings)
         self.assertIn("Diagnostic log export failed", log_view)

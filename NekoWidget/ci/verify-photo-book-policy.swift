@@ -103,6 +103,67 @@ private func verifyExplicitSelectionCanUseAnyLikedPhoto() throws {
     )
 }
 
+private func verifyDuplicateIdentifiersFailClosed() throws {
+    let duplicatedCandidates = [
+        candidate("photo-a", 100),
+        candidate("photo-a", 200),
+        candidate("photo-b", 300)
+    ]
+    try require(
+        PhotoBookPolicy.selection(
+            from: duplicatedCandidates,
+            selectedIdentifiers: ["photo-a", "photo-b"]
+        ).isEmpty,
+        "duplicate candidate identifiers satisfied a PDF selection"
+    )
+    try require(
+        PhotoBookPolicy.selection(
+            from: [candidate("photo-a", 100)],
+            selectedIdentifiers: ["photo-a", "photo-a"]
+        ).isEmpty,
+        "duplicate requested identifiers were silently accepted"
+    )
+}
+
+private func verifySingleMemoryPhotoSelection() throws {
+    let liked = candidate("liked", 100)
+    try require(
+        MemoryPhotoExportPolicy.selection(
+            from: [liked, candidate("other", 200)],
+            localIdentifier: "liked"
+        ) == liked,
+        "one explicitly selected liked photo was not accepted"
+    )
+    try require(
+        MemoryPhotoExportPolicy.selection(
+            from: [candidate("unliked", 100, liked: false)],
+            localIdentifier: "unliked"
+        ) == nil,
+        "an unliked photo was accepted for Memory export"
+    )
+    try require(
+        MemoryPhotoExportPolicy.selection(
+            from: [liked],
+            localIdentifier: "missing"
+        ) == nil,
+        "a missing photo fell back to a different Memory photo"
+    )
+    try require(
+        MemoryPhotoExportPolicy.selection(
+            from: [liked, liked],
+            localIdentifier: "liked"
+        ) == nil,
+        "duplicate Memory candidates were accepted"
+    )
+    try require(
+        MemoryPhotoExportPolicy.selection(
+            from: [liked],
+            localIdentifier: ""
+        ) == nil,
+        "an empty local identifier was accepted"
+    )
+}
+
 private func verifyLikedCollectionUsesPawOrder() throws {
     let values: [(identifier: String, likedAt: Date?)] = [
         ("nil-z", nil),
@@ -134,6 +195,8 @@ private enum PhotoBookPolicyVerifier {
         try verifySelectionBoundary()
         try verifyLikedOnlyOldestFirstSelection()
         try verifyExplicitSelectionCanUseAnyLikedPhoto()
+        try verifyDuplicateIdentifiersFailClosed()
+        try verifySingleMemoryPhotoSelection()
         try verifyLikedCollectionUsesPawOrder()
         print("Photo-book policy: PASS")
     }

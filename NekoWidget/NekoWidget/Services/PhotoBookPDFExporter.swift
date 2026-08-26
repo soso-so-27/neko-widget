@@ -1,6 +1,151 @@
 @preconcurrency import Photos
 import UIKit
 
+struct MemoryPhotoJPEGExport: Equatable, Sendable {
+    let jpeg: Data
+    let pixelWidth: Int
+    let pixelHeight: Int
+}
+
+private struct MemoryPhotoSendableImage: @unchecked Sendable {
+    let value: UIImage
+}
+
+enum MemoryPhotoJPEGExportError: LocalizedError, Equatable {
+    case photoNotInMemories
+    case photoUnavailable
+    case imageUnavailable
+    case couldNotCreateJPEG
+
+    var errorDescription: String? {
+        switch self {
+        case .photoNotInMemories:
+            "この写真は現在「思い出」にありません。"
+        case .photoUnavailable:
+            "この写真を写真ライブラリで確認できませんでした。"
+        case .imageUnavailable:
+            "写真データを取得できませんでした。"
+        case .couldNotCreateJPEG:
+            "写真を書き出せませんでした。"
+        }
+    }
+}
+
+/// Builds one privacy-minimal JPEG in memory after an explicit user action.
+/// The exact currently liked PhotoKit record is required; no alternate photo,
+/// raw-original resource API, or temporary file is used.
+struct MemoryPhotoJPEGExporter {
+    @MainActor
+    func export(
+        from records: [AssetRecord],
+        localIdentifier: String
+    ) async throws -> MemoryPhotoJPEGExport {
+        let candidates = records.map {
+            PhotoBookPhotoCandidate(
+                localIdentifier: $0.localIdentifier,
+                creationDate: $0.creationDate,
+                isLiked: $0.liked
+            )
+        }
+        guard let selected = MemoryPhotoExportPolicy.selection(
+            from: candidates,
+            localIdentifier: localIdentifier
+        ) else {
+            throw MemoryPhotoJPEGExportError.photoNotInMemories
+        }
+
+        try Task.checkCancellation()
+        let result = PHAsset.fetchAssets(
+            withLocalIdentifiers: [selected.localIdentifier],
+            options: nil
+        )
+        guard result.count == 1 else {
+            throw MemoryPhotoJPEGExportError.photoUnavailable
+        }
+        let asset = result.object(at: 0)
+        guard asset.localIdentifier == selected.localIdentifier,
+              let targetSize = Self.targetSize(for: asset) else {
+            throw MemoryPhotoJPEGExportError.photoUnavailable
+        }
+
+        guard let image = await image(for: asset, targetSize: targetSize) else {
+            try Task.checkCancellation()
+            throw MemoryPhotoJPEGExportError.imageUnavailable
+        }
+        try Task.checkCancellation()
+
+        let sourceImage = MemoryPhotoSendableImage(value: image)
+        let buildTask = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let normalized = WidgetSourceImageNormalizer.normalizedUIImage(
+                sourceImage.value
+            )
+            try Task.checkCancellation()
+            return try MomentCanonicalPreviewBuilder.build(image: normalized)
+        }
+        let preview: MomentCanonicalPreview
+        do {
+            preview = try await withTaskCancellationHandler {
+                try await buildTask.value
+            } onCancel: {
+                buildTask.cancel()
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw MemoryPhotoJPEGExportError.couldNotCreateJPEG
+        }
+        try Task.checkCancellation()
+        return MemoryPhotoJPEGExport(
+            jpeg: preview.jpeg,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight
+        )
+    }
+
+    private static func targetSize(for asset: PHAsset) -> CGSize? {
+        let sourceWidth = asset.pixelWidth
+        let sourceHeight = asset.pixelHeight
+        guard sourceWidth > 0, sourceHeight > 0 else { return nil }
+        let longestSide = max(sourceWidth, sourceHeight)
+        let scale = min(
+            CGFloat(1),
+            CGFloat(MomentSharingProtocol.maximumCanonicalPixelDimension)
+                / CGFloat(longestSide)
+        )
+        return CGSize(
+            width: max(1, (CGFloat(sourceWidth) * scale).rounded(.down)),
+            height: max(1, (CGFloat(sourceHeight) * scale).rounded(.down))
+        )
+    }
+
+    @MainActor
+    private func image(
+        for asset: PHAsset,
+        targetSize: CGSize
+    ) async -> UIImage? {
+        let options = PHImageRequestOptions()
+        options.version = .current
+        options.resizeMode = .exact
+        options.deliveryMode = .highQualityFormat
+        // Network access exists only inside this explicit export boundary so
+        // an iCloud-backed selected photo can be retrieved on demand.
+        options.isNetworkAccessAllowed = true
+        options.isSynchronous = false
+
+        let request = PhotoBookImageRequest(
+            asset: asset,
+            targetSize: targetSize,
+            options: options
+        )
+        return await withTaskCancellationHandler {
+            await request.value()
+        } onCancel: {
+            request.cancel()
+        }
+    }
+}
+
 enum PhotoBookPDFExportError: LocalizedError, Equatable {
     case invalidSelection(minimum: Int, maximum: Int, actual: Int)
     case selectedPhotosUnavailable(expected: Int, actual: Int)
@@ -61,7 +206,8 @@ struct PhotoBookPDFExporter {
         selectedIdentifiers: [String]
     ) async throws -> URL {
         let uniqueSelection = Set(selectedIdentifiers)
-        guard uniqueSelection.count >= PhotoBookPolicy.minimumPhotosPerExport,
+        guard uniqueSelection.count == selectedIdentifiers.count,
+              uniqueSelection.count >= PhotoBookPolicy.minimumPhotosPerExport,
               uniqueSelection.count <= PhotoBookPolicy.maximumPhotosPerExport else {
             throw PhotoBookPDFExportError.invalidSelection(
                 minimum: PhotoBookPolicy.minimumPhotosPerExport,
@@ -71,7 +217,7 @@ struct PhotoBookPDFExporter {
         }
         let selected = PhotoBookPolicy.selection(
             from: candidates,
-            selectedIdentifiers: Array(uniqueSelection)
+            selectedIdentifiers: selectedIdentifiers
         )
         guard selected.count == uniqueSelection.count else {
             throw PhotoBookPDFExportError.selectedPhotosUnavailable(
@@ -230,8 +376,8 @@ struct PhotoBookPDFExporter {
 }
 
 /// A cancellation-safe bridge for PhotoKit's potentially multi-callback image
-/// request. Degraded previews are ignored so each PDF page receives one final,
-/// high-quality image and the continuation is resumed exactly once.
+/// request. Degraded previews are ignored so each explicit export receives one
+/// final, high-quality image and the continuation is resumed exactly once.
 private final class PhotoBookImageRequest: @unchecked Sendable {
     /// iCloud-backed display derivatives can legitimately take longer than the
     /// former local-only ten-second budget. Keep a finite escape hatch while
