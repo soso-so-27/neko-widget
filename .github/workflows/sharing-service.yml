@@ -82,7 +82,7 @@ jobs:
             -File .\scripts\personal-staging-emergency-off-windows.ps1 `
             -PolicySelfTest
           if ($LASTEXITCODE -ne 0 -or
-              $emergencyOffPolicy -ne "NEKO_PERSONAL_STAGING_EMERGENCY_OFF_POLICY_SELFTEST_V1") {
+              $emergencyOffPolicy -ne "NEKO_PERSONAL_STAGING_EMERGENCY_OFF_POLICY_SELFTEST_V2") {
             throw "Emergency OFF policy self-test failed"
           }
           npm run check:moderation-keygen
