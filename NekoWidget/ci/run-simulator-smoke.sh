@@ -992,12 +992,10 @@ xcrun simctl help privacy > "$ARTIFACT_DIRECTORY/simctl-privacy-help.txt" 2>&1
 # Exercise the production permission button and expected system dialog through
 # Apple's UI-testing APIs instead. Parallel testing must stay disabled so the
 # authorization remains on this exact Simulator rather than a cloned device.
-# Host-shell environment variables are not forwarded to the Simulator's XCTest
-# runner. Set the release expectation on the booted Simulator explicitly so the
-# UI test can distinguish this fail-closed build from a sharing-enabled build.
-xcrun simctl spawn "$SIMULATOR_UDID" \
-    launchctl setenv NEKO_EXPECT_DISABLED_RELEASE 1
-xcodebuild \
+# Xcode forwards TEST_RUNNER_-prefixed variables to the Simulator's XCTest
+# runner after removing that prefix. Keep this expectation scoped to this one
+# test command instead of mutating the booted Simulator's global environment.
+TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     -project NekoWidget.xcodeproj \
     -scheme NekoWidget \
     -configuration Debug \
@@ -1013,8 +1011,6 @@ xcodebuild \
     CODE_SIGN_IDENTITY=- \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     test || PERMISSION_TEST_STATUS=$?
-xcrun simctl spawn "$SIMULATOR_UDID" \
-    launchctl unsetenv NEKO_EXPECT_DISABLED_RELEASE || true
 
 if (( PERMISSION_TEST_STATUS == 0 )); then
     # XCTest may terminate the AUT when the test session ends. Start one
