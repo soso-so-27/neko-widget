@@ -6949,12 +6949,15 @@ actor SharingRuntimeSelfTestRunner {
             // performed by the guard.
             let second = try PrivateWindowCatalogStore
                 .createAndActivateWhileLifecycleLocked()
-            guard second.displayName == "\(PrivateWindowDisplayName.fallback) 2"
+            // The first window now carries the authenticated owner name, so
+            // the fresh empty slot can use the base fallback without a
+            // numeric suffix.
+            guard second.displayName == PrivateWindowDisplayName.fallback
             else { throw PairingError.stateUnavailable }
             do {
                 try PrivateWindowCatalogStore
                     .updateActiveMetadataWhileLifecycleLocked(
-                        displayName: PrivateWindowDisplayName.fallback,
+                        displayName: recoveredOwnerName.displayName,
                         spaceID: nil,
                         credentialAccount: nil
                     )
