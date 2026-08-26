@@ -6730,6 +6730,29 @@ actor SharingRuntimeSelfTestRunner {
               })?.displayName == "妻のまど"
         else { throw PairingError.stateUnavailable }
 
+        // Keep this regression probe isolated from the long terminal-purge
+        // fixture below. Restore the same local presentation/catalog shape
+        // that the purge test used before owner-name synchronization was
+        // added; that test should continue to diagnose revocation only.
+        let restoredLocalName = try PrivateWindowPresentationStore.save(
+            displayName: secondWindowName.displayName,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: PrivateWindowDisplayName.fallback,
+                spaceID: paired.spaceID,
+                credentialAccount: paired.credentialAccount
+            )
+        }
+        guard restoredLocalName.displayName == secondWindowName.displayName,
+              let restoredCatalog = try PrivateWindowCatalogStore.load(),
+              restoredCatalog.windows.first(where: {
+                  $0.localWindowID == restoredCatalog.activeWindowID
+              })?.displayName == PrivateWindowDisplayName.fallback
+        else { throw PairingError.stateUnavailable }
+
         let reportOnlyUntil = Date(
             timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 60 * 60
         )
@@ -6940,9 +6963,7 @@ actor SharingRuntimeSelfTestRunner {
                   originalCatalog.windows.count == 1,
                   originalCatalog.activeWindowID
                     == originalCatalog.windows.first?.localWindowID,
-                  let firstWindowID = originalCatalog.windows.first?.localWindowID,
-                  let firstWindowDisplayName = originalCatalog.windows.first?
-                    .displayName
+                  let firstWindowID = originalCatalog.windows.first?.localWindowID
             else { throw PairingError.stateUnavailable }
 
             // An unrelated catalog slot with unreadable/mismatched authority
@@ -6951,15 +6972,12 @@ actor SharingRuntimeSelfTestRunner {
             // performed by the guard.
             let second = try PrivateWindowCatalogStore
                 .createAndActivateWhileLifecycleLocked()
-            // The first window now carries the authenticated owner name, so
-            // the fresh empty slot can use the base fallback without a
-            // numeric suffix.
-            guard second.displayName == PrivateWindowDisplayName.fallback
+            guard second.displayName == "\(PrivateWindowDisplayName.fallback) 2"
             else { throw PairingError.stateUnavailable }
             do {
                 try PrivateWindowCatalogStore
                     .updateActiveMetadataWhileLifecycleLocked(
-                        displayName: firstWindowDisplayName,
+                        displayName: PrivateWindowDisplayName.fallback,
                         spaceID: nil,
                         credentialAccount: nil
                     )
