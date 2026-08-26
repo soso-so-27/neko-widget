@@ -923,10 +923,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("pendingLegacyMigrationWindowID", catalog)
         self.assertIn("try saveWhileLifecycleLocked(state)", catalog)
-        self.assertIn("try resumeLegacyMigrationIfNeeded(&state)", catalog)
+        self.assertIn("try resumeLegacyMigrationIfNeeded(&committed)", catalog)
         self.assertLess(
             catalog.index("try saveWhileLifecycleLocked(state)"),
-            catalog.index("try resumeLegacyMigrationIfNeeded(&state)"),
+            catalog.index("try resumeLegacyMigrationIfNeeded(&committed)"),
         )
         self.assertIn("fileManager.moveItem(at: legacy, to: destination)", catalog)
         self.assertIn("throw Error.conflictingLegacyMigration", catalog)
@@ -970,9 +970,47 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "static func sharingCacheDirectoryURL(localWindowID: String?)",
             "static var sharingControlDirectoryURL",
         )
-        self.assertIn("fileExists(atPath: catalogURL.path)", resolution)
+        self.assertIn("privateWindowCatalogAuthorityArtifactURLs.contains", resolution)
+        self.assertIn("fileExists(atPath: $0.path)", resolution)
         self.assertIn("return nil", resolution)
         self.assertIn("pendingLegacyMigrationWindowID == catalog.activeWindowID", resolution)
+
+        catalog_storage = section(
+            container,
+            "static var privateWindowCatalogURL: URL?",
+            "static func windowDirectoryURL(localWindowID: String)",
+        )
+        self.assertIn("sharingControlDirectoryURL?.appendingPathComponent", catalog_storage)
+        self.assertIn("legacyPrivateWindowCatalogURL", catalog_storage)
+        self.assertIn("containerURL?.appendingPathComponent", catalog_storage)
+        self.assertIn("privateWindowCatalogStorageMarkerURL", catalog_storage)
+
+        catalog_loader = section(
+            container,
+            "private static func loadWithSource()",
+            "static func load() throws",
+        )
+        self.assertIn("protectedStorageMigrationIsComplete()", catalog_loader)
+        self.assertIn("throw Error.invalidCatalog", catalog_loader)
+        self.assertLess(
+            catalog_loader.index("protectedStorageMigrationIsComplete()"),
+            catalog_loader.index("decodeCatalogIfPresent(at: legacyURL)"),
+        )
+        catalog_save = section(
+            container,
+            "private static func saveWhileLifecycleLocked(",
+            "/// URLs shared by the application",
+        )
+        self.assertIn("SharedContainer.privateWindowCatalogURL", catalog_save)
+        self.assertIn("SharingSecureFile.write", catalog_save)
+        self.assertNotIn("legacyPrivateWindowCatalogURL", catalog_save)
+
+        catalog_reset = section(
+            container,
+            "static func resetAllWhileLifecycleLocked",
+            "private static func resumeLegacyMigrationIfNeeded",
+        )
+        self.assertIn("privateWindowCatalogAuthorityArtifactURLs", catalog_reset)
 
         pairing_store = source("Shared/Sharing/PairingKeychainStore.swift")
         scoped_load = section(

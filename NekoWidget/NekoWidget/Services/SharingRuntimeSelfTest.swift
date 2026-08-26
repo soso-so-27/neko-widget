@@ -421,6 +421,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("private-window-catalog-authority-uniqueness") {
             try Self.testPrivateWindowCatalogAuthorityUniqueness()
         })
+        results.append(run("private-window-catalog-protected-storage-migration") {
+            try Self.testPrivateWindowCatalogProtectedStorageMigration()
+        })
         results.append(run("private-window-legacy-conflict-quarantine-policy") {
             try Self.testPrivateWindowLegacyConflictQuarantinePolicy()
         })
@@ -808,6 +811,243 @@ actor SharingRuntimeSelfTestRunner {
         }
     }
 
+    private static func testPrivateWindowCatalogProtectedStorageMigration() throws {
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
+        var pairedFixtureWasReset = false
+        defer {
+            if !pairedFixtureWasReset {
+                _ = try? PairingInstallationGuard
+                    .resetLocalSharingForDisabledConfiguration()
+            }
+        }
+        let fixtureBootstrap = try PairingInstallationGuard.bootstrap()
+        let unpaired = fixtureBootstrap.state
+        guard unpaired.phase == .unpaired else {
+            throw PairingError.stateUnavailable
+        }
+
+        // Seed a real authenticated room before reproducing the physical
+        // Build 62-66 layout. A catalog-only fixture is insufficient here:
+        // full bootstrap must also recover PairingState and its exact Keychain
+        // credential after the legacy directory is moved.
+        let credential = PairingCrypto.makeCredential(
+            installationMarker: unpaired.installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: true
+        )
+        let peerCredential = PairingCrypto.makeCredential(
+            installationMarker: unpaired.installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: false
+        )
+        let localMember = PairingMemberIdentity(
+            memberID: opaque(0xc1),
+            participantID: credential.participantIDString,
+            agreementPublicKey: try PairingCrypto.agreementPublicKey(
+                for: credential
+            ).base64URLEncodedString(),
+            signingPublicKey: try PairingCrypto.signingPublicKey(
+                for: credential
+            ).base64URLEncodedString()
+        )
+        let peerMember = PairingMemberIdentity(
+            memberID: opaque(0xc2),
+            participantID: peerCredential.participantIDString,
+            agreementPublicKey: try PairingCrypto.agreementPublicKey(
+                for: peerCredential
+            ).base64URLEncodedString(),
+            signingPublicKey: try PairingCrypto.signingPublicKey(
+                for: peerCredential
+            ).base64URLEncodedString()
+        )
+        let spaceID = opaque(0xc3)
+        let invitationID = opaque(0xc4)
+        let enrollmentID = opaque(0xc5)
+        let transcript = PairingVerificationTranscript(
+            spaceID: spaceID,
+            invitationID: invitationID,
+            enrollmentID: enrollmentID,
+            dailyBoundaryMinuteUTC: 240,
+            inviter: localMember,
+            invitee: peerMember
+        )
+        let transcriptData = try transcript.canonicalData()
+        let transcriptHash = PairingCrypto.sha256(transcriptData)
+        var creating = unpaired
+        creating.phase = .creatingInvitation
+        creating.role = .inviter
+        creating.credentialAccount = credential.account
+        creating.participantID = credential.participantIDString
+        creating.pendingClientRequestID = UUID().uuidString.lowercased()
+        creating.pendingOperation = "create"
+        creating.lastUpdatedAt = .now
+        creating = try PairingStateStore.saveInitialCredentialAndState(
+            credential: credential,
+            state: creating,
+            expected: unpaired,
+            lifecycleToken: fixtureBootstrap.lifecycleToken
+        )
+        var paired = creating
+        paired.phase = .paired
+        paired.spaceID = spaceID
+        paired.memberID = localMember.memberID
+        paired.invitationID = invitationID
+        paired.enrollmentID = enrollmentID
+        paired.peerMemberID = peerMember.memberID
+        paired.peerParticipantID = peerMember.participantID
+        paired.peerAgreementPublicKey = peerMember.agreementPublicKey
+        paired.peerSigningPublicKey = peerMember.signingPublicKey
+        paired.transcript = transcriptData.base64URLEncodedString()
+        paired.transcriptHash = transcriptHash.base64URLEncodedString()
+        paired.verificationPhrase = PairingCrypto.verificationPhrase(
+            for: transcriptHash
+        )
+        paired.dailyBoundaryMinuteUTC = 240
+        paired.pendingClientRequestID = nil
+        paired.pendingOperation = nil
+        paired.mediaSharingConsentVersion = PairingMediaSharingConsent.currentVersion
+        paired.mediaSharingConsentAcceptedAt = .now
+        paired.lastUpdatedAt = .now
+        paired = try PairingStateStore.save(
+            paired,
+            expected: creating,
+            lifecycleToken: fixtureBootstrap.lifecycleToken
+        )
+
+        guard let container = SharedContainer.containerURL,
+              let protectedCatalog = SharedContainer.privateWindowCatalogURL,
+              let legacyCatalog = SharedContainer.legacyPrivateWindowCatalogURL,
+              let migrationMarker = SharedContainer
+                .privateWindowCatalogStorageMarkerURL,
+              let legacySharing = SharedContainer.legacySharingCacheDirectoryURL,
+              let controlDirectory = SharedContainer.sharingControlDirectoryURL,
+              protectedCatalog.deletingLastPathComponent().standardizedFileURL
+                == controlDirectory.standardizedFileURL,
+              protectedCatalog.deletingLastPathComponent().standardizedFileURL
+                != container.standardizedFileURL,
+              legacyCatalog.deletingLastPathComponent().standardizedFileURL
+                == container.standardizedFileURL
+        else { throw PairingError.stateUnavailable }
+
+        let pairedSentinel = Data("legacy-paired-sharing-preserved".utf8)
+        try SharingLifecycleGate.withExclusive {
+            guard let activeSharing = SharedContainer.sharingCacheDirectoryURL,
+                  FileManager.default.fileExists(atPath: activeSharing.path),
+                  !FileManager.default.fileExists(atPath: legacySharing.path)
+            else { throw PairingError.stateUnavailable }
+            try SharingSecureFile.write(
+                pairedSentinel,
+                to: activeSharing.appendingPathComponent(
+                    ".catalog-storage-paired-fixture",
+                    isDirectory: false
+                )
+            )
+            try FileManager.default.moveItem(
+                at: activeSharing,
+                to: legacySharing
+            )
+            for artifact in SharedContainer
+                .privateWindowCatalogAuthorityArtifactURLs
+                where FileManager.default.fileExists(atPath: artifact.path) {
+                try FileManager.default.removeItem(at: artifact)
+            }
+            // With every catalog artifact absent, this exact state write must
+            // route to Build 40's legacy `sharing/`, never the managed root.
+            try PairingStateStore.saveWhileLifecycleLocked(paired)
+        }
+
+        let recovered = try PairingInstallationGuard.bootstrap()
+        let repeated = try PairingInstallationGuard.bootstrap()
+        guard let recoveredCatalog = try PrivateWindowCatalogStore.load(),
+              let recoveredEntry = recoveredCatalog.windows.first(where: {
+                  $0.localWindowID == recoveredCatalog.activeWindowID
+              }),
+              let recoveredSharing = SharedContainer.sharingCacheDirectoryURL,
+              recovered.state == paired,
+              repeated.state == recovered.state,
+              try PairingStateStore.load(
+                  localWindowID: recoveredEntry.localWindowID
+              ) == recovered.state,
+              recoveredEntry.spaceID == paired.spaceID,
+              recoveredEntry.credentialAccount == paired.credentialAccount,
+              try PairingKeychainStore.load(
+                  account: credential.account,
+                  installationMarker: paired.installationMarker
+              ) == credential,
+              try Data(
+                  contentsOf: recoveredSharing.appendingPathComponent(
+                      ".catalog-storage-paired-fixture",
+                      isDirectory: false
+                  ),
+                  options: .mappedIfSafe
+              ) == pairedSentinel,
+              !FileManager.default.fileExists(atPath: legacySharing.path),
+              !FileManager.default.fileExists(atPath: legacyCatalog.path),
+              FileManager.default.fileExists(atPath: protectedCatalog.path),
+              FileManager.default.fileExists(atPath: migrationMarker.path)
+        else { throw PairingError.stateUnavailable }
+
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
+        let cleanBootstrap = try PairingInstallationGuard.bootstrap()
+        guard cleanBootstrap.state.phase == .unpaired else {
+            throw PairingError.stateUnavailable
+        }
+        pairedFixtureWasReset = true
+
+        try SharingLifecycleGate.withExclusive {
+            guard let expected = try PrivateWindowCatalogStore.load(),
+                  FileManager.default.fileExists(atPath: protectedCatalog.path),
+                  !FileManager.default.fileExists(atPath: legacyCatalog.path),
+                  !FileManager.default.fileExists(atPath: legacySharing.path)
+            else { throw PairingError.stateUnavailable }
+            let original = try Data(
+                contentsOf: protectedCatalog,
+                options: .mappedIfSafe
+            )
+            let originalMarker = try Data(
+                contentsOf: migrationMarker,
+                options: .mappedIfSafe
+            )
+            defer {
+                try? FileManager.default.removeItem(at: legacyCatalog)
+                try? FileManager.default.removeItem(at: legacySharing)
+                try? SharingSecureFile.write(original, to: protectedCatalog)
+                try? SharingSecureFile.write(originalMarker, to: migrationMarker)
+            }
+
+            // Model a Build 62-66 device where the validated root copy exists and
+            // the new protected copy does not. Bootstrap must copy, not move,
+            // the exact catalog before retiring the old authority.
+            try FileManager.default.removeItem(at: migrationMarker)
+            try original.write(to: legacyCatalog, options: .atomic)
+            try FileManager.default.removeItem(at: protectedCatalog)
+            let migrated = try PrivateWindowCatalogStore
+                .bootstrapLegacyMigrationWhileLifecycleLocked()
+            guard migrated == expected,
+                  try PrivateWindowCatalogStore.load() == expected,
+                  FileManager.default.fileExists(atPath: protectedCatalog.path),
+                  !FileManager.default.fileExists(atPath: legacyCatalog.path),
+                  FileManager.default.fileExists(atPath: migrationMarker.path)
+            else { throw PairingError.stateUnavailable }
+
+            // If the canonical file later disappears, the durable marker must
+            // make even a byte-valid stale root copy ineligible for recovery.
+            try FileManager.default.removeItem(at: protectedCatalog)
+            try original.write(to: legacyCatalog, options: .atomic)
+            do {
+                _ = try PrivateWindowCatalogStore.load()
+                throw PairingError.stateUnavailable
+            } catch PrivateWindowCatalogStore.Error.invalidCatalog {
+                // Expected fail-closed result.
+            }
+            try SharingSecureFile.write(original, to: protectedCatalog)
+            try FileManager.default.removeItem(at: legacyCatalog)
+            guard try PrivateWindowCatalogStore.load() == expected else {
+                throw PairingError.stateUnavailable
+            }
+        }
+    }
+
     private static func testPrivateWindowLegacyConflictQuarantinePolicy() throws {
         guard PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([]),
               PrivateWindowCatalogStore.runtimeTestLegacyEntriesAreReplaceable([
@@ -1092,10 +1332,13 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     private static func testSecureFileAttributes() throws {
-        guard let root = SharedContainer.containerURL else {
+        guard let directory = SharedContainer.sharingControlDirectoryURL else {
             throw DailySharingError.stateUnavailable
         }
-        let url = root.appendingPathComponent(".sharing-runtime-secure", isDirectory: false)
+        let url = directory.appendingPathComponent(
+            ".sharing-runtime-secure",
+            isDirectory: false
+        )
         defer { try? FileManager.default.removeItem(at: url) }
         try SharingSecureFile.write(Data("runtime".utf8), to: url)
 #if targetEnvironment(simulator)

@@ -44,6 +44,7 @@ CASES = {
     "partial-download-resume-tamper",
     "pairing-bootstrap-transient-preservation",
     "private-window-catalog-authority-uniqueness",
+    "private-window-catalog-protected-storage-migration",
     "private-window-legacy-conflict-quarantine-policy",
     "peer-revoke-terminal-purge",
     "retry-independent-deadline",

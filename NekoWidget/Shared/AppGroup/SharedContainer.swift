@@ -99,28 +99,117 @@ enum PrivateWindowCatalogStore {
         case conflictingLegacyMigration
     }
 
-    static func load() throws -> PrivateWindowCatalogState? {
-        guard let url = SharedContainer.privateWindowCatalogURL else {
-            throw Error.invalidCatalog
-        }
+    private enum StorageSource {
+        case protectedControlDirectory
+        case legacyContainerRoot
+    }
+
+    private static let protectedStorageMarker =
+        Data("protected-control-v1\n".utf8)
+
+    private static func decodeCatalogIfPresent(at url: URL) throws
+        -> PrivateWindowCatalogState? {
         let data: Data
         do {
             data = try Data(contentsOf: url, options: .mappedIfSafe)
         } catch {
-            guard SharingFileReadFailureClassifier.disposition(error) == .missing else {
-                throw error
-            }
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing
+            else { throw error }
             return nil
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
-            return try decoder.decode(PrivateWindowCatalogState.self, from: data)
+            return try decoder
+                .decode(PrivateWindowCatalogState.self, from: data)
                 .validated()
         } catch let error as Error {
             throw error
         } catch {
             throw Error.invalidCatalog
+        }
+    }
+
+    private static func protectedStorageMigrationIsComplete() throws -> Bool {
+        guard let markerURL = SharedContainer
+            .privateWindowCatalogStorageMarkerURL
+        else { throw Error.invalidCatalog }
+        let data: Data
+        do {
+            data = try Data(contentsOf: markerURL, options: .mappedIfSafe)
+        } catch {
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing
+            else { throw error }
+            return false
+        }
+        guard data == protectedStorageMarker else {
+            throw Error.invalidCatalog
+        }
+        return true
+    }
+
+    private static func loadWithSource() throws
+        -> (state: PrivateWindowCatalogState, source: StorageSource)? {
+        guard let protectedURL = SharedContainer.privateWindowCatalogURL,
+              let legacyURL = SharedContainer.legacyPrivateWindowCatalogURL
+        else { throw Error.invalidCatalog }
+
+        // The Build 62-66 catalog lived directly below the App Group container.
+        // `SharingSecureFile` must protect its parent before committing a
+        // private document, but the container root is managed by iOS and its
+        // attributes are not ours to mutate. New catalogs therefore live in
+        // the already protected lifecycle-control directory. A valid legacy
+        // catalog remains a read-only migration source until the host app can
+        // copy it under the lifecycle lock.
+        if let state = try decodeCatalogIfPresent(at: protectedURL) {
+            return (state, .protectedControlDirectory)
+        }
+        // Once the protected copy has been committed, its marker permanently
+        // retires the root copy. If the protected catalog later disappears or
+        // becomes unreadable, fail closed instead of resurrecting stale room
+        // metadata from an interrupted deletion or downgrade.
+        if try protectedStorageMigrationIsComplete() {
+            throw Error.invalidCatalog
+        }
+        if let state = try decodeCatalogIfPresent(at: legacyURL) {
+            return (state, .legacyContainerRoot)
+        }
+        return nil
+    }
+
+    static func load() throws -> PrivateWindowCatalogState? {
+        try loadWithSource()?.state
+    }
+
+    private static func loadForBootstrapWhileLifecycleLocked() throws
+        -> PrivateWindowCatalogState? {
+        guard let loaded = try loadWithSource() else { return nil }
+        if case .legacyContainerRoot = loaded.source {
+            // Commit the exact validated document first. The marker then
+            // retires the root authority before deletion is attempted.
+            try saveWhileLifecycleLocked(loaded.state)
+        }
+        try commitProtectedCatalogAuthorityWhileLifecycleLocked(loaded.state)
+        return loaded.state
+    }
+
+    private static func commitProtectedCatalogAuthorityWhileLifecycleLocked(
+        _ expected: PrivateWindowCatalogState
+    ) throws {
+        guard let protectedURL = SharedContainer.privateWindowCatalogURL,
+              let legacyURL = SharedContainer.legacyPrivateWindowCatalogURL,
+              let markerURL = SharedContainer
+                .privateWindowCatalogStorageMarkerURL,
+              try decodeCatalogIfPresent(at: protectedURL) == expected
+        else { throw Error.invalidCatalog }
+        try SharingSecureFile.write(protectedStorageMarker, to: markerURL)
+        do {
+            try FileManager.default.removeItem(at: legacyURL)
+        } catch {
+            // The marker is already durable. A root copy that cannot be
+            // removed remains inert and can never become authority again.
+            guard SharingFileReadFailureClassifier.disposition(error) == .missing
+            else { return }
         }
     }
 
@@ -398,7 +487,7 @@ enum PrivateWindowCatalogStore {
     static func bootstrapLegacyMigrationWhileLifecycleLocked(
         now: Date = .now
     ) throws -> PrivateWindowCatalogState {
-        if var existing = try load() {
+        if var existing = try loadForBootstrapWhileLifecycleLocked() {
             try resumeLegacyMigrationIfNeeded(&existing)
             try quarantineReappearedLegacySharingIfNeeded(&existing)
             return existing
@@ -422,8 +511,19 @@ enum PrivateWindowCatalogStore {
             pendingLegacyMigrationWindowID: legacyExists ? localWindowID : nil
         )
         try saveWhileLifecycleLocked(state)
-        try resumeLegacyMigrationIfNeeded(&state)
-        return state
+        // ISO-8601 persistence can normalize Date precision. Continue with the
+        // exact committed document so equality checks cannot reject a fresh
+        // physical-device catalog merely because its in-memory timestamps had
+        // finer precision than the durable representation.
+        guard let catalogURL = SharedContainer.privateWindowCatalogURL,
+              var committed = try decodeCatalogIfPresent(at: catalogURL)
+        else { throw Error.invalidCatalog }
+        try resumeLegacyMigrationIfNeeded(&committed)
+        guard let final = try decodeCatalogIfPresent(at: catalogURL) else {
+            throw Error.invalidCatalog
+        }
+        try commitProtectedCatalogAuthorityWhileLifecycleLocked(final)
+        return final
     }
 
     @discardableResult
@@ -511,8 +611,8 @@ enum PrivateWindowCatalogStore {
            FileManager.default.fileExists(atPath: legacy.path) {
             try FileManager.default.removeItem(at: legacy)
         }
-        if let catalog = SharedContainer.privateWindowCatalogURL,
-           FileManager.default.fileExists(atPath: catalog.path) {
+        for catalog in SharedContainer.privateWindowCatalogAuthorityArtifactURLs
+            where FileManager.default.fileExists(atPath: catalog.path) {
             try FileManager.default.removeItem(at: catalog)
         }
         return try bootstrapLegacyMigrationWhileLifecycleLocked(now: now)
@@ -1083,11 +1183,41 @@ enum SharedContainer {
         )
     }
 
+    /// Canonical Build 67+ catalog location. Its parent is app-owned and is
+    /// already protected/excluded from backup by the lifecycle store, unlike
+    /// the iOS-managed App Group container root.
     static var privateWindowCatalogURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "private-window-catalog.v1.json",
+            isDirectory: false
+        )
+    }
+
+    /// Build 62-66 attempted to store the catalog directly in the App Group
+    /// root. It is eligible only before the protected-copy marker exists, then
+    /// is retired after an exact validated copy has committed.
+    static var legacyPrivateWindowCatalogURL: URL? {
         containerURL?.appendingPathComponent(
             "private-window-catalog.v1.json",
             isDirectory: false
         )
+    }
+
+    static var privateWindowCatalogFileURLs: [URL] {
+        [privateWindowCatalogURL, legacyPrivateWindowCatalogURL]
+            .compactMap { $0 }
+    }
+
+    static var privateWindowCatalogStorageMarkerURL: URL? {
+        sharingControlDirectoryURL?.appendingPathComponent(
+            "private-window-catalog-protected.v1",
+            isDirectory: false
+        )
+    }
+
+    static var privateWindowCatalogAuthorityArtifactURLs: [URL] {
+        privateWindowCatalogFileURLs
+            + [privateWindowCatalogStorageMarkerURL].compactMap { $0 }
     }
 
     static func windowDirectoryURL(localWindowID: String) -> URL? {
@@ -1111,8 +1241,10 @@ enum SharedContainer {
         if let localWindowID {
             return windowSharingDirectoryURL(localWindowID: localWindowID)
         }
-        guard let catalogURL = privateWindowCatalogURL else { return nil }
-        guard FileManager.default.fileExists(atPath: catalogURL.path) else {
+        guard !privateWindowCatalogAuthorityArtifactURLs.isEmpty else { return nil }
+        guard privateWindowCatalogAuthorityArtifactURLs.contains(where: {
+            FileManager.default.fileExists(atPath: $0.path)
+        }) else {
             return legacySharingCacheDirectoryURL
         }
         guard let catalog = try? PrivateWindowCatalogStore.load(),
