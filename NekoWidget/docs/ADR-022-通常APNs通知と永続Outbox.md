@@ -34,7 +34,7 @@ APNsやiOSは配送・背景実行・Widget再読込を保証しない。製品�
 
 - `aps-environment`はHost appだけに付与する。Debugはdevelopment、Release/TestFlightはproductionとする。
 - WidgetとShare ExtensionへAPNs entitlementを付けない。
-- 通知許可済みかつ、ペアリング・写真共有同意が有効な選択中のまどだけへtokenを署名付き登録する。同じ物理tokenを別のまどからPUTした場合は以前のbindingと未完了deliveryを置き換え、非activeまどの通知でactiveまどを誤同期しない。
+- 通知許可済みかつ、ペアリング・写真共有同意が有効な認証済みの全まどへ、選択中のまどを先頭にtokenを署名付き登録する。v3登録では同じ物理tokenを複数のまどへ加算的に結び、通知payloadのopaqueな`nekoTarget`で宛先を一意に決める。v3未提供の旧Workerへ接続した場合だけ、選択中のまどをv2へ登録し、従来どおり他のbindingを置き換える。非activeまどの通知でactiveまどを誤同期しない。
 - 通知拒否時は署名付きDELETEを試み、失敗時もpairingを破壊しない。Server側のcascadeとlease expiryを最終収束経路にする。
 - remote callbackでは既存refreshを使い、APNs alertと同じ内容のlocal notificationを重複生成しない。
 - 通知タップはcold launchでも検証済みroute全体を一時mailboxへ保持する。`nekoTarget`がある場合はopaque `spaceId`と一意に一致する端末内まどへ先に切り替え、認証済み同期を完了してから、`new_moment`は対象の「届いた写真」、`heart`は「自分が届けた写真」の対象行を開く。対象まど・写真を解決できなければ開かず、現在のまどへfallbackしない。`nekoTarget`がない旧payloadだけは、選択中のまどで`new_moment`は「届いた」、`heart`は「届けた」を開く。

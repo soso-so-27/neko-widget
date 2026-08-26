@@ -159,7 +159,7 @@ PR24〜PR28はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`へ統合済みで�
 1. production moderation鍵の複数人バックアップ・rotation・破棄、強い運用者認証、通報判断・異議申立て・早期削除、独立したreport-ingestion緊急OFFを含む一般公開の安全運用
 2. hostile imageの隔離decode／再encode、production D1/R2、負荷試験、監視、App Store ConnectのPrivacy回答・審査メモ・審査用導線
 3. 通常APNs通知は実装済みだが、Apple DeveloperでPush Notificationsを有効化したApp ID、新しいproduction APNs entitlement入り配布profile、APNs Auth Key、Worker暗号鍵、D1 migration／deploy、production APNs実機smokeが未完了。これらを満たすまではTestFlightへ配布しない。iOS 18を含むWidget更新はbest effortであり、WidgetKit専用pushは後続releaseとする
-4. 複数まどの通常操作は実装済み。通常APNsはこのiPhoneで選択中のまどだけへ登録し、まど切替時に同じtokenの旧bindingを置き換える。非activeまども通知起点で明示スコープ同期し、そのまどを選んだWidgetまで更新する処理は後続releaseとする
+4. 複数まどの通常操作と、通知許可・共有同意が有効な認証済み全まどへの通常APNs登録は実装済み。非activeまどのpushはactiveまどを切り替えたり同期したりWidgetを更新したりせず、利用者が通知をタップした場合だけopaqueな宛先を照合して対象まどへ移動・同期する。通知をタップしなくても非activeまどを背景同期し、そのまどを選んだWidgetまで更新する処理は後続releaseとする
 5. 本人の追加端末は相手の確認付きで最大4台まで実装済み。残るのは3人以上の参加、端末一覧、端末単位の明示失効
 6. 期限付きの「届いた写真」自体をserverで長期保管する課金は未実装。将来再検討する場合も、個人の「思い出に追加」と分け、同意・容量・削除・鍵喪失・StoreKitを先に設計する
 7. 「届いた写真」の恒久的な思い出取込は実装済み。残るのは、取り込んだ写真を使う物理的な本・プリントの注文と削除・課金設計
