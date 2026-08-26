@@ -15,6 +15,7 @@ struct AppRootView: View {
     private var onboardingResumePageIndex = 0
     @StateObject private var widgetInstallationChecker = WidgetInstallationChecker()
     @StateObject private var photoPresentationCache = PhotoPresentationCache()
+    @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @State private var onboardingScanErrorMessage: String?
@@ -58,6 +59,13 @@ struct AppRootView: View {
                 // the pre-tap value while waiting for a library scan.
                 await viewModel.syncLikesForPresentation(trigger: "deeplink")
                 viewModel.handleURL(url)
+            }
+        }
+        .onChange(of: momentNotificationTapMailbox.pendingTap, initial: true) { _, tap in
+            guard let tap else { return }
+            Task { @MainActor in
+                viewModel.handleMomentNotificationRoute(tap.kind)
+                momentNotificationTapMailbox.consume(id: tap.id)
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -225,6 +233,8 @@ struct AppRootView: View {
             deepLinkedPhotoShownAt: $viewModel.selectedAssetShownAt,
             deepLinkedFamilyWindowIsPresented: $viewModel.isFamilyWindowPresented,
             deepLinkedFamilyMomentSourceDigest: $viewModel.pendingFamilyMomentSourceDigest,
+            pendingFamilyNotificationRouteKind:
+                $viewModel.pendingFamilyNotificationRouteKind,
             chooseMorePhotos: presentLimitedLibraryPicker,
             requestPhotoAccess: requestOrOpenPhotoAccess,
             showWidgetPlacementGuide: {

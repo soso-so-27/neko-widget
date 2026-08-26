@@ -68,6 +68,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedAssetShownAt: Date?
     @Published var isFamilyWindowPresented = false
     @Published var pendingFamilyMomentSourceDigest: String?
+    @Published var pendingFamilyNotificationRouteKind: MomentNotificationRouteKind?
     @Published private(set) var familyWindowPresentation: MomentFamilyWindowPresentation = .empty
     @Published private(set) var privateWindowDisplayName = PrivateWindowDisplayName.fallback
 
@@ -1933,6 +1934,7 @@ final class AppViewModel: ObservableObject {
                         return
                     }
                 }
+                self.pendingFamilyNotificationRouteKind = nil
                 self.pendingFamilyMomentSourceDigest = sourceDigest
                 self.isFamilyWindowPresented = true
                 SharedLog.app.info("deeplink", "Opened private window from Widget")
@@ -1953,6 +1955,27 @@ final class AppViewModel: ObservableObject {
             return
         }
         openPhotoRoute(readyRoute)
+    }
+
+    func handleMomentNotificationRoute(_ kind: MomentNotificationRouteKind) {
+        guard SharingAPIConfiguration.current.isMediaAvailable else {
+            SharedLog.app.info(
+                "moment-notification",
+                "Ignored notification route because sharing is unavailable"
+            )
+            return
+        }
+        // A notification never carries a photo or window identifier. Open only
+        // the locally selected window, and let its authenticated synchronization
+        // resolve the latest received photo or sent-heart presentation.
+        pendingFamilyMomentSourceDigest = nil
+        pendingFamilyNotificationRouteKind = kind
+        isFamilyWindowPresented = true
+        SharedLog.app.info(
+            "moment-notification",
+            "Opened selected private window from notification",
+            metadata: ["kind": kind.rawValue]
+        )
     }
 
     private func openPendingDeepLinkIfNeeded() {

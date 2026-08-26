@@ -14,6 +14,15 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.app = (ROOT / "NekoWidget/App/NekoWidgetApp.swift").read_text(
             encoding="utf-8"
         )
+        self.app_root = (ROOT / "NekoWidget/App/AppRootView.swift").read_text(
+            encoding="utf-8"
+        )
+        self.app_view_model = (
+            ROOT / "NekoWidget/ViewModels/AppViewModel.swift"
+        ).read_text(encoding="utf-8")
+        self.main_tab = (ROOT / "NekoWidget/Views/MainTabView.swift").read_text(
+            encoding="utf-8"
+        )
         self.family_window = (
             ROOT / "NekoWidget/Views/FamilyWindowView.swift"
         ).read_text(encoding="utf-8")
@@ -57,6 +66,7 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("registerForRemoteNotifications", self.service)
         self.assertIn("didRegisterForRemoteNotificationsWithDeviceToken", self.service)
         self.assertIn("didReceiveRemoteNotification", self.service)
+        self.assertIn("didReceive response: UNNotificationResponse", self.service)
 
     def test_background_sync_is_eligible_and_fail_closed(self) -> None:
         eligibility = self.service.split(
@@ -169,8 +179,11 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         )[1].split("private static func familyWidgetManifest", 1)[0]
         self.assertIn("UNMutableNotificationContent", notification)
         self.assertIn("新しい一枚が届きました", notification)
+        self.assertIn(
+            "content.userInfo = MomentNotificationRoutePayload.userInfo(for: .newMoment)",
+            notification,
+        )
         for forbidden in (
-            "userInfo",
             "attachment",
             "windowDisplayName",
             "participant",
@@ -182,6 +195,54 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, notification)
         self.assertIn(".provisional", self.service)
+
+    def test_notification_tap_route_is_bounded_and_cold_launch_safe(self) -> None:
+        payload = self.service.split("enum MomentNotificationRoutePayload", 1)[1].split(
+            "struct MomentNotificationTap", 1
+        )[0]
+        self.assertIn('static let envelopeKey = "neko"', payload)
+        self.assertIn("static let schemaVersion = 1", payload)
+        self.assertIn('Set(envelope.keys) == Set(["v", "kind"])', payload)
+        self.assertIn("MomentNotificationRouteKind(rawValue: rawKind)", payload)
+        for forbidden in (
+            "momentID",
+            "windowID",
+            "spaceID",
+            "participantID",
+            "deviceID",
+            "URL",
+        ):
+            self.assertNotIn(forbidden, payload)
+
+        callback = self.service.split(
+            "didReceive response: UNNotificationResponse", 1
+        )[1].split("private func run(", 1)[0]
+        self.assertIn("UNNotificationDefaultActionIdentifier", callback)
+        self.assertIn("MomentNotificationRoutePayload.routeKind", callback)
+        self.assertIn("MomentNotificationTapMailbox.shared.enqueue(kind)", callback)
+
+        mailbox = self.service.split("final class MomentNotificationTapMailbox", 1)[
+            1
+        ].split("final class NekoWidgetAppDelegate", 1)[0]
+        self.assertIn("@Published private(set) var pendingTap", mailbox)
+        self.assertIn("guard pendingTap?.id == id", mailbox)
+        self.assertIn("pendingTap = nil", mailbox)
+
+        self.assertIn(
+            ".onChange(of: momentNotificationTapMailbox.pendingTap, initial: true)",
+            self.app_root,
+        )
+        self.assertIn("viewModel.handleMomentNotificationRoute(tap.kind)", self.app_root)
+        self.assertIn("momentNotificationTapMailbox.consume(id: tap.id)", self.app_root)
+        self.assertIn("func handleMomentNotificationRoute(", self.app_view_model)
+        self.assertIn("pendingFamilyMomentSourceDigest = nil", self.app_view_model)
+        self.assertIn("pendingFamilyNotificationRouteKind = kind", self.app_view_model)
+        self.assertIn("selectedTab = .windows", self.main_tab)
+        self.assertIn("deepLinkedFamilyWindowIsPresented = true", self.main_tab)
+        self.assertIn("case .newMoment:", self.family_window)
+        self.assertIn("selectedSection = .received", self.family_window)
+        self.assertIn("case .heart:", self.family_window)
+        self.assertIn("selectedSection = .sent", self.family_window)
 
     def test_visible_notification_authorization_requires_an_explicit_tap(self) -> None:
         request = self.service.split(
@@ -211,6 +272,10 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         )[1].split("private static func familyWidgetManifest", 1)[0]
         self.assertIn("届けた写真にハートが届きました。", notification)
         self.assertIn("UNMutableNotificationContent", notification)
+        self.assertIn(
+            "content.userInfo = MomentNotificationRoutePayload.userInfo(for: .heart)",
+            notification,
+        )
         for forbidden in (
             "UNNotificationAttachment",
             "content.sound",

@@ -52,6 +52,16 @@ struct MomentShareIngressService {
         }
     }
 
+    /// Host-app `PhotosPicker` file-representation entry point. The caller
+    /// must invoke this while the provider-granted URL is valid. No source
+    /// bytes or provider URL are retained after the bounded canonical JPEG is
+    /// returned.
+    func prepare(fromFileURL url: URL) throws -> MomentShareIngressPhoto {
+        try autoreleasepool {
+            try Self.canonicalPhoto(from: url)
+        }
+    }
+
     func activeAdmissions(now: Date = .now) async throws -> [MomentShareDestinationAdmission] {
         try await Task.detached(priority: .userInitiated) {
             try MomentShareHandoffStore.activeAdmissions(now: now)
@@ -85,13 +95,21 @@ struct MomentShareIngressService {
               let source = CGImageSourceCreateWithURL(
                 url as CFURL,
                 [kCGImageSourceShouldCache: false] as CFDictionary
-              ),
-              CGImageSourceGetCount(source) == 1
+              )
         else { throw MomentSharingError.invalidPayload }
 
-        // Read only the small property dictionary and a bounded thumbnail from
-        // the provider's temporary URL. The original file is never copied into
-        // a Data value or our App Group container.
+        return try canonicalPhoto(from: source)
+    }
+
+    private static func canonicalPhoto(
+        from source: CGImageSource
+    ) throws -> MomentShareIngressPhoto {
+        guard CGImageSourceGetCount(source) == 1 else {
+            throw MomentSharingError.invalidPayload
+        }
+
+        // Read only the small property dictionary and a bounded thumbnail.
+        // The original is never copied into the App Group container.
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
             as? [CFString: Any]
         let options: [CFString: Any] = [

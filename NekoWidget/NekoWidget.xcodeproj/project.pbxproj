@@ -83,6 +83,7 @@
 		10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000252 /* MomentSharingAPIClient.swift */; };
 		10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000253 /* MomentSharingCoordinator.swift */; };
 		100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025A /* MomentBackgroundRefreshService.swift */; };
+		100000000000000000000178 /* MomentShareIngressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000354 /* MomentShareIngressService.swift */; };
 		100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000256 /* MomentShareHandoffProcessor.swift */; };
 		10000000000000000000016E /* MomentSharingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000254 /* MomentSharingViewModel.swift */; };
 		10000000000000000000016F /* FamilyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000255 /* FamilyWindowView.swift */; };
@@ -920,6 +921,7 @@
 				10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */,
 				10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */,
 				100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */,
+				100000000000000000000178 /* MomentShareIngressService.swift in Sources */,
 				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,
 				10000000000000000000016E /* MomentSharingViewModel.swift in Sources */,
 				10000000000000000000016F /* FamilyWindowView.swift in Sources */,

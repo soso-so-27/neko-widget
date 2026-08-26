@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Combine
 import Foundation
 import ImageIO
 import UIKit
@@ -35,6 +36,69 @@ struct MomentBackgroundRefreshResult: Equatable, Sendable {
 
     static func changed() -> Self {
         Self(succeeded: true, didChange: true)
+    }
+}
+
+/// A privacy-minimized navigation hint shared by remote and local sharing
+/// notifications. The payload deliberately carries no photo, window, member,
+/// device, or relay identifier. Unknown schema versions and kinds are ignored
+/// instead of guessing a destination.
+enum MomentNotificationRouteKind: String, Equatable, Sendable {
+    case newMoment = "new_moment"
+    case heart
+}
+
+enum MomentNotificationRoutePayload {
+    static let envelopeKey = "neko"
+    static let schemaVersion = 1
+
+    static func userInfo(
+        for kind: MomentNotificationRouteKind
+    ) -> [AnyHashable: Any] {
+        [
+            envelopeKey: [
+                "v": schemaVersion,
+                "kind": kind.rawValue
+            ]
+        ]
+    }
+
+    static func routeKind(
+        from userInfo: [AnyHashable: Any]
+    ) -> MomentNotificationRouteKind? {
+        guard let envelope = userInfo[envelopeKey] as? [String: Any],
+              Set(envelope.keys) == Set(["v", "kind"]),
+              let version = envelope["v"] as? Int,
+              version == schemaVersion,
+              let rawKind = envelope["kind"] as? String
+        else { return nil }
+        return MomentNotificationRouteKind(rawValue: rawKind)
+    }
+}
+
+struct MomentNotificationTap: Equatable, Identifiable, Sendable {
+    let id: UUID
+    let kind: MomentNotificationRouteKind
+}
+
+/// Keeps the latest validated tap in memory until SwiftUI has installed its
+/// root view. Posting NotificationCenter-only events here would lose a cold
+/// launch tap that arrives before AppRootView subscribes.
+@MainActor
+final class MomentNotificationTapMailbox: ObservableObject {
+    static let shared = MomentNotificationTapMailbox()
+
+    @Published private(set) var pendingTap: MomentNotificationTap?
+
+    private init() {}
+
+    func enqueue(_ kind: MomentNotificationRouteKind) {
+        pendingTap = MomentNotificationTap(id: UUID(), kind: kind)
+    }
+
+    func consume(id: UUID) {
+        guard pendingTap?.id == id else { return }
+        pendingTap = nil
     }
 }
 
@@ -144,6 +208,18 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // APNs and the existing local fallback both contain only generic text.
         // Keep them visible in the foreground without adding sound or a badge.
         [.banner]
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let kind = MomentNotificationRoutePayload.routeKind(
+                  from: response.notification.request.content.userInfo
+              )
+        else { return }
+        MomentNotificationTapMailbox.shared.enqueue(kind)
     }
 
     private func run(_ backgroundTask: BGAppRefreshTask) {
@@ -868,8 +944,10 @@ actor MomentBackgroundRefreshService {
         let content = UNMutableNotificationContent()
         content.title = "ねこのまど"
         content.body = "新しい一枚が届きました。アプリを開いて確認できます。"
-        // Keep the request text-only and generic. It carries no routing data,
-        // media, sender/window label, counter, or audible signal.
+        content.userInfo = MomentNotificationRoutePayload.userInfo(for: .newMoment)
+        // Keep the request text-only and generic. It carries no identifier-
+        // bearing route, media, sender/window label, counter, or audible signal.
+        // The bounded kind only selects a section after authenticated local sync.
         let request = UNNotificationRequest(
             identifier: "moment-arrival-\(UUID().uuidString.lowercased())",
             content: content,
@@ -887,6 +965,7 @@ actor MomentBackgroundRefreshService {
         let content = UNMutableNotificationContent()
         content.title = "ねこのまど"
         content.body = "届けた写真にハートが届きました。"
+        content.userInfo = MomentNotificationRoutePayload.userInfo(for: .heart)
         // No photo, sender/window label, moment identifier, sound, or badge is
         // attached. Opening the app performs the authenticated state lookup.
         let request = UNNotificationRequest(

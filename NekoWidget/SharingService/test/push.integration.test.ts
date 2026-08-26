@@ -313,6 +313,7 @@ describe("APNs durable notification delivery", () => {
         alert: { title: "ねこのまど", body: "新しい一枚が届きました。" },
         "content-available": 1,
       },
+      neko: { v: 1, kind: "new_moment" },
     });
     expect(requestPayload).not.toContain(momentID);
     expect(requestPayload).not.toContain(fixture.spaceID);
@@ -367,6 +368,7 @@ describe("APNs durable notification delivery", () => {
         alert: { title: "ねこのまど", body: "届けた写真にハートが届きました。" },
         "content-available": 1,
       },
+      neko: { v: 1, kind: "heart" },
     });
     expect(heartPayload).not.toContain(reactionID);
     expect(heartPayload).not.toContain(heartMomentID);

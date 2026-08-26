@@ -31,6 +31,7 @@ struct MainTabView: View {
     @Binding var deepLinkedPhotoShownAt: Date?
     @Binding var deepLinkedFamilyWindowIsPresented: Bool
     @Binding var deepLinkedFamilyMomentSourceDigest: String?
+    @Binding var pendingFamilyNotificationRouteKind: MomentNotificationRouteKind?
 
     let chooseMorePhotos: () -> Void
     let requestPhotoAccess: () -> Void
@@ -86,7 +87,9 @@ struct MainTabView: View {
                 NavigationStack {
                     WindowListView(
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
-                        pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest
+                        pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
+                        pendingFamilyNotificationRouteKind:
+                            $pendingFamilyNotificationRouteKind
                     )
                 }
                 .tabItem {
@@ -138,6 +141,12 @@ struct MainTabView: View {
             guard isPresented else { return }
             showsSettings = false
             selectedTab = .windows
+        }
+        .onChange(of: pendingFamilyNotificationRouteKind, initial: true) { _, kind in
+            guard kind != nil else { return }
+            showsSettings = false
+            selectedTab = .windows
+            deepLinkedFamilyWindowIsPresented = true
         }
         .onChange(of: todayPath) { _, path in
             guard path.isEmpty else { return }
@@ -477,6 +486,7 @@ private struct WindowListView: View {
 
     @Binding var opensActiveWindow: Bool
     @Binding var pendingFamilyMomentSourceDigest: String?
+    @Binding var pendingFamilyNotificationRouteKind: MomentNotificationRouteKind?
 
     @State private var windows: [PrivateWindowCatalogEntry] = []
     @State private var activeWindowID: String?
@@ -484,6 +494,7 @@ private struct WindowListView: View {
     @State private var switchingWindowID: String?
     @State private var catalogLoadMessage: String?
     @State private var pendingPreparationCounts: [String: Int] = [:]
+    @State private var showsAddWindowConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -537,6 +548,18 @@ private struct WindowListView: View {
         }
         .navigationTitle("まど")
         .background(Color(.systemGroupedBackground))
+        .confirmationDialog(
+            "別のまどを追加しますか？",
+            isPresented: $showsAddWindowConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("追加して設定へ進む") {
+                createAndOpenWindow()
+            }
+            Button("やめる", role: .cancel) {}
+        } message: {
+            Text("まどを1つ追加し、次の画面で名前を付けて、作成または招待への参加を選びます。")
+        }
         .navigationDestination(isPresented: $opensActiveWindow) {
             activeWindowDestination
                 .id(activeWindowID ?? "no-active-window")
@@ -638,15 +661,7 @@ private struct WindowListView: View {
 
     private var addWindowButton: some View {
         Button {
-            Task {
-                let previousActiveWindowID = activeWindowID
-                await model.createAnotherPrivateWindow()
-                reloadCatalogPresentation()
-                guard let createdWindowID = activeWindowID,
-                      createdWindowID != previousActiveWindowID
-                else { return }
-                opensActiveWindow = true
-            }
+            showsAddWindowConfirmation = true
         } label: {
             Label("別のまどを追加", systemImage: "rectangle.stack.badge.plus")
                 .font(.headline)
@@ -660,6 +675,18 @@ private struct WindowListView: View {
                 || windows.count >= PrivateWindowCatalogState.maximumWindowCount
         )
         .accessibilityIdentifier("window-list-add")
+    }
+
+    private func createAndOpenWindow() {
+        Task {
+            let previousActiveWindowID = activeWindowID
+            await model.createAnotherPrivateWindow()
+            reloadCatalogPresentation()
+            guard let createdWindowID = activeWindowID,
+                  createdWindowID != previousActiveWindowID
+            else { return }
+            opensActiveWindow = true
+        }
     }
 
     private func windowCard(_ window: PrivateWindowCatalogEntry) -> some View {
@@ -690,7 +717,7 @@ private struct WindowListView: View {
                     }
 
                     Text(window.spaceID == nil
-                        ? "まだ相手を招待していません"
+                        ? "設定を続ける"
                         : "相手1人と非公開")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -837,7 +864,8 @@ private struct WindowListView: View {
     private var activeWindowDestination: some View {
         if SharingAPIConfiguration.current.isMediaAvailable {
             FamilyWindowView(
-                pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest
+                pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest,
+                pendingNotificationRouteKind: $pendingFamilyNotificationRouteKind
             )
         } else if SharingAPIConfiguration.current.isAvailable {
             PairingView()

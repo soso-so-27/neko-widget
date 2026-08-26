@@ -12,7 +12,7 @@ APNsやiOSは配送・背景実行・Widget再読込を保証しない。製品�
 
 ## Privacy境界
 
-- payloadは「新しい一枚が届きました」「届けた写真にハートが届きました」という一般文だけにする。
+- payloadは一般文に加え、`v=1`と`kind=new_moment|heart`だけの閉じた遷移hintを持てる。未知version、未知kind、余分なkey、通知の独自actionは受理しない。
 - 写真、まど名、相手名、撮影日時、moment/reaction ID、URL、暗号鍵を入れない。
 - APNs tokenはWorkerのSecret keyringでAES-GCM暗号化し、D1には暗号文、nonce、key versionと重複確認用SHA-256だけを置く。平文tokenをlog、API response、iPhoneの永続領域へ残さない。
 - Serverは署名済みrequestから現在のparticipant、device、bundle topicを決定し、client指定のIDやtopicを受け付けない。
@@ -36,6 +36,7 @@ APNsやiOSは配送・背景実行・Widget再読込を保証しない。製品�
 - 通知許可済みかつ、ペアリング・写真共有同意が有効な選択中のまどだけへtokenを署名付き登録する。同じ物理tokenを別のまどからPUTした場合は以前のbindingと未完了deliveryを置き換え、非activeまどの通知でactiveまどを誤同期しない。
 - 通知拒否時は署名付きDELETEを試み、失敗時もpairingを破壊しない。Server側のcascadeとlease expiryを最終収束経路にする。
 - remote callbackでは既存refreshを使い、APNs alertと同じ内容のlocal notificationを重複生成しない。
+- 通知タップはcold launchでも一時mailboxへ保持し、`new_moment`は選択中のまどの「届いた」、`heart`は「届けた」を開く。payloadからまどや写真を推測せず、認証済みの端末内同期結果だけを表示する。
 
 ## 外部release gate
 

@@ -1,6 +1,30 @@
+import CoreTransferable
 import SwiftUI
 import ImageIO
+import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
+
+private struct PickedMomentIngressPhoto: Transferable {
+    let photo: MomentShareIngressPhoto
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .image) { received in
+            Self(
+                photo: try MomentShareIngressService().prepare(
+                    fromFileURL: received.file
+                )
+            )
+        }
+    }
+}
+
+private struct PreparedMomentDelivery: Identifiable {
+    let id = UUID()
+    let photo: MomentShareIngressPhoto
+    let preview: UIImage
+    let destination: MomentDeliveryDestination
+}
 
 private enum ReceivedPhotoFilter: String, CaseIterable, Identifiable {
     case all
@@ -31,6 +55,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Binding private var pendingMemorySourceDigest: String?
+    @Binding private var pendingNotificationRouteKind: MomentNotificationRouteKind?
     @StateObject private var model = MomentSharingViewModel()
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
@@ -52,9 +77,20 @@ struct FamilyWindowView: View {
     @State private var showsStaleWidgetPhotoAlert = false
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var preparedDelivery: PreparedMomentDelivery?
+    @State private var selectedMomentForDetail: MomentInboxItem?
+    @State private var isPreparingSelectedPhoto = false
+    @State private var isDeliveringSelectedPhoto = false
+    @State private var photoSelectionMessage: String?
+    @State private var selectedDeliveryMessage: String?
 
-    init(pendingMemorySourceDigest: Binding<String?> = .constant(nil)) {
+    init(
+        pendingMemorySourceDigest: Binding<String?> = .constant(nil),
+        pendingNotificationRouteKind: Binding<MomentNotificationRouteKind?> = .constant(nil)
+    ) {
         _pendingMemorySourceDigest = pendingMemorySourceDigest
+        _pendingNotificationRouteKind = pendingNotificationRouteKind
     }
 
     var body: some View {
@@ -117,6 +153,9 @@ struct FamilyWindowView: View {
         .onChange(of: pendingMemorySourceDigest) { _, _ in
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()
+        }
+        .onChange(of: pendingNotificationRouteKind, initial: true) { _, _ in
+            consumePendingNotificationRoute()
         }
         .onChange(of: model.bootstrapPresentationState) { _, _ in
             consumePendingMemoryTargetIfReady()
@@ -328,6 +367,25 @@ struct FamilyWindowView: View {
         } message: { _ in
             Text("自分の写真アプリと思い出へ残します。相手には通知しません。")
         }
+        .sheet(item: $preparedDelivery) { delivery in
+            deliveryConfirmation(delivery)
+        }
+        .sheet(item: $selectedMomentForDetail) { item in
+            NavigationStack {
+                ScrollView {
+                    momentCard(item)
+                        .padding(16)
+                }
+                .background(Color(uiColor: .systemGroupedBackground))
+                .navigationTitle("届いた写真")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("閉じる") { selectedMomentForDetail = nil }
+                    }
+                }
+            }
+        }
     }
 
     private var pairedContent: some View {
@@ -379,15 +437,25 @@ struct FamilyWindowView: View {
     @ViewBuilder
     private var receivedSectionContent: some View {
         if !model.receivedMoments.isEmpty {
-            Text("届いた写真")
-                .font(.headline)
-            Picker("表示する写真", selection: $receivedPhotoFilter) {
-                ForEach(ReceivedPhotoFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
+            HStack {
+                Text("届いた写真")
+                    .font(.headline)
+                Spacer()
+                Menu {
+                    Picker("表示する写真", selection: $receivedPhotoFilter) {
+                        ForEach(ReceivedPhotoFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                } label: {
+                    Label(
+                        receivedPhotoFilter.title,
+                        systemImage: "line.3.horizontal.decrease.circle"
+                    )
+                    .font(.subheadline.weight(.semibold))
                 }
+                .accessibilityIdentifier("family-window-photo-filter")
             }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("family-window-photo-filter")
 
             if let latest = filteredReceivedMoments.first {
                 momentCard(latest)
@@ -413,8 +481,16 @@ struct FamilyWindowView: View {
         if filteredReceivedMoments.count > 1 {
             Text(receivedPhotoFilter == .all ? "以前に届いた写真" : "ほかの残した写真")
                 .font(.headline)
-            ForEach(filteredReceivedMoments.dropFirst()) { item in
-                momentCard(item)
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                ForEach(filteredReceivedMoments.dropFirst()) { item in
+                    compactMomentCard(item)
+                }
             }
         }
 
@@ -481,17 +557,218 @@ struct FamilyWindowView: View {
     }
 
     private var sendPhotoAction: some View {
-        Button {
-            showsSendGuide = true
-        } label: {
-            Label("写真を届ける", systemImage: "paperplane.fill")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
+            PhotosPicker(
+                selection: $selectedPhotoItem,
+                matching: .images,
+                photoLibrary: .shared()
+            ) {
+                HStack(spacing: 8) {
+                    if isPreparingSelectedPhoto {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "photo.on.rectangle.angled")
+                    }
+                    Text(isPreparingSelectedPhoto
+                        ? "写真を準備しています…"
+                        : "写真を選んで届ける")
+                        .font(.headline)
+                }
                 .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(
+                model.isWorking
+                    || model.isShowingLastKnownState
+                    || isPreparingSelectedPhoto
+                    || isDeliveringSelectedPhoto
+            )
+            .accessibilityIdentifier("family-window-photo-picker")
+            .onChange(of: selectedPhotoItem) { _, item in
+                prepareSelectedPhoto(item)
+            }
+
+            HStack {
+                Text("送る前に写真と届け先を確認できます")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("共有から送る方法") { showsSendGuide = true }
+                    .font(.caption.weight(.semibold))
+                    .accessibilityIdentifier("family-window-send-guide")
+            }
+
+            if let photoSelectionMessage {
+                Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(model.isShowingLastKnownState)
-        .accessibilityIdentifier("family-window-send-guide")
+    }
+
+    private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        photoSelectionMessage = nil
+        selectedDeliveryMessage = nil
+        preparedDelivery = nil
+        isPreparingSelectedPhoto = true
+        Task {
+            defer {
+                isPreparingSelectedPhoto = false
+                selectedPhotoItem = nil
+            }
+            do {
+                guard let picked = try await item.loadTransferable(
+                    type: PickedMomentIngressPhoto.self
+                ) else { throw MomentSharingError.invalidPayload }
+                let destination = try await model.deliveryDestinationSnapshot()
+                let preview = try picked.photo.previewImage()
+                preparedDelivery = PreparedMomentDelivery(
+                    photo: picked.photo,
+                    preview: preview,
+                    destination: destination
+                )
+            } catch {
+                photoSelectionMessage =
+                    "写真または届け先を準備できませんでした。まどを確認して、もう一度お試しください。"
+            }
+        }
+    }
+
+    private func deliveryConfirmation(
+        _ delivery: PreparedMomentDelivery
+    ) -> some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Image(uiImage: delivery.preview)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 420)
+                    .background(Color.black.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("届け先")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(delivery.destination.displayName)
+                        .font(.title3.weight(.semibold))
+                    Label(
+                        "最大2,048px・位置情報を除いて送信",
+                        systemImage: "lock.shield"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+
+                if let selectedDeliveryMessage {
+                    Label(
+                        selectedDeliveryMessage,
+                        systemImage: "exclamationmark.circle"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    selectedDeliveryMessage = nil
+                    isDeliveringSelectedPhoto = true
+                    Task {
+                        let didStage = await model.deliverSelectedPhoto(
+                            delivery.photo,
+                            to: delivery.destination
+                        )
+                        isDeliveringSelectedPhoto = false
+                        if didStage {
+                            preparedDelivery = nil
+                            selectedSection = .sent
+                        } else {
+                            selectedDeliveryMessage = model.errorMessage
+                                ?? "写真を準備できませんでした。もう一度お試しください。"
+                        }
+                    }
+                } label: {
+                    HStack {
+                        if isDeliveringSelectedPhoto {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                        }
+                        Text(isDeliveringSelectedPhoto
+                            ? "届けています…"
+                            : "この1枚を届ける")
+                            .font(.headline)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(isDeliveringSelectedPhoto || model.isWorking)
+                .accessibilityIdentifier("family-window-confirm-delivery")
+            }
+            .padding(20)
+            .navigationTitle("写真を確認")
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(isDeliveringSelectedPhoto)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("やめる") { preparedDelivery = nil }
+                        .disabled(isDeliveringSelectedPhoto)
+                }
+            }
+        }
+    }
+
+    private func compactMomentCard(_ item: MomentInboxItem) -> some View {
+        Button {
+            selectedMomentForDetail = item
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                if let url = model.imageURL(for: item) {
+                    MomentLocalImageView(url: url)
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(1, contentMode: .fill)
+                        .clipped()
+                } else {
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(1, contentMode: .fit)
+                }
+                HStack(spacing: 5) {
+                    Text(item.receivedAt.formatted(.dateTime.month().day()))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 2)
+                    if model.isSavedMemory(item) {
+                        Image(systemName: "photo.badge.checkmark")
+                            .foregroundStyle(.tint)
+                            .accessibilityLabel("思い出に残した写真")
+                    }
+                    if model.heartOutboxItem(for: item)?.phase == .sent {
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(.tint)
+                            .accessibilityLabel("ハートを送信済み")
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+            }
+            .background(
+                Color(uiColor: .secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 16)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("写真を大きく表示して操作します")
+        .accessibilityIdentifier("family-window-photo-thumbnail-\(item.id)")
     }
 
     private func sharingErrorCard(_ message: String) -> some View {
@@ -670,7 +947,7 @@ struct FamilyWindowView: View {
                     .frame(width: 40, height: 40)
                     .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("まどの設定")
+                    Text("相手と端末")
                         .font(.subheadline.weight(.semibold))
                     Label("相手と接続済み", systemImage: "checkmark.circle.fill")
                         .font(.caption)
@@ -1088,13 +1365,6 @@ struct FamilyWindowView: View {
                 }
                 .padding(13)
 
-                Text("ハートは相手へ・思い出は自分だけ")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, 13)
-                    .padding(.bottom, 10)
-
                 if memoryResultMomentID == item.id,
                    let message = model.memoryActionMessage ?? model.errorMessage {
                     Label(
@@ -1222,6 +1492,23 @@ struct FamilyWindowView: View {
         focusedMomentID = target.id
         if !model.isSavedMemory(target) {
             widgetMemoryTarget = target
+        }
+    }
+
+    private func consumePendingNotificationRoute() {
+        guard let kind = pendingNotificationRouteKind else { return }
+        pendingNotificationRouteKind = nil
+        widgetMemoryTarget = nil
+        focusedMomentID = nil
+        switch kind {
+        case .newMoment:
+            selectedSection = .received
+            receivedPhotoFilter = .all
+        case .heart:
+            selectedSection = .sent
+            // A heart may refer to an older sent record. Keep every retained
+            // status visible instead of hiding it behind the three-row summary.
+            showsAllSentRecords = true
         }
     }
 

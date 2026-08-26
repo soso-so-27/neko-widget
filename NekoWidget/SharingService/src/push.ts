@@ -543,6 +543,10 @@ function notificationPayload(kind: NotificationKind): string {
       alert: { title: "ねこのまど", body },
       "content-available": 1,
     },
+    neko: {
+      v: 1,
+      kind,
+    },
   });
 }
 

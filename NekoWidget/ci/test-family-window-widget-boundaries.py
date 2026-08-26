@@ -546,7 +546,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("family-window-send-paw", family_view)
         self.assertIn("写真を届けた相手にハートを送る", family_view)
         self.assertIn("family-window-save-memory", family_view)
-        self.assertIn('Text("ハートは相手へ・思い出は自分だけ")', family_view)
+        self.assertNotIn('Text("ハートは相手へ・思い出は自分だけ")', family_view)
+        self.assertIn("相手には通知しません", family_view)
+        self.assertIn("写真を届けた相手にハートを送る", family_view)
         self.assertIn('"photo.badge.plus"', family_view)
         self.assertIn('"checkmark.circle.fill"', family_view)
         self.assertIn('return canRetry ? "送信を再試行" : "送信できません"', family_view)
@@ -1898,6 +1900,47 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private var trustLinks: some View",
         )
         self.assertIn("DisclosureGroup", privacy)
+
+    def test_host_photo_picker_uses_the_existing_bounded_handoff(self) -> None:
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        ingress = source("NekoWidgetShareExtension/MomentShareIngressService.swift")
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+
+        self.assertIn("PhotosPicker(", family)
+        self.assertIn('"写真を選んで届ける"', family)
+        self.assertIn("deliveryConfirmation", family)
+        self.assertIn("type: PickedMomentIngressPhoto.self", family)
+        self.assertNotIn("loadTransferable(type: Data.self)", family)
+        self.assertIn("to: delivery.destination", family)
+        self.assertIn("func deliverSelectedPhoto(", model)
+        self.assertIn("func deliveryDestinationSnapshot()", model)
+        self.assertIn(
+            "catalog.activeWindowID == confirmedDestination.localWindowID",
+            model,
+        )
+        self.assertIn(
+            "admission.bindingSHA256 == confirmedDestination.bindingSHA256",
+            model,
+        )
+        self.assertIn("refreshAdmissionCatalog(", model)
+        self.assertIn("MomentShareIngressService().stage(", model)
+        delivery = section(
+            model,
+            "func deliverSelectedPhoto(",
+            "func report(",
+        )
+        self.assertLess(delivery.index("didStage = true"), delivery.index("try reload()"))
+        self.assertIn("Staging already committed a unique durable capture", delivery)
+        self.assertIn("func prepare(fromFileURL url: URL)", ingress)
+        self.assertIn("try Self.canonicalPhoto(from: url)", ingress)
+
+        app_sources = section(
+            project,
+            "A00000000000000000000021 /* Sources */ = {",
+            "A00000000000000000000025 /* Sources */",
+        )
+        self.assertIn("MomentShareIngressService.swift in Sources", app_sources)
 
     def test_retryable_pairing_bootstrap_is_retried_after_data_protection(self) -> None:
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")

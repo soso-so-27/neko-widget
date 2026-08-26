@@ -588,6 +588,34 @@ enum PrivateWindowPresentationStore {
                   currentPairing.role == pairing.role else {
                 throw PairingError.stateUnavailable
             }
+            // The presentation record is the authority for the encrypted
+            // owner label, while the catalog is the authority used by the
+            // window picker and Widget configuration. Keep the two local
+            // projections in one lifecycle boundary: a newly added iPhone
+            // commonly begins with only the catalog fallback, and must not
+            // keep showing that fallback after an authenticated owner name
+            // has been accepted.
+            func mirrorCatalog(
+                _ presentation: PrivateWindowPresentationState
+            ) throws -> PrivateWindowPresentationState {
+                guard let catalog = try PrivateWindowCatalogStore.load(),
+                      let active = catalog.windows.first(where: {
+                          $0.localWindowID == catalog.activeWindowID
+                      })
+                else { throw PairingError.stateUnavailable }
+                if active.displayName == presentation.displayName,
+                   active.spaceID == currentPairing.spaceID,
+                   active.credentialAccount == currentPairing.credentialAccount {
+                    return presentation
+                }
+                try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                    displayName: presentation.displayName,
+                    spaceID: currentPairing.spaceID,
+                    credentialAccount: currentPairing.credentialAccount,
+                    now: now
+                )
+                return presentation
+            }
             try PrivateWindowCatalogStore
                 .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
                     displayName
@@ -596,12 +624,14 @@ enum PrivateWindowPresentationStore {
             let current = loaded?.pairingBindingSHA256 == currentBinding ? loaded : nil
 
             if pairing.role == .inviter, let current {
-                if current.storageRevision > ownerRevision { return current }
+                if current.storageRevision > ownerRevision {
+                    return try mirrorCatalog(current)
+                }
                 if current.storageRevision == ownerRevision {
                     guard current.displayName == displayName else {
                         throw PairingError.stateUnavailable
                     }
-                    return current
+                    return try mirrorCatalog(current)
                 }
             }
             let localRevision: Int
@@ -612,7 +642,7 @@ enum PrivateWindowPresentationStore {
                 guard !increment.overflow else { throw PairingError.stateUnavailable }
                 localRevision = increment.partialValue
             } else if let current {
-                return current
+                return try mirrorCatalog(current)
             } else {
                 localRevision = 0
             }
@@ -626,7 +656,7 @@ enum PrivateWindowPresentationStore {
             guard let committed = try loadWhileLifecycleLocked(),
                   committed == next
             else { throw PairingError.stateUnavailable }
-            return committed
+            return try mirrorCatalog(committed)
         }
     }
 

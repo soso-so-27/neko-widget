@@ -7,6 +7,12 @@ enum MomentSharingBootstrapPresentationState: Equatable {
     case temporarilyUnavailable(message: String)
 }
 
+struct MomentDeliveryDestination: Equatable, Sendable {
+    let localWindowID: String
+    let bindingSHA256: Data
+    let displayName: String
+}
+
 @MainActor
 final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var pairingState: PairingState?
@@ -176,6 +182,111 @@ final class MomentSharingViewModel: ObservableObject {
                 manualRefreshMessage = "更新できませんでした。接続を確認して、もう一度お試しください。"
             }
         }
+    }
+
+    /// Freezes the exact local-window and authenticated admission binding that
+    /// will be shown on the confirmation sheet. A later rename, re-pair, or
+    /// active-window change invalidates the confirmation instead of silently
+    /// changing its recipient.
+    func deliveryDestinationSnapshot() async throws -> MomentDeliveryDestination {
+        guard !isWorking,
+              !isShowingLastKnownState,
+              isPaired,
+              hasCurrentMediaSharingConsent,
+              !isReportOnly
+        else { throw MomentSharingError.stateUnavailable }
+
+        let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
+        guard let catalog = try PrivateWindowCatalogStore.load(),
+              let admission = try MomentShareHandoffProcessor()
+                .refreshAdmissionCatalog(
+                    lifecycleToken: bootstrap.lifecycleToken
+                )
+                .destinations
+                .first(where: {
+                    $0.localWindowID == catalog.activeWindowID
+                })
+        else { throw MomentSharingError.stateUnavailable }
+        return MomentDeliveryDestination(
+            localWindowID: catalog.activeWindowID,
+            bindingSHA256: admission.bindingSHA256,
+            displayName: admission.displayName
+        )
+    }
+
+    /// Stages one photo selected inside the host app through the exact same
+    /// admission and canonical-JPEG boundary used by the Share Extension.
+    /// Returning `true` means the durable local handoff succeeded; relay
+    /// delivery may continue in the ordinary synchronization pipeline.
+    func deliverSelectedPhoto(
+        _ photo: MomentShareIngressPhoto,
+        to confirmedDestination: MomentDeliveryDestination
+    ) async -> Bool {
+        guard !isWorking,
+              !isShowingLastKnownState,
+              isPaired,
+              hasCurrentMediaSharingConsent,
+              !isReportOnly
+        else { return false }
+
+        isPerformingAction = true
+        errorMessage = nil
+        var didStage = false
+        do {
+            let bootstrap = try await PairingInstallationGuard.bootstrapAsync()
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  catalog.activeWindowID == confirmedDestination.localWindowID,
+                  let admission = try MomentShareHandoffProcessor()
+                    .refreshAdmissionCatalog(
+                        lifecycleToken: bootstrap.lifecycleToken
+                    )
+                    .destinations
+                    .first(where: {
+                        $0.localWindowID == confirmedDestination.localWindowID
+                    }),
+                  admission.bindingSHA256 == confirmedDestination.bindingSHA256,
+                  admission.displayName == confirmedDestination.displayName
+            else {
+                errorMessage = "届け先の状態が変わりました。写真を選び直してください。"
+                isPerformingAction = false
+                return false
+            }
+
+            try await MomentShareIngressService().stage(
+                photo,
+                admissionID: admission.id,
+                senderPolicyAcceptedAt: .now
+            )
+            didStage = true
+            do {
+                try reload()
+            } catch {
+                // Staging already committed a unique durable capture. Treat
+                // that as success so a transient protected-data reload cannot
+                // invite a second tap and duplicate the same photo.
+                SharedLog.app.warning(
+                    "moment-ingress",
+                    "Staged host photo will refresh on the next synchronization",
+                    metadata: SharedLog.errorMetadata(error, category: .momentSharing)
+                )
+            }
+        } catch {
+            errorMessage = Self.userFacingMessage(for: error)
+            SharedLog.app.warning(
+                "moment-ingress",
+                "Host photo selection could not be staged",
+                metadata: SharedLog.errorMetadata(error, category: .momentSharing)
+            )
+        }
+        isPerformingAction = false
+
+        if didStage {
+            // Local staging is the user-visible completion boundary. Continue
+            // moderation and relay synchronization without keeping the
+            // confirmation sheet blocked on the network.
+            Task { await synchronize(isManual: false) }
+        }
+        return didStage
     }
 
     func report(

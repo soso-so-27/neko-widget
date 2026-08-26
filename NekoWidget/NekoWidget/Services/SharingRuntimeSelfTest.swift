@@ -6689,6 +6689,47 @@ actor SharingRuntimeSelfTestRunner {
                 == pairingRevisionBeforeRename
         else { throw PairingError.stateUnavailable }
 
+        // An additional/recovered iPhone begins with a catalog entry named
+        // `fallback` and no local presentation file. Accepting the creator's
+        // authenticated name must repair both local projections; a stale
+        // fallback must never put the catalog back into that initial state.
+        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
+            try FileManager.default.removeItem(at: windowPresentationURL)
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: PrivateWindowDisplayName.fallback,
+                spaceID: paired.spaceID,
+                credentialAccount: paired.credentialAccount
+            )
+        }
+        let recoveredOwnerName = try PrivateWindowPresentationStore
+            .applySynchronizedOwnerName(
+                displayName: "妻のまど",
+                ownerRevision: secondWindowName.storageRevision + 1,
+                pairing: paired,
+                validating: snapshot.lifecycleToken
+            )
+        guard recoveredOwnerName.displayName == "妻のまど",
+              let synchronizedCatalog = try PrivateWindowCatalogStore.load(),
+              let synchronizedActiveWindow = synchronizedCatalog.windows.first(where: {
+                  $0.localWindowID == synchronizedCatalog.activeWindowID
+              }),
+              synchronizedActiveWindow.displayName == "妻のまど",
+              synchronizedActiveWindow.spaceID == paired.spaceID,
+              synchronizedActiveWindow.credentialAccount == paired.credentialAccount
+        else { throw PairingError.stateUnavailable }
+        let staleFallback = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
+            displayName: PrivateWindowDisplayName.fallback,
+            ownerRevision: secondWindowName.storageRevision,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        guard staleFallback.displayName == "妻のまど",
+              let catalogAfterStaleFallback = try PrivateWindowCatalogStore.load(),
+              catalogAfterStaleFallback.windows.first(where: {
+                  $0.localWindowID == catalogAfterStaleFallback.activeWindowID
+              })?.displayName == "妻のまど"
+        else { throw PairingError.stateUnavailable }
+
         let reportOnlyUntil = Date(
             timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 60 * 60
         )

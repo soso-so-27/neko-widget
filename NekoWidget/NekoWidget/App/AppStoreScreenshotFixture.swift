@@ -299,6 +299,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             deepLinkedPhotoShownAt: $selectedPhotoShownAt,
             deepLinkedFamilyWindowIsPresented: $showsFamilyWindow,
             deepLinkedFamilyMomentSourceDigest: .constant(nil),
+            pendingFamilyNotificationRouteKind: .constant(nil),
             chooseMorePhotos: {},
             requestPhotoAccess: {},
             showWidgetPlacementGuide: {},
