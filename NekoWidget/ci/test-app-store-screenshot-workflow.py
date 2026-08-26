@@ -22,6 +22,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.workflow = source(".github/workflows/app-store-screenshots.yml")
         self.fixture = source("NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift")
         self.photo_image = source("NekoWidget/NekoWidget/Views/PhotoAssetImageView.swift")
+        self.album_view = source("NekoWidget/NekoWidget/Views/LikedPhotosView.swift")
         self.ui_test = source("NekoWidget/NekoWidgetUITests/AppStoreScreenshotUITests.swift")
         self.widget_ui_test = source(
             "NekoWidget/NekoWidgetUITests/WidgetPlacementScreenshotUITests.swift"
@@ -200,7 +201,12 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.fixture,
         )
         self.assertIn("requirements: [(12, 1)]", self.ui_test)
-        self.assertIn("requirements: [(8, 2), (6, 1), (4, 1), (1, 1)]", self.ui_test)
+        self.assertIn('"album-primary-all-cat-photos"', self.album_view)
+        self.assertIn(
+            'app.buttons["album-primary-all-cat-photos"]',
+            self.ui_test,
+        )
+        self.assertIn("requirements: [(1, 1), (8, 2), (6, 1), (4, 1)]", self.ui_test)
         self.assertIn("requirements: [(9, 1), (10, 1), (11, 1)]", self.ui_test)
         self.assertNotIn("waitForStableRendering", self.ui_test)
 

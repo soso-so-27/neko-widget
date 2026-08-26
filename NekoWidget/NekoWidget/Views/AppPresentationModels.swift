@@ -54,6 +54,7 @@ struct PhotoPresentation: Identifiable, Hashable {
 }
 
 enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
+    case all
     case time
     case cuteness
     case special
@@ -62,6 +63,7 @@ enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
 
     var title: String {
         switch self {
+        case .all: "すべて"
         case .time: "時間"
         case .cuteness: "かわいさ"
         case .special: "特別"
@@ -72,6 +74,7 @@ enum CuratedAlbumGroup: String, CaseIterable, Identifiable, Hashable {
 }
 
 enum CuratedAlbumID: Hashable, Identifiable {
+    case allCatPhotos
     case householdGrowth
     case growth
     case profileGrowth(identifier: String, displayName: String)
@@ -90,6 +93,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var title: String {
         switch self {
+        case .allCatPhotos: "すべての猫写真"
         case .householdGrowth: "この家の猫たちの成長"
         case .growth: "成長"
         case let .profileGrowth(_, displayName): "\(displayName)の成長"
@@ -108,6 +112,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
 
     var logKey: String {
         switch self {
+        case .allCatPhotos: "all_cat_photos"
         case .householdGrowth: "household_growth"
         case .growth: "growth"
         case .profileGrowth(_, _): "profile_growth"
@@ -255,6 +260,13 @@ struct CuratedAlbumBuilder {
         includesGrowth: Bool = true
     ) -> [CuratedAlbumSectionPresentation] {
         let photos = orderedUniquePhotos(inputPhotos)
+        let allAlbums = compactAlbums([
+            albumPreservingOrder(
+                .allCatPhotos,
+                group: .all,
+                photos: photos
+            )
+        ])
         let timeAlbums = makeTimeAlbums(
             from: photos,
             lifeReference: lifeReference,
@@ -286,6 +298,7 @@ struct CuratedAlbumBuilder {
         ])
 
         return [
+            section(.all, albums: allAlbums),
             section(.time, albums: timeAlbums),
             section(.cuteness, albums: cutenessAlbums),
             section(.special, albums: specialAlbums)

@@ -88,10 +88,11 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
         lifeReference: nil,
         includesGrowth: false
     )
-    try require(sections.map(\.id) == [.time, .cuteness, .special],
+    try require(sections.map(\.id) == [.all, .time, .cuteness, .special],
                 "section order changed")
     let ids = allAlbums(sections).map(\.id)
     try require(ids == [
+        .allCatPhotos,
         .calendarYear(2021),
         .calendarYear(2024),
         .closeUp,
@@ -109,6 +110,19 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "household growth log key changed")
     try require(CuratedAlbumID.householdGrowth.isGrowthComparison,
                 "household growth must use the comparison presentation")
+    try require(CuratedAlbumID.allCatPhotos.title == "すべての猫写真",
+                "all-cat album title changed")
+    try require(CuratedAlbumID.allCatPhotos.logKey == "all_cat_photos",
+                "all-cat album log key changed")
+    try require(CuratedAlbumGroup.all.rawValue == "all"
+                    && CuratedAlbumGroup.all.title == "すべて",
+                "all-cat album group key or title changed")
+    try require(!CuratedAlbumID.allCatPhotos.isGrowthComparison,
+                "all-cat album must use the normal photo-grid presentation")
+    try require(
+        allAlbums(sections).first?.photos.map(\.id) == ["newest", "older"],
+        "all-cat album did not preserve newest-first input coverage"
+    )
     let profileGrowth = CuratedAlbumID.profileGrowth(
         identifier: "profile-a",
         displayName: "むぎ"
@@ -123,6 +137,42 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
         allAlbums(sections).first { $0.id == .multipleCats }?.photos.map(\.id)
             == ["newest"],
         "a photo with three cats disappeared from the multiple-cat album"
+    )
+}
+
+private func verifyAllCatPhotosIsFirstDeduplicatedAndUngated() throws {
+    let photos = [
+        photo("dated-old", date(2022, 4, 1), analyzed: false),
+        photo("undated", nil, isGrowthEligible: false, analyzed: false),
+        photo("dated-new", date(2025, 2, 1)),
+        photo("dated-old", date(2022, 4, 1), analyzed: false)
+    ]
+    let sections = CuratedAlbumBuilder(timeZone: utc).sections(
+        from: photos,
+        lifeReference: nil,
+        includesGrowth: false
+    )
+
+    try require(sections.first?.id == .all,
+                "all-cat album did not receive the dedicated first section")
+    let album = sections.first?.albums.first
+    try require(album?.id == .allCatPhotos,
+                "all-cat album was not the first album")
+    try require(album?.group == .all,
+                "all-cat album did not use its dedicated group")
+    try require(
+        album?.photos.map(\.id) == ["dated-new", "dated-old", "undated"],
+        "all-cat album was not newest-first, deduplicated, and date-analysis ungated"
+    )
+    try require(album?.countLabel == "3枚",
+                "all-cat album count did not use the deduplicated photo total")
+    try require(
+        CuratedAlbumBuilder(timeZone: utc).sections(
+            from: [],
+            lifeReference: nil,
+            includesGrowth: false
+        ).isEmpty,
+        "an empty library created an empty all-cat album"
     )
 }
 
@@ -230,7 +280,12 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
         includesGrowth: false
     )).map(\.id)
     try require(
-        adoptionIDs == [.adoptionStart, .yearsTogether(1), .yearsTogether(2)],
+        adoptionIDs == [
+            .allCatPhotos,
+            .adoptionStart,
+            .yearsTogether(1),
+            .yearsTogether(2)
+        ],
         "adoption-based time albums were not restored: \(adoptionIDs)"
     )
 
@@ -239,7 +294,7 @@ private func verifyKittenBoundaryAndAgeBuckets() throws {
         lifeReference: anchor,
         includesGrowth: true
     )).map(\.id)
-    try require(withGrowth.first == .growth,
+    try require(Array(withGrowth.prefix(2)) == [.allCatPhotos, .growth],
                 "profile growth album was not restored")
 
     let onePeriod = allAlbums(CuratedAlbumBuilder(timeZone: utc).sections(
@@ -285,10 +340,10 @@ private func verifyCloseUpDoesNotWaitAndLegacyPosturesDoNotLeak() throws {
         lifeReference: nil,
         includesGrowth: false
     )
-    try require(sections.map(\.id) == [.time, .cuteness],
+    try require(sections.map(\.id) == [.all, .time, .cuteness],
                 "year or close-up album stayed gated on secondary analysis")
     let ids = allAlbums(sections).map(\.id)
-    try require(ids == [.calendarYear(2024), .closeUp],
+    try require(ids == [.allCatPhotos, .calendarYear(2024), .closeUp],
                 "legacy posture tags leaked into the active album list: \(ids)")
     try require(!ids.contains(.together) && !ids.contains(.outing),
                 "unconfirmed secondary traits leaked into derived albums")
@@ -956,6 +1011,7 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
+        try verifyAllCatPhotosIsFirstDeduplicatedAndUngated()
         try verifyProfileGrowthNeverMixesCats()
         try verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears()
         try verifyKittenBoundaryAndAgeBuckets()

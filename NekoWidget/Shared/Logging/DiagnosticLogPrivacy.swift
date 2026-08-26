@@ -723,12 +723,13 @@ enum DiagnosticLogPrivacy {
     }
 
     private static func validatedAlbumUsageGroup(_ value: String) -> String? {
-        ["time", "cuteness", "special"].contains(value) ? value : nil
+        ["all", "time", "cuteness", "special"].contains(value) ? value : nil
     }
 
     private static func validatedAlbumUsageKey(_ value: String) -> String? {
         let fixedValues: Set<String> = [
             "adoption_start",
+            "all_cat_photos",
             "cat_day",
             "close_up",
             "growth",

@@ -245,6 +245,7 @@ private struct DiagnosticLogPrivacyVerifier {
         )
 
         for album in [
+            "all_cat_photos",
             "household_growth",
             "profile_growth",
             "age_12",
@@ -256,6 +257,10 @@ private struct DiagnosticLogPrivacyVerifier {
                 "safe album product key was lost: \(album)"
             )
         }
+        try expect(
+            DiagnosticLogPrivacy.sanitizeMetadata(["group": "all"])["group"] == "all",
+            "safe all-photos album group key was lost"
+        )
         try expect(
             DiagnosticLogPrivacy.sanitizeMetadata(["group": "time"])["group"] == "time",
             "safe album group product key was lost"

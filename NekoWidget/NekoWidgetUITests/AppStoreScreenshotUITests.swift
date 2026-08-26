@@ -74,18 +74,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         automaticAlbums.tap()
-        guard app.staticTexts["成長・年ごと"].waitForExistence(timeout: 15) else {
-            fail("The deterministic automatic albums did not appear.", application: app)
+        let allCatPhotosAlbum = app.buttons["album-primary-all-cat-photos"]
+        guard allCatPhotosAlbum.waitForExistence(timeout: 15) else {
+            fail("The deterministic primary album did not appear.", application: app)
             return
         }
-        // The first two Memories cards both use the oldest deterministic
-        // photo. Requiring two rendered instances prevents a single retained
-        // or partially loaded cell from passing this capture gate.
+        // The primary uses fixture photo 1; household growth and 2022 both
+        // use fixture photo 8. Requiring those plus the intervening year
+        // covers proves that the full-width primary card and organized grid
+        // rendered real fixture pixels without depending on off-screen rows.
         guard waitForFixturePhotos(
             in: app,
-            requirements: [(8, 2), (6, 1), (4, 1), (1, 1)]
+            requirements: [(1, 1), (8, 2), (6, 1), (4, 1)]
         ) else {
-            fail("The deterministic Memories illustrations did not finish loading.", application: app)
+            fail("The deterministic album illustrations did not finish loading.", application: app)
             return
         }
         captureScreenshot(named: "03-organized-memories")

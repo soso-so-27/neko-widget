@@ -27,7 +27,7 @@ struct AlbumView: View {
                     }
                 }
 
-                ForEach(sections) { section in
+                ForEach(orderedSections) { section in
                     albumSection(section)
                 }
 
@@ -46,26 +46,61 @@ struct AlbumView: View {
     private func albumSection(
         _ section: CuratedAlbumSectionPresentation
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(sectionTitle(for: section.id))
-                .font(.title3.bold())
-                .accessibilityAddTraits(.isHeader)
-
-            LazyVGrid(columns: cardColumns, spacing: 12) {
+        Group {
+            if isPrimaryAlbumSection(section) {
                 ForEach(section.albums) { album in
-                    NavigationLink(value: AlbumRoute.album(album.id)) {
-                        CuratedAlbumCard(album: album)
+                    albumLink(album, isPrimary: true)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(sectionTitle(for: section.id))
+                        .font(.title3.bold())
+                        .accessibilityAddTraits(.isHeader)
+
+                    LazyVGrid(columns: cardColumns, spacing: 12) {
+                        ForEach(section.albums) { album in
+                            albumLink(album, isPrimary: false)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(album.title)、\(album.countLabel)")
-                    .accessibilityHint("写真の一覧を開きます")
                 }
             }
         }
     }
 
+    private func albumLink(
+        _ album: CuratedAlbumPresentation,
+        isPrimary: Bool
+    ) -> some View {
+        NavigationLink(value: AlbumRoute.album(album.id)) {
+            if isPrimary {
+                PrimaryCuratedAlbumCard(album: album)
+            } else {
+                CuratedAlbumCard(album: album)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(
+            isPrimary ? "album-primary-all-cat-photos" : "album-card-\(album.id.logKey)"
+        )
+        .accessibilityLabel("\(album.title)、\(album.countLabel)")
+        .accessibilityHint("写真の一覧を開きます")
+    }
+
+    private func isPrimaryAlbumSection(
+        _ section: CuratedAlbumSectionPresentation
+    ) -> Bool {
+        section.id == .all
+    }
+
+    private var orderedSections: [CuratedAlbumSectionPresentation] {
+        sections.filter { isPrimaryAlbumSection($0) }
+            + sections.filter { !isPrimaryAlbumSection($0) }
+    }
+
     private func sectionTitle(for group: CuratedAlbumGroup) -> String {
         switch group {
+        case .all:
+            "すべて"
         case .time:
             "成長・年ごと"
         case .cuteness:
@@ -85,49 +120,41 @@ struct AlbumView: View {
     }
 
     private var profileScopeSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("猫ごとのアルバム", systemImage: "photo.on.rectangle.angled")
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("表示する猫")
+                    .font(.subheadline.weight(.semibold))
 
-            Text("「みんな」には見つかった猫写真をまとめて表示します。猫を選ぶと、自分で指定した写真と、その子につないだ写真アルバムだけに切り替わります。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+
+                if let selectedProfile {
+                    profileSettingsLink(selectedProfile)
+                }
+            }
 
             CatProfileScopePicker(
                 profiles: profiles,
                 selection: $selectedScope
             )
-
-            if let selectedProfile {
-                selectedProfileNotice(selectedProfile)
-            }
         }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 
-    private func selectedProfileNotice(_ profile: CatProfilePresentation) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("\(profile.displayName)として明示した\(profile.confirmedPhotoCount.formatted())枚から作っています。自動判定ではありません。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            NavigationLink {
-                CatProfileDetailView(
-                    profile: profile,
-                    allProfiles: profiles,
-                    manualCandidatePhotos: profile.manualCandidatePhotos,
-                    photoAlbumOptions: photoAlbumOptions,
-                    actions: profileActions
-                )
-            } label: {
-                Label("\(profile.displayName)のページをひらく", systemImage: "photo.badge.plus")
-                    .font(.headline)
-            }
-            .accessibilityIdentifier("album-profile-add-photos")
+    private func profileSettingsLink(_ profile: CatProfilePresentation) -> some View {
+        NavigationLink {
+            CatProfileDetailView(
+                profile: profile,
+                allProfiles: profiles,
+                manualCandidatePhotos: profile.manualCandidatePhotos,
+                photoAlbumOptions: photoAlbumOptions,
+                actions: profileActions
+            )
+        } label: {
+            Label("写真と設定", systemImage: "slider.horizontal.3")
+                .font(.caption.weight(.semibold))
         }
-        .padding(14)
-        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+        .accessibilityLabel("\(profile.displayName)の写真と設定")
+        .accessibilityHint("\(profile.displayName)の写真とプロフィールを確認します")
+        .accessibilityIdentifier("album-profile-add-photos")
     }
 
     private var groupedAlbumPreparationBanner: some View {
@@ -179,6 +206,44 @@ struct AlbumView: View {
             )
             .frame(maxWidth: .infinity, minHeight: 420)
         }
+    }
+}
+
+private struct PrimaryCuratedAlbumCard: View {
+    let album: CuratedAlbumPresentation
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            PhotoAssetImageView(
+                localIdentifier: album.coverPhoto.localIdentifier,
+                catBoundingBox: album.coverPhoto.catBoundingBox,
+                targetPixelSize: CGSize(width: 1_000, height: 700),
+                targetAspectRatio: 10 / 7
+            )
+            .frame(maxWidth: .infinity)
+            .aspectRatio(10 / 7, contentMode: .fit)
+            .clipped()
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.68)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(album.cardTitle)
+                    .font(.title3.bold())
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Text(album.countLabel)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .foregroundStyle(.white)
+            .padding(16)
+        }
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }
 
