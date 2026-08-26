@@ -187,7 +187,8 @@ class PublicPolicySiteTests(unittest.TestCase):
             "通知用デバイストークン",
             "暗号化して最大35日保持",
             "Apple Push Notification service（APNs）",
-            "写真、まど名、相手名、撮影日時、写真ID、取得URL、暗号鍵を含めません",
+            "まどと写真の不透明な識別子",
+            "写真そのもの、まど名、相手名、撮影日時、取得URL、暗号鍵を含めません",
             "写真を含まないサーバー側記録",
             "生成AIの学習に利用しません",
             "「思い出」に残した一枚で「写真を書き出す」を明示的に選んだ場合だけ",
@@ -196,6 +197,8 @@ class PublicPolicySiteTests(unittest.TestCase):
             "iOSまたは共有先が処理のためにデータのコピーを作成・保持する場合があります",
         ):
             self.assertIn(phrase, privacy)
+        self.assertNotIn("一般的な通知文だけを送ります", privacy)
+        self.assertNotIn("写真ID、取得URL", privacy)
         for phrase in ("通報", "ブロック", "48時間以内", "削除対象", "再試行"):
             self.assertIn(phrase, community)
         self.assertNotIn("7日の期限を超えて保持しません", community)
