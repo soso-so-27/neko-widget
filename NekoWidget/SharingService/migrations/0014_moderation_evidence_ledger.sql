@@ -193,10 +193,10 @@ BEGIN
           JOIN moderation_operator_role_events AS role_grant
             ON role_grant.operator_id = action.requester_operator_id
            AND role_grant.event_type = 'granted'
-           AND role_grant.role_code = CASE action.action_type
+           AND role_grant.role_code = (CASE action.action_type
              WHEN 'review_start' THEN 'triage'
              ELSE 'evidence_reviewer'
-           END
+           END)
          WHERE action.action_id = NEW.action_id
            AND NOT EXISTS (
              SELECT 1 FROM moderation_operator_credential_events AS revoked

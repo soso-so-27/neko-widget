@@ -95,7 +95,7 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 
 ## 4. migrationの事前確認と適用
 
-D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0012_moderation_case_lifecycle.sql`までの12件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ12件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。過去のcleanupからreview済みとは推測しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0014_moderation_evidence_ledger.sql`までの14件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ14件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。過去のcleanupからreview済みとは推測しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
 
 ```powershell
 npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remote --config wrangler.staging.jsonc --experimental-provision=false --experimental-auto-create=false

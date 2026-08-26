@@ -805,10 +805,10 @@ BEGIN
         SELECT 1 FROM moderation_operator_role_events AS granted
          WHERE granted.operator_id = NEW.requester_operator_id
            AND granted.event_type = 'granted'
-           AND granted.role_code = CASE NEW.action_type
+           AND granted.role_code = (CASE NEW.action_type
              WHEN 'review_start' THEN 'triage'
              ELSE 'evidence_reviewer'
-           END
+           END)
            AND NOT EXISTS (
              SELECT 1 FROM moderation_operator_role_events AS revoked
               WHERE revoked.operator_id = granted.operator_id
