@@ -6940,7 +6940,9 @@ actor SharingRuntimeSelfTestRunner {
                   originalCatalog.windows.count == 1,
                   originalCatalog.activeWindowID
                     == originalCatalog.windows.first?.localWindowID,
-                  let firstWindowID = originalCatalog.windows.first?.localWindowID
+                  let firstWindowID = originalCatalog.windows.first?.localWindowID,
+                  let firstWindowDisplayName = originalCatalog.windows.first?
+                    .displayName
             else { throw PairingError.stateUnavailable }
 
             // An unrelated catalog slot with unreadable/mismatched authority
@@ -6957,7 +6959,7 @@ actor SharingRuntimeSelfTestRunner {
             do {
                 try PrivateWindowCatalogStore
                     .updateActiveMetadataWhileLifecycleLocked(
-                        displayName: recoveredOwnerName.displayName,
+                        displayName: firstWindowDisplayName,
                         spaceID: nil,
                         credentialAccount: nil
                     )
