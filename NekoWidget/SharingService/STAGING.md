@@ -95,7 +95,7 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 
 ## 4. migrationの事前確認と適用
 
-D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0015_moderation_operator_routes.sql`までの15件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ15件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。`0015`は予約をreview開始と扱わず、DB時刻で作った証拠intentを2分以内にledgerへ確定した同じtransaction内でだけ`review_started`を追加する。1人または1caseに有効な未確定intentは1件だけで、期限後は新しい操作で安全に再開できる。結果確定とcontent削除はcanonical evidenceとdomain outboxが未完成のため拒否する。過去のcleanupやlegacy ledgerからreview済みとは推測しません。`0015`もHTTP route、WebAuthn verifier、R2削除、runtime ONを追加しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0016_moderation_operator_access_audit.sql`までの16件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ16件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。`0015`は予約をreview開始と扱わず、DB時刻で作った証拠intentを2分以内にledgerへ確定した同じtransaction内でだけ`review_started`を追加する。`0016`はAccess session、失敗時にも再利用できない一回限りのassertion attempt、固定分類だけのappend-only access auditを加える。過去のsession／attempt／auditを推測でbackfillせず、旧未完了操作は新しい副作用へ進めない。intent作成後はsession失効やoperator revoke後も固定された2分以内なら安全に確定を再開できる。結果確定とcontent削除はcanonical evidenceとdomain outboxが未完成のため拒否する。`0016`もHTTP route、D1/R2 binding、削除、runtime ONを追加しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
 
 ```powershell
 npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remote --config wrangler.staging.jsonc --experimental-provision=false --experimental-auto-create=false
@@ -121,8 +121,9 @@ npx --no-install wrangler deploy --dry-run --config wrangler.moderation-operator
 ```
 
 このconfigへの通常の`wrangler deploy`、route追加、Dashboardでの変数変更、resource binding追加を
-行いません。Cloudflare Access、完全なWebAuthn検証、append-only access audit、case参照生成、
-運用者登録とrate limitが別々に完成しても、review済みの統合試験と明示承認まではruntimeをONに
+行いません。Access JWT verifier、厳格WebAuthn verifier、append-only access audit schemaは存在しても
+routeへ接続されていません。case参照生成、運用者登録、専用rate limit、Access policy監査と、成功時の
+domain side effectを同じtransactionへ結ぶ統合試験が完成し、明示承認されるまではruntimeをONに
 しません。将来D1を追加する場合はcase lifecycleと原子的制約を共有する同じD1だけを使い、通常写真の
 `MEDIA` bindingは管理Workerへ渡しません。
 

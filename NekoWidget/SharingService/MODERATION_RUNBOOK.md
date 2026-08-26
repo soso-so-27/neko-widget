@@ -50,8 +50,9 @@ DB時刻だけで追加できる`review_started`、続いて`review_decided`と�
 既存tombstoneのbackfillでは、人手確認済みと推測できる根拠がないためeventを一件も作らない。したがって、
 過去caseは意図的に未着手、時刻によってはSLA超過として表示される。cleanup済み、local復号済み、画像削除済み
 という事実からreview開始または判断済みを補わない。Migration `0013`から`0015`は生のAccess identityを
-保存しないoperator、二人承認、case予約、DB時刻の証拠intentを追加するが、認証済みoperator route、完全な
-WebAuthn検証、operator access auditはまだ追加しない。通常アプリやstatus commandからeventは書けず、
+保存しないoperator、二人承認、case予約、DB時刻の証拠intentを追加する。`0016`は検証済みAccess session、
+失敗を含む一回限りのWebAuthn assertion attempt、固定分類だけのappend-only access auditを追加し、
+過去の未完了操作を認証済みとはbackfillしない。通常アプリやstatus commandからeventは書けず、
 予約だけではreview開始にならない。未確定の証拠intentはDB時刻の2分で失効し、1人または1caseを
 永続占有できない。結果確定とcontent削除は未実装のcanonical evidenceとdomain outboxがそろうまで拒否する。
 このschemaは安全な保存先の基礎であり、
@@ -68,10 +69,19 @@ fileだけで監査できないため、「ネットワーク上で絶対に到�
 OFF時の`/operator/v1`は認証header、body、query、DB、R2を処理する前に一定の503を返す。誤ってflagを
 `YES`にした場合もoperation allow-listは空のため、通報の列挙、閲覧、判断、export、削除を実行できない。
 
-これはdeploy準備完了や運用開始を意味しない。config検証とlocal dry-run以外へ使わず、Cloudflare Access、
-完全なWebAuthn assertion検証、append-only access audit、case参照のversion付きHMAC生成、運用者登録、
-専用rate limitが完成してから別の変更として最小routeを検討する。通常写真bucketの`MEDIA`は管理Workerへ
+これはdeploy準備完了や運用開始を意味しない。Cloudflare Access verifierと、固定Origin／RP ID、32-byte
+random challenge、UP／UV、ES256、single-device credentialを要求する厳格なWebAuthn verifierはpure module
+として存在するが、routeには接続していない。config検証とlocal dry-run以外へ使わず、case参照のversion付き
+HMAC生成、運用者／credentialの承認済み登録、専用rate limit、Access policy監査が完成してから別の変更として
+最小routeを検討する。通常写真bucketの`MEDIA`は管理Workerへ
 bindingしない。decisionと削除はcanonical evidence、hold、domain outboxが完成するまで引き続き拒否する。
+
+将来routeへ接続するときは、HTTP bodyをJSON parseより前にbyte数で制限し、重複keyを失わないparserで
+top-level assertionを検証する。WebAuthn署名を検証する**前**に、そのchallengeとcanonical assertion digestの
+attemptを独立したD1 transactionでcommitし、検証失敗や後続transactionのrollbackでも同じchallengeを再利用
+できないようにする。署名検証後はchallenge consumption、credential counter更新、対象operation、audit startを
+同じ原子的transactionへ束ねる。attemptをこの後段transactionだけに含める実装は禁止する。これらを満たす
+route integration testがない限り、pure verifierと`0016` schemaが存在してもruntimeをONにしない。
 
 ## 鍵の準備と保管
 
@@ -300,7 +310,8 @@ POSIX outputは新規file・mode `0600`で作られる。Windowsは上記wrapper
 5. 誤通報と判断しても報復を許さず、繰り返し濫用は別のabuse caseとして扱う。
 
 現行Workerにはoperator decision/close/user-response APIがない。判断をServerへ反映してcontentを
-早期削除する経路、appeal/status通知、operator access auditもProduction開始前のblockerである。
+早期削除する経路、appeal/status通知、routeとdomain side effectへ原子的に結ばれたoperator access auditも
+Production開始前のblockerである。
 
 現行ToolのJPEG確認はbounded marker walkerであり、OS decoderでの実decodeや再encodeまでは行わない。
 改造client由来のhostile decoder inputをviewerへ渡さないため、Production開始前に、更新済みの隔離

@@ -9,9 +9,9 @@ import {
   type CloudflareAccessAuthenticationOptions,
 } from "../src/moderation-operator-auth";
 import {
-  moderationOperatorStepUpChallengeTranscript,
+  moderationOperatorActionBindingTranscript,
   ModerationOperatorProtocolError,
-  type ModerationOperatorStepUpChallengeFields,
+  type ModerationOperatorActionBindingFields,
 } from "../src/moderation-operator-protocol";
 
 const encoder = new TextEncoder();
@@ -416,8 +416,8 @@ describe("isolated Cloudflare Access operator authentication", () => {
   });
 });
 
-describe("moderation operator step-up transcript", () => {
-  const fields: ModerationOperatorStepUpChallengeFields = {
+describe("moderation operator action binding transcript", () => {
+  const fields: ModerationOperatorActionBindingFields = {
     operatorSubjectHmac: "1".repeat(64),
     subjectHmacKeyVersion: 1,
     accessSessionSHA256: "2".repeat(64),
@@ -436,8 +436,8 @@ describe("moderation operator step-up transcript", () => {
   };
 
   it("is deterministic and binds identity, session, credential, case, action, request and expiry", () => {
-    const first = moderationOperatorStepUpChallengeTranscript(fields);
-    const second = moderationOperatorStepUpChallengeTranscript({ ...fields });
+    const first = moderationOperatorActionBindingTranscript(fields);
+    const second = moderationOperatorActionBindingTranscript({ ...fields });
     expect([...second]).toEqual([...first]);
     for (const mutation of [
       { bodySHA256: "6".repeat(64) },
@@ -448,7 +448,7 @@ describe("moderation operator step-up transcript", () => {
       { subjectHmacKeyVersion: 2 },
     ]) {
       expect([
-        ...moderationOperatorStepUpChallengeTranscript({ ...fields, ...mutation }),
+        ...moderationOperatorActionBindingTranscript({ ...fields, ...mutation }),
       ]).not.toEqual([...first]);
     }
   });
@@ -465,8 +465,8 @@ describe("moderation operator step-up transcript", () => {
       { ...fields, extra: "unknown" },
     ];
     for (const value of invalid) {
-      expect(() => moderationOperatorStepUpChallengeTranscript(
-        value as ModerationOperatorStepUpChallengeFields,
+      expect(() => moderationOperatorActionBindingTranscript(
+        value as ModerationOperatorActionBindingFields,
       )).toThrow(ModerationOperatorProtocolError);
     }
   });

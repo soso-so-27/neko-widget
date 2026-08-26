@@ -2,8 +2,8 @@ import { base64urlDecode } from "./encoding";
 import { encodeCanonicalFields } from "./protocol";
 
 export const MODERATION_OPERATOR_PROTOCOL_VERSION = 2 as const;
-export const MODERATION_OPERATOR_STEP_UP_DOMAIN =
-  "NW.MODERATION-OPERATOR.STEP-UP" as const;
+export const MODERATION_OPERATOR_ACTION_BINDING_DOMAIN =
+  "NW.MODERATION-OPERATOR.ACTION-BINDING" as const;
 export const MODERATION_OPERATOR_MAXIMUM_CHALLENGE_SECONDS = 300;
 export const MODERATION_OPERATOR_MAXIMUM_PATHNAME_CHARACTERS = 512;
 
@@ -39,7 +39,7 @@ function exactKeys(
   const wanted = [...expected].sort();
   if (actual.length !== wanted.length
       || actual.some((key, index) => key !== wanted[index])) {
-    fail("step-up challenge fields are invalid");
+    fail("action binding fields are invalid");
   }
 }
 
@@ -97,7 +97,7 @@ function operatorPath(value: unknown): string {
   return path;
 }
 
-export interface ModerationOperatorStepUpChallengeFields {
+export interface ModerationOperatorActionBindingFields {
   operatorSubjectHmac: string;
   subjectHmacKeyVersion: number;
   accessSessionSHA256: string;
@@ -116,15 +116,16 @@ export interface ModerationOperatorStepUpChallengeFields {
 }
 
 /**
- * Canonical, ambiguity-free transcript for a future hardware-backed step-up
- * assertion. This function does not verify WebAuthn and is intentionally not an
- * authentication success path by itself.
+ * Canonical audit/binding transcript for the immutable action row. The
+ * authenticator challenge is always the independent 32-byte random
+ * `challengeValue` itself; callers must never pass this transcript to WebAuthn
+ * as its challenge. This function does not verify authentication.
  */
-export function moderationOperatorStepUpChallengeTranscript(
-  fields: ModerationOperatorStepUpChallengeFields,
+export function moderationOperatorActionBindingTranscript(
+  fields: ModerationOperatorActionBindingFields,
 ): Uint8Array {
   if (fields === null || Array.isArray(fields) || typeof fields !== "object") {
-    fail("step-up challenge fields are invalid");
+    fail("action binding fields are invalid");
   }
   exactKeys(fields, [
     "operatorSubjectHmac",
@@ -179,11 +180,11 @@ export function moderationOperatorStepUpChallengeTranscript(
   const expiresAt = safeUnixSecond(fields.expiresAt, "expiresAt");
   if (expiresAt <= issuedAt
       || expiresAt - issuedAt > MODERATION_OPERATOR_MAXIMUM_CHALLENGE_SECONDS) {
-    fail("step-up challenge expiry is invalid");
+    fail("action binding expiry is invalid");
   }
 
   return encodeCanonicalFields([
-    MODERATION_OPERATOR_STEP_UP_DOMAIN,
+    MODERATION_OPERATOR_ACTION_BINDING_DOMAIN,
     String(MODERATION_OPERATOR_PROTOCOL_VERSION),
     operatorSubjectHmac,
     String(subjectHmacKeyVersion),
