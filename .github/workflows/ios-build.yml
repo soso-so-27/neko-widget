@@ -469,10 +469,14 @@ jobs:
           grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
           grep -Fq 'Label("思い出", systemImage: "photo.stack.fill")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Label("ホーム", systemImage: "house.fill")' \
+          grep -Fq 'Label("今日", systemImage: "sun.max.fill")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Label("アルバム", systemImage: "square.grid.3x3.fill")' \
+          grep -Fq 'Label("まど", systemImage: "rectangle.on.rectangle.angled")' \
             NekoWidget/Views/MainTabView.swift
+          grep -Fq 'Text("写真を見つける")' \
+            NekoWidget/Views/HomeView.swift
+          grep -Fq 'NavigationLink(value: TodayRoute.automaticAlbums)' \
+            NekoWidget/Views/HomeView.swift
           grep -Fq 'accessibilityIdentifier("window-settings-button")' \
             NekoWidget/Views/HomeView.swift
           grep -Fq 'LikedPhotosView(' NekoWidget/Views/MainTabView.swift
@@ -492,10 +496,10 @@ jobs:
             NekoWidget/App/AppRootView.swift
           grep -Fq 'に思い出へ残した猫の写真' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq '.navigationDestination(isPresented: $showsFamilyWindow)' \
-            NekoWidget/Views/HomeView.swift
-          if grep -Fq '.sheet(isPresented: $showsFamilyWindow)' \
-            NekoWidget/Views/HomeView.swift; then
+          grep -Fq '.navigationDestination(isPresented: $opensActiveWindow)' \
+            NekoWidget/Views/MainTabView.swift
+          if grep -Fq '.sheet(isPresented: $opensActiveWindow)' \
+            NekoWidget/Views/MainTabView.swift; then
             echo "The private window must not cover the main tab bar" >&2
             exit 1
           fi
