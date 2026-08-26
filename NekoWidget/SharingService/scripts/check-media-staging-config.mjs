@@ -26,7 +26,7 @@ try {
   }
 
   console.log("media staging config preflight: PASS (three exact ON/OFF flag differences)");
-  console.log("legacy sharing remains OFF; no Cloudflare deployment was performed");
+  console.log("report ingestion, APNs, and legacy sharing remain OFF; no Cloudflare deployment was performed");
 } catch (error) {
   console.error(
     `media staging config preflight: FAIL: ${error instanceof Error ? error.message : "unknown error"}`,

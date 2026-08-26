@@ -6,6 +6,8 @@
 
 - `MOMENT_RUNTIME_ENABLED=YES`: 現行の一枚共有だけを利用可能にする
 - `WINDOW_NAME_RUNTIME_ENABLED=YES`: 暗号化済みのまど名同期を利用可能にする
+- `APNS_RUNTIME_ENABLED=YES|NO`: 通知だけを独立制御する。通知OFFでも写真同期を正本として維持する
+- `REPORT_INGESTION_RUNTIME_ENABLED=YES|NO`: 新規通報受付だけを独立制御する。OFFでもblockとcleanupを維持する
 - `LEGACY_SHARING_RUNTIME_ENABLED=NO`: 旧日次共有は常に無効
 - `/health`: `200`とexactなhealth JSON
 - 未認証の`/v2/moments/changes`: `401 invalid_authentication`
@@ -27,27 +29,66 @@ $env:NEKO_STAGING_API_ORIGIN = "https://neko-window-sharing-staging.nakanishisoy
 node scripts/check-staging-runtime.mjs --expected on
 ```
 
-この確認はWorkerのroutingとruntime switch、未認証時のauthentication境界を検査します。D1への実読み書き、R2、Cron、受信端末の同期、Appleのbackground実行までは証明しません。Cloudflare dashboardでは週1回を目安に、D1/R2使用量、2本のCron、error/exception、R2のPublic Development URL無効とCustom Domains空を確認します。請求上限や予算通知はCloudflare側の別設定です。
+この確認はWorkerのroutingとruntime switch、未認証時のauthentication境界を検査します。D1への実読み書き、R2、Cron、受信端末の同期、Appleのbackground実行までは証明しません。Cloudflare dashboardでは週1回を目安に、D1/R2使用量、3本のCron、error/exception、R2のPublic Development URL無効とCustom Domains空を確認します。請求上限や予算通知はCloudflare側の別設定です。
 
-## 写真配送・まど名同期の緊急OFF（Worker全停止ではない）
+## 広いOFF候補のlocal検証（Workerは停止しない）
 
-想定外の写真配送、誤った相手、暗号化やmoderationの疑い、急なerror増加、費用急増があれば、新しい写真の送受信を止めます。Cloudflare dashboardで変数だけを手編集せず、review済みのignored OFF configと固定版Wranglerを使います。
+review済みのignored OFF configが、通常moment、reaction、暗号化まど名、APNs、新規通報受付、旧共有を
+すべて`NO`にしたbundleを作れることだけをlocalで確認する。これは現在activeなWorkerを変更せず、緊急停止を
+実行するコマンドではない。
 
-まず外部変更をしないdry-runを行います。
+package commandは`-DryRun`を内部で固定している。
+
+```powershell
+npm run staging:runtime:emergency-off
+```
+
+直接実行する場合も許可するのは次だけである。
 
 ```powershell
 & .\scripts\personal-staging-emergency-off-windows.ps1 -DryRun
 ```
 
-実際に止めるときだけ、同じreview済みSharingService worktreeで明示確認を付けます。実行元はcleanなdetached HEADで、そのcommitが`origin/main`へ含まれることも自動確認します。cleanなだけの未merge branchはdeployしません。
+`-ConfirmPersonalStagingEmergencyOff`は、config解決、Git remote-state確認、Wrangler起動、公開endpoint確認の
+前に必ず失敗する。旧実装はdeploy先account／Workerと検証先originを原子的に束縛できず、別Workerを変更した
+後で既にOFFのoriginを確認して成功と誤認できたため、外部deploy／query経路を廃止した。
+
+現在のrepositoryには、広いruntime OFFまたはWorker全停止を安全に外部実行するコマンドはない。想定外の配送、
+誤routing、暗号化／moderationの疑い、急なerror・費用増加では、local dry-run成功を停止証拠にせず、本人2台の
+利用を中断して、別途承認されたCloudflare incident responseへescalateする。deploy先account、事前固定version、
+active-version条件、検証対象originを一つのmanifestへ束縛した実停止が完成するまで、この欠落は継続利用と
+一般配布のblockerである。
+
+原因、影響範囲、非公開R2、D1、moderation、2台の資格情報を確認するまで再開しない。
+
+## 通知／新規通報だけのOFF候補（実停止ではない）
+
+まず[`STAGING.md`の一般配布候補config手順](STAGING.md#一般配布候補の独立停止config生成検証のみ)で
+ignored候補を生成・exact比較する。現時点の個別コマンドはlocal dry-run専用で、外部deployを行わない。
+
+写真共有を継続できる一方で通知providerだけに異常がある場合の候補:
 
 ```powershell
-& .\scripts\personal-staging-emergency-off-windows.ps1 `
-  -ConfirmPersonalStagingEmergencyOff
+npm run staging:runtime:apns-off
 ```
 
-この操作は通常moment、暗号化まど名、旧共有を`NO`にしたbundleを再検査してdeployし、公開endpointがOFF境界へ変わるまで確認します。停止後もhealth、ペアリング、通報、block、cleanupは残り、新しいmomentのreserve、upload、commit、receive、ACKとまど名のGET/PUTが止まります。既に端末へ安全に保存済みの履歴を遠隔削除する操作ではありません。
+通報鍵、moderation受付または担当体制だけに異常がある場合の候補:
 
-Workerの公開origin自体とペアリング・安全APIまで止める重大事故では、このコマンドを全停止とみなさず、[Worker全体を止める別手順](STAGING.md#停止条件)で`workers_dev=false`をreview・commitしてdeployします。
+```powershell
+npm run staging:runtime:report-ingestion-off
+```
 
-ONへ戻すコマンドはこの緊急手順に含めません。原因、影響範囲、非公開R2、D1、moderation、2台の資格情報を確認し、別のreview済み変更として再開します。
+通常の写真・ハート・まど名・APNsだけを止め、通報受付とblock／cleanupを残す場合はmedia-onlyを使う。
+
+```powershell
+npm run staging:runtime:media-off
+```
+
+3つのconfirmation引数は、local bundle確認後に必ず失敗してdeployしない。通常deployにはactive versionの
+原子的な条件がなく、別deployとの競合やcode／binding／Cronの同時変更を「1機能だけOFF」と誤認できるため
+である。review済みON/OFF version IDと条件付き切替が完成するまでは選択的実停止を利用可能と扱わない。
+
+広いOFFを含む実停止経路も提供しない。本人2台のpersonal stagingでもlocal dry-runを停止とみなさず、
+利用中断と承認済みincident responseへescalateする。一般配布では実停止の未整備をrelease blockerとする。
+将来の仕組みでは全状態を事前生成し、deploy先account／Worker、review済みversion ID、active-version条件、
+検証originを同じ保護manifestへ束縛する。

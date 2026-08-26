@@ -27,7 +27,7 @@ try {
     throw new Error("Notification ON/OFF configs may differ only by four reviewed runtime flags.");
   }
   console.log("notification staging config preflight: PASS (four exact ON/OFF flag differences)");
-  console.log("APNs secrets are intentionally not inspected or printed; no deployment was performed");
+  console.log("report ingestion remains OFF; APNs secrets are not inspected or printed; no deployment was performed");
 } catch (error) {
   console.error(
     `notification staging config preflight: FAIL: ${error instanceof Error ? error.message : "unknown error"}`,

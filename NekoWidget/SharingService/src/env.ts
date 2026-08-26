@@ -7,8 +7,13 @@ export interface Env {
   MEMBER_RATE_LIMITER?: RateLimit;
   ENVIRONMENT: string;
   /// Exact, server-side operational switch for normal v2 moment traffic.
-  /// Reports, blocks and cleanup remain available when this is disabled.
+  /// Report ingestion is controlled separately; blocks and cleanup remain
+  /// available when this is disabled.
   MOMENT_RUNTIME_ENABLED?: string;
+  /// Exact, independent server-side switch for accepting new moderation
+  /// report reservations, ciphertext uploads and commits. Report cleanup,
+  /// retention and deletion remain available when this is disabled.
+  REPORT_INGESTION_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side operational switch for paw reactions.
   REACTION_RUNTIME_ENABLED?: string;
   /// Exact, independent server-side switch for encrypted private-window names.
@@ -35,6 +40,12 @@ export function momentRuntimeEnabled(
   env: Pick<Env, "MOMENT_RUNTIME_ENABLED">,
 ): boolean {
   return env.MOMENT_RUNTIME_ENABLED === "YES";
+}
+
+export function reportIngestionRuntimeEnabled(
+  env: Pick<Env, "REPORT_INGESTION_RUNTIME_ENABLED">,
+): boolean {
+  return env.REPORT_INGESTION_RUNTIME_ENABLED === "YES";
 }
 
 export function reactionRuntimeEnabled(

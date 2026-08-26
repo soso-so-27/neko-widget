@@ -13,7 +13,7 @@ try {
   const template = await readFile(templatePath, "utf8");
   const rendered = renderStagingConfig(template, process.env);
   await writeFile(outputPath, rendered, { encoding: "utf8", flag: "wx", mode: 0o600 });
-  console.log("Created ignored wrangler.staging.jsonc with moment, reaction, window-name, and legacy runtimes locked OFF.");
+  console.log("Created ignored wrangler.staging.jsonc with media, report ingestion, APNs, and legacy runtimes locked OFF.");
   console.log("No Cloudflare resource identifier was printed.");
 } catch (error) {
   console.error(`staging config render: FAIL: ${error instanceof Error ? error.message : "unknown error"}`);

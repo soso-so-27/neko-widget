@@ -59,6 +59,17 @@ function reviewedMomentRuntime(options) {
   return expectedMomentRuntime;
 }
 
+function requireExactKeys(actual, expectedKeys, label) {
+  requireCondition(isRecord(actual), `${label} must be an object.`);
+  const actualKeys = Object.keys(actual).sort();
+  const reviewedKeys = [...expectedKeys].sort();
+  requireCondition(
+    actualKeys.length === reviewedKeys.length
+      && actualKeys.every((key, index) => key === reviewedKeys[index]),
+    `${label} contains an unreviewed field.`,
+  );
+}
+
 function reviewedAPNSRuntime(options) {
   const expectedAPNSRuntime = options?.expectedAPNSRuntime ?? "NO";
   requireCondition(
@@ -68,14 +79,30 @@ function reviewedAPNSRuntime(options) {
   return expectedAPNSRuntime;
 }
 
+function reviewedReportIngestionRuntime(options) {
+  const expectedReportIngestionRuntime =
+    options?.expectedReportIngestionRuntime ?? "NO";
+  requireCondition(
+    expectedReportIngestionRuntime === "NO"
+      || expectedReportIngestionRuntime === "YES",
+    "The expected report-ingestion runtime must be exactly NO or YES.",
+  );
+  return expectedReportIngestionRuntime;
+}
+
 export function validateStagingConfig(config, options = {}) {
   const expectedMomentRuntime = reviewedMomentRuntime(options);
   const expectedAPNSRuntime = reviewedAPNSRuntime(options);
+  const expectedReportIngestionRuntime = reviewedReportIngestionRuntime(options);
   requireCondition(
     expectedAPNSRuntime !== "YES" || expectedMomentRuntime === "YES",
     "The APNs runtime requires the reviewed private media runtimes to be ON.",
   );
   requireCondition(isRecord(config), "The staging Wrangler configuration must be an object.");
+  requireCondition(
+    config.$schema === "node_modules/wrangler/config-schema.json",
+    "The staging Wrangler schema reference changed.",
+  );
   requireCondition(config.name === expectedWorkerName, "The staging Worker name is not isolated.");
   requireCondition(config.main === "src/index.ts", "The staging Worker entry point changed.");
   requireCondition(
@@ -95,11 +122,21 @@ export function validateStagingConfig(config, options = {}) {
     config.limits === undefined,
     "Staging must use the account plan defaults; custom limits would require Workers Paid.",
   );
+  requireExactKeys(
+    config,
+    [
+      "$schema", "name", "main", "compatibility_date", "workers_dev",
+      "preview_urls", "observability", "vars", "triggers", "d1_databases",
+      "r2_buckets", "ratelimits",
+    ],
+    "The staging Wrangler configuration",
+  );
   requireExactObject(
     config.vars,
     {
       ENVIRONMENT: "staging",
       MOMENT_RUNTIME_ENABLED: expectedMomentRuntime,
+      REPORT_INGESTION_RUNTIME_ENABLED: expectedReportIngestionRuntime,
       REACTION_RUNTIME_ENABLED: expectedMomentRuntime,
       WINDOW_NAME_RUNTIME_ENABLED: expectedMomentRuntime,
       APNS_RUNTIME_ENABLED: expectedAPNSRuntime,
@@ -129,7 +166,11 @@ export function validateStagingConfig(config, options = {}) {
     "Staging must bind exactly one D1 database.",
   );
   const database = config.d1_databases[0];
-  requireCondition(isRecord(database), "The staging D1 binding is malformed.");
+  requireExactKeys(
+    database,
+    ["binding", "database_name", "database_id", "migrations_dir"],
+    "The staging D1 binding",
+  );
   requireCondition(database.binding === "DB", "The staging D1 binding must be DB.");
   requireCondition(database.database_name === expectedDatabaseName, "The staging D1 name is not isolated.");
   requireCondition(database.migrations_dir === "migrations", "The staging D1 migration directory changed.");
@@ -139,6 +180,9 @@ export function validateStagingConfig(config, options = {}) {
     Array.isArray(config.r2_buckets) && config.r2_buckets.length === 2,
     "Staging must bind exactly two R2 buckets.",
   );
+  for (const bucket of config.r2_buckets) {
+    requireExactKeys(bucket, ["binding", "bucket_name"], "A staging R2 binding");
+  }
   const bucketByBinding = new Map(config.r2_buckets.map((bucket) => [bucket?.binding, bucket]));
   requireCondition(bucketByBinding.size === 2, "Staging R2 bindings must be unique.");
   requireCondition(
@@ -162,7 +206,11 @@ export function validateStagingConfig(config, options = {}) {
   );
   const namespaceIDs = new Set();
   for (const rateLimit of config.ratelimits) {
-    requireCondition(isRecord(rateLimit), "A staging rate limiter is malformed.");
+    requireExactKeys(
+      rateLimit,
+      ["name", "namespace_id", "simple"],
+      "A staging rate limiter",
+    );
     const expected = expectedRateLimits.get(rateLimit.name);
     requireCondition(expected !== undefined, "An unexpected staging rate limiter was configured.");
     requireExactObject(rateLimit.simple, expected, `${rateLimit.name}.simple`);
@@ -182,6 +230,7 @@ export function validateStagingConfig(config, options = {}) {
 export function renderStagingConfig(template, environment, options = {}) {
   const expectedMomentRuntime = reviewedMomentRuntime(options);
   const expectedAPNSRuntime = reviewedAPNSRuntime(options);
+  const expectedReportIngestionRuntime = reviewedReportIngestionRuntime(options);
   requireCondition(
     expectedAPNSRuntime !== "YES" || expectedMomentRuntime === "YES",
     "The APNs runtime requires the reviewed private media runtimes to be ON.",
@@ -214,10 +263,19 @@ export function renderStagingConfig(template, environment, options = {}) {
     config?.vars?.APNS_RUNTIME_ENABLED === "NO",
     "The tracked staging template must keep the APNs runtime locked OFF.",
   );
+  requireCondition(
+    config?.vars?.REPORT_INGESTION_RUNTIME_ENABLED === "NO",
+    "The tracked staging template must keep report ingestion locked OFF.",
+  );
   config.vars.MOMENT_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.REACTION_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.WINDOW_NAME_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.APNS_RUNTIME_ENABLED = expectedAPNSRuntime;
-  validateStagingConfig(config, { expectedMomentRuntime, expectedAPNSRuntime });
+  config.vars.REPORT_INGESTION_RUNTIME_ENABLED = expectedReportIngestionRuntime;
+  validateStagingConfig(config, {
+    expectedMomentRuntime,
+    expectedAPNSRuntime,
+    expectedReportIngestionRuntime,
+  });
   return `${JSON.stringify(config, null, 2)}\n`;
 }

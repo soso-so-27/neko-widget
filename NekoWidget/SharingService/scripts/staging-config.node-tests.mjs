@@ -29,6 +29,7 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(config.vars.REACTION_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.WINDOW_NAME_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.APNS_RUNTIME_ENABLED, "NO");
+  assert.equal(config.vars.REPORT_INGESTION_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.LEGACY_SHARING_RUNTIME_ENABLED, "NO");
   assert.equal(config.limits, undefined);
   assert.equal(config.d1_databases[0].database_name, "neko-window-sharing-staging");
@@ -84,6 +85,38 @@ test("rejects a staging config that enables the moment runtime", () => {
   assert.throws(() => validateStagingConfig(config), /reviewed staging policy/u);
 });
 
+test("rejects every unreviewed top-level Wrangler capability", () => {
+  for (const [field, value] of [
+    ["services", [{ binding: "OTHER", service: "other-worker" }]],
+    ["durable_objects", { bindings: [] }],
+    ["queues", { producers: [] }],
+    ["assets", { directory: "./public" }],
+  ]) {
+    const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
+    config[field] = value;
+    assert.throws(
+      () => validateStagingConfig(config),
+      /staging Wrangler configuration contains an unreviewed field/u,
+    );
+  }
+});
+
+test("rejects unreviewed fields inside every resource binding", () => {
+  const mutations = [
+    (config) => { config.d1_databases[0].preview_database_id = "unreviewed"; },
+    (config) => { config.r2_buckets[0].jurisdiction = "eu"; },
+    (config) => { config.ratelimits[0].extra = true; },
+  ];
+  for (const mutate of mutations) {
+    const config = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
+    mutate(config);
+    assert.throws(
+      () => validateStagingConfig(config),
+      /contains an unreviewed field/u,
+    );
+  }
+});
+
 test("derives a notification window only with all private media runtimes enabled", () => {
   const offConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
   const onConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
@@ -94,6 +127,7 @@ test("derives a notification window only with all private media runtimes enabled
   assert.equal(onConfig.vars.REACTION_RUNTIME_ENABLED, "YES");
   assert.equal(onConfig.vars.WINDOW_NAME_RUNTIME_ENABLED, "YES");
   assert.equal(onConfig.vars.APNS_RUNTIME_ENABLED, "YES");
+  assert.equal(onConfig.vars.REPORT_INGESTION_RUNTIME_ENABLED, "NO");
   onConfig.vars.MOMENT_RUNTIME_ENABLED = "NO";
   onConfig.vars.REACTION_RUNTIME_ENABLED = "NO";
   onConfig.vars.WINDOW_NAME_RUNTIME_ENABLED = "NO";
@@ -103,6 +137,52 @@ test("derives a notification window only with all private media runtimes enabled
     () => renderStagingConfig(template, fixtureEnvironment, { expectedAPNSRuntime: "YES" }),
     /requires the reviewed private media runtimes/u,
   );
+});
+
+test("derives a report-ingestion window independently from APNs", () => {
+  const offConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment));
+  const reportConfig = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedReportIngestionRuntime: "YES",
+  }));
+  assert.equal(reportConfig.vars.REPORT_INGESTION_RUNTIME_ENABLED, "YES");
+  assert.equal(reportConfig.vars.MOMENT_RUNTIME_ENABLED, "NO");
+  assert.equal(reportConfig.vars.REACTION_RUNTIME_ENABLED, "NO");
+  assert.equal(reportConfig.vars.WINDOW_NAME_RUNTIME_ENABLED, "NO");
+  assert.equal(reportConfig.vars.APNS_RUNTIME_ENABLED, "NO");
+  reportConfig.vars.REPORT_INGESTION_RUNTIME_ENABLED = "NO";
+  assert.deepEqual(reportConfig, offConfig);
+});
+
+test("derives exact general-distribution selective OFF candidates", () => {
+  const general = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+    expectedAPNSRuntime: "YES",
+    expectedReportIngestionRuntime: "YES",
+  }));
+  const apnsOff = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+    expectedReportIngestionRuntime: "YES",
+  }));
+  const reportOff = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "YES",
+    expectedAPNSRuntime: "YES",
+  }));
+  const mediaOff = JSON.parse(renderStagingConfig(template, fixtureEnvironment, {
+    expectedReportIngestionRuntime: "YES",
+  }));
+
+  const normalizedAPNs = structuredClone(general);
+  normalizedAPNs.vars.APNS_RUNTIME_ENABLED = "NO";
+  assert.deepEqual(normalizedAPNs, apnsOff);
+  const normalizedReport = structuredClone(general);
+  normalizedReport.vars.REPORT_INGESTION_RUNTIME_ENABLED = "NO";
+  assert.deepEqual(normalizedReport, reportOff);
+  const normalizedMedia = structuredClone(general);
+  normalizedMedia.vars.MOMENT_RUNTIME_ENABLED = "NO";
+  normalizedMedia.vars.REACTION_RUNTIME_ENABLED = "NO";
+  normalizedMedia.vars.WINDOW_NAME_RUNTIME_ENABLED = "NO";
+  normalizedMedia.vars.APNS_RUNTIME_ENABLED = "NO";
+  assert.deepEqual(normalizedMedia, mediaOff);
 });
 
 test("rejects a staging config that enables only reactions", () => {
@@ -170,6 +250,9 @@ test("keeps the generated staging config out of git", async () => {
   assert.match(ignore, /^wrangler\.staging\.jsonc$/mu);
   assert.match(ignore, /^wrangler\.media-staging-on\.jsonc$/mu);
   assert.match(ignore, /^wrangler\.notification-staging-on\.jsonc$/mu);
+  assert.match(ignore, /^wrangler\.report-ingestion-staging-on\.jsonc$/mu);
+  assert.match(ignore, /^wrangler\.general-staging-on\.jsonc$/mu);
+  assert.match(ignore, /^wrangler\.general-staging-apns-off\.jsonc$/mu);
   const repositoryIgnore = await readFile(join(projectDirectory, "..", "..", ".gitignore"), "utf8");
   assert.match(repositoryIgnore, /^\.wrangler\/$/mu);
 });

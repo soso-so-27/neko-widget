@@ -66,6 +66,7 @@ const SHARING_BETA_PAGES = Object.freeze([
       "ACK後7日",
       "未受領の通常暗号文：commit後30日",
       "生成AIの学習に利用しません",
+      "まどと写真の不透明な識別子",
       "受信写真の「思い出に残す」",
       "明示的に選んだ場合だけ",
       "位置情報を除いた最大2,048pxの受信写真を写真アプリへ新しく保存",
@@ -73,6 +74,10 @@ const SHARING_BETA_PAGES = Object.freeze([
       "相手には通知しません",
       "「思い出から外す」を選んでも写真アプリからは削除せず",
       "ハートの送信や受信だけで自動保存することはありません",
+    ]),
+    forbiddenPhrases: Object.freeze([
+      "一般的な通知文だけを送ります",
+      "写真ID、取得URL",
     ]),
   }),
   Object.freeze({

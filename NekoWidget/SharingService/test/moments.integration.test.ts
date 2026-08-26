@@ -91,6 +91,171 @@ describe("moment runtime kill switch", () => {
       }
     }
   });
+
+  it("authenticates and burns signed nonces before independently stopping report ingestion", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const evidence = crypto.getRandomValues(new Uint8Array(192));
+    const reservationBody = {
+      protocolVersion: 2,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      momentId: published.reservation.moment.id,
+      reasonCode: "privacy",
+      moderationKeyId: "moderation-v1",
+      ciphertextSize: evidence.length,
+      ciphertextSHA256: await sha256Base64url(evidence),
+      reporterConsent: { version: 1, acceptedAt: new Date().toISOString() },
+    };
+    const disabledEnv = {
+      ...testEnv,
+      REPORT_INGESTION_RUNTIME_ENABLED: "NO",
+    } as Env;
+
+    await expect(route(
+      new Request("https://sharing.invalid/v2/reports/reservations", { method: "POST" }),
+      disabledEnv,
+    )).rejects.toMatchObject({ status: 401, code: "invalid_authentication" });
+
+    for (const value of [undefined, "NO", "true", "yes"]) {
+      const nonce = randomValue(16);
+      const currentEnv = {
+        ...testEnv,
+        REPORT_INGESTION_RUNTIME_ENABLED: value,
+      } as Env;
+      await expect(route(
+        await signedRequest(
+          "/v2/reports/reservations",
+          "POST",
+          space.invitee,
+          reservationBody,
+          nonce,
+        ),
+        currentEnv,
+      )).rejects.toMatchObject({
+        status: 503,
+        code: "report_ingestion_runtime_disabled",
+      });
+      await expect(route(
+        await signedRequest(
+          "/v2/reports/reservations",
+          "POST",
+          space.invitee,
+          reservationBody,
+          nonce,
+        ),
+        { ...testEnv, REPORT_INGESTION_RUNTIME_ENABLED: "YES" } as Env,
+      )).rejects.toMatchObject({ status: 409, code: "replayed_request" });
+    }
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM moment_reports WHERE moment_id = ?",
+    ).bind(published.reservation.moment.id).first<{ count: number }>())?.count).toBe(0);
+
+    const enabledEnv = {
+      ...testEnv,
+      REPORT_INGESTION_RUNTIME_ENABLED: "YES",
+    } as Env;
+    const reservedResponse = await route(
+      await signedRequest(
+        "/v2/reports/reservations",
+        "POST",
+        space.invitee,
+        reservationBody,
+      ),
+      enabledEnv,
+    );
+    expect(reservedResponse.status).toBe(201);
+    const reserved = await reservedResponse.json<{
+      report: { id: string; state: string; uploadExpiresAt: number };
+    }>();
+
+    const uploadNonce = randomValue(16);
+    await expect(route(
+      await signedRequest(
+        `/v2/reports/${reserved.report.id}/ciphertext`,
+        "PUT",
+        space.invitee,
+        evidence,
+        uploadNonce,
+      ),
+      disabledEnv,
+    )).rejects.toMatchObject({
+      status: 503,
+      code: "report_ingestion_runtime_disabled",
+    });
+    await expect(route(
+      await signedRequest(
+        `/v2/reports/${reserved.report.id}/ciphertext`,
+        "PUT",
+        space.invitee,
+        evidence,
+        uploadNonce,
+      ),
+      enabledEnv,
+    )).rejects.toMatchObject({ status: 409, code: "replayed_request" });
+    expect((await testEnv.DB.prepare(
+      "SELECT state FROM moment_reports WHERE id = ?",
+    ).bind(reserved.report.id).first<{ state: string }>())?.state).toBe("reserved");
+
+    const uploadResponse = await route(
+      await signedRequest(
+        `/v2/reports/${reserved.report.id}/ciphertext`,
+        "PUT",
+        space.invitee,
+        evidence,
+      ),
+      enabledEnv,
+    );
+    expect(uploadResponse.status).toBe(200);
+
+    const commitBody = {
+      protocolVersion: 2,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+    };
+    const commitNonce = randomValue(16);
+    await expect(route(
+      await signedRequest(
+        `/v2/reports/${reserved.report.id}/commit`,
+        "POST",
+        space.invitee,
+        commitBody,
+        commitNonce,
+      ),
+      disabledEnv,
+    )).rejects.toMatchObject({
+      status: 503,
+      code: "report_ingestion_runtime_disabled",
+    });
+    await expect(route(
+      await signedRequest(
+        `/v2/reports/${reserved.report.id}/commit`,
+        "POST",
+        space.invitee,
+        commitBody,
+        commitNonce,
+      ),
+      enabledEnv,
+    )).rejects.toMatchObject({ status: 409, code: "replayed_request" });
+    expect((await testEnv.DB.prepare(
+      "SELECT state FROM moment_reports WHERE id = ?",
+    ).bind(reserved.report.id).first<{ state: string }>())?.state).toBe("uploaded");
+
+    await runMomentCleanup(disabledEnv, reserved.report.uploadExpiresAt + 1);
+    expect((await testEnv.DB.prepare(
+      "SELECT state FROM moment_reports WHERE id = ?",
+    ).bind(reserved.report.id).first<{ state: string }>())?.state).toBe("deleted");
+
+    const blockSpace = await seedActiveSpace();
+    const blockResponse = await route(
+      await signedRequest(
+        `/v2/participants/${blockSpace.invitee.id}/block`,
+        "POST",
+        blockSpace.owner,
+        { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() },
+      ),
+      disabledEnv,
+    );
+    expect(blockResponse.status).toBe(200);
+  });
 });
 
 interface TestMember {

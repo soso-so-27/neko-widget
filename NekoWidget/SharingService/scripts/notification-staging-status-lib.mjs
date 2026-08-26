@@ -2,12 +2,15 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import process from "node:process";
 
 import { validateStagingConfig } from "./staging-config-lib.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 export const notificationStagingProjectDirectory = join(scriptDirectory, "..");
 export const notificationStagingConfigName = "wrangler.notification-staging-on.jsonc";
+const notificationStatusTimeoutMilliseconds = 30_000;
+const notificationStatusOutputLimitBytes = 1024 * 1024;
 
 // These queries intentionally expose only coarse operational buckets. They
 // never select IDs, token digests/ciphertext, encrypted media, or raw APNs
@@ -204,11 +207,20 @@ export function notificationStatusCommand({ projectDirectory, databaseName, sql 
     throw new Error("notification status may execute only reviewed read-only queries");
   }
   const configPath = join(projectDirectory, notificationStagingConfigName);
+  const wranglerEntryPoint = join(
+    projectDirectory,
+    "node_modules",
+    "wrangler",
+    "bin",
+    "wrangler.js",
+  );
   return Object.freeze({
-    executable: process.platform === "win32" ? "npx.cmd" : "npx",
+    // Spawn the reviewed local Wrangler entry point through the Node process
+    // already running this script. This avoids Windows' npx.cmd shell shim and
+    // keeps shell execution disabled on every platform.
+    executable: process.execPath,
     args: Object.freeze([
-      "--no-install",
-      "wrangler",
+      wranglerEntryPoint,
       "d1",
       "execute",
       databaseName,
@@ -223,25 +235,92 @@ export function notificationStatusCommand({ projectDirectory, databaseName, sql 
   });
 }
 
-export async function runReadOnlyWranglerCommand(command) {
+export function notificationWranglerEnvironment(environment = process.env) {
+  return Object.freeze({
+    ...environment,
+    DO_NOT_TRACK: "1",
+    WRANGLER_HIDE_BANNER: "true",
+    WRANGLER_SEND_ERROR_REPORTS: "false",
+    WRANGLER_SEND_METRICS: "false",
+  });
+}
+
+function requirePositiveRunnerLimit(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive safe integer`);
+  }
+  return value;
+}
+
+export async function runReadOnlyWranglerCommand(command, {
+  environment = process.env,
+  maxOutputBytes = notificationStatusOutputLimitBytes,
+  spawnImpl = spawn,
+  timeoutMilliseconds = notificationStatusTimeoutMilliseconds,
+} = {}) {
+  requirePositiveRunnerLimit(maxOutputBytes, "notification status output limit");
+  requirePositiveRunnerLimit(timeoutMilliseconds, "notification status timeout");
   return new Promise((resolve, reject) => {
-    const child = spawn(command.executable, command.args, {
-      cwd: command.cwd,
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.on("error", () => reject(new Error("notification status could not start Wrangler")));
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error("notification status read-only D1 query failed"));
+    let child;
+    try {
+      child = spawnImpl(command.executable, command.args, {
+        cwd: command.cwd,
+        env: notificationWranglerEnvironment(environment),
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      reject(new Error("notification status could not start Wrangler"));
+      return;
+    }
+
+    let outputBytes = 0;
+    const stdoutChunks = [];
+    let settled = false;
+    let timeoutHandle;
+    const finish = (error, output, killChild = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      if (killChild) {
+        try {
+          child.kill();
+        } catch {
+          // The original bounded failure remains authoritative.
+        }
+      }
+      if (error === null) resolve(output);
+      else reject(error);
+    };
+    const consume = (chunk, keep) => {
+      if (settled) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      outputBytes += bytes.length;
+      if (outputBytes > maxOutputBytes) {
+        finish(new Error("notification status Wrangler output exceeded the limit"), undefined, true);
         return;
       }
-      resolve(stdout);
+      if (keep) stdoutChunks.push(bytes);
+    };
+
+    // Drain both pipes. Stderr is deliberately discarded after counting so
+    // provider diagnostics cannot leak into operator output or block the child.
+    child.stdout.on("data", (chunk) => consume(chunk, true));
+    child.stderr.on("data", (chunk) => consume(chunk, false));
+    child.on("error", () => {
+      finish(new Error("notification status could not start Wrangler"));
     });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        finish(new Error("notification status read-only D1 query failed"));
+        return;
+      }
+      finish(null, Buffer.concat(stdoutChunks).toString("utf8"));
+    });
+    timeoutHandle = setTimeout(() => {
+      finish(new Error("notification status read-only D1 query timed out"), undefined, true);
+    }, timeoutMilliseconds);
   });
 }
 

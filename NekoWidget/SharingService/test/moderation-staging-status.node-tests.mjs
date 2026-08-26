@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  collectNotificationStagingStatus,
-  formatNotificationStagingStatus,
-  notificationStagingConfigName,
-  notificationStatusCommand,
-  notificationStatusQueries,
-  requireNoStatusArguments,
-  runReadOnlyWranglerCommand,
-} from "../scripts/notification-staging-status-lib.mjs";
+  collectModerationStagingStatus,
+  formatModerationStagingStatus,
+  moderationStagingConfigName,
+  moderationStatusCommand,
+  moderationStatusQueries,
+  requireNoModerationStatusArguments,
+  runReadOnlyModerationWranglerCommand,
+} from "../scripts/moderation-staging-status-lib.mjs";
 import { renderStagingConfig } from "../scripts/staging-config-lib.mjs";
 
 const projectDirectory = "/safe/neko-widget/SharingService";
@@ -59,6 +59,14 @@ const template = JSON.stringify({
   ],
 });
 
+function renderedConfig() {
+  return renderStagingConfig(template, fixtureEnvironment, {
+    expectedMomentRuntime: "NO",
+    expectedAPNSRuntime: "NO",
+    expectedReportIngestionRuntime: "YES",
+  });
+}
+
 function successfulRows(rows) {
   return JSON.stringify([{ success: true, results: rows }]);
 }
@@ -71,15 +79,15 @@ function localNodeCommand(source) {
   });
 }
 
-test("bounds notification Wrangler execution and enforces its process environment", async (context) => {
+test("bounds moderation Wrangler execution and enforces its process environment", async (context) => {
   await context.test("forces telemetry, error-report, banner, and update suppression", async () => {
-    const output = await runReadOnlyWranglerCommand(
+    const output = await runReadOnlyModerationWranglerCommand(
       localNodeCommand(`process.stdout.write(JSON.stringify({
         DO_NOT_TRACK: process.env.DO_NOT_TRACK,
         WRANGLER_HIDE_BANNER: process.env.WRANGLER_HIDE_BANNER,
         WRANGLER_SEND_ERROR_REPORTS: process.env.WRANGLER_SEND_ERROR_REPORTS,
         WRANGLER_SEND_METRICS: process.env.WRANGLER_SEND_METRICS,
-        preserved: process.env.NEKO_NOTIFICATION_STATUS_TEST,
+        preserved: process.env.NEKO_MODERATION_STATUS_TEST,
       }));`),
       {
         environment: {
@@ -88,7 +96,7 @@ test("bounds notification Wrangler execution and enforces its process environmen
           WRANGLER_HIDE_BANNER: "false",
           WRANGLER_SEND_ERROR_REPORTS: "true",
           WRANGLER_SEND_METRICS: "true",
-          NEKO_NOTIFICATION_STATUS_TEST: "preserved",
+          NEKO_MODERATION_STATUS_TEST: "preserved",
         },
         maxOutputBytes: 64 * 1024,
         timeoutMilliseconds: 5_000,
@@ -104,7 +112,7 @@ test("bounds notification Wrangler execution and enforces its process environmen
   });
 
   await context.test("drains a large bounded stderr stream", async () => {
-    const output = await runReadOnlyWranglerCommand(
+    const output = await runReadOnlyModerationWranglerCommand(
       localNodeCommand(`
         process.stderr.write("x".repeat(256 * 1024));
         process.stdout.write("ok");
@@ -117,7 +125,7 @@ test("bounds notification Wrangler execution and enforces its process environmen
   await context.test("kills stdout and stderr overflow", async () => {
     for (const stream of ["stdout", "stderr"]) {
       await assert.rejects(
-        runReadOnlyWranglerCommand(
+        runReadOnlyModerationWranglerCommand(
           localNodeCommand(`process.${stream}.write("x".repeat(64 * 1024));`),
           { maxOutputBytes: 1024, timeoutMilliseconds: 5_000 },
         ),
@@ -129,7 +137,7 @@ test("bounds notification Wrangler execution and enforces its process environmen
   await context.test("kills a command that exceeds its explicit timeout", async () => {
     const startedAt = Date.now();
     await assert.rejects(
-      runReadOnlyWranglerCommand(
+      runReadOnlyModerationWranglerCommand(
         localNodeCommand("setInterval(() => {}, 1_000);"),
         { maxOutputBytes: 1024, timeoutMilliseconds: 100 },
       ),
@@ -139,26 +147,37 @@ test("bounds notification Wrangler execution and enforces its process environmen
   });
 });
 
-test("runs exactly the reviewed read-only D1 queries through the isolated ON config", async () => {
-  const config = renderStagingConfig(template, fixtureEnvironment, {
-    expectedMomentRuntime: "YES",
-    expectedAPNSRuntime: "YES",
-  });
+const validResponses = Object.freeze({
+  schema: successfulRows([{ table_count: 2 }]),
+  lifecycle: successfulRows([
+    { state: "committed", count: 3 },
+    { state: "reserved", count: 1 },
+  ]),
+  "committed-age": successfulRows([{
+    under_24h: 1,
+    from_24h_to_48h: 1,
+    over_48h: 1,
+    future_count: 0,
+  }]),
+  cleanup: successfulRows([{
+    expired_upload_reports: 1,
+    expired_content_reports: 0,
+    pending_report_deletions: 2,
+    due_report_deletions: 1,
+  }]),
+});
+
+function queryForCommand(command) {
+  return moderationStatusQueries.find((entry) => command.args.includes(entry.sql));
+}
+
+test("runs exactly the reviewed aggregate-only queries through report-ingestion staging", async () => {
   const commands = [];
-  const responses = new Map([
-    ["route-schema", successfulRows([{ invalid_count: 0, normalizer_count: 1 }])],
-    ["subscriptions", successfulRows([{ environment: "production", count: 2 }])],
-    ["events", successfulRows([{ kind: "new_moment", count: 1 }])],
-    ["deliveries", successfulRows([{ state: "accepted", status: "200", reason: "none", count: 1 }])],
-  ]);
-  const status = await collectNotificationStagingStatus({
+  const status = await collectModerationStagingStatus({
     projectDirectory,
     readFileImpl: async (path) => {
-      assert.equal(
-        path.replaceAll("\\", "/"),
-        `${projectDirectory}/${notificationStagingConfigName}`,
-      );
-      return config;
+      assert.equal(path.replaceAll("\\", "/"), `${projectDirectory}/${moderationStagingConfigName}`);
+      return renderedConfig();
     },
     runCommand: async (command) => {
       commands.push(command);
@@ -170,116 +189,134 @@ test("runs exactly the reviewed read-only D1 queries through the isolated ON con
       );
       assert.equal(command.args.includes("npx"), false);
       assert.equal(command.args.includes("npx.cmd"), false);
-      assert.equal(command.args.includes("--no-install"), false);
       assert.equal(command.args.includes("--remote"), true);
       assert.equal(command.args.includes("--json"), true);
       assert.equal(command.args.includes("--local"), false);
       assert.equal(command.args.includes("--file"), false);
-      assert.equal(command.args.includes("--config"), true);
       assert.equal(
         command.args.at(command.args.indexOf("--config") + 1).replaceAll("\\", "/"),
-        `${projectDirectory}/${notificationStagingConfigName}`,
+        `${projectDirectory}/${moderationStagingConfigName}`,
       );
-      const query = notificationStatusQueries.find((entry) => command.args.includes(entry.sql));
+      const query = queryForCommand(command);
       assert.notEqual(query, undefined);
-      return responses.get(query.name);
+      return validResponses[query.name];
     },
   });
+
   assert.equal(commands.length, 4);
   assert.deepEqual(status, {
-    "route-schema": [{ state: "ready" }],
-    subscriptions: [{ environment: "production", count: 2 }],
-    events: [{ kind: "new_moment", count: 1 }],
-    deliveries: [{ state: "accepted", status: "200", reason: "none", count: 1 }],
+    schema: [{ state: "ready" }],
+    lifecycle: [{ state: "committed", count: 3 }, { state: "reserved", count: 1 }],
+    "committed-age": { under24h: 1, from24hTo48h: 1, over48h: 1 },
+    cleanup: {
+      expiredUploadReports: 1,
+      expiredContentReports: 0,
+      pendingReportDeletions: 2,
+      dueReportDeletions: 1,
+    },
   });
-  const text = formatNotificationStagingStatus(status);
-  assert.match(text, /route_schema: ready/u);
-  assert.match(text, /production=2/u);
-  assert.match(text, /accepted\/200\/none=1/u);
+  const text = formatModerationStagingStatus(status);
+  assert.match(text, /read-only aggregates/u);
+  assert.match(text, /not review SLA/u);
+  assert.match(text, /over_48h=1/u);
   assert.doesNotMatch(text, /must-not-pass-through/u);
 });
 
-test("rejects unreviewed databases and SQL before starting Wrangler", () => {
-  assert.doesNotThrow(() => requireNoStatusArguments([]));
+test("rejects arguments, unreviewed databases, and unreviewed SQL", () => {
+  assert.doesNotThrow(() => requireNoModerationStatusArguments([]));
   assert.throws(
-    () => requireNoStatusArguments(["--command", "DELETE FROM notification_events"]),
+    () => requireNoModerationStatusArguments(["--command", "SELECT object_key FROM moment_reports"]),
     /accepts no arguments/u,
   );
   assert.throws(
-    () => notificationStatusCommand({
+    () => moderationStatusCommand({
       projectDirectory,
       databaseName: "other-database",
-      sql: notificationStatusQueries[0].sql,
+      sql: moderationStatusQueries[0].sql,
     }),
     /only the isolated staging database/u,
   );
   assert.throws(
-    () => notificationStatusCommand({
+    () => moderationStatusCommand({
       projectDirectory,
       databaseName: "neko-window-sharing-staging",
-      sql: "DELETE FROM notification_events",
+      sql: "SELECT object_key FROM moment_reports",
     }),
     /only reviewed read-only queries/u,
   );
 });
 
-test("rejects malformed or raw provider output without rendering it", async () => {
-  const config = renderStagingConfig(template, fixtureEnvironment, {
-    expectedMomentRuntime: "YES",
-    expectedAPNSRuntime: "YES",
-  });
+test("rejects unexpected fields and categories without rendering them", async () => {
   await assert.rejects(
-    collectNotificationStagingStatus({
+    collectModerationStagingStatus({
       projectDirectory,
-      readFileImpl: async () => config,
-      runCommand: async () => successfulRows([{
-        environment: "production",
-        count: 2,
-        token_ciphertext: "must-not-pass-through",
-      }]),
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "schema") return validResponses.schema;
+        if (query?.name === "lifecycle") {
+          return successfulRows([{
+            state: "reviewed",
+            count: 1,
+            object_key: "must-not-pass-through",
+          }]);
+        }
+        throw new Error("later queries must not run after malformed lifecycle output");
+      },
     }),
-    /unexpected response|unexpected category|unexpected fields/u,
+    /unexpected fields|unexpected category/u,
   );
 });
 
-test("fails closed when the applied route schema is missing or invalid", async () => {
-  const config = renderStagingConfig(template, fixtureEnvironment, {
-    expectedMomentRuntime: "YES",
-    expectedAPNSRuntime: "YES",
-  });
+test("fails closed when the moderation schema is unavailable", async () => {
   await assert.rejects(
-    collectNotificationStagingStatus({
+    collectModerationStagingStatus({
       projectDirectory,
-      readFileImpl: async () => config,
-      runCommand: async (command) => {
-        const query = notificationStatusQueries.find((entry) => command.args.includes(entry.sql));
-        if (query?.name === "route-schema") {
-          return successfulRows([{ invalid_count: 1, normalizer_count: 1 }]);
-        }
-        throw new Error("later queries must not run after a schema failure");
-      },
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async () => successfulRows([{ table_count: 1 }]),
     }),
-    /route schema contains invalid rows/u,
+    /schema is unavailable/u,
   );
 });
 
-test("fails closed when the rollback normalizer trigger is missing", async () => {
-  const config = renderStagingConfig(template, fixtureEnvironment, {
-    expectedMomentRuntime: "YES",
-    expectedAPNSRuntime: "YES",
-  });
+test("fails closed for future report timestamps and inconsistent cleanup counts", async () => {
   await assert.rejects(
-    collectNotificationStagingStatus({
+    collectModerationStagingStatus({
       projectDirectory,
-      readFileImpl: async () => config,
+      readFileImpl: async () => renderedConfig(),
       runCommand: async (command) => {
-        const query = notificationStatusQueries.find((entry) => command.args.includes(entry.sql));
-        if (query?.name === "route-schema") {
-          return successfulRows([{ invalid_count: 0, normalizer_count: 0 }]);
+        const query = queryForCommand(command);
+        if (query?.name === "committed-age") {
+          return successfulRows([{
+            under_24h: 0,
+            from_24h_to_48h: 0,
+            over_48h: 0,
+            future_count: 1,
+          }]);
         }
-        throw new Error("later queries must not run after a schema failure");
+        return validResponses[query.name];
       },
     }),
-    /route schema normalizer is unavailable/u,
+    /future timestamps/u,
+  );
+
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "cleanup") {
+          return successfulRows([{
+            expired_upload_reports: 0,
+            expired_content_reports: 0,
+            pending_report_deletions: 1,
+            due_report_deletions: 2,
+          }]);
+        }
+        return validResponses[query.name];
+      },
+    }),
+    /inconsistent counts/u,
   );
 });

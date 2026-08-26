@@ -97,7 +97,9 @@ SensitiveContentAnalysisが扱うcategoryだけで全ての不適切内容を検
 コミュニティ基準で禁止内容を明示し、招待制、送信枠、端末credential、通報、block、
 失効、運用対応を併用する。公開support URL、community standards、対応担当、通報用公開鍵、
 48時間以内の初回確認runbookが揃うまで、環境の`MOMENT_RUNTIME_ENABLED`を`NO`に保つ。
-Workerはこの値がexact `YES`でない限り通常moment APIをfail-closedで拒否し、通報・block・cleanupだけを維持する。
+Workerはこの値がexact `YES`でない限り通常moment APIをfail-closedで拒否する。新規通報の
+reserve／upload／commitは別の`REPORT_INGESTION_RUNTIME_ENABLED`がexact `YES`のときだけ許可し、
+block、共有解除、通報TTL cleanup、既存暗号文削除は両runtimeがOFFでも維持する。
 
 ## 暗号化と配送
 

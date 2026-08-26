@@ -140,7 +140,7 @@ Node/Windowsはdirectory fsyncをPOSIXと同等には保証しない。Local NTF
 - Production鍵の二人管理backup、rotation、廃棄
 - 強いoperator認証、二人承認、rate limit、access audit付きremote export API
 - decision、appeal、早期content deletion workflow
-- 独立report-ingestion kill switch
+- 独立report-ingestionのflag／candidate／local dry-runは実装済み。残るのは事前固定versionとactive-version条件を使う実停止、production訓練
 - hostile image用sandboxed decode→canonical re-encode gate
 
 これらが未完了のため、このrunbookやdrill成功を根拠にProduction、写真runtime、TestFlight media uploadを有効にしない。

@@ -2,7 +2,7 @@
 
 この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
 
-Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、「届いた写真」、ホーム、Widgetの受入、Build 34で名前付きのまどと1枚共有の本人2台受入まで完了しました。Build 35は共有UXと期限付きbookmark（当時の表示名「思い出に残す」、現「しおり」）を追加し、Appleへのvalidate／upload受付まで完了していますが、Apple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。2026-08-24現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視と緊急OFF](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
+Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、「届いた写真」、ホーム、Widgetの受入、Build 34で名前付きのまどと1枚共有の本人2台受入まで完了しました。Build 35は共有UXと期限付きbookmark（当時の表示名「思い出に残す」、現「しおり」）を追加し、Appleへのvalidate／upload受付まで完了していますが、Apple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。2026-08-24現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視とOFF候補のlocal検証](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。repository内の外部実停止経路は廃止済みで、異常時はdry-runを停止とみなさず利用中断と承認済みincident responseへescalateします。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
 
 ## release modeの固定値
 
@@ -111,7 +111,7 @@ uploadの承認後は、専用の内部tester groupにだけ配布します。�
 - 写真アクセスを許可していない旧iPhoneでは個人写真源を空のまま保ち、共有写真源だけで届いた写真を表示できることを確認
 - 通常momentだけを継続ONとし、旧日次共有runtimeはOFFのまま維持
 
-Build 31で完了したのは本人2台の内部受入であり、一般公開のproduction gateではない。アプリ内の公開policy Link、実際の通報・block・共有解除、offline／Extension終了／再起動、鍵喪失、再install後の旧資格拒否、負荷、監視、鍵運用、App Store Connect回答は別gateとして残る。本人2台の継続利用は[個人例外runbook](../SharingService/PERSONAL_STAGING_OPERATIONS.md)に従い、異常時は新しい写真配送を緊急OFFにする。一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。
+Build 31で完了したのは本人2台の内部受入であり、一般公開のproduction gateではない。アプリ内の公開policy Link、実際の通報・block・共有解除、offline／Extension終了／再起動、鍵喪失、再install後の旧資格拒否、負荷、監視、鍵運用、App Store Connect回答は別gateとして残る。本人2台の継続利用は[個人例外runbook](../SharingService/PERSONAL_STAGING_OPERATIONS.md)に従う。repository内の外部実停止経路はないため、異常時はlocal dry-runを停止証拠にせず利用を中断し、承認済みincident responseへescalateする。一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。
 
 ## Build 34 名前付きまどの本人2台受入記録
 
@@ -156,9 +156,9 @@ PR24〜PR28はmain `df7c7acf7747e9673f8269dd67763845ab9960e2`へ統合済みで�
 
 ## 次のrelease candidateでも残るもの（2026-08-25更新）
 
-1. production moderation鍵の複数人バックアップ・rotation・破棄、強い運用者認証、通報判断・異議申立て・早期削除、独立したreport-ingestion緊急OFFを含む一般公開の安全運用
+1. production moderation鍵の複数人バックアップ・rotation・破棄、強い運用者認証、通報判断・異議申立て・早期削除を含む一般公開の安全運用。report-ingestionの独立flag／候補config／local dry-runと識別子を含まない集計statusまでは実装済みだが、少数件もexact表示する運用出力であり、事前固定versionをactive-version条件付きで切り替える外部実停止、production訓練、担当者運用は未完了
 2. hostile imageの隔離decode／再encode、production D1/R2、負荷試験、監視、App Store ConnectのPrivacy回答・審査メモ・審査用導線
-3. 通常APNs通知は実装済みだが、Apple DeveloperでPush Notificationsを有効化したApp ID、新しいproduction APNs entitlement入り配布profile、APNs Auth Key、Worker暗号鍵、D1 migration／deploy、production APNs実機smokeが未完了。これらを満たすまではTestFlightへ配布しない。iOS 18を含むWidget更新はbest effortであり、WidgetKit専用pushは後続releaseとする
+3. 通常APNs通知は実装済み。Apple DeveloperのPush Notifications有効化、production APNs entitlement入り配布profile、APNs Auth Key、本人用staging WorkerのAPNs秘密値登録までは完了している。残るのは`0011`を含む対象D1 migration、新Worker deploy、識別子を含まない集計status確認、production APNs実機smoke、一般配布環境ごとの資格情報・停止訓練である。これらを満たすまでは一般向けTestFlightへ配布しない。iOS 18を含むWidget更新はbest effortであり、WidgetKit専用pushは後続releaseとする
 4. 複数まどの通常操作と、通知許可・共有同意が有効な認証済み全まどへの通常APNs登録は実装済み。非activeまどのpushはactiveまどを切り替えたり同期したりWidgetを更新したりせず、利用者が通知をタップした場合だけopaqueな宛先を照合して対象まどへ移動・同期する。通知をタップしなくても非activeまどを背景同期し、そのまどを選んだWidgetまで更新する処理は後続releaseとする
 5. 本人の追加端末は相手の確認付きで最大4台まで実装済み。残るのは3人以上の参加、端末一覧、端末単位の明示失効
 6. 期限付きの「届いた写真」自体をserverで長期保管する課金は未実装。将来再検討する場合も、個人の「思い出に追加」と分け、同意・容量・削除・鍵喪失・StoreKitを先に設計する

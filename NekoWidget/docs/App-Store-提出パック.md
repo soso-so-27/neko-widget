@@ -54,7 +54,7 @@ Apple要件の外部リンクはApple公式資料だけを使用する。法律�
 - production moderation鍵の承認済み生成、複数人backup、rotation、破棄
 - 強い運用者認証、二人承認、監査可能な通報export
 - 通報判断、利用者への応答、異議申立て、早期削除
-- 通常写真runtimeとは独立したreport-ingestion緊急OFF
+- 通常写真runtimeとは独立したreport-ingestion緊急OFF（ソースとdry-runは実装済み。対象productionでの停止訓練は未完了）
 - hostile imageを隔離してdecode／再encodeする境界
 - production D1／R2、負荷試験、cleanup、監視、alert
 - 休日を含む48時間以内の初回確認を、実際の担当者で満たす訓練
@@ -440,6 +440,9 @@ Guideline 1.2の公開連絡先として機能させる。公開GitHub Issueだ�
 - [ ] `【Connect確認】` 必要な暗号化文書をbuildへattach
 - [ ] `【境界Bのみ・提出停止 / AはN/A】` Guideline 1.2のfilter、report、timely response、block、公開連絡先
 - [ ] `【境界Bのみ・提出停止 / AはN/A】` production moderationと独立緊急OFF
+
+独立したAPNs OFF／report-ingestion OFFのreview済みコマンドとdry-run検証は実装済みである。ただし、
+この項目は対象productionでの資格情報、担当者、停止・復旧訓練が完了するまでチェックしない。
 
 ### 7.5 Pricing and Availability
 

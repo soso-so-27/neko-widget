@@ -12,3 +12,6 @@ dist/
 wrangler.staging.jsonc
 wrangler.media-staging-on.jsonc
 wrangler.notification-staging-on.jsonc
+wrangler.report-ingestion-staging-on.jsonc
+wrangler.general-staging-on.jsonc
+wrangler.general-staging-apns-off.jsonc

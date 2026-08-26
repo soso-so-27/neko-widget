@@ -119,4 +119,5 @@ operator体制、Production準備を証明しません。
 
 Production鍵は本helperで作りません。[暗号化された写真通報のオフライン確認runbook](MODERATION_RUNBOOK.md)に
 列挙した二人管理backup、rotation／廃棄、強いoperator認証付きexport API、decision／appeal／早期削除、
-独立report-ingestion kill switch、実運用drillが全て未完了のままです。
+事前固定したversion IDとactive-version条件を使う独立report-ingestion実停止、対象productionでの訓練が
+未完了のままです。Flag、candidate生成、local dry-run自体は実装済みです。

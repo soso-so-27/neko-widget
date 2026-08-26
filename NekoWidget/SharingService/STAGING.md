@@ -1,10 +1,10 @@
 # Cloudflare隔離staging手順
 
-この手順は「今の一枚」のCloudflare実環境検証を、productionと共有しないWorker、D1、R2、rate-limit namespaceで始めるためのものです。この段階では通常moment runtime、暗号化まど名runtime、旧日次共有runtimeを有効にしません。追跡対象の`wrangler.staging.template.jsonc`と通常preflightは`MOMENT_RUNTIME_ENABLED = NO`、`WINDOW_NAME_RUNTIME_ENABLED = NO`、`LEGACY_SHARING_RUNTIME_ENABLED = NO`以外を拒否します。section 7のmedia専用preflightだけが、同じOFF設定から派生したignored ON候補をdry-run用に検証します。
+この手順は「今の一枚」のCloudflare実環境検証を、productionと共有しないWorker、D1、R2、rate-limit namespaceで始めるためのものです。この段階では通常moment、reaction、暗号化まど名、APNs、新規通報受付、旧日次共有runtimeを有効にしません。追跡対象の`wrangler.staging.template.jsonc`と通常preflightはこれらのflagがすべてexact `NO`であることを要求します。section 7の用途別preflightだけが、同じOFF設定から派生したignored ON候補をdry-run用に検証します。
 
 この手順が作成する外部resourceはstaging専用です。
 
-> 2026-08-24現在、本人所有2台では内部TestFlight Build 34までを確認し、通常momentと暗号化まど名を継続利用する個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、旧共有を`LEGACY_SHARING_RUNTIME_ENABLED=NO`で運用します。Build 35はAppleへのvalidate／upload受付までで、Apple側の処理完了、内部group割当、実機受入は未確認です。一般公開や第三者の招待を認める変更ではありません。日次の公開境界監視と緊急OFFは[本人2台用・写真／まど名共有staging運用](PERSONAL_STAGING_OPERATIONS.md)を正本とします。以下の通常手順のOFF既定と、ON候補を直接deployしない原則は変更しません。
+> 2026-08-24現在、本人所有2台では内部TestFlight Build 34までを確認し、通常momentと暗号化まど名を継続利用する個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、旧共有を`LEGACY_SHARING_RUNTIME_ENABLED=NO`で運用します。Build 35はAppleへのvalidate／upload受付までで、Apple側の処理完了、内部group割当、実機受入は未確認です。一般公開や第三者の招待を認める変更ではありません。日次の公開境界監視とOFF候補のlocal検証は[本人2台用・写真／まど名共有staging運用](PERSONAL_STAGING_OPERATIONS.md)を正本とします。repository内の外部実停止経路は廃止済みで、未整備の実停止は継続利用と一般配布のblockerです。以下の通常手順のOFF既定と、ON候補を直接deployしない原則は変更しません。
 >
 > Build 36は`disabled`かつApp Store Connectへ送信しない署名dry runであり、このstagingのWorker、D1、R2、rate-limit namespace、secret、runtime flagを一切変更していません。
 
@@ -90,12 +90,12 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 - `ENVIRONMENT=staging`、`MOMENT_RUNTIME_ENABLED=NO`、`WINDOW_NAME_RUNTIME_ENABLED=NO`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`である
 - Workers Paid専用のcustom `limits`が存在しない
 - rate limit 3本が固有namespaceで、5/min・10/min・120/minである
-- cleanup Cron 2本がある
+- cleanup／通知配送を含むCron 3本がある
 - account固有のIDや未置換placeholderをtracked templateへ持ち込まない
 
 ## 4. migrationの事前確認と適用
 
-D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。未適用一覧は`0001_pairing.sql`、`0002_daily_sharing.sql`、`0003_append_only_moments.sql`、`0004_encrypted_window_name.sql`だけでなければ停止します。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0011_apns_route_schema.sql`までの11件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ11件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
 
 ```powershell
 npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remote --config wrangler.staging.jsonc --experimental-provision=false --experimental-auto-create=false
@@ -105,7 +105,7 @@ npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remot
 
 Apply前の確認promptでdatabase名またはmigration一覧が違う場合は承認しません。trigger migrationはLF改行と括弧付き`CASE`をCIで固定し、Wrangler/D1のremote parser回帰を防ぎます。失敗時はD1が空のままかを確認し、場当たり的なSQLやmigration ledgerの手動挿入で進めません。
 
-## 5. bundleとdeployの二段階確認
+## 5. bundleのローカル確認
 
 外部uploadを行わないdry-runを先に通します。
 
@@ -123,17 +123,9 @@ npx --no-install wrangler deploy --dry-run --config wrangler.staging.jsonc --out
 - 3本のRate Limit binding
 - `MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`LEGACY_SHARING_RUNTIME_ENABLED`がすべて`NO`
 
-実deploy直前にもう一度preflightを通し、その直後にだけdeployします。`--keep-vars=false`でdashboard上の古いplaintext varsを正本にせず、tracked policyを反映します。Worker secretを削除する操作ではありません。
+現在のrepositoryには、対象Cloudflare account／Worker／active versionを原子的に照合してから切り替える外部deploy経路がありません。この手順ではdry-runより先へ進みません。通常の`wrangler deploy`やDashboardの手動var編集で代用すると、別account・別Worker・別versionを操作しても成功に見えるため禁止します。実配備は、review済みversionの事前作成、対象の固定、条件付きactive-version切替、直後の同一origin検証、rollback訓練が実装された後の別手順とします。
 
-```powershell
-npm run staging:config:check
-$stagingCommit = (git rev-parse --short=12 HEAD).Trim()
-npx --no-install wrangler deploy --strict --config wrangler.staging.jsonc --autoconfig=false --keep-vars=false --message "pairing-only staging; moment+window-name+legacy OFF; $stagingCommit" --experimental-provision=false --experimental-auto-create=false
-```
-
-deployが返した`https://neko-window-sharing-staging.<account-subdomain>.workers.dev`をstaging API originとして控えます。独自domainやPagesはこの段階では不要です。
-
-## 6. runtime OFFのsmoke確認
+## 6. 将来の実配備後に必要なruntime OFF smoke
 
 URLは現在のprocessだけへ置き、末尾へpath、query、fragmentを加えません。
 
@@ -152,11 +144,11 @@ curl.exe -i "$env:NEKO_STAGING_API_ORIGIN/v1/sharing/sources"
 - `/v2/window-name`: `503`、error code `window_name_runtime_disabled`
 - `/v1/sharing/sources`: `503`、error code `legacy_sharing_runtime_disabled`
 
-Cloudflare dashboardで2本のCronが登録済みであり、両R2 bucketが引き続き非公開であることも確認します。`/health`はD1/R2/Cronの健全性を証明しないため、これだけでruntimeをONにしません。
+Cloudflare dashboardで3本のCronが登録済みであり、両R2 bucketが引き続き非公開であることも確認します。`/health`はD1/R2/Cronの健全性を証明しないため、これだけでruntimeをONにしません。
 
 ## 7. 写真・まど名runtimeの短時間テスト設定を準備する（deployしない）
 
-この節は、通常写真と暗号化まど名を2台だけで検証するためのON候補と、即時rollback用のOFF候補を同じresource設定から生成します。生成だけではCloudflareへ何も送信しません。tracked templateは引き続き`MOMENT_RUNTIME_ENABLED = NO`、`WINDOW_NAME_RUNTIME_ENABLED = NO`を正本とし、ON候補は両方を`YES`にしてignored fileへだけ派生させます。旧日次共有runtimeは常に`NO`です。
+この節は、通常写真、ハート、暗号化まど名を2台だけで検証するためのON候補と、rollback候補を同じresource設定から生成します。生成だけではCloudflareへ何も送信しません。tracked templateは全runtimeのexact `NO`を正本とし、media候補は`MOMENT_RUNTIME_ENABLED`、`REACTION_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`だけを`YES`にしてignored fileへ派生させます。APNs、新規通報受付、旧日次共有は`NO`のままです。
 
 先に次の外部条件をすべて満たしている必要があります。
 
@@ -179,7 +171,7 @@ git check-ignore -v wrangler.staging.jsonc
 git check-ignore -v wrangler.media-staging-on.jsonc
 ```
 
-`media-staging:config:check`は、両configが同じWorker、D1、非公開R2、rate limit、Cronを使い、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を保ったまま、差が`MOMENT_RUNTIME_ENABLED`と`WINDOW_NAME_RUNTIME_ENABLED`の`NO`／`YES`だけであることを確認します。IDやresource名が一つでも違えば停止します。
+`media-staging:config:check`は、両configが同じWorker、D1、非公開R2、rate limit、Cronを使い、通報受付、APNs、旧共有を`NO`に保ったまま、差がmedia用3 flagの`NO`／`YES`だけであることを確認します。IDやresource名が一つでも違えば停止します。
 
 明示的に許可されたテスト窓の前でも、ON候補はdry-runまでに留めます。
 
@@ -188,15 +180,34 @@ $mediaBundle = Join-Path $env:TEMP ("neko-sharing-media-staging-" + [guid]::NewG
 npx --no-install wrangler deploy --dry-run --config wrangler.media-staging-on.jsonc --outdir $mediaBundle --autoconfig=false --experimental-provision=false --experimental-auto-create=false
 ```
 
-実際のON deploy、2台受入、OFF rollbackは別の明示承認を得て、一つの短時間テスト窓として連続実施します。テスト完了・失敗・中断のいずれでも、review済みの`wrangler.staging.jsonc`をdeployして通常momentと暗号化まど名runtimeを`NO`へ戻し、`/v2/moments/changes`が`503 moment_runtime_disabled`、`/v2/window-name`が`503 window_name_runtime_disabled`、旧runtimeも`503 legacy_sharing_runtime_disabled`であることを確認します。Dashboardの手動var編集を正本にしません。
+ON候補とOFF候補の実deployは、このrepositoryの現状では行いません。対象account／Worker／active versionを固定した条件付き切替が実装された後に、別の明示承認を得て一つの短時間テスト窓として実施します。テスト完了・失敗・中断のいずれでも同じ対象へreview済みOFF versionを原子的に戻し、同一originでruntime停止を確認できることが採用条件です。通常のdeployやDashboardの手動var編集は代替になりません。
+
+### 一般配布候補の独立停止config（生成・検証のみ）
+
+一般配布の安全試験では、写真・APNs・新規通報受付をすべてONにした候補を起点として、APNsだけOFF、
+新規通報受付だけOFF、mediaとAPNsをOFFにして通報窓口だけ維持、の3遷移をexact比較する。
+
+```powershell
+npm run notification-staging:config:render
+npm run report-ingestion-staging:config:render
+npm run general-staging:config:render
+npm run general-staging:apns-off-config:render
+npm run selective-staging-off:config:check
+```
+
+各rendererは既存fileを上書きせず、出力はすべてgit ignoredである。checkは同じWorker／binding／Cron／
+rate limitであることと、各遷移でreview済みruntime flag以外が一切変わらないことを要求する。ここでは
+deploy、migration、secret変更を行わない。OFF候補と実停止未実装の境界は
+[`PERSONAL_STAGING_OPERATIONS.md`](PERSONAL_STAGING_OPERATIONS.md)、APNsは
+[`APNS_OPERATIONS.md`](APNS_OPERATIONS.md)、通報は[`MODERATION_RUNBOOK.md`](MODERATION_RUNBOOK.md)を正本とする。
 
 ## 停止条件
 
-この手順単体では`MOMENT_RUNTIME_ENABLED=YES`と`WINDOW_NAME_RUNTIME_ENABLED=YES`を実deployせず、section 7のignored候補もdry-runまでに留めます。通常momentと暗号化まど名の短時間ONは、列挙した外部gateを満たした後に別の明示承認でだけ行います。`LEGACY_SHARING_RUNTIME_ENABLED`はstagingでも常に`NO`です。
+この手順単体ではruntimeを実deployせず、section 7のignored候補もdry-runまでに留めます。短時間ONは、列挙した外部gateを満たした後に別の明示承認でだけ行います。`LEGACY_SHARING_RUNTIME_ENABLED`はstagingでも常に`NO`です。
 
 生成config、migration対象、Worker名、bucket公開状態の一つでも不明な場合はdeployしません。D1/R2/Workerを削除する操作はこの手順に含めません。
 
-workers.devは公開originです。この段階でも招待・ペアリングAPIはインターネットから到達し、rate limitで保護されます。緊急全停止時はreview済みconfigで`workers_dev=false`、`preview_urls=false`、custom routeなしへ変更して再deployします。通常moment／暗号化まど名／旧共有のフラグOFFだけでは、ペアリングと安全APIまで停止しません。次のdeployで再び公開しないよう、この停止変更を先にcommitします。
+workers.devは公開originです。この段階でも招待・ペアリングAPIはインターネットから到達し、rate limitで保護されます。通常moment／暗号化まど名／旧共有のflag OFFだけでは、ペアリングと安全APIまで停止しません。現在のvalidatorは誤配備防止のため`workers_dev=true`のstaging候補だけを受け付け、`workers_dev=false`へ通常deployする全停止手順を実装済みとは扱いません。対象account／Workerとactive versionを原子的に束縛したreview済み全停止・再開手順と訓練が完成するまでは一般配布のrelease blockerです。緊急時にlocal dry-runや別originの応答を停止証拠にせず、別途承認されたCloudflare incident responseへescalateします。
 
 ## 公式資料
 

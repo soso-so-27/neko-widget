@@ -494,6 +494,20 @@ test("rejects false local-only persistence, export, and contact claims", async (
   }
 });
 
+test("rejects a sharing privacy claim that hides opaque APNs routing identifiers", async () => {
+  const page = sharingBeta.definition.pages.find(({ name }) => name === "privacy");
+  assert.ok(page);
+  for (const phrase of page.forbiddenPhrases) {
+    await assert.rejects(
+      check(sharingBeta, new Map([[
+        page.name,
+        pageHtml(sharingBeta, page, { extraBody: phrase }),
+      ]])),
+      new RegExp(`privacy contains forbidden policy content: ${phrase}`, "u"),
+    );
+  }
+});
+
 test("requires explicit export risk and submission blocker copy on every local-only page", async () => {
   const required = [
     "写真PDFには利用者が選んだ写真が含まれます",

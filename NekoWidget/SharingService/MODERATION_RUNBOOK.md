@@ -3,7 +3,8 @@
 このrunbookは、利用者が明示的に送信した一枚の通報copyだけを、権限を持つ担当者が
 隔離された端末で確認するための手順である。通常の家族共有写真を復号する手順ではない。
 現在のrepositoryにはProduction秘密鍵を置かず、Cloudflareから通報を取り出すoperator APIも
-まだない。したがって、本書とtoolだけを理由にProductionの写真共有を有効化してはならない。
+まだない。識別子を含まない件数・滞留時間帯を確認するread-only statusはあるが、本文を閲覧する機能ではない。
+したがって、本書とtoolだけを理由にProductionの写真共有を有効化してはならない。
 
 ## 責任者と対応時間
 
@@ -14,6 +15,30 @@
 - 差し迫った身体的危害、児童の安全、法的保存要請など通常手順を超える事案は、画像を転送せず、
   定められた安全・法務担当へ直ちにcase IDだけでescalateする。法的判断をoperator単独で行わない。
 - Primary不在時にbackupが同じ手順を完遂できるか、合成fixtureだけで四半期ごとに訓練する。
+
+### 内容を見ない日次確認
+
+report-ingestion専用のignored ON configを作成・検証済みで、そのconfigが参照する隔離済みstaging D1を
+確認するときだけ、次のread-only確認を使う。
+
+```powershell
+npm run moderation-staging:status
+```
+
+固定されたstaging D1へ、review済みの`SELECT`だけを実行する。引数、任意SQL、任意database、任意configを
+受け付けず、表示するのはreport lifecycleの件数、committed reportの`24時間未満 / 24〜48時間 /
+48時間超`という年齢帯、期限切れcleanupとreport object削除待ちの件数だけである。ID、氏名、端末、
+object key、hash、暗号文、URL、秘密値、理由、写真本文は読み取りも表示もしない。
+
+このコマンドが証明するのは、そのD1のschemaと識別子を含まない集計だけである。件数は少数でも抑制せず
+exact表示するため、担当者が既知の出来事と照合すれば通報の発生や時刻帯を推測できる場合がある。出力を
+公開channelや通常logへ転送せず、権限を持つ運用者だけが確認する。現在activeなWorkerのcode、binding、
+runtime flag、Cron、または同じD1へ配備されていることは検証しない。一般配布前には、active deploymentと
+review済みmanifestの一致を別のfail-closedな手順で証明する必要があり、未整備の間はrelease blockerとする。
+
+`48時間超`は**reportの作成時刻帯であり、未確認やSLA違反を証明する値ではない**。現行Serverには
+人手確認の完了receiptがないため、担当者の短期local台帳と突き合わせる。件数だけで個別caseを推測せず、
+異常な滞留またはcleanup待ちを見つけたときは新規受付を独立停止してから運用incidentとして調べる。
 
 ## 鍵の準備と保管
 
@@ -206,21 +231,42 @@ Audit JSONLは画像を含まないため、security audit retention policyに�
 
 ## Kill switchと障害対応
 
-通常写真共有の安全性、moderation staffing、export、復号、削除、鍵のいずれかが利用不能なら、
-環境の`MOMENT_RUNTIME_ENABLED`をexact `NO`へ戻し、client releaseの`SHARING_MEDIA_ENABLED`も
-`NO`に保つ。`SHARING_SHARE_EXTENSION_SEND_ENABLED`は常に`NO`である。変更は二人でreviewし、
-通常moment reserve/upload/commitがfail-closedであることと、cleanupが継続することを確認する。
+通常写真共有の安全性が疑わしい一方で安全窓口を維持できる場合は、media-only OFFで通常写真・ハート・
+まど名・APNsを止め、report-ingestion、block、cleanupを残す候補を使う。先に
+[`STAGING.md`の一般配布候補config手順](STAGING.md#一般配布候補の独立停止config生成検証のみ)を完了する。
 
-重要: 現行設計では`MOMENT_RUNTIME_ENABLED=NO`でも通報・block・cleanup経路は維持される。
-したがってmoderation秘密鍵の漏えいに対する独立したreport-ingestion kill switchではない。
-鍵漏えい、紛失、backup不一致が疑われる場合は次を行う。
+```powershell
+npm run staging:runtime:media-off
+```
+
+通報鍵、受付、復号、
+削除、担当体制のいずれかが利用不能なら、通常共有とは独立した
+`REPORT_INGESTION_RUNTIME_ENABLED=NO`へ戻す。このflagはexact `YES`のときだけ新しい通報の
+reserve、暗号文upload、commitを許し、それ以外では、有効で現在も権限を持つ署名済み通報requestを
+検証してnonceを消費した後に
+`503 report_ingestion_runtime_disabled`で停止する。block、共有解除、TTL cleanup、既存暗号文の削除は
+OFF中も継続する。不正署名は`401`、閉じたreport-only window等は既存契約どおりのerrorとなり、すべてが
+503へ到達するわけではない。
+
+まず外部変更を行わないdry-runを実行する。
+
+```powershell
+npm run staging:runtime:report-ingestion-off
+```
+
+`--confirm-media-only-off`と`--confirm-report-ingestion-only-off`は、local dry-run後に意図的に失敗し、
+deployしない。通常のWrangler deployではactive versionへの原子的な条件を付けられず、選択したflag以外の
+code／binding／Cronまで置き換え得るためである。review済みON/OFF version IDを事前固定し、条件付き切替を
+検証する仕組みが完成するまで、実停止は一般公開のblockerである。広いOFFを含むrepository内の外部deploy
+経路も廃止済みなので、本人2台のpersonal stagingでもdry-runを停止とみなさず、利用を中断して承認済み
+incident responseへescalateする。鍵漏えい、紛失、backup不一致が疑われる場合は次を行う。
 
 1. 通常写真共有を即時OFFにし、Primary/backupの鍵使用を停止する。
 2. Audit/case IDだけを保存し、鍵や復号画像をincident channelへ貼らない。
 3. 影響期間、使用者、export履歴、local artifact削除状態を確認する。
 4. 新しいkey ID/public key、Server allow-list、client configを一体でrotateする。旧keyで暗号化された
    未処理reportをどう閉じるかをprivacy/legal責任者が決めるまで、推測で復号または再暗号化しない。
-5. 専用report-ingestion kill switchとkey rotationを実装・検証してから共有を再開する。
+5. 原因とrotation後のacceptance windowをreviewし、別の承認済み変更で受付を再開する。
 
 ## Production開始前に残るblocker
 
@@ -228,7 +274,7 @@ Audit JSONLは画像を含まないため、security audit retention policyに�
 - Committed reportだけをprivate R2から取得し、同じD1 snapshotのexact manifestを返す、強いoperator認証・
   二人承認・rate limit・access audit付きremote export API
 - Operator decision、user response、appeal、早期content deletionを記録するadmin workflow
-- 通常runtimeとは独立したreport-ingestion kill switchと、鍵ID rotation中の明確なacceptance window
+- 事前固定したreview済みversion IDとactive version条件を使う原子的な選択的OFF、対象productionでの実停止訓練、鍵ID rotation中の明確なacceptance window
 - Offline端末のWindows ACL/POSIX permission、encrypted volume、backup除外を確認する実運用drill
 - Productionに近いSwift生成fixtureを使ったcross-platform compatibility試験。現在の自動試験は同じ
   field順、binary plist、X25519/HKDF/AAD/ChaCha combinedを再現する合成fixtureで、秘密鍵はtest内だけにある

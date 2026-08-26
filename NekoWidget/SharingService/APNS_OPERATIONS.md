@@ -92,10 +92,11 @@ DELETEの成功responseは、呼び出したrouteと同じprotocol versionを返
 ## Staging gate
 
 1. Apple Developerでアプリ本体App IDのPush Notificationsを有効にし、配布profileを再生成する。
-2. `0011_apns_route_schema.sql`までD1 migrationを順番に適用する。`0008`は1人の複数iPhone、`0009`は同じAPNs tokenを持つ複数binding、`0010`は1台だけを解除しても同じ参加者の名前・ハート・再送防止情報を消さないために必要である。`0011`は旧active-only routeと新targeted routeをserverで区別し、rollbackした旧clientが非選択まどの通知を誤解釈しないために必要である。migration後、Workerを更新する前に`npm run notification-staging:status`を実行する。このread-only確認は`route_schema_version`を直接参照するため、未適用なら失敗する。
+2. `0011_apns_route_schema.sql`までD1 migrationを順番に適用する。`0008`は1人の複数iPhone、`0009`は同じAPNs tokenを持つ複数binding、`0010`は1台だけを解除しても同じ参加者の名前・ハート・再送防止情報を消さないために必要である。`0011`は旧active-only routeと新targeted routeをserverで区別し、rollbackした旧clientが非選択まどの通知を誤解釈しないために必要である。
 3. 上記二つのSecretを、development／productionを混同せず対象Workerへ登録する。TestFlightは`production`と`https://api.push.apple.com`を使う。
 4. `npm run notification-staging:config:render`でignored ON候補を作り、`npm run notification-staging:config:check`を通す。これはdeployしない。
-5. 明示承認後にだけ同じcandidateをdeployし、署名PUT、moment/heart各1件、APNs HTTP `200`、署名DELETE、`APNS_RUNTIME_ENABLED=NO`へのrollbackを実機で確認する。
+5. migrationとignored configの準備後、Workerを更新する前に`npm run notification-staging:status`を実行する。このread-only確認は`route_schema_version`を直接参照するため、未適用なら失敗する。ただしactive Workerとconfigの一致は証明しない。
+6. 一般配布前には、同じreview済みcode／bindingからON・OFF versionを事前固定し、active version条件付き切替を実装・検証した後にだけ、署名PUT、moment/heart各1件、APNs HTTP `200`、署名DELETE、`APNS_RUNTIME_ENABLED=NO`へのrollbackを実機で確認する。現時点のcandidateを通常deployで切り替えない。
 6. Cloudflare outbound `fetch`とAPNsの実接続はmock testでは証明できない。sandbox／productionの実`200`が取れなければ公開せず、APNs provider部分をHTTP/2対応serviceへ分離する。
 
 ## 古いWorkerへ戻す場合
@@ -113,7 +114,7 @@ DELETEの成功responseは、呼び出したrouteと同じprotocol versionを返
 
 ## 件数だけの運用確認
 
-ON候補を作成・検証済みで、対象Workerへ既に配備されているときだけ、次を実行できます。
+ON候補を作成・検証済みで、そのconfigが参照する隔離済みstaging D1を確認するときだけ、次を実行できます。
 
 ```powershell
 npm run notification-staging:status
@@ -123,11 +124,39 @@ npm run notification-staging:status
 
 - 有効subscription：`environment`ごとの件数
 - 未期限切れevent：`new_moment`／`heart`ごとの件数
-- delivery：`state`、粗いHTTP status（`200`／`other`）、匿名化したreason区分ごとの件数
+- delivery：`state`、粗いHTTP status（`200`／`other`）、識別子を含まないreason区分ごとの件数
 
 ID、device ID、APNs token/digest/ciphertext、写真、まど名、暗号文、raw provider reasonは読み取りも表示もしません。`accepted/200`はAPNs受付の証拠ですが、端末の表示・background実行・Widget更新の証拠ではありません。
 
+このコマンドは現在activeなWorkerのcode、binding、runtime flag、Cron、または同じD1へ配備されていることを
+証明しません。一般配布前には、active deploymentとreview済みmanifestの一致を別のfail-closedな手順で
+証明する必要があり、未整備の間はrelease blockerです。
+
 eventとdeliveryは、受信側がアプリを開いて署名済み同期／ACKを行うと直ちに消えることがあります。APNsの確認時は、**受信側アプリを開く前**にこの集計を取り、写真送信後およそ30秒と70秒の二度で確認します。即時`waitUntil`配送または毎分cronのどちらでも、対象の写真は`new_moment`、ハートは`heart`として`accepted/200`を期待します。
+
+## APNsだけのOFF候補を検証する（実停止ではない）
+
+通知provider、token暗号鍵、誤routing、想定外の通知件数に異常があるときは、写真共有・通報・block・
+cleanupを止めず、`APNS_RUNTIME_ENABLED`だけを`NO`へ戻す候補を使う。先に
+[`STAGING.md`の一般配布候補config手順](STAGING.md#一般配布候補の独立停止config生成検証のみ)で4つの
+ignored configを生成し、`npm run selective-staging-off:config:check`を通す。必要なD1／rate-limit IDは
+その手順どおり現在のprocess環境だけから与え、file、chat、logへ書かない。
+
+現時点で自動化するのは、外部変更を行わないcandidate検証とlocal bundleのdry-runまでである。
+
+```powershell
+npm run staging:runtime:apns-off
+```
+
+`--confirm-apns-only-off`は意図的に失敗し、deployしない。Wranglerの通常deployでは、現在のactive
+versionと原子的に比較しながら変数1つだけを変更できず、Worker code、binding、Cronを同時に置き換える
+可能性があるためである。事前に同じreview済みcode／bindingからON・OFF versionを作り、そのversion IDを
+保護されたmanifestへ固定し、active versionへの条件付き切替を検証できるまでは、一般配布環境の
+APNs-only実停止を自動実行しない。
+
+広いOFFを含むrepository内の外部deploy経路も廃止済みである。本人2台のpersonal stagingでもdry-runを
+停止とみなさず、利用を中断して承認済みincident responseへescalateする。一般配布ではこの未整備自体を
+release blockerとする。
 
 ## 最終APNs smoke（手動確認は一度だけ）
 
@@ -137,4 +166,4 @@ eventとdeliveryは、受信側がアプリを開いて署名済み同期／ACK�
 2. 受信側を閉じ、送信側から**新しい**写真を一枚届ける。受信側を開く前に集計で`new_moment`の`accepted/200`を確認する。通知後に別のまどを選択してから通知をタップし、対象のまどへ切り替わって対象写真の詳細が開くこと、Widgetが対象まどの検証済みcacheへ更新されることを確認する。
 3. 受信側からその写真へ**新しい**ハートを一回送る。送信側を閉じたまま集計で`heart`の`accepted/200`を確認する。通知後に別のまどを選択してから通知をタップし、対象のまどへ切り替わって「自分が届けた写真」の対象行が示されることを確認する。
 
-すでに同期済みの写真、すでに送ったハート、通知がOFFの端末ではeventが出ないかdeliveryが先に消えるため、このsmokeの証拠には使いません。失敗時はIDやpayloadを採取せず、上記の匿名集計、Cloudflareのcron実行時刻・error件数、iPhoneの診断コードだけを確認します。
+すでに同期済みの写真、すでに送ったハート、通知がOFFの端末ではeventが出ないかdeliveryが先に消えるため、このsmokeの証拠には使いません。失敗時はIDやpayloadを採取せず、上記の識別子を含まない集計、Cloudflareのcron実行時刻・error件数、iPhoneの診断コードだけを確認します。件数は小さい母数でも抑制しないため、operator専用とし、個人の状態を推測できる可能性を前提に外部共有しません。

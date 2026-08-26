@@ -16,7 +16,11 @@ import {
   verifyEd25519,
 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
-import { positiveIntegerSetting, type Env } from "./env";
+import {
+  positiveIntegerSetting,
+  reportIngestionRuntimeEnabled,
+  type Env,
+} from "./env";
 import {
   enforceRateLimit,
   parseJsonBody,
@@ -352,6 +356,23 @@ async function consumeReportAndThrow(
 ): Promise<never> {
   await consumeReportNonce(env, member, context);
   throw error;
+}
+
+async function requireReportIngestionRuntime(
+  env: Env,
+  member: AuthenticatedMember,
+  context: MomentContextRow,
+): Promise<void> {
+  if (reportIngestionRuntimeEnabled(env)) return;
+  // Authentication and signature verification happen before this gate. Burn
+  // the signed nonce as well so a request rejected during an emergency stop
+  // cannot be replayed after ingestion is enabled again.
+  await consumeReportNonce(env, member, context);
+  throw new ApiError(
+    503,
+    "report_ingestion_runtime_disabled",
+    "New reports are temporarily unavailable.",
+  );
 }
 
 async function signedReportRequest(
@@ -2120,6 +2141,7 @@ async function recordExistingReportReservation(
 
 export async function reserveMomentReport(request: Request, env: Env): Promise<Response> {
   const { body, member, context } = await signedReportRequest(request, env);
+  await requireReportIngestionRuntime(env, member, context);
   let clientRequestID: string;
   let momentID: string;
   let reasonCode: "objectionable" | "harassment" | "privacy" | "other";
@@ -2497,12 +2519,13 @@ export async function uploadMomentReportCiphertext(
 ): Promise<Response> {
   const reportID = opaqueId(reportIDValue, "report");
   requireOctetStream(request);
-  const bucket = requireModerationBucket(env);
   const { body, member, context } = await signedReportRequest(
     request,
     env,
     MAXIMUM_MOMENT_CIPHERTEXT_BYTES,
   );
+  await requireReportIngestionRuntime(env, member, context);
+  const bucket = requireModerationBucket(env);
   if (body.length < minimumAEADCiphertextBytes) {
     return consumeReportAndThrow(
       env,
@@ -2593,8 +2616,9 @@ export async function commitMomentReport(
   reportIDValue: string,
 ): Promise<Response> {
   const reportID = opaqueId(reportIDValue, "report");
-  const bucket = requireModerationBucket(env);
   const { body, member, context } = await signedReportRequest(request, env);
+  await requireReportIngestionRuntime(env, member, context);
+  const bucket = requireModerationBucket(env);
   let clientRequestID: string;
   try {
     const object = parseJsonBody(request, body);

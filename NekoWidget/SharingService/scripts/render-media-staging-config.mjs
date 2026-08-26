@@ -16,7 +16,7 @@ try {
   });
   await writeFile(outputPath, rendered, { encoding: "utf8", flag: "wx", mode: 0o600 });
   console.log("Created ignored wrangler.media-staging-on.jsonc with moment, reaction, and window-name runtimes ON.");
-  console.log("The legacy sharing runtime remains locked OFF; no deployment was performed.");
+  console.log("Report ingestion, APNs, and legacy sharing remain locked OFF; no deployment was performed.");
   console.log("No Cloudflare resource identifier was printed.");
 } catch (error) {
   console.error(
