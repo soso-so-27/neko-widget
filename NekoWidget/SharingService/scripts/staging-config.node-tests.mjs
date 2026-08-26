@@ -270,6 +270,7 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0009_multi_window_apns_tokens.sql", 21],
     ["0010_multi_device_shared_data.sql", 7],
     ["0011_apns_route_schema.sql", 3],
+    ["0012_moderation_case_lifecycle.sql", 11],
   ]);
   for (const [name, expectedStatementCount] of expectedStatementCounts) {
     const migration = await readFile(join(projectDirectory, "migrations", name));

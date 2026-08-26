@@ -139,6 +139,21 @@ keychain serviceは削除専用として読み戻し・移行を行わない。�
 再pairingが必要になるが、旧資格を新installへ持ち越さない。Extensionからのdirect network
 sendは今後も解除せず、複数端末を追加する場合はhost handoffまたはApp Attest等の別設計で行う。
 
+## moderation case lifecycle
+
+Migration `0012_moderation_case_lifecycle.sql`は、committed reportごとに最小のcaseを同じD1 transactionで
+自動作成する。caseは既存の`moment_report_tombstones`を参照し、`report_id`、`committed_at`、
+`review_due_at`だけを持つ。participant、device、object key、hash、reason、暗号文をcaseへ追加コピーせず、
+通常のreport evidence cleanup後も初回確認期限のreceiptだけを保持する。期限はDB制約で
+`review_due_at = committed_at + 172800`に固定する。
+
+review lifecycleはmutableなstatus列ではなく、DB時刻でのみ追加できる`review_started`と、その後にだけ
+追加できる`review_decided`のappend-only eventで表す。既存tombstoneのbackfillはcaseだけを作り、cleanupや
+local artifactから人手確認を推測しない。このため過去caseは未着手、期限経過時はSLA超過になる。
+ここでのSLAは初回`review_started`が48時間以内かであり、判断完了期限ではない。Migrationはoperator route、
+R2 export、operator identity/access audit、user response、appeal、早期削除を追加しないため、これらは
+引き続きrelease blockerである。
+
 ## release境界
 
 コードと隔離stagingは、運用フラグOFFのまま実装・検証できる。次が揃うまでproduction、

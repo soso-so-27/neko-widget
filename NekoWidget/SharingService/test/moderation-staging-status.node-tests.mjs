@@ -148,7 +148,7 @@ test("bounds moderation Wrangler execution and enforces its process environment"
 });
 
 const validResponses = Object.freeze({
-  schema: successfulRows([{ table_count: 2 }]),
+  schema: successfulRows([{ table_count: 4 }]),
   lifecycle: successfulRows([
     { state: "committed", count: 3 },
     { state: "reserved", count: 1 },
@@ -158,6 +158,14 @@ const validResponses = Object.freeze({
     from_24h_to_48h: 1,
     over_48h: 1,
     future_count: 0,
+  }]),
+  "review-lifecycle": successfulRows([{
+    unreviewed: 2,
+    in_review: 1,
+    decided: 3,
+    sla_exceeded: 1,
+    future_count: 0,
+    future_event_count: 0,
   }]),
   cleanup: successfulRows([{
     expired_upload_reports: 1,
@@ -203,11 +211,17 @@ test("runs exactly the reviewed aggregate-only queries through report-ingestion 
     },
   });
 
-  assert.equal(commands.length, 4);
+  assert.equal(commands.length, 5);
   assert.deepEqual(status, {
     schema: [{ state: "ready" }],
     lifecycle: [{ state: "committed", count: 3 }, { state: "reserved", count: 1 }],
     "committed-age": { under24h: 1, from24hTo48h: 1, over48h: 1 },
+    "review-lifecycle": {
+      unreviewed: 2,
+      inReview: 1,
+      decided: 3,
+      slaExceeded: 1,
+    },
     cleanup: {
       expiredUploadReports: 1,
       expiredContentReports: 0,
@@ -219,6 +233,10 @@ test("runs exactly the reviewed aggregate-only queries through report-ingestion 
   assert.match(text, /read-only aggregates/u);
   assert.match(text, /not review SLA/u);
   assert.match(text, /over_48h=1/u);
+  assert.match(text, /unreviewed=2/u);
+  assert.match(text, /in_review=1/u);
+  assert.match(text, /decided=3/u);
+  assert.match(text, /sla_exceeded=1/u);
   assert.doesNotMatch(text, /must-not-pass-through/u);
 });
 
@@ -279,7 +297,7 @@ test("fails closed when the moderation schema is unavailable", async () => {
   );
 });
 
-test("fails closed for future report timestamps and inconsistent cleanup counts", async () => {
+test("fails closed for future timestamps and inconsistent aggregate counts", async () => {
   await assert.rejects(
     collectModerationStagingStatus({
       projectDirectory,
@@ -298,6 +316,72 @@ test("fails closed for future report timestamps and inconsistent cleanup counts"
       },
     }),
     /future timestamps/u,
+  );
+
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "review-lifecycle") {
+          return successfulRows([{
+            unreviewed: 0,
+            in_review: 0,
+            decided: 0,
+            sla_exceeded: 0,
+            future_count: 1,
+            future_event_count: 0,
+          }]);
+        }
+        return validResponses[query.name];
+      },
+    }),
+    /future case timestamps/u,
+  );
+
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "review-lifecycle") {
+          return successfulRows([{
+            unreviewed: 0,
+            in_review: 1,
+            decided: 0,
+            sla_exceeded: 0,
+            future_count: 0,
+            future_event_count: 1,
+          }]);
+        }
+        return validResponses[query.name];
+      },
+    }),
+    /future event timestamps/u,
+  );
+
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        const query = queryForCommand(command);
+        if (query?.name === "review-lifecycle") {
+          return successfulRows([{
+            unreviewed: 1,
+            in_review: 0,
+            decided: 0,
+            sla_exceeded: 2,
+            future_count: 0,
+            future_event_count: 0,
+          }]);
+        }
+        return validResponses[query.name];
+      },
+    }),
+    /inconsistent counts/u,
   );
 
   await assert.rejects(

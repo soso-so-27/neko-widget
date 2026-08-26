@@ -27,8 +27,9 @@ npm run moderation-staging:status
 
 固定されたstaging D1へ、review済みの`SELECT`だけを実行する。引数、任意SQL、任意database、任意configを
 受け付けず、表示するのはreport lifecycleの件数、committed reportの`24時間未満 / 24〜48時間 /
-48時間超`という年齢帯、期限切れcleanupとreport object削除待ちの件数だけである。ID、氏名、端末、
-object key、hash、暗号文、URL、秘密値、理由、写真本文は読み取りも表示もしない。
+48時間超`というcontent年齢帯、caseの`未着手 / 確認中 / 判断済み / 初回確認SLA超過`、期限切れcleanupと
+report object削除待ちの件数だけである。ID、氏名、端末、object key、hash、暗号文、URL、秘密値、理由、
+写真本文は読み取りも表示もしない。
 
 このコマンドが証明するのは、そのD1のschemaと識別子を含まない集計だけである。件数は少数でも抑制せず
 exact表示するため、担当者が既知の出来事と照合すれば通報の発生や時刻帯を推測できる場合がある。出力を
@@ -36,9 +37,18 @@ exact表示するため、担当者が既知の出来事と照合すれば通報
 runtime flag、Cron、または同じD1へ配備されていることは検証しない。一般配布前には、active deploymentと
 review済みmanifestの一致を別のfail-closedな手順で証明する必要があり、未整備の間はrelease blockerとする。
 
-`48時間超`は**reportの作成時刻帯であり、未確認やSLA違反を証明する値ではない**。現行Serverには
-人手確認の完了receiptがないため、担当者の短期local台帳と突き合わせる。件数だけで個別caseを推測せず、
-異常な滞留またはcleanup待ちを見つけたときは新規受付を独立停止してから運用incidentとして調べる。
+`committed_report_age`の`48時間超`は**contentの作成時刻帯であり、未確認やSLA違反を示さない**。
+Migration `0012_moderation_case_lifecycle.sql`は、report commitと同じtransaction内でPIIを追加コピーしない
+caseを作り、`review_due_at = committed_at + 48時間`をDB制約で固定する。review状態はmutableな列ではなく、
+DB時刻だけで追加できる`review_started`、続いて`review_decided`というappend-only eventで表す。
+`sla_exceeded`は**初回確認開始が48時間以内だったか**を示し、判断完了まで48時間以内だったとは主張しない。
+
+既存tombstoneのbackfillでは、人手確認済みと推測できる根拠がないためeventを一件も作らない。したがって、
+過去caseは意図的に未着手、時刻によってはSLA超過として表示される。cleanup済み、local復号済み、画像削除済み
+という事実からreview開始または判断済みを補わない。現時点には認証済みoperator routeもoperator identityの
+access auditもなく、通常アプリやstatus commandからeventは書けない。このschemaは安全な保存先の基礎であり、
+実際の人手確認運用が完成した証明ではない。件数だけで個別caseを推測せず、異常な滞留またはcleanup待ちを
+見つけたときは新規受付を独立停止してから運用incidentとして調べる。
 
 ## 鍵の準備と保管
 
@@ -273,7 +283,8 @@ incident responseへescalateする。鍵漏えい、紛失、backup不一致が�
 - Production X25519鍵の承認済み生成、二人管理backup、rotation、廃棄（このrepositoryには置かない）
 - Committed reportだけをprivate R2から取得し、同じD1 snapshotのexact manifestを返す、強いoperator認証・
   二人承認・rate limit・access audit付きremote export API
-- Operator decision、user response、appeal、早期content deletionを記録するadmin workflow
+- Migration 0012のappend-only case eventへ強く認証したoperator identityとaccess auditを結び、
+  decision、user response、appeal、早期content deletionを扱うadmin workflow
 - 事前固定したreview済みversion IDとactive version条件を使う原子的な選択的OFF、対象productionでの実停止訓練、鍵ID rotation中の明確なacceptance window
 - Offline端末のWindows ACL/POSIX permission、encrypted volume、backup除外を確認する実運用drill
 - Productionに近いSwift生成fixtureを使ったcross-platform compatibility試験。現在の自動試験は同じ

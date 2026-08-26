@@ -1391,8 +1391,18 @@ describe("append-only encrypted moments", () => {
     );
     expect(commit.status).toBe(201);
     const committed = await commit.json<{
-      report: { contentExpiresAt: number };
+      report: { committedAt: number; contentExpiresAt: number };
     }>();
+    expect(await testEnv.DB.prepare(
+      `SELECT committed_at, review_due_at
+         FROM moderation_cases WHERE report_id = ?`,
+    ).bind(report.report.id).first()).toEqual({
+      committed_at: committed.report.committedAt,
+      review_due_at: committed.report.committedAt + 172_800,
+    });
+    expect((await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM moderation_case_events WHERE report_id = ?",
+    ).bind(report.report.id).first<{ count: number }>())?.count).toBe(0);
     const row = await testEnv.DB.prepare(
       "SELECT object_key FROM moment_reports WHERE id = ?",
     ).bind(report.report.id).first<{ object_key: string }>();
@@ -1439,6 +1449,9 @@ describe("append-only encrypted moments", () => {
       .bind(report.report.id).first()).toBeNull();
     expect(await testEnv.DB.prepare(
       "SELECT report_id FROM moment_report_tombstones WHERE report_id = ?",
+    ).bind(report.report.id).first()).not.toBeNull();
+    expect(await testEnv.DB.prepare(
+      "SELECT report_id FROM moderation_cases WHERE report_id = ?",
     ).bind(report.report.id).first()).not.toBeNull();
   });
 

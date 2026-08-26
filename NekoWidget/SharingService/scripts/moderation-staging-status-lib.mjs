@@ -21,7 +21,12 @@ export const moderationStatusQueries = Object.freeze([
     sql: `SELECT COUNT(*) AS table_count
             FROM sqlite_schema
            WHERE type = 'table'
-             AND name IN ('moment_reports', 'moment_object_deletions')`,
+             AND name IN (
+               'moment_reports',
+               'moment_object_deletions',
+               'moderation_cases',
+               'moderation_case_events'
+             )`,
   }),
   Object.freeze({
     name: "lifecycle",
@@ -45,6 +50,44 @@ export const moderationStatusQueries = Object.freeze([
               WHEN committed_at > unixepoch() THEN 1 ELSE 0 END), 0) AS future_count
            FROM moment_reports
           WHERE state = 'committed'`,
+  }),
+  Object.freeze({
+    name: "review-lifecycle",
+    sql: `SELECT
+            COALESCE(SUM(CASE WHEN review_started_at IS NULL THEN 1 ELSE 0 END), 0)
+              AS unreviewed,
+            COALESCE(SUM(CASE
+              WHEN review_started_at IS NOT NULL AND decided_at IS NULL THEN 1 ELSE 0 END), 0)
+              AS in_review,
+            COALESCE(SUM(CASE WHEN decided_at IS NOT NULL THEN 1 ELSE 0 END), 0)
+              AS decided,
+            COALESCE(SUM(CASE
+              WHEN (review_started_at IS NULL AND review_due_at < unixepoch())
+                OR review_started_at > review_due_at THEN 1 ELSE 0 END), 0)
+              AS sla_exceeded,
+            COALESCE(SUM(CASE WHEN committed_at > unixepoch() THEN 1 ELSE 0 END), 0)
+              AS future_count,
+            COALESCE(SUM(CASE
+              WHEN latest_event_at > unixepoch() THEN 1 ELSE 0 END), 0)
+              AS future_event_count
+           FROM (
+             SELECT moderation_case.report_id,
+                    moderation_case.committed_at,
+                    moderation_case.review_due_at,
+                    MIN(CASE
+                      WHEN event.event_type = 'review_started' THEN event.recorded_at END)
+                      AS review_started_at,
+                    MIN(CASE
+                      WHEN event.event_type = 'review_decided' THEN event.recorded_at END)
+                      AS decided_at,
+                    MAX(event.recorded_at) AS latest_event_at
+               FROM moderation_cases AS moderation_case
+               LEFT JOIN moderation_case_events AS event
+                 ON event.report_id = moderation_case.report_id
+              GROUP BY moderation_case.report_id,
+                       moderation_case.committed_at,
+                       moderation_case.review_due_at
+           ) AS lifecycle`,
   }),
   Object.freeze({
     name: "cleanup",
@@ -119,7 +162,7 @@ function validateSchemaRows(rows) {
     throw new Error("moderation schema check returned an unexpected response");
   }
   requireExactKeys(rows[0], ["table_count"]);
-  if (requireCount(rows[0].table_count) !== 2) {
+  if (requireCount(rows[0].table_count) !== 4) {
     throw new Error("moderation schema is unavailable");
   }
   return Object.freeze([{ state: "ready" }]);
@@ -154,6 +197,35 @@ function validateCommittedAgeRows(rows) {
   });
 }
 
+function validateReviewLifecycleRows(rows) {
+  if (rows.length !== 1) {
+    throw new Error("moderation review-lifecycle query returned an unexpected response");
+  }
+  const row = rows[0];
+  requireExactKeys(row, [
+    "unreviewed",
+    "in_review",
+    "decided",
+    "sla_exceeded",
+    "future_count",
+    "future_event_count",
+  ]);
+  if (requireCount(row.future_count) !== 0) {
+    throw new Error("moderation review lifecycle found future case timestamps");
+  }
+  if (requireCount(row.future_event_count) !== 0) {
+    throw new Error("moderation review lifecycle found future event timestamps");
+  }
+  const unreviewed = requireCount(row.unreviewed);
+  const inReview = requireCount(row.in_review);
+  const decided = requireCount(row.decided);
+  const slaExceeded = requireCount(row.sla_exceeded);
+  if (slaExceeded > unreviewed + inReview + decided) {
+    throw new Error("moderation review lifecycle returned inconsistent counts");
+  }
+  return Object.freeze({ unreviewed, inReview, decided, slaExceeded });
+}
+
 function validateCleanupRows(rows) {
   if (rows.length !== 1) {
     throw new Error("moderation cleanup query returned an unexpected response");
@@ -184,6 +256,7 @@ function validatedRows(name, output) {
     case "schema": return validateSchemaRows(rows);
     case "lifecycle": return validateLifecycleRows(rows);
     case "committed-age": return validateCommittedAgeRows(rows);
+    case "review-lifecycle": return validateReviewLifecycleRows(rows);
     case "cleanup": return validateCleanupRows(rows);
     default: throw new Error("moderation status query name is unsupported");
   }
@@ -347,7 +420,8 @@ export function formatModerationStagingStatus(status) {
     "PASS moderation staging status (read-only aggregates; no IDs, names, object keys, hashes, ciphertext, URLs, secrets, reason codes, or report content)",
     `schema: ${status.schema[0].state}`,
     `lifecycle: ${line(status.lifecycle, (row) => `${row.state}=${row.count}`)}`,
-    `committed_report_age (not review SLA): under_24h=${status["committed-age"].under24h}, 24h_to_48h=${status["committed-age"].from24hTo48h}, over_48h=${status["committed-age"].over48h}`,
+    `committed_report_age (content age, not review SLA): under_24h=${status["committed-age"].under24h}, 24h_to_48h=${status["committed-age"].from24hTo48h}, over_48h=${status["committed-age"].over48h}`,
+    `review_lifecycle: unreviewed=${status["review-lifecycle"].unreviewed}, in_review=${status["review-lifecycle"].inReview}, decided=${status["review-lifecycle"].decided}, sla_exceeded=${status["review-lifecycle"].slaExceeded}`,
     `cleanup: expired_upload=${status.cleanup.expiredUploadReports}, expired_content=${status.cleanup.expiredContentReports}, pending_report_deletions=${status.cleanup.pendingReportDeletions}, due_report_deletions=${status.cleanup.dueReportDeletions}`,
   ].join("\n");
 }
