@@ -1225,7 +1225,13 @@ struct PhotoBrowserView: View {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
-                memoryPhotoExportErrorMessage = error.localizedDescription
+                if let exportError = error as? MemoryPhotoJPEGExportError {
+                    memoryPhotoExportErrorMessage = exportError.errorDescription
+                        ?? "写真を準備できませんでした。もう一度お試しください。"
+                } else {
+                    memoryPhotoExportErrorMessage =
+                        "写真を準備できませんでした。もう一度お試しください。"
+                }
             }
         }
     }
