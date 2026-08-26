@@ -402,7 +402,9 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             smoke.count('-xcconfig "$PROJECT_DIRECTORY/Config.Disabled.xcconfig"'),
             2,
         )
-        self.assertIn("NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild", smoke)
+        self.assertIn("launchctl setenv NEKO_EXPECT_DISABLED_RELEASE 1", smoke)
+        self.assertIn("launchctl unsetenv NEKO_EXPECT_DISABLED_RELEASE", smoke)
+        self.assertNotIn("NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild", smoke)
         ui_test = (ROOT / "NekoWidgetUITests/PhotoPermissionUITests.swift").read_text(
             encoding="utf-8"
         )
