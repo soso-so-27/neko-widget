@@ -98,7 +98,8 @@ private struct DiagnosticLogPrivacyVerifier {
             "visibleLiked": "1",
             "priority": "true",
             "pass": "localRecovery512",
-            "sharingFailureReason": "keychain-protected-data-unavailable",
+            "sharingFailureReason": "private-window-migration-unavailable",
+            "sharingRecoveryStage": "authenticated-candidates-ambiguous",
             "status": "limited",
             "photoSource": "family-window",
             "action": "liked",
@@ -122,11 +123,33 @@ private struct DiagnosticLogPrivacyVerifier {
             "priority": "true",
             "requestedPixels": "1024x1024",
             "sharedLiked": "2",
-            "sharingFailureReason": "keychain-protected-data-unavailable",
+            "sharingFailureReason": "private-window-migration-unavailable",
+            "sharingRecoveryStage": "authenticated-candidates-ambiguous",
             "source": "interactive-widget",
             "status": "limited",
             "visibleLiked": "1",
         ], "metadata default-deny boundary failed: \(metadata)")
+
+        for stage in [
+            "authenticated-candidate-missing",
+            "authenticated-candidates-ambiguous",
+            "candidate-promotion-unavailable",
+            "catalog-unavailable",
+            "legacy-conflict-unsafe",
+            "migration-retry-unavailable",
+            "recovered-authority-mismatch",
+            "recovered-state-unavailable",
+            "recovery-locations-unavailable",
+            "target-unavailable",
+            "target-unsafe-to-initialize",
+        ] {
+            try expect(
+                DiagnosticLogPrivacy.sanitizeMetadata([
+                    "sharingRecoveryStage": stage,
+                ]) == ["sharingRecoveryStage": stage],
+                "known recovery stage was lost: \(stage)"
+            )
+        }
 
         let malformedKnownFields = DiagnosticLogPrivacy.sanitizeMetadata([
             "assets": "/private/var/mobile/secret",
@@ -134,6 +157,7 @@ private struct DiagnosticLogPrivacyVerifier {
             "asset": "SUPERSECRET",
             "outputPixels": "2048x1536?token=SUPERSECRET",
             "sharingFailureReason": "raw-error-/private/var/mobile/secret",
+            "sharingRecoveryStage": "raw-stage-/private/var/mobile/secret",
         ])
         try expect(
             malformedKnownFields.isEmpty,

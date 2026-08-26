@@ -328,6 +328,69 @@ enum PrivateWindowCatalogStore {
         return validatedEntry
     }
 
+    /// Preserves a late legacy room after the catalog's owning room
+    /// has been authenticated by the host against its exact Keychain item.
+    ///
+    /// This is deliberately narrower than the ordinary legacy migration:
+    /// callers may use it only after selecting the catalog destination as the
+    /// authoritative recovery candidate. A legacy directory without a valid
+    /// paired identity is never moved here because it may contain an unbound
+    /// report-only marker or other privacy-bearing state that must continue to
+    /// fail closed. A different, fully identified room is moved whole to the
+    /// protected quarantine and is neither merged nor deleted.
+    @discardableResult
+    static func quarantineAuthenticatedLegacyConflictWhileLifecycleLocked(
+        legacyOwnerWindowID: String,
+        expectedSpaceID: String,
+        expectedCredentialAccount: String,
+        now: Date = .now
+    ) throws -> Bool {
+        guard var state = try load(),
+              state.pendingLegacyMigrationWindowID == nil,
+              state.windows.first?.localWindowID == legacyOwnerWindowID,
+              let activeIndex = state.windows.firstIndex(where: {
+                  $0.localWindowID == legacyOwnerWindowID
+              }),
+              state.windows[activeIndex].spaceID == expectedSpaceID,
+              state.windows[activeIndex].credentialAccount
+                == expectedCredentialAccount,
+              let legacy = SharedContainer.legacySharingCacheDirectoryURL,
+              let destination = SharedContainer.windowSharingDirectoryURL(
+                  localWindowID: legacyOwnerWindowID
+              )
+        else { throw Error.conflictingLegacyMigration }
+
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: legacy.path) else { return false }
+        guard fileManager.fileExists(atPath: destination.path),
+              recoveryLocationIsOrdinaryDirectory(legacy),
+              recoveryLocationIsOrdinaryDirectory(destination),
+              let destinationIdentity = try validatedPairingIdentity(
+                  in: destination
+              ),
+              destinationIdentity.spaceID == expectedSpaceID,
+              destinationIdentity.credentialAccount
+                == expectedCredentialAccount
+        else { throw Error.conflictingLegacyMigration }
+        let legacyIdentity = try validatedPairingIdentity(in: legacy)
+        guard legacyIdentity != nil else {
+            // An unbound legacy directory may contain a report-only marker or
+            // other privacy-bearing state. Let the ordinary closed allowlist
+            // decide whether it is replaceable; otherwise bootstrap remains
+            // fail-closed and reports the exact retry stage.
+            return false
+        }
+
+        try moveLegacySharingToQuarantine(legacy)
+        state.windows[activeIndex].updatedAt = max(
+            state.windows[activeIndex].updatedAt,
+            now
+        )
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+        return true
+    }
+
     /// Called by installation bootstrap while it already owns the lifecycle
     /// lock. The first commit makes the migration resumable; the subsequent
     /// same-volume move is atomic and never merges two room directories.
@@ -640,6 +703,19 @@ enum PrivateWindowCatalogStore {
             throw Error.conflictingLegacyMigration
         }
 
+        try moveLegacySharingToQuarantine(
+            legacy,
+            quarantineRoot: explicitQuarantineRoot
+        )
+    }
+
+    private static func moveLegacySharingToQuarantine(
+        _ legacy: URL,
+        quarantineRoot explicitQuarantineRoot: URL? = nil
+    ) throws {
+        guard recoveryLocationIsOrdinaryDirectory(legacy) else {
+            throw Error.conflictingLegacyMigration
+        }
         guard let quarantineRoot = explicitQuarantineRoot
             ?? SharedContainer.privateWindowLegacySharingQuarantineDirectoryURL
         else { throw Error.conflictingLegacyMigration }
@@ -648,6 +724,20 @@ enum PrivateWindowCatalogStore {
             at: quarantineRoot,
             withIntermediateDirectories: true
         )
+        guard recoveryLocationIsOrdinaryDirectory(quarantineRoot) else {
+            throw Error.conflictingLegacyMigration
+        }
+        let retained = try fileManager.contentsOfDirectory(
+            at: quarantineRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        )
+        guard retained.count < 64,
+              retained.allSatisfy({
+                  UUID(uuidString: $0.lastPathComponent) != nil
+                    && recoveryLocationIsOrdinaryDirectory($0)
+              })
+        else { throw Error.conflictingLegacyMigration }
         // Enforce the same protection boundary before the atomic rename. The
         // source already held sharing data, but re-validating it prevents a
         // late writer from downgrading attributes before quarantine.

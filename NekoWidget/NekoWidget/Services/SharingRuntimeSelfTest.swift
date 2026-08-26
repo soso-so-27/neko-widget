@@ -599,6 +599,16 @@ actor SharingRuntimeSelfTestRunner {
                 == .retryable(.keychainUnavailable)
         else { throw PairingError.stateUnavailable }
 
+        for stage in PairingInstallationGuard
+            .PrivateWindowMigrationRecoveryStage.allCases {
+            let error = PairingInstallationGuard.RetryableBootstrapError(
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: stage
+            )
+            guard error.errorDescription?.contains(stage.diagnosticCode) == true
+            else { throw PairingError.stateUnavailable }
+        }
+
         let missingCocoaFile = NSError(
             domain: NSCocoaErrorDomain,
             code: CocoaError.Code.fileReadNoSuchFile.rawValue
@@ -6616,7 +6626,201 @@ actor SharingRuntimeSelfTestRunner {
                   includingPropertiesForKeys: nil
               ).isEmpty) == false
         else { throw PairingError.stateUnavailable }
-        return result
+        return try testCatalogAuthoritativeLegacyConflictRecovery(
+            result,
+            activeDirectory: activeDirectory,
+            quarantineRoot: quarantineRoot
+        )
+    }
+
+    /// Reproduces the Build 65 real-device dead loop: the catalog destination
+    /// is a valid paired room while a late legacy writer leaves another valid
+    /// credential copy beside it. The committed catalog location must win, the
+    /// conflicting copy must be retained whole in quarantine, and report-only
+    /// or other active-room state must remain byte-for-byte unchanged.
+    private static func testCatalogAuthoritativeLegacyConflictRecovery(
+        _ current: PairingInstallationGuard.BootstrapResult,
+        activeDirectory: URL,
+        quarantineRoot: URL
+    ) throws -> PairingInstallationGuard.BootstrapResult {
+        guard let legacy = SharedContainer.legacySharingCacheDirectoryURL,
+              let activeAccount = current.state.credentialAccount
+        else { throw PairingError.stateUnavailable }
+
+        var conflictingCredential = try PairingKeychainStore.load(
+            account: activeAccount,
+            installationMarker: current.state.installationMarker
+        )
+        let conflictingAccount = UUID().uuidString.lowercased()
+        conflictingCredential.account = conflictingAccount
+        defer { try? PairingKeychainStore.delete(account: conflictingAccount) }
+
+        var conflictingState = current.state
+        conflictingState.credentialAccount = conflictingAccount
+        conflictingState.storageRevision = (current.state.storageRevision ?? 0) + 1
+        conflictingState.lastUpdatedAt = current.state.lastUpdatedAt
+            .addingTimeInterval(1)
+        conflictingState = try conflictingState.validated()
+
+        guard var catalog = try PrivateWindowCatalogStore.load(),
+              let activeEntryIndex = catalog.windows.firstIndex(where: {
+                  $0.localWindowID == catalog.activeWindowID
+              })
+        else { throw PairingError.stateUnavailable }
+        let activeWindowID = catalog.activeWindowID
+        let candidateStates = [current.state, conflictingState]
+        let candidateKinds: [PrivateWindowRecoveryLocation.Kind] = [
+            .catalogWindow(localWindowID: activeWindowID),
+            .legacy,
+        ]
+        guard PairingInstallationGuard
+            .runtimeTestCatalogAuthoritativeRecoveryCandidateIndex(
+                states: candidateStates,
+                locationKinds: candidateKinds,
+                catalog: catalog,
+                targetLocalWindowID: activeWindowID
+            ) == 0
+        else { throw PairingError.stateUnavailable }
+        if let otherWindowID = catalog.windows.first(where: {
+            $0.localWindowID != activeWindowID
+        })?.localWindowID {
+            var inactiveOwnerCatalog = catalog
+            inactiveOwnerCatalog.activeWindowID = otherWindowID
+            guard PairingInstallationGuard
+                .runtimeTestCatalogAuthoritativeRecoveryCandidateIndex(
+                    states: candidateStates,
+                    locationKinds: candidateKinds,
+                    catalog: inactiveOwnerCatalog,
+                    targetLocalWindowID: activeWindowID
+                ) == 0
+            else { throw PairingError.stateUnavailable }
+        }
+        catalog.windows[activeEntryIndex].spaceID = nil
+        catalog.windows[activeEntryIndex].credentialAccount = nil
+        guard PairingInstallationGuard
+            .runtimeTestCatalogAuthoritativeRecoveryCandidateIndex(
+                states: candidateStates,
+                locationKinds: candidateKinds,
+                catalog: catalog,
+                targetLocalWindowID: activeWindowID
+            ) == nil,
+              PairingInstallationGuard
+                .runtimeTestCatalogAuthoritativeRecoveryCandidateIndex(
+                    states: [conflictingState],
+                    locationKinds: [.legacy],
+                    catalog: catalog,
+                    targetLocalWindowID: activeWindowID
+                ) == nil
+        else { throw PairingError.stateUnavailable }
+        catalog.pendingLegacyMigrationWindowID = activeWindowID
+        guard PairingInstallationGuard
+            .runtimeTestCatalogAuthoritativeRecoveryCandidateIndex(
+                states: [conflictingState],
+                locationKinds: [.legacy],
+                catalog: catalog,
+                targetLocalWindowID: activeWindowID
+            ) == 0
+        else { throw PairingError.stateUnavailable }
+
+        let activePreservationURL = activeDirectory.appendingPathComponent(
+            ".build66-recovery-preservation",
+            isDirectory: false
+        )
+        let activePreservationBytes = Data(repeating: 0x66, count: 41)
+        try SharingSecureFile.write(
+            activePreservationBytes,
+            to: activePreservationURL
+        )
+        defer { try? FileManager.default.removeItem(at: activePreservationURL) }
+        let fileManager = FileManager.default
+        try SharingLifecycleGate.withExclusive {
+            guard !fileManager.fileExists(atPath: legacy.path) else {
+                throw PairingError.stateUnavailable
+            }
+            try PairingKeychainStore.saveWhileLifecycleLocked(
+                conflictingCredential
+            )
+            try fileManager.copyItem(at: activeDirectory, to: legacy)
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(legacy)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [
+                .prettyPrinted,
+                .sortedKeys,
+                .withoutEscapingSlashes,
+            ]
+            try SharingSecureFile.write(
+                encoder.encode(conflictingState),
+                to: legacy.appendingPathComponent(
+                    "pairing-state.json",
+                    isDirectory: false
+                )
+            )
+            // Without both immutable catalog identifiers, physical location
+            // alone must not decide between different authenticated rooms.
+            try PrivateWindowCatalogStore
+                .updateActiveMetadataWhileLifecycleLocked(
+                    spaceID: nil,
+                    credentialAccount: nil
+                )
+        }
+
+        do {
+            _ = try PairingInstallationGuard.bootstrap()
+            throw PairingError.stateUnavailable
+        } catch let error as PairingInstallationGuard.RetryableBootstrapError {
+            guard error.reason == .privateWindowMigrationUnavailable,
+                  error.migrationRecoveryStage
+                    == .authenticatedCandidatesAmbiguous,
+                  fileManager.fileExists(atPath: activeDirectory.path),
+                  fileManager.fileExists(atPath: legacy.path)
+            else { throw PairingError.stateUnavailable }
+        }
+        try SharingLifecycleGate.withExclusive {
+            try PrivateWindowCatalogStore
+                .updateActiveMetadataWhileLifecycleLocked(
+                    spaceID: current.state.spaceID,
+                    credentialAccount: current.state.credentialAccount
+                )
+        }
+
+        let recovered = try PairingInstallationGuard.bootstrap()
+        let repeated = try PairingInstallationGuard.bootstrap()
+        try SharingLifecycleGate.validate(recovered.lifecycleToken)
+        try SharingLifecycleGate.validate(repeated.lifecycleToken)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let retained = try fileManager.contentsOfDirectory(
+            at: quarantineRoot,
+            includingPropertiesForKeys: nil
+        )
+        let conflictingCopyWasPreserved = retained.contains { directory in
+            let stateURL = directory.appendingPathComponent(
+                "pairing-state.json",
+                isDirectory: false
+            )
+            guard let data = try? Data(contentsOf: stateURL, options: .mappedIfSafe),
+                  let state = try? decoder.decode(PairingState.self, from: data)
+            else { return false }
+            return state.credentialAccount == conflictingAccount
+        }
+        let activePreservationAfter = try Data(
+            contentsOf: activePreservationURL,
+            options: .mappedIfSafe
+        )
+        let retainedCredential = try PairingKeychainStore.load(
+            account: conflictingAccount,
+            installationMarker: current.state.installationMarker
+        )
+        guard recovered.state == current.state,
+              repeated.state == recovered.state,
+              retainedCredential == conflictingCredential,
+              !fileManager.fileExists(atPath: legacy.path),
+              conflictingCopyWasPreserved,
+              activePreservationAfter == activePreservationBytes
+        else { throw PairingError.stateUnavailable }
+        return recovered
     }
 
     private static func opaque(_ byte: UInt8) -> String {

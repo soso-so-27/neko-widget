@@ -51,13 +51,55 @@ enum PairingInstallationGuard {
         case keychainUnavailable = "keychain-unavailable"
     }
 
+    enum PrivateWindowMigrationRecoveryStage:
+        String, CaseIterable, Equatable, Sendable {
+        case catalogUnavailable = "catalog-unavailable"
+        case recoveryLocationsUnavailable = "recovery-locations-unavailable"
+        case authenticatedCandidateMissing = "authenticated-candidate-missing"
+        case authenticatedCandidatesAmbiguous =
+            "authenticated-candidates-ambiguous"
+        case candidatePromotionUnavailable = "candidate-promotion-unavailable"
+        case legacyConflictUnsafe = "legacy-conflict-unsafe"
+        case migrationRetryUnavailable = "migration-retry-unavailable"
+        case targetUnavailable = "target-unavailable"
+        case targetUnsafeToInitialize = "target-unsafe-to-initialize"
+        case recoveredStateUnavailable = "recovered-state-unavailable"
+        case recoveredAuthorityMismatch = "recovered-authority-mismatch"
+
+        var diagnosticCode: String {
+            switch self {
+            case .catalogUnavailable: "PW-01"
+            case .recoveryLocationsUnavailable: "PW-02"
+            case .authenticatedCandidateMissing: "PW-03"
+            case .authenticatedCandidatesAmbiguous: "PW-04"
+            case .candidatePromotionUnavailable: "PW-05"
+            case .legacyConflictUnsafe: "PW-06"
+            case .migrationRetryUnavailable: "PW-07"
+            case .targetUnavailable: "PW-08"
+            case .targetUnsafeToInitialize: "PW-09"
+            case .recoveredStateUnavailable: "PW-10"
+            case .recoveredAuthorityMismatch: "PW-11"
+            }
+        }
+    }
+
     struct RetryableBootstrapError: LocalizedError, Equatable, Sendable {
         let reason: RetryableBootstrapReason
+        let migrationRecoveryStage: PrivateWindowMigrationRecoveryStage?
+
+        init(
+            reason: RetryableBootstrapReason,
+            migrationRecoveryStage: PrivateWindowMigrationRecoveryStage? = nil
+        ) {
+            self.reason = reason
+            self.migrationRecoveryStage = migrationRecoveryStage
+        }
 
         var errorDescription: String? {
             switch reason {
             case .privateWindowMigrationUnavailable:
-                return "共有データの更新を完了できませんでした。データは削除せず保護しています。時間をおいて、もう一度お試しください。"
+                let code = migrationRecoveryStage?.diagnosticCode ?? "PW-00"
+                return "共有データの更新を完了できませんでした。データは削除せず保護しています。診断コード：\(code)"
             default:
                 return "共有の状態を一時的に確認できませんでした。iPhoneのロックを解除したまま、もう一度お試しください。"
             }
@@ -185,7 +227,8 @@ enum PairingInstallationGuard {
                       committed == expected
                 else {
                     throw deferredBootstrapError(
-                        reason: .privateWindowMigrationUnavailable
+                        reason: .privateWindowMigrationUnavailable,
+                        migrationRecoveryStage: .recoveredStateUnavailable
                     )
                 }
                 state = committed
@@ -328,31 +371,111 @@ enum PairingInstallationGuard {
             // cache-only destination. Recover only when exactly one fully
             // validated room also proves its exact Keychain account, then
             // require the ordinary migration bootstrap to succeed again.
-            guard let catalog = try PrivateWindowCatalogStore.load() else {
+            let catalog: PrivateWindowCatalogState
+            do {
+                guard let loaded = try PrivateWindowCatalogStore.load() else {
+                    throw PrivateWindowCatalogStore.Error.invalidCatalog
+                }
+                catalog = loaded
+            } catch {
                 throw deferredBootstrapError(
-                    reason: .privateWindowMigrationUnavailable
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .catalogUnavailable
                 )
             }
-            let discovery = try discoverPairedRecoveryCandidateWhileLocked(
-                installationMarker: marker,
-                targetLocalWindowID: catalog.activeWindowID
-            )
-            guard case let .unique(candidate) = discovery else {
+            guard let legacyOwnerWindowID =
+                    catalog.pendingLegacyMigrationWindowID
+                    ?? catalog.windows.first?.localWindowID
+            else {
                 throw deferredBootstrapError(
-                    reason: .privateWindowMigrationUnavailable
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .targetUnavailable
                 )
             }
-            _ = try promotePairedRecoveryCandidateWhileLocked(
-                candidate,
-                targetLocalWindowID: catalog.activeWindowID,
-                invalidateLifecycle: true
-            )
+            let discovery: PairedRecoveryDiscovery
+            do {
+                discovery = try discoverPairedRecoveryCandidateWhileLocked(
+                    installationMarker: marker,
+                    targetLocalWindowID: legacyOwnerWindowID,
+                    requireCatalogMigrationOwnership: true
+                )
+            } catch let error as RetryableBootstrapError {
+                throw error
+            } catch {
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .recoveryLocationsUnavailable
+                )
+            }
+            let candidate: PairedRecoveryCandidate
+            switch discovery {
+            case .none:
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .authenticatedCandidateMissing
+                )
+            case .ambiguous:
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .authenticatedCandidatesAmbiguous
+                )
+            case let .unique(value):
+                candidate = value
+            }
+            let committedCatalogOwner: Bool
+            if catalog.pendingLegacyMigrationWindowID == nil,
+               case let .catalogWindow(localWindowID) = candidate.location.kind,
+               localWindowID == legacyOwnerWindowID {
+                committedCatalogOwner = true
+            } else {
+                committedCatalogOwner = false
+            }
+            do {
+                if committedCatalogOwner {
+                    // The authenticated owner may be the first legacy slot
+                    // while another window is selected. Do not switch the
+                    // user's active window merely to remove a stale path.
+                    _ = try SharingLifecycleGate.bumpEpochWhileLocked()
+                    try DailySharingStateStore
+                        .revokeAllSyncLeasesWhileLifecycleLocked()
+                } else {
+                    _ = try promotePairedRecoveryCandidateWhileLocked(
+                        candidate,
+                        targetLocalWindowID: legacyOwnerWindowID,
+                        invalidateLifecycle: true
+                    )
+                }
+            } catch let error as RetryableBootstrapError {
+                throw error
+            } catch {
+                throw deferredBootstrapError(
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .candidatePromotionUnavailable
+                )
+            }
+            if let spaceID = candidate.state.spaceID,
+               let credentialAccount = candidate.state.credentialAccount {
+                do {
+                    _ = try PrivateWindowCatalogStore
+                        .quarantineAuthenticatedLegacyConflictWhileLifecycleLocked(
+                            legacyOwnerWindowID: legacyOwnerWindowID,
+                            expectedSpaceID: spaceID,
+                            expectedCredentialAccount: credentialAccount
+                        )
+                } catch {
+                    throw deferredBootstrapError(
+                        reason: .privateWindowMigrationUnavailable,
+                        migrationRecoveryStage: .legacyConflictUnsafe
+                    )
+                }
+            }
             do {
                 _ = try PrivateWindowCatalogStore
                     .bootstrapLegacyMigrationWhileLifecycleLocked()
             } catch {
                 throw deferredBootstrapError(
-                    reason: .privateWindowMigrationUnavailable
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .migrationRetryUnavailable
                 )
             }
         }
@@ -514,7 +637,8 @@ enum PairingInstallationGuard {
     ) throws -> PairingState {
         guard let catalog = try PrivateWindowCatalogStore.load() else {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .catalogUnavailable
             )
         }
         let targetLocalWindowID = catalog.activeWindowID
@@ -558,7 +682,8 @@ enum PairingInstallationGuard {
               })
         else {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .targetUnavailable
             )
         }
 
@@ -597,7 +722,8 @@ enum PairingInstallationGuard {
                 return .stored(storedState)
             case .ambiguous:
                 throw deferredBootstrapError(
-                    reason: .privateWindowMigrationUnavailable
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .authenticatedCandidatesAmbiguous
                 )
             case let .unique(candidate):
                 return .recover(candidate)
@@ -610,7 +736,8 @@ enum PairingInstallationGuard {
         ) {
         case .ambiguous:
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .authenticatedCandidatesAmbiguous
             )
         case let .unique(candidate):
             return .recover(candidate)
@@ -621,7 +748,8 @@ enum PairingInstallationGuard {
                   )
             else {
                 throw deferredBootstrapError(
-                    reason: .privateWindowMigrationUnavailable
+                    reason: .privateWindowMigrationUnavailable,
+                    migrationRecoveryStage: .targetUnsafeToInitialize
                 )
             }
             return .initializeEmpty
@@ -633,7 +761,8 @@ enum PairingInstallationGuard {
     /// implicit fallback. Zero or multiple candidates do not mutate storage.
     private static func discoverPairedRecoveryCandidateWhileLocked(
         installationMarker: String,
-        targetLocalWindowID: String
+        targetLocalWindowID: String,
+        requireCatalogMigrationOwnership: Bool = false
     ) throws -> PairedRecoveryDiscovery {
         guard let catalog = try PrivateWindowCatalogStore.load(),
               catalog.windows.contains(where: {
@@ -641,7 +770,8 @@ enum PairingInstallationGuard {
               })
         else {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .targetUnavailable
             )
         }
         let locations: [PrivateWindowRecoveryLocation]
@@ -650,7 +780,8 @@ enum PairingInstallationGuard {
                 .recoveryLocationsWhileLifecycleLocked()
         } catch {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .recoveryLocationsUnavailable
             )
         }
 
@@ -679,6 +810,18 @@ enum PairingInstallationGuard {
                 candidates.append(candidate)
             }
         }
+        if requireCatalogMigrationOwnership, !candidates.isEmpty {
+            guard let authoritative = catalogAuthoritativeRecoveryCandidate(
+                among: candidates,
+                catalog: catalog,
+                targetLocalWindowID: targetLocalWindowID
+            ) else { return .ambiguous }
+            SharedLog.app.info(
+                "pairing",
+                "Catalog migration owner authenticated"
+            )
+            return .unique(authoritative)
+        }
         switch candidates.count {
         case 0:
             return .none
@@ -686,33 +829,85 @@ enum PairingInstallationGuard {
             guard let candidate = candidates.first else { return .none }
             return .unique(candidate)
         default:
-            guard recoveryStatesHaveSingleAuthority(
-                candidates.map(\.state)
-            )
-            else { return .ambiguous }
-
-            // Build 63 can quarantine the same authenticated room more than
-            // once when an older Widget or Share Extension recreates the
-            // legacy directory after migration. Physical copies are not
-            // separate authorities: every candidate above has independently
-            // proved the same installation marker, Keychain account, room key
-            // and immutable member/peer identity. Prefer the highest persisted
-            // revision, then the newest timestamp; location and path are only
-            // deterministic tie-breakers. The unused copies remain quarantined
-            // and are never merged or deleted here.
-            guard let preferred = candidates.min(by: {
-                recoveryCandidateIsPreferred(
-                    $0,
-                    over: $1,
-                    targetLocalWindowID: targetLocalWindowID
+            if recoveryStatesHaveSingleAuthority(candidates.map(\.state)) {
+                // Build 63 can quarantine the same authenticated room more
+                // than once when an older Widget or Share Extension recreates
+                // the legacy directory after migration. Prefer the highest
+                // persisted revision before considering physical location.
+                guard let preferred = candidates.min(by: {
+                    recoveryCandidateIsPreferred(
+                        $0,
+                        over: $1,
+                        targetLocalWindowID: targetLocalWindowID
+                    )
+                }) else { return .none }
+                SharedLog.app.info(
+                    "pairing",
+                    "Equivalent paired recovery copies coalesced"
                 )
-            }) else { return .none }
-            SharedLog.app.info(
-                "pairing",
-                "Equivalent paired recovery copies coalesced"
-            )
-            return .unique(preferred)
+                return .unique(preferred)
+            }
+            if let authoritative = catalogAuthoritativeRecoveryCandidate(
+                among: candidates,
+                catalog: catalog,
+                targetLocalWindowID: targetLocalWindowID
+            ) {
+                SharedLog.app.info(
+                    "pairing",
+                    "Catalog-authoritative paired recovery copy selected"
+                )
+                return .unique(authoritative)
+            }
+            return .ambiguous
         }
+    }
+
+    /// When physical copies describe different authenticated credentials, the
+    /// crash-resumable catalog determines which location owns the selected
+    /// room. During a pending first migration the legacy directory owns it;
+    /// after that commit the active catalog directory owns it. Other copies are
+    /// retained for quarantine and are never merged implicitly.
+    private static func catalogAuthoritativeRecoveryCandidate(
+        among candidates: [PairedRecoveryCandidate],
+        catalog: PrivateWindowCatalogState,
+        targetLocalWindowID: String
+    ) -> PairedRecoveryCandidate? {
+        guard let target = catalog.windows.first(where: {
+                  $0.localWindowID == targetLocalWindowID
+              })
+        else { return nil }
+
+        if catalog.pendingLegacyMigrationWindowID == targetLocalWindowID {
+            let matching = candidates.filter { candidate in
+                guard case .legacy = candidate.location.kind else {
+                    return false
+                }
+                if let spaceID = target.spaceID,
+                   candidate.state.spaceID != spaceID { return false }
+                if let account = target.credentialAccount,
+                   candidate.state.credentialAccount != account { return false }
+                return true
+            }
+            guard matching.count == 1 else { return nil }
+            return matching[0]
+        }
+
+        // Once migration is committed, physical location alone must never
+        // establish authority. The catalog's immutable room and Keychain
+        // account metadata must both identify the authenticated candidate.
+        guard let spaceID = target.spaceID,
+              let account = target.credentialAccount
+        else { return nil }
+        let matching = candidates.filter { candidate in
+            guard case let .catalogWindow(localWindowID) =
+                    candidate.location.kind,
+                  localWindowID == targetLocalWindowID
+            else { return false }
+            return candidate.state.spaceID == spaceID &&
+                candidate.state.credentialAccount == account
+        }
+        guard matching.count == 1 else { return nil }
+        return matching[0]
     }
 
     private static func recoveryCandidateIsPreferred(
@@ -763,7 +958,8 @@ enum PairingInstallationGuard {
               let credentialAccount = candidate.state.credentialAccount
         else {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .candidatePromotionUnavailable
             )
         }
 
@@ -787,7 +983,8 @@ enum PairingInstallationGuard {
                 .revokeAllSyncLeasesWhileLifecycleLocked()
         } catch {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .candidatePromotionUnavailable
             )
         }
 
@@ -799,14 +996,16 @@ enum PairingInstallationGuard {
             recovered = state
         } catch {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .recoveredStateUnavailable
             )
         }
         guard recovered.phase == .paired,
               sameRecoveryAuthority(recovered, candidate.state)
         else {
             throw deferredBootstrapError(
-                reason: .privateWindowMigrationUnavailable
+                reason: .privateWindowMigrationUnavailable,
+                migrationRecoveryStage: .recoveredAuthorityMismatch
             )
         }
         SharedLog.app.info(
@@ -1184,6 +1383,37 @@ enum PairingInstallationGuard {
     ) -> Bool {
         (try? credentialMatchesRecoveryState(credential, state: state)) == true
     }
+
+    static func runtimeTestCatalogAuthoritativeRecoveryCandidateIndex(
+        states: [PairingState],
+        locationKinds: [PrivateWindowRecoveryLocation.Kind],
+        catalog: PrivateWindowCatalogState,
+        targetLocalWindowID: String
+    ) -> Int? {
+        guard states.count == locationKinds.count else { return nil }
+        let candidates = zip(states, locationKinds).enumerated().map {
+            index, pair in
+            PairedRecoveryCandidate(
+                location: PrivateWindowRecoveryLocation(
+                    kind: pair.1,
+                    sharingDirectoryURL: URL(
+                        fileURLWithPath: "/runtime-recovery-\(index)",
+                        isDirectory: true
+                    )
+                ),
+                state: pair.0
+            )
+        }
+        guard let selected = catalogAuthoritativeRecoveryCandidate(
+            among: candidates,
+            catalog: catalog,
+            targetLocalWindowID: targetLocalWindowID
+        ) else { return nil }
+        return candidates.firstIndex {
+            $0.location.sharingDirectoryURL
+                == selected.location.sharingDirectoryURL
+        }
+    }
 #endif
 
     private static func sameRecoveryAuthority(
@@ -1232,7 +1462,8 @@ enum PairingInstallationGuard {
     }
 
     private static func deferredBootstrapError(
-        reason: RetryableBootstrapReason
+        reason: RetryableBootstrapReason,
+        migrationRecoveryStage: PrivateWindowMigrationRecoveryStage? = nil
     ) -> RetryableBootstrapError {
         switch reason {
         case .installationMarkerReadUnavailable:
@@ -1268,13 +1499,16 @@ enum PairingInstallationGuard {
                 ]
             )
         case .privateWindowMigrationUnavailable:
+            var metadata = [
+                "sharingFailureReason": "private-window-migration-unavailable"
+            ]
+            if let migrationRecoveryStage {
+                metadata["sharingRecoveryStage"] = migrationRecoveryStage.rawValue
+            }
             SharedLog.app.warning(
                 "pairing",
                 "Pairing bootstrap deferred",
-                metadata: [
-                    "sharingFailureReason":
-                        "private-window-migration-unavailable"
-                ]
+                metadata: metadata
             )
         case .keychainProtectedDataUnavailable:
             SharedLog.app.warning(
@@ -1291,7 +1525,10 @@ enum PairingInstallationGuard {
                 metadata: ["sharingFailureReason": "keychain-unavailable"]
             )
         }
-        return RetryableBootstrapError(reason: reason)
+        return RetryableBootstrapError(
+            reason: reason,
+            migrationRecoveryStage: migrationRecoveryStage
+        )
     }
 
     /// Called only after an authenticated sharing endpoint proves this member
