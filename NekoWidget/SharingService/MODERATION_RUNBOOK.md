@@ -58,6 +58,21 @@ WebAuthn検証、operator access auditはまだ追加しない。通常アプリ
 実際の人手確認運用が完成した証明ではない。件数だけで個別caseを推測せず、異常な滞留またはcleanup待ちを
 見つけたときは新規受付を独立停止してから運用incidentとして調べる。
 
+### 分離した管理Workerは公開routeなし・runtime OFF
+
+trackedな`wrangler.moderation-operator.disabled.jsonc`と`src/moderation-operator-worker.ts`は、通常の
+写真共有Workerへ管理routeを混在させないためのOFF shellだけを定義する。tracked configは公開origin、
+preview URL、custom route、D1、R2、Cron、Queue、secret、service bindingを宣言せず、runtime flagは
+exact `NO`である。account側に別途存在し得るService Binding、Dashboard route、既存secretまではこの
+fileだけで監査できないため、「ネットワーク上で絶対に到達不能」とは主張しない。仮に呼び出されても、
+OFF時の`/operator/v1`は認証header、body、query、DB、R2を処理する前に一定の503を返す。誤ってflagを
+`YES`にした場合もoperation allow-listは空のため、通報の列挙、閲覧、判断、export、削除を実行できない。
+
+これはdeploy準備完了や運用開始を意味しない。config検証とlocal dry-run以外へ使わず、Cloudflare Access、
+完全なWebAuthn assertion検証、append-only access audit、case参照のversion付きHMAC生成、運用者登録、
+専用rate limitが完成してから別の変更として最小routeを検討する。通常写真bucketの`MEDIA`は管理Workerへ
+bindingしない。decisionと削除はcanonical evidence、hold、domain outboxが完成するまで引き続き拒否する。
+
 ## 鍵の準備と保管
 
 Production鍵はこの変更では生成しない。導入時は次を別の承認済み作業として実施する。

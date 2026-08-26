@@ -105,6 +105,27 @@ npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remot
 
 Apply前の確認promptでdatabase名またはmigration一覧が違う場合は承認しません。trigger migrationはLF改行と括弧付き`CASE`をCIで固定し、Wrangler/D1のremote parser回帰を防ぎます。失敗時はD1が空のままかを確認し、場当たり的なSQLやmigration ledgerの手動挿入で進めません。
 
+### 管理Workerの公開routeなし・runtime OFF shell
+
+`wrangler.moderation-operator.disabled.jsonc`は、将来の通報確認機能を通常の写真共有Workerから
+分離するための**ローカルbundle候補**であり、配備設定ではありません。`workers_dev=false`、
+`preview_urls=false`、custom routeなし、runtimeはexact `NO`で固定し、D1、R2、Cron、Queue、
+service、rate limit、secretのbindingを一つも持ちません。管理APIのoperationもまだ0件です。
+account側で別途Service Bindingやrouteを設定していないことまでは、このtracked configだけでは証明しません。
+仮に外部から呼ばれても、runtime gateが一定の503を返し、operationへ到達させない設計です。
+
+```powershell
+npm run moderation-operator:config:check
+$operatorBundle = Join-Path $env:TEMP ("neko-moderation-operator-disabled-" + [guid]::NewGuid())
+npx --no-install wrangler deploy --dry-run --config wrangler.moderation-operator.disabled.jsonc --outdir $operatorBundle --autoconfig=false --experimental-provision=false --experimental-auto-create=false
+```
+
+このconfigへの通常の`wrangler deploy`、route追加、Dashboardでの変数変更、resource binding追加を
+行いません。Cloudflare Access、完全なWebAuthn検証、append-only access audit、case参照生成、
+運用者登録とrate limitが別々に完成しても、review済みの統合試験と明示承認まではruntimeをONに
+しません。将来D1を追加する場合はcase lifecycleと原子的制約を共有する同じD1だけを使い、通常写真の
+`MEDIA` bindingは管理Workerへ渡しません。
+
 ## 5. bundleのローカル確認
 
 外部uploadを行わないdry-runを先に通します。

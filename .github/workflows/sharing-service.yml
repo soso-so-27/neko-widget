@@ -114,15 +114,10 @@ jobs:
         shell: bash
         run: npm ci --ignore-scripts
 
-      - name: Typecheck Worker
-        working-directory: NekoWidget/SharingService
-        shell: bash
-        run: npm run typecheck
-
       - name: Run Worker, D1, staging, moderation, and key ceremony tests
         working-directory: NekoWidget/SharingService
         shell: bash
-        run: npm run check:staging-config && npm run check:staging-runtime && npm run check:moderation-operator-control-plane && npm run check:moderation-evidence-ledger && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test
+        run: npm run check
 
       - name: Build deployment bundle without publishing
         working-directory: NekoWidget/SharingService
@@ -134,3 +129,11 @@ jobs:
             --config wrangler.jsonc \
             --outdir "$RUNNER_TEMP/neko-sharing-worker"
           test -n "$(find "$RUNNER_TEMP/neko-sharing-worker" -type f -print -quit)"
+          npx --no-install wrangler deploy \
+            --dry-run \
+            --config wrangler.moderation-operator.disabled.jsonc \
+            --outdir "$RUNNER_TEMP/neko-moderation-operator-disabled" \
+            --autoconfig=false \
+            --experimental-provision=false \
+            --experimental-auto-create=false
+          test -n "$(find "$RUNNER_TEMP/neko-moderation-operator-disabled" -type f -print -quit)"
