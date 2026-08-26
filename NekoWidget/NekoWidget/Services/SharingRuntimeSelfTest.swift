@@ -661,13 +661,7 @@ actor SharingRuntimeSelfTestRunner {
               ) == .retryable(.pairingStateReadUnavailable),
               PairingInstallationGuard.pairingStateLoadFailureDisposition(
                   PairingStateStore.LoadError.invalidState
-              ) == .failClosed,
-              !PairingInstallationGuard
-                .runtimeTestRecoveryCandidateCountIsUnique(0),
-              PairingInstallationGuard
-                .runtimeTestRecoveryCandidateCountIsUnique(1),
-              !PairingInstallationGuard
-                .runtimeTestRecoveryCandidateCountIsUnique(2)
+              ) == .failClosed
         else { throw PairingError.stateUnavailable }
 
         let malformedState = DecodingError.dataCorrupted(
@@ -6410,10 +6404,10 @@ actor SharingRuntimeSelfTestRunner {
     }
 
     /// Mirrors the Build 63 failure boundary without deleting any fixture
-    /// data: the valid paired directory is displaced to the protected migration
+    /// data: equivalent paired copies are displaced to the protected migration
     /// quarantine while the active slot contains a synthetic unpaired state.
-    /// Bootstrap must promote the sole marker+Keychain-authenticated candidate
-    /// and preserve the displaced empty slot for later privacy cleanup.
+    /// Bootstrap must choose the newest marker+Keychain-authenticated copy and
+    /// preserve the other copies for later privacy cleanup.
     private static func testQuarantinedPairedStateRecovery(
         _ expected: PairingState,
         previousLifecycleToken: SharingLifecycleGate.Token
@@ -6435,6 +6429,44 @@ actor SharingRuntimeSelfTestRunner {
                 state: expected
             )
         else { throw PairingError.stateUnavailable }
+        guard PairingInstallationGuard
+            .runtimeTestRecoveryStatesHaveSingleAuthority([expected, expected])
+        else { throw PairingError.stateUnavailable }
+        var differentAuthority = expected
+        differentAuthority.spaceID = Self.opaque(0xf1)
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryStatesHaveSingleAuthority([
+                expected,
+                differentAuthority,
+            ])
+        else { throw PairingError.stateUnavailable }
+        differentAuthority = expected
+        differentAuthority.dailyBoundaryMinuteUTC =
+            (expected.dailyBoundaryMinuteUTC ?? 0) + 1
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryStatesHaveSingleAuthority([
+                expected,
+                differentAuthority,
+            ])
+        else { throw PairingError.stateUnavailable }
+        differentAuthority = expected
+        differentAuthority.localDeviceIsAdditional =
+            !(expected.localDeviceIsAdditional ?? false)
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryStatesHaveSingleAuthority([
+                expected,
+                differentAuthority,
+            ])
+        else { throw PairingError.stateUnavailable }
+        differentAuthority = expected
+        differentAuthority.canonicalParticipantSigningPublicKey =
+            Data(repeating: 0x7f, count: 32).base64URLEncodedString()
+        guard !PairingInstallationGuard
+            .runtimeTestRecoveryStatesHaveSingleAuthority([
+                expected,
+                differentAuthority,
+            ])
+        else { throw PairingError.stateUnavailable }
         mismatchedParticipant[0] ^= 0xff
         var mismatchedState = expected
         mismatchedState.participantID = mismatchedParticipant
@@ -6446,10 +6478,19 @@ actor SharingRuntimeSelfTestRunner {
             )
         else { throw PairingError.stateUnavailable }
         let fileManager = FileManager.default
-        let quarantined = quarantineRoot.appendingPathComponent(
-            UUID().uuidString.lowercased(),
-            isDirectory: true
-        )
+        let quarantineCopies = (0..<2).map { _ in
+            quarantineRoot.appendingPathComponent(
+                UUID().uuidString.lowercased(),
+                isDirectory: true
+            )
+        }.sorted {
+            $0.standardizedFileURL.path < $1.standardizedFileURL.path
+        }
+        guard quarantineCopies.count == 2 else {
+            throw PairingError.stateUnavailable
+        }
+        let quarantined = quarantineCopies[0]
+        let duplicateQuarantined = quarantineCopies[1]
         try SharingLifecycleGate.withExclusive {
             guard let originalCatalog = try PrivateWindowCatalogStore.load(),
                   originalCatalog.windows.count == 1,
@@ -6498,9 +6539,37 @@ actor SharingRuntimeSelfTestRunner {
             )
             try SharingSecureFile.enforceProtectionAndBackupExclusion(quarantineRoot)
             guard fileManager.fileExists(atPath: activeDirectory.path),
-                  !fileManager.fileExists(atPath: quarantined.path)
+                  !fileManager.fileExists(atPath: quarantined.path),
+                  !fileManager.fileExists(atPath: duplicateQuarantined.path)
             else { throw PairingError.stateUnavailable }
             try fileManager.moveItem(at: activeDirectory, to: quarantined)
+            try fileManager.copyItem(at: quarantined, to: duplicateQuarantined)
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(
+                duplicateQuarantined
+            )
+            try SharingSecureFile.enforceProtectionAndBackupExclusion(
+                duplicateQuarantined.appendingPathComponent(
+                    "pairing-state.json",
+                    isDirectory: false
+                )
+            )
+            var newestCopy = expected
+            newestCopy.storageRevision = (expected.storageRevision ?? 0) + 7
+            newestCopy.lastUpdatedAt = expected.lastUpdatedAt.addingTimeInterval(7)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [
+                .prettyPrinted,
+                .sortedKeys,
+                .withoutEscapingSlashes,
+            ]
+            try SharingSecureFile.write(
+                encoder.encode(try newestCopy.validated()),
+                to: duplicateQuarantined.appendingPathComponent(
+                    "pairing-state.json",
+                    isDirectory: false
+                )
+            )
             try fileManager.createDirectory(
                 at: activeDirectory,
                 withIntermediateDirectories: true
@@ -6525,6 +6594,8 @@ actor SharingRuntimeSelfTestRunner {
             previousTokenWasInvalidated = true
         }
         try SharingLifecycleGate.validate(result.lifecycleToken)
+        let repeatedBootstrap = try PairingInstallationGuard.bootstrap()
+        try SharingLifecycleGate.validate(repeatedBootstrap.lifecycleToken)
         guard result.state.phase == .paired,
               previousTokenWasInvalidated,
               result.state.installationMarker == expected.installationMarker,
@@ -6532,11 +6603,14 @@ actor SharingRuntimeSelfTestRunner {
               result.state.spaceID == expected.spaceID,
               result.state.participantID == expected.participantID,
               result.state.peerParticipantID == expected.peerParticipantID,
+              result.state.storageRevision == (expected.storageRevision ?? 0) + 7,
+              repeatedBootstrap.state == result.state,
               recoveredCatalog?.windows.count == 2,
               recoveredCatalog?.activeWindowID
                 == recoveredCatalog?.windows.first?.localWindowID,
               FileManager.default.fileExists(atPath: activeDirectory.path),
-              !FileManager.default.fileExists(atPath: quarantined.path),
+              FileManager.default.fileExists(atPath: quarantined.path),
+              !FileManager.default.fileExists(atPath: duplicateQuarantined.path),
               (try? fileManager.contentsOfDirectory(
                   at: quarantineRoot,
                   includingPropertiesForKeys: nil

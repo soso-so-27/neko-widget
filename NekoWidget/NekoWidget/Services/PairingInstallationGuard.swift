@@ -686,7 +686,71 @@ enum PairingInstallationGuard {
             guard let candidate = candidates.first else { return .none }
             return .unique(candidate)
         default:
-            return .ambiguous
+            guard recoveryStatesHaveSingleAuthority(
+                candidates.map(\.state)
+            )
+            else { return .ambiguous }
+
+            // Build 63 can quarantine the same authenticated room more than
+            // once when an older Widget or Share Extension recreates the
+            // legacy directory after migration. Physical copies are not
+            // separate authorities: every candidate above has independently
+            // proved the same installation marker, Keychain account, room key
+            // and immutable member/peer identity. Prefer the highest persisted
+            // revision, then the newest timestamp; location and path are only
+            // deterministic tie-breakers. The unused copies remain quarantined
+            // and are never merged or deleted here.
+            guard let preferred = candidates.min(by: {
+                recoveryCandidateIsPreferred(
+                    $0,
+                    over: $1,
+                    targetLocalWindowID: targetLocalWindowID
+                )
+            }) else { return .none }
+            SharedLog.app.info(
+                "pairing",
+                "Equivalent paired recovery copies coalesced"
+            )
+            return .unique(preferred)
+        }
+    }
+
+    private static func recoveryCandidateIsPreferred(
+        _ lhs: PairedRecoveryCandidate,
+        over rhs: PairedRecoveryCandidate,
+        targetLocalWindowID: String
+    ) -> Bool {
+        let lhsRevision = lhs.state.storageRevision ?? 0
+        let rhsRevision = rhs.state.storageRevision ?? 0
+        if lhsRevision != rhsRevision { return lhsRevision > rhsRevision }
+        if lhs.state.lastUpdatedAt != rhs.state.lastUpdatedAt {
+            return lhs.state.lastUpdatedAt > rhs.state.lastUpdatedAt
+        }
+
+        func rank(_ location: PrivateWindowRecoveryLocation) -> Int {
+            switch location.kind {
+            case let .catalogWindow(localWindowID):
+                return localWindowID == targetLocalWindowID ? 0 : 3
+            case .legacy:
+                return 1
+            case .quarantine:
+                return 2
+            }
+        }
+
+        let lhsRank = rank(lhs.location)
+        let rhsRank = rank(rhs.location)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        return lhs.location.sharingDirectoryURL.standardizedFileURL.path
+            < rhs.location.sharingDirectoryURL.standardizedFileURL.path
+    }
+
+    private static func recoveryStatesHaveSingleAuthority(
+        _ states: [PairingState]
+    ) -> Bool {
+        guard let first = states.first else { return false }
+        return states.dropFirst().allSatisfy {
+            sameRecoveryAuthority($0, first)
         }
     }
 
@@ -1093,13 +1157,11 @@ enum PairingInstallationGuard {
         return try recoveryDirectoryIsSafeForUnpairedInitialization(directory)
     }
 
-    private static func recoveryCandidateCountIsUnique(_ count: Int) -> Bool {
-        count == 1
-    }
-
 #if DEBUG
-    static func runtimeTestRecoveryCandidateCountIsUnique(_ count: Int) -> Bool {
-        recoveryCandidateCountIsUnique(count)
+    static func runtimeTestRecoveryStatesHaveSingleAuthority(
+        _ states: [PairingState]
+    ) -> Bool {
+        recoveryStatesHaveSingleAuthority(states)
     }
 
     static func runtimeTestRecoveryDirectoryIsSafeForUnpairedInitialization(
@@ -1135,6 +1197,11 @@ enum PairingInstallationGuard {
             && lhs.spaceID == rhs.spaceID
             && lhs.memberID == rhs.memberID
             && lhs.resolvedLocalMomentDeviceID == rhs.resolvedLocalMomentDeviceID
+            && lhs.dailyBoundaryMinuteUTC == rhs.dailyBoundaryMinuteUTC
+            && (lhs.localDeviceIsAdditional ?? false) ==
+                (rhs.localDeviceIsAdditional ?? false)
+            && lhs.canonicalParticipantSigningPublicKey
+                == rhs.canonicalParticipantSigningPublicKey
             && lhs.peerMemberID == rhs.peerMemberID
             && lhs.peerParticipantID == rhs.peerParticipantID
             && lhs.peerAgreementPublicKey == rhs.peerAgreementPublicKey
