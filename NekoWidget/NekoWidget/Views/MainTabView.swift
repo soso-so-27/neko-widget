@@ -776,6 +776,15 @@ private struct WindowListView: View {
                 Color(.secondarySystemBackground),
                 in: RoundedRectangle(cornerRadius: 20)
             )
+            .overlay {
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(
+                        isActive
+                            ? Color.accentColor.opacity(0.18)
+                            : Color.primary.opacity(0.05),
+                        lineWidth: 1
+                    )
+            }
             .contentShape(RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
@@ -796,16 +805,13 @@ private struct WindowListView: View {
 
     @ViewBuilder
     private func windowThumbnail(for window: PrivateWindowCatalogEntry) -> some View {
-        Image(systemName: window.spaceID == nil
-            ? "rectangle.on.rectangle.angled"
-            : "person.2.fill")
-            .font(.system(size: 24, weight: .semibold))
-            .foregroundStyle(.tint)
+        SubtleWindowThumbnail(showsSetupMark: window.spaceID == nil)
             .frame(width: 72, height: 72)
             .background(
-                Color.accentColor.opacity(0.10),
+                Color.accentColor.opacity(0.07),
                 in: RoundedRectangle(cornerRadius: 16)
             )
+            .accessibilityHidden(true)
     }
 
     private func open(_ window: PrivateWindowCatalogEntry) {
@@ -900,6 +906,39 @@ private struct WindowListView: View {
         } else {
             EmptyView()
         }
+    }
+}
+
+private struct SubtleWindowThumbnail: View {
+    let showsSetupMark: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor.opacity(0.035))
+
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.accentColor.opacity(0.72), lineWidth: 1.5)
+
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.42))
+                .frame(width: 1)
+                .padding(.vertical, 3)
+
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.42))
+                .frame(height: 1)
+                .padding(.horizontal, 3)
+
+            if showsSetupMark {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Color.accentColor, Color(.secondarySystemBackground))
+                    .offset(x: 14, y: 14)
+            }
+        }
+        .frame(width: 38, height: 38)
     }
 }
 

@@ -769,6 +769,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("pendingPreparationCounts = [:]", count_failure)
         self.assertIn('"送信準備中 \\(pendingCount.formatted())枚"', window_list)
 
+        self.assertIn("SubtleWindowThumbnail(showsSetupMark:", window_list)
+        self.assertIn("private struct SubtleWindowThumbnail: View", main_tab)
+        self.assertIn("Color.accentColor.opacity(0.07)", window_list)
+        self.assertIn("Color.accentColor.opacity(0.18)", window_list)
+
+    def test_settings_prioritizes_daily_safety_and_about_tasks(self) -> None:
+        settings = source("NekoWidget/Views/SettingsView.swift")
+        for section_title in ("日常", "共有と安全", "アプリについて"):
+            self.assertIn(f'Text("{section_title}")', settings)
+
+        self.assertIn('Label("写真の表示と整理"', settings)
+        self.assertIn("private var photoSettingsView: some View", settings)
+        self.assertIn('.navigationTitle("写真")', settings)
+        self.assertIn('Label("ウィジェットの置き方"', settings)
+        self.assertIn('"settings-widget-placement-guide"', settings)
+        self.assertIn('"settings-sharing-review"', settings)
+        self.assertIn('"settings-privacy-policy"', settings)
+        self.assertIn('"settings-support-page"', settings)
+        self.assertNotIn('Text("プライバシーとアプリ情報")', settings)
+
     def test_album_scope_change_keeps_automatic_album_root_visible(self) -> None:
         main_tab = source("NekoWidget/Views/MainTabView.swift")
         scope_change = section(

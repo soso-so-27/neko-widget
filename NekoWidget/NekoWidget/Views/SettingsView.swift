@@ -94,6 +94,170 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
+                NavigationLink {
+                    photoSettingsView
+                } label: {
+                    LabeledContent {
+                        Text(photoSettingsSummary)
+                    } label: {
+                        Label("写真の表示と整理", systemImage: "photo.on.rectangle.angled")
+                    }
+                }
+
+                NavigationLink {
+                    CatProfilesView(
+                        presentation: catProfilesPresentation,
+                        actions: catProfilesActions
+                    )
+                } label: {
+                    LabeledContent {
+                        Text(catProfilesPresentation.profiles.isEmpty
+                            ? "未登録"
+                            : "\(catProfilesPresentation.profiles.count.formatted())匹")
+                    } label: {
+                        Label("ねこのプロフィール", systemImage: "cat.fill")
+                    }
+                }
+
+                Button(action: showWidgetPlacementGuide) {
+                    Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
+                }
+                .accessibilityIdentifier("settings-widget-placement-guide")
+            } header: {
+                Text("日常")
+            }
+
+            Section {
+                if SharingAPIConfiguration.current.isReviewVisible {
+                    NavigationLink {
+                        if SharingAPIConfiguration.current.isMediaAvailable {
+                            FamilyWindowView()
+                        } else if SharingAPIConfiguration.current.isAvailable {
+                            PairingView()
+                        } else {
+                            SharingReviewPreviewView()
+                        }
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(privateWindowDisplayName)
+                                Text(sharingSettingsSummary)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "rectangle.on.rectangle.angled")
+                        }
+                    }
+                    .accessibilityIdentifier("settings-sharing-review")
+                }
+
+                LabeledContent {
+                    Text("このiPhone内")
+                } label: {
+                    Label("写真の検出", systemImage: "lock.iphone")
+                }
+
+                if SharingAPIConfiguration.current.isMediaAvailable {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("共有する写真")
+                            Text("縮小・位置情報削除・暗号化")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "shield.lefthalf.filled")
+                    }
+                }
+
+                if SharingAPIConfiguration.current.isReviewVisible,
+                   let url = SharingAPIConfiguration.current.communityStandardsURL {
+                    Link(destination: url) {
+                        Label("コミュニティ基準", systemImage: "checkmark.shield")
+                    }
+                }
+            } header: {
+                Text("共有と安全")
+            }
+
+            Section {
+                if let url = AppPublicLinksConfiguration.current.privacyURL {
+                    Link(destination: url) {
+                        Label("プライバシーポリシー", systemImage: "hand.raised.fill")
+                    }
+                    .accessibilityIdentifier("settings-privacy-policy")
+                }
+
+                if let url = AppPublicLinksConfiguration.current.supportURL {
+                    Link(destination: url) {
+                        Label("サポート", systemImage: "questionmark.circle")
+                    }
+                    .accessibilityIdentifier("settings-support-page")
+                }
+
+                LabeledContent {
+                    Text("iOS 17.1以上")
+                } label: {
+                    Label("対応OS", systemImage: "iphone")
+                }
+
+                NavigationLink {
+                    advancedDiagnosticsView
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("詳細・診断")
+                            Text("問題の確認や再スキャン")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "wrench.and.screwdriver")
+                    }
+                }
+            } header: {
+                Text("アプリについて")
+            }
+        }
+        .navigationTitle("設定")
+        .onChange(of: settings) { _, newSettings in
+            if isSavingLifeReference {
+                draft.catLifeReference = newSettings.catLifeReference
+            } else if !isSaving {
+                draft = newSettings
+            }
+        }
+        .onChange(of: draft.catLifeReference) { _, newValue in
+            scheduleLifeReferenceSave(newValue)
+        }
+        .sheet(item: $exportedFile, onDismiss: cleanupVerificationExport) { file in
+            ActivityView(activityItems: [file.url])
+                .presentationDetents([.medium, .large])
+        }
+        .onDisappear(perform: cleanupVerificationExport)
+    }
+
+    private var photoSettingsSummary: String {
+        guard hasPhotoAccess else { return "未許可" }
+        let access = isLimitedAccess ? "選択した写真" : "許可済み"
+        return "\(access)・\(draft.range.rawValue)"
+    }
+
+    private var sharingSettingsSummary: String {
+        let configuration = SharingAPIConfiguration.current
+        if configuration.isMediaAvailable {
+            return "1枚ずつ非公開で共有"
+        }
+        if configuration.isAvailable {
+            return "接続設定のみ"
+        }
+        return "画面プレビュー"
+    }
+
+    private var photoSettingsView: some View {
+        Form {
+            Section {
                 if hasPhotoAccess {
                     LabeledContent(
                         "写真へのアクセス",
@@ -107,48 +271,56 @@ struct SettingsView: View {
                     Button("写真へのアクセスを許可", action: requestPhotoAccess)
                         .accessibilityIdentifier("settings-photo-permission")
                 }
+            } header: {
+                Text("アクセス")
+            }
 
-                Picker("出す範囲", selection: $draft.range) {
+            Section {
+                Picker("表示する範囲", selection: $draft.range) {
                     ForEach(PhotoRangePresentation.allCases) { range in
                         Text(range.rawValue).tag(range)
                     }
                 }
                 .pickerStyle(.segmented)
-            } header: {
-                Text("写真")
-            } footer: {
-                Text(hasPhotoAccess
-                    ? "出す範囲は、「今日」・ウィジェット・「写真を見つける」の候補に共通で使います。"
-                    : "許可するまで写真のスキャンは行いません。ウィジェットの案内など、ほかの設定は利用できます。")
-            }
 
-            Section {
-                Button(action: showWidgetPlacementGuide) {
-                    Label("ウィジェットの置き方を見る", systemImage: "rectangle.on.rectangle.angled")
-                }
-                .accessibilityIdentifier("settings-widget-placement-guide")
-            } header: {
-                Text("ウィジェット")
-            } footer: {
-                Text("一度スキップしても、ここからいつでも案内を開き直せます。")
-            }
-
-            Section {
                 NavigationLink {
-                    CatProfilesView(
-                        presentation: catProfilesPresentation,
-                        actions: catProfilesActions
+                    CatCandidateCurationView(
+                        excludedPhotos: excludedCatPhotos,
+                        sourceAlbums: photoSourceAlbums,
+                        sourceStatus: photoSourceStatus,
+                        isLimitedAccess: isLimitedAccess,
+                        isScanning: isScanning,
+                        chooseMorePhotos: chooseMorePhotos,
+                        restoreCatCandidates: restoreCatCandidates,
+                        selectSourceAlbum: selectPhotoSourceAlbum,
+                        refreshSourceAlbums: refreshPhotoSourceAlbums
                     )
                 } label: {
                     LabeledContent(
-                        "ねこのプロフィール",
-                        value: catProfilesPresentation.profiles.isEmpty
-                            ? "未登録"
-                            : "\(catProfilesPresentation.profiles.count.formatted())匹"
+                        "対象と除外",
+                        value: excludedCatPhotos.isEmpty
+                            ? sourceSummary
+                            : "除外 \(excludedCatPhotos.count.formatted())枚"
                     )
                 }
+
+                Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
+                    LabeledContent("思い出の枚数上限", value: "\(draft.albumLimit.formatted())枚")
+                }
+
+                NavigationLink {
+                    PhotoLibraryAlbumSettingsView(
+                        state: albumState,
+                        canUpdate: canUpdatePhotoLibraryAlbum,
+                        update: updatePhotoLibraryAlbum
+                    )
+                } label: {
+                    Label("写真アプリとの連携", systemImage: "rectangle.stack.badge.plus")
+                }
+            } header: {
+                Text("表示と整理")
             } footer: {
-                Text("プロフィールは任意です。多頭の場合は、猫ごとの日付と確認した写真を設定できます。未確認の写真も「みんな」には残ります。")
+                Text("候補から外しても、写真アプリの写真は削除しません。")
             }
 
             if catProfilesPresentation.profiles.isEmpty {
@@ -172,55 +344,17 @@ struct SettingsView: View {
                             draft.catLifeReference = nil
                         }
                     }
-                } header: {
-                    Text("ねこの年齢")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("誕生日を入力すると「子猫のころ」「1歳のころ」のように分かれます。迎えた日はプロフィール情報として保存し、年齢アルバムの基準には使いません。")
-                        Text(isSavingLifeReference ? "自動保存中…" : "変更は自動で保存され、日付は端末内だけで使います。")
+
+                    if isSavingLifeReference {
+                        Text("保存中…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                } header: {
+                    Text("思い出の分け方")
+                } footer: {
+                    Text("誕生日を設定すると、年齢ごとに思い出を分けます。日付は端末内だけで使います。")
                 }
-            }
-
-            Section {
-                NavigationLink {
-                    CatCandidateCurationView(
-                        excludedPhotos: excludedCatPhotos,
-                        sourceAlbums: photoSourceAlbums,
-                        sourceStatus: photoSourceStatus,
-                        isLimitedAccess: isLimitedAccess,
-                        isScanning: isScanning,
-                        chooseMorePhotos: chooseMorePhotos,
-                        restoreCatCandidates: restoreCatCandidates,
-                        selectSourceAlbum: selectPhotoSourceAlbum,
-                        refreshSourceAlbums: refreshPhotoSourceAlbums
-                    )
-                } label: {
-                    LabeledContent(
-                        "対象と除外を管理",
-                        value: excludedCatPhotos.isEmpty
-                            ? sourceSummary
-                            : "除外 \(excludedCatPhotos.count.formatted())枚"
-                    )
-                }
-
-                Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
-                    LabeledContent("アルバムの枚数上限", value: "\(draft.albumLimit.formatted())枚")
-                }
-
-                NavigationLink {
-                    PhotoLibraryAlbumSettingsView(
-                        state: albumState,
-                        canUpdate: canUpdatePhotoLibraryAlbum,
-                        update: updatePhotoLibraryAlbum
-                    )
-                } label: {
-                    Label("写真アプリとの連携", systemImage: "rectangle.stack.badge.plus")
-                }
-            } header: {
-                Text("写真の整理")
-            } footer: {
-                Text("「表示候補から外す」にした写真の復元と、スキャンする写真アルバムの選択ができます。写真アプリの写真は削除しません。")
             }
 
             Section {
@@ -231,106 +365,13 @@ struct SettingsView: View {
                         isSaving = false
                     }
                 } label: {
-                    Label(isSaving ? "保存中…" : "写真の設定を保存", systemImage: "checkmark.circle")
+                    Label(isSaving ? "保存中…" : "変更を保存", systemImage: "checkmark.circle")
                 }
                 .disabled(isSaving || draft == settings)
-            } footer: {
-                Text("写真の範囲と、アルバムに表示する枚数上限の変更を保存します。")
-            }
-
-            if SharingAPIConfiguration.current.isReviewVisible {
-                Section {
-                    NavigationLink {
-                        if SharingAPIConfiguration.current.isMediaAvailable {
-                            FamilyWindowView()
-                        } else if SharingAPIConfiguration.current.isAvailable {
-                            PairingView()
-                        } else {
-                            SharingReviewPreviewView()
-                        }
-                    } label: {
-                        Label(privateWindowDisplayName, systemImage: "person.2.fill")
-                    }
-                    .accessibilityIdentifier("settings-sharing-review")
-                } header: {
-                    Text("共有するまど")
-                } footer: {
-                    Text(sharingSettingsFooter)
-                }
-            }
-
-            Section {
-                Label("写真は端末内で見つけます", systemImage: "lock.iphone")
-                Text(SharingAPIConfiguration.current.isMediaAvailable
-                    ? "写真の検出は端末内で行います。写真共有へ同意した場合だけ、位置情報などを除いた縮小画像を暗号化して共有します。原本は送りません。"
-                    : "すべての検出は端末内で行います。サーバーへの写真送信や、写真本体の複製はしません。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                LabeledContent("対応OS", value: "iOS 17.1以上")
-                if let url = AppPublicLinksConfiguration.current.privacyURL {
-                    Link(destination: url) {
-                        Label("プライバシーポリシー", systemImage: "hand.raised.fill")
-                    }
-                    .accessibilityIdentifier("settings-privacy-policy")
-                }
-            } header: {
-                Text("プライバシーとアプリ情報")
-            }
-
-            Section {
-                if let url = AppPublicLinksConfiguration.current.supportURL {
-                    Link(destination: url) {
-                        Label("サポートページ", systemImage: "questionmark.circle")
-                    }
-                    .accessibilityIdentifier("settings-support-page")
-                }
-                NavigationLink {
-                    advancedDiagnosticsView
-                } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("詳細・診断")
-                            Text("検出設定、標本、再スキャン、書き出し、ログ")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "wrench.and.screwdriver")
-                    }
-                }
-            } header: {
-                Text("サポート")
-            } footer: {
-                Text("通常は変更する必要はありません。問題の調査や検出結果の検証に使います。")
             }
         }
-        .navigationTitle("設定")
-        .onChange(of: settings) { _, newSettings in
-            if isSavingLifeReference {
-                draft.catLifeReference = newSettings.catLifeReference
-            } else if !isSaving {
-                draft = newSettings
-            }
-        }
-        .onChange(of: draft.catLifeReference) { _, newValue in
-            scheduleLifeReferenceSave(newValue)
-        }
-        .sheet(item: $exportedFile, onDismiss: cleanupVerificationExport) { file in
-            ActivityView(activityItems: [file.url])
-                .presentationDetents([.medium, .large])
-        }
-        .onDisappear(perform: cleanupVerificationExport)
-    }
-
-    private var sharingSettingsFooter: String {
-        let configuration = SharingAPIConfiguration.current
-        if configuration.isMediaAvailable {
-            return "共有シートで選んだ1枚を、招待した相手との非公開なまどへ届けます。"
-        }
-        if configuration.isAvailable {
-            return "ペアリングのみ。このBuildでは写真を保存・送信しません。"
-        }
-        return "将来の体験を確認する静的レビューです。招待・送信・同期は動作せず、写真や識別子を端末外へ送りません。"
+        .navigationTitle("写真")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private var advancedDiagnosticsView: some View {
