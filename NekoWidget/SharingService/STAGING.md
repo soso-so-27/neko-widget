@@ -147,7 +147,7 @@ npx --no-install wrangler deploy --dry-run --config wrangler.staging.jsonc --out
 - 3本のRate Limit binding
 - `MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`LEGACY_SHARING_RUNTIME_ENABLED`がすべて`NO`
 
-現在のrepositoryには、対象Cloudflare account／Worker／active versionを原子的に照合してから切り替える外部deploy経路がありません。この手順ではdry-runより先へ進みません。通常の`wrangler deploy`やDashboardの手動var編集で代用すると、別account・別Worker・別versionを操作しても成功に見えるため禁止します。実配備は、review済みversionの事前作成、対象の固定、条件付きactive-version切替、直後の同一origin検証、rollback訓練が実装された後の別手順とします。
+現在のrepositoryは、account／Worker／固定origin／期待active version／事前承認済みOFF versionをexact manifestへ束縛し、呼び出し側のactive snapshotが不一致なら副作用のない切替planすら返さないpure契約まで実装しています。既定はdry-runで、実provider、Cloudflare query、version切替、origin確認はありません。Cloudflareの公開version切替APIにexpected-currentの原子的preconditionがないため、GET後のPOSTを条件付き切替やcompare-and-swapとは表現しません。この手順ではdry-runより先へ進まず、通常の`wrangler deploy`やDashboardの手動var編集でも代用しません。安全な切替方式、直後の同一origin exact OFF確認、rollback訓練が実装・承認された後にだけ別手順で実配備します。
 
 ## 6. 将来の実配備後に必要なruntime OFF smoke
 

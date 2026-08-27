@@ -1,14 +1,27 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateStagingConfig } from "./staging-config-lib.mjs";
+import { normalizePublicHttpsOrigin } from "./staging-runtime-check-lib.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 export const selectiveOffProjectDirectory = join(scriptDirectory, "..");
 const reviewedWranglerVersion = "4.125.0";
+const emergencyOffManifestKeys = Object.freeze([
+  "accountId",
+  "expectedActiveVersionId",
+  "origin",
+  "preapprovedOffVersionId",
+  "schemaVersion",
+  "workerName",
+]);
+const canonicalVersionID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u;
+const nilVersionID = "00000000-0000-0000-0000-000000000000";
+const canonicalAccountID = /^[0-9a-f]{32}$/u;
+const canonicalWorkerName = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 
 export const selectiveOffPolicies = Object.freeze({
   apns: Object.freeze({
@@ -113,6 +126,109 @@ function exactSerializedConfig(actual, expected, message) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(message);
   }
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactKeys(value, expectedKeys) {
+  return isPlainObject(value)
+    && JSON.stringify(Object.keys(value).sort())
+      === JSON.stringify([...expectedKeys].sort());
+}
+
+function requireCanonicalVersionID(value) {
+  if (typeof value !== "string"
+      || !canonicalVersionID.test(value)
+      || value === nilVersionID) {
+    throw new Error("emergency OFF control manifest contains an invalid version ID");
+  }
+  return value;
+}
+
+/**
+ * Validates the protected, non-secret target contract used by a future
+ * emergency-OFF provider. This binds identity and both reviewed versions in
+ * one object, but deliberately does not claim that a later remote read and
+ * write would be atomic.
+ */
+export function validateEmergencyOffControlManifest(input) {
+  if (!hasExactKeys(input, emergencyOffManifestKeys)
+      || input.schemaVersion !== 1
+      || typeof input.accountId !== "string"
+      || !canonicalAccountID.test(input.accountId)
+      || typeof input.workerName !== "string"
+      || !canonicalWorkerName.test(input.workerName)) {
+    throw new Error("emergency OFF control manifest is unavailable or invalid");
+  }
+  const origin = normalizePublicHttpsOrigin(input.origin);
+  const expectedActiveVersionId = requireCanonicalVersionID(
+    input.expectedActiveVersionId,
+  );
+  const preapprovedOffVersionId = requireCanonicalVersionID(
+    input.preapprovedOffVersionId,
+  );
+  if (expectedActiveVersionId === preapprovedOffVersionId) {
+    throw new Error("emergency OFF versions must be distinct");
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    accountId: input.accountId,
+    workerName: input.workerName,
+    origin,
+    expectedActiveVersionId,
+    preapprovedOffVersionId,
+  });
+}
+
+export async function readEmergencyOffControlManifest(
+  path,
+  readFileImpl = readFile,
+) {
+  if (typeof path !== "string" || path.trim() !== path || path.length === 0) {
+    throw new Error("emergency OFF control manifest is unavailable or invalid");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFileImpl(path, "utf8"));
+  } catch {
+    throw new Error("emergency OFF control manifest is unavailable or invalid");
+  }
+  return validateEmergencyOffControlManifest(parsed);
+}
+
+function validateActiveVersionSnapshot(snapshot, manifest) {
+  if (!hasExactKeys(snapshot, ["accountId", "activeVersionId", "workerName"])
+      || snapshot.accountId !== manifest.accountId
+      || snapshot.workerName !== manifest.workerName
+      || snapshot.activeVersionId !== manifest.expectedActiveVersionId) {
+    throw new Error("active version does not match the reviewed emergency OFF contract");
+  }
+}
+
+/**
+ * Produces a side-effect-free plan only after a caller-supplied snapshot
+ * exactly matches the reviewed target and active version. This plan does not
+ * make a later remote read and write atomic, and no repository code executes
+ * it against Cloudflare.
+ */
+export function createEmergencyOffSwitchPlan(manifestInput, activeSnapshot) {
+  const manifest = validateEmergencyOffControlManifest(manifestInput);
+  validateActiveVersionSnapshot(activeSnapshot, manifest);
+  return Object.freeze({
+    operation: "activate-existing-version",
+    target: Object.freeze({
+      accountId: manifest.accountId,
+      workerName: manifest.workerName,
+    }),
+    expectedActiveVersionId: manifest.expectedActiveVersionId,
+    versionId: manifest.preapprovedOffVersionId,
+    verification: Object.freeze({
+      origin: manifest.origin,
+      expected: "off",
+    }),
+  });
 }
 
 export function validateSelectiveOffConfigs(kind, sourceConfig, targetConfig) {
@@ -233,4 +349,28 @@ export async function runSelectiveOffControl(kind, argv, {
       + "and the active version are unchanged. No repository command performs "
       + "an external staging OFF deployment.",
   );
+}
+
+async function runEmergencyOffManifestValidationCLI(argv) {
+  if (!Array.isArray(argv)
+      || argv.length !== 2
+      || argv[0] !== "--validate-emergency-off-manifest") {
+    throw new Error("use exactly --validate-emergency-off-manifest <path>");
+  }
+  await readEmergencyOffControlManifest(argv[1]);
+  console.log(
+    "PASS emergency OFF control manifest local validation; no external query or mutation was performed.",
+  );
+}
+
+if (process.argv[1] !== undefined
+    && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  try {
+    await runEmergencyOffManifestValidationCLI(process.argv.slice(2));
+  } catch (error) {
+    console.error(
+      `FAIL emergency OFF control manifest: ${error instanceof Error ? error.message : "unknown failure"}`,
+    );
+    process.exitCode = 1;
+  }
 }

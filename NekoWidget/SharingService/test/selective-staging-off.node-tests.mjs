@@ -7,10 +7,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  createEmergencyOffSwitchPlan,
   localWranglerCommand,
   localOnlyWranglerEnvironment,
   parseSelectiveOffArguments,
+  readEmergencyOffControlManifest,
   runSelectiveOffControl,
+  validateEmergencyOffControlManifest,
   validateSelectiveOffConfigs,
 } from "../scripts/selective-staging-off-lib.mjs";
 import { renderStagingConfig } from "../scripts/staging-config-lib.mjs";
@@ -34,6 +37,14 @@ const fixtureEnvironment = {
   NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID: "700002",
   NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID: "700003",
 };
+const emergencyOffManifest = Object.freeze({
+  schemaVersion: 1,
+  accountId: "0123456789abcdef0123456789abcdef",
+  workerName: "neko-window-sharing-staging",
+  origin: "https://neko-window-sharing-staging.example.workers.dev",
+  expectedActiveVersionId: "11111111-1111-4111-8111-111111111111",
+  preapprovedOffVersionId: "22222222-2222-4222-8222-222222222222",
+});
 
 function config(options = {}) {
   return JSON.parse(renderStagingConfig(template, fixtureEnvironment, options));
@@ -111,8 +122,95 @@ test("the legacy broad-OFF helper retains only a local dry-run path", () => {
     '$env:WRANGLER_HIDE_BANNER = "true"',
     '$env:WRANGLER_SEND_ERROR_REPORTS = "false"',
     '$env:WRANGLER_SEND_METRICS = "false"',
+    "--validate-emergency-off-manifest",
+    "emergency-off-control-manifest.json",
   ]) {
     assert.equal(broadOffScript.includes(required), true, required);
+  }
+});
+
+test("binds the exact emergency OFF target and two distinct reviewed versions", async () => {
+  assert.deepEqual(
+    validateEmergencyOffControlManifest(emergencyOffManifest),
+    emergencyOffManifest,
+  );
+  assert.deepEqual(
+    await readEmergencyOffControlManifest(
+      "/protected/emergency-off-control-manifest.json",
+      async () => JSON.stringify(emergencyOffManifest),
+    ),
+    emergencyOffManifest,
+  );
+
+  for (const invalid of [
+    { ...emergencyOffManifest, accountId: "not-an-account" },
+    { ...emergencyOffManifest, workerName: "Unexpected Worker" },
+    { ...emergencyOffManifest, origin: `${emergencyOffManifest.origin}/path` },
+    { ...emergencyOffManifest, expectedActiveVersionId: "not-a-version" },
+    {
+      ...emergencyOffManifest,
+      expectedActiveVersionId: "00000000-0000-0000-0000-000000000000",
+    },
+    {
+      ...emergencyOffManifest,
+      preapprovedOffVersionId: emergencyOffManifest.expectedActiveVersionId,
+    },
+    { ...emergencyOffManifest, apiToken: "must-not-be-accepted" },
+  ]) {
+    assert.throws(
+      () => validateEmergencyOffControlManifest(invalid),
+      /manifest|version|origin/u,
+    );
+  }
+});
+
+test("creates only a side-effect-free plan for the pre-approved existing OFF version", () => {
+  const plan = createEmergencyOffSwitchPlan(emergencyOffManifest, {
+    accountId: emergencyOffManifest.accountId,
+    workerName: emergencyOffManifest.workerName,
+    activeVersionId: emergencyOffManifest.expectedActiveVersionId,
+  });
+  assert.deepEqual(plan, {
+    operation: "activate-existing-version",
+    target: {
+      accountId: emergencyOffManifest.accountId,
+      workerName: emergencyOffManifest.workerName,
+    },
+    expectedActiveVersionId: emergencyOffManifest.expectedActiveVersionId,
+    versionId: emergencyOffManifest.preapprovedOffVersionId,
+    verification: {
+      origin: emergencyOffManifest.origin,
+      expected: "off",
+    },
+  });
+  assert.equal(JSON.stringify(plan).includes("token"), false);
+  assert.equal(JSON.stringify(plan).includes("email"), false);
+  assert.equal(JSON.stringify(plan).includes("userId"), false);
+});
+
+test("refuses to create a switch plan for any active target mismatch", () => {
+  const validSnapshot = {
+    accountId: emergencyOffManifest.accountId,
+    workerName: emergencyOffManifest.workerName,
+    activeVersionId: emergencyOffManifest.expectedActiveVersionId,
+  };
+  for (const snapshot of [
+    { ...validSnapshot, accountId: "fedcba9876543210fedcba9876543210" },
+    { ...validSnapshot, workerName: "different-worker" },
+    {
+      ...validSnapshot,
+      activeVersionId: "33333333-3333-4333-8333-333333333333",
+    },
+    { ...validSnapshot, extra: "unreviewed" },
+  ]) {
+    assert.throws(
+      () => createEmergencyOffSwitchPlan(emergencyOffManifest, snapshot),
+      (error) => {
+        assert.match(error.message, /active version does not match/u);
+        assert.equal(error.message.includes(String(snapshot.activeVersionId)), false);
+        return true;
+      },
+    );
   }
 });
 

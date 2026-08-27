@@ -37,7 +37,24 @@ review済みのignored OFF configが、通常moment、reaction、暗号化まど
 すべて`NO`にしたbundleを作れることだけをlocalで確認する。これは現在activeなWorkerを変更せず、緊急停止を
 実行するコマンドではない。
 
-package commandは`-DryRun`を内部で固定している。
+先に`SharingService/emergency-off-control-manifest.json`を作り、Gitに追跡させない。値はDashboardや承認記録で
+別々に確認した実値を記入し、API token、鍵、email、利用者・端末・通報IDは入れない。
+
+```json
+{
+  "schemaVersion": 1,
+  "accountId": "<32文字のlowercase hex>",
+  "workerName": "<対象Worker名>",
+  "origin": "https://<同じWorkerの固定origin>",
+  "expectedActiveVersionId": "<現在であるべきreview済みON version UUID>",
+  "preapprovedOffVersionId": "<事前作成・review済みOFF version UUID>"
+}
+```
+
+manifestは余分なfield、同じversion ID、非canonicalなaccount／Worker／origin／versionを拒否する。local検証の
+成功は、versionが実在すること、現在activeであること、originがそのWorkerへ向くことを照会・証明しない。
+
+package commandは`-DryRun`を内部で固定し、manifest契約のlocal検証後にOFF bundleだけを作る。
 
 ```powershell
 npm run staging:runtime:emergency-off
@@ -46,18 +63,25 @@ npm run staging:runtime:emergency-off
 直接実行する場合も許可するのは次だけである。
 
 ```powershell
-& .\scripts\personal-staging-emergency-off-windows.ps1 -DryRun
+& .\scripts\personal-staging-emergency-off-windows.ps1 `
+    -ControlManifestPath .\emergency-off-control-manifest.json `
+    -DryRun
 ```
 
 `-ConfirmPersonalStagingEmergencyOff`は、config解決、Git remote-state確認、Wrangler起動、公開endpoint確認の
 前に必ず失敗する。旧実装はdeploy先account／Workerと検証先originを原子的に束縛できず、別Workerを変更した
 後で既にOFFのoriginを確認して成功と誤認できたため、外部deploy／query経路を廃止した。
 
+pureな計画生成は、呼び出し側が渡したaccount／Worker／active version snapshotがmanifestと完全一致しない
+限りplanを返さない。一致時のplanも`preapprovedOffVersionId`と同じoriginのexact OFF確認要件を示すだけで、
+query、mutation、HTTP確認を実行しない。repositoryには実providerがなく、Cloudflareのversion切替APIに
+expected-currentの原子的なpreconditionがないため、GET後の切替を安全なcompare-and-swapとは扱わない。
+
 現在のrepositoryには、広いruntime OFFまたはWorker全停止を安全に外部実行するコマンドはない。想定外の配送、
 誤routing、暗号化／moderationの疑い、急なerror・費用増加では、local dry-run成功を停止証拠にせず、本人2台の
-利用を中断して、別途承認されたCloudflare incident responseへescalateする。deploy先account、事前固定version、
-active-version条件、検証対象originを一つのmanifestへ束縛した実停止が完成するまで、この欠落は継続利用と
-一般配布のblockerである。
+利用を中断して、別途承認されたCloudflare incident responseへescalateする。manifestとpure planは誤対象を
+拒否する準備であり実停止ではない。原子的な条件または同等にreviewされた安全な切替方式、実provider、対象
+productionでの訓練が完成するまで、この欠落は継続利用と一般配布のblockerである。
 
 原因、影響範囲、非公開R2、D1、moderation、2台の資格情報を確認するまで再開しない。
 

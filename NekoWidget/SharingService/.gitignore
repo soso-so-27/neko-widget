@@ -15,3 +15,4 @@ wrangler.notification-staging-on.jsonc
 wrangler.report-ingestion-staging-on.jsonc
 wrangler.general-staging-on.jsonc
 wrangler.general-staging-apns-off.jsonc
+emergency-off-control-manifest.json

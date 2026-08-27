@@ -2,6 +2,8 @@
 param(
     [string]$ConfigDirectory,
 
+    [string]$ControlManifestPath,
+
     [switch]$ConfirmPersonalStagingEmergencyOff,
 
     [switch]$DryRun,
@@ -78,6 +80,14 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "reviewed ignored OFF config is missing"
 }
 
+if ([string]::IsNullOrWhiteSpace($ControlManifestPath)) {
+    $ControlManifestPath = Join-Path $configRoot "emergency-off-control-manifest.json"
+}
+$controlManifestFullPath = (Resolve-Path -LiteralPath $ControlManifestPath -ErrorAction Stop).Path
+if (-not (Test-Path -LiteralPath $controlManifestFullPath -PathType Leaf)) {
+    throw "reviewed emergency OFF control manifest is missing"
+}
+
 $git = Get-Command git.exe -CommandType Application -ErrorAction Stop |
     Select-Object -First 1 -ExpandProperty Source
 $node = Get-Command node.exe -CommandType Application -ErrorAction Stop |
@@ -88,9 +98,15 @@ $wranglerEntryPoint = Join-Path $configRoot "node_modules\wrangler\bin\wrangler.
 if (-not (Test-Path -LiteralPath $wranglerEntryPoint -PathType Leaf)) {
     throw "reviewed local Wrangler entry point is unavailable"
 }
+$selectiveOffLibrary = Join-Path $configRoot "scripts\selective-staging-off-lib.mjs"
+if (-not (Test-Path -LiteralPath $selectiveOffLibrary -PathType Leaf)) {
+    throw "reviewed emergency OFF manifest validator is unavailable"
+}
 
 & $git -C $configRoot check-ignore --quiet -- "wrangler.staging.jsonc"
 if ($LASTEXITCODE -ne 0) { throw "OFF config must remain ignored by Git" }
+& $git -C $configRoot check-ignore --quiet -- $controlManifestFullPath
+if ($LASTEXITCODE -ne 0) { throw "emergency OFF control manifest must remain ignored by Git" }
 
 $bundleName = "neko-personal-staging-emergency-off-" + [guid]::NewGuid().ToString("N")
 $bundleDirectory = Join-Path ([IO.Path]::GetTempPath()) $bundleName
@@ -118,6 +134,11 @@ try {
 
     & $npm run staging:config:check
     if ($LASTEXITCODE -ne 0) { throw "staging OFF config policy check failed" }
+
+    & $node $selectiveOffLibrary `
+        --validate-emergency-off-manifest `
+        $controlManifestFullPath
+    if ($LASTEXITCODE -ne 0) { throw "emergency OFF control manifest validation failed" }
 
     $wranglerVersion = (& $node $wranglerEntryPoint --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $wranglerVersion -notmatch "(?m)\b4\.125\.0\b") {
