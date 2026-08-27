@@ -29,6 +29,11 @@ class TestFlightReleaseEvidenceWorkflowTests(unittest.TestCase):
     def test_bundle_is_authenticated_before_decryption_and_content_binding(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         package_step = workflow.index("- name: Package archive and symbols")
+        package_end = workflow.index(
+            "- name: Upload encrypted signed app and symbols", package_step
+        )
+        package = workflow[package_step:package_end]
+        self.assertIn("COPYFILE_DISABLE=1 tar \\", package)
         authentication = workflow.index(
             'signed-artifact-authentication.py" verify', package_step
         )

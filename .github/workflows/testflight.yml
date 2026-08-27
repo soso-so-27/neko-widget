@@ -1265,7 +1265,7 @@ jobs:
             echo "Non-media release unexpectedly retained a trust manifest path." >&2
             exit 1
           fi
-          tar \
+          COPYFILE_DISABLE=1 tar \
             -C "$RUNNER_TEMP" \
             -czf - \
             "${runner_members[@]}" \
