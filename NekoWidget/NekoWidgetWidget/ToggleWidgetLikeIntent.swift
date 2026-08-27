@@ -3,9 +3,9 @@ import Foundation
 import WidgetKit
 
 struct ToggleWidgetLikeIntent: AppIntent {
-    static var title: LocalizedStringResource = "写真の思い出状態を切り替える"
+    static var title: LocalizedStringResource = "写真を思い出に残す"
     static var description = IntentDescription(
-        "表示中の写真を思い出に残す、または思い出から外します。"
+        "表示中の写真を思い出に残します。解除はアプリで確認して行います。"
     )
     // Build 6 uses this intent only as the widget's private interaction. It is
     // deliberately not offered as a Siri or Shortcuts action.
@@ -15,7 +15,9 @@ struct ToggleWidgetLikeIntent: AppIntent {
     @Parameter(title: "写真ID")
     var localIdentifier: String
 
-    @Parameter(title: "現在の好き状態")
+    // Keep the parameter name so buttons rendered by an older timeline remain
+    // decodable. The add-only action intentionally ignores its value.
+    @Parameter(title: "以前の状態（互換用）")
     var fallbackIsLiked: Bool
 
     init() {
@@ -39,17 +41,20 @@ struct ToggleWidgetLikeIntent: AppIntent {
 
         let changedAt = Date()
         do {
-            let mutation = try SharedLikeStore.toggle(
+            // This action is deliberately add-only. A stale Widget can still
+            // show the unsaved control after the app has saved the photo; a
+            // toggle would then silently remove the canonical memory.
+            let mutation = try SharedLikeStore.set(
                 localIdentifier: localIdentifier,
-                fallbackIsLiked: fallbackIsLiked,
+                isLiked: true,
                 at: changedAt,
                 source: "interactive-widget"
             )
             SharedLog.widget.info(
                 "like",
-                "Widget like state changed",
+                "Widget memory saved",
                 metadata: [
-                    "action": mutation.record.isLiked ? "liked" : "unliked",
+                    "action": "liked",
                     "asset": SharedLog.shortHash(localIdentifier),
                     "changedAt": Self.timestamp(changedAt),
                     "liked": "\(mutation.record.isLiked)",
@@ -61,7 +66,7 @@ struct ToggleWidgetLikeIntent: AppIntent {
         } catch {
             SharedLog.widget.error(
                 "like",
-                "Widget like state change failed",
+                "Widget memory save failed",
                 metadata: SharedLog.errorMetadata(
                     error,
                     category: .widgetLike,

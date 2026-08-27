@@ -1674,7 +1674,7 @@ struct FamilyWindowView: View {
         memoryResultMomentID = nil
         memoryActionMomentID = item.id
         Task {
-            await model.toggleSavedMemory(item)
+            await model.setSavedMemory(item, isSaved: shouldSave)
             memoryActionMomentID = nil
             memoryResultMomentID = item.id
             if clearsWidgetFocusAfterCompletion {

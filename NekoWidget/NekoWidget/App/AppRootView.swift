@@ -240,8 +240,13 @@ struct AppRootView: View {
             showWidgetPlacementGuide: {
                 showsWidgetPlacementGuide = true
             },
-            toggleLike: { identifier in
-                Task { await viewModel.toggleLike(id: identifier) }
+            setMemorySaved: { identifier, isSaved in
+                Task {
+                    await viewModel.setMemorySaved(
+                        id: identifier,
+                        isSaved: isSaved
+                    )
+                }
             },
             exportPhotoBook: { identifiers in
                 try await PhotoBookPDFExporter().export(
@@ -264,13 +269,16 @@ struct AppRootView: View {
             rescan: {
                 await viewModel.rescan()
             },
-            saveSettings: { settings in
-                await viewModel.updateSettings(coreSettings(from: settings))
-            },
             savePhotoSettings: { range, albumLimit in
                 var settings = viewModel.settings
                 settings.dateRange = range == .all ? .all : .recentYear
                 settings.albumMaximum = albumLimit
+                await viewModel.updateSettings(settings)
+            },
+            saveDetectionSettings: { confidenceThreshold, minimumAreaRatio in
+                var settings = viewModel.settings
+                settings.confidenceThreshold = Float(confidenceThreshold)
+                settings.minimumCatAreaRatio = minimumAreaRatio
                 await viewModel.updateSettings(settings)
             },
             saveLifeReference: { reference in
@@ -846,16 +854,6 @@ struct AppRootView: View {
         case let .failed(message):
             return .failed(message: message)
         }
-    }
-
-    private func coreSettings(from presentation: SettingsPresentation) -> AppSettings {
-        var settings = viewModel.settings
-        settings.dateRange = presentation.range == .all ? .all : .recentYear
-        settings.albumMaximum = presentation.albumLimit
-        settings.confidenceThreshold = Float(presentation.confidenceThreshold)
-        settings.minimumCatAreaRatio = presentation.minimumAreaRatio
-        settings.catLifeReference = presentation.catLifeReference
-        return settings
     }
 
     private func photoPresentation(_ asset: AssetRecord) -> PhotoPresentation {

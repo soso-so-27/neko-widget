@@ -303,7 +303,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             chooseMorePhotos: {},
             requestPhotoAccess: {},
             showWidgetPlacementGuide: {},
-            toggleLike: { _ in },
+            setMemorySaved: { _, _ in },
             exportPhotoBook: { _ in
                 throw CocoaError(.fileWriteUnknown)
             },
@@ -313,8 +313,8 @@ struct AppStoreScreenshotFixtureRootView: View {
             albumOpened: { _, _ in },
             updateAlbum: {},
             rescan: {},
-            saveSettings: { _ in },
             savePhotoSettings: { _, _ in },
+            saveDetectionSettings: { _, _ in },
             saveLifeReference: { _ in },
             excludeFromCatCandidates: { _ in },
             restoreCatCandidates: { _ in },

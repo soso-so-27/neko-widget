@@ -36,14 +36,14 @@ struct MainTabView: View {
     let chooseMorePhotos: () -> Void
     let requestPhotoAccess: () -> Void
     let showWidgetPlacementGuide: () -> Void
-    let toggleLike: (String) -> Void
+    let setMemorySaved: (String, Bool) -> Void
     let exportPhotoBook: ([String]) async throws -> URL
     let exportMemoryPhoto: (String) async throws -> MemoryPhotoJPEGExport
     let albumOpened: (String, String) -> Void
     let updateAlbum: () -> Void
     let rescan: () async -> Void
-    let saveSettings: (SettingsPresentation) async -> Void
     let savePhotoSettings: (PhotoRangePresentation, Int) async -> Void
+    let saveDetectionSettings: (Double, Double) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let excludeFromCatCandidates: ([String]) async -> Void
     let restoreCatCandidates: ([String]) async -> Void
@@ -74,7 +74,7 @@ struct MainTabView: View {
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showSettings: { showsSettings = true },
-                    toggleLike: toggleLike,
+                    setMemorySaved: setMemorySaved,
                     rescan: { Task { await rescan() } }
                 )
                 .navigationDestination(for: TodayRoute.self, destination: todayDestination)
@@ -190,8 +190,8 @@ struct MainTabView: View {
                     && scan.displayedCatCount > 0,
                 requestPhotoAccess: requestPhotoAccess,
                 updatePhotoLibraryAlbum: updateAlbum,
-                saveSettings: saveSettings,
                 savePhotoSettings: savePhotoSettings,
+                saveDetectionSettings: saveDetectionSettings,
                 saveLifeReference: saveLifeReference,
                 rescan: rescan,
                 excludedCatPhotos: excludedCatPhotos,
@@ -252,7 +252,7 @@ struct MainTabView: View {
             initialPhoto: photo(for: localIdentifier),
             widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
             widgetIntervalMinutes: widgetIntervalMinutes,
-            toggleLike: toggleLike,
+            setMemorySaved: setMemorySaved,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
             excludeFromCatCandidates: { identifiers in
                 Task { await excludeFromCatCandidates(identifiers) }
@@ -276,7 +276,7 @@ struct MainTabView: View {
             initialPhoto: photo(for: localIdentifier),
             widgetShownAt: nil,
             widgetIntervalMinutes: widgetIntervalMinutes,
-            toggleLike: toggleLike,
+            setMemorySaved: setMemorySaved,
             exportMemoryPhoto: exportMemoryPhoto,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
             excludeFromCatCandidates: { identifiers in
@@ -341,7 +341,7 @@ struct MainTabView: View {
                     initialPhoto: initialPhoto,
                     widgetShownAt: nil,
                     widgetIntervalMinutes: widgetIntervalMinutes,
-                    toggleLike: toggleLike,
+                    setMemorySaved: setMemorySaved,
                     excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                     excludeFromCatCandidates: { identifiers in
                         Task { await excludeFromCatCandidates(identifiers) }

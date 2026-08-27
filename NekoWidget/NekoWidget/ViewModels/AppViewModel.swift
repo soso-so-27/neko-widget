@@ -706,24 +706,23 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func toggleLike(id localIdentifier: String) async {
-        guard candidateAuthorityIsReady(operation: "toggle_like") else { return }
+    func setMemorySaved(id localIdentifier: String, isSaved: Bool) async {
+        guard candidateAuthorityIsReady(operation: "set_memory_saved") else { return }
         guard let index = snapshot.assets.firstIndex(where: {
             $0.localIdentifier == localIdentifier
         }) else { return }
 
         errorMessage = nil
-        let fallbackIsLiked = snapshot.assets[index].liked
         let mutation: SharedLikeMutation
         do {
-            mutation = try SharedLikeStore.toggle(
+            mutation = try SharedLikeStore.set(
                 localIdentifier: localIdentifier,
-                fallbackIsLiked: fallbackIsLiked,
+                isLiked: isSaved,
                 at: .now,
                 source: "app"
             )
         } catch {
-            Self.logError(error, category: "like", operation: "toggle_shared_like")
+            Self.logError(error, category: "like", operation: "set_shared_like")
             setError(error)
             return
         }
@@ -739,7 +738,7 @@ final class AppViewModel: ObservableObject {
         snapshot = updatedSnapshot
         SharedLog.app.info(
             "like",
-            "Like state changed",
+            "Memory saved state set",
             metadata: [
                 "asset": SharedLog.shortHash(localIdentifier),
                 "changedAt": Self.iso8601String(mutation.record.changedAt),

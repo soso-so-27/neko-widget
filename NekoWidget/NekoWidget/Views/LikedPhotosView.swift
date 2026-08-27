@@ -465,7 +465,7 @@ struct CuratedAlbumDetailView: View {
                     .foregroundStyle(.white, Color.accentColor)
                     .padding(7)
             } else if photo.isLiked {
-                Image(systemName: "checkmark.circle.fill")
+                Image(systemName: "bookmark.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(7)
@@ -867,7 +867,7 @@ struct PhotoBrowserView: View {
     /// Sourced from AppSettings rather than fixed in this view so a future
     /// cadence change keeps the explanation aligned with generated timelines.
     let widgetIntervalMinutes: Int
-    let toggleLike: (String) -> Void
+    let setMemorySaved: (String, Bool) -> Void
     let exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)?
     let excludedCatCandidateIdentifiers: Set<String>
     let excludeFromCatCandidates: ([String]) -> Void
@@ -898,7 +898,7 @@ struct PhotoBrowserView: View {
         initialPhoto: PhotoPresentation,
         widgetShownAt: Date?,
         widgetIntervalMinutes: Int,
-        toggleLike: @escaping (String) -> Void,
+        setMemorySaved: @escaping (String, Bool) -> Void,
         exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)? = nil,
         excludedCatCandidateIdentifiers: Set<String>,
         excludeFromCatCandidates: @escaping ([String]) -> Void,
@@ -922,7 +922,7 @@ struct PhotoBrowserView: View {
         self.initialPhoto = initialPhoto
         self.widgetShownAt = widgetShownAt
         self.widgetIntervalMinutes = widgetIntervalMinutes
-        self.toggleLike = toggleLike
+        self.setMemorySaved = setMemorySaved
         self.exportMemoryPhoto = exportMemoryPhoto
         self.excludedCatCandidateIdentifiers = excludedCatCandidateIdentifiers
         self.excludeFromCatCandidates = excludeFromCatCandidates
@@ -1023,7 +1023,7 @@ struct PhotoBrowserView: View {
                             .accessibilityIdentifier("photo-browser-memory-saved-state")
                         } else {
                             Button {
-                                toggleLike(selectedPhoto.localIdentifier)
+                                setMemorySaved(selectedPhoto.localIdentifier, true)
                             } label: {
                                 HStack(spacing: 9) {
                                     Image(systemName: "bookmark")
@@ -1130,7 +1130,7 @@ struct PhotoBrowserView: View {
             Button("思い出から外す", role: .destructive) {
                 guard let identifier = pendingMemoryRemovalIdentifier else { return }
                 pendingMemoryRemovalIdentifier = nil
-                toggleLike(identifier)
+                setMemorySaved(identifier, false)
             }
             Button("キャンセル", role: .cancel) {
                 pendingMemoryRemovalIdentifier = nil

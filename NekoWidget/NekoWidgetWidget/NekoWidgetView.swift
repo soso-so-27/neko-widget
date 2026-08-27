@@ -79,19 +79,24 @@ struct NekoWidgetView: View {
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
             HStack(spacing: family == .systemSmall ? 6 : 8) {
-                if let memoryActionURL = entry.memoryActionURL {
+                if entry.isBookmarked {
+                    actionPill(
+                        "残した",
+                        systemImage: "bookmark.fill",
+                        isActive: true
+                    )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("思い出に残した写真")
+                    .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
+                } else if let memoryActionURL = entry.memoryActionURL {
                     Link(destination: memoryActionURL) {
                         actionPill(
-                            entry.isBookmarked ? "残した" : "残す",
-                            systemImage: entry.isBookmarked
-                                ? "checkmark.circle.fill"
-                                : "photo.badge.plus",
-                            isActive: entry.isBookmarked
+                            "残す",
+                            systemImage: "bookmark",
+                            isActive: false
                         )
                     }
-                    .accessibilityLabel(
-                        entry.isBookmarked ? "思い出に残した写真" : "アプリで思い出に残す"
-                    )
+                    .accessibilityLabel("アプリで思い出に残す")
                     .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
                 }
 
@@ -101,24 +106,35 @@ struct NekoWidgetView: View {
         } else if let localIdentifier = entry.localIdentifier,
                   entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
                   entry.isLikeInteractionEnabled {
-            Button(
-                intent: ToggleWidgetLikeIntent(
-                    localIdentifier: localIdentifier,
-                    fallbackIsLiked: entry.isLiked
-                )
-            ) {
-                actionPill(
-                    entry.isLiked ? "残した" : "残す",
-                    systemImage: entry.isLiked
-                        ? "checkmark.circle.fill"
-                        : "photo.badge.plus",
-                    isActive: entry.isLiked,
-                    invalidatesContent: true
-                )
+            Group {
+                if entry.isLiked {
+                    actionPill(
+                        "残した",
+                        systemImage: "bookmark.fill",
+                        isActive: true
+                    )
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("思い出に残した写真")
+                    .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
+                } else {
+                    Button(
+                        intent: ToggleWidgetLikeIntent(
+                            localIdentifier: localIdentifier,
+                            fallbackIsLiked: false
+                        )
+                    ) {
+                        actionPill(
+                            "残す",
+                            systemImage: "bookmark",
+                            isActive: false,
+                            invalidatesContent: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("思い出に残す")
+                    .accessibilityHint("アプリを開かず、自分の思い出一覧に追加します")
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(entry.isLiked ? "思い出から外す" : "思い出に残す")
-            .accessibilityHint("アプリを開かず、自分の思い出一覧を更新します")
             .padding(actionButtonInset)
         }
     }

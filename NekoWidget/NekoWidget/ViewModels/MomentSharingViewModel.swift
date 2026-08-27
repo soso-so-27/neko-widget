@@ -398,7 +398,7 @@ final class MomentSharingViewModel: ObservableObject {
         }
     }
 
-    func toggleSavedMemory(_ item: MomentInboxItem) async {
+    func setSavedMemory(_ item: MomentInboxItem, isSaved: Bool) async {
         // This explicit action imports the sanitized JPEG into Photos once,
         // then uses the ordinary shared like ledger. It never contacts the
         // relay or notifies the other participant.
@@ -423,10 +423,9 @@ final class MomentSharingViewModel: ObservableObject {
                     // Limited access cannot prove that an invisible asset was
                     // deleted. Keep the durable mapping so a retry never makes
                     // a second Photos copy.
-                    let willSave = !isSavedMemory(item)
                     _ = try SharedLikeStore.set(
                         localIdentifier: existing.photoLocalIdentifier,
-                        isLiked: willSave,
+                        isLiked: isSaved,
                         source: "received-memory"
                     )
                     errorMessage = nil
@@ -434,17 +433,38 @@ final class MomentSharingViewModel: ObservableObject {
                     notifyPersonalMemoriesChanged(
                         localIdentifier: existing.photoLocalIdentifier
                     )
-                    showMemoryActionMessage(willSave
+                    showMemoryActionMessage(isSaved
                         ? "思い出に残しました"
                         : "思い出から外しました（写真アプリには残ります）")
                     return
                 case .confirmedMissing:
+                    _ = try SharedLikeStore.set(
+                        localIdentifier: existing.photoLocalIdentifier,
+                        isLiked: false,
+                        source: "received-memory"
+                    )
                     try MomentSharingStateStore.removeImportedMemoryRecord(
                         momentID: item.id,
                         expectedPhotoLocalIdentifier: existing.photoLocalIdentifier,
                         validating: bootstrap.lifecycleToken
                     )
+                    notifyPersonalMemoriesChanged(
+                        localIdentifier: existing.photoLocalIdentifier
+                    )
+                    if !isSaved {
+                        errorMessage = nil
+                        try reload()
+                        showMemoryActionMessage("思い出から外しました")
+                        return
+                    }
                 }
+            }
+
+            guard isSaved else {
+                errorMessage = nil
+                try reload()
+                showMemoryActionMessage("思い出から外しました")
+                return
             }
 
             try await copyService.requestMemoryImportAuthorization()

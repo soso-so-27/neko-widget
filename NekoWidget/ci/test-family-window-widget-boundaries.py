@@ -204,12 +204,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("Link(destination: memoryActionURL)", view)
         self.assertNotIn("ToggleFamilyWidgetBookmarkIntent", view)
-        self.assertIn('entry.isBookmarked ? "残した" : "残す"', view)
-        self.assertIn('"photo.badge.plus"', view)
-        self.assertIn('"checkmark.circle.fill"', view)
+        self.assertNotIn('entry.isBookmarked ? "残した" : "残す"', view)
+        self.assertIn('systemImage: "bookmark"', view)
+        self.assertIn('systemImage: "bookmark.fill"', view)
+        self.assertIn('if entry.isBookmarked {', view)
+        self.assertIn('if entry.isLiked {', view)
+        self.assertIn('fallbackIsLiked: false', view)
+        self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
         self.assertIn('actionPill(', view)
         self.assertIn("写真アプリへの取り込みを確認するため、アプリを開きます", view)
         self.assertIn("SendFamilyWidgetHeartIntent", view)
+
+        intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
+        personal_intent = section(
+            intent,
+            "struct ToggleWidgetLikeIntent",
+            "struct ToggleFamilyWidgetBookmarkIntent",
+        )
+        self.assertIn("SharedLikeStore.set(", personal_intent)
+        self.assertIn("isLiked: true", personal_intent)
+        self.assertNotIn("SharedLikeStore.toggle(", personal_intent)
         self.assertIn('systemImage: "heart"', view)
         self.assertIn('systemImage: "clock.fill"', view)
         self.assertIn('"ハート"', view)
@@ -632,7 +646,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
         import_action = section(
             model,
-            "func toggleSavedMemory(_ item: MomentInboxItem) async",
+            "func setSavedMemory(_ item: MomentInboxItem, isSaved: Bool) async",
             "private func notifyPersonalMemoriesChanged",
         )
         self.assertIn("MomentSharingStateStore.importedMemoryRecord", import_action)
@@ -665,9 +679,71 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         heart_action = section(
             model,
             "func sendHeart(_ item: MomentInboxItem) async",
-            "func toggleSavedMemory(_ item: MomentInboxItem) async",
+            "func setSavedMemory(_ item: MomentInboxItem, isSaved: Bool) async",
         )
         self.assertNotIn("PhotoLibrary", heart_action)
+
+    def test_memory_actions_set_the_requested_state_without_toggling(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        browser = source("NekoWidget/Views/LikedPhotosView.swift")
+        main_tab = source("NekoWidget/Views/MainTabView.swift")
+        app_root = source("NekoWidget/App/AppRootView.swift")
+        app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
+        family_model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+
+        self.assertIn("let setMemorySaved: (String, Bool) -> Void", home)
+        self.assertIn("setMemorySaved(identifier, false)", home)
+        self.assertIn("setMemorySaved(photo.localIdentifier, true)", home)
+        self.assertNotIn("toggleLike", home)
+
+        self.assertIn("let setMemorySaved: (String, Bool) -> Void", browser)
+        self.assertIn("setMemorySaved(selectedPhoto.localIdentifier, true)", browser)
+        self.assertIn("setMemorySaved(identifier, false)", browser)
+        self.assertNotIn("toggleLike", browser)
+
+        self.assertIn("let setMemorySaved: (String, Bool) -> Void", main_tab)
+        self.assertIn("setMemorySaved: setMemorySaved", main_tab)
+        self.assertNotIn("toggleLike", main_tab)
+        self.assertIn("setMemorySaved: { identifier, isSaved in", app_root)
+        self.assertIn("viewModel.setMemorySaved(", app_root)
+        self.assertIn("isSaved: isSaved", app_root)
+
+        personal_action = section(
+            app_model,
+            "func setMemorySaved(id localIdentifier: String, isSaved: Bool) async",
+            "func selectAsset(id localIdentifier: String?)",
+        )
+        self.assertIn("SharedLikeStore.set(", personal_action)
+        self.assertIn("isLiked: isSaved", personal_action)
+        self.assertNotIn("SharedLikeStore.toggle", personal_action)
+        self.assertNotIn("fallbackIsLiked", personal_action)
+
+        family_action = section(
+            family_model,
+            "func setSavedMemory(_ item: MomentInboxItem, isSaved: Bool) async",
+            "private func notifyPersonalMemoriesChanged",
+        )
+        self.assertIn("isLiked: isSaved", family_action)
+        self.assertIn("guard isSaved else", family_action)
+        self.assertNotIn("let willSave = !isSavedMemory(item)", family_action)
+        self.assertIn(
+            "await model.setSavedMemory(item, isSaved: shouldSave)",
+            family,
+        )
+        self.assertNotIn("model.toggleSavedMemory", family)
+
+    def test_album_grid_distinguishes_saved_bookmarks_from_selection(self) -> None:
+        albums = source("NekoWidget/Views/LikedPhotosView.swift")
+        thumbnail = section(
+            albums,
+            "private func albumGridThumbnail(",
+            "private func toggleSelection(",
+        )
+        self.assertIn('if isSelected {', thumbnail)
+        self.assertIn('Image(systemName: "checkmark.circle.fill")', thumbnail)
+        self.assertIn('} else if photo.isLiked {', thumbnail)
+        self.assertIn('Image(systemName: "bookmark.fill")', thumbnail)
 
     def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")
@@ -793,9 +869,33 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('"settings-sharing-review"', settings)
         self.assertIn('FamilyWindowView(initialPresentation: .settings)', settings)
         self.assertIn('Text("まどの設定")', settings)
+        self.assertIn('Image(systemName: "rectangle.split.2x2")', settings)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
+        self.assertIn(
+            "await saveDetectionSettings(requestedConfidence, requestedMinimumArea)",
+            settings,
+        )
+        self.assertNotIn("var requestedSettings = settings", settings)
         self.assertIn("isPhotoSettingsSavePending = true", settings)
         self.assertIn("!canUpdate || isSavingSettings || state == .updating", settings)
+        photo_settings = section(
+            settings,
+            "private var photoSettingsView: some View",
+            "private var advancedDiagnosticsView: some View",
+        )
+        diagnostics = section(
+            settings,
+            "private var advancedDiagnosticsView: some View",
+            "private var canReviewDetectionAccuracySample",
+        )
+        self.assertIn('Text("写真を見つけ直す")', photo_settings)
+        self.assertIn('"最初から再スキャン"', photo_settings)
+        self.assertNotIn('"最初から再スキャン"', diagnostics)
+        self.assertIn('Text("診断モード")', settings)
+        self.assertIn('Label("未保存の変更があります",', diagnostics)
+        self.assertIn('Text("検証データ")', diagnostics)
+        self.assertIn('Text("ランダム100枚を確認")', diagnostics)
+        self.assertNotIn('Text("ランダム100枚を確認")', photo_settings)
         photo_save = section(
             app_root,
             "savePhotoSettings: { range, albumLimit in",
@@ -803,6 +903,37 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("var settings = viewModel.settings", photo_save)
         self.assertIn("settings.albumMaximum = albumLimit", photo_save)
+        detection_save = section(
+            app_root,
+            "saveDetectionSettings: { confidenceThreshold, minimumAreaRatio in",
+            "saveLifeReference:",
+        )
+        self.assertIn("var settings = viewModel.settings", detection_save)
+        self.assertIn(
+            "settings.confidenceThreshold = Float(confidenceThreshold)",
+            detection_save,
+        )
+        self.assertIn(
+            "settings.minimumCatAreaRatio = minimumAreaRatio",
+            detection_save,
+        )
+        self.assertIn(
+            ".onChange(of: settings) { oldSettings, newSettings in",
+            settings,
+        )
+        self.assertIn("let preservesRange = (", settings)
+        self.assertIn("|| isPhotoSettingsSavePending", settings)
+        self.assertIn("let preservesLifeReference = (", settings)
+        self.assertIn("|| isLifeReferenceSavePending", settings)
+        self.assertIn("let preservesDetection = (", settings)
+        self.assertIn("pendingDetectionSettingsSave != nil", settings)
+        self.assertIn("detectionSettingsMatch(currentDraft, newSettings)", settings)
+        self.assertIn("abs(lhs.confidenceThreshold - rhs.confidenceThreshold)", settings)
+        self.assertIn("if pendingDetectionSettingsSave == request", settings)
+        self.assertGreaterEqual(
+            settings.count(".disabled(isSavingDetectionSettings)"),
+            2,
+        )
         self.assertIn('"settings-privacy-policy"', settings)
         self.assertIn('"settings-support-page"', settings)
         self.assertNotIn('Text("プライバシーとアプリ情報")', settings)
@@ -1821,16 +1952,16 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("思い出に残しました", model)
         self.assertIn("family-window-bookmark-result", family)
         self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
-        toggle = section(
+        set_action = section(
             model,
-            "func toggleSavedMemory(_ item: MomentInboxItem) async",
+            "func setSavedMemory(_ item: MomentInboxItem, isSaved: Bool) async",
             "private func showMemoryActionMessage",
         )
         self.assertIn(
             "guard !isPerformingAction, !isShowingLastKnownState, !isReportOnly",
-            toggle,
+            set_action,
         )
-        self.assertNotIn("guard !isWorking", toggle)
+        self.assertNotIn("guard !isWorking", set_action)
         memory_control = section(
             family,
             "private func memoryActionControl(",
@@ -2242,7 +2373,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         sharing_model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
         import_action = section(
             sharing_model,
-            "func toggleSavedMemory(",
+            "func setSavedMemory(",
             "private func notifyPersonalMemoriesChanged",
         )
         self.assertIn("SharedLikeStore.ensureInitialized()", import_action)

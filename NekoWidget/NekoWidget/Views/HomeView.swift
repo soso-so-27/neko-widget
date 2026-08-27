@@ -11,7 +11,7 @@ struct HomeView: View {
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let showSettings: () -> Void
-    let toggleLike: (String) -> Void
+    let setMemorySaved: (String, Bool) -> Void
     let rescan: () -> Void
 
     @State private var pendingMemoryRemovalIdentifier: String?
@@ -64,7 +64,7 @@ struct HomeView: View {
             Button("思い出から外す", role: .destructive) {
                 guard let identifier = pendingMemoryRemovalIdentifier else { return }
                 pendingMemoryRemovalIdentifier = nil
-                toggleLike(identifier)
+                setMemorySaved(identifier, false)
             }
             Button("キャンセル", role: .cancel) {
                 pendingMemoryRemovalIdentifier = nil
@@ -267,7 +267,7 @@ struct HomeView: View {
             .accessibilityIdentifier("today-memory-saved-state")
         } else {
             Button {
-                toggleLike(photo.localIdentifier)
+                setMemorySaved(photo.localIdentifier, true)
             } label: {
                 Label("思い出に残す", systemImage: "bookmark")
                     .font(.subheadline.bold())

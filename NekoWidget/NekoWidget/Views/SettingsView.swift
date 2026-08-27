@@ -1,6 +1,11 @@
 import SwiftUI
 import UIKit
 
+private struct DetectionSettingsSaveRequest: Equatable {
+    let confidenceThreshold: Double
+    let minimumAreaRatio: Double
+}
+
 struct SettingsView: View {
     let settings: SettingsPresentation
     let detectionAccuracySample: DetectionAccuracySamplePresentation
@@ -11,8 +16,8 @@ struct SettingsView: View {
     let canUpdatePhotoLibraryAlbum: Bool
     let requestPhotoAccess: () -> Void
     let updatePhotoLibraryAlbum: () -> Void
-    let saveSettings: (SettingsPresentation) async -> Void
     let savePhotoSettings: (PhotoRangePresentation, Int) async -> Void
+    let saveDetectionSettings: (Double, Double) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let rescan: () async -> Void
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
@@ -35,7 +40,11 @@ struct SettingsView: View {
     @State private var settingsSaveTask: Task<Void, Never>?
     @State private var settingsSaveRevision = 0
     @State private var isSavingLifeReference = false
+    @State private var isLifeReferenceSavePending = false
     @State private var lifeReferenceSaveTask: Task<Void, Never>?
+    @State private var lifeReferenceSaveRevision = 0
+    @State private var isSavingDetectionSettings = false
+    @State private var pendingDetectionSettingsSave: DetectionSettingsSaveRequest?
     @State private var isRescanning = false
     @State private var isExporting = false
     @State private var exportedFile: ExportedFile?
@@ -50,8 +59,8 @@ struct SettingsView: View {
         canUpdatePhotoLibraryAlbum: Bool,
         requestPhotoAccess: @escaping () -> Void,
         updatePhotoLibraryAlbum: @escaping () -> Void,
-        saveSettings: @escaping (SettingsPresentation) async -> Void,
         savePhotoSettings: @escaping (PhotoRangePresentation, Int) async -> Void,
+        saveDetectionSettings: @escaping (Double, Double) async -> Void,
         saveLifeReference: @escaping (CatLifeReference?) async -> Void,
         rescan: @escaping () async -> Void,
         excludedCatPhotos: [ExcludedCatPhotoPresentation],
@@ -77,8 +86,8 @@ struct SettingsView: View {
         self.canUpdatePhotoLibraryAlbum = canUpdatePhotoLibraryAlbum
         self.requestPhotoAccess = requestPhotoAccess
         self.updatePhotoLibraryAlbum = updatePhotoLibraryAlbum
-        self.saveSettings = saveSettings
         self.savePhotoSettings = savePhotoSettings
+        self.saveDetectionSettings = saveDetectionSettings
         self.saveLifeReference = saveLifeReference
         self.rescan = rescan
         self.excludedCatPhotos = excludedCatPhotos
@@ -152,7 +161,7 @@ struct SettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                         } icon: {
-                            Image(systemName: "rectangle.on.rectangle.angled")
+                            Image(systemName: "rectangle.split.2x2")
                         }
                     }
                     .accessibilityIdentifier("settings-sharing-review")
@@ -213,8 +222,8 @@ struct SettingsView: View {
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("詳細・診断")
-                            Text("問題の確認や再スキャン")
+                            Text("診断モード")
+                            Text("不具合の調査や検証データ")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -227,11 +236,44 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("設定")
-        .onChange(of: settings) { _, newSettings in
-            if isSavingLifeReference {
-                draft.catLifeReference = newSettings.catLifeReference
-            } else if !isSaving {
-                draft = newSettings
+        .onChange(of: settings) { oldSettings, newSettings in
+            // Each settings section saves independently. Merge incoming values
+            // field by field so one completed save cannot erase a still-pending
+            // edit made in another section.
+            let currentDraft = draft
+            let preservesRange = (
+                currentDraft.range != oldSettings.range
+                    || currentDraft.albumLimit != oldSettings.albumLimit
+                    || isPhotoSettingsSavePending
+            ) && (
+                currentDraft.range != newSettings.range
+                    || currentDraft.albumLimit != newSettings.albumLimit
+            )
+            let preservesLifeReference = (
+                currentDraft.catLifeReference != oldSettings.catLifeReference
+                    || isLifeReferenceSavePending
+            ) && currentDraft.catLifeReference != newSettings.catLifeReference
+            let preservesDetection = (
+                !detectionSettingsMatch(currentDraft, oldSettings)
+                    || pendingDetectionSettingsSave != nil
+            ) && !detectionSettingsMatch(currentDraft, newSettings)
+            var mergedDraft = newSettings
+
+            if preservesRange {
+                mergedDraft.range = currentDraft.range
+                mergedDraft.albumLimit = currentDraft.albumLimit
+            }
+            if preservesLifeReference {
+                mergedDraft.catLifeReference = currentDraft.catLifeReference
+            }
+            if preservesDetection {
+                mergedDraft.confidenceThreshold = currentDraft.confidenceThreshold
+                mergedDraft.minimumAreaRatio = currentDraft.minimumAreaRatio
+            }
+            draft = mergedDraft
+            if let request = pendingDetectionSettingsSave,
+               detectionSettingsMatch(request, newSettings) {
+                pendingDetectionSettingsSave = nil
             }
         }
         .onChange(of: draft.catLifeReference) { _, newValue in
@@ -367,6 +409,26 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                Button {
+                    Task {
+                        isRescanning = true
+                        await rescan()
+                        isRescanning = false
+                    }
+                } label: {
+                    Label(
+                        isRescanning || isScanning ? "スキャン中…" : "最初から再スキャン",
+                        systemImage: "arrow.clockwise"
+                    )
+                }
+                .disabled(isRescanning || isScanning || !hasPhotoAccess)
+            } header: {
+                Text("写真を見つけ直す")
+            } footer: {
+                Text("写真が増えたときや、検出結果を作り直したいときに使います。")
+            }
+
             if isSaving {
                 Section {
                     Label("変更を保存しています…", systemImage: "arrow.triangle.2.circlepath")
@@ -392,6 +454,7 @@ struct SettingsView: View {
                         value: draft.confidenceThreshold.formatted(.percent.precision(.fractionLength(0)))
                     )
                     Slider(value: $draft.confidenceThreshold, in: 0.5...0.95, step: 0.01)
+                        .disabled(isSavingDetectionSettings)
                 }
                 .padding(.vertical, 4)
 
@@ -401,19 +464,33 @@ struct SettingsView: View {
                         value: draft.minimumAreaRatio.formatted(.percent.precision(.fractionLength(0)))
                     )
                     Slider(value: $draft.minimumAreaRatio, in: 0.01...0.3, step: 0.01)
+                        .disabled(isSavingDetectionSettings)
                 }
                 .padding(.vertical, 4)
 
-                Button {
-                    Task {
-                        isSaving = true
-                        await saveSettings(draft)
-                        isSaving = false
-                    }
-                } label: {
-                    Label(isSaving ? "保存中…" : "検出設定を適用", systemImage: "checkmark.circle")
+                if hasUnsavedDetectionSettings {
+                    Label("未保存の変更があります", systemImage: "circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
-                .disabled(isSaving || draft == settings)
+
+                Button {
+                    Task { await persistDetectionSettings() }
+                } label: {
+                    Label(
+                        isSavingDetectionSettings ? "保存中…" : "検出設定を適用",
+                        systemImage: "checkmark.circle"
+                    )
+                }
+                .disabled(
+                    isSavingDetectionSettings
+                        || isSaving
+                        || isPhotoSettingsSavePending
+                        || isSavingLifeReference
+                        || isLifeReferenceSavePending
+                        || draft.catLifeReference != settings.catLifeReference
+                        || !hasUnsavedDetectionSettings
+                )
             } header: {
                 Text("検出の調整")
             } footer: {
@@ -461,17 +538,6 @@ struct SettingsView: View {
             Section {
                 Button {
                     Task {
-                        isRescanning = true
-                        await rescan()
-                        isRescanning = false
-                    }
-                } label: {
-                    Label(isRescanning || isScanning ? "スキャン中…" : "最初から再スキャン", systemImage: "arrow.clockwise")
-                }
-                .disabled(isRescanning || isScanning || !hasPhotoAccess)
-
-                Button {
-                    Task {
                         isExporting = true
                         cleanupVerificationExport()
                         if let url = await exportJSON() {
@@ -484,9 +550,9 @@ struct SettingsView: View {
                 }
                 .disabled(isExporting)
             } header: {
-                Text("再スキャンと書き出し")
+                Text("検証データ")
             } footer: {
-                Text("アルバムは保存済みの撮影日と検出結果から作ります。表示を直すためだけに再スキャンする必要はありません。")
+                Text("サポートへ調査情報を渡す必要があるときだけ使います。")
             }
 
             Section {
@@ -501,8 +567,32 @@ struct SettingsView: View {
                 Text("アプリとウィジェットのログを統合表示します。写真自体やPhotoKitの識別子全文は記録しません。")
             }
         }
-        .navigationTitle("詳細・診断")
+        .navigationTitle("診断モード")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var hasUnsavedDetectionSettings: Bool {
+        draft.confidenceThreshold != settings.confidenceThreshold
+            || draft.minimumAreaRatio != settings.minimumAreaRatio
+    }
+
+    @MainActor
+    private func persistDetectionSettings() async {
+        guard hasUnsavedDetectionSettings else { return }
+        let requestedConfidence = draft.confidenceThreshold
+        let requestedMinimumArea = draft.minimumAreaRatio
+        let request = DetectionSettingsSaveRequest(
+            confidenceThreshold: requestedConfidence,
+            minimumAreaRatio: requestedMinimumArea
+        )
+
+        pendingDetectionSettingsSave = request
+        isSavingDetectionSettings = true
+        defer { isSavingDetectionSettings = false }
+        await saveDetectionSettings(requestedConfidence, requestedMinimumArea)
+        if pendingDetectionSettingsSave == request {
+            pendingDetectionSettingsSave = nil
+        }
     }
 
     private var canReviewDetectionAccuracySample: Bool {
@@ -549,11 +639,16 @@ struct SettingsView: View {
     }
 
     private func scheduleLifeReferenceSave(_ value: CatLifeReference?) {
+        lifeReferenceSaveRevision += 1
+        let revision = lifeReferenceSaveRevision
         lifeReferenceSaveTask?.cancel()
         guard value != settings.catLifeReference else {
             isSavingLifeReference = false
+            isLifeReferenceSavePending = false
+            lifeReferenceSaveTask = nil
             return
         }
+        isLifeReferenceSavePending = true
         lifeReferenceSaveTask = Task { @MainActor in
             // Coalesce the DatePicker's rapid intermediate values before any
             // disk write. 150 ms is imperceptible after a calendar selection
@@ -565,9 +660,27 @@ struct SettingsView: View {
             }
             isSavingLifeReference = true
             await saveLifeReference(value)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, revision == lifeReferenceSaveRevision else { return }
             isSavingLifeReference = false
+            isLifeReferenceSavePending = false
+            lifeReferenceSaveTask = nil
         }
+    }
+
+    private func detectionSettingsMatch(
+        _ lhs: SettingsPresentation,
+        _ rhs: SettingsPresentation
+    ) -> Bool {
+        abs(lhs.confidenceThreshold - rhs.confidenceThreshold) < 0.000_001
+            && abs(lhs.minimumAreaRatio - rhs.minimumAreaRatio) < 0.000_001
+    }
+
+    private func detectionSettingsMatch(
+        _ request: DetectionSettingsSaveRequest,
+        _ settings: SettingsPresentation
+    ) -> Bool {
+        abs(request.confidenceThreshold - settings.confidenceThreshold) < 0.000_001
+            && abs(request.minimumAreaRatio - settings.minimumAreaRatio) < 0.000_001
     }
 
     private func schedulePhotoSettingsSave() {
@@ -678,7 +791,7 @@ private struct PhotoLibraryAlbumSettingsView: View {
             } header: {
                 Text("写真アプリの「うちの子」")
             } footer: {
-                Text("見つけた猫写真を、設定した枚数まで写真アプリのアルバムへ反映します。上限を変えても「思い出」の写真は消えません。変更は自動で保存されます。")
+                Text("写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。反映は設定した枚数までです。上限を変えても「思い出」の写真は消えません。変更は自動で保存されます。")
             }
 
             Section {
