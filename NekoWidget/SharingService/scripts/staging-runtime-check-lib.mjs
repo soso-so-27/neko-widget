@@ -9,6 +9,7 @@ const EXPECTATIONS = Object.freeze({
       path: "/health",
       status: 200,
       body: Object.freeze({ status: "ok", protocolVersion: 1 }),
+      runtime: Object.freeze({ media: "ON", apns: "ON", report: "OFF" }),
     }),
     Object.freeze({
       name: "moment",
@@ -69,6 +70,7 @@ const EXPECTATIONS = Object.freeze({
       path: "/health",
       status: 200,
       body: Object.freeze({ status: "ok", protocolVersion: 1 }),
+      runtime: Object.freeze({ media: "OFF", apns: "OFF", report: "OFF" }),
     }),
     Object.freeze({
       name: "moment",
@@ -95,6 +97,7 @@ const EXPECTATIONS = Object.freeze({
       path: "/health",
       status: 200,
       body: Object.freeze({ status: "ok", protocolVersion: 1 }),
+      runtime: Object.freeze({ media: "OFF", apns: "OFF", report: "OFF" }),
     }),
     Object.freeze({
       name: "moment",
@@ -194,6 +197,7 @@ async function checkEndpoint({ origin, expectation, fetchImpl, timeoutMs }) {
     response = await fetchImpl(`${origin}${expectation.path}`, {
       method: expectation.method ?? "GET",
       headers: { Accept: "application/json" },
+      cache: "no-store",
       redirect: "manual",
       signal: controller.signal,
     });
@@ -220,6 +224,22 @@ async function checkEndpoint({ origin, expectation, fetchImpl, timeoutMs }) {
   const body = parseJson(bodyText, expectation.name);
   if (expectation.body !== undefined) {
     assertExactObject(body, expectation.body, expectation.name);
+    if (expectation.runtime !== undefined) {
+      const generation = response.headers.get("neko-runtime-gate-generation");
+      if (generation === null || !/^(?:0|[1-9][0-9]*)$/u.test(generation)
+          || !Number.isSafeInteger(Number(generation))) {
+        throw new Error("health returned an invalid runtime gate generation");
+      }
+      for (const [header, expectedValue] of [
+        ["neko-runtime-media", expectation.runtime.media],
+        ["neko-runtime-apns", expectation.runtime.apns],
+        ["neko-runtime-report-ingestion", expectation.runtime.report],
+      ]) {
+        if (response.headers.get(header) !== expectedValue) {
+          throw new Error("health returned an unexpected runtime gate state");
+        }
+      }
+    }
   } else {
     const code = isPlainObject(body) && isPlainObject(body.error) ? body.error.code : undefined;
     if (code !== expectation.errorCode) {

@@ -9,6 +9,24 @@
 - `APNS_RUNTIME_ENABLED=YES|NO`: 通知だけを独立制御する。通知OFFでも写真同期を正本として維持する
 - `REPORT_INGESTION_RUNTIME_ENABLED=YES|NO`: 新規通報受付だけを独立制御する。OFFでもblockとcleanupを維持する
 - `LEGACY_SHARING_RUNTIME_ENABLED=NO`: 旧日次共有は常に無効
+
+`0011`適用後は上記varを上限とし、D1のsingleton runtime gateも同時にONでなければ
+media（写真・ハート・暗号化まど名）、APNs、新規通報受付はfail closedになります。gateは
+generation付きCASだけで更新し、初期値はすべてOFFです。`personal-staging-runtime-gate-manifest.json`
+はGit管理外に置き、固定account／Worker／D1／origin、期待generation、`build70-media-apns-on`
+（media ON、APNs ON、通報OFF）または`broad-off`だけを記録します。
+
+```powershell
+npm run staging:runtime:gate
+# 実操作は別途承認時だけ。通常の引数、任意SQL、任意originは受け付けません。
+node .\scripts\personal-staging-runtime-gate.mjs --confirm-build70-media-apns-on
+node .\scripts\personal-staging-runtime-gate.mjs --confirm-broad-off
+```
+
+実操作は固定ignored configからD1へ`UPDATE ... WHERE generation=<expected> RETURNING ...`を
+1回だけ実行し、変更1件と同一origin `/health` のgeneration／実効状態headerを照合します。
+この開発作業ではremote更新・照会を実行しません。gate導入前のWorkerへrollbackするとD1 gateを
+読まないため、上限varがOFFでない限り安全なrollbackではありません。
 - `/health`: `200`とexactなhealth JSON
 - 未認証の`/v2/moments/changes`: `401 invalid_authentication`
 - 未認証の`/v2/window-name`: `401 invalid_authentication`

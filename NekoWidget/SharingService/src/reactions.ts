@@ -361,6 +361,7 @@ export async function recordPawReaction(
   request: Request,
   env: Env,
   momentIDValue: string,
+  notificationsEnabled: boolean,
 ): Promise<Response> {
   const momentID = opaqueId(momentIDValue, "moment");
   const { body, member } = await signedReactionRequest(request, env);
@@ -464,6 +465,7 @@ export async function recordPawReaction(
         reaction.id,
         reaction.recipient_participant_id,
         reaction.created_at,
+        notificationsEnabled,
       ),
       idempotencyStatement(
         env,

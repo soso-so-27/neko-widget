@@ -29,6 +29,39 @@ interface Fixture {
 
 const databaseEnv = env as unknown as Env;
 
+async function temporarilyDisableAPNSGate(): Promise<() => Promise<void>> {
+  const previous = await databaseEnv.DB.prepare(
+    `SELECT generation, media_enabled, apns_enabled, report_ingestion_enabled
+       FROM personal_staging_runtime_gate WHERE singleton = 1`,
+  ).first<{
+    generation: number;
+    media_enabled: number;
+    apns_enabled: number;
+    report_ingestion_enabled: number;
+  }>();
+  if (previous === null) throw new Error("runtime gate test baseline is unavailable");
+  const changed = await databaseEnv.DB.prepare(
+    `UPDATE personal_staging_runtime_gate
+        SET generation = generation + 1, apns_enabled = 0, updated_at = unixepoch()
+      WHERE singleton = 1 AND generation = ?`,
+  ).bind(previous.generation).run();
+  if (changed.meta.changes !== 1) throw new Error("runtime gate test transition failed");
+  return async () => {
+    const restored = await databaseEnv.DB.prepare(
+      `UPDATE personal_staging_runtime_gate
+          SET generation = generation + 1, media_enabled = ?, apns_enabled = ?,
+              report_ingestion_enabled = ?, updated_at = unixepoch()
+        WHERE singleton = 1 AND generation = ?`,
+    ).bind(
+      previous.media_enabled,
+      previous.apns_enabled,
+      previous.report_ingestion_enabled,
+      previous.generation + 1,
+    ).run();
+    if (restored.meta.changes !== 1) throw new Error("runtime gate test restore failed");
+  };
+}
+
 function buffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.length);
   copy.set(bytes);
@@ -224,6 +257,43 @@ async function seedCommittedMoment(
 }
 
 describe("APNs durable notification delivery", () => {
+  it("uses the D1 APNs lower gate while preserving signed DELETE", async () => {
+    const fixture = await seedFixture();
+    const configuredEnv = await pushEnv();
+    const restore = await temporarilyDisableAPNSGate();
+    try {
+      const put = await signedRequest(
+        "/v2/push-subscriptions/current", "PUT", fixture.inviteeID,
+        fixture.inviteeKeys,
+        { protocolVersion: 2, token: randomValue(32), environment: "production" },
+      );
+      const replay = put.clone();
+      await expect(route(put, configuredEnv)).rejects
+        .toMatchObject({ status: 503, code: "apns_runtime_disabled" });
+      await expect(route(replay as unknown as Request, configuredEnv)).rejects
+        .toMatchObject({ status: 409, code: "replayed_request" });
+
+      const deleted = await route(await signedRequest(
+        "/v2/push-subscriptions/current", "DELETE", fixture.inviteeID,
+        fixture.inviteeKeys, { protocolVersion: 2 },
+      ), configuredEnv);
+      expect(deleted.status).toBe(200);
+    } finally {
+      await restore();
+    }
+  });
+
+  it("does not create notification events when the explicit lower gate is closed", async () => {
+    const fixture = await seedFixture();
+    const configuredEnv = await pushEnv();
+    const now = Math.floor(Date.now() / 1_000);
+    const momentID = await seedCommittedMoment(fixture, now);
+    expect(momentNotificationEventStatements(configuredEnv, momentID, now, false)).toEqual([]);
+    expect(reactionNotificationEventStatements(
+      configuredEnv, randomValue(16), fixture.inviteeID, now, false,
+    )).toEqual([]);
+  });
+
   it("rejects legacy protocol bodies at the additive subscription boundary", async () => {
     const fixture = await seedFixture();
     const configuredEnv = await pushEnv();
@@ -317,7 +387,7 @@ describe("APNs durable notification delivery", () => {
 
     const now = Math.floor(Date.now() / 1_000);
     const momentID = await seedCommittedMoment(fixture, now);
-    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now, true));
 
     let requestURL = "";
     let requestHeaders = new Headers();
@@ -388,6 +458,7 @@ describe("APNs durable notification delivery", () => {
         reactionID,
         fixture.inviteeID,
         now + 1,
+        true,
       ),
     ]);
     let heartPayload = "";
@@ -419,7 +490,7 @@ describe("APNs durable notification delivery", () => {
 
     const acknowledgedMomentID = await seedCommittedMoment(fixture, now + 2);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, acknowledgedMomentID, now + 2),
+      momentNotificationEventStatements(configuredEnv, acknowledgedMomentID, now + 2, true),
     );
     await databaseEnv.DB.prepare(
       `UPDATE moment_deliveries
@@ -444,7 +515,7 @@ describe("APNs durable notification delivery", () => {
 
     const secondMomentID = await seedCommittedMoment(fixture, now + 3);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, secondMomentID, now + 3),
+      momentNotificationEventStatements(configuredEnv, secondMomentID, now + 3, true),
     );
     const invalidated = await drainNotificationOutbox(
       configuredEnv,
@@ -493,7 +564,7 @@ describe("APNs durable notification delivery", () => {
     const now = Math.floor(Date.now() / 1_000);
     const historicalMomentID = await seedCommittedMoment(fixture, now);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, historicalMomentID, now),
+      momentNotificationEventStatements(configuredEnv, historicalMomentID, now, true),
     );
     expect(await databaseEnv.DB.prepare(
       "SELECT 1 AS present FROM notification_deliveries WHERE event_id IN (SELECT id FROM notification_events WHERE moment_id = ?)",
@@ -537,7 +608,7 @@ describe("APNs durable notification delivery", () => {
     const now = Math.floor(Date.now() / 1_000);
     const momentID = await seedCommittedMoment(fixture, now);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, momentID, now),
+      momentNotificationEventStatements(configuredEnv, momentID, now, true),
     );
     expect(await databaseEnv.DB.prepare(
       "SELECT 1 AS present FROM notification_deliveries WHERE device_id = ?",
@@ -615,7 +686,7 @@ describe("APNs durable notification delivery", () => {
     expect(firstResponse.status).toBe(200);
     const replacedMomentID = await seedCommittedMoment(fixture, now + 1);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, replacedMomentID, now + 1),
+      momentNotificationEventStatements(configuredEnv, replacedMomentID, now + 1, true),
     );
     expect(await databaseEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM notification_events WHERE moment_id = ?",
@@ -648,7 +719,7 @@ describe("APNs durable notification delivery", () => {
 
     const momentID = await seedCommittedMoment(fixture, now + 2);
     await databaseEnv.DB.batch(
-      momentNotificationEventStatements(configuredEnv, momentID, now + 2),
+      momentNotificationEventStatements(configuredEnv, momentID, now + 2, true),
     );
     expect(await databaseEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM notification_deliveries WHERE token_digest = ?",
@@ -749,8 +820,8 @@ describe("APNs durable notification delivery", () => {
     const firstMomentID = await seedCommittedMoment(first, now);
     const secondMomentID = await seedCommittedMoment(second, now + 1);
     await databaseEnv.DB.batch([
-      ...momentNotificationEventStatements(configuredEnv, firstMomentID, now),
-      ...momentNotificationEventStatements(configuredEnv, secondMomentID, now + 1),
+      ...momentNotificationEventStatements(configuredEnv, firstMomentID, now, true),
+      ...momentNotificationEventStatements(configuredEnv, secondMomentID, now + 1, true),
     ]);
     const payloads: Array<{
       neko: { v: number; kind: string };
@@ -939,7 +1010,7 @@ describe("APNs durable notification delivery", () => {
 
     const now = Math.floor(Date.now() / 1_000);
     const momentID = await seedCommittedMoment(fixture, now);
-    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now, true));
     let requests = 0;
     const drained = await drainNotificationOutbox(
       configuredEnv,
@@ -997,7 +1068,7 @@ describe("APNs durable notification delivery", () => {
 
     const now = Math.floor(Date.now() / 1_000);
     const momentID = await seedCommittedMoment(fixture, now);
-    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now, true));
     const routeVersions: number[] = [];
     const first = await drainNotificationOutbox(
       configuredEnv,
@@ -1064,7 +1135,7 @@ describe("APNs durable notification delivery", () => {
 
     const now = Math.floor(Date.now() / 1_000);
     const momentID = await seedCommittedMoment(fixture, now);
-    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now, true));
 
     let requests = 0;
     const drained = await drainNotificationOutbox(
@@ -1122,7 +1193,7 @@ describe("APNs durable notification delivery", () => {
     ).bind(fixture.inviteeID).run();
     const now = Math.floor(Date.now() / 1_000);
     const momentID = await seedCommittedMoment(fixture, now);
-    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now));
+    await databaseEnv.DB.batch(momentNotificationEventStatements(configuredEnv, momentID, now, true));
 
     let requests = 0;
     const mismatched = await drainNotificationOutbox(

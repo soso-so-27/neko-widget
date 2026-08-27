@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -22,8 +23,11 @@ function runtimeFetch({
   reactionCode = "invalid_authentication",
   pushStatus = 401,
   pushCode = "invalid_authentication",
+  targetedPushStatus = pushStatus,
+  targetedPushCode = pushCode,
   windowNameStatus,
   windowNameCode,
+  healthMediaRuntime,
   legacyStatus = 503,
   legacyCode = "legacy_sharing_runtime_disabled",
 }) {
@@ -32,12 +36,20 @@ function runtimeFetch({
     ?? (momentCode === "moment_runtime_disabled"
       ? "window_name_runtime_disabled"
       : momentCode);
+  const mediaRuntime = healthMediaRuntime ?? (
+    momentStatus === 401 && resolvedWindowNameStatus === 401 ? "ON" : "OFF"
+  );
   return async (url, options) => {
     assert.equal(options.redirect, "manual");
     switch (new URL(url).pathname) {
       case "/health":
         assert.equal(options.method, "GET");
-        return jsonResponse(200, { status: "ok", protocolVersion: 1 });
+        return jsonResponse(200, { status: "ok", protocolVersion: 1 }, {
+          "Neko-Runtime-Gate-Generation": "7",
+          "Neko-Runtime-Media": mediaRuntime,
+          "Neko-Runtime-Apns": mediaRuntime,
+          "Neko-Runtime-Report-Ingestion": "OFF",
+        });
       case "/v2/moments/changes":
         assert.equal(options.method, "GET");
         return jsonResponse(momentStatus, { error: { code: momentCode, message: "expected test response" } });
@@ -47,10 +59,14 @@ function runtimeFetch({
           error: { code: reactionCode, message: "expected test response" },
         });
       case "/v2/push-subscriptions/current":
-      case "/v3/push-subscriptions/current":
         assert.ok(options.method === "PUT" || options.method === "DELETE");
         return jsonResponse(pushStatus, {
           error: { code: pushCode, message: "expected test response" },
+        });
+      case "/v3/push-subscriptions/current":
+        assert.ok(options.method === "PUT" || options.method === "DELETE");
+        return jsonResponse(targetedPushStatus, {
+          error: { code: targetedPushCode, message: "expected test response" },
         });
       case "/v2/window-name":
         assert.equal(options.method, "GET");
@@ -83,6 +99,32 @@ test("accepts the expected ON runtime boundary", async () => {
     { name: "window-name", status: 401 },
     { name: "legacy", status: 503 },
   ]);
+});
+
+test("the daily monitor pins the current policy revision and ON boundary", async () => {
+  const workflow = await readFile(
+    new URL("../../../.github/workflows/sharing-staging-monitor.yml", import.meta.url),
+    "utf8",
+  );
+  assert.equal(workflow.match(/revision: "2026-08-26"/gu)?.length, 2);
+  assert.doesNotMatch(workflow, /revision: "2026-08-(?:24|25)"/u);
+  assert.match(workflow, /node scripts\/check-staging-runtime\.mjs --expected on/u);
+});
+
+test("rejects an ON boundary without the Build 70 targeted push route", async () => {
+  await assert.rejects(
+    checkStagingRuntime({
+      origin,
+      expected: "on",
+      fetchImpl: runtimeFetch({
+        momentStatus: 401,
+        momentCode: "invalid_authentication",
+        targetedPushStatus: 404,
+        targetedPushCode: "not_found",
+      }),
+    }),
+    /targeted-push-register returned HTTP 404; expected 401/u,
+  );
 });
 
 test("accepts the expected OFF runtime boundary", async () => {
@@ -122,6 +164,7 @@ test("rejects an enabled private window-name runtime in the mixed boundary", asy
         momentCode: "invalid_authentication",
         windowNameStatus: 401,
         windowNameCode: "invalid_authentication",
+        healthMediaRuntime: "OFF",
       }),
     }),
     /window-name returned HTTP 401; expected 503/u,
@@ -154,6 +197,7 @@ test("rejects a moment state mismatch", async () => {
         momentCode: "moment_runtime_disabled",
         windowNameStatus: 401,
         windowNameCode: "invalid_authentication",
+        healthMediaRuntime: "ON",
       }),
     }),
     /moment returned HTTP 503; expected 401/u,
@@ -186,6 +230,7 @@ test("rejects a private window-name state mismatch", async () => {
         momentCode: "invalid_authentication",
         windowNameStatus: 503,
         windowNameCode: "window_name_runtime_disabled",
+        healthMediaRuntime: "ON",
       }),
     }),
     /window-name returned HTTP 503; expected 401/u,

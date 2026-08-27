@@ -23,3 +23,22 @@ BEGIN
        SET route_schema_version = 1
      WHERE device_id = NEW.device_id;
 END;
+
+-- A data-plane gate is independent of Worker deployment state. Wrangler vars
+-- remain an upper bound; this singleton is the lower bound and starts closed.
+-- The generation is advanced only by an exact compare-and-swap UPDATE.
+CREATE TABLE personal_staging_runtime_gate (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    generation INTEGER NOT NULL CHECK (generation >= 0),
+    media_enabled INTEGER NOT NULL CHECK (media_enabled IN (0, 1)),
+    apns_enabled INTEGER NOT NULL CHECK (apns_enabled IN (0, 1)),
+    report_ingestion_enabled INTEGER NOT NULL
+        CHECK (report_ingestion_enabled IN (0, 1)),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+    CHECK (apns_enabled <= media_enabled)
+) STRICT;
+
+INSERT INTO personal_staging_runtime_gate(
+    singleton, generation, media_enabled, apns_enabled,
+    report_ingestion_enabled, updated_at
+) VALUES (1, 0, 0, 0, 0, unixepoch());

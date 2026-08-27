@@ -16,8 +16,18 @@ const sharedHeaders = {
   "X-Content-Type-Options": "nosniff",
 } as const;
 
-export function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), { status, headers: sharedHeaders });
+export function jsonResponse(
+  value: unknown,
+  status = 200,
+  additionalHeaders?: HeadersInit,
+): Response {
+  const headers = new Headers(sharedHeaders);
+  if (additionalHeaders !== undefined) {
+    new Headers(additionalHeaders).forEach((headerValue, headerName) => {
+      headers.set(headerName, headerValue);
+    });
+  }
+  return new Response(JSON.stringify(value), { status, headers });
 }
 
 export function errorResponse(error: unknown): Response {

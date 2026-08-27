@@ -1,11 +1,18 @@
 import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {
+  apnsRuntimeEnabled,
   legacySharingRuntimeEnabled,
   momentRuntimeEnabled,
   reactionRuntimeEnabled,
   windowNameRuntimeEnabled,
   type Env,
 } from "./env";
+import {
+  apnsGateOpen,
+  effectiveRuntimeGateHeaders,
+  loadRuntimeGate,
+  mediaGateOpen,
+} from "./runtime-gate";
 import {
   approveEnrollment,
   cancelEnrollment,
@@ -79,9 +86,22 @@ export async function route(
   const url = new URL(request.url);
   rejectQuery(url);
   const { pathname } = url;
+  let runtimeGatePromise: ReturnType<typeof loadRuntimeGate> | undefined;
+  const runtimeGate = (): ReturnType<typeof loadRuntimeGate> => {
+    runtimeGatePromise ??= loadRuntimeGate(env);
+    return runtimeGatePromise;
+  };
 
   if (request.method === "GET" && pathname === "/health") {
-    return jsonResponse({ status: "ok", protocolVersion: 1 });
+    const snapshot = await runtimeGate();
+    if (snapshot === null) {
+      throw new ApiError(503, "runtime_gate_unavailable", "Runtime control is unavailable.");
+    }
+    return jsonResponse(
+      { status: "ok", protocolVersion: 1 },
+      200,
+      effectiveRuntimeGateHeaders(env, snapshot),
+    );
   }
   if (pathname === "/v1/sharing" || pathname.startsWith("/v1/sharing/")) {
     if (!legacySharingRuntimeEnabled(env)) {
@@ -172,7 +192,7 @@ export async function route(
     (pawReactionMatch?.[1] !== undefined
       || pathname === "/v2/reactions/changes"
       || pathname.startsWith("/v2/reactions/changes/"))
-    && !reactionRuntimeEnabled(env)
+    && (!reactionRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate()))
   ) {
     throw new ApiError(
       503,
@@ -184,7 +204,7 @@ export async function route(
     (pathname === "/v2/moments" || pathname.startsWith("/v2/moments/"))
     && pawReactionMatch?.[1] === undefined
   ) {
-    if (!momentRuntimeEnabled(env)) {
+    if (!momentRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate())) {
       throw new ApiError(
         503,
         "moment_runtime_disabled",
@@ -215,7 +235,10 @@ export async function route(
       return deleteAdditivePushSubscription(request, env);
     }
   }
-  if (pathname === "/v2/window-name" && !windowNameRuntimeEnabled(env)) {
+  if (
+    pathname === "/v2/window-name"
+    && (!windowNameRuntimeEnabled(env) || !mediaGateOpen(await runtimeGate()))
+  ) {
     throw new ApiError(
       503,
       "window_name_runtime_disabled",
@@ -251,7 +274,12 @@ export async function route(
   }
   const momentCommitMatch = pathname.match(/^\/v2\/moments\/([^/]+)\/commit$/u);
   if (request.method === "POST" && momentCommitMatch?.[1] !== undefined) {
-    const response = await commitMoment(request, env, momentCommitMatch[1]);
+    const response = await commitMoment(
+      request,
+      env,
+      momentCommitMatch[1],
+      apnsRuntimeEnabled(env) && apnsGateOpen(await runtimeGate()),
+    );
     if (response.ok && ctx !== undefined) scheduleNotificationDrain(env, ctx);
     return response;
   }
@@ -260,7 +288,12 @@ export async function route(
     return acknowledgeMoment(request, env, momentAckMatch[1]);
   }
   if (request.method === "POST" && pawReactionMatch?.[1] !== undefined) {
-    const response = await recordPawReaction(request, env, pawReactionMatch[1]);
+    const response = await recordPawReaction(
+      request,
+      env,
+      pawReactionMatch[1],
+      apnsRuntimeEnabled(env) && apnsGateOpen(await runtimeGate()),
+    );
     if (response.ok && ctx !== undefined) scheduleNotificationDrain(env, ctx);
     return response;
   }

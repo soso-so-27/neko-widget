@@ -21,6 +21,52 @@ interface KeyPair {
 }
 
 describe("moment runtime kill switch", () => {
+  it("treats the D1 media gate as a fail-closed lower bound without blocking safety routes", async () => {
+    const restore = await temporarilySetRuntimeGate({ mediaEnabled: 0, apnsEnabled: 0 });
+    try {
+      for (const [path, code] of [
+        ["/v2/moments/changes", "moment_runtime_disabled"],
+        ["/v2/reactions/changes", "reaction_runtime_disabled"],
+        ["/v2/window-name", "window_name_runtime_disabled"],
+      ] as const) {
+        await expect(route(new Request(`https://sharing.invalid${path}`), testEnv))
+          .rejects.toMatchObject({ status: 503, code });
+      }
+      await expect(route(new Request(
+        "https://sharing.invalid/v2/participants/0000000000000000000000/block",
+        { method: "POST" },
+      ), testEnv)).rejects.toMatchObject({ status: 401, code: "invalid_authentication" });
+
+      const health = await route(new Request("https://sharing.invalid/health"), testEnv);
+      expect(health.headers.get("cache-control")).toBe("no-store");
+      expect(health.headers.get("neko-runtime-media")).toBe("OFF");
+      expect(health.headers.get("neko-runtime-apns")).toBe("OFF");
+      await expect(runMomentCleanup(testEnv)).resolves.toBeUndefined();
+    } finally {
+      await restore();
+    }
+  });
+
+  it("keeps the health state fail closed when an upper var is off or the gate is missing", async () => {
+    const upperOff = await route(
+      new Request("https://sharing.invalid/health"),
+      { ...testEnv, MOMENT_RUNTIME_ENABLED: "NO" } as Env,
+    );
+    expect(upperOff.headers.get("neko-runtime-media")).toBe("OFF");
+    let serializedHeaders = "";
+    upperOff.headers.forEach((value, name) => { serializedHeaders += `${name}:${value}\n`; });
+    expect(serializedHeaders).not.toMatch(
+      /account|database|token|secret|email/iu,
+    );
+
+    const unavailableGateEnv = {
+      ...testEnv,
+      DB: { prepare: () => { throw new Error("gate unavailable"); } } as unknown as D1Database,
+    } as Env;
+    await expect(route(new Request("https://sharing.invalid/health"), unavailableGateEnv))
+      .rejects.toMatchObject({ status: 503, code: "runtime_gate_unavailable" });
+  });
+
   it("fails closed for normal moment routes unless the exact server flag is enabled", async () => {
     for (const value of [undefined, "NO", "true", "yes"]) {
       const disabledEnv = {
@@ -256,6 +302,38 @@ describe("moment runtime kill switch", () => {
     );
     expect(blockResponse.status).toBe(200);
   });
+
+  it("authenticates and burns the nonce when the D1 report lower gate is closed", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const evidence = crypto.getRandomValues(new Uint8Array(192));
+    const body = {
+      protocolVersion: 2,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      momentId: published.reservation.moment.id,
+      reasonCode: "privacy",
+      moderationKeyId: "moderation-v1",
+      ciphertextSize: evidence.length,
+      ciphertextSHA256: await sha256Base64url(evidence),
+      reporterConsent: { version: 1, acceptedAt: new Date().toISOString() },
+    };
+    const restore = await temporarilySetRuntimeGate({ reportIngestionEnabled: 0 });
+    try {
+      const nonce = randomValue(16);
+      const request = await signedRequest(
+        "/v2/reports/reservations", "POST", space.invitee, body, nonce,
+      );
+      const replay = await signedRequest(
+        "/v2/reports/reservations", "POST", space.invitee, body, nonce,
+      );
+      await expect(route(request, { ...testEnv, REPORT_INGESTION_RUNTIME_ENABLED: "YES" } as Env))
+        .rejects.toMatchObject({ status: 503, code: "report_ingestion_runtime_disabled" });
+      await expect(route(replay, { ...testEnv, REPORT_INGESTION_RUNTIME_ENABLED: "YES" } as Env))
+        .rejects.toMatchObject({ status: 409, code: "replayed_request" });
+    } finally {
+      await restore();
+    }
+  });
 });
 
 interface TestMember {
@@ -307,6 +385,51 @@ interface WindowNameResponse {
 }
 
 const testEnv = env as unknown as Env;
+
+interface RuntimeGateTestState {
+  generation: number;
+  media_enabled: number;
+  apns_enabled: number;
+  report_ingestion_enabled: number;
+}
+
+async function temporarilySetRuntimeGate(patch: {
+  mediaEnabled?: 0 | 1;
+  apnsEnabled?: 0 | 1;
+  reportIngestionEnabled?: 0 | 1;
+}): Promise<() => Promise<void>> {
+  const previous = await testEnv.DB.prepare(
+    `SELECT generation, media_enabled, apns_enabled, report_ingestion_enabled
+       FROM personal_staging_runtime_gate WHERE singleton = 1`,
+  ).first<RuntimeGateTestState>();
+  if (previous === null) throw new Error("runtime gate test baseline is unavailable");
+  const next = {
+    media: patch.mediaEnabled ?? previous.media_enabled,
+    apns: patch.apnsEnabled ?? previous.apns_enabled,
+    report: patch.reportIngestionEnabled ?? previous.report_ingestion_enabled,
+  };
+  const changed = await testEnv.DB.prepare(
+    `UPDATE personal_staging_runtime_gate
+        SET generation = generation + 1, media_enabled = ?, apns_enabled = ?,
+            report_ingestion_enabled = ?, updated_at = unixepoch()
+      WHERE singleton = 1 AND generation = ?`,
+  ).bind(next.media, next.apns, next.report, previous.generation).run();
+  if (changed.meta.changes !== 1) throw new Error("runtime gate test transition failed");
+  return async () => {
+    const restored = await testEnv.DB.prepare(
+      `UPDATE personal_staging_runtime_gate
+          SET generation = generation + 1, media_enabled = ?, apns_enabled = ?,
+              report_ingestion_enabled = ?, updated_at = unixepoch()
+        WHERE singleton = 1 AND generation = ?`,
+    ).bind(
+      previous.media_enabled,
+      previous.apns_enabled,
+      previous.report_ingestion_enabled,
+      previous.generation + 1,
+    ).run();
+    if (restored.meta.changes !== 1) throw new Error("runtime gate test restore failed");
+  };
+}
 
 function bytes(value: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(value.length);

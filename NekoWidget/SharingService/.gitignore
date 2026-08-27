@@ -16,3 +16,5 @@ wrangler.report-ingestion-staging-on.jsonc
 wrangler.general-staging-on.jsonc
 wrangler.general-staging-apns-off.jsonc
 emergency-off-control-manifest.json
+personal-staging-runtime-gate-manifest.json
+.wrangler-build70-0011.jsonc

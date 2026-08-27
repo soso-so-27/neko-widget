@@ -14,6 +14,7 @@ import {
 } from "./encoding";
 import { ApiError, jsonResponse } from "./errors";
 import { apnsRuntimeEnabled, type Env } from "./env";
+import { apnsGateOpen, loadRuntimeGate } from "./runtime-gate";
 import { enforceRateLimit, parseJsonBody, readBody, transientNetworkKey } from "./http";
 import { exactKeys, stringField, type JsonRecord } from "./validation";
 
@@ -330,7 +331,7 @@ async function putPushSubscription(
   registrationMode: "exclusiveLegacy" | "additiveTargeted",
 ): Promise<Response> {
   const { body, member } = await signedActiveRequest(request, env);
-  if (!apnsRuntimeEnabled(env)) {
+  if (!apnsRuntimeEnabled(env) || !apnsGateOpen(await loadRuntimeGate(env))) {
     await consumeNonce(env, member);
     throw new ApiError(503, "apns_runtime_disabled", "Notifications are temporarily unavailable.");
   }
@@ -575,8 +576,9 @@ export function momentNotificationEventStatements(
   env: Env,
   momentID: string,
   createdAt: number,
+  gateEnabled: boolean,
 ): D1PreparedStatement[] {
-  if (!apnsRuntimeEnabled(env)) return [];
+  if (!apnsRuntimeEnabled(env) || !gateEnabled) return [];
   return [env.DB.prepare(
     `INSERT INTO notification_events(
        id, kind, participant_id, moment_id, reaction_id, created_at, expires_at
@@ -597,8 +599,9 @@ export function reactionNotificationEventStatements(
   reactionID: string,
   participantID: string,
   createdAt: number,
+  gateEnabled: boolean,
 ): D1PreparedStatement[] {
-  if (!apnsRuntimeEnabled(env)) return [];
+  if (!apnsRuntimeEnabled(env) || !gateEnabled) return [];
   return [env.DB.prepare(
     `INSERT INTO notification_events(
        id, kind, participant_id, moment_id, reaction_id, created_at, expires_at
@@ -857,7 +860,10 @@ export async function drainNotificationOutbox(
     env.DB.prepare("DELETE FROM apns_subscriptions WHERE expires_at <= ?").bind(now),
     env.DB.prepare("DELETE FROM notification_events WHERE expires_at <= ?").bind(now),
   ]);
-  if (!apnsRuntimeEnabled(env)) return summary;
+  const runtimeGate = await loadRuntimeGate(env);
+  if (!apnsRuntimeEnabled(env) || runtimeGate === null || !apnsGateOpen(runtimeGate)) {
+    return summary;
+  }
 
   let credential: ProviderCredential;
   let keyring: TokenKeyring;
@@ -965,13 +971,18 @@ export async function drainNotificationOutbox(
          JOIN apns_subscriptions AS subscription
            ON subscription.device_id = delivery.device_id
           AND subscription.token_digest = delivery.token_digest
+         JOIN personal_staging_runtime_gate AS runtime_gate
+           ON runtime_gate.singleton = 1
         WHERE delivery.event_id = ? AND delivery.device_id = ?
           AND delivery.token_digest = ?
           AND delivery.state = 'leased' AND delivery.lease_id = ?
           AND event.expires_at > ?
           AND subscription.expires_at > ?
           AND subscription.environment = ?
-          AND subscription.route_schema_version = ?`,
+          AND subscription.route_schema_version = ?
+          AND runtime_gate.generation = ?
+          AND runtime_gate.media_enabled = 1
+          AND runtime_gate.apns_enabled = 1`,
     ).bind(
       row.event_id,
       row.device_id,
@@ -981,6 +992,7 @@ export async function drainNotificationOutbox(
       now,
       credential.environment,
       row.route_schema_version,
+      runtimeGate.generation,
     ).first<{ present: number }>();
     if (stillCurrent === null) {
       summary.skipped += 1;

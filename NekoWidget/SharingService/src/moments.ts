@@ -32,6 +32,7 @@ import { idempotencyStatement, storedIdempotentResponse } from "./idempotency";
 import { encodeCanonicalFields, signedRequestTranscript } from "./protocol";
 import { momentNotificationEventStatements } from "./push";
 import { REACTION_USAGE_RETENTION_DAYS } from "./reactions";
+import { loadRuntimeGate, reportIngestionGateOpen } from "./runtime-gate";
 import {
   asObject,
   binaryField,
@@ -363,7 +364,10 @@ async function requireReportIngestionRuntime(
   member: AuthenticatedMember,
   context: MomentContextRow,
 ): Promise<void> {
-  if (reportIngestionRuntimeEnabled(env)) return;
+  if (
+    reportIngestionRuntimeEnabled(env)
+    && reportIngestionGateOpen(await loadRuntimeGate(env))
+  ) return;
   // Authentication and signature verification happen before this gate. Burn
   // the signed nonce as well so a request rejected during an emergency stop
   // cannot be replayed after ingestion is enabled again.
@@ -1188,6 +1192,7 @@ export async function commitMoment(
   request: Request,
   env: Env,
   momentIDValue: string,
+  notificationsEnabled: boolean,
 ): Promise<Response> {
   const momentID = opaqueId(momentIDValue, "moment");
   const bucket = requireMediaBucket(env);
@@ -1351,7 +1356,12 @@ export async function commitMoment(
           WHERE delivery.moment_id = ?
             AND delivery.recipient_participant_id <> ?`,
       ).bind(committedAt, momentID, firstRecipientID),
-      ...momentNotificationEventStatements(env, momentID, committedAt),
+      ...momentNotificationEventStatements(
+        env,
+        momentID,
+        committedAt,
+        notificationsEnabled,
+      ),
       env.DB.prepare("DELETE FROM moment_commit_events WHERE id = ?").bind(commitEventID),
       idempotencyStatement(
         env,
