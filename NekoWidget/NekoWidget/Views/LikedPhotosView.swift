@@ -39,7 +39,7 @@ struct AlbumView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("アルバム")
+        .navigationTitle("自動アルバム")
         .background(Color(.systemGroupedBackground))
     }
 
@@ -376,7 +376,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("「今日」・ウィジェット・「写真を見つける」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("「今日」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -518,8 +518,6 @@ struct LikedPhotosView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
-                summaryCard
-
                 if photos.isEmpty {
                     ContentUnavailableView {
                         Label {
@@ -539,10 +537,19 @@ struct LikedPhotosView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 9) {
-                        Label("残した順", systemImage: "photo.stack.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
+                        HStack {
+                            Label(
+                                "\(photos.count.formatted())枚の思い出",
+                                systemImage: "bookmark.fill"
+                            )
+                            .font(.headline)
+                            Spacer()
+                            Text("残した順")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                        .accessibilityIdentifier("photo-book-progress")
 
                         LazyVGrid(columns: photoColumns, spacing: 3) {
                             ForEach(photos) { photo in
@@ -560,7 +567,7 @@ struct LikedPhotosView: View {
         .toolbar {
             if !photos.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "まとめる") {
+                    Button(isSelectingForExport ? "キャンセル" : "PDFにまとめる") {
                         if isSelectingForExport {
                             cancelExportSelection()
                         } else {
@@ -600,36 +607,6 @@ struct LikedPhotosView: View {
             photoBookExportTask?.cancel()
             photoBookExportTask = nil
         }
-    }
-
-    private var summaryCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(photos.count.formatted())
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
-                    .contentTransition(.numericText())
-                Text("枚の思い出")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Text("自分で選んだ写真です。「今日」の「写真を見つける」とは別に、何枚でも追加できます。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("photo-book-progress")
-
-            if !photos.isEmpty, !isSelectingForExport {
-                Button(action: startExportSelection) {
-                    Label("写真を選んでまとめる", systemImage: "square.grid.3x3.square")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .padding(16)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
-        .padding(.horizontal, 16)
     }
 
     private var photoColumns: [GridItem] {
@@ -738,7 +715,7 @@ struct LikedPhotosView: View {
         .overlay(alignment: .bottomLeading) {
             if !isSelectingForExport, let likedAt = photo.likedAt {
                 HStack(spacing: 3) {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: "bookmark.fill")
                     Text(likedAt.formatted(.dateTime.year().month().day()))
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
@@ -908,6 +885,7 @@ struct PhotoBrowserView: View {
     @State private var preheatedPhotoIdentifiers: Set<String> = []
     @State private var pendingExclusionIdentifier: String?
     @State private var showsExclusionConfirmation = false
+    @State private var pendingMemoryRemovalIdentifier: String?
     @State private var showsAssignmentSheet = false
     @State private var isExportingMemoryPhoto = false
     @State private var memoryPhotoExportTask: Task<Void, Never>?
@@ -1019,24 +997,48 @@ struct PhotoBrowserView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        Button {
-                            toggleLike(selectedPhoto.localIdentifier)
-                        } label: {
-                            HStack(spacing: 9) {
-                                Image(systemName: selectedPhoto.isLiked
-                                    ? "checkmark.circle.fill"
-                                    : "photo.badge.plus")
-                                    .font(.system(size: 20, weight: .semibold))
-                                Text(selectedPhoto.isLiked ? "思い出から外す" : "思い出に残す")
+                        if selectedPhoto.isLiked {
+                            HStack(spacing: 10) {
+                                Label("思い出に残した", systemImage: "bookmark.fill")
+                                    .font(.headline)
+                                Spacer(minLength: 4)
+                                Menu {
+                                    Button("思い出から外す", role: .destructive) {
+                                        pendingMemoryRemovalIdentifier = selectedPhoto.localIdentifier
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                        .font(.title3)
+                                        .accessibilityLabel("思い出の操作")
+                                }
+                                .disabled(isExportingMemoryPhoto)
                             }
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                            .background(
+                                Color(.secondarySystemBackground),
+                                in: RoundedRectangle(cornerRadius: 14)
+                            )
+                            .accessibilityIdentifier("photo-browser-memory-saved-state")
+                        } else {
+                            Button {
+                                toggleLike(selectedPhoto.localIdentifier)
+                            } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: "bookmark")
+                                        .font(.system(size: 20, weight: .semibold))
+                                    Text("思い出に残す")
+                                }
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color.accentColor)
+                            .controlSize(.large)
+                            .disabled(isExportingMemoryPhoto)
+                            .accessibilityHint("自分の思い出一覧に残します")
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(selectedPhoto.isLiked ? Color.secondary : Color.accentColor)
-                        .controlSize(.large)
-                        .disabled(isExportingMemoryPhoto)
-                        .accessibilityLabel(selectedPhoto.isLiked ? "思い出から外す" : "思い出に残す")
 
                         if isExportingMemoryPhoto {
                             HStack(spacing: 10) {
@@ -1116,6 +1118,27 @@ struct PhotoBrowserView: View {
             }
         }
         .confirmationDialog(
+            "思い出から外しますか？",
+            isPresented: Binding(
+                get: { pendingMemoryRemovalIdentifier != nil },
+                set: { isPresented in
+                    if !isPresented { pendingMemoryRemovalIdentifier = nil }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("思い出から外す", role: .destructive) {
+                guard let identifier = pendingMemoryRemovalIdentifier else { return }
+                pendingMemoryRemovalIdentifier = nil
+                toggleLike(identifier)
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingMemoryRemovalIdentifier = nil
+            }
+        } message: {
+            Text("写真アプリの写真は削除されません。")
+        }
+        .confirmationDialog(
             "表示候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
             titleVisibility: .visible
@@ -1129,7 +1152,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("「今日」・ウィジェット・「写真を見つける」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("「今日」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(

@@ -106,6 +106,11 @@ enum OnboardingPresentationVerifier {
             "scan manuscript copy changed"
         )
         try require(
+            OnboardingPresentationCopy.scanContinueAction
+                == "先に進む（スキャンは続きます）",
+            "scan page stopped offering a non-blocking continuation"
+        )
+        try require(
             OnboardingPresentationCopy.resultLeadLines == [
                 "このiPhoneで見つけた",
                 "猫写真は"

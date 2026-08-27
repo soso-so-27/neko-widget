@@ -629,6 +629,15 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         )[1].split("private var canManageOutgoingPresentation", 1)[0]
         self.assertIn("focusedSentMomentID", visible_sent)
         self.assertIn("$0.momentID == focusedSentMomentID", visible_sent)
+        self.assertIn("通知の写真を開いています…", self.family_window)
+        self.assertIn("family-window-notification-route-progress", self.family_window)
+        self.assertIn("family-window-notification-route-retry", self.family_window)
+        self.assertIn("family-window-notification-route-dismiss", self.family_window)
+        self.assertIn("通知の写真を表示できません", self.family_window)
+        self.assertIn("通知の写真を確認できません", self.family_window)
+        self.assertIn("resolvePendingNotificationRoute()", self.family_window)
+        self.assertIn("finishPendingNotificationResolutionIfNeeded()", self.family_window)
+        self.assertIn("consumePendingNotificationRoute()", self.family_window)
 
     def test_visible_notification_authorization_requires_an_explicit_tap(self) -> None:
         request = self.service.split(
@@ -647,9 +656,11 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("目立つ通知にする", self.family_window)
 
     def test_notification_copy_does_not_claim_immediate_delivery(self) -> None:
-        self.assertIn("選択中のまどの通知", self.family_window)
-        self.assertIn("このまどの新着を通知できます", self.family_window)
+        self.assertIn("写真とハートの通知", self.family_window)
+        self.assertIn("このiPhoneの通知を許可できます", self.family_window)
+        self.assertIn("iPhoneで静かな通知に設定中", self.family_window)
         self.assertIn("iPhoneで許可済み", self.family_window)
+        self.assertNotIn("選択中のまどの通知", self.family_window)
         self.assertNotIn("写真やハートが届いたら必ずすぐ通知します", self.family_window)
 
     def test_heart_notification_is_text_only_and_privacy_minimized(self) -> None:

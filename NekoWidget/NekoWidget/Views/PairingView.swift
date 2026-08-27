@@ -22,9 +22,6 @@ struct PairingView: View {
                 if !model.isMediaSyncEnabled {
                     pairingOnlyBuildSection
                 }
-                if !model.privateWindows.isEmpty {
-                    privateWindowSwitcherSection
-                }
                 if !model.isConfigured {
                     Section {
                         ContentUnavailableView(
@@ -192,67 +189,6 @@ struct PairingView: View {
                 .foregroundStyle(.secondary)
         } header: {
             Text("このBuildの確認範囲")
-        }
-    }
-
-    private var privateWindowSwitcherSection: some View {
-        Section {
-            ForEach(model.privateWindows) { window in
-                Button {
-                    Task {
-                        await model.activatePrivateWindow(
-                            localWindowID: window.localWindowID
-                        )
-                        setupPath = nil
-                        hasAcceptedPairingTerms = false
-                        windowDisplayNameDraft = model.windowDisplayName
-                    }
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: window.localWindowID == model.activePrivateWindowID
-                            ? "checkmark.circle.fill"
-                            : "circle")
-                            .foregroundStyle(
-                                window.localWindowID == model.activePrivateWindowID
-                                    ? Color.accentColor
-                                    : Color.secondary
-                            )
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(window.displayName)
-                                .foregroundStyle(.primary)
-                            Text(window.spaceID == nil ? "まだ相手を招待していません" : "相手1人と非公開")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(model.isWorking)
-                .accessibilityHint(
-                    window.localWindowID == model.activePrivateWindowID
-                        ? "現在開いているまどです"
-                        : "このまどへ切り替えます"
-                )
-            }
-
-            Button {
-                Task {
-                    await model.createAnotherPrivateWindow()
-                    setupPath = nil
-                    hasAcceptedPairingTerms = false
-                    windowDisplayNameDraft = model.windowDisplayName
-                }
-            } label: {
-                Label("別のまどを追加", systemImage: "rectangle.stack.badge.plus")
-                    .font(.headline)
-            }
-            .disabled(model.isWorking || !model.canCreateAnotherPrivateWindow)
-        } header: {
-            Text("まどを選ぶ")
-        } footer: {
-            Text("まどごとに名前・相手・届いた写真が分かれます。1つのまどにつながる相手は1人です。")
         }
     }
 
@@ -458,12 +394,12 @@ struct PairingView: View {
                 setupPath = .recover
             } label: {
                 Label(
-                    "別のiPhoneをこのまどに追加",
+                    "このiPhoneを以前のまどに追加",
                     systemImage: "iphone.and.arrow.forward"
                 )
                     .font(.headline)
             }
-            .accessibilityHint("追加するiPhoneで、相手から届いたNWR1.で始まる追加コードを使います")
+            .accessibilityHint("このiPhoneで、接続済みの相手から届いたNWR1.で始まる追加コードを使います")
         } header: {
             Text("まどをつなぐ")
         } footer: {
@@ -483,7 +419,7 @@ struct PairingView: View {
             icon = "person.badge.plus"
         case .recover:
             // Additional-device enrollment has a dedicated explanation.
-            title = "このまどにiPhoneを追加"
+            title = "このiPhoneを以前のまどに追加"
             icon = "iphone.and.arrow.forward"
         }
         return Section {

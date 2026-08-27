@@ -43,6 +43,7 @@ struct MainTabView: View {
     let updateAlbum: () -> Void
     let rescan: () async -> Void
     let saveSettings: (SettingsPresentation) async -> Void
+    let savePhotoSettings: (PhotoRangePresentation, Int) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let excludeFromCatCandidates: ([String]) async -> Void
     let restoreCatCandidates: ([String]) async -> Void
@@ -94,7 +95,7 @@ struct MainTabView: View {
                     )
                 }
                 .tabItem {
-                    Label("まど", systemImage: "rectangle.on.rectangle.angled")
+                    Label("まど", systemImage: "rectangle.split.2x2")
                         .accessibilityIdentifier("main-tab-windows")
                 }
                 .tag(AppTab.windows)
@@ -190,6 +191,7 @@ struct MainTabView: View {
                 requestPhotoAccess: requestPhotoAccess,
                 updatePhotoLibraryAlbum: updateAlbum,
                 saveSettings: saveSettings,
+                savePhotoSettings: savePhotoSettings,
                 saveLifeReference: saveLifeReference,
                 rescan: rescan,
                 excludedCatPhotos: excludedCatPhotos,
@@ -234,7 +236,7 @@ struct MainTabView: View {
                 profileActions: catProfilesActions,
                 selectedScope: $selectedAlbumScope
             )
-            .navigationTitle("写真を見つける")
+            .navigationTitle("自動アルバム")
             .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
             .onAppear {
                 isAutomaticAlbumsInPath = true
@@ -520,6 +522,8 @@ private struct WindowListView: View {
     @State private var switchingWindowID: String?
     @State private var catalogLoadMessage: String?
     @State private var pendingPreparationCounts: [String: Int] = [:]
+    @State private var pairingPhases: [String: PairingPhase] = [:]
+    @State private var catalogReloadRevision = 0
     @State private var showsAddWindowConfirmation = false
 
     var body: some View {
@@ -599,7 +603,7 @@ private struct WindowListView: View {
                 for: .momentSharingPresentationNeedsRefresh
             )
         ) { _ in
-            reloadCatalogPresentation()
+            Task { await reloadCatalogPresentation() }
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -707,7 +711,7 @@ private struct WindowListView: View {
         Task {
             let previousActiveWindowID = activeWindowID
             await model.createAnotherPrivateWindow()
-            reloadCatalogPresentation()
+            await reloadCatalogPresentation()
             guard let createdWindowID = activeWindowID,
                   createdWindowID != previousActiveWindowID
             else { return }
@@ -733,7 +737,7 @@ private struct WindowListView: View {
                             .lineLimit(1)
 
                         if isActive {
-                            Text("開いている")
+                            Text("現在のまど")
                                 .font(.caption2.bold())
                                 .foregroundStyle(.tint)
                                 .padding(.horizontal, 7)
@@ -742,9 +746,7 @@ private struct WindowListView: View {
                         }
                     }
 
-                    Text(window.spaceID == nil
-                        ? "設定を続ける"
-                        : "相手1人と非公開")
+                    Text(windowConnectionLabel(for: window))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
@@ -825,7 +827,7 @@ private struct WindowListView: View {
         switchingWindowID = window.localWindowID
         Task {
             await model.activatePrivateWindow(localWindowID: window.localWindowID)
-            reloadCatalogPresentation()
+            await reloadCatalogPresentation()
             switchingWindowID = nil
             guard activeWindowID == window.localWindowID else { return }
             opensActiveWindow = true
@@ -835,30 +837,98 @@ private struct WindowListView: View {
     private func reload() async {
         isLoading = true
         await model.bootstrap()
-        reloadCatalogPresentation()
+        await reloadCatalogPresentation()
         isLoading = false
     }
 
-    private func reloadCatalogPresentation() {
+    private struct CatalogPresentationSnapshot: Sendable {
+        let windows: [PrivateWindowCatalogEntry]
+        let activeWindowID: String
+        let pairingPhases: [String: PairingPhase]
+    }
+
+    private func reloadCatalogPresentation() async {
+        catalogReloadRevision += 1
+        let revision = catalogReloadRevision
         do {
-            guard let catalog = try PrivateWindowCatalogStore.load() else {
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try Self.loadCatalogPresentationSnapshot()
+            }.value
+            guard revision == catalogReloadRevision else { return }
+            guard let snapshot else {
                 windows = []
                 activeWindowID = nil
                 pendingPreparationCounts = [:]
+                pairingPhases = [:]
                 catalogLoadMessage = nil
                 return
             }
-            windows = catalog.windows.sorted {
-                if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
-                return $0.localWindowID < $1.localWindowID
-            }
-            activeWindowID = catalog.activeWindowID
+            windows = snapshot.windows
+            activeWindowID = snapshot.activeWindowID
+            pairingPhases = snapshot.pairingPhases
             catalogLoadMessage = nil
             reloadPreparationCounts()
         } catch {
+            guard revision == catalogReloadRevision else { return }
             catalogLoadMessage = windows.isEmpty
                 ? "保存済みのまどを読み込めませんでした。時間をおいて、もう一度お試しください。"
                 : "まどの一覧を更新できませんでした。保存済みの一覧は変更していません。"
+        }
+    }
+
+    private nonisolated static func loadCatalogPresentationSnapshot() throws
+        -> CatalogPresentationSnapshot? {
+        guard let catalog = try PrivateWindowCatalogStore.load() else {
+            return nil
+        }
+        let sortedWindows = catalog.windows.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.localWindowID < $1.localWindowID
+        }
+        let phasePairs: [(String, PairingPhase)] = catalog.windows.compactMap { window in
+            guard let state = try? PairingStateStore.load(
+                localWindowID: window.localWindowID
+            ) else { return nil }
+            return (window.localWindowID, state.phase)
+        }
+        return CatalogPresentationSnapshot(
+            windows: sortedWindows,
+            activeWindowID: catalog.activeWindowID,
+            pairingPhases: Dictionary(uniqueKeysWithValues: phasePairs)
+        )
+    }
+
+    private func windowConnectionLabel(
+        for window: PrivateWindowCatalogEntry
+    ) -> String {
+        guard let phase = pairingPhases[window.localWindowID] else {
+            return window.spaceID == nil ? "設定を続ける" : "接続状態を確認中"
+        }
+        switch phase {
+        case .unpaired:
+            return "設定を続ける"
+        case .creatingInvitation:
+            return "招待を準備中"
+        case .awaitingInvitee:
+            return "相手の参加待ち"
+        case .joining:
+            return "招待を確認中"
+        case .claimingRecovery:
+            return "このiPhoneを追加中"
+        case .pendingRecoveryApproval:
+            return "iPhone追加の承認待ち"
+        case .recoveryAwaitingCompletion:
+            return "iPhone追加の完了待ち"
+        case .pendingApproval:
+            return "相手の承認待ち"
+        case .approvalRequired:
+            return "相手の確認が必要"
+        case .awaitingCompletion:
+            return "接続の完了待ち"
+        case .paired:
+            return "相手1人と非公開"
+        case .failed:
+            return "設定を確認"
         }
     }
 

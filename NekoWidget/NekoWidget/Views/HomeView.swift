@@ -14,6 +14,8 @@ struct HomeView: View {
     let toggleLike: (String) -> Void
     let rescan: () -> Void
 
+    @State private var pendingMemoryRemovalIdentifier: String?
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
@@ -48,6 +50,27 @@ struct HomeView: View {
                 .accessibilityLabel("設定")
                 .accessibilityIdentifier("window-settings-button")
             }
+        }
+        .confirmationDialog(
+            "思い出から外しますか？",
+            isPresented: Binding(
+                get: { pendingMemoryRemovalIdentifier != nil },
+                set: { isPresented in
+                    if !isPresented { pendingMemoryRemovalIdentifier = nil }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("思い出から外す", role: .destructive) {
+                guard let identifier = pendingMemoryRemovalIdentifier else { return }
+                pendingMemoryRemovalIdentifier = nil
+                toggleLike(identifier)
+            }
+            Button("キャンセル", role: .cancel) {
+                pendingMemoryRemovalIdentifier = nil
+            }
+        } message: {
+            Text("写真アプリの写真は削除されません。")
         }
     }
 
@@ -121,7 +144,7 @@ struct HomeView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("写真を見つける")
+                    Text("自動アルバム")
                         .font(.headline)
                         .foregroundStyle(.primary)
                     Text("成長・年ごとに自動でまとまった写真を見ます。")
@@ -189,45 +212,19 @@ struct HomeView: View {
                         .padding(.vertical, 6)
                         .background(.black.opacity(0.42), in: Capsule())
                         .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: .topLeading
+                        )
                         .allowsHitTesting(false)
 
                     VStack {
                         Spacer()
                         HStack {
                             Spacer()
-                            Button {
-                                toggleLike(currentPhoto.localIdentifier)
-                            } label: {
-                                HStack(spacing: 7) {
-                                    Image(systemName: currentPhoto.isLiked
-                                        ? "checkmark.circle.fill"
-                                        : "bookmark")
-                                    Text(currentPhoto.isLiked
-                                        ? "思い出に残した"
-                                        : "思い出に残す")
-                                }
-                                .font(.subheadline.bold())
-                                .foregroundStyle(Color.white)
-                                .padding(.horizontal, 14)
-                                .frame(minHeight: 48)
-                                .background(
-                                    currentPhoto.isLiked
-                                        ? Color.accentColor
-                                        : Color.black.opacity(0.62),
-                                    in: Capsule()
-                                )
-                                .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
-                            }
-                            .padding(12)
-                            .accessibilityLabel(
-                                currentPhoto.isLiked ? "思い出から外す" : "思い出に残す"
-                            )
-                            .accessibilityHint(
-                                currentPhoto.isLiked
-                                    ? "タップすると自分の思い出一覧から外します"
-                                    : "タップすると自分の思い出一覧に残します"
-                            )
+                            todayMemoryControl(currentPhoto)
+                                .padding(12)
                         }
                     }
                 }
@@ -245,6 +242,43 @@ struct HomeView: View {
         }
         let year = Calendar.current.component(.year, from: creationDate)
         return "このiPhone・\(year)年"
+    }
+
+    @ViewBuilder
+    private func todayMemoryControl(_ photo: PhotoPresentation) -> some View {
+        if photo.isLiked {
+            HStack(spacing: 8) {
+                Label("思い出に残した", systemImage: "bookmark.fill")
+                Menu {
+                    Button("思い出から外す", role: .destructive) {
+                        pendingMemoryRemovalIdentifier = photo.localIdentifier
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .accessibilityLabel("思い出の操作")
+                }
+            }
+            .font(.subheadline.bold())
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 48)
+            .background(Color.accentColor, in: Capsule())
+            .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
+            .accessibilityIdentifier("today-memory-saved-state")
+        } else {
+            Button {
+                toggleLike(photo.localIdentifier)
+            } label: {
+                Label("思い出に残す", systemImage: "bookmark")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 48)
+                    .background(Color.black.opacity(0.62), in: Capsule())
+                    .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
+            }
+            .accessibilityHint("自分の思い出一覧に残します")
+        }
     }
 
     @ViewBuilder

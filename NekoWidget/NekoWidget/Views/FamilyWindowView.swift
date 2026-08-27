@@ -34,9 +34,14 @@ private enum ReceivedPhotoFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: "すべて"
-        case .memories: "残した写真"
+        case .memories: "思い出に残した"
         }
     }
+}
+
+enum FamilyWindowInitialPresentation: Equatable, Sendable {
+    case content
+    case settings
 }
 
 private enum FamilyWindowSection: String, CaseIterable, Identifiable {
@@ -54,6 +59,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
 
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
+    private let initialPresentation: FamilyWindowInitialPresentation
     @Binding private var pendingMemorySourceDigest: String?
     @Binding private var pendingNotificationRoute: MomentNotificationRoute?
     @StateObject private var model = MomentSharingViewModel()
@@ -75,6 +81,9 @@ struct FamilyWindowView: View {
     @State private var focusedMomentID: String?
     @State private var focusedSentMomentID: String?
     @State private var widgetMemoryTarget: MomentInboxItem?
+    @State private var memoryRemovalTarget: MomentInboxItem?
+    @State private var clearsWidgetFocusAfterMemorySave = false
+    @State private var notificationRouteResolutionFailed = false
     @State private var showsStaleWidgetPhotoAlert = false
     @State private var notificationAuthorizationState:
         MomentNotificationAuthorizationState = .checking
@@ -87,9 +96,11 @@ struct FamilyWindowView: View {
     @State private var selectedDeliveryMessage: String?
 
     init(
+        initialPresentation: FamilyWindowInitialPresentation = .content,
         pendingMemorySourceDigest: Binding<String?> = .constant(nil),
         pendingNotificationRoute: Binding<MomentNotificationRoute?> = .constant(nil)
     ) {
+        self.initialPresentation = initialPresentation
         _pendingMemorySourceDigest = pendingMemorySourceDigest
         _pendingNotificationRoute = pendingNotificationRoute
     }
@@ -115,17 +126,24 @@ struct FamilyWindowView: View {
                     PairingView()
                 } else if !model.hasCurrentMediaSharingConsent {
                     consentRequiredContent
+                } else if initialPresentation == .settings {
+                    windowSettingsContent
                 } else {
                     pairedContent
                 }
             }
         }
-        .navigationTitle(model.windowDisplayName)
+        .navigationTitle(
+            initialPresentation == .settings
+                ? "まどの設定"
+                : model.windowDisplayName
+        )
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await model.bootstrap()
             consumePendingMemoryTargetIfReady()
             consumePendingNotificationRoute()
+            finishPendingNotificationResolutionIfNeeded()
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -136,6 +154,7 @@ struct FamilyWindowView: View {
                 await model.bootstrap()
                 consumePendingMemoryTargetIfReady()
                 consumePendingNotificationRoute()
+                finishPendingNotificationResolutionIfNeeded()
             }
         }
         .onReceive(
@@ -158,8 +177,14 @@ struct FamilyWindowView: View {
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()
         }
-        .onChange(of: pendingNotificationRoute, initial: true) { _, _ in
-            consumePendingNotificationRoute()
+        .onChange(of: pendingNotificationRoute) { _, route in
+            notificationRouteResolutionFailed = false
+            guard route?.target != nil,
+                  case .ready = model.bootstrapPresentationState else {
+                consumePendingNotificationRoute()
+                return
+            }
+            Task { await resolvePendingNotificationRoute() }
         }
         .onChange(of: model.bootstrapPresentationState) { _, _ in
             consumePendingMemoryTargetIfReady()
@@ -176,6 +201,9 @@ struct FamilyWindowView: View {
             showsPreparationCancelConfirmation = false
             showsTerminalResultDismissConfirmation = false
             widgetMemoryTarget = nil
+            memoryRemovalTarget = nil
+            clearsWidgetFocusAfterMemorySave = false
+            notificationRouteResolutionFailed = false
         }
     }
 
@@ -332,11 +360,6 @@ struct FamilyWindowView: View {
 
     private var guidanceDialogs: some View {
         cleanupDialogs
-        .alert("写真を届ける", isPresented: $showsSendGuide) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text("写真アプリで1枚を開き、共有から「ねこのまど」を選びます。送る前に写真と届け先を確認できます。")
-        }
         .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
             Button("閉じる", role: .cancel) {}
         } message: {
@@ -354,7 +377,10 @@ struct FamilyWindowView: View {
                 set: {
                     if !$0 {
                         widgetMemoryTarget = nil
-                        focusedMomentID = nil
+                        if clearsWidgetFocusAfterMemorySave {
+                            focusedMomentID = nil
+                        }
+                        clearsWidgetFocusAfterMemorySave = false
                     }
                 }
             ),
@@ -362,15 +388,48 @@ struct FamilyWindowView: View {
             presenting: widgetMemoryTarget
         ) { item in
             Button("思い出に残す") {
+                let clearsWidgetFocus = clearsWidgetFocusAfterMemorySave
                 widgetMemoryTarget = nil
-                performMemoryAction(item, clearsWidgetFocusAfterCompletion: true)
+                clearsWidgetFocusAfterMemorySave = false
+                performMemoryAction(
+                    item,
+                    shouldSave: true,
+                    clearsWidgetFocusAfterCompletion: clearsWidgetFocus
+                )
             }
+            .disabled(
+                model.isPerformingAction
+                    || model.isShowingLastKnownState
+                    || model.isReportOnly
+            )
             Button("今はしない", role: .cancel) {
                 widgetMemoryTarget = nil
-                focusedMomentID = nil
+                if clearsWidgetFocusAfterMemorySave {
+                    focusedMomentID = nil
+                }
+                clearsWidgetFocusAfterMemorySave = false
+            }
+        } message: { item in
+            Text(memorySaveConfirmationMessage(for: item))
+        }
+        .confirmationDialog(
+            "思い出から外しますか？",
+            isPresented: Binding(
+                get: { memoryRemovalTarget != nil },
+                set: { if !$0 { memoryRemovalTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: memoryRemovalTarget
+        ) { item in
+            Button("思い出から外す", role: .destructive) {
+                memoryRemovalTarget = nil
+                performMemoryAction(item, shouldSave: false)
+            }
+            Button("やめる", role: .cancel) {
+                memoryRemovalTarget = nil
             }
         } message: { _ in
-            Text("自分の写真アプリと思い出へ残します。相手には通知しません。")
+            Text("思い出一覧から外します。写真アプリへコピーした写真は削除されません。")
         }
         .sheet(item: $preparedDelivery) { delivery in
             deliveryConfirmation(delivery)
@@ -401,6 +460,12 @@ struct FamilyWindowView: View {
                 }
 
                 if !model.isReportOnly {
+                    if pendingNotificationRoute?.target != nil {
+                        notificationRouteResolutionCard
+                    }
+
+                    sendPhotoAction
+
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
                             Text(section.title).tag(section)
@@ -409,7 +474,6 @@ struct FamilyWindowView: View {
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("family-window-section")
 
-                    sendPhotoAction
                     manualRefreshResult
                 }
 
@@ -466,7 +530,7 @@ struct FamilyWindowView: View {
                 momentCard(latest)
             } else {
                 ContentUnavailableView(
-                    "残した写真はまだありません",
+                    "思い出に残した写真はまだありません",
                     systemImage: "photo.stack",
                     description: Text("写真の「思い出に残す」を押すと、ここで見返せます。")
                 )
@@ -484,7 +548,9 @@ struct FamilyWindowView: View {
         }
 
         if filteredReceivedMoments.count > 1 {
-            Text(receivedPhotoFilter == .all ? "以前に届いた写真" : "ほかの残した写真")
+            Text(receivedPhotoFilter == .all
+                ? "以前に届いた写真"
+                : "ほかの思い出に残した写真")
                 .font(.headline)
             LazyVGrid(
                 columns: [
@@ -595,15 +661,20 @@ struct FamilyWindowView: View {
                 prepareSelectedPhoto(item)
             }
 
-            HStack {
-                Text("送る前に写真と届け先を確認できます")
+            Text("送る前に写真と届け先を確認できます")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            DisclosureGroup(isExpanded: $showsSendGuide) {
+                Text("写真アプリで1枚を開き、共有から「ねこのまど」を選ぶこともできます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Button("共有から送る方法") { showsSendGuide = true }
+                    .padding(.top, 4)
+            } label: {
+                Text("ほかの送り方")
                     .font(.caption.weight(.semibold))
-                    .accessibilityIdentifier("family-window-send-guide")
             }
+            .accessibilityIdentifier("family-window-send-guide")
 
             if let photoSelectionMessage {
                 Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
@@ -611,6 +682,81 @@ struct FamilyWindowView: View {
                     .foregroundStyle(.orange)
             }
         }
+    }
+
+    private var notificationRouteResolutionCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            if model.isWorking, !notificationRouteResolutionFailed {
+                ProgressView()
+                    .frame(width: 22, height: 22)
+            } else {
+                Image(systemName: notificationRouteResolutionFailed
+                    || notificationRouteHasSynchronizationError
+                    ? "exclamationmark.triangle.fill"
+                    : "bell.badge")
+                    .foregroundStyle(
+                        notificationRouteResolutionFailed
+                            || notificationRouteHasSynchronizationError
+                            ? Color.orange
+                            : Color.accentColor
+                    )
+                    .frame(width: 22, height: 22)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(notificationRouteResolutionTitle)
+                    .font(.subheadline.weight(.semibold))
+                Text(notificationRouteResolutionDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !model.isWorking {
+                    HStack(spacing: 14) {
+                        Button("もう一度確認") {
+                            notificationRouteResolutionFailed = false
+                            Task { await resolvePendingNotificationRoute() }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .accessibilityIdentifier("family-window-notification-route-retry")
+
+                        Button("閉じる", role: .cancel) {
+                            pendingNotificationRoute = nil
+                        }
+                        .font(.caption.weight(.semibold))
+                        .accessibilityIdentifier("family-window-notification-route-dismiss")
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            Color.accentColor.opacity(0.1),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
+        .accessibilityIdentifier("family-window-notification-route-progress")
+    }
+
+    private var notificationRouteHasSynchronizationError: Bool {
+        model.isShowingLastKnownState || model.errorMessage != nil
+    }
+
+    private var notificationRouteResolutionTitle: String {
+        if notificationRouteResolutionFailed {
+            return "通知の写真を表示できません"
+        }
+        if notificationRouteHasSynchronizationError {
+            return "通知の写真を確認できません"
+        }
+        return "通知の写真を開いています…"
+    }
+
+    private var notificationRouteResolutionDetail: String {
+        if notificationRouteResolutionFailed {
+            return "写真が期限切れ、削除済み、または安全確認で非表示の可能性があります。別の写真は表示しません。"
+        }
+        if notificationRouteHasSynchronizationError {
+            return "共有データを更新できませんでした。接続を確認して再試行するか、この案内を閉じてください。別の写真は表示しません。"
+        }
+        return "通知と一致する写真だけを安全に確認します。別の写真は表示しません。"
     }
 
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
@@ -752,7 +898,7 @@ struct FamilyWindowView: View {
                         .foregroundStyle(.primary)
                     Spacer(minLength: 2)
                     if model.isSavedMemory(item) {
-                        Image(systemName: "photo.badge.checkmark")
+                        Image(systemName: "bookmark.fill")
                             .foregroundStyle(.tint)
                             .accessibilityLabel("思い出に残した写真")
                     }
@@ -864,7 +1010,7 @@ struct FamilyWindowView: View {
                     in: RoundedRectangle(cornerRadius: 12)
                 )
             VStack(alignment: .leading, spacing: 2) {
-                Text("選択中のまどの通知")
+                Text("写真とハートの通知")
                     .font(.subheadline.weight(.semibold))
                 Text(notificationStatusText)
                     .font(.caption)
@@ -915,9 +1061,9 @@ struct FamilyWindowView: View {
     private var notificationStatusText: String {
         switch notificationAuthorizationState {
         case .checking: "確認中"
-        case .notRequested: "このまどの新着を通知できます"
+        case .notRequested: "このiPhoneの通知を許可できます"
         case .enabled: "iPhoneで許可済み"
-        case .quiet: "このまどをひかえめに通知"
+        case .quiet: "iPhoneで静かな通知に設定中"
         case .denied: "iPhoneの設定でオフ"
         }
     }
@@ -954,9 +1100,20 @@ struct FamilyWindowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("相手と端末")
                         .font(.subheadline.weight(.semibold))
-                    Label("相手と接続済み", systemImage: "checkmark.circle.fill")
+                    Label(
+                        model.isShowingLastKnownState
+                            ? "接続状態を確認できません"
+                            : "相手と接続済み",
+                        systemImage: model.isShowingLastKnownState
+                            ? "exclamationmark.triangle.fill"
+                            : "checkmark.circle.fill"
+                    )
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(
+                            model.isShowingLastKnownState
+                                ? Color.orange
+                                : Color.green
+                        )
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -1109,7 +1266,6 @@ struct FamilyWindowView: View {
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
-        let displayedAt = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
         let backgroundColor: Color = isNotificationTarget
             ? Color.accentColor.opacity(0.12)
             : (arrived
@@ -1120,19 +1276,28 @@ struct FamilyWindowView: View {
                 .foregroundStyle(arrived ? Color.green : Color.accentColor)
                 .frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 3) {
-                Text(record.title)
+                Text(record.serverAcceptedAt.formatted(
+                    .dateTime.month().day().hour().minute()
+                ))
                     .font(.subheadline.weight(.semibold))
-                Text(arrived ? "端末への到着を確認・既読ではありません" : "相手のiPhoneへの到着待ち")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(
-                    "\(arrived ? "到着" : "受付") "
-                        + displayedAt.formatted(.dateTime.month().day().hour().minute())
+                Label(
+                    record.title,
+                    systemImage: arrived ? "iphone" : "server.rack"
                 )
+                    .font(.caption)
+                    .foregroundStyle(arrived ? Color.green : Color.secondary)
+                Text(arrived
+                    ? "相手のiPhoneへ到着・閲覧や既読の確認ではありません"
+                    : "サーバー受付済み・相手のiPhoneへの到着待ち")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if let confirmedAt = record.recipientDeliveryConfirmedAt {
+                    Text("到着 \(confirmedAt.formatted(.dateTime.month().day().hour().minute()))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 if record.hasReceivedHeart {
-                    Label("ハートが届きました", systemImage: "heart.fill")
+                    Label("この写真にハートが届きました", systemImage: "heart.fill")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tint)
                 }
@@ -1279,9 +1444,8 @@ struct FamilyWindowView: View {
     private func momentCard(_ item: MomentInboxItem) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let url = model.imageURL(for: item) {
-                MomentLocalImageView(url: url)
-                    .frame(height: 280)
-                    .clipped()
+                MomentLocalImageView(url: url, contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: 520)
             }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1331,31 +1495,7 @@ struct FamilyWindowView: View {
                 Divider()
                 let heart = model.heartOutboxItem(for: item)
                 HStack(spacing: 10) {
-                    Button {
-                        performMemoryAction(item)
-                    } label: {
-                        HStack(spacing: 6) {
-                            if memoryActionMomentID == item.id,
-                               model.isPerformingAction {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Image(systemName: model.isSavedMemory(item)
-                                    ? "checkmark.circle.fill"
-                                    : "photo.badge.plus")
-                            }
-                            Text(model.isSavedMemory(item) ? "思い出に残した" : "思い出に残す")
-                        }
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isPerformingAction)
-                    .accessibilityLabel(
-                        model.isSavedMemory(item) ? "思い出から外す" : "思い出に残す"
-                    )
-                    .accessibilityHint("自分の写真アプリと思い出へ残します。相手には通知しません")
-                    .accessibilityIdentifier("family-window-save-memory")
+                    memoryActionControl(item)
 
                     if model.canSendHeart(for: item) || heart != nil {
                         Button {
@@ -1442,7 +1582,7 @@ struct FamilyWindowView: View {
                 }
             }
             if model.isReportOnly, model.isSavedMemory(item) {
-                Label("思い出に残した", systemImage: "checkmark.circle.fill")
+                Label("思い出に残した", systemImage: "bookmark.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(13)
@@ -1452,10 +1592,83 @@ struct FamilyWindowView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
+    @ViewBuilder
+    private func memoryActionControl(_ item: MomentInboxItem) -> some View {
+        if model.isSavedMemory(item) {
+            HStack(spacing: 6) {
+                Label("思い出に残した", systemImage: "bookmark.fill")
+                    .lineLimit(1)
+                Spacer(minLength: 2)
+                Menu {
+                    Button("思い出から外す", role: .destructive) {
+                        memoryRemovalTarget = item
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .accessibilityLabel("思い出の操作")
+                }
+                .disabled(
+                    model.isPerformingAction
+                        || model.isShowingLastKnownState
+                        || model.isReportOnly
+                )
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background(
+                Color(uiColor: .tertiarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .accessibilityIdentifier("family-window-saved-memory-state")
+        } else {
+            Button {
+                clearsWidgetFocusAfterMemorySave = false
+                widgetMemoryTarget = item
+            } label: {
+                HStack(spacing: 6) {
+                    if memoryActionMomentID == item.id,
+                       model.isPerformingAction {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "bookmark")
+                    }
+                    Text("思い出に残す")
+                }
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(
+                model.isPerformingAction
+                    || model.isShowingLastKnownState
+                    || model.isReportOnly
+            )
+            .accessibilityHint(memorySaveConfirmationMessage(for: item))
+            .accessibilityIdentifier("family-window-save-memory")
+        }
+    }
+
+    private func memorySaveConfirmationMessage(for item: MomentInboxItem) -> String {
+        if model.hasImportedMemory(item) {
+            return "写真アプリにある写真を、もう一度思い出に加えます。相手には通知しません。"
+        }
+        return "写真アプリへコピーして、思い出に加えます。iCloud写真の設定により、iCloudにも同期される場合があります。相手には通知しません。"
+    }
+
     private func performMemoryAction(
         _ item: MomentInboxItem,
+        shouldSave: Bool,
         clearsWidgetFocusAfterCompletion: Bool = false
     ) {
+        guard model.isSavedMemory(item) != shouldSave else {
+            if clearsWidgetFocusAfterCompletion {
+                focusedMomentID = nil
+            }
+            return
+        }
         heartActionMomentID = nil
         heartResultMomentID = nil
         memoryResultMomentID = nil
@@ -1472,6 +1685,7 @@ struct FamilyWindowView: View {
 
     private func consumePendingMemoryTargetIfReady() {
         guard let sourceDigest = pendingMemorySourceDigest else { return }
+        guard !model.isShowingLastKnownState, !model.isReportOnly else { return }
         guard PendingFamilyMemoryTargetPresentationPolicy.disposition(
             for: pendingMemoryTargetBootstrapPhase
         ) == .resolve else {
@@ -1528,10 +1742,12 @@ struct FamilyWindowView: View {
         pendingMemorySourceDigest = nil
         focusedMomentID = nil
         widgetMemoryTarget = nil
+        clearsWidgetFocusAfterMemorySave = false
         selectedSection = .received
         receivedPhotoFilter = .all
         focusedMomentID = target.id
         if !model.isSavedMemory(target) {
+            clearsWidgetFocusAfterMemorySave = true
             widgetMemoryTarget = target
         }
     }
@@ -1594,6 +1810,39 @@ struct FamilyWindowView: View {
         }
     }
 
+    private func resolvePendingNotificationRoute() async {
+        while model.isWorking {
+            do {
+                try await Task.sleep(for: .milliseconds(150))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  pendingNotificationRoute?.target != nil else { return }
+        }
+
+        // An already-running authenticated refresh may have materialized the
+        // exact target while this task was waiting. Avoid a redundant request.
+        consumePendingNotificationRoute()
+        guard pendingNotificationRoute?.target != nil else { return }
+
+        await model.synchronize(isManual: false)
+        consumePendingNotificationRoute()
+        finishPendingNotificationResolutionIfNeeded()
+    }
+
+    private func finishPendingNotificationResolutionIfNeeded() {
+        guard pendingNotificationRoute?.target != nil else {
+            notificationRouteResolutionFailed = false
+            return
+        }
+        guard !model.isWorking else { return }
+        guard !model.isShowingLastKnownState, model.errorMessage == nil else {
+            return
+        }
+        notificationRouteResolutionFailed = true
+    }
+
     private var pendingMemoryTargetBootstrapPhase:
         PendingFamilyMemoryTargetBootstrapPhase {
         switch model.bootstrapPresentationState {
@@ -1610,6 +1859,7 @@ struct FamilyWindowView: View {
         pendingMemorySourceDigest = nil
         focusedMomentID = nil
         widgetMemoryTarget = nil
+        clearsWidgetFocusAfterMemorySave = false
         showsStaleWidgetPhotoAlert = true
     }
 
@@ -1618,8 +1868,8 @@ struct FamilyWindowView: View {
         canRetry: Bool
     ) -> String {
         guard let heart else { return "ハートを送る" }
-        if heart.phase == .sent { return "送信済み" }
-        return canRetry ? "送信を再試行" : "送信できません"
+        if heart.phase == .sent { return "ハート送信済み" }
+        return canRetry ? "ハートを再送" : "ハートを送れません"
     }
 
     private func heartActionIcon(
@@ -1783,17 +2033,29 @@ struct FamilyWindowView: View {
 
 struct MomentLocalImageView: View {
     let url: URL
+    let contentMode: ContentMode
     @State private var image: UIImage?
 
+    init(url: URL, contentMode: ContentMode = .fill) {
+        self.url = url
+        self.contentMode = contentMode
+    }
+
+    @ViewBuilder
     var body: some View {
-        ZStack {
-            Color(uiColor: .tertiarySystemFill)
+        Group {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(uiColor: .tertiarySystemFill))
             } else {
-                ProgressView()
+                ZStack {
+                    Color(uiColor: .tertiarySystemFill)
+                    ProgressView()
+                }
+                .aspectRatio(4 / 3, contentMode: .fit)
             }
         }
         .task(id: url) {

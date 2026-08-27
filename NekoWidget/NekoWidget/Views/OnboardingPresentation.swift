@@ -94,6 +94,7 @@ enum OnboardingPresentationCopy {
         "全部の集計は、",
         "次にひらいたときに続きます。"
     ]
+    static let scanContinueAction = "先に進む（スキャンは続きます）"
     static let resultLeadLines = [
         "このiPhoneで見つけた",
         "猫写真は"

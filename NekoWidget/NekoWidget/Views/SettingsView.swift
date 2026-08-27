@@ -12,6 +12,7 @@ struct SettingsView: View {
     let requestPhotoAccess: () -> Void
     let updatePhotoLibraryAlbum: () -> Void
     let saveSettings: (SettingsPresentation) async -> Void
+    let savePhotoSettings: (PhotoRangePresentation, Int) async -> Void
     let saveLifeReference: (CatLifeReference?) async -> Void
     let rescan: () async -> Void
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
@@ -30,6 +31,9 @@ struct SettingsView: View {
 
     @State private var draft: SettingsPresentation
     @State private var isSaving = false
+    @State private var isPhotoSettingsSavePending = false
+    @State private var settingsSaveTask: Task<Void, Never>?
+    @State private var settingsSaveRevision = 0
     @State private var isSavingLifeReference = false
     @State private var lifeReferenceSaveTask: Task<Void, Never>?
     @State private var isRescanning = false
@@ -47,6 +51,7 @@ struct SettingsView: View {
         requestPhotoAccess: @escaping () -> Void,
         updatePhotoLibraryAlbum: @escaping () -> Void,
         saveSettings: @escaping (SettingsPresentation) async -> Void,
+        savePhotoSettings: @escaping (PhotoRangePresentation, Int) async -> Void,
         saveLifeReference: @escaping (CatLifeReference?) async -> Void,
         rescan: @escaping () async -> Void,
         excludedCatPhotos: [ExcludedCatPhotoPresentation],
@@ -73,6 +78,7 @@ struct SettingsView: View {
         self.requestPhotoAccess = requestPhotoAccess
         self.updatePhotoLibraryAlbum = updatePhotoLibraryAlbum
         self.saveSettings = saveSettings
+        self.savePhotoSettings = savePhotoSettings
         self.saveLifeReference = saveLifeReference
         self.rescan = rescan
         self.excludedCatPhotos = excludedCatPhotos
@@ -131,7 +137,7 @@ struct SettingsView: View {
                 if SharingAPIConfiguration.current.isReviewVisible {
                     NavigationLink {
                         if SharingAPIConfiguration.current.isMediaAvailable {
-                            FamilyWindowView()
+                            FamilyWindowView(initialPresentation: .settings)
                         } else if SharingAPIConfiguration.current.isAvailable {
                             PairingView()
                         } else {
@@ -140,8 +146,8 @@ struct SettingsView: View {
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(privateWindowDisplayName)
-                                Text(sharingSettingsSummary)
+                                Text("まどの設定")
+                                Text("\(privateWindowDisplayName)・\(sharingSettingsSummary)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -231,6 +237,12 @@ struct SettingsView: View {
         .onChange(of: draft.catLifeReference) { _, newValue in
             scheduleLifeReferenceSave(newValue)
         }
+        .onChange(of: draft.range) { _, _ in
+            schedulePhotoSettingsSave()
+        }
+        .onChange(of: draft.albumLimit) { _, _ in
+            schedulePhotoSettingsSave()
+        }
         .sheet(item: $exportedFile, onDismiss: cleanupVerificationExport) { file in
             ActivityView(activityItems: [file.url])
                 .presentationDetents([.medium, .large])
@@ -241,7 +253,7 @@ struct SettingsView: View {
     private var photoSettingsSummary: String {
         guard hasPhotoAccess else { return "未許可" }
         let access = isLimitedAccess ? "選択した写真" : "許可済み"
-        return "\(access)・\(draft.range.rawValue)"
+        return "\(access)・\(settings.range.rawValue)"
     }
 
     private var sharingSettingsSummary: String {
@@ -304,14 +316,12 @@ struct SettingsView: View {
                     )
                 }
 
-                Stepper(value: $draft.albumLimit, in: 50...1_000, step: 50) {
-                    LabeledContent("思い出の枚数上限", value: "\(draft.albumLimit.formatted())枚")
-                }
-
                 NavigationLink {
                     PhotoLibraryAlbumSettingsView(
                         state: albumState,
                         canUpdate: canUpdatePhotoLibraryAlbum,
+                        albumLimit: $draft.albumLimit,
+                        isSavingSettings: isSaving || isPhotoSettingsSavePending,
                         update: updatePhotoLibraryAlbum
                     )
                 } label: {
@@ -320,7 +330,7 @@ struct SettingsView: View {
             } header: {
                 Text("表示と整理")
             } footer: {
-                Text("候補から外しても、写真アプリの写真は削除しません。")
+                Text("変更は自動で保存されます。候補から外しても、写真アプリの写真は削除しません。")
             }
 
             if catProfilesPresentation.profiles.isEmpty {
@@ -357,17 +367,11 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                Button {
-                    Task {
-                        isSaving = true
-                        await saveSettings(draft)
-                        isSaving = false
-                    }
-                } label: {
-                    Label(isSaving ? "保存中…" : "変更を保存", systemImage: "checkmark.circle")
+            if isSaving {
+                Section {
+                    Label("変更を保存しています…", systemImage: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(isSaving || draft == settings)
             }
         }
         .navigationTitle("写真")
@@ -566,6 +570,45 @@ struct SettingsView: View {
         }
     }
 
+    private func schedulePhotoSettingsSave() {
+        settingsSaveRevision += 1
+        let revision = settingsSaveRevision
+        let requestedRange = draft.range
+        let requestedAlbumLimit = draft.albumLimit
+        let hadSaveInFlight = isSaving
+        settingsSaveTask?.cancel()
+        guard hadSaveInFlight
+                || requestedRange != settings.range
+                || requestedAlbumLimit != settings.albumLimit else {
+            isSaving = false
+            isPhotoSettingsSavePending = false
+            settingsSaveTask = nil
+            return
+        }
+
+        isPhotoSettingsSavePending = true
+        settingsSaveTask = Task { @MainActor in
+            // Coalesce segmented-control and Stepper changes while keeping the
+            // page free of a second, easy-to-miss save convention.
+            do {
+                try await Task.sleep(nanoseconds: 350_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+
+            isSaving = true
+            // The app layer merges only these two fields into its latest
+            // canonical settings. A concurrent birthday or detector save can
+            // therefore never be restored to an older whole-form snapshot.
+            await savePhotoSettings(requestedRange, requestedAlbumLimit)
+            guard !Task.isCancelled, revision == settingsSaveRevision else { return }
+            isSaving = false
+            isPhotoSettingsSavePending = false
+            settingsSaveTask = nil
+        }
+    }
+
     private var sampleSummary: String {
         if !detectionAccuracySample.snapshotIsFinal {
             return "全件スキャンの確定後に利用できます"
@@ -603,6 +646,8 @@ struct SettingsView: View {
 private struct PhotoLibraryAlbumSettingsView: View {
     let state: AlbumPresentationState
     let canUpdate: Bool
+    @Binding var albumLimit: Int
+    let isSavingSettings: Bool
     let update: () -> Void
 
     @State private var showsPhotoShuffleGuide = false
@@ -610,17 +655,30 @@ private struct PhotoLibraryAlbumSettingsView: View {
     var body: some View {
         Form {
             Section {
+                Stepper(value: $albumLimit, in: 50...1_000, step: 50) {
+                    LabeledContent(
+                        "写真アプリの「うちの子」の枚数上限",
+                        value: "\(albumLimit.formatted())枚"
+                    )
+                }
+
+                if isSavingSettings {
+                    Label("枚数上限を保存しています…", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 status
 
                 Button(action: update) {
                     Label(updateTitle, systemImage: "arrow.triangle.2.circlepath")
                 }
-                .disabled(!canUpdate || state == .updating)
+                .disabled(!canUpdate || isSavingSettings || state == .updating)
                 .accessibilityIdentifier("settings-photo-library-album-update")
             } header: {
                 Text("写真アプリの「うちの子」")
             } footer: {
-                Text("写真を複製せず、見つけた猫写真を写真アプリのアルバムへ反映します。")
+                Text("見つけた猫写真を、設定した枚数まで写真アプリのアルバムへ反映します。上限を変えても「思い出」の写真は消えません。変更は自動で保存されます。")
             }
 
             Section {

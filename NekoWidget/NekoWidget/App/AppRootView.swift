@@ -267,6 +267,12 @@ struct AppRootView: View {
             saveSettings: { settings in
                 await viewModel.updateSettings(coreSettings(from: settings))
             },
+            savePhotoSettings: { range, albumLimit in
+                var settings = viewModel.settings
+                settings.dateRange = range == .all ? .all : .recentYear
+                settings.albumMaximum = albumLimit
+                await viewModel.updateSettings(settings)
+            },
             saveLifeReference: { reference in
                 await viewModel.updateCatLifeReference(reference)
             },

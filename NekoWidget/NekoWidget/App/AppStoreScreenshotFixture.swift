@@ -314,6 +314,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             updateAlbum: {},
             rescan: {},
             saveSettings: { _ in },
+            savePhotoSettings: { _, _ in },
             saveLifeReference: { _ in },
             excludeFromCatCandidates: { _ in },
             restoreCatCandidates: { _ in },

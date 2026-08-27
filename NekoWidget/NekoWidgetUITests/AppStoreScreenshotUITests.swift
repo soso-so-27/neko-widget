@@ -100,7 +100,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The Memories tab was not available.", application: app)
             return
         }
-        guard app.buttons["まとめる"].waitForExistence(timeout: 15) else {
+        guard app.buttons["PDFにまとめる"].waitForExistence(timeout: 15) else {
             fail("The deterministic Likes collection did not appear.", application: app)
             return
         }

@@ -128,7 +128,12 @@ struct OnboardingView: View {
                 }
             )
         } else {
-            OnboardingScanInProgressPage(scan: scan)
+            OnboardingScanInProgressPage(
+                scan: scan,
+                continueAction: {
+                    page = .widgetGuide
+                }
+            )
         }
     }
 
@@ -325,6 +330,7 @@ private struct OnboardingPhotoPermissionPage: View {
 
 private struct OnboardingScanInProgressPage: View {
     let scan: ScanPresentation
+    let continueAction: () -> Void
 
     var body: some View {
         VStack(spacing: 26) {
@@ -352,6 +358,20 @@ private struct OnboardingScanInProgressPage: View {
             Spacer()
         }
         .padding(28)
+        .safeAreaInset(edge: .bottom) {
+            Button(action: continueAction) {
+                Text(OnboardingPresentationCopy.scanContinueAction)
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 12)
+            .background(.bar)
+            .accessibilityIdentifier("onboarding-scan-continue")
+        }
     }
 }
 
@@ -396,35 +416,30 @@ private struct OnboardingPawLikePage: View {
 
 private struct PawLocationDiagram: View {
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                LinearGradient(
-                    colors: [Color.accentColor.opacity(0.22), Color.pink.opacity(0.16)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+        ZStack(alignment: .bottomTrailing) {
+            LinearGradient(
+                colors: [Color.accentColor.opacity(0.22), Color.pink.opacity(0.16)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
 
-                Image(systemName: "cat.fill")
-                    .font(.system(size: 72, weight: .light))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(height: 210)
+            Image(systemName: "cat.fill")
+                .font(.system(size: 72, weight: .light))
+                .foregroundStyle(.secondary)
 
-            HStack(spacing: 10) {
-                Image(systemName: "photo.badge.plus")
-                    .font(.system(size: 22, weight: .semibold))
+            HStack(spacing: 7) {
+                Image(systemName: "bookmark")
+                    .font(.system(size: 18, weight: .semibold))
                 Text("思い出に残す")
-                    .font(.headline)
-                Spacer()
-                Image(systemName: "arrow.left")
-                    .font(.title3.bold())
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
+                    .font(.subheadline.bold())
             }
-            .padding(.horizontal, 18)
-            .frame(height: 58)
-            .background(Color(.secondarySystemBackground))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 48)
+            .background(.black.opacity(0.62), in: Capsule())
+            .padding(14)
         }
+        .frame(height: 268)
         .frame(maxWidth: 360)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
@@ -432,7 +447,7 @@ private struct PawLocationDiagram: View {
                 .stroke(Color.accentColor.opacity(0.25), lineWidth: 2)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("写真の下にある「思い出に残す」ボタン")
+        .accessibilityLabel("写真の右下にあるブックマークの「思い出に残す」ボタン")
         .accessibilityIdentifier("onboarding-paw-location-diagram")
     }
 }
