@@ -613,10 +613,10 @@ jobs:
           SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           set -euo pipefail
-          policy_revision="2026-08-25"
+          policy_revision="2026-08-26"
           case "$SELECTED_RELEASE_MODE" in
             disabled)
-              policy_revision="2026-08-24"
+              policy_revision="2026-08-26"
               policy_profile="local-only"
               policy_site_base="https://soso-so-27.github.io/neko-widget/app/"
               ;;

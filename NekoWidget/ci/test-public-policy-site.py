@@ -409,7 +409,7 @@ class PublicPolicySiteTests(unittest.TestCase):
         self.assertIn('node-version: "22"', setup)
 
         gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
-        self.assertEqual(gate.count('policy_revision="2026-08-25"'), 1)
+        self.assertEqual(gate.count('policy_revision="2026-08-26"'), 2)
         disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
         self.assertIn('policy_profile="local-only"', disabled)
         self.assertIn(
