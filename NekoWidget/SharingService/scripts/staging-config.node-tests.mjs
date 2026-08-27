@@ -274,7 +274,9 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0013_moderation_operator_control_plane.sql", 48],
     ["0014_moderation_evidence_ledger.sql", 10],
     ["0015_moderation_operator_routes.sql", 32],
-  ["0016_moderation_operator_access_audit.sql", 45],
+    ["0016_moderation_operator_access_audit.sql", 45],
+    ["0017_moderation_operator_enrollment_trust.sql", 39],
+    ["0018_moderation_operator_case_reference_binding.sql", 21],
   ]);
   for (const [name, expectedStatementCount] of expectedStatementCounts) {
     const migration = await readFile(join(projectDirectory, "migrations", name));

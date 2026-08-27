@@ -52,7 +52,15 @@ DB時刻だけで追加できる`review_started`、続いて`review_decided`と�
 という事実からreview開始または判断済みを補わない。Migration `0013`から`0015`は生のAccess identityを
 保存しないoperator、二人承認、case予約、DB時刻の証拠intentを追加する。`0016`は検証済みAccess session、
 失敗を含む一回限りのWebAuthn assertion attempt、固定分類だけのappend-only access auditを追加し、
-過去の未完了操作を認証済みとはbackfillしない。通常アプリやstatus commandからeventは書けず、
+過去の未完了操作を認証済みとはbackfillしない。`0017`は既存operator／alias／credentialを自動では
+信頼せず、allowlist済みoffline authority 2者による初回bootstrapか、target本人とは異なる既存の
+admitted security admin 1名による通常enrollmentをappend-only provenanceへ束縛する。credential recoveryは
+追加登録ではなく直前admissionのcredentialを置換し、targetとは異なるcurrent admitted security admin 2名の
+承認を要求する。侵害時に旧credentialを先にrevokeしても復旧でき、未revokeならrecovery admissionと同じ
+statementで旧credentialをrevokeする。署名・attestation
+の暗号検証はfuture verifierの責任であり、このschemaへのinsert自体は検証証明ではない。D1へ直接write
+できる管理者はauthority、approval、admission rowをforgeできるtrust boundary内にあるため、runtimeへ
+その権限を公開せず、offline authority追加を含む直接DB操作は独立監査する。通常アプリやstatus commandからeventは書けず、
 予約だけではreview開始にならない。未確定の証拠intentはDB時刻の2分で失効し、1人または1caseを
 永続占有できない。結果確定とcontent削除は未実装のcanonical evidenceとdomain outboxがそろうまで拒否する。
 このschemaは安全な保存先の基礎であり、
@@ -71,10 +79,30 @@ OFF時の`/operator/v1`は認証header、body、query、DB、R2を処理する�
 
 これはdeploy準備完了や運用開始を意味しない。Cloudflare Access verifierと、固定Origin／RP ID、32-byte
 random challenge、UP／UV、ES256、single-device credentialを要求する厳格なWebAuthn verifierはpure module
-として存在するが、routeには接続していない。config検証とlocal dry-run以外へ使わず、case参照のversion付き
-HMAC生成、運用者／credentialの承認済み登録、専用rate limit、Access policy監査が完成してから別の変更として
-最小routeを検討する。通常写真bucketの`MEDIA`は管理Workerへ
+として存在するが、routeには接続していない。version付きcase referenceのpure HMAC-SHA256生成も
+`src/moderation-operator-case-reference.ts`に実装済みである。
+固定domain・protocol version・HMAC key version・canonicalな22文字report IDを結合し、lowercase hexだけを
+返す。pure moduleの結果、operator log、audit、exportへraw report IDやHMAC keyを含めてはならない。
+`0018`はdomain、protocol version、HMAC key version、report ID、derived HMACを1つのimmutableな正本rowへ
+束縛し、旧`0013`rowを同じSQLite statementで自動生成する。`0018`より前のversionなしrowはbackfillせず、
+新しいchallenge、assertion、action、reservation、evidence、exportから拒否する。HMAC keyそのものはD1へ
+保存しない。これらのpure moduleとschemaはconfig検証とlocal test以外へ接続しない。
+`moderation-operator-control-plane-preflight-lib.mjs`は、別途review済みの非secret policyと、呼び出し側が
+sanitizeした完全snapshotだけを比較するpure validatorである。account、self-hosted Access app、HTTPS origin、
+AUD／issuer、WebAuthn RP ID、runtime verifier、単一Allow policy、15分以下のsession、security-key MFA、
+managed-device posture、専用rate-limit namespaceとreview済みexact値を固定する。これはCloudflareからlive取得
+した証拠ではなく、成功時も`releaseReady: false`である。Workers Rate Limitingは近似的な防御に限り、正確な
+回数制限は同じD1 transactionのquotaを必須hard boundaryとする。raw JWT、email、氏名、device ID、token、
+secretは入力snapshotにも出力にも含めない。
+
+次に必要なのは、review済み取得器によるlive Access／account snapshotの独立照合、D1 exact quota、専用binding、
+最小routeとtransaction統合試験である。これらが完成して明示承認されるまでruntimeをONにしない。通常写真
+bucketの`MEDIA`は管理Workerへ
 bindingしない。decisionと削除はcanonical evidence、hold、domain outboxが完成するまで引き続き拒否する。
+
+```powershell
+npm run check:moderation-operator-control-plane-preflight
+```
 
 将来routeへ接続するときは、HTTP bodyをJSON parseより前にbyte数で制限し、重複keyを失わないparserで
 top-level assertionを検証する。WebAuthn署名を検証する**前**に、そのchallengeとcanonical assertion digestの
