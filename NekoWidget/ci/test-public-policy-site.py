@@ -115,7 +115,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
     def test_private_window_capability_boundary_is_consistent(self):
         required = (
-            "この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。",
+            "この共有仕様は、招待した少人数だけの限定外部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。",
             "1台のiPhoneで最大20個の名前付き非公開なまど",
             "1つのまどは作成者と信頼できる招待相手1人だけ",
             "各参加者は、承認した最大4台のiPhone",
@@ -138,7 +138,7 @@ class PublicPolicySiteTests(unittest.TestCase):
                 self.assertNotIn(phrase, text, page)
 
         privacy = "".join(self.parsed(PAGES[1]).text)
-        self.assertIn("写真共有が有効な内部TestFlight共有ベータでは", privacy)
+        self.assertIn("写真共有が有効な限定外部TestFlight共有ベータでは", privacy)
         self.assertNotIn("写真共有が有効な現行版では", privacy)
         for phrase in (
             "写真アプリに「うちの子」アルバムを作成・更新",
@@ -179,9 +179,13 @@ class PublicPolicySiteTests(unittest.TestCase):
         privacy = "".join(self.parsed(PAGES[1]).text)
         community = "".join(self.parsed(PAGES[2]).text)
         support = "".join(self.parsed(PAGES[3]).text)
+        overview = "".join(self.parsed(PAGES[0]).text)
+        for phrase in ("通報時の例外", "通報、ブロック"):
+            self.assertNotIn(phrase, overview)
         for phrase in (
             "エンドツーエンド暗号化",
-            "通報専用公開鍵",
+            "新規の暗号化通報受付は停止",
+            "通報用暗号文を送信・保存しません",
             "ACK後7日",
             "未受領の通常暗号文：commit後30日",
             "通知用デバイストークン",
@@ -199,12 +203,21 @@ class PublicPolicySiteTests(unittest.TestCase):
             self.assertIn(phrase, privacy)
         self.assertNotIn("一般的な通知文だけを送ります", privacy)
         self.assertNotIn("写真ID、取得URL", privacy)
-        for phrase in ("通報", "ブロック", "48時間以内", "削除対象", "再試行"):
+        for phrase in (
+            "新規の暗号化通報受付は停止",
+            "TestFlightの「ベータ版フィードバックを送信」",
+            "この相手をブロック",
+            "ブロックしてまどを解除",
+            "48時間以内",
+            "再試行",
+        ):
             self.assertIn(phrase, community)
         self.assertNotIn("7日の期限を超えて保持しません", community)
         for phrase in (
             "GitHub Issues",
             "TestFlight",
+            "この相手をブロック",
+            "ブロックしてまどを解除",
             "招待コード",
             "緊急通報先ではありません",
             "iOS 18",
@@ -410,6 +423,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
         gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
         self.assertEqual(gate.count('policy_revision="2026-08-26"'), 2)
+        self.assertEqual(gate.count('policy_revision="2026-08-27"'), 1)
         disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
         self.assertIn('policy_profile="local-only"', disabled)
         self.assertIn(
@@ -417,6 +431,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             disabled,
         )
         media = gate.split("media-staging)", 1)[1].split(";;", 1)[0]
+        self.assertIn('policy_revision="2026-08-27"', media)
         self.assertIn('policy_profile="sharing-beta"', media)
         self.assertIn(
             'policy_site_base="https://soso-so-27.github.io/neko-widget/"',

@@ -54,6 +54,7 @@ jobs:
           python3 ci/test-signed-artifact-authentication.py
           python3 ci/test-validate-sharing-runtime-self-test.py
           python3 ci/test-public-policy-site.py
+          python3 ci/test-limited-external-beta-reporting.py
           python3 ci/test-app-store-local-only-readiness.py
           python3 ci/test-export-temp-file-lifecycle.py
           python3 ci/test-photo-permission-bootstrap.py

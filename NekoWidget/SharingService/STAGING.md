@@ -4,7 +4,7 @@
 
 この手順が作成する外部resourceはstaging専用です。
 
-> 2026-08-24現在、本人所有2台では内部TestFlight Build 34までを確認し、通常momentと暗号化まど名を継続利用する個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、旧共有を`LEGACY_SHARING_RUNTIME_ENABLED=NO`で運用します。Build 35はAppleへのvalidate／upload受付までで、Apple側の処理完了、内部group割当、実機受入は未確認です。一般公開や第三者の招待を認める変更ではありません。日次の公開境界監視とOFF候補のlocal検証は[本人2台用・写真／まど名共有staging運用](PERSONAL_STAGING_OPERATIONS.md)を正本とします。repository内の外部実停止経路は廃止済みで、未整備の実停止は継続利用と一般配布のblockerです。以下の通常手順のOFF既定と、ON候補を直接deployしない原則は変更しません。
+> 2026-08-27現在、本人所有2台ではBuild 70の写真・ハート・まど名・APNsを確認し、旧共有を`LEGACY_SHARING_RUNTIME_ENABLED=NO`で運用します。一般公開や第三者の招待を認める変更ではありません。日次監視、D1 generation CASによる共有data-plane OFF／復旧、独立OFF Worker候補のlocal検証は[本人2台用・写真／まど名共有staging運用](PERSONAL_STAGING_OPERATIONS.md)を正本とします。active Worker code／binding自体を疑うincident向けのversion実切替はrepositoryから提供しません。以下の通常手順のOFF既定と、ON候補を直接deployしない原則は変更しません。
 >
 > Build 36は`disabled`かつApp Store Connectへ送信しない署名dry runであり、このstagingのWorker、D1、R2、rate-limit namespace、secret、runtime flagを一切変更していません。
 

@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-const EXPECTATIONS = Object.freeze({
+const BASE_EXPECTATIONS = Object.freeze({
   on: Object.freeze([
     Object.freeze({
       name: "health",
@@ -106,6 +106,12 @@ const EXPECTATIONS = Object.freeze({
       errorCode: "moment_runtime_disabled",
     }),
     Object.freeze({
+      name: "reaction",
+      path: "/v2/reactions/changes",
+      status: 503,
+      errorCode: "reaction_runtime_disabled",
+    }),
+    Object.freeze({
       name: "window-name",
       path: "/v2/window-name",
       status: 503,
@@ -117,6 +123,45 @@ const EXPECTATIONS = Object.freeze({
       status: 503,
       errorCode: "legacy_sharing_runtime_disabled",
     }),
+  ]),
+});
+
+// Report routes authenticate before reading the runtime gate so an anonymous
+// caller cannot use them as an ON/OFF oracle. The health header proves the gate
+// is OFF; signed integration tests prove an authenticated request receives the
+// report_ingestion_runtime_disabled response and burns its nonce.
+const REPORT_AUTH_BOUNDARY_EXPECTATIONS = Object.freeze([
+  Object.freeze({
+    name: "report-reserve",
+    method: "POST",
+    path: "/v2/reports/reservations",
+    status: 401,
+    errorCode: "invalid_authentication",
+  }),
+  Object.freeze({
+    name: "report-upload",
+    method: "PUT",
+    path: "/v2/reports/0000000000000000000000/ciphertext",
+    headers: Object.freeze({ "Content-Type": "application/octet-stream" }),
+    status: 401,
+    errorCode: "invalid_authentication",
+  }),
+  Object.freeze({
+    name: "report-commit",
+    method: "POST",
+    path: "/v2/reports/0000000000000000000000/commit",
+    status: 401,
+    errorCode: "invalid_authentication",
+  }),
+]);
+
+const EXPECTATIONS = Object.freeze({
+  ...BASE_EXPECTATIONS,
+  "limited-external-beta": Object.freeze([
+    BASE_EXPECTATIONS.on[0],
+    ...BASE_EXPECTATIONS.on.slice(1, -1),
+    ...REPORT_AUTH_BOUNDARY_EXPECTATIONS,
+    BASE_EXPECTATIONS.on.at(-1),
   ]),
 });
 
@@ -196,7 +241,7 @@ async function checkEndpoint({ origin, expectation, fetchImpl, timeoutMs }) {
   try {
     response = await fetchImpl(`${origin}${expectation.path}`, {
       method: expectation.method ?? "GET",
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...expectation.headers },
       cache: "no-store",
       redirect: "manual",
       signal: controller.signal,
@@ -265,7 +310,7 @@ export async function checkStagingRuntime({
   const expectations = EXPECTATIONS[expected];
   if (expectations === undefined) {
     throw new Error(
-      "expected runtime state must be 'on', 'moment-on-window-name-off', or 'off'",
+      "expected runtime state must be 'on', 'limited-external-beta', 'moment-on-window-name-off', or 'off'",
     );
   }
   if (typeof fetchImpl !== "function") {

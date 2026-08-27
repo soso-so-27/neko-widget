@@ -23,7 +23,7 @@ jobs:
         include:
           - profile: sharing-beta
             site_base: https://soso-so-27.github.io/neko-widget/
-            revision: "2026-08-26"
+            revision: "2026-08-27"
           - profile: local-only
             site_base: https://soso-so-27.github.io/neko-widget/app/
             revision: "2026-08-26"
@@ -50,7 +50,7 @@ jobs:
             --expected-revision "${{ matrix.revision }}"
 
   public-runtime-boundary:
-    name: Verify moment and window-name ON, legacy OFF
+    name: Verify limited external beta media/APNs ON, reports/legacy OFF
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
@@ -72,4 +72,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/check-staging-runtime.mjs --expected on
+          node scripts/check-staging-runtime.mjs --expected limited-external-beta

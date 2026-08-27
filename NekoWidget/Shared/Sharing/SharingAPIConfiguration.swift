@@ -122,6 +122,12 @@ struct SharingAPIConfiguration: Equatable, Sendable {
         isAvailable && isMediaEnabled && hasOperationalSafetyConfiguration
     }
 
+    /// Encrypted report ingestion stays fail closed until the remote operator
+    /// export/review/early-delete path has passed its real-environment drill.
+    /// Do not derive this from the presence of the moderation public key: that
+    /// key is retained for forward-compatible media builds, not as an ON flag.
+    var isEncryptedReportAvailable: Bool { false }
+
     /// The extension may only place one canonical, short-lived input in the
     /// App Group. The host validates its ordinary-container installation
     /// marker before that input can become encrypted outbox data.

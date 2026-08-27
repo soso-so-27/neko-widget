@@ -759,11 +759,17 @@ struct SharingReviewPreviewView: View {
                 }
 
                 reviewSection("困ったとき", systemImage: "exclamationmark.bubble") {
-                    Label("写真を通報", systemImage: "exclamationmark.bubble")
+                    if SharingAPIConfiguration.current.isEncryptedReportAvailable {
+                        Label("写真を通報", systemImage: "exclamationmark.bubble")
+                    } else {
+                        Label("TestFlightから問題を連絡", systemImage: "envelope")
+                    }
                     Label("相手をブロックして表示と取得を停止", systemImage: "person.crop.circle.badge.xmark")
                     Label("共有を解除", systemImage: "person.2.slash")
 
-                    Text("通報・ブロック・公開連絡先の運用を用意するまで、実際の共有は有効にしません。")
+                    Text(SharingAPIConfiguration.current.isEncryptedReportAvailable
+                        ? "通報・ブロック・公開連絡先を使って安全を確認します。"
+                        : "この限定ベータではアプリ内通報を停止しています。写真や招待秘密を添付せず、TestFlightのベータ版フィードバックから連絡してください。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

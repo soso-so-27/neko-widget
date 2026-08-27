@@ -7,6 +7,25 @@ review済みpublic-key SHA-256へbindされた状態でSwift互換の合成通�
 
 このdrillが完了してもProduction運用の承認にはならない。全手順中、次をexactに維持する。
 
+## 本人用stagingの実施記録
+
+2026-08-27に、`moderation-v1`の既存合成drill evidenceを専用validatorで再確認した。
+完了directoryには非機密の`synthetic-export.json`と`synthetic-audit.jsonl`だけが残り、
+review JPEG、receipt、ciphertextは残っていない。Auditは
+`decrypt_succeeded` → plaintext削除開始／完了 → ciphertext削除開始／完了の固定順序である。
+秘密鍵、公開鍵、fingerprint、画像の内容はconsole、repository、chatへ出力していない。
+
+```powershell
+node .\scripts\verify-moderation-staging-drill-completion.mjs `
+  --phase deleted `
+  --drill-dir '<restricted completed drill directory>' `
+  --moderation-key-id moderation-v1
+```
+
+結果は`Synthetic staging moderation decrypt/delete drill completion verified`である。
+これは本人用staging鍵と固定合成fixtureの復号・削除訓練だけを証明する。Production鍵、
+backup復元、remote export、判断・異議申立て、早期削除、48時間SLA訓練の完了を意味しない。
+
 - `MOMENT_RUNTIME_ENABLED=NO`
 - `LEGACY_SHARING_RUNTIME_ENABLED=NO`
 - clientの`SHARING_MEDIA_ENABLED=NO`

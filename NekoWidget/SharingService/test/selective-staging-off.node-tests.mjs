@@ -83,7 +83,7 @@ test("local Wrangler commands suppress update checks, telemetry, and error repor
   );
 });
 
-test("npm operator commands embed the non-mutating mode instead of relying on forwarded flags", () => {
+test("npm operator commands distinguish actual gate control from the legacy candidate dry-run", () => {
   for (const scriptName of [
     "staging:runtime:apns-off",
     "staging:runtime:report-ingestion-off",
@@ -92,11 +92,24 @@ test("npm operator commands embed the non-mutating mode instead of relying on fo
     assert.match(packageManifest.scripts[scriptName], / --local-dry-run$/u);
     assert.doesNotMatch(packageManifest.scripts[scriptName], /--confirm-/u);
   }
-  assert.match(packageManifest.scripts["staging:runtime:emergency-off"], / -DryRun$/u);
+  assert.match(
+    packageManifest.scripts["staging:runtime:emergency-off-candidate:dry-run"],
+    / -DryRun$/u,
+  );
   assert.doesNotMatch(
-    packageManifest.scripts["staging:runtime:emergency-off"],
+    packageManifest.scripts["staging:runtime:emergency-off-candidate:dry-run"],
     /ConfirmPersonalStagingEmergencyOff/u,
   );
+  assert.match(
+    packageManifest.scripts["staging:runtime:emergency-off:confirm"],
+    /--confirm-broad-off$/u,
+  );
+  assert.match(
+    packageManifest.scripts["staging:runtime:recover:confirm"],
+    /--confirm-build70-media-apns-on$/u,
+  );
+  assert.match(packageManifest.scripts["staging:runtime:status"], /--status$/u);
+  assert.equal(packageManifest.scripts["staging:runtime:emergency-off"], undefined);
 });
 
 test("the legacy broad-OFF helper retains only a local dry-run path", () => {

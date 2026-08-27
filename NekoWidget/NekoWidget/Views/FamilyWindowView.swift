@@ -978,10 +978,19 @@ struct FamilyWindowView: View {
             Label("\(model.windowDisplayName)の共有は終了しました", systemImage: "hand.raised.fill")
                 .font(.headline)
                 .foregroundStyle(.orange)
-            if let until = model.reportOnlyUntil {
+            if model.isEncryptedReportAvailable,
+               let until = model.reportOnlyUntil {
                 Text("\(until.formatted(.dateTime.month().day().hour().minute()))までは、届いていた写真の通報だけ利用できます。新しい送受信は行いません。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+            } else {
+                Text("新しい送受信は行いません。安全上の問題は、写真や招待秘密を添付せずTestFlightのベータ版フィードバックから連絡してください。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if let url = SharingAPIConfiguration.current.supportURL {
+                    Link("サポートを開く", destination: url)
+                        .font(.subheadline.weight(.semibold))
+                }
             }
         }
         .padding(14)
@@ -1281,36 +1290,41 @@ struct FamilyWindowView: View {
                     Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let reportStatus = model.reportStatusText(item) {
+                    if model.isEncryptedReportAvailable,
+                       let reportStatus = model.reportStatusText(item) {
                         Text(reportStatus)
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
                 }
                 Spacer()
-                Menu {
-                    Button {
-                        reportTarget = item
-                    } label: {
-                        Label(
-                            model.reportActionTitle(item),
-                            systemImage: "exclamationmark.bubble"
-                        )
-                    }
-                    .disabled(!model.canSubmitReport(item))
-                    if !model.isReportOnly {
-                        Button(role: .destructive) {
-                            blockTarget = item
-                        } label: {
-                            Label("この相手をブロック", systemImage: "hand.raised.fill")
+                if model.isEncryptedReportAvailable || !model.isReportOnly {
+                    Menu {
+                        if model.isEncryptedReportAvailable {
+                            Button {
+                                reportTarget = item
+                            } label: {
+                                Label(
+                                    model.reportActionTitle(item),
+                                    systemImage: "exclamationmark.bubble"
+                                )
+                            }
+                            .disabled(!model.canSubmitReport(item))
                         }
+                        if !model.isReportOnly {
+                            Button(role: .destructive) {
+                                blockTarget = item
+                            } label: {
+                                Label("この相手をブロック", systemImage: "hand.raised.fill")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.title3)
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
+                    .accessibilityLabel("写真の安全メニュー")
+                    .disabled(model.isShowingLastKnownState)
                 }
-                .accessibilityLabel("写真の安全メニュー")
-                .disabled(model.isShowingLastKnownState)
             }
             .padding(13)
             if !model.isReportOnly, !model.isShowingLastKnownState {
@@ -1647,45 +1661,45 @@ struct FamilyWindowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("内容を表示していません")
                     .font(.subheadline.weight(.semibold))
-                Text(item.state == .revoked
-                    ? "共有が終了したため非表示にしています。内容を再表示せず、安全のため通報できます。"
-                    : (model.isReportOnly
-                        ? "端末の安全確認を通せなかった受信です。内容を表示せずに通報できます。"
-                        : "端末の安全確認を通せなかった受信です。内容を表示せずに通報またはブロックできます。"))
+                Text(safetyHiddenExplanation(item))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let reportStatus = model.reportStatusText(item) {
+                if model.isEncryptedReportAvailable,
+                   let reportStatus = model.reportStatusText(item) {
                     Text(reportStatus)
                         .font(.caption2)
                         .foregroundStyle(.orange)
                 }
             }
             Spacer()
-            Menu {
-                if item.localJPEGFileName != nil {
-                    Button {
-                        reportTarget = item
-                    } label: {
-                        Label(
-                            model.reportActionTitle(item, hidden: true),
-                            systemImage: "exclamationmark.bubble"
-                        )
+            if model.isEncryptedReportAvailable || !model.isReportOnly {
+                Menu {
+                    if model.isEncryptedReportAvailable,
+                       item.localJPEGFileName != nil {
+                        Button {
+                            reportTarget = item
+                        } label: {
+                            Label(
+                                model.reportActionTitle(item, hidden: true),
+                                systemImage: "exclamationmark.bubble"
+                            )
+                        }
+                        .disabled(!model.canSubmitReport(item))
                     }
-                    .disabled(!model.canSubmitReport(item))
-                }
-                if !model.isReportOnly {
-                    Button(role: .destructive) {
-                        blockTarget = item
-                    } label: {
-                        Label("この相手をブロック", systemImage: "hand.raised.fill")
+                    if !model.isReportOnly {
+                        Button(role: .destructive) {
+                            blockTarget = item
+                        } label: {
+                            Label("この相手をブロック", systemImage: "hand.raised.fill")
+                        }
                     }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
                 }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.title3)
+                .disabled(model.isShowingLastKnownState)
+                .accessibilityLabel("非表示にした受信の安全メニュー")
             }
-            .disabled(model.isShowingLastKnownState)
-            .accessibilityLabel("非表示にした受信の安全メニュー")
         }
         .padding(14)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -1717,6 +1731,11 @@ struct FamilyWindowView: View {
             if let url = SharingAPIConfiguration.current.supportURL {
                 Link("問題を問い合わせる", destination: url)
             }
+            if !model.isEncryptedReportAvailable {
+                Text("この限定ベータではアプリ内通報を停止しています。安全上の問題は、写真・招待コード・確認フレーズ・鍵を添付せず、TestFlightのベータ版フィードバックから連絡してください。相手は安全メニューからブロックして共有を終了できます。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MiBまで保持します。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -1738,6 +1757,20 @@ struct FamilyWindowView: View {
             Task { await model.report(target, reason: reason) }
         }
         .disabled(reportTarget.map { !model.canSubmitReport($0) } ?? true)
+    }
+
+    private func safetyHiddenExplanation(_ item: MomentInboxItem) -> String {
+        if !model.isEncryptedReportAvailable {
+            return model.isReportOnly || item.state == .revoked
+                ? "共有が終了したため非表示にしています。安全上の問題は、写真を添付せずTestFlightのベータ版フィードバックから連絡してください。"
+                : "端末の安全確認を通せなかったため表示していません。必要なら相手をブロックして共有を終了できます。"
+        }
+        if item.state == .revoked {
+            return "共有が終了したため非表示にしています。内容を再表示せず、安全のため通報できます。"
+        }
+        return model.isReportOnly
+            ? "端末の安全確認を通せなかった受信です。内容を表示せずに通報できます。"
+            : "端末の安全確認を通せなかった受信です。内容を表示せずに通報またはブロックできます。"
     }
 
     private func captureLabel(_ item: MomentInboxItem) -> String {

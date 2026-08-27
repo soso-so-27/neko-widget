@@ -11,6 +11,8 @@ export const moderationStagingProjectDirectory = join(scriptDirectory, "..");
 export const moderationStagingConfigName = "wrangler.report-ingestion-staging-on.jsonc";
 const moderationStatusTimeoutMilliseconds = 30_000;
 const moderationStatusOutputLimitBytes = 1024 * 1024;
+const canonicalAccountID = /^[0-9a-f]{32}$/u;
+const canonicalDatabaseID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u;
 
 // These fixed queries expose aggregate operations data only. They never select
 // report IDs, participant/device IDs, object keys, hashes, ciphertext, URLs,
@@ -296,7 +298,7 @@ function validatedRows(name, output) {
   }
 }
 
-export function moderationStatusCommand({ projectDirectory, databaseName, sql }) {
+export function moderationStatusCommand({ projectDirectory, databaseName, sql, accountId }) {
   if (typeof projectDirectory !== "string" || projectDirectory.length === 0) {
     throw new Error("moderation status project directory is unavailable");
   }
@@ -305,6 +307,10 @@ export function moderationStatusCommand({ projectDirectory, databaseName, sql })
   }
   if (!moderationStatusQueries.some((query) => query.sql === sql)) {
     throw new Error("moderation status may execute only reviewed read-only queries");
+  }
+  if (accountId !== undefined
+      && (typeof accountId !== "string" || !canonicalAccountID.test(accountId))) {
+    throw new Error("moderation status account is unavailable or invalid");
   }
   const configPath = join(projectDirectory, moderationStagingConfigName);
   const wranglerEntryPoint = join(projectDirectory, "node_modules", "wrangler", "bin", "wrangler.js");
@@ -323,6 +329,7 @@ export function moderationStatusCommand({ projectDirectory, databaseName, sql })
       sql,
     ]),
     cwd: projectDirectory,
+    ...(accountId === undefined ? {} : { accountId }),
   });
 }
 
@@ -356,7 +363,12 @@ export async function runReadOnlyModerationWranglerCommand(command, {
     try {
       child = spawnImpl(command.executable, command.args, {
         cwd: command.cwd,
-        env: moderationWranglerEnvironment(environment),
+        env: moderationWranglerEnvironment({
+          ...environment,
+          ...(command.accountId === undefined
+            ? {}
+            : { CLOUDFLARE_ACCOUNT_ID: command.accountId }),
+        }),
         shell: false,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -419,6 +431,8 @@ export async function collectModerationStagingStatus({
   projectDirectory = moderationStagingProjectDirectory,
   readFileImpl = readFile,
   runCommand = runReadOnlyModerationWranglerCommand,
+  expectedDatabaseId,
+  accountId,
 } = {}) {
   const configPath = join(projectDirectory, moderationStagingConfigName);
   let config;
@@ -432,15 +446,49 @@ export async function collectModerationStagingStatus({
     expectedAPNSRuntime: "NO",
     expectedReportIngestionRuntime: "YES",
   });
-  const databaseName = config.d1_databases[0]?.database_name;
+  const binding = config.d1_databases[0];
+  const databaseName = binding?.database_name;
   if (databaseName !== "neko-window-sharing-staging") {
     throw new Error("moderation status may query only the isolated staging database");
+  }
+  if (expectedDatabaseId !== undefined
+      && (typeof expectedDatabaseId !== "string"
+        || !canonicalDatabaseID.test(expectedDatabaseId)
+        || binding?.database_id !== expectedDatabaseId)) {
+    throw new Error("moderation status database does not match the reviewed target");
+  }
+  if (accountId !== undefined
+      && (typeof accountId !== "string" || !canonicalAccountID.test(accountId))) {
+    throw new Error("moderation status account is unavailable or invalid");
   }
 
   const result = {};
   for (const query of moderationStatusQueries) {
-    const command = moderationStatusCommand({ projectDirectory, databaseName, sql: query.sql });
-    result[query.name] = validatedRows(query.name, await runCommand(command));
+    const command = moderationStatusCommand({
+      projectDirectory,
+      databaseName,
+      sql: query.sql,
+      accountId,
+    });
+    let output;
+    try {
+      output = await runCommand(command);
+    } catch (error) {
+      const safeMessage = error instanceof Error ? error.message : "";
+      if (safeMessage === "moderation status read-only D1 query timed out") {
+        throw new Error(`moderation status ${query.name} read-only D1 query timed out`);
+      }
+      if (safeMessage === "moderation status could not start Wrangler") {
+        throw new Error(`moderation status ${query.name} could not start Wrangler`);
+      }
+      if (safeMessage === "moderation status Wrangler output exceeded the limit") {
+        throw new Error(`moderation status ${query.name} Wrangler output exceeded the limit`);
+      }
+      // Never pass through provider diagnostics or injected runner messages.
+      // The reviewed query name is enough to localize the failure safely.
+      throw new Error(`moderation status ${query.name} read-only D1 query failed`);
+    }
+    result[query.name] = validatedRows(query.name, output);
   }
   const lifecycleCounts = new Map(result.lifecycle.map((row) => [row.state, row.count]));
   const keyedCounts = new Map();

@@ -7,7 +7,7 @@
 - `ios-build.yml`：push、pull request、手動実行で、AppとWidgetをiOS Simulator向けに無署名ビルドする。これはSwiftのコンパイル検査であり、実機用entitlementや配布署名の正しさまでは保証しない。
 - `ios-scale.yml`：手動実行で、1,000〜3,000枚のSimulatorスケールテストとプロセスメモリ計測を行う。通常は繰り返し実行しない。
 - `app-store-screenshots.yml`：手動実行だけで、消去済みの6.9-inch iPhone Simulatorから共有OFFの日本語候補5枚を作る。AppleやApp Store Connectへ接続・uploadしない。
-- `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA exportを行う。既定は共有を完全に無効化する`disabled`で、静的な画面確認だけの`review-preview`、写真なしの内部試験だけの`pairing-only`、本人2台の一枚共有だけの`media-staging`を明示的に分離する。`upload_to_testflight`がtrueのときだけApp Store Connectで検証し、TestFlightへuploadする。GitHub Environment `testflight`を使う。
+- `testflight.yml`：`workflow_dispatch`からだけ起動し、Release archive、署名とApp Group entitlementの検査、IPA exportを行う。既定は共有を完全に無効化する`disabled`で、静的な画面確認だけの`review-preview`、写真なしの内部試験だけの`pairing-only`、一枚共有の`media-staging`を明示的に分離する。`media-staging`は原則として本人2台の内部試験用で、例外はreportをclient／serverともOFFに固定したBuild 71候補を、public linkなしで信頼できる外部tester 1人だけへ配布する場合に限る。`upload_to_testflight`がtrueのときだけApp Store Connectで検証し、TestFlightへuploadする。GitHub Environment `testflight`を使う。
 
 2026年4月28日以降のアップロード要件に合わせ、4つとも`macos-15` runner上のXcode 26.3を明示している。runnerからこのXcodeが削除された場合は、GitHub runner imageの一覧とAppleの提出要件を確認して`DEVELOPER_DIR`を更新する。
 
@@ -65,14 +65,14 @@ Environment Variablesには次を置く。
 
 | Variable | 内容 |
 | --- | --- |
-| `SHARING_STAGING_API_ORIGIN` | `pairing-only`または`media-staging`だけに注入するstaging Workerの公開HTTPS origin。末尾path、query、placeholder、localhost、IP直書きは不可 |
+| `SHARING_STAGING_API_ORIGIN` | `pairing-only`または`media-staging`だけに注入するstaging Worker origin。`media-staging`は監視対象の`https://neko-window-sharing-staging.nakanishisoya.workers.dev`と完全一致しなければ停止 |
 | `SHARING_EXPORT_REVIEWED` | pairing暗号を含むbuildの輸出コンプライアンス確認後だけ`YES` |
 | `SHARING_STAGING_MODERATION_KEY_ID` | `media-staging`用の公開moderation key ID。現在の配布済み／提出候補buildは`moderation-v1`のまま |
 | `SHARING_STAGING_MODERATION_PUBLIC_KEY` | `media-staging`用の公開moderation key。秘密鍵はEnvironmentへ置かない |
 | `SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST` | review済み非secret JSON。exact `schema`、`environment=testflight`、正の整数`revision`、`keys` mapのみ。v1 entry必須、v2 entry任意 |
-| `SHARING_STAGING_PRIVACY_URL` | `media-staging`用の公開HTTPS Privacy Policy URL |
-| `SHARING_STAGING_SUPPORT_URL` | `media-staging`用の公開HTTPS Support URL |
-| `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | `media-staging`用の公開HTTPS Community Standards URL |
+| `SHARING_STAGING_PRIVACY_URL` | `media-staging`では`https://soso-so-27.github.io/neko-widget/privacy/`と完全一致 |
+| `SHARING_STAGING_SUPPORT_URL` | `media-staging`では`https://soso-so-27.github.io/neko-widget/support/`と完全一致 |
+| `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | `media-staging`では`https://soso-so-27.github.io/neko-widget/community/`と完全一致 |
 
 これらのstaging値は`Config.xcconfig`やソースへ書かない。Trust manifestのfingerprintはcanonical base64urlを
 decodeした32-byte raw X25519 public keyのSHA-256、lowercase 64文字hexであり、秘密値ではない。Manifestに
@@ -109,7 +109,7 @@ Windowsでは秘密値をconsoleやtext fileへ出さず、[Apple Developer署�
 1. まず`iOS build check`を手動実行し、無署名コンパイルを通す。
 2. Actions > `Archive and upload to TestFlight` > Run workflowを選ぶ。
    実行対象branchは`main`に限定しており、それ以外でdispatchしたjobはskipする。
-3. 通常は既定の`release_mode = disabled`のままにする。これはApp Store候補の完全ローカル境界で、共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにする。`review-preview`は静的な画面確認、`pairing-only`と`media-staging`は明示した内部試験だけに使う。
+3. 通常は既定の`release_mode = disabled`のままにする。これはApp Store候補の完全ローカル境界で、共有runtime、まど名同期、Share Extension handoff、review previewをすべてOFFにする。`review-preview`は静的な画面確認、`pairing-only`は明示した内部試験だけに使う。`media-staging`も原則は内部試験用であり、Build 71候補の外部1人限定例外に使う場合は、[Media-Staging-TestFlight手順](Media-Staging-TestFlight手順.md#build-71候補の外部1人限定例外)の全条件を先に満たす。
 4. 初回は`upload_to_testflight = false`、`retain_signed_artifacts = false`にし、P12 import、3 profile、manual archive、署名検査、IPA exportだけを通す。API Key関連の3 Secretsはまだ不要で、Appleへは送信しない。
 5. `build_number`は正の整数を指定する。空欄では当該workflowの`github.run_number`を使うが、手動Xcodeなど別経路で同じ番号を使った場合は、既存より大きい番号を明示する。
 6. `testflight` Environmentの承認を行う。

@@ -49,6 +49,9 @@ final class MomentSharingViewModel: ObservableObject {
     }
     var reportOnlyUntil: Date? { sharingState.reportOnlyUntil }
     var isReportOnly: Bool { reportOnlyUntil != nil }
+    var isEncryptedReportAvailable: Bool {
+        configuration.isEncryptedReportAvailable
+    }
     var receivedMoments: [MomentInboxItem] {
         sharingState.inbox
             .filter { $0.state == .available || $0.state == .acknowledged }
@@ -310,7 +313,10 @@ final class MomentSharingViewModel: ObservableObject {
         _ item: MomentInboxItem,
         reason: MomentReportReason
     ) async {
-        guard !isWorking, !isShowingLastKnownState else { return }
+        guard configuration.isEncryptedReportAvailable,
+              !isWorking,
+              !isShowingLastKnownState
+        else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
@@ -638,7 +644,8 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     func canSubmitReport(_ item: MomentInboxItem) -> Bool {
-        !isShowingLastKnownState
+        configuration.isEncryptedReportAvailable
+            && !isShowingLastKnownState
             && !hasReported(item)
             && !reportDeliveryIsUnknown(item)
     }

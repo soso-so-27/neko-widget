@@ -25,9 +25,12 @@ function runtimeFetch({
   pushCode = "invalid_authentication",
   targetedPushStatus = pushStatus,
   targetedPushCode = pushCode,
+  reportStatus = 401,
+  reportCode = "invalid_authentication",
   windowNameStatus,
   windowNameCode,
   healthMediaRuntime,
+  healthReportRuntime = "OFF",
   legacyStatus = 503,
   legacyCode = "legacy_sharing_runtime_disabled",
 }) {
@@ -48,7 +51,7 @@ function runtimeFetch({
           "Neko-Runtime-Gate-Generation": "7",
           "Neko-Runtime-Media": mediaRuntime,
           "Neko-Runtime-Apns": mediaRuntime,
-          "Neko-Runtime-Report-Ingestion": "OFF",
+          "Neko-Runtime-Report-Ingestion": healthReportRuntime,
         });
       case "/v2/moments/changes":
         assert.equal(options.method, "GET");
@@ -72,6 +75,18 @@ function runtimeFetch({
         assert.equal(options.method, "GET");
         return jsonResponse(resolvedWindowNameStatus, {
           error: { code: resolvedWindowNameCode, message: "expected test response" },
+        });
+      case "/v2/reports/reservations":
+      case "/v2/reports/0000000000000000000000/commit":
+        assert.equal(options.method, "POST");
+        return jsonResponse(reportStatus, {
+          error: { code: reportCode, message: "expected test response" },
+        });
+      case "/v2/reports/0000000000000000000000/ciphertext":
+        assert.equal(options.method, "PUT");
+        assert.equal(options.headers["Content-Type"], "application/octet-stream");
+        return jsonResponse(reportStatus, {
+          error: { code: reportCode, message: "expected test response" },
         });
       case "/v1/sharing/sources":
         assert.equal(options.method, "GET");
@@ -101,14 +116,56 @@ test("accepts the expected ON runtime boundary", async () => {
   ]);
 });
 
-test("the daily monitor pins the current policy revision and ON boundary", async () => {
+test("accepts limited external beta when health is OFF and report routes stay auth-first", async () => {
+  const result = await checkStagingRuntime({
+    origin,
+    expected: "limited-external-beta",
+    fetchImpl: runtimeFetch({
+      momentStatus: 401,
+      momentCode: "invalid_authentication",
+      reportStatus: 401,
+      reportCode: "invalid_authentication",
+    }),
+  });
+  assert.deepEqual(result.checks.map(({ name, status, code }) => ({ name, status, code })), [
+    { name: "health", status: 200, code: undefined },
+    { name: "moment", status: 401, code: "invalid_authentication" },
+    { name: "reaction", status: 401, code: "invalid_authentication" },
+    { name: "push-register", status: 401, code: "invalid_authentication" },
+    { name: "push-delete", status: 401, code: "invalid_authentication" },
+    { name: "targeted-push-register", status: 401, code: "invalid_authentication" },
+    { name: "targeted-push-delete", status: 401, code: "invalid_authentication" },
+    { name: "window-name", status: 401, code: "invalid_authentication" },
+    { name: "report-reserve", status: 401, code: "invalid_authentication" },
+    { name: "report-upload", status: 401, code: "invalid_authentication" },
+    { name: "report-commit", status: 401, code: "invalid_authentication" },
+    { name: "legacy", status: 503, code: "legacy_sharing_runtime_disabled" },
+  ]);
+});
+
+test("rejects limited external beta if report ingestion becomes reachable", async () => {
+  await assert.rejects(checkStagingRuntime({
+    origin,
+    expected: "limited-external-beta",
+    fetchImpl: runtimeFetch({
+      momentStatus: 401,
+      momentCode: "invalid_authentication",
+      healthReportRuntime: "ON",
+      reportStatus: 401,
+      reportCode: "invalid_authentication",
+    }),
+  }), /health returned an unexpected runtime gate state/u);
+});
+
+test("the daily monitor pins the current policy revisions and limited-beta boundary", async () => {
   const workflow = await readFile(
     new URL("../../../.github/workflows/sharing-staging-monitor.yml", import.meta.url),
     "utf8",
   );
-  assert.equal(workflow.match(/revision: "2026-08-26"/gu)?.length, 2);
+  assert.equal(workflow.match(/revision: "2026-08-27"/gu)?.length, 1);
+  assert.equal(workflow.match(/revision: "2026-08-26"/gu)?.length, 1);
   assert.doesNotMatch(workflow, /revision: "2026-08-(?:24|25)"/u);
-  assert.match(workflow, /node scripts\/check-staging-runtime\.mjs --expected on/u);
+  assert.match(workflow, /node scripts\/check-staging-runtime\.mjs --expected limited-external-beta/u);
 });
 
 test("rejects an ON boundary without the Build 70 targeted push route", async () => {
@@ -128,11 +185,39 @@ test("rejects an ON boundary without the Build 70 targeted push route", async ()
 });
 
 test("accepts the expected OFF runtime boundary", async () => {
-  await checkStagingRuntime({
+  const result = await checkStagingRuntime({
     origin,
     expected: "off",
-    fetchImpl: runtimeFetch({ momentStatus: 503, momentCode: "moment_runtime_disabled" }),
+    fetchImpl: runtimeFetch({
+      momentStatus: 503,
+      momentCode: "moment_runtime_disabled",
+      reactionStatus: 503,
+      reactionCode: "reaction_runtime_disabled",
+    }),
   });
+  assert.deepEqual(result.checks.map(({ name, status, code }) => ({ name, status, code })), [
+    { name: "health", status: 200, code: undefined },
+    { name: "moment", status: 503, code: "moment_runtime_disabled" },
+    { name: "reaction", status: 503, code: "reaction_runtime_disabled" },
+    { name: "window-name", status: 503, code: "window_name_runtime_disabled" },
+    { name: "legacy", status: 503, code: "legacy_sharing_runtime_disabled" },
+  ]);
+});
+
+test("rejects an OFF boundary that leaves reactions enabled", async () => {
+  await assert.rejects(
+    checkStagingRuntime({
+      origin,
+      expected: "off",
+      fetchImpl: runtimeFetch({
+        momentStatus: 503,
+        momentCode: "moment_runtime_disabled",
+        reactionStatus: 401,
+        reactionCode: "invalid_authentication",
+      }),
+    }),
+    /reaction returned HTTP 401; expected 503/u,
+  );
 });
 
 test("accepts moment ON with private window-name and legacy runtimes OFF", async () => {

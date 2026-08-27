@@ -443,10 +443,12 @@ test("requires profile-specific safety content", async () => {
     check(sharingBeta, new Map([[
       "privacy",
       pageHtml(sharingBeta, sharingPage, {
-        phrases: sharingPage.requiredPhrases.filter((phrase) => phrase !== "通報専用公開鍵"),
+        phrases: sharingPage.requiredPhrases.filter(
+          (phrase) => phrase !== "新規の暗号化通報受付は停止",
+        ),
       }),
     ]])),
-    /privacy is missing required policy content: 通報専用公開鍵/u,
+    /privacy is missing required policy content: 新規の暗号化通報受付は停止/u,
   );
 
   const localPage = localOnly.definition.pages[1];
@@ -528,8 +530,8 @@ test("requires explicit export risk and submission blocker copy on every local-o
   }
 });
 
-test("requires the internal TestFlight boundary on every sharing-beta page", async () => {
-  const boundary = "この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。";
+test("requires the limited external TestFlight boundary on every sharing-beta page", async () => {
+  const boundary = "この共有仕様は、招待した少人数だけの限定外部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。";
   for (const page of sharingBeta.definition.pages) {
     await assert.rejects(
       check(sharingBeta, new Map([[

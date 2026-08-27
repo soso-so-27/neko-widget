@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="neko-policy-revision" content="2026-08-26">
+  <meta name="neko-policy-revision" content="2026-08-27">
   <meta name="description" content="ねこのまどのコミュニティ基準">
   <title>コミュニティ基準｜ねこのまど</title>
   <link rel="stylesheet" href="../assets/site.css">
@@ -19,8 +19,8 @@
   </header>
   <main>
     <h1>コミュニティ基準</h1>
-    <p class="updated">最終更新日：2026年8月26日</p>
-    <p class="notice">この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。</p>
+    <p class="updated">最終更新日：2026年8月27日</p>
+    <p class="notice">この共有仕様は、招待した少人数だけの限定外部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。</p>
     <p>「ねこのまど」は、1台のiPhoneで最大20個の名前付き非公開なまどを作成・参加・切り替えでき、一枚ずつ写真を届ける場所です。1つのまどは作成者と信頼できる招待相手1人だけで使います。各参加者は、承認した最大4台のiPhoneで同じまどを使えます。家族に限定しません。公開フィード、検索、フォロー、匿名の出会いはありません。それでも、相手の同意と安全を尊重する必要があります。</p>
 
     <h2>共有してはいけない内容</h2>
@@ -38,22 +38,23 @@
     <ol>
       <li>写っている人と場所について、相手へ送ってよい写真か確認する。</li>
       <li>送り先が意図した名前の非公開なまどであることを確認する。</li>
-      <li>共有シートの一時保存後、アプリを開き、安全確認と送信結果を確認する。</li>
+      <li>アプリ内で選んだ場合は確認画面、写真アプリの共有シートを使った場合は一時保存後にアプリを開き、安全確認と送信結果を確認する。</li>
     </ol>
     <p>端末内の自動安全確認は補助機能であり、すべての違反を見つける保証はありません。</p>
 
     <h2>受信した内容に問題があるとき</h2>
+    <p class="notice">この1人限定の外部TestFlightでは、新規の暗号化通報受付は停止しています。アプリ内通報は利用できず、写真や通報用暗号文を送信・保存しません。</p>
     <ul>
-      <li>受信写真のメニューから「通報」を選ぶと、その一枚だけが通報専用鍵で暗号化され、対応担当者が確認できる状態になります。</li>
-      <li>「ブロックして共有を終了」を選ぶと、通常の新規送受信を停止します。</li>
+      <li>TestFlightの「ベータ版フィードバックを送信」で開発者へ非公開に連絡してください。写真、招待コード、確認フレーズ、暗号鍵は添付しないでください。</li>
+      <li>受信写真の安全メニューで「この相手をブロック」を選び、確認画面の「ブロックしてまどを解除」を押すと、通常の新規送受信を停止します。</li>
       <li>緊急の危険がある場合、このサービスの対応を待たず、地域の警察・消防・相談窓口へ連絡してください。</li>
     </ul>
 
     <h2>対応方針</h2>
-    <p>通報は原則48時間以内に初回確認し、内容と危険性に応じて共有停止、取得権の失効、暗号文の削除依頼、再発防止を行います。重大または反復する違反では、関係する共有を直ちに停止します。判断記録には必要最小限の識別子だけを残します。通報写真はcommit後7日で利用期限を終えて削除対象となり、物理削除は完了するまで再試行します。</p>
+    <p>安全上のTestFlightフィードバックは原則48時間以内に初回確認します。内容と危険性に応じて、共有data-planeの緊急OFF、テスターへのブロック・共有解除の案内、暗号文の通常期限による削除と再試行を行います。フィードバックに写真を含めないため、開発者が通常共有写真を復号して内容判断することはありません。暗号化通報を有効にするには、安全な抽出・判断・早期削除の実環境訓練を別途合格する必要があります。</p>
 
     <h2>English summary</h2>
-    <p>Do not share exploitative, non-consensual intimate, threatening, harassing, hateful, illegal, privacy-invasive, deceptive, or infringing content. Recipients can report a single image and block the sender. Reports are targeted for initial review within 48 hours. For immediate danger, contact local emergency services.</p>
+    <p>Do not share exploitative, non-consensual intimate, threatening, harassing, hateful, illegal, privacy-invasive, deceptive, or infringing content. Encrypted in-app report ingestion is disabled during this one-person external TestFlight. Use private TestFlight feedback without attaching the photo, and block the sender to end sharing. Safety feedback is targeted for initial review within 48 hours. For immediate danger, contact local emergency services.</p>
   </main>
   <footer><a href="../">安全とプライバシーのトップへ</a></footer>
 </body>

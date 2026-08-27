@@ -81,17 +81,24 @@ function localNodeCommand(source) {
 
 test("bounds moderation Wrangler execution and enforces its process environment", async (context) => {
   await context.test("forces telemetry, error-report, banner, and update suppression", async () => {
-    const output = await runReadOnlyModerationWranglerCommand(
-      localNodeCommand(`process.stdout.write(JSON.stringify({
+    const accountId = "11111111111111111111111111111111";
+    const command = Object.freeze({
+      ...localNodeCommand(`process.stdout.write(JSON.stringify({
         DO_NOT_TRACK: process.env.DO_NOT_TRACK,
         WRANGLER_HIDE_BANNER: process.env.WRANGLER_HIDE_BANNER,
         WRANGLER_SEND_ERROR_REPORTS: process.env.WRANGLER_SEND_ERROR_REPORTS,
         WRANGLER_SEND_METRICS: process.env.WRANGLER_SEND_METRICS,
+        CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
         preserved: process.env.NEKO_MODERATION_STATUS_TEST,
       }));`),
+      accountId,
+    });
+    const output = await runReadOnlyModerationWranglerCommand(
+      command,
       {
         environment: {
           ...process.env,
+          CLOUDFLARE_ACCOUNT_ID: "22222222222222222222222222222222",
           DO_NOT_TRACK: "0",
           WRANGLER_HIDE_BANNER: "false",
           WRANGLER_SEND_ERROR_REPORTS: "true",
@@ -107,6 +114,7 @@ test("bounds moderation Wrangler execution and enforces its process environment"
       WRANGLER_HIDE_BANNER: "true",
       WRANGLER_SEND_ERROR_REPORTS: "false",
       WRANGLER_SEND_METRICS: "false",
+      CLOUDFLARE_ACCOUNT_ID: accountId,
       preserved: "preserved",
     });
   });
@@ -186,8 +194,11 @@ function queryForCommand(command) {
 
 test("runs exactly the reviewed aggregate-only queries through report-ingestion staging", async () => {
   const commands = [];
+  const accountId = "11111111111111111111111111111111";
   const status = await collectModerationStagingStatus({
     projectDirectory,
+    expectedDatabaseId: fixtureEnvironment.NEKO_STAGING_D1_DATABASE_ID,
+    accountId,
     readFileImpl: async (path) => {
       assert.equal(path.replaceAll("\\", "/"), `${projectDirectory}/${moderationStagingConfigName}`);
       return renderedConfig();
@@ -195,6 +206,7 @@ test("runs exactly the reviewed aggregate-only queries through report-ingestion 
     runCommand: async (command) => {
       commands.push(command);
       assert.equal(command.cwd, projectDirectory);
+      assert.equal(command.accountId, accountId);
       assert.equal(command.executable, process.execPath);
       assert.equal(
         command.args[0].replaceAll("\\", "/"),
@@ -252,6 +264,33 @@ test("runs exactly the reviewed aggregate-only queries through report-ingestion 
   assert.doesNotMatch(text, /must-not-pass-through/u);
 });
 
+test("identifies a failed reviewed query without exposing runner diagnostics", async () => {
+  let commands = 0;
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async (command) => {
+        commands += 1;
+        const query = queryForCommand(command);
+        if (query?.name === "key-lifecycle") {
+          throw new Error("provider detail containing must-not-pass-through");
+        }
+        return validResponses[query.name];
+      },
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "moderation status key-lifecycle read-only D1 query failed",
+      );
+      assert.doesNotMatch(error.message, /must-not-pass-through/u);
+      return true;
+    },
+  );
+  assert.equal(commands, 3);
+});
+
 test("rejects arguments, unreviewed databases, and unreviewed SQL", () => {
   assert.doesNotThrow(() => requireNoModerationStatusArguments([]));
   assert.throws(
@@ -273,6 +312,34 @@ test("rejects arguments, unreviewed databases, and unreviewed SQL", () => {
       sql: "SELECT object_key FROM moment_reports",
     }),
     /only reviewed read-only queries/u,
+  );
+});
+
+test("binds moderation status to the reviewed D1 and account before any query", async () => {
+  let commands = 0;
+  await assert.rejects(
+    collectModerationStagingStatus({
+      projectDirectory,
+      expectedDatabaseId: "22222222-2222-2222-2222-222222222222",
+      accountId: "11111111111111111111111111111111",
+      readFileImpl: async () => renderedConfig(),
+      runCommand: async () => {
+        commands += 1;
+        throw new Error("must not query");
+      },
+    }),
+    /database does not match the reviewed target/u,
+  );
+  assert.equal(commands, 0);
+
+  assert.throws(
+    () => moderationStatusCommand({
+      projectDirectory,
+      databaseName: "neko-window-sharing-staging",
+      sql: moderationStatusQueries[0].sql,
+      accountId: "not-an-account",
+    }),
+    /account is unavailable or invalid/u,
   );
 });
 

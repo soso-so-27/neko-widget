@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-const SHARING_BETA_BOUNDARY_PHRASE = "この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。";
+const SHARING_BETA_BOUNDARY_PHRASE = "この共有仕様は、招待した少人数だけの限定外部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。";
 const PHOTO_ALBUM_DISCLOSURE_PHRASES = Object.freeze([
   "写真アプリに「うちの子」アルバムを作成・更新",
   "元写真のアルバム所属を追加・解除",
@@ -52,6 +52,10 @@ const SHARING_BETA_PAGES = Object.freeze([
       "家族に限定しません",
       "公開フィード、検索、フォロー、匿名の出会いはありません",
     ]),
+    forbiddenPhrases: Object.freeze([
+      "通報時の例外",
+      "通報、ブロック",
+    ]),
   }),
   Object.freeze({
     name: "privacy",
@@ -62,7 +66,8 @@ const SHARING_BETA_PAGES = Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
       ...PHOTO_ALBUM_DISCLOSURE_PHRASES,
       "エンドツーエンド暗号化",
-      "通報専用公開鍵",
+      "新規の暗号化通報受付は停止",
+      "通報用暗号文を送信・保存しません",
       "ACK後7日",
       "未受領の通常暗号文：commit後30日",
       "生成AIの学習に利用しません",
@@ -78,6 +83,7 @@ const SHARING_BETA_PAGES = Object.freeze([
     forbiddenPhrases: Object.freeze([
       "一般的な通知文だけを送ります",
       "写真ID、取得URL",
+      "その一枚を通報専用公開鍵へ別に暗号化します",
     ]),
   }),
   Object.freeze({
@@ -87,11 +93,15 @@ const SHARING_BETA_PAGES = Object.freeze([
     visibleRevision: true,
     requiredPhrases: Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
-      "通報",
-      "ブロック",
+      "新規の暗号化通報受付は停止",
+      "TestFlightの「ベータ版フィードバックを送信」",
+      "この相手をブロック",
+      "ブロックしてまどを解除",
       "48時間以内",
-      "削除対象",
       "再試行",
+    ]),
+    forbiddenPhrases: Object.freeze([
+      "その一枚だけが通報専用鍵で暗号化",
     ]),
   }),
   Object.freeze({
@@ -103,6 +113,9 @@ const SHARING_BETA_PAGES = Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
       "GitHub Issues",
       "TestFlight",
+      "新規の暗号化通報受付は停止",
+      "この相手をブロック",
+      "ブロックしてまどを解除",
       "招待コード",
       "緊急通報先ではありません",
       "届いた写真の「思い出」",

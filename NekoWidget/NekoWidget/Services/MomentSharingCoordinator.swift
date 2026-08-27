@@ -600,7 +600,8 @@ actor MomentSharingCoordinator {
         reason: MomentReportReason,
         consentAcceptedAt: Date
     ) async throws {
-        guard configuration.isMediaAvailable,
+        guard configuration.isEncryptedReportAvailable,
+              configuration.isMediaAvailable,
               let moderationKeyID = configuration.moderationKeyID,
               let moderationPublicKey = configuration.moderationPublicKey,
               let fileName = inboxItem.localJPEGFileName,
@@ -738,6 +739,11 @@ actor MomentSharingCoordinator {
         api: URLSessionMomentSharingAPIClient,
         authorization: Authorization
     ) async throws -> Int {
+        // A previous build may have left a bounded encrypted report in the
+        // local outbox. Keep it local until ordinary report-history pruning or
+        // pairing cleanup removes it; never reserve, upload, or commit while
+        // this release boundary is OFF.
+        guard configuration.isEncryptedReportAvailable else { return 0 }
         let snapshot = try MomentSharingStateStore.load().reportOutbox
         var committedCount = 0
         for candidate in snapshot {

@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       release_mode:
-        description: "配布範囲。App Store候補はdisabled、画面確認だけreview-preview、明示した内部試験だけpairing-only/media-staging"
+        description: "配布範囲。App Store候補はdisabled、review-previewは画面確認、pairing-onlyは内部限定、media-stagingは内部またはBuild 71候補の外部1人限定"
         required: true
         default: disabled
         type: choice
@@ -129,12 +129,32 @@ jobs:
                 "$PROJECT_DIRECTORY/NekoWidget/PrivacyInfo.xcprivacy"
               ;;
             media-staging)
-              release_origin="${SHARING_STAGING_API_ORIGIN:-}"
+              expected_media_origin="https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+              expected_media_privacy_url="https://soso-so-27.github.io/neko-widget/privacy/"
+              expected_media_support_url="https://soso-so-27.github.io/neko-widget/support/"
+              expected_media_community_url="https://soso-so-27.github.io/neko-widget/community/"
+              if [[ "${SHARING_STAGING_API_ORIGIN:-}" != "$expected_media_origin" ]]; then
+                echo "SHARING_STAGING_API_ORIGIN must exactly match the monitored limited-beta Worker." >&2
+                exit 1
+              fi
+              if [[ "${SHARING_STAGING_PRIVACY_URL:-}" != "$expected_media_privacy_url" ]]; then
+                echo "SHARING_STAGING_PRIVACY_URL must exactly match the monitored limited-beta policy." >&2
+                exit 1
+              fi
+              if [[ "${SHARING_STAGING_SUPPORT_URL:-}" != "$expected_media_support_url" ]]; then
+                echo "SHARING_STAGING_SUPPORT_URL must exactly match the monitored limited-beta support page." >&2
+                exit 1
+              fi
+              if [[ "${SHARING_STAGING_COMMUNITY_STANDARDS_URL:-}" != "$expected_media_community_url" ]]; then
+                echo "SHARING_STAGING_COMMUNITY_STANDARDS_URL must exactly match the monitored limited-beta standards." >&2
+                exit 1
+              fi
+              release_origin="$expected_media_origin"
               release_moderation_key_id="${SHARING_STAGING_MODERATION_KEY_ID:-}"
               release_moderation_public_key="${SHARING_STAGING_MODERATION_PUBLIC_KEY:-}"
-              release_privacy_url="${SHARING_STAGING_PRIVACY_URL:-}"
-              release_support_url="${SHARING_STAGING_SUPPORT_URL:-}"
-              release_community_standards_url="${SHARING_STAGING_COMMUNITY_STANDARDS_URL:-}"
+              release_privacy_url="$expected_media_privacy_url"
+              release_support_url="$expected_media_support_url"
+              release_community_standards_url="$expected_media_community_url"
               release_app_privacy_url="$release_privacy_url"
               release_app_support_url="$release_support_url"
               release_summary="media-staging/two-device one-photo sharing"
@@ -378,6 +398,23 @@ jobs:
               raise SystemExit("pairing-only must not receive media safety configuration.")
 
           if mode == "media-staging":
+              expected_media_binding = {
+                  "SHARING_STAGING_API_ORIGIN": "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
+                  "SHARING_STAGING_PRIVACY_URL": "https://soso-so-27.github.io/neko-widget/privacy/",
+                  "SHARING_STAGING_SUPPORT_URL": "https://soso-so-27.github.io/neko-widget/support/",
+                  "SHARING_STAGING_COMMUNITY_STANDARDS_URL": "https://soso-so-27.github.io/neko-widget/community/",
+              }
+              actual_media_binding = {
+                  "SHARING_STAGING_API_ORIGIN": origin,
+                  "SHARING_STAGING_PRIVACY_URL": privacy_url,
+                  "SHARING_STAGING_SUPPORT_URL": support_url,
+                  "SHARING_STAGING_COMMUNITY_STANDARDS_URL": community_url,
+              }
+              for label, expected in expected_media_binding.items():
+                  if actual_media_binding[label] != expected:
+                      raise SystemExit(
+                          f"{label} does not exactly match the monitored limited-beta endpoint."
+                      )
               if moderation_key_id != moderation_key_id.strip():
                   raise SystemExit(
                       "SHARING_STAGING_MODERATION_KEY_ID must not contain surrounding whitespace."
@@ -602,6 +639,12 @@ jobs:
             echo "RELEASE_MODE_SUMMARY=$release_summary"
           } >> "$GITHUB_ENV"
 
+      - name: Validate limited external beta reporting boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/test-limited-external-beta-reporting.py"
+
       - name: Set up Node.js for public policy gate
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -621,6 +664,7 @@ jobs:
               policy_site_base="https://soso-so-27.github.io/neko-widget/app/"
               ;;
             media-staging)
+              policy_revision="2026-08-27"
               policy_profile="sharing-beta"
               policy_site_base="https://soso-so-27.github.io/neko-widget/"
               ;;
@@ -638,6 +682,16 @@ jobs:
             --profile "$policy_profile" \
             --site-base "$policy_site_base" \
             --expected-revision "$policy_revision"
+
+      - name: Validate the exact runtime embedded in the limited external beta
+        if: ${{ inputs.release_mode == 'media-staging' }}
+        working-directory: NekoWidget/SharingService
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RELEASE_SHARING_API_ORIGIN" = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+          NEKO_STAGING_API_ORIGIN="$RELEASE_SHARING_API_ORIGIN" \
+            node scripts/check-staging-runtime.mjs --expected limited-external-beta
 
       - name: Validate required secrets
         shell: bash

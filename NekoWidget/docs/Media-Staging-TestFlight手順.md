@@ -1,8 +1,8 @@
 # 2台メディアstaging・TestFlight準備
 
-この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
+この手順は、既にペアリング済みの2台で「今の一枚」を確認するためのクライアント側release gateです。原則は本人所有2台の内部TestFlightに使い、外部配布は後述するBuild 71候補の信頼できる1人限定例外だけに使います。Cloudflare resourceの作成、migration、deployは[Cloudflare隔離staging手順](../SharingService/STAGING.md)の責務とし、ここでは繰り返しません。
 
-Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfail-closedな受信再試行、「届いた写真」、ホーム、Widgetの受入、Build 34で名前付きのまどと1枚共有の本人2台受入まで完了しました。Build 35は共有UXと期限付きbookmark（当時の表示名「思い出に残す」、現「しおり」）を追加し、Appleへのvalidate／upload受付まで完了していますが、Apple側の処理完了・build一覧表示、内部group割当、実機受入は未確認です。2026-08-24現在は本人2台だけの個人例外として`MOMENT_RUNTIME_ENABLED=YES`、`WINDOW_NAME_RUNTIME_ENABLED=YES`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視とOFF候補のlocal検証](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。repository内の外部実停止経路は廃止済みで、異常時はdry-runを停止とみなさず利用中断と承認済みincident responseへescalateします。一般向けTestFlight配布、App Store審査提出、公開はまだ行いません。
+Build 70では本人所有2台で写真・ハート・まど名・Widget・APNsを受入済みです。本人2台だけの個人例外として`LEGACY_SHARING_RUNTIME_ENABLED=NO`を維持し、[日次監視、D1 generation CASによる共有data-plane OFF／復旧、独立OFF Worker候補のlocal検証](../SharingService/PERSONAL_STAGING_OPERATIONS.md)を適用します。独立OFF候補のdry-runは停止とみなさず、active Worker code／binding自体を疑う場合はD1を先にOFFにして承認済みincident responseへescalateします。Build 70を外部配布せず、Build 71候補だけを下記の1人限定例外として別に判定します。App Store審査提出と一般公開はまだ行いません。
 
 ## release modeの固定値
 
@@ -16,7 +16,7 @@ Build 30で本人所有2台への最初の内部TestFlight受入、Build 31でfa
 | Share Extension direct-send | `NO` |
 | review-preview | `NO` |
 
-Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネットワーク送信しません。host appは現在のinstallationと明示同意を確認した後にだけ送信候補を作ります。workflowの既定値は共有を完全にOFFにする`disabled`です。`review-preview`は静的な画面確認だけ、`pairing-only`は写真OFF、`media-staging`は明示した本人2台の内部試験だけに使います。
+Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネットワーク送信しません。host appは現在のinstallationと明示同意を確認した後にだけ送信候補を作ります。workflowの既定値は共有を完全にOFFにする`disabled`です。`review-preview`は静的な画面確認だけ、`pairing-only`は写真OFFです。`media-staging`は本人2台の内部試験、または全条件を満たしたBuild 71候補の外部1人限定例外にだけ使います。
 
 ## GitHub `testflight` Environmentのprotected variables
 
@@ -24,13 +24,13 @@ Share Extensionは保護された1枚をhost appへ受け渡すだけで、ネ�
 
 | Variable | 要件 |
 |---|---|
-| `SHARING_STAGING_API_ORIGIN` | 公開DNSで解決できるHTTPS origin。credential、path、query、fragmentなし |
+| `SHARING_STAGING_API_ORIGIN` | `https://neko-window-sharing-staging.nakanishisoya.workers.dev`と完全一致。日次監視とBuildが同じWorkerを指すことをworkflowでも再検証する |
 | `SHARING_STAGING_MODERATION_KEY_ID` | 現在は`moderation-v1`とexact一致。v2 client releaseはrotation runbook完了後だけ |
 | `SHARING_STAGING_MODERATION_PUBLIC_KEY` | 32 byteのcanonical base64url public key |
 | `SHARING_STAGING_MODERATION_KEY_TRUST_MANIFEST` | review済み非secret JSON。`schema`、`environment=testflight`、正の整数`revision`、`keys` mapだけを持ち、`moderation-v1` entryを必須とする |
-| `SHARING_STAGING_PRIVACY_URL` | 公開HTTPSのprivacy policy URL |
-| `SHARING_STAGING_SUPPORT_URL` | 公開HTTPSのsupport URL |
-| `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | 公開HTTPSのcommunity standards URL |
+| `SHARING_STAGING_PRIVACY_URL` | `https://soso-so-27.github.io/neko-widget/privacy/`と完全一致 |
+| `SHARING_STAGING_SUPPORT_URL` | `https://soso-so-27.github.io/neko-widget/support/`と完全一致 |
+| `SHARING_STAGING_COMMUNITY_STANDARDS_URL` | `https://soso-so-27.github.io/neko-widget/community/`と完全一致 |
 
 Fingerprintはcanonical base64urlをdecodeした32-byte raw X25519 public keyのSHA-256をlowercase 64文字hexで
 記録します。Manifestはbuild番号を含めず長期固定し、例えば値の形だけを示すと
@@ -63,6 +63,19 @@ privacy policyは写真共有への同意toggleより前と、受信画面の「
 
 App Store ConnectのApp PrivacyはTestFlight uploadと別の手動gateです。内部TestFlight向けにbinaryのuploadが成功しても、App Privacyの回答保存・Publishや外部配布、審査提出は完了しません。外部groupへの追加またはApp Store審査提出の前に、公開policyの内容と上記4種類を実装へ一致させ、App Store Connect側を更新します。
 
+## Build 71候補の外部1人限定例外
+
+`media-staging`を外部TestFlightへ使える唯一の例外です。次を全て満たさなければ内部groupから動かしません。
+
+- 最終binaryで暗号化通報操作が非表示で、coreと旧outbox再送もfail closedになっている
+- staging D1はmedia=ON、APNs=ON、report-ingestion=OFFで、日次`limited-external-beta`監視が合格している
+- 公開Privacy、Community Standards、Supportがrevision `2026-08-27`で配備され、TestFlight workflowの公開policy gateが合格している
+- Feedback EmailとReview Contactが実値で、休日を含め48時間以内に初回確認できる
+- Build 71専用の新しいexternal groupを作り、既知で信頼できるtester 1人だけを追加する。public linkはOFF、Build 71候補以外を追加しない
+- 安全連絡は写真や招待秘密を添付しないTestFlight feedback、即時の保護はblock／共有解除、必要時は共有data-plane緊急OFFを使う
+
+この例外は2人目、public link、別build、App Store審査提出または一般公開へ流用しません。安全な通報export／判断／早期削除を実環境で完成するまでreportをONにしません。
+
 ## signing-onlyの実行
 
 外部gateが全て完了しても、最初はActionsの`Archive and upload to TestFlight`を次で実行します。
@@ -75,21 +88,22 @@ App Store ConnectのApp PrivacyはTestFlight uploadと別の手動gateです。�
 これは署名archiveとIPA exportまでで、App Store Connectへ送信しません。次の全てが揃わなければ`upload_to_testflight = true`を選びません。
 
 - staging Workerが別手順でreview、deployされ、通常moment runtimeをONにする承認がある
-- moderation private keyの保管、復号、通報処理runbookが運用可能である
+- Build 71候補の外部1人限定例外では、暗号化通報がclient／serverともOFFで、TestFlight feedback・block／共有解除・48時間以内の初回確認・共有data-plane緊急OFFのrunbookが運用可能である
 - privacy、support、community standardsが公開URLで確認できる
 - App Store Connectのprivacy申告と暗号化輸出回答がarchiveと一致する
 - signing-only runのarchive/privacy/entitlement検査が成功し、対象commit SHAが固定されている
 
 ## 2台確認の停止条件
 
-uploadの承認後は、専用の内部tester groupにだけ配布します。個人情報を含まない識別しやすいテスト画像1枚を使い、共有シート→host appの内容確認→送信→相手の受信を順に確認します。次のいずれかで即時停止します。
+uploadの承認後は、原則として専用の内部tester groupだけへ配布します。Build 71候補の外部1人限定例外では、旧buildを含まないBuild 71専用の新しいexternal groupを作り、TestFlight App Review承認後にpublic link OFFのまま既知のtester 1人だけを追加します。個人情報を含まない識別しやすいテスト画像1枚を使い、共有シート→host appの内容確認→送信→相手の受信を順に確認します。次のいずれかで即時停止します。
 
 - Share Extensionがhost appを経由せず送信する
 - 同意前に写真または縮小画像の保存、送信、server object作成が発生する
 - 選択した1枚以外、原本、位置情報が届く
 - 送信済み表示と相手の受信状態を受領確認と誤認する
 - privacy、support、community standardsのLinkが開けない
-- 通報、block、共有解除のいずれかが失敗する
+- Build 71候補で通報操作が表示される、またはserverのreport-ingestionがONになる
+- blockまたは共有解除が失敗する
 
 ## Build 30 初回受入記録
 
@@ -128,7 +142,7 @@ uploadの承認後は、専用の内部tester groupにだけ配布します。�
 - 写真アクセスを許可していない旧iPhoneでは個人写真源を空のまま保ち、共有写真源だけで届いた写真を表示できることを確認
 - 通常momentだけを継続ONとし、旧日次共有runtimeはOFFのまま維持
 
-Build 31で完了したのは本人2台の内部受入であり、一般公開のproduction gateではない。アプリ内の公開policy Link、実際の通報・block・共有解除、offline／Extension終了／再起動、鍵喪失、再install後の旧資格拒否、負荷、監視、鍵運用、App Store Connect回答は別gateとして残る。本人2台の継続利用は[個人例外runbook](../SharingService/PERSONAL_STAGING_OPERATIONS.md)に従う。repository内の外部実停止経路はないため、異常時はlocal dry-runを停止証拠にせず利用を中断し、承認済みincident responseへescalateする。一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。
+本人2台の受入は一般公開のproduction gateではない。アプリ内の公開policy Link、実際の通報・block・共有解除、offline／Extension終了／再起動、鍵喪失、再install後の旧資格拒否、負荷、監視、鍵運用、App Store Connect回答は別gateとして残る。本人2台の継続利用は[個人例外runbook](../SharingService/PERSONAL_STAGING_OPERATIONS.md)に従う。共有data-planeの実停止はD1 generation CASを使い、独立OFF Worker候補のlocal dry-runを停止証拠にしない。一般向けTestFlightまたはApp Storeで写真runtimeを有効化しない。
 
 ## Build 34 名前付きまどの本人2台受入記録
 

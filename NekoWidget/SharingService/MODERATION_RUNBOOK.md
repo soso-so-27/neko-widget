@@ -7,6 +7,36 @@
 確認するread-only statusはあるが、本文を閲覧する機能ではない。
 したがって、本書とtoolだけを理由にProductionの写真共有を有効化してはならない。
 
+## 1人限定外部TestFlightの暫定安全経路
+
+安全なremote export、判断、hold確認、早期削除が未完成のため、1人限定外部TestFlightでは暗号化通報を
+受け付けない。通常写真・ハート・まど名・APNsはONにできるが、D1の
+`report_ingestion_enabled`は必ず`0`に保つ。Worker config上の上限値が`YES`でも、D1 gateがOFFなら
+reserve／upload／commitはすべて`503 report_ingestion_runtime_disabled`で停止する。
+
+```powershell
+npm run staging:runtime:status
+npm run staging:runtime:limited-external-beta:check
+```
+
+2つの確認は、同じpublic originでmedia=ON、APNs=ON、report=OFFをhealth headerで照合し、3つの通報endpointが
+未認証requestを401でauth-first拒否することを確認する。認証済みrequestがOFF gateで503となりnonceを消費する
+ことはintegration testで固定する。日次monitorも`limited-external-beta`を正本とし、reportをONにするCAS commandは
+提供しない。通常写真を含むdata-plane全体を止める場合は`staging:runtime:emergency-off:confirm`を使う。
+
+この限定運用で安全上の連絡を受ける経路は次だけである。
+
+1. テスターは受信写真の安全メニューで「この相手をブロック」を選び、確認画面の「ブロックしてまどを解除」で新しい送受信を止める。
+2. TestFlightの「ベータ版フィードバックを送信」から、写真や招待秘密を添付せず、概要とBuild番号だけを送る。
+3. Primary operatorは48時間以内に初回確認し、必要なら共有data-planeを緊急OFFにする。通常写真を復号して
+   内容判断したとは記録せず、テスターと共有解除／再招待の要否を調整する。
+4. 生命・身体への差し迫った危険は地域の緊急窓口へ案内する。TestFlight feedbackは緊急通報先ではない。
+
+外部groupは信頼できる既知の1人、public linkなしに固定する。Feedback Email、Review contact、support、
+Privacy、Community Standardsが実値で公開され、policy revisionとruntime monitorがgreenであることをinvite前に
+確認する。これは外部TestFlight 1人だけの縮退運用であり、外部人数の追加、public link、App Store一般公開、
+またはアプリ内通報が利用可能だという審査説明には使わない。それらには以下の本格operator経路が必要である。
+
 ## 責任者と対応時間
 
 - Primary operatorとbackup operatorを各一人指名し、氏名ではなく社内roleを台帳に記録する。
@@ -428,13 +458,19 @@ Audit JSONLは画像を含まないため、security audit retention policyに�
 
 ## Kill switchと障害対応
 
-通常写真共有の安全性が疑わしい一方で安全窓口を維持できる場合は、media-only OFFで通常写真・ハート・
-まど名・APNsを止め、report-ingestion、block、cleanupを残す候補を使う。先に
-[`STAGING.md`の一般配布候補config手順](STAGING.md#一般配布候補の独立停止config生成検証のみ)を完了する。
+Build 70のpersonal stagingで通常写真共有、通知または通報受付の安全性が疑わしい場合は、
+D1 generation CASの`broad-off`で通常写真・ハート・まど名・APNs・新規通報受付を停止する。
+block、共有解除、TTL cleanupはOFF中も継続する。操作、現在値照合、復旧順序は
+[本人2台用staging運用](PERSONAL_STAGING_OPERATIONS.md#共有data-planeの緊急offと復旧)を正本とする。
 
 ```powershell
-npm run staging:runtime:media-off
+npm run staging:runtime:status
+npm run staging:runtime:emergency-off:confirm
 ```
+
+通常写真を止めながら新規通報受付だけを残すmedia-only OFFは、将来の一般配布候補です。現在は
+[`STAGING.md`の一般配布候補config手順](STAGING.md#一般配布候補の独立停止config生成検証のみ)で
+local bundleを確認できるだけで、実deployは行いません。
 
 通報鍵、受付、復号、
 削除、担当体制のいずれかが利用不能なら、通常共有とは独立した
@@ -454,9 +490,9 @@ npm run staging:runtime:report-ingestion-off
 `--confirm-media-only-off`と`--confirm-report-ingestion-only-off`は、local dry-run後に意図的に失敗し、
 deployしない。通常のWrangler deployではactive versionへの原子的な条件を付けられず、選択したflag以外の
 code／binding／Cronまで置き換え得るためである。review済みON/OFF version IDを事前固定し、条件付き切替を
-検証する仕組みが完成するまで、実停止は一般公開のblockerである。広いOFFを含むrepository内の外部deploy
-経路も廃止済みなので、本人2台のpersonal stagingでもdry-runを停止とみなさず、利用を中断して承認済み
-incident responseへescalateする。鍵漏えい、紛失、backup不一致が疑われる場合は次を行う。
+検証する仕組みが完成するまで、選択的な実停止は一般公開のblockerである。共有全体の実停止には上記D1 CASを
+使い、独立OFF Worker候補のdry-runを停止とみなさない。active Worker code／binding自体を疑う場合はD1を
+先にOFFにし、承認済みincident responseへescalateする。鍵漏えい、紛失、backup不一致が疑われる場合は次を行う。
 
 1. 通常写真共有を即時OFFにし、Primary/backupの鍵使用を停止する。
 2. Audit/case IDだけを保存し、鍵や復号画像をincident channelへ貼らない。
@@ -472,7 +508,7 @@ incident responseへescalateする。鍵漏えい、紛失、backup不一致が�
   二人承認・rate limit・access audit付きremote export API
 - Migration 0012のappend-only case eventへ強く認証したoperator identityとaccess auditを結び、
   decision、user response、appeal、早期content deletionを扱うadmin workflow
-- 事前固定したreview済みversion IDとactive version条件を使う原子的な選択的OFF、対象productionでの実停止訓練、鍵ID rotation中の明確なacceptance window
+- D1 generation CASによる共有data-plane OFF／復旧の対象環境訓練、選択的OFFと独立OFF Workerの承認済み手順、鍵ID rotation中の明確なacceptance window
 - Offline端末のWindows ACL/POSIX permission、encrypted volume、backup除外を確認する実運用drill
 - Productionに近いSwift生成fixtureを使ったcross-platform compatibility試験。現在の自動試験は同じ
   field順、binary plist、X25519/HKDF/AAD/ChaCha combinedを再現する合成fixtureで、秘密鍵はtest内だけにある

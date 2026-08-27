@@ -2706,7 +2706,9 @@ actor SharingRuntimeSelfTestRunner {
         }
 
         guard configuration("moderation-v1").hasOperationalSafetyConfiguration,
-              configuration("moderation-v2").hasOperationalSafetyConfiguration
+              configuration("moderation-v2").hasOperationalSafetyConfiguration,
+              configuration("moderation-v2").isMediaAvailable,
+              !configuration("moderation-v2").isEncryptedReportAvailable
         else { throw MomentSharingError.stateUnavailable }
         for rejected in [nil, "", "moderation-v3", " moderation-v2", "moderation-v2 "] {
             guard !configuration(rejected).hasOperationalSafetyConfiguration,

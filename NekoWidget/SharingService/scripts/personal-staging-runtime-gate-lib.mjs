@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { validateStagingConfig } from "./staging-config-lib.mjs";
 import { normalizePublicHttpsOrigin } from "./staging-runtime-check-lib.mjs";
 
-export const runtimeGateConfigName = "wrangler.notification-staging-on.jsonc";
+export const runtimeGateConfigName = "wrangler.general-staging-on.jsonc";
 export const runtimeGateManifestName = "personal-staging-runtime-gate-manifest.json";
 const databaseName = "neko-window-sharing-staging";
 const workerName = "neko-window-sharing-staging";
@@ -19,6 +19,10 @@ const states = Object.freeze({
   "build70-media-apns-on": Object.freeze({ media: 1, apns: 1, report: 0 }),
   "broad-off": Object.freeze({ media: 0, apns: 0, report: 0 }),
 });
+const statusSQL = `SELECT generation, media_enabled, apns_enabled,
+       report_ingestion_enabled
+  FROM personal_staging_runtime_gate
+ WHERE singleton = 1`;
 
 function plain(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -37,7 +41,7 @@ export function validateRuntimeGateManifest(input) {
       || typeof input.databaseId !== "string"
       || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(input.databaseId)
       || input.workerName !== workerName
-      || states[input.desiredState] === undefined
+      || !Object.hasOwn(states, input.desiredState)
       || !Number.isSafeInteger(input.expectedGeneration)
       || input.expectedGeneration < 0
       || input.expectedGeneration > 2_147_483_646) {
@@ -58,7 +62,7 @@ function validateFixedConfig(config, manifest) {
   validateStagingConfig(config, {
     expectedMomentRuntime: "YES",
     expectedAPNSRuntime: "YES",
-    expectedReportIngestionRuntime: "NO",
+    expectedReportIngestionRuntime: "YES",
   });
   const binding = config.d1_databases[0];
   if (config.name !== workerName
@@ -91,6 +95,21 @@ export function runtimeGateCommand(projectDirectory, manifestInput) {
       entry, "d1", "execute", databaseName, "--remote", "--json",
       "--config", join(projectDirectory, runtimeGateConfigName),
       "--command", runtimeGateUpdateSQL(manifest),
+    ]),
+    cwd: projectDirectory,
+    accountId: manifest.accountId,
+  });
+}
+
+export function runtimeGateStatusCommand(projectDirectory, manifestInput) {
+  const manifest = validateRuntimeGateManifest(manifestInput);
+  const entry = join(projectDirectory, "node_modules", "wrangler", "bin", "wrangler.js");
+  return Object.freeze({
+    executable: process.execPath,
+    args: Object.freeze([
+      entry, "d1", "execute", databaseName, "--remote", "--json",
+      "--config", join(projectDirectory, runtimeGateConfigName),
+      "--command", statusSQL,
     ]),
     cwd: projectDirectory,
     accountId: manifest.accountId,
@@ -132,13 +151,40 @@ export function parseRuntimeGateUpdate(output, manifestInput) {
   return Object.freeze({ ...expected, updated_at: row.updated_at });
 }
 
-export async function verifyRuntimeGateOrigin(
-  manifestInput,
-  fetchImpl = fetch,
-  { timeoutMilliseconds = 15_000 } = {},
+export function parseRuntimeGateStatus(output) {
+  let parsed;
+  try { parsed = JSON.parse(output); } catch {
+    throw new Error("runtime gate D1 status returned invalid JSON");
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !plain(parsed[0])
+      || parsed[0].success !== true || parsed[0].meta?.changes !== 0
+      || !Array.isArray(parsed[0].results) || parsed[0].results.length !== 1) {
+    throw new Error("runtime gate D1 status did not return exactly one read-only row");
+  }
+  const row = parsed[0].results[0];
+  if (!exactKeys(row, [
+    "generation", "media_enabled", "apns_enabled", "report_ingestion_enabled",
+  ]) || !Number.isSafeInteger(row.generation) || row.generation < 0
+      || ![0, 1].includes(row.media_enabled)
+      || ![0, 1].includes(row.apns_enabled)
+      || row.report_ingestion_enabled !== 0
+      || row.apns_enabled > row.media_enabled) {
+    throw new Error("runtime gate D1 status returned an unexpected row");
+  }
+  return Object.freeze({
+    generation: row.generation,
+    media_enabled: row.media_enabled,
+    apns_enabled: row.apns_enabled,
+    report_ingestion_enabled: row.report_ingestion_enabled,
+  });
+}
+
+async function verifyRuntimeGateOriginState(
+  manifest,
+  expected,
+  fetchImpl,
+  timeoutMilliseconds,
 ) {
-  const manifest = validateRuntimeGateManifest(manifestInput);
-  const expected = expectedResult(manifest);
   if (!Number.isSafeInteger(timeoutMilliseconds)
       || timeoutMilliseconds < 1 || timeoutMilliseconds > 30_000) {
     throw new Error("same-origin runtime gate verification timeout is invalid");
@@ -178,19 +224,41 @@ export async function verifyRuntimeGateOrigin(
   }
 }
 
+export async function verifyRuntimeGateOrigin(
+  manifestInput,
+  fetchImpl = fetch,
+  { timeoutMilliseconds = 15_000 } = {},
+) {
+  const manifest = validateRuntimeGateManifest(manifestInput);
+  const expected = expectedResult(manifest);
+  await verifyRuntimeGateOriginState(
+    manifest,
+    expected,
+    fetchImpl,
+    timeoutMilliseconds,
+  );
+}
+
 export function parseRuntimeGateArguments(argv) {
   if (!Array.isArray(argv) || argv.length !== 1) {
-    throw new Error("use exactly --plan, --confirm-build70-media-apns-on, or --confirm-broad-off");
+    throw new Error(
+      "use exactly --plan, --status, --confirm-build70-media-apns-on, or --confirm-broad-off",
+    );
   }
   const mapping = {
-    "--plan": null,
+    "--plan": Object.freeze({ action: "plan", confirmation: null }),
+    "--status": Object.freeze({ action: "status", confirmation: null }),
     "--confirm-build70-media-apns-on": "build70-media-apns-on",
     "--confirm-broad-off": "broad-off",
   };
-  if (!(argv[0] in mapping)) {
-    throw new Error("use exactly --plan, --confirm-build70-media-apns-on, or --confirm-broad-off");
+  if (!Object.hasOwn(mapping, argv[0])) {
+    throw new Error(
+      "use exactly --plan, --status, --confirm-build70-media-apns-on, or --confirm-broad-off",
+    );
   }
-  return Object.freeze({ confirmation: mapping[argv[0]] });
+  const value = mapping[argv[0]];
+  if (plain(value)) return value;
+  return Object.freeze({ action: "confirm", confirmation: value });
 }
 
 export async function runRuntimeGateCommand(command, {
@@ -267,10 +335,10 @@ export async function runRuntimeGateControl(argv, {
     throw new Error("personal staging runtime gate files are unavailable or invalid");
   }
   validateFixedConfig(config, manifest);
-  if (mode.confirmation === null) {
+  if (mode.action === "plan") {
     return "PASS runtime gate plan validated; no D1 update or network request was performed.";
   }
-  if (mode.confirmation !== manifest.desiredState) {
+  if (mode.action === "confirm" && mode.confirmation !== manifest.desiredState) {
     throw new Error("runtime gate confirmation does not match the reviewed manifest");
   }
   const versionCommand = Object.freeze({
@@ -282,6 +350,23 @@ export async function runRuntimeGateControl(argv, {
   if (!new RegExp(`\\b${wranglerVersion.replaceAll(".", "\\.")}\\b`, "u")
     .test(await runCommand(versionCommand))) {
     throw new Error(`reviewed Wrangler ${wranglerVersion} is required`);
+  }
+  if (mode.action === "status") {
+    const snapshot = parseRuntimeGateStatus(
+      await runCommand(runtimeGateStatusCommand(projectDirectory, manifest)),
+    );
+    await verifyRuntimeGateOriginState(
+      manifest,
+      snapshot,
+      fetchImpl,
+      15_000,
+    );
+    if (snapshot.generation !== manifest.expectedGeneration) {
+      throw new Error(
+        `runtime gate manifest generation is stale; live generation is ${snapshot.generation}`,
+      );
+    }
+    return `PASS runtime gate status generation ${snapshot.generation} media=${snapshot.media_enabled ? "ON" : "OFF"} apns=${snapshot.apns_enabled ? "ON" : "OFF"} report=${snapshot.report_ingestion_enabled ? "ON" : "OFF"}; manifest generation reconciled.`;
   }
   const output = await runCommand(runtimeGateCommand(projectDirectory, manifest));
   parseRuntimeGateUpdate(output, manifest);

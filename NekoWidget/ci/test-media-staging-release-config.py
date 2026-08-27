@@ -33,6 +33,10 @@ DEVICE_ID = "NSPrivacyCollectedDataTypeDeviceID"
 PRODUCT_INTERACTION = "NSPrivacyCollectedDataTypeProductInteraction"
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
 MODERATION_PUBLIC_KEY = "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo"
+MEDIA_ORIGIN = "https://neko-window-sharing-staging.nakanishisoya.workers.dev"
+MEDIA_PRIVACY_URL = "https://soso-so-27.github.io/neko-widget/privacy/"
+MEDIA_SUPPORT_URL = "https://soso-so-27.github.io/neko-widget/support/"
+MEDIA_COMMUNITY_URL = "https://soso-so-27.github.io/neko-widget/community/"
 MODERATION_PUBLIC_KEY_SHA256 = hashlib.sha256(
     base64.urlsafe_b64decode(MODERATION_PUBLIC_KEY + "=")
 ).hexdigest()
@@ -430,14 +434,14 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
             manifest_hash = hashlib.sha256(canonical_json(trust_manifest_value)).hexdigest()
             valid_arguments = [
                 "media-staging",
-                "https://sharing.nekonomado.jp",
-                "https://nekonomado.jp/privacy",
-                "https://nekonomado.jp/support",
+                MEDIA_ORIGIN,
+                MEDIA_PRIVACY_URL,
+                MEDIA_SUPPORT_URL,
                 "moderation-v1",
                 MODERATION_PUBLIC_KEY,
-                "https://nekonomado.jp/privacy",
-                "https://nekonomado.jp/support",
-                "https://nekonomado.jp/community",
+                MEDIA_PRIVACY_URL,
+                MEDIA_SUPPORT_URL,
+                MEDIA_COMMUNITY_URL,
                 trust_manifest,
                 str(policy_path),
             ]
@@ -556,14 +560,14 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         def arguments(policy_path: Path) -> list[str]:
             return [
                 "media-staging",
-                "https://sharing.nekonomado.jp",
-                "https://nekonomado.jp/privacy",
-                "https://nekonomado.jp/support",
+                MEDIA_ORIGIN,
+                MEDIA_PRIVACY_URL,
+                MEDIA_SUPPORT_URL,
                 "moderation-v2",
                 SYNTHETIC_V2_PUBLIC_KEY,
-                "https://nekonomado.jp/privacy",
-                "https://nekonomado.jp/support",
-                "https://nekonomado.jp/community",
+                MEDIA_PRIVACY_URL,
+                MEDIA_SUPPORT_URL,
+                MEDIA_COMMUNITY_URL,
                 trust_manifest,
                 str(policy_path),
             ]

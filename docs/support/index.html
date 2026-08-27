@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="neko-policy-revision" content="2026-08-26">
+  <meta name="neko-policy-revision" content="2026-08-27">
   <meta name="description" content="ねこのまどのサポートと問い合わせ">
   <title>サポート｜ねこのまど</title>
   <link rel="stylesheet" href="../assets/site.css">
@@ -19,18 +19,19 @@
   </header>
   <main>
     <h1>サポート</h1>
-    <p class="updated">最終更新日：2026年8月26日</p>
-    <p class="notice">この共有仕様は、内部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。</p>
-    <p>この内部TestFlight共有ベータでは、1台のiPhoneで最大20個の名前付き非公開なまどを作成・参加・切り替えできます。1つのまどは作成者と信頼できる招待相手1人だけで使います。各参加者は、承認した最大4台のiPhoneで同じまどを使えます。家族に限定しません。公開フィード、検索、フォロー、匿名の出会いはありません。</p>
+    <p class="updated">最終更新日：2026年8月27日</p>
+    <p class="notice">この共有仕様は、招待した少人数だけの限定外部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。</p>
+    <p>この限定外部TestFlight共有ベータでは、1台のiPhoneで最大20個の名前付き非公開なまどを作成・参加・切り替えできます。1つのまどは作成者と信頼できる招待相手1人だけで使います。各参加者は、承認した最大4台のiPhoneで同じまどを使えます。家族に限定しません。公開フィード、検索、フォロー、匿名の出会いはありません。</p>
     <p class="notice">公開の問い合わせに、写真、招待コード、12語の確認フレーズ、暗号鍵、氏名・住所・メールアドレスなどの個人情報を投稿しないでください。</p>
 
     <h2>問い合わせ方法</h2>
     <h3>TestFlightで試している場合</h3>
-    <p>TestFlightの「ベータ版フィードバックを送信」を利用してください。スクリーンショットを添付する前に、写真、招待コード、確認フレーズが写っていないか確認してください。</p>
+    <p>TestFlightの「ベータ版フィードバックを送信」を利用してください。この経路は外部テスターから開発者へ非公開で届きます。スクリーンショットを添付する前に、写真、招待コード、確認フレーズが写っていないか確認してください。</p>
     <h3>技術的な不具合・一般的な質問</h3>
     <p><a href="https://github.com/soso-so-27/neko-widget/issues/new">公開サポート窓口（GitHub Issues）</a>へ、アプリのBuild番号、iOSバージョン、iPhone機種、再現手順だけを記載してください。公開してよい情報だけを送ってください。</p>
     <h3>受信写真の安全上の問題</h3>
-    <p>アプリ内の受信写真メニューから「通報」または「ブロックして共有を終了」を選んでください。通報した一枚だけが、一般公開されない通報経路へ送られます。</p>
+    <p class="notice">この1人限定の外部TestFlightでは、新規の暗号化通報受付は停止しています。アプリ内通報は利用できず、写真や通報用暗号文は送信・保存されません。</p>
+    <p>まず受信写真の安全メニューで「この相手をブロック」を選び、確認画面の「ブロックしてまどを解除」で新しい送受信を止めてください。その後、TestFlightの「ベータ版フィードバックを送信」から問題の概要とBuild番号だけを連絡してください。写真、招待コード、12語の確認フレーズ、暗号鍵は添付しないでください。</p>
 
     <h2>よくある確認</h2>
     <h3>ペアリングだけのBuild</h3>
@@ -39,9 +40,9 @@
     <ol>
       <li>両端末で同じ12語を順番どおり確認してから承認する。</li>
       <li>iPhoneの「設定」からSensitive Content Warningを有効にする。</li>
-      <li>写真アプリの共有シートで一枚を選び、「ねこのまど」に一時保存する。</li>
-      <li>送信側で「ねこのまど」を開き、安全確認と送信状況を見る。</li>
-      <li>通知を許可したBuildでは、アプリで選択中のまどについて、写真またはハートのサーバー受付後に一般的な新着通知が届く場合があります。届かない場合は受信側でアプリを開き、該当するまどを選んで「状態を更新」します。</li>
+      <li>まど画面の「写真を選んで届ける」から一枚を選ぶ。写真アプリの共有シートで一枚を開き、「ねこのまど」に一時保存する方法も利用できます。</li>
+      <li>確認画面で送り先、写真、安全確認を見てから送信し、送信状況を確認する。</li>
+      <li>通知を許可したBuildでは、写真またはハートのサーバー受付後に一般的な新着通知が届く場合があります。通知を開くと対象のまど・写真を照合します。変化がない場合は該当するまどを開き、エラー画面に「もう一度確認する」が表示されたときだけ押してください。</li>
     </ol>
     <p>通知は写真や相手名を含まず、到着時刻はAppleとiOSの制御を受けます。iOS 18を含め、アプリを閉じた状態のWidget更新はbest effortです。通知が届いてもWidgetがすぐ更新されない場合は、通知を開くかアプリの「状態を更新」を使用してください。アプリを強制終了した状態では、次にアプリを開くまで背景更新されない場合があります。</p>
     <p>同じiCloud写真を使う2台でも、非公開なまどの鍵と状態は端末ごとに分かれます。試験中に写真の経路を区別したい場合は、写真ライブラリへ保存せず、送信端末だけにあるスクリーンショットを共有してください。iCloudからサインアウトしたり写真を削除したりする必要はありません。</p>
@@ -57,10 +58,10 @@
     <p>設定の「共有の設定・解除」から解除できます。再インストール後は古い共有鍵を復元せず、再招待が必要です。相手がすでに「思い出に残す」で写真アプリへ保存した写真やスクリーンショットは、解除後も本サービスから削除できません。詳しくは<a href="../privacy/">プライバシーポリシー</a>をご覧ください。</p>
 
     <h2>応答時間</h2>
-    <p>安全上の通報は原則48時間以内に初回確認します。一般的な技術問い合わせは順次確認します。この窓口は緊急通報先ではありません。生命・身体への差し迫った危険は地域の緊急窓口へ連絡してください。</p>
+    <p>安全上のTestFlightフィードバックは原則48時間以内に初回確認します。一般的な技術問い合わせは順次確認します。この窓口は緊急通報先ではありません。生命・身体への差し迫った危険は地域の緊急窓口へ連絡してください。</p>
 
     <h2>English summary</h2>
-    <p>Each app installation can keep up to 20 named private windows. Each window is shared only by its creator and one trusted invitee. Each participant can use up to four approved iPhone installations for that window. The app has no public feed, search, following, or anonymous discovery. When the user explicitly exports one saved Memory photo, the app passes an in-memory JPEG up to 2,048px with location and source metadata removed to the iOS share sheet; the selected destination's policy applies and may retain a copy. For TestFlight, use Send Beta Feedback. For non-sensitive technical questions, use the public GitHub Issues link above. Never post photos, invitation secrets, verification phrases, encryption keys, or personal information. Use the in-app report and block controls for a received image.</p>
+    <p>Each app installation can keep up to 20 named private windows. Each window is shared only by its creator and one trusted invitee. Each participant can use up to four approved iPhone installations for that window. The app has no public feed, search, following, or anonymous discovery. When the user explicitly exports one saved Memory photo, the app passes an in-memory JPEG up to 2,048px with location and source metadata removed to the iOS share sheet; the selected destination's policy applies and may retain a copy. Encrypted in-app report ingestion is disabled for this one-person external TestFlight. Block the sender to end sharing and use Send Beta Feedback without attaching the photo or any invitation secret. For non-sensitive technical questions, use the public GitHub Issues link above.</p>
   </main>
   <footer><a href="../">安全とプライバシーのトップへ</a></footer>
 </body>
