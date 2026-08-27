@@ -14,6 +14,19 @@ class TestFlightReleaseEvidenceWorkflowTests(unittest.TestCase):
     def test_upload_reauthenticates_then_rehashes_exact_payload_before_altool(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         upload_step = workflow.index("- name: Validate and upload IPA to TestFlight")
+        upload_end = workflow.index("- name: Write local-only signed release evidence")
+        upload_block = workflow[upload_step:upload_end]
+        self.assertIn(
+            'python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/'
+            'signed-artifact-authentication.py" verify',
+            upload_block,
+        )
+        self.assertIn(
+            'python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/'
+            'verify-moderation-upload-payload.py"',
+            upload_block,
+        )
+        self.assertNotIn('python3 "$PROJECT_DIRECTORY/ci/', upload_block)
         authentication = workflow.index(
             'signed-artifact-authentication.py" verify', upload_step
         )

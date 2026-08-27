@@ -1357,11 +1357,11 @@ jobs:
           # Re-authenticate the retained evidence immediately before checking the
           # exact IPA bytes that altool will receive. Authentication must precede
           # digest comparison so a rewritten metadata file cannot bless a new IPA.
-          python3 "$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
+          python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/signed-artifact-authentication.py" verify \
             --ciphertext "$RUNNER_TEMP/NekoWidget-signed-artifacts.tar.gz.enc" \
             --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
             --authentication "$RUNNER_TEMP/signed-artifact-authentication.json"
-          python3 "$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
+          python3 "$GITHUB_WORKSPACE/$PROJECT_DIRECTORY/ci/verify-moderation-upload-payload.py" \
             --metadata "$RUNNER_TEMP/moderation-release-metadata.json" \
             --ipa "$IPA_PATH" \
             --expected-source-commit "$GITHUB_SHA" \
