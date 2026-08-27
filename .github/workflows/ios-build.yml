@@ -473,9 +473,9 @@ jobs:
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("今日", systemImage: "sun.max.fill")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Label("まど", systemImage: "rectangle.on.rectangle.angled")' \
+          grep -Fq 'Label("まど", systemImage: "rectangle.split.2x2")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Text("写真を見つける")' \
+          grep -Fq 'Text("自動アルバム")' \
             NekoWidget/Views/HomeView.swift
           grep -Fq 'NavigationLink(value: TodayRoute.automaticAlbums)' \
             NekoWidget/Views/HomeView.swift
@@ -490,9 +490,9 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'private var footerHeight: CGFloat = 48' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Label("写真を選んでまとめる"' \
+          grep -Fq 'Button(isSelectingForExport ? "キャンセル" : "PDFにまとめる")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Label("残した順", systemImage: "photo.stack.fill")' \
+          grep -Fq 'Text("残した順")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift
@@ -510,13 +510,13 @@ jobs:
             echo "The private-window photo actions must not repeat explanatory copy" >&2
             exit 1
           fi
-          grep -Fq 'Text(model.isSavedMemory(item) ? "思い出に残した" : "思い出に残す")' \
+          grep -Fq 'accessibilityIdentifier("family-window-saved-memory-state")' \
             NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq 'return canRetry ? "送信を再試行" : "送信できません"' \
+          grep -Fq 'return canRetry ? "ハートを再送" : "ハートを送れません"' \
             NekoWidget/Views/FamilyWindowView.swift
           grep -Fq 'heart?.phase == .sent' \
             NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq '"photo.badge.plus"' \
+          grep -Fq 'systemImage: "bookmark"' \
             NekoWidgetWidget/NekoWidgetView.swift
           if grep -Eq 'foregroundStyle\(\.pink\)|systemImage:.*star' \
             NekoWidgetWidget/NekoWidgetView.swift \
