@@ -17,6 +17,7 @@ private struct SeasonalMoviePreparationKey: Hashable {
     let canPrepare: Bool
     let quarterStart: Date?
     let photoDigest: Int
+    let videoCatalogDigest: Int
     let sourceAlbumIdentifier: String?
 }
 
@@ -362,6 +363,12 @@ struct MainTabView: View {
                         seasonalMovie = updated
                     }
                     return updated
+                },
+                freezeRecipe: { reason in
+                    try await seasonalMovieArchive.freeze(
+                        periodID,
+                        reason: reason
+                    )
                 }
             )
         } else {
@@ -532,7 +539,18 @@ struct MainTabView: View {
                 hasher.combine(photo.creationDate)
                 hasher.combine(photo.catBoundingBox)
                 hasher.combine(photo.largestCatAreaRatio)
+                hasher.combine(photo.isLiked)
+                hasher.combine(photo.isPhotoLibraryFavorite)
             }
+        }
+        let videoCatalogDigest: Int
+        if hasPhotoAccess, sourceIsAvailable, let interval {
+            videoCatalogDigest = SeasonalMovieVideoCatalog.digest(
+                in: interval,
+                sourceAlbumIdentifier: sourceAlbumIdentifier
+            )
+        } else {
+            videoCatalogDigest = 0
         }
         return SeasonalMoviePreparationKey(
             canPrepare: hasPhotoAccess
@@ -541,6 +559,7 @@ struct MainTabView: View {
                 && scenePhase == .active,
             quarterStart: interval?.start,
             photoDigest: hasher.finalize(),
+            videoCatalogDigest: videoCatalogDigest,
             sourceAlbumIdentifier: sourceAlbumIdentifier
         )
     }
@@ -586,13 +605,13 @@ struct MainTabView: View {
             }
         }
 
-        let videoCandidates = await service.videoCandidates(
+        let videoBatch = await service.videoCandidateBatch(
             in: quarter,
             sourceAlbumIdentifier: preparationKey.sourceAlbumIdentifier
         )
         guard !Task.isCancelled else { return }
         if case let .ready(richerPresentation) = builder.buildMostRecent(
-            from: photoCandidates + videoCandidates,
+            from: photoCandidates + videoBatch.candidates,
             through: now
         ) {
             if let archiveDraft {
@@ -604,19 +623,28 @@ struct MainTabView: View {
                 let richerDraft = await seasonalMovieArchive.recordDraft(
                     richerPresentation
                 )
-                seasonalMovie = richerDraft?.presentation
-                guard richerDraft != nil else {
+                guard let richerDraft else {
                     // A foreground transition changes the preparation task
                     // key, giving temporary protected-file/IO failure one
                     // bounded retry without spinning in this session.
                     completedSeasonalMoviePreparationKey = nil
                     return
                 }
+                seasonalMovie = await seasonalMovieArchive.finalizeDraft(
+                    richerPresentation,
+                    from: richerDraft
+                )
             }
         } else if archiveDraft == nil {
             seasonalMovie = nil
         }
-        completedSeasonalMoviePreparationKey = preparationKey
+        // PhotoKit does not expose local byte availability as stable metadata.
+        // If a network-disabled request found an unavailable video, leave the
+        // key incomplete so the next foreground activation gets one bounded
+        // retry. No retry is started in this foreground task.
+        completedSeasonalMoviePreparationKey = videoBatch.hadLocallyUnavailableMedia
+            ? nil
+            : preparationKey
     }
 
     private func refreshedMonthlyWindow(

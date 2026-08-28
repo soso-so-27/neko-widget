@@ -10,61 +10,91 @@ struct SeasonalMovieCard: View {
     let presentation: SeasonalMoviePresentation
     let open: () -> Void
 
+    @State private var showsAboutSeasonalMovie = false
+
     var body: some View {
-        Button(action: open) {
-            ZStack {
-                if let cover = presentation.coverScene {
-                    PhotoAssetImageView(
-                        localIdentifier: cover.localIdentifier,
-                        catBoundingBox: cover.catBoundingBox,
-                        targetPixelSize: CGSize(width: 1_200, height: 750),
-                        targetAspectRatio: 16.0 / 10.0,
-                        networkAccessAllowed: false
-                    )
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                }
-
-                LinearGradient(
-                    colors: [.black.opacity(0.05), .black.opacity(0.86)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text("季節の作品")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.82))
-                        Spacer()
-                        Image(systemName: "play.fill")
-                            .font(.headline)
-                            .frame(width: 44, height: 44)
-                            .background(.black.opacity(0.45), in: Circle())
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: open) {
+                ZStack {
+                    if let cover = presentation.coverScene {
+                        PhotoAssetImageView(
+                            localIdentifier: cover.localIdentifier,
+                            catBoundingBox: cover.catBoundingBox,
+                            targetPixelSize: CGSize(width: 1_200, height: 750),
+                            targetAspectRatio: 16.0 / 10.0,
+                            networkAccessAllowed: false
+                        )
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(16.0 / 10.0, contentMode: .fit)
                     }
 
-                    Spacer()
+                    LinearGradient(
+                        colors: [.black.opacity(0.05), .black.opacity(0.86)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
 
-                    Text(cardTitle)
-                        .font(.title3.bold())
-                    Text("\(presentation.scenes.count)場面・約\(estimatedSeconds.formatted())秒")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.82))
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack {
+                            Text("季節の作品")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.82))
+                            Spacer()
+                            Image(systemName: "play.fill")
+                                .font(.headline)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.45), in: Circle())
+                        }
+
+                        Spacer()
+
+                        Text(cardTitle)
+                            .font(.title3.bold())
+                        Text("\(presentation.scenes.count)場面・約\(estimatedSeconds.formatted())秒")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(16)
                 }
-                .foregroundStyle(.white)
-                .padding(16)
+                .frame(maxWidth: .infinity)
+                .aspectRatio(16.0 / 10.0, contentMode: .fit)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 22))
             }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16.0 / 10.0, contentMode: .fit)
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 22))
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("today-seasonal-movie")
+            .accessibilityLabel(
+                "\(cardTitle)、\(presentation.scenes.count)場面、約\(estimatedSeconds)秒"
+            )
+            .accessibilityHint("開くとそのまま再生します")
+
+            if let nextWorkDescription {
+                HStack(spacing: 7) {
+                    Image(systemName: "calendar")
+                        .accessibilityHidden(true)
+                    Text(nextWorkDescription)
+                        .lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button {
+                        showsAboutSeasonalMovie = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel("季節の作品の選び方")
+                    .accessibilityIdentifier("seasonal-movie-about-button")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("today-seasonal-movie")
-        .accessibilityLabel(
-            "\(cardTitle)、\(presentation.scenes.count)場面、約\(estimatedSeconds)秒"
-        )
-        .accessibilityHint("開くとそのまま再生します")
+        .sheet(isPresented: $showsAboutSeasonalMovie) {
+            SeasonalMovieAboutSheet()
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var cardTitle: String {
@@ -76,6 +106,69 @@ struct SeasonalMovieCard: View {
 
     private var estimatedSeconds: Int {
         max(1, Int(presentation.estimatedDuration.rounded()))
+    }
+
+    private var nextWorkDescription: String? {
+        let calendar = Calendar.current
+        guard let nextQuarterEnd = calendar.date(
+            byAdding: .month,
+            value: 3,
+            to: presentation.quarterEnd
+        ),
+              let lastDay = calendar.date(
+                byAdding: .day,
+                value: -1,
+                to: nextQuarterEnd
+              ) else { return nil }
+        let releaseMonth = calendar.component(.month, from: nextQuarterEnd)
+        let startMonth = calendar.component(.month, from: presentation.quarterEnd)
+        let endMonth = calendar.component(.month, from: lastDay)
+        return "次は\(releaseMonth)月ごろ、\(startMonth)月–\(endMonth)月を振り返ります"
+    }
+}
+
+private struct SeasonalMovieAboutSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("ひとつ前の季節を、このiPhoneで利用できる猫の写真と動画から短くまとめます。")
+                        .font(.headline)
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        explanationRow("似た写真をまとめます", systemImage: "rectangle.on.rectangle")
+                        explanationRow("撮影日が偏らないように選びます", systemImage: "calendar")
+                        explanationRow("思い出と動く場面を優先します", systemImage: "bookmark")
+                        explanationRow("写真が少ない季節は作りません", systemImage: "leaf")
+                    }
+
+                    Text("原本はコピーせず、写真や動画を端末の外へ送りません。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+            }
+            .navigationTitle("季節の作品について")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+        .accessibilityIdentifier("seasonal-movie-about-sheet")
+    }
+
+    private func explanationRow(
+        _ title: String,
+        systemImage: String
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

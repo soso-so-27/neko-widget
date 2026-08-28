@@ -426,6 +426,7 @@ actor SeasonalMovieArchiveStore {
         let calendar = Calendar(identifier: .gregorian)
         return [
             presentation.scenes.filter(\.isMemory).count,
+            presentation.scenes.filter(\.isPhotoLibraryFavorite).count,
             Set(presentation.scenes.map {
                 calendar.dateInterval(of: .month, for: $0.creationDate)?.start
                     ?? calendar.startOfDay(for: $0.creationDate)
