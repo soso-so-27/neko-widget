@@ -514,6 +514,7 @@ struct LikedPhotosView: View {
     @State private var isSelectingForExport = false
     @State private var selectedExportIdentifiers = Set<String>()
     @State private var photoBookExportTask: Task<Void, Never>?
+    @State private var showsCreationPreview = false
 
     var body: some View {
         ScrollView {
@@ -532,6 +533,10 @@ struct LikedPhotosView: View {
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .padding()
                 } else {
+                    if !isSelectingForExport {
+                        creationPreviewCard
+                    }
+
                     if isSelectingForExport {
                         exportSelectionCard
                     }
@@ -579,6 +584,9 @@ struct LikedPhotosView: View {
                 }
             }
         }
+        .sheet(isPresented: $showsCreationPreview) {
+            MemoryCreationPreviewSheet()
+        }
         .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
             LikedPhotoBookActivityView(activityItems: [export.url])
         }
@@ -611,6 +619,58 @@ struct LikedPhotosView: View {
 
     private var photoColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
+    }
+
+    private var creationPreviewCard: some View {
+        Button {
+            showsCreationPreview = true
+        } label: {
+            HStack(spacing: 13) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        Color.accentColor.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 11)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text("かたちにする")
+                            .font(.headline)
+                        Text("準備中")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor.opacity(0.10), in: Capsule())
+                    }
+
+                    Text("一枚を贈る・卓上に飾る・小さな本")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 18)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .accessibilityIdentifier("memory-creation-preview")
+        .accessibilityLabel("かたちにする、準備中")
+        .accessibilityHint("今後、思い出から作れるものを確認します。まだ注文はできません")
     }
 
     private var exportSelectionCard: some View {
@@ -800,6 +860,99 @@ struct LikedPhotosView: View {
         }
         photoBookExportDirectory = nil
         photoBookExport = nil
+    }
+}
+
+private struct MemoryCreationPreviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("思い出から、つくれるもの")
+                            .font(.title2.bold())
+                        Text("この先、残した写真から選べるようになります。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(spacing: 0) {
+                        creationRow(
+                            systemImage: "envelope",
+                            title: "一枚を贈る",
+                            detail: "写真カードにして、自分や相手へ"
+                        )
+                        Divider().padding(.leading, 54)
+                        creationRow(
+                            systemImage: "photo.on.rectangle.angled",
+                            title: "卓上に飾る",
+                            detail: "4枚を入れ替えて飾る"
+                        )
+                        Divider().padding(.leading, 54)
+                        creationRow(
+                            systemImage: "book.closed",
+                            title: "小さな本にまとめる",
+                            detail: "20枚を一冊にまとめる"
+                        )
+                    }
+                    .background(
+                        Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 18)
+                    )
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label("準備中", systemImage: "clock")
+                            .font(.headline)
+                        Text("まだ注文できません。購入できるようになったら、この画面でお知らせします。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
+                }
+                .padding(16)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("かたちにする")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func creationRow(
+        systemImage: String,
+        title: String,
+        detail: String
+    ) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.headline)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .accessibilityElement(children: .combine)
     }
 }
 
