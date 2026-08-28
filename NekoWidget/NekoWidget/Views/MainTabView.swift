@@ -4,7 +4,6 @@ enum TodayRoute: Hashable {
     case photo(String)
     case automaticAlbums
     case monthlyWindow(MonthlyWindowPresentation)
-    case monthlyPhoto(MonthlyWindowPresentation, String)
 }
 
 enum MemoriesRoute: Hashable {
@@ -249,11 +248,6 @@ struct MainTabView: View {
                 presentation: refreshedMonthlyWindow(snapshot),
                 setMemorySaved: setMemorySaved
             )
-        case let .monthlyPhoto(snapshot, localIdentifier):
-            monthlyWindowDetailView(
-                snapshot: snapshot,
-                localIdentifier: localIdentifier
-            )
         }
     }
 
@@ -304,40 +298,6 @@ struct MainTabView: View {
                 Task { await catProfilesActions.replacePhotoAssignments(values) }
             }
         )
-    }
-
-    @ViewBuilder
-    private func monthlyWindowDetailView(
-        snapshot: MonthlyWindowPresentation,
-        localIdentifier: String
-    ) -> some View {
-        let monthlyWindow = refreshedMonthlyWindow(snapshot)
-        if let initialPhoto = monthlyWindow.photos.first(where: {
-               $0.localIdentifier == localIdentifier
-           }) {
-            PhotoBrowserView(
-                photos: monthlyWindow.photos,
-                libraryPhotos: libraryPhotos,
-                initialPhoto: initialPhoto,
-                widgetShownAt: nil,
-                widgetIntervalMinutes: widgetIntervalMinutes,
-                setMemorySaved: setMemorySaved,
-                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-                excludeFromCatCandidates: { identifiers in
-                    Task { await excludeFromCatCandidates(identifiers) }
-                },
-                restoreCatCandidates: { identifiers in
-                    Task { await restoreCatCandidates(identifiers) }
-                },
-                profiles: catProfilesPresentation.profiles,
-                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-                replaceProfileAssignments: { values in
-                    Task { await catProfilesActions.replacePhotoAssignments(values) }
-                }
-            )
-        } else {
-            missingMonthlyWindowView
-        }
     }
 
     @ViewBuilder
@@ -495,7 +455,7 @@ struct MainTabView: View {
             photos: snapshot.photos.map {
                 currentByIdentifier[$0.localIdentifier] ?? $0
             },
-            availablePhotoCount: snapshot.availablePhotoCount
+            availableSceneCount: snapshot.availableSceneCount
         )
     }
 
@@ -572,14 +532,6 @@ struct MainTabView: View {
             "アルバムを更新しています",
             systemImage: "rectangle.stack",
             description: Text("スキャン結果が更新されました。アルバムの一覧へ戻って、もう一度開いてください。")
-        )
-    }
-
-    private var missingMonthlyWindowView: some View {
-        ContentUnavailableView(
-            "月のまどを更新しています",
-            systemImage: "sparkles.rectangle.stack",
-            description: Text("「今日」へ戻ると、最新の写真からもう一度作ります。")
         )
     }
 
