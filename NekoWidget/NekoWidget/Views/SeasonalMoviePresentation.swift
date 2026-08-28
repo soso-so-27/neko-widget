@@ -386,25 +386,38 @@ struct SeasonalMovieBuilder {
         }
 
         let movingTarget = Int(ceil(Double(targetCount) * Self.targetMovingSceneRatio))
-        for candidate in candidates
-            .filter({ $0.mediaKind.isMoving })
-            .sorted(by: coverageFirst) {
-            guard selected.filter({ $0.mediaKind.isMoving }).count < movingTarget else {
-                break
-            }
+        var movingCandidates = candidates.filter {
+            $0.mediaKind.isMoving && !selectedIDs.contains($0.localIdentifier)
+        }
+        while selected.count < targetCount,
+              selected.filter({ $0.mediaKind.isMoving }).count < movingTarget,
+              !movingCandidates.isEmpty {
+            // Re-evaluate coverage after every append. Sorting only once would
+            // let two scenes from one previously unused day occupy adjacent
+            // slots before another unused day is considered.
+            movingCandidates.sort(by: coverageFirst)
+            let candidate = movingCandidates.removeFirst()
             append(candidate)
         }
 
         // Once the moving target is reached, prefer still scenes for the
         // remaining rhythm. A final all-media pass handles libraries that do
         // not contain enough stills without making motion a hard gate.
-        for candidate in candidates
-            .filter({ !$0.mediaKind.isMoving })
-            .sorted(by: coverageFirst) {
+        var stillCandidates = candidates.filter {
+            !$0.mediaKind.isMoving && !selectedIDs.contains($0.localIdentifier)
+        }
+        while selected.count < targetCount, !stillCandidates.isEmpty {
+            stillCandidates.sort(by: coverageFirst)
+            let candidate = stillCandidates.removeFirst()
             append(candidate)
         }
 
-        for candidate in candidates.sorted(by: coverageFirst) {
+        var remainingCandidates = candidates.filter {
+            !selectedIDs.contains($0.localIdentifier)
+        }
+        while selected.count < targetCount, !remainingCandidates.isEmpty {
+            remainingCandidates.sort(by: coverageFirst)
+            let candidate = remainingCandidates.removeFirst()
             append(candidate)
         }
 
