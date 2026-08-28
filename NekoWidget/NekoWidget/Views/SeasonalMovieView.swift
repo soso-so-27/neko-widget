@@ -140,6 +140,8 @@ private struct SeasonalMovieShareItem: Identifiable {
 /// action, uses a single optional original soundtrack, and never mutates the
 /// source items in Photos.
 struct SeasonalMovieView: View {
+    private static let meaningfulPlaybackSceneCount = 2
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -149,6 +151,9 @@ struct SeasonalMovieView: View {
         String,
         Bool
     ) async throws -> SeasonalMoviePresentation
+    let freezeRecipe: (
+        SeasonalMovieArchiveFreezeReason
+    ) async throws -> Void
 
     @AppStorage("seasonalMovieSoundEnabled") private var soundEnabled = true
     @StateObject private var soundtrack = SeasonalMovieSoundtrackPlayer()
@@ -159,6 +164,8 @@ struct SeasonalMovieView: View {
     @State private var isPlaying = true
     @State private var hasFinished = false
     @State private var currentSceneIsReady = false
+    @State private var completedScenePlaybackCount = 0
+    @State private var hasRequestedRecipeFreeze = false
     @State private var playbackGeneration = 0
     @State private var showsExcludeConfirmation = false
     @State private var showsMinimumSceneAlert = false
@@ -178,10 +185,14 @@ struct SeasonalMovieView: View {
         presentation: SeasonalMoviePresentation,
         setSceneExcluded: (
             (String, Bool) async throws -> SeasonalMoviePresentation
+        )? = nil,
+        freezeRecipe: (
+            (SeasonalMovieArchiveFreezeReason) async throws -> Void
         )? = nil
     ) {
         self.presentation = presentation
         self.setSceneExcluded = setSceneExcluded ?? { _, _ in presentation }
+        self.freezeRecipe = freezeRecipe ?? { _ in }
         _activePresentation = State(initialValue: presentation)
     }
 
@@ -547,6 +558,15 @@ struct SeasonalMovieView: View {
             )
         )
         guard !Task.isCancelled, isPlaying, !hasFinished else { return }
+        completedScenePlaybackCount += 1
+        if completedScenePlaybackCount >= Self.meaningfulPlaybackSceneCount,
+           !hasRequestedRecipeFreeze {
+            hasRequestedRecipeFreeze = true
+            // Playback must keep flowing if protected storage is temporarily
+            // unavailable. The archive library still blocks automatic refresh
+            // for this process after the freeze was requested.
+            try? await freezeRecipe(.meaningfulPlayback)
+        }
         advance()
     }
 
@@ -729,6 +749,7 @@ struct SeasonalMovieView: View {
         let includesSound = soundEnabled
         exportTask = Task {
             do {
+                try await freezeRecipe(.export)
                 let url = try await SeasonalMovieExportService.shared.export(
                     presentation,
                     soundEnabled: includesSound
@@ -772,7 +793,8 @@ struct SeasonalMovieView: View {
     }
 
     private func exportMessage(for error: Error) -> String {
-        (error as? SeasonalMovieExportError)?.errorDescription
+        (error as? SeasonalMovieArchiveError)?.errorDescription
+            ?? (error as? SeasonalMovieExportError)?.errorDescription
             ?? "動画を書き出せませんでした。もう一度お試しください。"
     }
 

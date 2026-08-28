@@ -48,6 +48,7 @@ private func candidate(
     _ capturedAt: Date,
     kind: SeasonalMovieMediaKind = .stillPhoto,
     memory: Bool = false,
+    favorite: Bool = false,
     box: CGRect? = CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5),
     area: Double? = 0.25
 ) -> SeasonalMovieCandidate {
@@ -58,9 +59,43 @@ private func candidate(
         catBoundingBox: box,
         largestCatAreaRatio: area,
         isMemory: memory,
+        isPhotoLibraryFavorite: favorite,
         suggestedStartTime: kind == .video ? 1 : nil,
         suggestedDuration: kind == .video ? 4 : nil
     )
+}
+
+private func verifyCurationSignalPriority() throws {
+    let builder = SeasonalMovieBuilder(timeZone: utc)
+    let favorite = candidate(
+        "rapid-favorite",
+        date(2026, 4, 2, second: 4),
+        favorite: true
+    )
+    let favoriteProposal = try ready(builder.buildMostRecent(
+        from: tenStillScenes() + [favorite],
+        through: date(2026, 8, 28)
+    ))
+    let favoriteIDs = favoriteProposal.scenes.map(\.localIdentifier)
+    try require(favoriteIDs.contains("rapid-favorite"),
+                "a Photos favorite did not beat its automatic near-duplicate")
+    try require(!favoriteIDs.contains("a1"),
+                "an automatic scene displaced a Photos favorite")
+
+    let memory = candidate(
+        "rapid-memory-priority",
+        date(2026, 4, 2, second: 6),
+        memory: true
+    )
+    let memoryProposal = try ready(builder.buildMostRecent(
+        from: tenStillScenes() + [favorite, memory],
+        through: date(2026, 8, 28)
+    ))
+    let memoryIDs = memoryProposal.scenes.map(\.localIdentifier)
+    try require(memoryIDs.contains("rapid-memory-priority"),
+                "an app memory did not beat its Photos favorite near-duplicate")
+    try require(!memoryIDs.contains("rapid-favorite"),
+                "a Photos favorite displaced the stronger app memory")
 }
 
 private func ready(
@@ -365,6 +400,7 @@ private struct SeasonalMovieVerifier {
         try verifyCompletedQuarterAndStillOnlyEligibility()
         try verifyDiversityGates()
         try verifyRapidDuplicatesAndBoundaryExclusion()
+        try verifyCurationSignalPriority()
         try verifyShortSequenceVarietyAndMemoryProtection()
         try verifyCoverageContinuesPastTheMinimumGate()
         try verifyMotionBalanceAndDeterminism()

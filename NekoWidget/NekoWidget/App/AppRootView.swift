@@ -701,6 +701,7 @@ struct AppRootView: View {
             catBoundingBox: displayBox?.cgRect,
             isLiked: asset.liked,
             likedAt: asset.likedAt,
+            isPhotoLibraryFavorite: asset.isFavorite,
             albumPostures: Set(selectedBox.map {
                 CatBoundingBoxAspectBucket.postures(for: [$0])
             } ?? []),
@@ -865,6 +866,7 @@ struct AppRootView: View {
             catBoundingBox: asset.cat.boundingBox?.cgRect,
             isLiked: asset.liked,
             likedAt: asset.likedAt,
+            isPhotoLibraryFavorite: asset.isFavorite,
             albumPostures: Set(CatBoundingBoxAspectBucket.postures(
                 for: resolvedBoxes
             )),

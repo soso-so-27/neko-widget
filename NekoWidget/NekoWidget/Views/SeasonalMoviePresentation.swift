@@ -17,13 +17,102 @@ struct SeasonalMovieCandidate: Codable, Identifiable, Hashable, Sendable {
     let mediaKind: SeasonalMovieMediaKind
     let catBoundingBox: CGRect?
     let largestCatAreaRatio: Double?
+    /// The app's explicit 「思い出」 state. This is deliberately distinct
+    /// from Apple Photos' favorite flag and is the stronger curation signal.
     let isMemory: Bool
+    /// A secondary signal read from Apple Photos. Older archived recipes did
+    /// not store it, so decoding defaults it to false without changing media.
+    let isPhotoLibraryFavorite: Bool
     /// Suggested local playback excerpt. Live Photos and stills leave these
     /// nil; videos use a short range around a cat-confirmed sampled frame.
     let suggestedStartTime: TimeInterval?
     let suggestedDuration: TimeInterval?
 
     var id: String { localIdentifier }
+
+    var curationSignalRank: Int {
+        if isMemory { return 2 }
+        if isPhotoLibraryFavorite { return 1 }
+        return 0
+    }
+
+    init(
+        localIdentifier: String,
+        creationDate: Date,
+        mediaKind: SeasonalMovieMediaKind,
+        catBoundingBox: CGRect?,
+        largestCatAreaRatio: Double?,
+        isMemory: Bool,
+        isPhotoLibraryFavorite: Bool = false,
+        suggestedStartTime: TimeInterval?,
+        suggestedDuration: TimeInterval?
+    ) {
+        self.localIdentifier = localIdentifier
+        self.creationDate = creationDate
+        self.mediaKind = mediaKind
+        self.catBoundingBox = catBoundingBox
+        self.largestCatAreaRatio = largestCatAreaRatio
+        self.isMemory = isMemory
+        self.isPhotoLibraryFavorite = isPhotoLibraryFavorite
+        self.suggestedStartTime = suggestedStartTime
+        self.suggestedDuration = suggestedDuration
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case localIdentifier
+        case creationDate
+        case mediaKind
+        case catBoundingBox
+        case largestCatAreaRatio
+        case isMemory
+        case isPhotoLibraryFavorite
+        case suggestedStartTime
+        case suggestedDuration
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        localIdentifier = try values.decode(String.self, forKey: .localIdentifier)
+        creationDate = try values.decode(Date.self, forKey: .creationDate)
+        mediaKind = try values.decode(SeasonalMovieMediaKind.self, forKey: .mediaKind)
+        catBoundingBox = try values.decodeIfPresent(
+            CGRect.self,
+            forKey: .catBoundingBox
+        )
+        largestCatAreaRatio = try values.decodeIfPresent(
+            Double.self,
+            forKey: .largestCatAreaRatio
+        )
+        isMemory = try values.decode(Bool.self, forKey: .isMemory)
+        isPhotoLibraryFavorite = try values.decodeIfPresent(
+            Bool.self,
+            forKey: .isPhotoLibraryFavorite
+        ) ?? false
+        suggestedStartTime = try values.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .suggestedStartTime
+        )
+        suggestedDuration = try values.decodeIfPresent(
+            TimeInterval.self,
+            forKey: .suggestedDuration
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(localIdentifier, forKey: .localIdentifier)
+        try values.encode(creationDate, forKey: .creationDate)
+        try values.encode(mediaKind, forKey: .mediaKind)
+        try values.encodeIfPresent(catBoundingBox, forKey: .catBoundingBox)
+        try values.encodeIfPresent(
+            largestCatAreaRatio,
+            forKey: .largestCatAreaRatio
+        )
+        try values.encode(isMemory, forKey: .isMemory)
+        try values.encode(isPhotoLibraryFavorite, forKey: .isPhotoLibraryFavorite)
+        try values.encodeIfPresent(suggestedStartTime, forKey: .suggestedStartTime)
+        try values.encodeIfPresent(suggestedDuration, forKey: .suggestedDuration)
+    }
 
     var playbackDuration: TimeInterval {
         switch mediaKind {
@@ -66,7 +155,9 @@ struct SeasonalMoviePresentation: Codable, Identifiable, Hashable, Sendable {
 
     var coverScene: SeasonalMovieCandidate? {
         scenes.min {
-            if $0.isMemory != $1.isMemory { return $0.isMemory }
+            if $0.curationSignalRank != $1.curationSignalRank {
+                return $0.curationSignalRank > $1.curationSignalRank
+            }
             let leftArea = $0.largestCatAreaRatio ?? 0
             let rightArea = $1.largestCatAreaRatio ?? 0
             if leftArea != rightArea { return leftArea > rightArea }
@@ -311,14 +402,15 @@ struct SeasonalMovieBuilder {
             respectsDayLimit: Bool = true,
             avoidsShortSequenceRepeats: Bool = true
         ) {
-            // When a human-marked memory and an automatic choice are from the
-            // same short sequence, keep the human choice in the same coverage
-            // slot. The replaced identifier remains consumed so it cannot be
-            // added again by a later automatic pass.
-            if candidate.isMemory,
+            // Keep the stronger human curation signal in one short-sequence
+            // coverage slot: app memory > Photos favorite > automatic. The
+            // replaced identifier remains consumed so it cannot be added by
+            // a later automatic pass.
+            if candidate.curationSignalRank > 0,
                !selectedIDs.contains(candidate.localIdentifier),
                let replacementIndex = selected.indices.first(where: {
-                   !selected[$0].isMemory
+                   selected[$0].curationSignalRank
+                       < candidate.curationSignalRank
                        && areConfidentShortSequenceMatches(
                            selected[$0],
                            candidate
@@ -458,8 +550,8 @@ struct SeasonalMovieBuilder {
             guard let index = removable.sorted(by: { lhs, rhs in
                 let left = scenes[lhs]
                 let right = scenes[rhs]
-                if left.isMemory != right.isMemory {
-                    return !left.isMemory
+                if left.curationSignalRank != right.curationSignalRank {
+                    return left.curationSignalRank < right.curationSignalRank
                 }
                 let leftDayCount = scenes.filter {
                     dayKey($0) == dayKey(left)
@@ -540,13 +632,15 @@ struct SeasonalMovieBuilder {
         return preferredScene(lhs, rhs)
     }
 
-    /// `min(by:)`: memories and moving scenes are better representatives, but
-    /// neither property bypasses the diversity gates above.
+    /// `min(by:)`: app memories, then Photos favorites, then moving scenes are
+    /// better representatives. None bypasses the diversity gates above.
     private func preferredScene(
         _ lhs: SeasonalMovieCandidate,
         _ rhs: SeasonalMovieCandidate
     ) -> Bool {
-        if lhs.isMemory != rhs.isMemory { return lhs.isMemory }
+        if lhs.curationSignalRank != rhs.curationSignalRank {
+            return lhs.curationSignalRank > rhs.curationSignalRank
+        }
         if lhs.mediaKind.isMoving != rhs.mediaKind.isMoving {
             return lhs.mediaKind.isMoving
         }

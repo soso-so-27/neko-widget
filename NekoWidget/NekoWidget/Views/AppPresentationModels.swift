@@ -8,6 +8,9 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
     let catBoundingBox: CGRect?
     let isLiked: Bool
     let likedAt: Date?
+    /// Apple Photos' separate favorite flag. `isLiked` is the app's explicit
+    /// 「思い出」 state and must remain the stronger, canonical user signal.
+    let isPhotoLibraryFavorite: Bool
     /// Album traits are intentionally reduced to the derived, privacy-minimal
     /// values needed by the UI. Raw pose joints, face rectangles and locations
     /// never cross this presentation boundary.
@@ -30,6 +33,7 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
         catBoundingBox: CGRect? = nil,
         isLiked: Bool = false,
         likedAt: Date? = nil,
+        isPhotoLibraryFavorite: Bool = false,
         albumPostures: Set<CatPostureTag> = [],
         albumContainsPerson: Bool? = nil,
         albumIsOuting: Bool? = nil,
@@ -43,6 +47,7 @@ struct PhotoPresentation: Identifiable, Hashable, Sendable {
         self.catBoundingBox = catBoundingBox
         self.isLiked = isLiked
         self.likedAt = likedAt
+        self.isPhotoLibraryFavorite = isPhotoLibraryFavorite
         self.albumPostures = albumPostures
         self.albumContainsPerson = albumContainsPerson
         self.albumIsOuting = albumIsOuting
@@ -464,6 +469,7 @@ private extension PhotoPresentation {
             catBoundingBox: catBoundingBox,
             isLiked: isLiked,
             likedAt: likedAt,
+            isPhotoLibraryFavorite: isPhotoLibraryFavorite,
             albumPostures: albumPostures,
             albumContainsPerson: albumContainsPerson,
             albumIsOuting: albumIsOuting,

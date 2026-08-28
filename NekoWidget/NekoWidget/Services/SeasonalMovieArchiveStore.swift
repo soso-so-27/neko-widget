@@ -30,6 +30,15 @@ enum SeasonalMovieArchiveError: LocalizedError {
     }
 }
 
+enum SeasonalMovieArchiveFreezeReason: String, Codable, Hashable, Sendable {
+    case meaningfulPlayback
+    case sceneEdit
+    case export
+    /// Version 1 did not record whether a work had already been watched or
+    /// exported. Preserve it rather than guessing that it is still a draft.
+    case legacyRecord
+}
+
 struct SeasonalMoviePeriodID: Codable, Hashable, Identifiable, Sendable {
     let year: Int
     let quarter: Int
@@ -48,7 +57,7 @@ struct SeasonalMoviePeriodID: Codable, Hashable, Identifiable, Sendable {
 }
 
 struct SeasonalMovieArchiveRecord: Codable, Hashable, Identifiable, Sendable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     let version: Int
     let periodID: SeasonalMoviePeriodID
@@ -56,8 +65,12 @@ struct SeasonalMovieArchiveRecord: Codable, Hashable, Identifiable, Sendable {
     var updatedAt: Date
     var presentation: SeasonalMoviePresentation
     var excludedSceneIdentifiers: Set<String>
+    var frozenAt: Date?
+    var freezeReason: SeasonalMovieArchiveFreezeReason?
 
     var id: SeasonalMoviePeriodID { periodID }
+
+    var isFrozen: Bool { frozenAt != nil }
 
     var effectivePresentation: SeasonalMoviePresentation {
         presentation.replacingScenes(
@@ -113,14 +126,41 @@ actor SeasonalMovieArchiveStore {
                 catalog.version
             )
         }
+        var migratedLegacyRecord = false
         let records = catalog.records
-            .filter { $0.version == SeasonalMovieArchiveRecord.schemaVersion }
+            .compactMap { record -> SeasonalMovieArchiveRecord? in
+                switch record.version {
+                case SeasonalMovieArchiveRecord.schemaVersion:
+                    return record
+                case 1:
+                    migratedLegacyRecord = true
+                    return SeasonalMovieArchiveRecord(
+                        version: SeasonalMovieArchiveRecord.schemaVersion,
+                        periodID: record.periodID,
+                        createdAt: record.createdAt,
+                        updatedAt: record.updatedAt,
+                        presentation: record.presentation,
+                        excludedSceneIdentifiers: record.excludedSceneIdentifiers,
+                        frozenAt: record.updatedAt,
+                        freezeReason: .legacyRecord
+                    )
+                default:
+                    return nil
+                }
+            }
             .sorted { $0.presentation.quarterStart > $1.presentation.quarterStart }
         guard records.count == catalog.records.count,
               records.count <= Self.maximumRecordCount,
               Set(records.map(\.periodID)).count == records.count,
               records.allSatisfy(isValid) else {
             throw SeasonalMovieArchiveError.invalidRecord
+        }
+        // Migration is deliberately best-effort. A protected or temporarily
+        // unwritable directory must not hide a valid legacy catalog. The
+        // normalized records stay frozen in memory and the next successful
+        // mutation persists version 2 atomically.
+        if migratedLegacyRecord {
+            try? save(records)
         }
         return records
     }
@@ -140,12 +180,14 @@ actor SeasonalMovieArchiveStore {
             throw SeasonalMovieArchiveError.catalogLimit
         }
         let record = SeasonalMovieArchiveRecord(
-            version: Self.catalogVersion,
+            version: SeasonalMovieArchiveRecord.schemaVersion,
             periodID: periodID,
             createdAt: now,
             updatedAt: now,
             presentation: presentation,
-            excludedSceneIdentifiers: []
+            excludedSceneIdentifiers: [],
+            frozenAt: nil,
+            freezeReason: nil
         )
         guard isValid(record) else {
             throw SeasonalMovieArchiveError.invalidRecord
@@ -181,6 +223,10 @@ actor SeasonalMovieArchiveStore {
         } else {
             records[index].excludedSceneIdentifiers.remove(identifier)
         }
+        if !records[index].isFrozen {
+            records[index].frozenAt = now
+            records[index].freezeReason = .sceneEdit
+        }
         records[index].updatedAt = now
         let updated = records[index]
         try save(records)
@@ -203,11 +249,42 @@ actor SeasonalMovieArchiveStore {
         guard let index = records.firstIndex(where: { $0.periodID == periodID }) else {
             throw SeasonalMovieArchiveError.periodNotFound
         }
-        guard records[index].excludedSceneIdentifiers.isEmpty,
+        guard !records[index].isFrozen,
+              records[index].excludedSceneIdentifiers.isEmpty,
               records[index].presentation == sourcePresentation else {
             return records[index]
         }
+        guard records[index].presentation != presentation else {
+            return records[index]
+        }
+        guard isPreferredDraftRefresh(
+            presentation,
+            over: records[index].presentation
+        ) else {
+            return records[index]
+        }
         records[index].presentation = presentation
+        records[index].updatedAt = now
+        guard isValid(records[index]) else {
+            throw SeasonalMovieArchiveError.invalidRecord
+        }
+        let updated = records[index]
+        try save(records)
+        return updated
+    }
+
+    func freeze(
+        _ periodID: SeasonalMoviePeriodID,
+        reason: SeasonalMovieArchiveFreezeReason,
+        now: Date = Date()
+    ) throws -> SeasonalMovieArchiveRecord {
+        var records = try load()
+        guard let index = records.firstIndex(where: { $0.periodID == periodID }) else {
+            throw SeasonalMovieArchiveError.periodNotFound
+        }
+        guard !records[index].isFrozen else { return records[index] }
+        records[index].frozenAt = now
+        records[index].freezeReason = reason
         records[index].updatedAt = now
         guard isValid(records[index]) else {
             throw SeasonalMovieArchiveError.invalidRecord
@@ -302,6 +379,11 @@ actor SeasonalMovieArchiveStore {
         let scenes = record.presentation.scenes
         let sceneIDs = Set(scenes.map(\.localIdentifier))
         return record.version == SeasonalMovieArchiveRecord.schemaVersion
+            && (record.frozenAt == nil) == (record.freezeReason == nil)
+            && (record.excludedSceneIdentifiers.isEmpty || record.isFrozen)
+            && record.createdAt.timeIntervalSinceReferenceDate.isFinite
+            && record.updatedAt.timeIntervalSinceReferenceDate.isFinite
+            && (record.frozenAt?.timeIntervalSinceReferenceDate.isFinite ?? true)
             && scenes.count >= SeasonalMovieBuilder.minimumOutputSceneCount
             && scenes.count <= SeasonalMovieBuilder.maximumOutputSceneCount
             && sceneIDs.count == scenes.count
@@ -320,6 +402,42 @@ actor SeasonalMovieArchiveStore {
                 >= SeasonalMovieBuilder.minimumOutputSceneCount
     }
 
+    /// An incomplete local-media pass must never make a visible draft worse.
+    /// Refresh only on an objective gain, in the same order the product uses
+    /// for selection: explicit memories, period coverage, motion, then scene
+    /// count. Equal-quality substitutions are kept stable to avoid churn.
+    private func isPreferredDraftRefresh(
+        _ proposal: SeasonalMoviePresentation,
+        over current: SeasonalMoviePresentation
+    ) -> Bool {
+        let proposedQuality = draftQuality(proposal)
+        let currentQuality = draftQuality(current)
+        for index in proposedQuality.indices {
+            if proposedQuality[index] != currentQuality[index] {
+                return proposedQuality[index] > currentQuality[index]
+            }
+        }
+        return false
+    }
+
+    private func draftQuality(
+        _ presentation: SeasonalMoviePresentation
+    ) -> [Int] {
+        let calendar = Calendar(identifier: .gregorian)
+        return [
+            presentation.scenes.filter(\.isMemory).count,
+            Set(presentation.scenes.map {
+                calendar.dateInterval(of: .month, for: $0.creationDate)?.start
+                    ?? calendar.startOfDay(for: $0.creationDate)
+            }).count,
+            Set(presentation.scenes.map {
+                calendar.startOfDay(for: $0.creationDate)
+            }).count,
+            presentation.movingSceneCount,
+            presentation.scenes.count
+        ]
+    }
+
     private func isFinite(_ rect: CGRect?) -> Bool {
         guard let rect else { return true }
         return rect.origin.x.isFinite
@@ -335,6 +453,9 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
     @Published private(set) var lastErrorDescription: String?
 
     private let store: SeasonalMovieArchiveStore
+    /// If a durable freeze fails, do not permit another automatic rewrite in
+    /// this process after the person has watched or exported the work.
+    private var locallyFrozenPeriodIDs: Set<SeasonalMoviePeriodID> = []
 
     init(store: SeasonalMovieArchiveStore = .shared) {
         self.store = store
@@ -362,9 +483,10 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
             lastErrorDescription = nil
             return SeasonalMovieArchiveDraft(
                 presentation: record.effectivePresentation,
-                sourcePresentation: presentation,
-                canFinalize: record.excludedSceneIdentifiers.isEmpty
-                    && record.presentation == presentation
+                sourcePresentation: record.presentation,
+                canFinalize: !record.isFrozen
+                    && !locallyFrozenPeriodIDs.contains(record.periodID)
+                    && record.excludedSceneIdentifiers.isEmpty
             )
         } catch {
             lastErrorDescription = archiveMessage(
@@ -381,7 +503,11 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         _ presentation: SeasonalMoviePresentation,
         from draft: SeasonalMovieArchiveDraft
     ) async -> SeasonalMoviePresentation {
-        guard draft.canFinalize else { return draft.presentation }
+        let periodID = SeasonalMoviePeriodID(presentation: draft.presentation)
+        guard draft.canFinalize,
+              !locallyFrozenPeriodIDs.contains(periodID) else {
+            return draft.presentation
+        }
         do {
             let record = try await store.finalizeDraft(
                 presentation,
@@ -398,6 +524,24 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
                 fallback: "動画を含む作品へ更新できませんでした。"
             )
             return draft.presentation
+        }
+    }
+
+    func freeze(
+        _ periodID: SeasonalMoviePeriodID,
+        reason: SeasonalMovieArchiveFreezeReason
+    ) async throws {
+        locallyFrozenPeriodIDs.insert(periodID)
+        do {
+            let record = try await store.freeze(periodID, reason: reason)
+            merge(record)
+            lastErrorDescription = nil
+        } catch {
+            lastErrorDescription = archiveMessage(
+                for: error,
+                fallback: "作品を固定できませんでした。"
+            )
+            throw error
         }
     }
 

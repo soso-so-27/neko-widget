@@ -221,6 +221,68 @@ enum SeasonalMovieLocalMediaLoader {
     }
 }
 
+struct SeasonalMovieVideoCandidateBatch: Sendable {
+    let candidates: [SeasonalMovieCandidate]
+    let hadLocallyUnavailableMedia: Bool
+}
+
+/// Cheap, metadata-only identity for the quarter's scoped video catalog. It
+/// deliberately does not request frames or media bytes; the preparation task
+/// can therefore notice additions, edits and Photos favorite changes without
+/// duplicating the bounded Vision pass.
+enum SeasonalMovieVideoCatalog {
+    static func digest(
+        in quarter: DateInterval,
+        sourceAlbumIdentifier: String?
+    ) -> Int {
+        guard let assets = fetchAssets(
+            in: quarter,
+            sourceAlbumIdentifier: sourceAlbumIdentifier
+        ) else { return Int.min }
+
+        var hasher = Hasher()
+        hasher.combine(sourceAlbumIdentifier)
+        hasher.combine(assets.count)
+        for index in 0..<assets.count {
+            let asset = assets.object(at: index)
+            hasher.combine(asset.localIdentifier)
+            hasher.combine(asset.creationDate)
+            hasher.combine(asset.modificationDate)
+            hasher.combine(asset.duration)
+            hasher.combine(asset.isFavorite)
+        }
+        return hasher.finalize()
+    }
+
+    static func fetchAssets(
+        in quarter: DateInterval,
+        sourceAlbumIdentifier: String?
+    ) -> PHFetchResult<PHAsset>? {
+        let options = PHFetchOptions()
+        options.predicate = NSPredicate(
+            format: "creationDate >= %@ AND creationDate < %@ AND mediaType == %d",
+            quarter.start as NSDate,
+            quarter.end as NSDate,
+            PHAssetMediaType.video.rawValue
+        )
+        options.sortDescriptors = [NSSortDescriptor(
+            key: "creationDate",
+            ascending: false
+        )]
+        if let sourceAlbumIdentifier {
+            guard let collection = PHAssetCollection.fetchAssetCollections(
+                withLocalIdentifiers: [sourceAlbumIdentifier],
+                options: nil
+            ).firstObject,
+                  collection.assetCollectionType == .album else {
+                return nil
+            }
+            return PHAsset.fetchAssets(in: collection, options: options)
+        }
+        return PHAsset.fetchAssets(with: .video, options: options)
+    }
+}
+
 /// Finds motion-capable seasonal candidates without uploading or persisting
 /// media. Existing cat-photo results are reused for stills and Live Photos;
 /// ordinary videos receive a narrow, on-device Vision check on three frames.
@@ -230,6 +292,12 @@ actor SeasonalMovieCandidateService {
         let boundingBox: CGRect
         let largestAreaRatio: Double
         let confidence: Float
+    }
+
+    private enum VideoCandidateOutcome {
+        case candidate(SeasonalMovieCandidate)
+        case locallyUnavailable
+        case rejected
     }
 
     private static let videoSampleFractions = [0.20, 0.50, 0.80]
@@ -254,10 +322,11 @@ actor SeasonalMovieCandidateService {
             knownCatPhotos,
             in: quarter
         )
-        result.append(contentsOf: await videoCandidates(
+        let videoBatch = await videoCandidateBatch(
             in: quarter,
             sourceAlbumIdentifier: sourceAlbumIdentifier
-        ))
+        )
+        result.append(contentsOf: videoBatch.candidates)
         return result.sorted {
             if $0.creationDate != $1.creationDate {
                 return $0.creationDate < $1.creationDate
@@ -282,7 +351,13 @@ actor SeasonalMovieCandidateService {
                 byIdentifier[photo.localIdentifier] = photo
                 continue
             }
-            if photo.isLiked && !current.isLiked {
+            let photoRank = photo.isLiked
+                ? 2
+                : (photo.isPhotoLibraryFavorite ? 1 : 0)
+            let currentRank = current.isLiked
+                ? 2
+                : (current.isPhotoLibraryFavorite ? 1 : 0)
+            if photoRank > currentRank {
                 byIdentifier[photo.localIdentifier] = photo
             }
         }
@@ -311,6 +386,7 @@ actor SeasonalMovieCandidateService {
                 catBoundingBox: photo.catBoundingBox,
                 largestCatAreaRatio: photo.largestCatAreaRatio,
                 isMemory: photo.isLiked,
+                isPhotoLibraryFavorite: photo.isPhotoLibraryFavorite,
                 suggestedStartTime: nil,
                 suggestedDuration: nil
             ))
@@ -320,33 +396,18 @@ actor SeasonalMovieCandidateService {
 
     /// Bounded second stage. The caller may publish a valid photo-only plan
     /// first, then replace it with this richer plan when preparation finishes.
-    func videoCandidates(
+    func videoCandidateBatch(
         in quarter: DateInterval,
         sourceAlbumIdentifier: String?
-    ) async -> [SeasonalMovieCandidate] {
-        let options = PHFetchOptions()
-        options.predicate = NSPredicate(
-            format: "creationDate >= %@ AND creationDate < %@ AND mediaType == %d",
-            quarter.start as NSDate,
-            quarter.end as NSDate,
-            PHAssetMediaType.video.rawValue
-        )
-        options.sortDescriptors = [NSSortDescriptor(
-            key: "creationDate",
-            ascending: false
-        )]
-        let assets: PHFetchResult<PHAsset>
-        if let sourceAlbumIdentifier {
-            guard let collection = PHAssetCollection.fetchAssetCollections(
-                withLocalIdentifiers: [sourceAlbumIdentifier],
-                options: nil
-            ).firstObject,
-                  collection.assetCollectionType == .album else {
-                return []
-            }
-            assets = PHAsset.fetchAssets(in: collection, options: options)
-        } else {
-            assets = PHAsset.fetchAssets(with: .video, options: options)
+    ) async -> SeasonalMovieVideoCandidateBatch {
+        guard let assets = SeasonalMovieVideoCatalog.fetchAssets(
+            in: quarter,
+            sourceAlbumIdentifier: sourceAlbumIdentifier
+        ) else {
+            return SeasonalMovieVideoCandidateBatch(
+                candidates: [],
+                hadLocallyUnavailableMedia: false
+            )
         }
 
         // Bound on-device Vision work without allowing a busy recent month to
@@ -374,14 +435,27 @@ actor SeasonalMovieCandidateService {
         }
 
         var result: [SeasonalMovieCandidate] = []
+        var hadLocallyUnavailableMedia = false
         for asset in selectedAssets {
-            guard !Task.isCancelled else { return result }
-            guard let candidate = await videoCandidate(for: asset) else {
+            guard !Task.isCancelled else {
+                return SeasonalMovieVideoCandidateBatch(
+                    candidates: result,
+                    hadLocallyUnavailableMedia: hadLocallyUnavailableMedia
+                )
+            }
+            switch await videoCandidate(for: asset) {
+            case let .candidate(candidate):
+                result.append(candidate)
+            case .locallyUnavailable:
+                hadLocallyUnavailableMedia = true
+            case .rejected:
                 continue
             }
-            result.append(candidate)
         }
-        return result
+        return SeasonalMovieVideoCandidateBatch(
+            candidates: result,
+            hadLocallyUnavailableMedia: hadLocallyUnavailableMedia
+        )
     }
 
     private func evenlySpacedAssets(
@@ -400,21 +474,25 @@ actor SeasonalMovieCandidateService {
 
     private func videoCandidate(
         for photoAsset: PHAsset
-    ) async -> SeasonalMovieCandidate? {
-        guard let creationDate = photoAsset.creationDate,
-              let avAsset = await localAVAsset(for: photoAsset) else {
-            return nil
+    ) async -> VideoCandidateOutcome {
+        guard let creationDate = photoAsset.creationDate else {
+            return .rejected
+        }
+        guard let avAsset = await localAVAsset(for: photoAsset) else {
+            return .locallyUnavailable
         }
 
         let duration: CMTime
         do {
             duration = try await avAsset.load(.duration)
         } catch {
-            return nil
+            return .rejected
         }
         let durationSeconds = CMTimeGetSeconds(duration)
         guard durationSeconds.isFinite,
-              durationSeconds >= Self.minimumVideoDuration else { return nil }
+              durationSeconds >= Self.minimumVideoDuration else {
+            return .rejected
+        }
 
         let generator = AVAssetImageGenerator(asset: avAsset)
         generator.appliesPreferredTrackTransform = true
@@ -427,7 +505,7 @@ actor SeasonalMovieCandidateService {
 
         var catFrames: [VideoCatFrame] = []
         for fraction in Self.videoSampleFractions {
-            guard !Task.isCancelled else { return nil }
+            guard !Task.isCancelled else { return .rejected }
             let seconds = min(
                 max(0, durationSeconds * fraction),
                 max(0, durationSeconds - 0.05)
@@ -452,22 +530,25 @@ actor SeasonalMovieCandidateService {
                       return $0.confidence < $1.confidence
                   }
                   return $0.largestAreaRatio < $1.largestAreaRatio
-              }) else { return nil }
+              }) else { return .rejected }
 
         let start = min(
             max(0, representative.seconds - Self.excerptDuration / 2),
             max(0, durationSeconds - Self.excerptDuration)
         )
-        return SeasonalMovieCandidate(
+        return .candidate(SeasonalMovieCandidate(
             localIdentifier: photoAsset.localIdentifier,
             creationDate: creationDate,
             mediaKind: .video,
             catBoundingBox: representative.boundingBox,
             largestCatAreaRatio: representative.largestAreaRatio,
-            isMemory: photoAsset.isFavorite,
+            // App memories currently contain still/Live Photo scan records.
+            // A Photos favorite is useful, but must not masquerade as one.
+            isMemory: false,
+            isPhotoLibraryFavorite: photoAsset.isFavorite,
             suggestedStartTime: start,
             suggestedDuration: min(Self.excerptDuration, durationSeconds - start)
-        )
+        ))
     }
 
     private func catFrame(
