@@ -1,12 +1,12 @@
 import Foundation
 
-/// Presentation-only name for the one invite-only private window supported by
-/// v1. It is never an identifier, key input, plaintext server field, or
+/// Presentation-only name for an invite-only private window. It is never an
+/// identifier, key input, plaintext server field, or
 /// admission binding. The relay may retain only its bounded encrypted record.
 /// All targets share this policy so a malformed App Group value falls back to
 /// a neutral name instead of entering Widget or Share Extension UI.
 enum PrivateWindowDisplayName {
-    static let fallback = "ふたりのまど"
+    static let fallback = "新しいまど"
     static let maximumUTF8ByteCount = 64
 
     static func normalized(_ rawValue: String) -> String {

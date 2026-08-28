@@ -294,7 +294,7 @@ struct AppStoreScreenshotFixtureRootView: View {
             isScanning: false,
             shouldOfferWidgetPlacementGuide: false,
             widgetIntervalMinutes: 60,
-            privateWindowDisplayName: "ふたりのまど",
+            privateWindowDisplayName: "ミケのまど",
             deepLinkedPhotoIdentifier: $selectedPhotoIdentifier,
             deepLinkedPhotoShownAt: $selectedPhotoShownAt,
             deepLinkedFamilyWindowIsPresented: $showsFamilyWindow,

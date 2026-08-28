@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A read-only monthly suggestion assembled from the same privacy-minimal
@@ -8,21 +9,29 @@ struct MonthlyWindowPresentation: Identifiable, Hashable {
     let yearNumber: Int
     let monthNumber: Int
     let photos: [PhotoPresentation]
-    let availablePhotoCount: Int
+    let availableSceneCount: Int
 
     var id: Date { monthStart }
 
     var title: String {
-        "\(monthNumber)月のまど"
+        "\(monthNumber)月の小さな便り"
     }
 
     var accessibilityTitle: String {
-        "\(yearNumber)年\(monthNumber)月のまど"
+        "\(yearNumber)年\(monthNumber)月の小さな便り"
     }
 
     var coverPhoto: PhotoPresentation? {
-        guard !photos.isEmpty else { return nil }
-        return photos[photos.count / 2]
+        photos.min { lhs, rhs in
+            if lhs.isLiked != rhs.isLiked { return lhs.isLiked }
+            let leftArea = lhs.largestCatAreaRatio ?? 0
+            let rightArea = rhs.largestCatAreaRatio ?? 0
+            if leftArea != rightArea { return leftArea > rightArea }
+            let leftDate = lhs.creationDate ?? .distantFuture
+            let rightDate = rhs.creationDate ?? .distantFuture
+            if leftDate != rightDate { return leftDate < rightDate }
+            return lhs.localIdentifier < rhs.localIdentifier
+        }
     }
 
     var memoryPhotoCount: Int {
@@ -33,17 +42,17 @@ struct MonthlyWindowPresentation: Identifiable, Hashable {
 
 enum MonthlyWindowUnavailableReason: Hashable {
     case noDatedPhotos
-    case notEnoughDatedPhotos
+    case notEnoughDistinctScenes
 }
 
 struct MonthlyWindowUnavailablePresentation: Hashable {
     let monthStart: Date
     let reason: MonthlyWindowUnavailableReason
-    let availablePhotoCount: Int
-    let minimumPhotoCount: Int
+    let availableSceneCount: Int
+    let minimumSceneCount: Int
 
-    var remainingPhotoCount: Int {
-        max(0, minimumPhotoCount - availablePhotoCount)
+    var remainingSceneCount: Int {
+        max(0, minimumSceneCount - availableSceneCount)
     }
 }
 
@@ -52,13 +61,21 @@ enum MonthlyWindowBuildResult: Hashable {
     case unavailable(MonthlyWindowUnavailablePresentation)
 }
 
-/// Produces a deterministic 8...12-photo monthly draft from the same
+/// Produces a deterministic 5...7-scene monthly letter from the same
 /// privacy-minimal `PhotoPresentation` values used by automatic albums. The
 /// draft is only a suggestion: the caller continues to use the existing
 /// explicit "思い出に残す" action for writes.
 struct MonthlyWindowBuilder {
-    static let minimumPhotoCount = 8
-    static let maximumPhotoCount = 12
+    static let minimumSceneCount = 5
+    static let maximumSceneCount = 7
+
+    /// A first-pass grouping boundary for ordinary rapid captures that are not
+    /// represented as a formal Photos burst. Time alone is deliberately not
+    /// enough to merge two photos: the privacy-minimal analysis metadata and
+    /// normalized cat framing must also closely agree.
+    private static let rapidNearDuplicateInterval: TimeInterval = 12
+    private static let minimumBoundingBoxIntersectionOverUnion = 0.62
+    private static let maximumLargestCatAreaDelta = 0.04
 
     private let calendar: Calendar
 
@@ -77,7 +94,7 @@ struct MonthlyWindowBuilder {
             return unavailableResult(
                 monthStart: referenceDate,
                 reason: .noDatedPhotos,
-                availablePhotoCount: 0
+                availableSceneCount: 0
             )
         }
 
@@ -90,17 +107,23 @@ struct MonthlyWindowBuilder {
             }
             .sorted(by: oldestFirst)
 
-        guard monthPhotos.count >= Self.minimumPhotoCount else {
+        // Formal Photos bursts are already excluded upstream. This additional
+        // pass conservatively collapses only ordinary rapid captures whose
+        // existing local analysis strongly indicates the same scene. It never
+        // reads or decodes image bytes.
+        let scenePhotos = collapseRapidNearDuplicates(monthPhotos)
+
+        guard scenePhotos.count >= Self.minimumSceneCount else {
             return unavailableResult(
                 monthStart: interval.start,
-                reason: monthPhotos.isEmpty ? .noDatedPhotos : .notEnoughDatedPhotos,
-                availablePhotoCount: monthPhotos.count
+                reason: scenePhotos.isEmpty ? .noDatedPhotos : .notEnoughDistinctScenes,
+                availableSceneCount: scenePhotos.count
             )
         }
 
-        let targetCount = min(Self.maximumPhotoCount, monthPhotos.count)
+        let targetCount = min(Self.maximumSceneCount, scenePhotos.count)
         let selected = selectRepresentatives(
-            from: monthPhotos,
+            from: scenePhotos,
             targetCount: targetCount,
             interval: interval
         )
@@ -110,13 +133,13 @@ struct MonthlyWindowBuilder {
             yearNumber: calendar.component(.year, from: interval.start),
             monthNumber: calendar.component(.month, from: interval.start),
             photos: selected.sorted(by: oldestFirst),
-            availablePhotoCount: monthPhotos.count
+            availableSceneCount: scenePhotos.count
         ))
     }
 
-    /// Uses the current month when it is ready. Early in a new month, it keeps
-    /// the newest earlier month with enough photos instead of making a finished
-    /// recap disappear on the first day of the month.
+    /// Uses the newest completed month with enough distinct scenes. A letter is
+    /// a finished look back, not a live folder that changes while the month is
+    /// still in progress.
     func buildMostRecent(
         from inputPhotos: [PhotoPresentation],
         through referenceDate: Date
@@ -128,30 +151,38 @@ struct MonthlyWindowBuilder {
             return unavailableResult(
                 monthStart: referenceDate,
                 reason: .noDatedPhotos,
-                availablePhotoCount: 0
+                availableSceneCount: 0
             )
         }
 
         let photos = canonicalPhotos(inputPhotos)
-        var months: [Date: Int] = [:]
+        var months: [Date: [PhotoPresentation]] = [:]
         for photo in photos {
             guard let capturedAt = photo.creationDate,
-                  capturedAt < currentInterval.end,
+                  capturedAt < currentInterval.start,
                   let monthStart = calendar.dateInterval(
                     of: .month,
                     for: capturedAt
                   )?.start else { continue }
-            months[monthStart, default: 0] += 1
+            months[monthStart, default: []].append(photo)
         }
 
         if let newestReadyMonth = months
-            .filter({ $0.value >= Self.minimumPhotoCount })
+            .filter({
+                collapseRapidNearDuplicates($0.value).count
+                    >= Self.minimumSceneCount
+            })
             .map(\.key)
             .max() {
             return build(from: photos, monthContaining: newestReadyMonth)
         }
 
-        return build(from: photos, monthContaining: referenceDate)
+        let previousMonth = calendar.date(
+            byAdding: .month,
+            value: -1,
+            to: currentInterval.start
+        ) ?? referenceDate
+        return build(from: photos, monthContaining: previousMonth)
     }
 
     /// Cat photos normally arrive with one record per Photos identifier. This
@@ -171,6 +202,138 @@ struct MonthlyWindowBuilder {
             }
         }
         return Array(unique.values)
+    }
+
+    /// Returns one deterministic representative for each confidently matched
+    /// rapid-capture group. The first photo still bounds the group's total
+    /// duration, while comparison follows the current representative so a
+    /// preferred middle shot cannot remain beside a near-identical last shot.
+    private func collapseRapidNearDuplicates(
+        _ photos: [PhotoPresentation]
+    ) -> [PhotoPresentation] {
+        let sorted = photos.sorted(by: oldestFirst)
+        var groups: [[PhotoPresentation]] = []
+
+        for photo in sorted {
+            var matchingGroupIndices: [Int] = []
+            for index in groups.indices.reversed() {
+                guard let anchor = groups[index].first,
+                      let anchorDate = anchor.creationDate,
+                      let photoDate = photo.creationDate else { continue }
+
+                let elapsed = photoDate.timeIntervalSince(anchorDate)
+                guard elapsed >= 0 else { continue }
+                if elapsed > Self.rapidNearDuplicateInterval { break }
+                let representative = groups[index].min(
+                    by: preferredSceneRepresentative
+                ) ?? anchor
+                if areConfidentRapidNearDuplicates(representative, photo) {
+                    matchingGroupIndices.append(index)
+                }
+            }
+
+            if let insertionIndex = matchingGroupIndices.min() {
+                var mergedGroup = [photo]
+                for index in matchingGroupIndices {
+                    mergedGroup.append(contentsOf: groups[index])
+                }
+                for index in matchingGroupIndices.sorted(by: >) {
+                    groups.remove(at: index)
+                }
+                groups.insert(
+                    mergedGroup.sorted(by: oldestFirst),
+                    at: insertionIndex
+                )
+            } else {
+                groups.append([photo])
+            }
+        }
+
+        return groups.compactMap { group in
+            group.min(by: preferredSceneRepresentative)
+        }
+    }
+
+    /// Time proximity is intentionally insufficient. Both photos must have
+    /// current local analysis, matching coarse scene traits, a nearly identical
+    /// cat framing, and a closely matching detected cat area. Missing evidence
+    /// fails open as two separate scenes so distinct moments are not lost.
+    private func areConfidentRapidNearDuplicates(
+        _ lhs: PhotoPresentation,
+        _ rhs: PhotoPresentation
+    ) -> Bool {
+        guard lhs.hasCurrentAlbumAnalysis,
+              rhs.hasCurrentAlbumAnalysis,
+              lhs.albumContainsPerson == rhs.albumContainsPerson,
+              lhs.albumIsOuting == rhs.albumIsOuting,
+              lhs.albumPostures == rhs.albumPostures,
+              lhs.detectedCatCount == rhs.detectedCatCount,
+              lhs.isGrowthEligible == rhs.isGrowthEligible,
+              let leftBox = lhs.catBoundingBox,
+              let rightBox = rhs.catBoundingBox,
+              boundingBoxIntersectionOverUnion(leftBox, rightBox)
+                >= Self.minimumBoundingBoxIntersectionOverUnion,
+              let leftArea = lhs.largestCatAreaRatio,
+              let rightArea = rhs.largestCatAreaRatio,
+              leftArea.isFinite,
+              rightArea.isFinite,
+              abs(leftArea - rightArea)
+                <= Self.maximumLargestCatAreaDelta else {
+            return false
+        }
+        return true
+    }
+
+    private func boundingBoxIntersectionOverUnion(
+        _ lhs: CGRect,
+        _ rhs: CGRect
+    ) -> Double {
+        guard lhs.origin.x.isFinite,
+              lhs.origin.y.isFinite,
+              lhs.width.isFinite,
+              lhs.height.isFinite,
+              rhs.origin.x.isFinite,
+              rhs.origin.y.isFinite,
+              rhs.width.isFinite,
+              rhs.height.isFinite,
+              lhs.width > 0,
+              lhs.height > 0,
+              rhs.width > 0,
+              rhs.height > 0 else { return 0 }
+
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull,
+              intersection.width > 0,
+              intersection.height > 0 else { return 0 }
+
+        let intersectionArea = intersection.width * intersection.height
+        let unionArea = lhs.width * lhs.height
+            + rhs.width * rhs.height
+            - intersectionArea
+        guard unionArea > 0 else { return 0 }
+        return Double(intersectionArea / unionArea)
+    }
+
+    /// `min(by:)` comparator: true means lhs is the representative preferred
+    /// over rhs. Explicit memories are never discarded in favor of an ordinary
+    /// rapid shot; the remaining metadata tie-breakers are deterministic.
+    private func preferredSceneRepresentative(
+        _ lhs: PhotoPresentation,
+        _ rhs: PhotoPresentation
+    ) -> Bool {
+        if lhs.isLiked != rhs.isLiked { return lhs.isLiked }
+        if lhs.hasCurrentAlbumAnalysis != rhs.hasCurrentAlbumAnalysis {
+            return lhs.hasCurrentAlbumAnalysis
+        }
+
+        let leftArea = lhs.largestCatAreaRatio ?? 0
+        let rightArea = rhs.largestCatAreaRatio ?? 0
+        if leftArea != rightArea { return leftArea > rightArea }
+
+        let leftDate = lhs.creationDate ?? .distantFuture
+        let rightDate = rhs.creationDate ?? .distantFuture
+        if leftDate != rightDate { return leftDate < rightDate }
+        return lhs.localIdentifier < rhs.localIdentifier
     }
 
     private func isPreferredCanonicalPhoto(
@@ -315,13 +478,13 @@ struct MonthlyWindowBuilder {
     private func unavailableResult(
         monthStart: Date,
         reason: MonthlyWindowUnavailableReason,
-        availablePhotoCount: Int
+        availableSceneCount: Int
     ) -> MonthlyWindowBuildResult {
         .unavailable(MonthlyWindowUnavailablePresentation(
             monthStart: monthStart,
             reason: reason,
-            availablePhotoCount: availablePhotoCount,
-            minimumPhotoCount: Self.minimumPhotoCount
+            availableSceneCount: availableSceneCount,
+            minimumSceneCount: Self.minimumSceneCount
         ))
     }
 }
