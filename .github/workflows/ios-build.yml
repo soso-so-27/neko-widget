@@ -425,6 +425,18 @@ jobs:
             -o "$RUNNER_TEMP/verify-monthly-window"
           "$RUNNER_TEMP/verify-monthly-window"
 
+      - name: Verify seasonal movie selection
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Views/SeasonalMoviePresentation.swift \
+            ci/verify-seasonal-movie.swift \
+            -o "$RUNNER_TEMP/verify-seasonal-movie"
+          "$RUNNER_TEMP/verify-seasonal-movie"
+
       - name: Verify scan recovery and Widget eligibility policies
         working-directory: NekoWidget
         shell: bash

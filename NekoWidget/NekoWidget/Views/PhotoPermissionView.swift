@@ -53,18 +53,18 @@ struct PhotoPermissionView: View {
         switch status {
         case .denied: "写真へのアクセスが必要です"
         case .restricted: "写真へのアクセスが制限されています"
-        default: "このiPhoneの猫写真を見つけよう"
+        default: "猫の写真や動画を見つけよう"
         }
     }
 
     private var message: String {
         switch status {
         case .denied:
-            "設定で写真へのアクセスを許可すると、カメラロールから猫の写真だけを選びます。"
+            "設定で写真へのアクセスを許可すると、猫の写真を整理し、猫が写る動画を季節の作品に使えます。"
         case .restricted:
             "スクリーンタイムや端末管理の設定により、写真を読み込めません。"
         default:
-            "カメラロールの写真を端末内で調べ、猫が主役の写真だけを選びます。"
+            "写真から猫が写る場面を整理し、季節の作品では端末内で確認できた動画も使います。"
         }
     }
 

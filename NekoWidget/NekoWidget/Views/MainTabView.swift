@@ -3,6 +3,7 @@ import SwiftUI
 enum TodayRoute: Hashable {
     case photo(String)
     case automaticAlbums
+    case seasonalMovie(SeasonalMoviePresentation)
     case monthlyWindow(MonthlyWindowPresentation)
 }
 
@@ -11,7 +12,16 @@ enum MemoriesRoute: Hashable {
     case automaticAlbums
 }
 
+private struct SeasonalMoviePreparationKey: Hashable {
+    let canPrepare: Bool
+    let quarterStart: Date?
+    let photoDigest: Int
+    let sourceAlbumIdentifier: String?
+}
+
 struct MainTabView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     let currentPhoto: PhotoPresentation?
     let likedPhotos: [PhotoPresentation]
     let catPhotos: [PhotoPresentation]
@@ -66,12 +76,15 @@ struct MainTabView: View {
     @State private var widgetShownAt: Date?
     @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
     @State private var isAutomaticAlbumsInPath = false
+    @State private var seasonalMovie: SeasonalMoviePresentation?
+    @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
 
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $todayPath) {
                 HomeView(
                     currentPhoto: currentPhoto,
+                    seasonalMovie: seasonalMovie,
                     monthlyWindow: currentMonthlyWindow,
                     scan: scan,
                     hasPhotoAccess: hasPhotoAccess,
@@ -81,6 +94,10 @@ struct MainTabView: View {
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showSettings: { showsSettings = true },
+                    openSeasonalMovie: {
+                        guard let seasonalMovie else { return }
+                        todayPath.append(TodayRoute.seasonalMovie(seasonalMovie))
+                    },
                     setMemorySaved: setMemorySaved,
                     rescan: { Task { await rescan() } }
                 )
@@ -186,6 +203,9 @@ struct MainTabView: View {
                 return
             }
         }
+        .task(id: seasonalMoviePreparationKey) {
+            await prepareSeasonalMovie()
+        }
     }
 
     private var settingsSheet: some View {
@@ -243,6 +263,8 @@ struct MainTabView: View {
                 .onAppear {
                     isAutomaticAlbumsInPath = true
                 }
+        case let .seasonalMovie(presentation):
+            SeasonalMovieView(presentation: presentation)
         case let .monthlyWindow(snapshot):
             MonthlyWindowView(
                 presentation: refreshedMonthlyWindow(snapshot),
@@ -439,6 +461,96 @@ struct MainTabView: View {
         )
         guard case let .ready(presentation) = result else { return nil }
         return presentation
+    }
+
+    private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {
+        let builder = SeasonalMovieBuilder()
+        let interval = builder.completedQuarter(containing: Date())
+        let sourceAlbumIdentifier: String?
+        let sourceIsAvailable: Bool
+        switch photoSourceStatus {
+        case .allLibrary:
+            sourceAlbumIdentifier = nil
+            sourceIsAvailable = true
+        case let .selected(album):
+            sourceAlbumIdentifier = album.localIdentifier
+            sourceIsAvailable = true
+        case .unavailable:
+            sourceAlbumIdentifier = nil
+            sourceIsAvailable = false
+        }
+        var hasher = Hasher()
+        if let interval {
+            for photo in catPhotos
+                .filter({ photo in
+                    guard let date = photo.creationDate else { return false }
+                    return date >= interval.start && date < interval.end
+                })
+                .sorted(by: { $0.localIdentifier < $1.localIdentifier }) {
+                hasher.combine(photo.localIdentifier)
+                hasher.combine(photo.creationDate)
+                hasher.combine(photo.catBoundingBox)
+                hasher.combine(photo.largestCatAreaRatio)
+            }
+        }
+        return SeasonalMoviePreparationKey(
+            canPrepare: hasPhotoAccess
+                && sourceIsAvailable
+                && !isScanning
+                && scenePhase == .active,
+            quarterStart: interval?.start,
+            photoDigest: hasher.finalize(),
+            sourceAlbumIdentifier: sourceAlbumIdentifier
+        )
+    }
+
+    @MainActor
+    private func prepareSeasonalMovie() async {
+        guard hasPhotoAccess else {
+            seasonalMovie = nil
+            completedSeasonalMoviePreparationKey = nil
+            return
+        }
+        let preparationKey = seasonalMoviePreparationKey
+        guard preparationKey.canPrepare else {
+            if photoSourceStatus == .unavailable {
+                seasonalMovie = nil
+                completedSeasonalMoviePreparationKey = nil
+            }
+            return
+        }
+        guard completedSeasonalMoviePreparationKey != preparationKey else { return }
+
+        let now = Date()
+        let builder = SeasonalMovieBuilder()
+        guard let quarter = builder.completedQuarter(containing: now) else {
+            seasonalMovie = nil
+            return
+        }
+        let service = SeasonalMovieCandidateService()
+        let photoCandidates = await service.photoCandidates(catPhotos, in: quarter)
+        guard !Task.isCancelled else { return }
+        if case let .ready(photoPresentation) = builder.buildMostRecent(
+            from: photoCandidates,
+            through: now
+        ) {
+            seasonalMovie = photoPresentation
+        } else {
+            seasonalMovie = nil
+        }
+
+        let videoCandidates = await service.videoCandidates(
+            in: quarter,
+            sourceAlbumIdentifier: preparationKey.sourceAlbumIdentifier
+        )
+        guard !Task.isCancelled else { return }
+        if case let .ready(richerPresentation) = builder.buildMostRecent(
+            from: photoCandidates + videoCandidates,
+            through: now
+        ) {
+            seasonalMovie = richerPresentation
+        }
+        completedSeasonalMoviePreparationKey = preparationKey
     }
 
     private func refreshedMonthlyWindow(

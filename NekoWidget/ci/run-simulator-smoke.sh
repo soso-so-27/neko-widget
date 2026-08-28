@@ -10,7 +10,7 @@ PHOTO_PERMISSION_VALIDATOR="$PROJECT_DIRECTORY/ci/validate-photo-permission-boot
 SHARING_RUNTIME_REPORT_FILENAME="sharing-runtime-self-test.json"
 SHARING_RUNTIME_PROGRESS_FILENAME="sharing-runtime-self-test-progress.json"
 SHARING_RUNTIME_RENDERER_VERSION="cat-aware-full-bleed-v6"
-LOCAL_PHOTO_LIBRARY_USAGE_DESCRIPTION='猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は端末内で行います。'
+LOCAL_PHOTO_LIBRARY_USAGE_DESCRIPTION='猫の写真を端末内で見つけて写真アプリの「うちの子」アルバムとウィジェットへ反映し、猫が写る写真や動画から季節の作品を再生するため、写真ライブラリへのアクセスを許可してください。解析と再生は端末内で行い、元の写真や動画を変更・削除しません。'
 SIMULATOR_TEST_MODE="${SIMULATOR_TEST_MODE:-smoke}"
 case "$SIMULATOR_TEST_MODE" in
     smoke)

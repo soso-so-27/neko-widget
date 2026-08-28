@@ -25,5 +25,5 @@ APP_SUPPORT_URL = https:/$()/soso-so-27.github.io/neko-widget/app/support/
 // An ordinary Release/Archive must remain truthful and must not advertise the
 // Share Extension. Media-staging can override both values only in the guarded
 // release workflow, where the processed archive is validated again.
-PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真を端末内で見つけて整理し、「うちの子」アルバムとウィジェットへ反映するため、写真ライブラリへのアクセスを許可してください。写真の解析とウィジェット用画像の作成は端末内で行います。
+PHOTO_LIBRARY_USAGE_DESCRIPTION = 猫の写真を端末内で見つけて写真アプリの「うちの子」アルバムとウィジェットへ反映し、猫が写る写真や動画から季節の作品を再生するため、写真ライブラリへのアクセスを許可してください。解析と再生は端末内で行い、元の写真や動画を変更・削除しません。
 SHARE_EXTENSION_INFOPLIST_FILE = NekoWidgetShareExtension/Info.Disabled.plist
