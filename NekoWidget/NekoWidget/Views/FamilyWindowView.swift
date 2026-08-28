@@ -59,6 +59,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
 
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let initialPresentation: FamilyWindowInitialPresentation
     @Binding private var pendingMemorySourceDigest: String?
     @Binding private var pendingNotificationRoute: MomentNotificationRoute?
@@ -553,10 +554,7 @@ struct FamilyWindowView: View {
                 : "ほかの思い出に残した写真")
                 .font(.headline)
             LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 10),
-                    GridItem(.flexible(), spacing: 10)
-                ],
+                columns: receivedPhotoColumns,
                 spacing: 10
             ) {
                 ForEach(filteredReceivedMoments.dropFirst()) { item in
@@ -603,6 +601,14 @@ struct FamilyWindowView: View {
             moments.insert(moments.remove(at: index), at: moments.startIndex)
         }
         return moments
+    }
+
+    private var receivedPhotoColumns: [GridItem] {
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        return Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 10),
+            count: count
+        )
     }
 
     @ViewBuilder
@@ -881,16 +887,13 @@ struct FamilyWindowView: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 if let url = model.imageURL(for: item) {
-                    MomentLocalImageView(url: url)
-                        .frame(maxWidth: .infinity)
-                        .aspectRatio(1, contentMode: .fill)
-                        .clipped()
+                    receivedPhotoSurface(
+                        url: url,
+                        aspectRatio: 1,
+                        contentMode: .fill
+                    )
                 } else {
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .aspectRatio(1, contentMode: .fit)
+                    receivedPhotoPlaceholder(aspectRatio: 1)
                 }
                 HStack(spacing: 5) {
                     Text(item.receivedAt.formatted(.dateTime.month().day()))
@@ -1444,8 +1447,13 @@ struct FamilyWindowView: View {
     private func momentCard(_ item: MomentInboxItem) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let url = model.imageURL(for: item) {
-                MomentLocalImageView(url: url, contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: 520)
+                receivedPhotoSurface(
+                    url: url,
+                    aspectRatio: 4.0 / 3.0,
+                    contentMode: .fit
+                )
+            } else {
+                receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)
             }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1590,6 +1598,33 @@ struct FamilyWindowView: View {
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func receivedPhotoSurface(
+        url: URL,
+        aspectRatio: CGFloat,
+        contentMode: ContentMode
+    ) -> some View {
+        ZStack {
+            Color(uiColor: .tertiarySystemFill)
+            MomentLocalImageView(url: url, contentMode: contentMode)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        // The container owns the size. Asking the image itself to establish a
+        // square inside a flexible grid lets portrait and landscape assets
+        // produce different row heights on device.
+        .aspectRatio(aspectRatio, contentMode: .fit)
+        .clipped()
+    }
+
+    private func receivedPhotoPlaceholder(aspectRatio: CGFloat) -> some View {
+        ZStack {
+            Color(uiColor: .tertiarySystemFill)
+            Image(systemName: "photo")
+                .font(.largeTitle)
+                .foregroundStyle(.secondary)
+        }
+        .aspectRatio(aspectRatio, contentMode: .fit)
     }
 
     @ViewBuilder
@@ -2035,6 +2070,7 @@ struct MomentLocalImageView: View {
     let url: URL
     let contentMode: ContentMode
     @State private var image: UIImage?
+    @State private var loadFailed = false
 
     init(url: URL, contentMode: ContentMode = .fill) {
         self.url = url
@@ -2050,6 +2086,13 @@ struct MomentLocalImageView: View {
                     .aspectRatio(contentMode: contentMode)
                     .frame(maxWidth: .infinity)
                     .background(Color(uiColor: .tertiarySystemFill))
+            } else if loadFailed {
+                ZStack {
+                    Color(uiColor: .tertiarySystemFill)
+                    Image(systemName: "photo")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 ZStack {
                     Color(uiColor: .tertiarySystemFill)
@@ -2063,6 +2106,7 @@ struct MomentLocalImageView: View {
             // safe photo. Never retain the previous pixels while the new file
             // is loading or if its decode fails.
             image = nil
+            loadFailed = false
             if let cached = MomentLocalImageCache.shared.image(for: url) {
                 guard !Task.isCancelled else { return }
                 image = cached
@@ -2078,7 +2122,11 @@ struct MomentLocalImageView: View {
                     maximumPixelSize: maximumPixelSize
                 )
             }.value
-            guard !Task.isCancelled, let rendered else { return }
+            guard !Task.isCancelled else { return }
+            guard let rendered else {
+                loadFailed = true
+                return
+            }
             let value = UIImage(cgImage: rendered.cgImage)
             MomentLocalImageCache.shared.insert(
                 value,
@@ -2088,7 +2136,10 @@ struct MomentLocalImageView: View {
             )
             image = value
         }
-        .onDisappear { image = nil }
+        .onDisappear {
+            image = nil
+            loadFailed = false
+        }
     }
 }
 

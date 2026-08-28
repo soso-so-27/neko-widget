@@ -745,6 +745,36 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('} else if photo.isLiked {', thumbnail)
         self.assertIn('Image(systemName: "bookmark.fill")', thumbnail)
 
+    def test_memories_preview_future_physical_forms_without_a_false_purchase_action(self) -> None:
+        memories = source("NekoWidget/Views/LikedPhotosView.swift")
+        memory_view = section(
+            memories,
+            "struct LikedPhotosView:",
+            "private struct MemoryCreationPreviewSheet:",
+        )
+        self.assertIn("if !isSelectingForExport", memory_view)
+        self.assertIn("creationPreviewCard", memory_view)
+        self.assertIn('Text("かたちにする")', memory_view)
+        self.assertIn('Text("準備中")', memory_view)
+        self.assertIn('Text("一枚を贈る・卓上に飾る・小さな本")', memory_view)
+        self.assertIn('accessibilityIdentifier("memory-creation-preview")', memory_view)
+
+        preview = section(
+            memories,
+            "private struct MemoryCreationPreviewSheet:",
+            "private struct LikedPhotoBookExportFile:",
+        )
+        for future_form in [
+            'title: "一枚を贈る"',
+            'title: "卓上に飾る"',
+            'title: "小さな本にまとめる"',
+        ]:
+            self.assertIn(future_form, preview)
+        self.assertIn("まだ注文できません。", preview)
+        self.assertNotIn('Button("購入', preview)
+        self.assertNotIn('Button("注文', preview)
+        self.assertNotIn("StoreKit", preview)
+
     def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")
         centered = section(
@@ -2117,15 +2147,59 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func compactMomentCard(",
             "private func sharingErrorCard(",
         )
-        self.assertIn(".aspectRatio(1, contentMode: .fill)", compact)
+        self.assertIn("receivedPhotoSurface(", compact)
+        self.assertIn("aspectRatio: 1", compact)
+        self.assertIn("contentMode: .fill", compact)
+        self.assertIn("receivedPhotoPlaceholder(aspectRatio: 1)", compact)
+        self.assertNotIn(".aspectRatio(1, contentMode: .fill)", compact)
+
+        received_section = section(
+            family,
+            "@ViewBuilder\n    private var receivedSectionContent",
+            "@ViewBuilder\n    private var sentSectionContent",
+        )
+        self.assertIn("columns: receivedPhotoColumns", received_section)
+        received_columns = section(
+            family,
+            "private var receivedPhotoColumns:",
+            "@ViewBuilder\n    private var manualRefreshResult",
+        )
+        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 1 : 2", received_columns)
+        self.assertIn("GridItem(.flexible(minimum: 0)", received_columns)
 
         primary = section(
             family,
             "private func momentCard(",
             "private func memoryActionControl(",
         )
-        self.assertIn("MomentLocalImageView(url: url, contentMode: .fit)", primary)
+        self.assertIn("receivedPhotoSurface(", primary)
+        self.assertIn("aspectRatio: 4.0 / 3.0", primary)
+        self.assertIn("contentMode: .fit", primary)
+        self.assertIn(
+            "receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)",
+            primary,
+        )
         self.assertNotIn(".frame(height: 280)", primary)
+        self.assertNotIn("maxHeight: 520", primary)
+
+        surface = section(
+            family,
+            "private func receivedPhotoSurface(",
+            "@ViewBuilder\n    private func memoryActionControl(",
+        )
+        self.assertIn(".frame(maxWidth: .infinity, maxHeight: .infinity)", surface)
+        self.assertIn(".aspectRatio(aspectRatio, contentMode: .fit)", surface)
+        self.assertIn(".clipped()", surface)
+
+        local_image = section(
+            family,
+            "struct MomentLocalImageView:",
+            "private struct MomentDownsampledImage:",
+        )
+        self.assertIn("@State private var loadFailed = false", local_image)
+        self.assertIn("} else if loadFailed {", local_image)
+        self.assertIn("guard let rendered else {", local_image)
+        self.assertIn("loadFailed = true", local_image)
 
         memory = section(
             family,
