@@ -100,6 +100,32 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The Memories tab was not available.", application: app)
             return
         }
+        let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
+        guard memoriesAutomaticAlbums.waitForExistence(timeout: 15) else {
+            fail(
+                "The automatic-albums entry was not available from Memories.",
+                application: app
+            )
+            return
+        }
+        memoriesAutomaticAlbums.tap()
+        guard app.buttons["album-primary-all-cat-photos"]
+            .waitForExistence(timeout: 15) else {
+            fail(
+                "The Memories automatic-albums entry did not open the albums.",
+                application: app
+            )
+            return
+        }
+        let memoriesBackButton = app.navigationBars["自動アルバム"].buttons["思い出"]
+        guard memoriesBackButton.waitForExistence(timeout: 5) else {
+            fail(
+                "The automatic-albums screen could not return to Memories.",
+                application: app
+            )
+            return
+        }
+        memoriesBackButton.tap()
         guard app.buttons["PDFにまとめる"].waitForExistence(timeout: 15) else {
             fail("The deterministic Likes collection did not appear.", application: app)
             return

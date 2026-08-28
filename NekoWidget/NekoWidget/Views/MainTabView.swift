@@ -3,6 +3,13 @@ import SwiftUI
 enum TodayRoute: Hashable {
     case photo(String)
     case automaticAlbums
+    case monthlyWindow(MonthlyWindowPresentation)
+    case monthlyPhoto(MonthlyWindowPresentation, String)
+}
+
+enum MemoriesRoute: Hashable {
+    case photo(String)
+    case automaticAlbums
 }
 
 struct MainTabView: View {
@@ -53,7 +60,7 @@ struct MainTabView: View {
 
     @State private var selectedTab: AppTab = .today
     @State private var todayPath = NavigationPath()
-    @State private var memoriesPath: [String] = []
+    @State private var memoriesPath = NavigationPath()
     @State private var showsSettings = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
     @State private var widgetOpenedPhotoIdentifier: String?
@@ -66,6 +73,7 @@ struct MainTabView: View {
             NavigationStack(path: $todayPath) {
                 HomeView(
                     currentPhoto: currentPhoto,
+                    monthlyWindow: currentMonthlyWindow,
                     scan: scan,
                     hasPhotoAccess: hasPhotoAccess,
                     isLimitedAccess: isLimitedAccess,
@@ -104,9 +112,13 @@ struct MainTabView: View {
             NavigationStack(path: $memoriesPath) {
                 LikedPhotosView(
                     photos: likedPhotos,
+                    hasPhotoAccess: hasPhotoAccess,
                     exportPhotoBook: exportPhotoBook
                 )
-                    .navigationDestination(for: String.self, destination: memoryDetailView)
+                    .navigationDestination(
+                        for: MemoriesRoute.self,
+                        destination: memoriesDestination
+                    )
             }
             .tabItem {
                 Label("思い出", systemImage: "photo.stack.fill")
@@ -228,19 +240,20 @@ struct MainTabView: View {
         case let .photo(localIdentifier):
             detailView(for: localIdentifier)
         case .automaticAlbums:
-            AlbumView(
-                sections: curatedAlbumSections,
-                scan: scan,
-                profiles: catProfilesPresentation.profiles,
-                photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
-                profileActions: catProfilesActions,
-                selectedScope: $selectedAlbumScope
+            automaticAlbumsView
+                .onAppear {
+                    isAutomaticAlbumsInPath = true
+                }
+        case let .monthlyWindow(snapshot):
+            MonthlyWindowView(
+                presentation: refreshedMonthlyWindow(snapshot),
+                setMemorySaved: setMemorySaved
             )
-            .navigationTitle("自動アルバム")
-            .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
-            .onAppear {
-                isAutomaticAlbumsInPath = true
-            }
+        case let .monthlyPhoto(snapshot, localIdentifier):
+            monthlyWindowDetailView(
+                snapshot: snapshot,
+                localIdentifier: localIdentifier
+            )
         }
     }
 
@@ -291,6 +304,63 @@ struct MainTabView: View {
                 Task { await catProfilesActions.replacePhotoAssignments(values) }
             }
         )
+    }
+
+    @ViewBuilder
+    private func monthlyWindowDetailView(
+        snapshot: MonthlyWindowPresentation,
+        localIdentifier: String
+    ) -> some View {
+        let monthlyWindow = refreshedMonthlyWindow(snapshot)
+        if let initialPhoto = monthlyWindow.photos.first(where: {
+               $0.localIdentifier == localIdentifier
+           }) {
+            PhotoBrowserView(
+                photos: monthlyWindow.photos,
+                libraryPhotos: libraryPhotos,
+                initialPhoto: initialPhoto,
+                widgetShownAt: nil,
+                widgetIntervalMinutes: widgetIntervalMinutes,
+                setMemorySaved: setMemorySaved,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: { identifiers in
+                    Task { await excludeFromCatCandidates(identifiers) }
+                },
+                restoreCatCandidates: { identifiers in
+                    Task { await restoreCatCandidates(identifiers) }
+                },
+                profiles: catProfilesPresentation.profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: { values in
+                    Task { await catProfilesActions.replacePhotoAssignments(values) }
+                }
+            )
+        } else {
+            missingMonthlyWindowView
+        }
+    }
+
+    @ViewBuilder
+    private func memoriesDestination(for route: MemoriesRoute) -> some View {
+        switch route {
+        case let .photo(localIdentifier):
+            memoryDetailView(for: localIdentifier)
+        case .automaticAlbums:
+            automaticAlbumsView
+        }
+    }
+
+    private var automaticAlbumsView: some View {
+        AlbumView(
+            sections: curatedAlbumSections,
+            scan: scan,
+            profiles: catProfilesPresentation.profiles,
+            photoAlbumOptions: catProfilesPresentation.photoAlbumOptions,
+            profileActions: catProfilesActions,
+            selectedScope: $selectedAlbumScope
+        )
+        .navigationTitle("自動アルバム")
+        .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
     }
 
     @ViewBuilder
@@ -402,6 +472,33 @@ struct MainTabView: View {
         return sections
     }
 
+    private var currentMonthlyWindow: MonthlyWindowPresentation? {
+        let result = MonthlyWindowBuilder().buildMostRecent(
+            from: catPhotos,
+            through: Date()
+        )
+        guard case let .ready(presentation) = result else { return nil }
+        return presentation
+    }
+
+    private func refreshedMonthlyWindow(
+        _ snapshot: MonthlyWindowPresentation
+    ) -> MonthlyWindowPresentation {
+        var currentByIdentifier: [String: PhotoPresentation] = [:]
+        for photo in catPhotos {
+            currentByIdentifier[photo.localIdentifier] = photo
+        }
+        return MonthlyWindowPresentation(
+            monthStart: snapshot.monthStart,
+            yearNumber: snapshot.yearNumber,
+            monthNumber: snapshot.monthNumber,
+            photos: snapshot.photos.map {
+                currentByIdentifier[$0.localIdentifier] ?? $0
+            },
+            availablePhotoCount: snapshot.availablePhotoCount
+        )
+    }
+
     private var scopedCatPhotos: [PhotoPresentation] {
         guard case let .profile(identifier) = selectedAlbumScope else {
             return catPhotos
@@ -475,6 +572,14 @@ struct MainTabView: View {
             "アルバムを更新しています",
             systemImage: "rectangle.stack",
             description: Text("スキャン結果が更新されました。アルバムの一覧へ戻って、もう一度開いてください。")
+        )
+    }
+
+    private var missingMonthlyWindowView: some View {
+        ContentUnavailableView(
+            "月のまどを更新しています",
+            systemImage: "sparkles.rectangle.stack",
+            description: Text("「今日」へ戻ると、最新の写真からもう一度作ります。")
         )
     }
 
