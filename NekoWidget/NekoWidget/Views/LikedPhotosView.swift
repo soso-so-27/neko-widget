@@ -505,6 +505,7 @@ struct CuratedAlbumDetailView: View {
 /// automatically organized "アルバム". PDF export is optional.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
+    let hasPhotoAccess: Bool
     let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var isExportingPhotoBook = false
@@ -519,16 +520,20 @@ struct LikedPhotosView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
+                if hasPhotoAccess {
+                    automaticAlbumsCard
+                }
+
                 if photos.isEmpty {
                     ContentUnavailableView {
                         Label {
-                            Text("思い出はまだありません")
+                            Text("残した写真はまだありません")
                         } icon: {
                             Image(systemName: "photo.stack")
                                 .font(.system(size: 28, weight: .semibold))
                         }
                     } description: {
-                        Text("写真の「思い出に残す」を押すと、ここに溜まります。")
+                        Text("「思い出に残す」を押した写真だけが、ここに溜まります。")
                     }
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .padding()
@@ -544,14 +549,19 @@ struct LikedPhotosView: View {
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
                             Label(
-                                "\(photos.count.formatted())枚の思い出",
+                                "自分で残した写真",
                                 systemImage: "bookmark.fill"
                             )
                             .font(.headline)
                             Spacer()
-                            Text("残した順")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 4) {
+                                Text("\(photos.count.formatted())枚")
+                                Text("・")
+                                    .accessibilityHidden(true)
+                                Text("残した順")
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 16)
                         .accessibilityIdentifier("photo-book-progress")
@@ -619,6 +629,46 @@ struct LikedPhotosView: View {
 
     private var photoColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
+    }
+
+    private var automaticAlbumsCard: some View {
+        NavigationLink(value: MemoriesRoute.automaticAlbums) {
+            HStack(spacing: 13) {
+                Image(systemName: "rectangle.stack.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        Color.accentColor.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 11)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("自動アルバムを見る")
+                        .font(.headline)
+                    Text("猫写真をテーマごとに整理")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 18)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .accessibilityIdentifier("memories-open-automatic-albums")
+        .accessibilityHint("自動で整理された猫写真を開きます")
     }
 
     private var creationPreviewCard: some View {
@@ -735,7 +785,7 @@ struct LikedPhotosView: View {
             .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
             .accessibilityValue(isSelected ? "PDFに選択中" : "未選択")
         } else {
-            NavigationLink(value: photo.localIdentifier) {
+            NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
                 likedPhotoThumbnail(photo, isSelected: false)
             }
             .buttonStyle(.plain)

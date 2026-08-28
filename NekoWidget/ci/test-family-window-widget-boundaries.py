@@ -752,6 +752,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "struct LikedPhotosView:",
             "private struct MemoryCreationPreviewSheet:",
         )
+        self.assertIn("if hasPhotoAccess", memory_view)
         self.assertIn("if !isSelectingForExport", memory_view)
         self.assertIn("creationPreviewCard", memory_view)
         self.assertIn('Text("かたちにする")', memory_view)
@@ -774,6 +775,39 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('Button("購入', preview)
         self.assertNotIn('Button("注文', preview)
         self.assertNotIn("StoreKit", preview)
+
+    def test_monthly_window_is_local_read_only_and_reachable_from_today(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        main = source("NekoWidget/Views/MainTabView.swift")
+        model = source("NekoWidget/Views/MonthlyWindowPresentation.swift")
+        view = source("NekoWidget/Views/MonthlyWindowView.swift")
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+
+        self.assertIn("if hasPhotoAccess, let monthlyWindow", home)
+        self.assertIn("MonthlyWindowCard(presentation: monthlyWindow)", home)
+        self.assertIn("from: catPhotos", main)
+        self.assertIn("buildMostRecent", main)
+        self.assertIn("through: Date()", main)
+        self.assertIn("case monthlyWindow", main)
+        self.assertIn("case monthlyPhoto(MonthlyWindowPresentation, String)", main)
+        self.assertIn("refreshedMonthlyWindow(snapshot)", main)
+
+        self.assertIn("static let minimumPhotoCount = 8", model)
+        self.assertIn("static let maximumPhotoCount = 12", model)
+        self.assertIn("capturedAt >= interval.start && capturedAt < interval.end", model)
+        self.assertNotIn("URLSession", model)
+        self.assertNotIn("UserDefaults", model)
+        self.assertNotIn("PHAsset", model)
+
+        self.assertIn("写真は送信しません。", view)
+        self.assertIn('Label("流して見る", systemImage: "play.fill")', view)
+        self.assertIn("MonthlyWindowSlideshowView", view)
+        self.assertIn("setMemorySaved(photo.localIdentifier, true)", view)
+        self.assertNotIn("AVFoundation", view)
+        self.assertNotIn("VideoPlayer", view)
+
+        self.assertIn("MonthlyWindowPresentation.swift in Sources", project)
+        self.assertIn("MonthlyWindowView.swift in Sources", project)
 
     def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")

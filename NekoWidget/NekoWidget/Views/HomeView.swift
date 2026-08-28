@@ -3,6 +3,7 @@ import UIKit
 
 struct HomeView: View {
     let currentPhoto: PhotoPresentation?
+    let monthlyWindow: MonthlyWindowPresentation?
     let scan: ScanPresentation
     let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
@@ -23,6 +24,10 @@ struct HomeView: View {
                     todayPhoto
                 } else {
                     photoAccessCard
+                }
+
+                if hasPhotoAccess, let monthlyWindow {
+                    MonthlyWindowCard(presentation: monthlyWindow)
                 }
 
                 if shouldOfferWidgetPlacementGuide {

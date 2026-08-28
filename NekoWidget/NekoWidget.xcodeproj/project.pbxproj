@@ -91,6 +91,8 @@
 		100000000000000000000174 /* PairingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000258 /* PairingPresentation.swift */; };
 		100000000000000000000144 /* PairingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000221 /* PairingViewModel.swift */; };
 		100000000000000000000130 /* AppPresentationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000230 /* AppPresentationModels.swift */; };
+		100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025B /* MonthlyWindowPresentation.swift */; };
+		10000000000000000000017A /* MonthlyWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025C /* MonthlyWindowView.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
 		100000000000000000000132 /* LikedPhotosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000232 /* LikedPhotosView.swift */; };
 		100000000000000000000133 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000233 /* MainTabView.swift */; };
@@ -257,6 +259,8 @@
 		F0000000000000000000022C /* HomeLocationClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLocationClassifier.swift; sourceTree = "<group>"; };
 		F00000000000000000000221 /* PairingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000230 /* AppPresentationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationModels.swift; sourceTree = "<group>"; };
+		F0000000000000000000025B /* MonthlyWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowPresentation.swift; sourceTree = "<group>"; };
+		F0000000000000000000025C /* MonthlyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthlyWindowView.swift; sourceTree = "<group>"; };
 		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F00000000000000000000232 /* LikedPhotosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LikedPhotosView.swift; sourceTree = "<group>"; };
 		F00000000000000000000233 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -595,6 +599,8 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000230 /* AppPresentationModels.swift */,
+				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
+				F0000000000000000000025C /* MonthlyWindowView.swift */,
 				F00000000000000000000231 /* HomeView.swift */,
 				F00000000000000000000232 /* LikedPhotosView.swift */,
 				F00000000000000000000233 /* MainTabView.swift */,
@@ -891,6 +897,8 @@
 				100000000000000000000155 /* CatHouseholdIdentityStore.swift in Sources */,
 				100000000000000000000144 /* PairingViewModel.swift in Sources */,
 				100000000000000000000130 /* AppPresentationModels.swift in Sources */,
+				100000000000000000000179 /* MonthlyWindowPresentation.swift in Sources */,
+				10000000000000000000017A /* MonthlyWindowView.swift in Sources */,
 				10000000000000000000014F /* GrowthAlbumSelector.swift in Sources */,
 				100000000000000000000150 /* GrowthAlbumView.swift in Sources */,
 				100000000000000000000153 /* CatCandidateCurationView.swift in Sources */,

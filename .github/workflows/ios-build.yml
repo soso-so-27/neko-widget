@@ -405,6 +405,26 @@ jobs:
           grep -Fq '? settings.catLifeReference' "$main_tab"
           grep -Fq '.onChange(of: settings.catLifeReference)' "$main_tab"
 
+      - name: Verify monthly window selection
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/AppSettings.swift \
+            Shared/Models/NormalizedRect.swift \
+            Shared/Models/CatDetection.swift \
+            Shared/Models/AssetRecord.swift \
+            Shared/Models/ScanState.swift \
+            Shared/Models/LibrarySnapshot.swift \
+            NekoWidget/Views/GrowthAlbumSelector.swift \
+            NekoWidget/Views/AppPresentationModels.swift \
+            NekoWidget/Views/MonthlyWindowPresentation.swift \
+            ci/verify-monthly-window.swift \
+            -o "$RUNNER_TEMP/verify-monthly-window"
+          "$RUNNER_TEMP/verify-monthly-window"
+
       - name: Verify scan recovery and Widget eligibility policies
         working-directory: NekoWidget
         shell: bash
