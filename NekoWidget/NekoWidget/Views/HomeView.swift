@@ -3,6 +3,7 @@ import UIKit
 
 struct HomeView: View {
     let currentPhoto: PhotoPresentation?
+    let seasonalMovie: SeasonalMoviePresentation?
     let monthlyWindow: MonthlyWindowPresentation?
     let scan: ScanPresentation
     let hasPhotoAccess: Bool
@@ -12,6 +13,7 @@ struct HomeView: View {
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let showSettings: () -> Void
+    let openSeasonalMovie: () -> Void
     let setMemorySaved: (String, Bool) -> Void
     let rescan: () -> Void
 
@@ -24,6 +26,13 @@ struct HomeView: View {
                     todayPhoto
                 } else {
                     photoAccessCard
+                }
+
+                if hasPhotoAccess, let seasonalMovie {
+                    SeasonalMovieCard(
+                        presentation: seasonalMovie,
+                        open: openSeasonalMovie
+                    )
                 }
 
                 if hasPhotoAccess, let monthlyWindow {

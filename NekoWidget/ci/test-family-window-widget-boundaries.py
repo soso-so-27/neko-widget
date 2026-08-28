@@ -820,6 +820,78 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("MonthlyWindowPresentation.swift in Sources", project)
         self.assertIn("MonthlyWindowView.swift in Sources", project)
 
+    def test_seasonal_movie_is_bounded_local_and_reachable_from_today(self) -> None:
+        home = source("NekoWidget/Views/HomeView.swift")
+        main = source("NekoWidget/Views/MainTabView.swift")
+        model = source("NekoWidget/Views/SeasonalMoviePresentation.swift")
+        service = source("NekoWidget/Services/SeasonalMovieCandidateService.swift")
+        view = source("NekoWidget/Views/SeasonalMovieView.swift")
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        config = source("Config.xcconfig")
+
+        self.assertIn("if hasPhotoAccess, let seasonalMovie", home)
+        self.assertIn("SeasonalMovieCard(", home)
+        self.assertIn("case seasonalMovie(SeasonalMoviePresentation)", main)
+        self.assertIn("SeasonalMovieView(presentation: presentation)", main)
+        self.assertIn("let service = SeasonalMovieCandidateService()", main)
+        self.assertIn("await service.photoCandidates", main)
+        self.assertIn("await service.videoCandidates", main)
+        self.assertIn("sourceAlbumIdentifier: preparationKey.sourceAlbumIdentifier", main)
+        self.assertIn("if photoSourceStatus == .unavailable", main)
+        self.assertIn("case let .ready(presentation)", main)
+        self.assertIn(".task(id: seasonalMoviePreparationKey)", main)
+        self.assertIn("completedSeasonalMoviePreparationKey", main)
+        self.assertIn(
+            "guard completedSeasonalMoviePreparationKey != preparationKey else { return }",
+            main,
+        )
+
+        self.assertIn("static let minimumDistinctSceneCount = 10", model)
+        self.assertIn("static let minimumCaptureDayCount = 6", model)
+        self.assertIn("static let minimumMonthCount = 2", model)
+        self.assertIn("static let maximumOutputSceneCount = 14", model)
+        self.assertIn("completedQuarter(containing: referenceDate)", model)
+        self.assertIn("collapseRapidNearDuplicates", model)
+        self.assertNotIn("URLSession", model)
+        self.assertNotIn("UserDefaults", model)
+
+        self.assertIn("PHAsset.fetchAssets(with: .video", service)
+        self.assertIn("VNRecognizeAnimalsRequest", service)
+        self.assertIn("maximumVideosPerMonth = 12", service)
+        self.assertIn("evenlySpacedAssets", service)
+        self.assertIn("PHAsset.fetchAssets(in: collection, options: options)", service)
+        self.assertIn("SeasonalMoviePhotoKitRequest", service)
+        self.assertIn("requestTimeoutNanoseconds", service)
+        self.assertGreaterEqual(
+            service.count("options.isNetworkAccessAllowed = false"),
+            2,
+        )
+        self.assertNotIn("URLSession", service)
+        self.assertNotIn("UserDefaults", service)
+
+        self.assertIn('Text("できました")', view)
+        self.assertIn('Text("この季節は、ここまで")', view)
+        self.assertIn("LocalSeasonalLivePhotoView", view)
+        self.assertIn("LocalSeasonalVideoView", view)
+        self.assertIn("currentSceneIsReady", view)
+        self.assertIn("markSceneReady", view)
+        self.assertIn("skipUnavailableScene", view)
+        self.assertIn("didLoad ? onReady() : onUnavailable()", view)
+        self.assertGreaterEqual(view.count("isMuted = true"), 2)
+        self.assertGreaterEqual(view.count("networkAccessAllowed: false"), 2)
+        self.assertIn("@Environment(\\.accessibilityReduceMotion)", view)
+        self.assertIn("@Environment(\\.scenePhase)", view)
+        self.assertNotIn("square.and.arrow.up", view)
+        self.assertNotIn("setMemorySaved", view)
+
+        self.assertIn("SeasonalMoviePresentation.swift in Sources", project)
+        self.assertIn("SeasonalMovieCandidateService.swift in Sources", project)
+        self.assertIn("SeasonalMovieView.swift in Sources", project)
+        self.assertIn("猫の写真を端末内で見つけて", config)
+        self.assertIn("アルバムとウィジェットへ反映し", config)
+        self.assertIn("猫が写る写真や動画から季節の作品", config)
+        self.assertIn("元の写真や動画を変更・削除しません", config)
+
     def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")
         centered = section(
@@ -1834,8 +1906,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         scan = source("NekoWidget/Views/ScanStatusView.swift")
         self.assertIn('"ねこのプロフィール"', settings)
         self.assertIn('.navigationTitle("ねこのプロフィール")', profiles)
-        self.assertIn('"このiPhoneの猫写真を探すために、"', onboarding)
-        self.assertIn('"このiPhoneの猫写真を見つけよう"', permission)
+        self.assertIn('"このiPhoneの猫の写真や動画を"', onboarding)
+        self.assertIn('"猫の写真や動画を見つけよう"', permission)
         self.assertIn('"このiPhoneの猫写真を探しています"', scan)
 
         surfaces_without_legacy_album_copy = [

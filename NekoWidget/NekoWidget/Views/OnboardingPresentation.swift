@@ -60,29 +60,29 @@ enum OnboardingPresentationCopy {
     static let purposeAction = "はじめる"
 
     static let permissionTitleLines = [
-        "このiPhoneの猫写真を探すために、",
-        "写真を読ませてください。"
+        "このiPhoneの猫の写真や動画を",
+        "端末内で見つけます。"
     ]
     static func permissionPrivacyLines(isMediaAvailable: Bool) -> [String] {
         if isMediaAvailable {
             return [
                 "・解析はすべてこの端末の中で行います",
-                "・写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります",
-                "・原本の自動送信・削除・変更はしません"
+                "・共有は別に同意した後、選んだ縮小写真1枚だけを送ります",
+                "・写真や動画の自動送信・削除・変更はしません"
             ]
         }
         return [
             "・解析はすべてこの端末の中で行います",
-            "・開発者のサーバーへ写真を自動送信しません",
-            "・写真を消したり変更したりしません"
+            "・写真や動画を開発者のサーバーへ自動送信しません",
+            "・写真や動画を消したり変更したりしません"
         ]
     }
 
     static func homePermissionBody(isMediaAvailable: Bool) -> String {
         if isMediaAvailable {
-            return "解析はこの端末内で行います。写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります。原本の自動送信・削除・変更はしません。あとからここで許可できます。"
+            return "解析はこの端末内で行います。共有は別に同意した後、選んだ縮小写真1枚だけを送ります。写真や動画の自動送信・削除・変更はしません。あとから許可できます。"
         }
-        return "解析はこの端末内で行い、開発者のサーバーへ写真を自動送信しません。写真の変更や削除もしません。あとからここで許可できます。"
+        return "解析はこの端末内で行い、写真や動画を開発者のサーバーへ自動送信しません。変更や削除もしません。あとから許可できます。"
     }
     static let permissionLimitedAccessNote = "「すべての写真」がおすすめです。「選択した写真のみ」でも動きます。"
     static let permissionAction = "写真へのアクセスを許可"

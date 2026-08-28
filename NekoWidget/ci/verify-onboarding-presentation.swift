@@ -52,24 +52,24 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.permissionTitleLines == [
-                "このiPhoneの猫写真を探すために、",
-                "写真を読ませてください。"
+                "このiPhoneの猫の写真や動画を",
+                "端末内で見つけます。"
             ],
             "Photos permission request changed"
         )
         try require(
             OnboardingPresentationCopy.permissionPrivacyLines(isMediaAvailable: false) == [
                 "・解析はすべてこの端末の中で行います",
-                "・開発者のサーバーへ写真を自動送信しません",
-                "・写真を消したり変更したりしません"
+                "・写真や動画を開発者のサーバーへ自動送信しません",
+                "・写真や動画を消したり変更したりしません"
             ],
             "Photos permission privacy promise changed"
         )
         try require(
             OnboardingPresentationCopy.permissionPrivacyLines(isMediaAvailable: true) == [
                 "・解析はすべてこの端末の中で行います",
-                "・写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります",
-                "・原本の自動送信・削除・変更はしません"
+                "・共有は別に同意した後、選んだ縮小写真1枚だけを送ります",
+                "・写真や動画の自動送信・削除・変更はしません"
             ],
             "media-enabled Photos permission privacy promise changed"
         )

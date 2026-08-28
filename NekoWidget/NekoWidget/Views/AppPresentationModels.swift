@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 /// UI-only representation of a scanned photo. The image itself always remains in PhotoKit.
-struct PhotoPresentation: Identifiable, Hashable {
+struct PhotoPresentation: Identifiable, Hashable, Sendable {
     let localIdentifier: String
     let creationDate: Date?
     let catBoundingBox: CGRect?
