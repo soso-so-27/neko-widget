@@ -248,7 +248,7 @@ actor SeasonalMovieExportService {
                     case .month:
                         return min(
                             frameCount,
-                            Int(frameCount(for: Self.monthMarkerDuration))
+                            Int(self.frameCount(for: Self.monthMarkerDuration))
                         )
                     case .opening, .ending:
                         return frameCount
