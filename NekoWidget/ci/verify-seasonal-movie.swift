@@ -314,20 +314,25 @@ private func verifyMotionBalanceAndDeterminism() throws {
 
 private func verifyAllVideoCutStaysShort() throws {
     let builder = SeasonalMovieBuilder(timeZone: utc)
-    let values = (0..<18).map { index in
-        candidate(
+    var values: [SeasonalMovieCandidate] = []
+    values.reserveCapacity(18)
+    for index in 0..<18 {
+        let captureDate = date(2026, 4 + index % 3, 2 + index)
+        let boundingBox = CGRect(
+            x: 0.05 + CGFloat(index % 4) * 0.18,
+            y: 0.15,
+            width: 0.25,
+            height: 0.45
+        )
+        let value = candidate(
             "video-only-\(index)",
-            date(2026, 4 + index % 3, 2 + index),
+            captureDate,
             kind: .video,
             memory: index == 17,
-            box: CGRect(
-                x: 0.05 + CGFloat(index % 4) * 0.18,
-                y: 0.15,
-                width: 0.25,
-                height: 0.45
-            ),
+            box: boundingBox,
             area: 0.1125
         )
+        values.append(value)
     }
     let proposal = try ready(builder.buildMostRecent(
         from: values,
