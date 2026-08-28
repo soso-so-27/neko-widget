@@ -348,13 +348,13 @@ private func verifyRapidNearIdenticalShotsCollapseDeterministically() throws {
         analyzedScenePhoto(
             "chain-b",
             date(2026, 8, 21, hour: 9, second: 2),
-            box: CGRect(x: 0.20, y: 0.20, width: 0.50, height: 0.50),
-            isMemory: true
+            box: CGRect(x: 0.30, y: 0.20, width: 0.50, height: 0.50)
         ),
         analyzedScenePhoto(
             "chain-c",
             date(2026, 8, 21, hour: 9, second: 3),
-            box: CGRect(x: 0.30, y: 0.20, width: 0.50, height: 0.50)
+            box: CGRect(x: 0.20, y: 0.20, width: 0.50, height: 0.50),
+            isMemory: true
         )
     ]
     let chainedProposal = try ready(builder.build(
@@ -363,10 +363,10 @@ private func verifyRapidNearIdenticalShotsCollapseDeterministically() throws {
     ))
     try require(chainedProposal.availableSceneCount == 5,
                 "near-identical shots around the preferred representative split")
-    try require(chainedProposal.photos.contains { $0.localIdentifier == "chain-b" },
-                "the preferred middle shot did not represent its rapid group")
+    try require(chainedProposal.photos.contains { $0.localIdentifier == "chain-c" },
+                "the bridging preferred shot did not represent its rapid group")
     try require(!chainedProposal.photos.contains {
-        $0.localIdentifier == "chain-a" || $0.localIdentifier == "chain-c"
+        $0.localIdentifier == "chain-a" || $0.localIdentifier == "chain-b"
     }, "near-identical shots remained beside the preferred representative")
 
     let twoExplicitMemories = [

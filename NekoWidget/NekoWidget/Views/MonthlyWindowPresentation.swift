@@ -215,7 +215,7 @@ struct MonthlyWindowBuilder {
         var groups: [[PhotoPresentation]] = []
 
         for photo in sorted {
-            var matchingGroupIndex: Int?
+            var matchingGroupIndices: [Int] = []
             for index in groups.indices.reversed() {
                 guard let anchor = groups[index].first,
                       let anchorDate = anchor.creationDate,
@@ -228,13 +228,22 @@ struct MonthlyWindowBuilder {
                     by: preferredSceneRepresentative
                 ) ?? anchor
                 if areConfidentRapidNearDuplicates(representative, photo) {
-                    matchingGroupIndex = index
-                    break
+                    matchingGroupIndices.append(index)
                 }
             }
 
-            if let matchingGroupIndex {
-                groups[matchingGroupIndex].append(photo)
+            if let insertionIndex = matchingGroupIndices.min() {
+                var mergedGroup = [photo]
+                for index in matchingGroupIndices {
+                    mergedGroup.append(contentsOf: groups[index])
+                }
+                for index in matchingGroupIndices.sorted(by: >) {
+                    groups.remove(at: index)
+                }
+                groups.insert(
+                    mergedGroup.sorted(by: oldestFirst),
+                    at: insertionIndex
+                )
             } else {
                 groups.append([photo])
             }

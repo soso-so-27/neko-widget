@@ -163,7 +163,7 @@ struct MonthlyWindowView: View {
                 .font(.title2.bold())
 
             if !savedIdentifiers.isEmpty {
-                Text("\(savedIdentifiers.count.formatted())枚を思い出に残しました")
+                Text("\(savedIdentifiers.count.formatted())枚は思い出に残っています")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
