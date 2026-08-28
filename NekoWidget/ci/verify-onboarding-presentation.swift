@@ -75,9 +75,9 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.homePermissionBody(isMediaAvailable: false)
-                == "解析はこの端末内で行い、開発者のサーバーへ写真を自動送信しません。写真の変更や削除もしません。あとからここで許可できます。"
+                == "解析はこの端末内で行い、写真や動画を開発者のサーバーへ自動送信しません。変更や削除もしません。あとから許可できます。"
                 && OnboardingPresentationCopy.homePermissionBody(isMediaAvailable: true)
-                == "解析はこの端末内で行います。写真共有は別に同意した後、選んだ縮小1枚だけを暗号化して送ります。原本の自動送信・削除・変更はしません。あとからここで許可できます。",
+                == "解析はこの端末内で行います。共有は別に同意した後、選んだ縮小写真1枚だけを送ります。写真や動画の自動送信・削除・変更はしません。あとから許可できます。",
             "Home Photos permission privacy promise changed"
         )
         try require(
