@@ -969,7 +969,6 @@ private struct SeasonalMovieChromeButtonStyle: ButtonStyle {
 
 @MainActor
 private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
-    private static let playbackVolume: Float = 0.55
     private var player: AVAudioPlayer?
     private var isEnabled = true
     private var finishTask: Task<Void, Never>?
@@ -990,7 +989,10 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
             if enabled {
                 try session.setActive(true)
                 player.play()
-                player.setVolume(Self.playbackVolume, fadeDuration: 0.4)
+                player.setVolume(
+                    SeasonalMovieSoundtrackContract.volume,
+                    fadeDuration: SeasonalMovieSoundtrackContract.fadeInDuration
+                )
             }
             self.player = player
         } catch {
@@ -1003,11 +1005,17 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
         finishTask?.cancel()
         finishTask = nil
         isEnabled = enabled
-        player.setVolume(enabled ? Self.playbackVolume : 0, fadeDuration: 0.25)
-        if enabled, playing, !player.isPlaying {
+        if enabled, playing {
             try? AVAudioSession.sharedInstance().setActive(true)
-            player.play()
+            if !player.isPlaying {
+                player.play()
+            }
+            player.setVolume(
+                SeasonalMovieSoundtrackContract.volume,
+                fadeDuration: SeasonalMovieSoundtrackContract.fadeInDuration
+            )
         } else if !enabled {
+            player.volume = 0
             player.pause()
             deactivateAudioSession()
         }
@@ -1019,7 +1027,13 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
         finishTask = nil
         if playing, isEnabled {
             try? AVAudioSession.sharedInstance().setActive(true)
-            player.play()
+            if !player.isPlaying {
+                player.play()
+            }
+            player.setVolume(
+                SeasonalMovieSoundtrackContract.volume,
+                fadeDuration: SeasonalMovieSoundtrackContract.fadeInDuration
+            )
         } else {
             player.pause()
             deactivateAudioSession()
@@ -1029,14 +1043,39 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
     func finish() {
         guard let player else { return }
         finishTask?.cancel()
-        player.setVolume(0, fadeDuration: 1.0)
+        guard isEnabled, player.isPlaying else {
+            player.pause()
+            deactivateAudioSession()
+            finishTask = nil
+            return
+        }
         finishTask = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
+                try await Task.sleep(
+                    nanoseconds: UInt64(
+                        SeasonalMovieSoundtrackContract.endingHoldDuration
+                            * 1_000_000_000
+                    )
+                )
             } catch {
                 return
             }
             guard let self, self.player === player else { return }
+            player.setVolume(
+                0,
+                fadeDuration: SeasonalMovieSoundtrackContract.fadeOutDuration
+            )
+            do {
+                try await Task.sleep(
+                    nanoseconds: UInt64(
+                        SeasonalMovieSoundtrackContract.fadeOutDuration
+                            * 1_000_000_000
+                    )
+                )
+            } catch {
+                return
+            }
+            guard self.player === player else { return }
             player.pause()
             self.deactivateAudioSession()
             self.finishTask = nil

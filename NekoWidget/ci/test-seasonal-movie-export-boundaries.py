@@ -1,8 +1,11 @@
+import wave
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "NekoWidget" / "Services" / "SeasonalMovieExportService.swift"
+PRESENTATION = ROOT / "NekoWidget" / "Views" / "SeasonalMoviePresentation.swift"
+VIEW = ROOT / "NekoWidget" / "Views" / "SeasonalMovieView.swift"
 PROJECT = ROOT / "NekoWidget.xcodeproj" / "project.pbxproj"
 SOUNDTRACK = (
     ROOT
@@ -15,6 +18,8 @@ SOUNDTRACK = (
 
 def main() -> None:
     source = SOURCE.read_text(encoding="utf-8")
+    presentation = PRESENTATION.read_text(encoding="utf-8")
+    view = VIEW.read_text(encoding="utf-8")
     project = PROJECT.read_text(encoding="utf-8")
 
     required = (
@@ -32,11 +37,14 @@ def main() -> None:
         'case opening(title: String, period: String)',
         'case month(String)',
         'case ending',
-        'let endingDuration: TimeInterval = 1.8',
         'let monthMarkerDuration: TimeInterval = 0.8',
-        'let soundtrackVolume: Float = 0.55',
-        'parameters.setVolume(Self.soundtrackVolume, at: .zero)',
-        'fromStartVolume: Self.soundtrackVolume',
+        'parameters.setVolume(0, at: .zero)',
+        'fromStartVolume: 0',
+        'toEndVolume: SeasonalMovieSoundtrackContract.volume',
+        'fromStartVolume: SeasonalMovieSoundtrackContract.volume',
+        'AVSampleRateKey: SeasonalMovieSoundtrackContract.sampleRate',
+        'AVNumberOfChannelsKey: SeasonalMovieSoundtrackContract.channelCount',
+        'AVEncoderBitRateKey: SeasonalMovieSoundtrackContract.encoderBitRate',
         'localFrame < overlayVisibleFrameCount',
         '.dateTime.month(.wide)',
         "duration: Double(totalFrameCount) / Double(Self.frameRate)",
@@ -63,12 +71,31 @@ def main() -> None:
     assert 'let text = "この季節も、ここまで" as NSString' in source
     assert "finalFrameImage = generatedImage" in source
     assert "sourceTrack" in source
+    contract_boundaries = (
+        "enum SeasonalMovieSoundtrackContract",
+        "static let volume: Float = 0.55",
+        "static let fadeInDuration: TimeInterval = 0.25",
+        "static let endingHoldDuration: TimeInterval = 0.8",
+        "static let fadeOutDuration: TimeInterval = 1.0",
+        "static let endingDuration = endingHoldDuration + fadeOutDuration",
+        "static let sampleRate = 48_000",
+        "static let channelCount = 2",
+        "static let encoderBitRate = 128_000",
+    )
+    for boundary in contract_boundaries:
+        assert boundary in presentation, f"missing soundtrack contract: {boundary}"
+    assert "SeasonalMovieSoundtrackContract.endingHoldDuration" in view
+    assert "SeasonalMovieSoundtrackContract.fadeOutDuration" in view
+    assert "SeasonalMovieSoundtrackContract.fadeInDuration" in view
     assert "SeasonalMovieExportService.swift in Sources" in project
     assert project.count("SeasonalMovieExportService.swift in Sources") == 2
-    soundtrack = SOUNDTRACK.read_bytes()
-    assert soundtrack[:4] == b"RIFF"
-    assert soundtrack[8:12] == b"WAVE"
-    assert 1_000_000 <= len(soundtrack) <= 1_100_000
+    with wave.open(str(SOUNDTRACK), "rb") as soundtrack:
+        assert soundtrack.getcomptype() == "NONE"
+        assert soundtrack.getnchannels() == 2
+        assert soundtrack.getframerate() == 48_000
+        assert soundtrack.getsampwidth() == 2
+        duration = soundtrack.getnframes() / soundtrack.getframerate()
+        assert abs(duration - 24.0) <= (1 / soundtrack.getframerate())
 
 
 if __name__ == "__main__":

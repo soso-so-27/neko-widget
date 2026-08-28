@@ -45,9 +45,7 @@ actor SeasonalMovieExportService {
     private static let frameRate: Int32 = 24
     private static let frameTimescale: Int32 = 600
     private static let outputSize = CGSize(width: 720, height: 1_280)
-    private static let endingDuration: TimeInterval = 1.8
     private static let monthMarkerDuration: TimeInterval = 0.8
-    private static let soundtrackVolume: Float = 0.55
     private static let requestTimeoutNanoseconds: UInt64 = 8_000_000_000
 
     private enum FrameOverlay {
@@ -343,7 +341,9 @@ actor SeasonalMovieExportService {
             guard let finalFrameImage else {
                 throw SeasonalMovieExportError.encodingFailed
             }
-            let endingFrameCount = frameCount(for: Self.endingDuration)
+            let endingFrameCount = frameCount(
+                for: SeasonalMovieSoundtrackContract.endingDuration
+            )
             let endingOverlay = makeOverlayImage(.ending)
             for _ in 0..<endingFrameCount {
                 try await append(
@@ -441,22 +441,41 @@ actor SeasonalMovieExportService {
             audioTracks: [track],
             audioSettings: outputSettings
         )
-        let fadeDuration = min(1.0, CMTimeGetSeconds(requestedDuration))
+        let requestedDurationSeconds = CMTimeGetSeconds(requestedDuration)
+        let fadeInDuration = min(
+            SeasonalMovieSoundtrackContract.fadeInDuration,
+            requestedDurationSeconds
+        )
+        let fadeOutDuration = min(
+            SeasonalMovieSoundtrackContract.fadeOutDuration,
+            requestedDurationSeconds
+        )
         let parameters = AVMutableAudioMixInputParameters(track: track)
-        parameters.setVolume(Self.soundtrackVolume, at: .zero)
+        parameters.setVolume(0, at: .zero)
         parameters.setVolumeRamp(
-            fromStartVolume: Self.soundtrackVolume,
+            fromStartVolume: 0,
+            toEndVolume: SeasonalMovieSoundtrackContract.volume,
+            timeRange: CMTimeRange(
+                start: .zero,
+                duration: CMTime(
+                    seconds: fadeInDuration,
+                    preferredTimescale: Self.frameTimescale
+                )
+            )
+        )
+        parameters.setVolumeRamp(
+            fromStartVolume: SeasonalMovieSoundtrackContract.volume,
             toEndVolume: 0,
             timeRange: CMTimeRange(
                 start: CMTimeSubtract(
                     requestedDuration,
                     CMTime(
-                        seconds: fadeDuration,
+                        seconds: fadeOutDuration,
                         preferredTimescale: Self.frameTimescale
                     )
                 ),
                 duration: CMTime(
-                    seconds: fadeDuration,
+                    seconds: fadeOutDuration,
                     preferredTimescale: Self.frameTimescale
                 )
             )
@@ -470,9 +489,9 @@ actor SeasonalMovieExportService {
 
         let inputSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 22_050,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 64_000
+            AVSampleRateKey: SeasonalMovieSoundtrackContract.sampleRate,
+            AVNumberOfChannelsKey: SeasonalMovieSoundtrackContract.channelCount,
+            AVEncoderBitRateKey: SeasonalMovieSoundtrackContract.encoderBitRate
         ]
         let input = AVAssetWriterInput(
             mediaType: .audio,
@@ -618,7 +637,7 @@ actor SeasonalMovieExportService {
     ) -> Int64 {
         presentation.scenes.indices.reduce(Int64.zero) { total, index in
             total + frameCount(for: presentation.playbackDuration(at: index))
-        } + frameCount(for: Self.endingDuration)
+        } + frameCount(for: SeasonalMovieSoundtrackContract.endingDuration)
     }
 
     private func overlay(

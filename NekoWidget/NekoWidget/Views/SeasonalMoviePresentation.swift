@@ -1,6 +1,18 @@
 import CoreGraphics
 import Foundation
 
+enum SeasonalMovieSoundtrackContract {
+    static let volume: Float = 0.55
+    static let fadeInDuration: TimeInterval = 0.25
+    static let endingHoldDuration: TimeInterval = 0.8
+    static let fadeOutDuration: TimeInterval = 1.0
+    static let endingDuration = endingHoldDuration + fadeOutDuration
+
+    static let sampleRate = 48_000
+    static let channelCount = 2
+    static let encoderBitRate = 128_000
+}
+
 enum SeasonalMovieMediaKind: String, Codable, Hashable, Sendable {
     case stillPhoto
     case livePhoto
