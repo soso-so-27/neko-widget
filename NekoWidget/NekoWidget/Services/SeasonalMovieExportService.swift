@@ -46,6 +46,8 @@ actor SeasonalMovieExportService {
     private static let frameTimescale: Int32 = 600
     private static let outputSize = CGSize(width: 720, height: 1_280)
     private static let endingDuration: TimeInterval = 1.8
+    private static let monthMarkerDuration: TimeInterval = 0.8
+    private static let soundtrackVolume: Float = 0.55
     private static let requestTimeoutNanoseconds: UInt64 = 8_000_000_000
 
     private enum FrameOverlay {
@@ -241,6 +243,17 @@ actor SeasonalMovieExportService {
                     in: presentation
                 )
                 let overlayImage = overlay.map(makeOverlayImage)
+                let overlayVisibleFrameCount: Int = overlay.map { value in
+                    switch value {
+                    case .month:
+                        return min(
+                            frameCount,
+                            Int(frameCount(for: Self.monthMarkerDuration))
+                        )
+                    case .opening, .ending:
+                        return frameCount
+                    }
+                } ?? 0
 
                 switch scene.mediaKind {
                 case .stillPhoto, .livePhoto:
@@ -250,10 +263,12 @@ actor SeasonalMovieExportService {
                         throw SeasonalMovieExportError.mediaNotAvailableOffline
                     }
                     finalFrameImage = frameImage
-                    for _ in 0..<frameCount {
+                    for localFrame in 0..<frameCount {
                         try await append(
                             frameImage,
-                            overlay: overlayImage,
+                            overlay: localFrame < overlayVisibleFrameCount
+                                ? overlayImage
+                                : nil,
                             at: outputFrame,
                             writer: writer,
                             input: input,
@@ -312,7 +327,9 @@ actor SeasonalMovieExportService {
                         finalFrameImage = generatedImage
                         try await append(
                             generatedImage,
-                            overlay: overlayImage,
+                            overlay: localFrame < overlayVisibleFrameCount
+                                ? overlayImage
+                                : nil,
                             at: outputFrame,
                             writer: writer,
                             input: input,
@@ -426,8 +443,9 @@ actor SeasonalMovieExportService {
         )
         let fadeDuration = min(1.0, CMTimeGetSeconds(requestedDuration))
         let parameters = AVMutableAudioMixInputParameters(track: track)
+        parameters.setVolume(Self.soundtrackVolume, at: .zero)
         parameters.setVolumeRamp(
-            fromStartVolume: 1,
+            fromStartVolume: Self.soundtrackVolume,
             toEndVolume: 0,
             timeRange: CMTimeRange(
                 start: CMTimeSubtract(
@@ -624,7 +642,7 @@ actor SeasonalMovieExportService {
         ) else { return nil }
         return .month(
             current.formatted(
-                .dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))
+                .dateTime.month(.wide).locale(Locale(identifier: "ja_JP"))
             )
         )
     }
@@ -664,24 +682,16 @@ actor SeasonalMovieExportService {
                 )
 
             case let .month(text):
+                let shadow = NSShadow()
+                shadow.shadowColor = UIColor.black.withAlphaComponent(0.72)
+                shadow.shadowBlurRadius = 4
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 23, weight: .semibold),
-                    .foregroundColor: UIColor.white
+                    .font: UIFont.systemFont(ofSize: 22, weight: .semibold),
+                    .foregroundColor: UIColor.white.withAlphaComponent(0.82),
+                    .shadow: shadow
                 ]
-                let textSize = (text as NSString).size(withAttributes: attributes)
-                let capsule = CGRect(
-                    x: (Self.outputSize.width - textSize.width - 36) / 2,
-                    y: Self.outputSize.height - 176,
-                    width: textSize.width + 36,
-                    height: 48
-                )
-                UIColor.black.withAlphaComponent(0.46).setFill()
-                UIBezierPath(roundedRect: capsule, cornerRadius: 24).fill()
                 (text as NSString).draw(
-                    at: CGPoint(
-                        x: capsule.midX - textSize.width / 2,
-                        y: capsule.midY - textSize.height / 2
-                    ),
+                    at: CGPoint(x: 40, y: Self.outputSize.height - 152),
                     withAttributes: attributes
                 )
 

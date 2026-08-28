@@ -33,11 +33,9 @@ struct SeasonalMovieCard: View {
 
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
-                        Text("できました")
-                            .font(.caption.bold())
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.black.opacity(0.45), in: Capsule())
+                        Text("季節の作品")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.82))
                         Spacer()
                         Image(systemName: "play.fill")
                             .font(.headline)
@@ -47,9 +45,9 @@ struct SeasonalMovieCard: View {
 
                     Spacer()
 
-                    Text(presentation.title)
+                    Text(cardTitle)
                         .font(.title3.bold())
-                    Text("\(presentation.periodTitle)・約\(estimatedSeconds.formatted())秒")
+                    Text("\(presentation.scenes.count)場面・約\(estimatedSeconds.formatted())秒")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.82))
                 }
@@ -64,9 +62,16 @@ struct SeasonalMovieCard: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("today-seasonal-movie")
         .accessibilityLabel(
-            "\(presentation.periodTitle)の\(presentation.title)ができました"
+            "\(cardTitle)、\(presentation.scenes.count)場面、約\(estimatedSeconds)秒"
         )
         .accessibilityHint("開くとそのまま再生します")
+    }
+
+    private var cardTitle: String {
+        if presentation.startYearNumber == presentation.endYearNumber {
+            return "\(presentation.startMonthNumber)月–\(presentation.endMonthNumber)月の小さな映画"
+        }
+        return "\(presentation.periodTitle)の小さな映画"
     }
 
     private var estimatedSeconds: Int {
@@ -148,6 +153,7 @@ struct SeasonalMovieView: View {
     @AppStorage("seasonalMovieSoundEnabled") private var soundEnabled = true
     @StateObject private var soundtrack = SeasonalMovieSoundtrackPlayer()
     @State private var soundtrackHasStarted = false
+    @State private var monthMarkerIsVisible = false
     @State private var activePresentation: SeasonalMoviePresentation
     @State private var currentIndex = 0
     @State private var isPlaying = true
@@ -224,6 +230,9 @@ struct SeasonalMovieView: View {
         .statusBarHidden()
         .task(id: playbackGeneration) {
             await continuePlayback()
+        }
+        .task(id: currentSceneIsReady ? currentScene?.localIdentifier : nil) {
+            await showMonthMarkerBriefly()
         }
         .onAppear {
             // Wait for the first real visual frame. Starting music while
@@ -323,15 +332,17 @@ struct SeasonalMovieView: View {
                 .padding(.bottom, 96)
                 .foregroundStyle(.white)
                 .transition(.opacity)
-            } else if showsMonthMarker, !hasFinished {
-                Text(monthMarkerText)
-                    .font(.caption.bold())
-                    .padding(.horizontal, 10)
-                    .frame(minHeight: 30)
-                    .background(.black.opacity(0.42), in: Capsule())
-                    .foregroundStyle(.white)
-                    .padding(.bottom, 104)
-                    .transition(.opacity)
+            } else if monthMarkerIsVisible, !hasFinished {
+                HStack {
+                    Text(monthMarkerText)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .shadow(color: .black.opacity(0.72), radius: 4)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 104)
+                .transition(.opacity)
             }
         }
         .allowsHitTesting(false)
@@ -505,8 +516,22 @@ struct SeasonalMovieView: View {
     private var monthMarkerText: String {
         guard let scene = currentScene else { return "" }
         return scene.creationDate.formatted(
-            .dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))
+            .dateTime.month(.wide).locale(Locale(identifier: "ja_JP"))
         )
+    }
+
+    @MainActor
+    private func showMonthMarkerBriefly() async {
+        monthMarkerIsVisible = showsMonthMarker
+        guard monthMarkerIsVisible else { return }
+        do {
+            try await Task.sleep(nanoseconds: 800_000_000)
+        } catch {
+            return
+        }
+        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) {
+            monthMarkerIsVisible = false
+        }
     }
 
     @MainActor
@@ -832,6 +857,7 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
     private static let playbackVolume: Float = 0.55
     private var player: AVAudioPlayer?
     private var isEnabled = true
+    private var finishTask: Task<Void, Never>?
 
     func prepare(enabled: Bool) {
         guard player == nil,
@@ -840,13 +866,14 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
         }
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.ambient, mode: .default)
+            try session.setCategory(.playback, mode: .moviePlayback)
             let player = try AVAudioPlayer(data: data)
             player.numberOfLoops = -1
             player.volume = 0
             player.prepareToPlay()
             isEnabled = enabled
             if enabled {
+                try session.setActive(true)
                 player.play()
                 player.setVolume(Self.playbackVolume, fadeDuration: 0.4)
             }
@@ -858,39 +885,73 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
 
     func setEnabled(_ enabled: Bool, playing: Bool) {
         guard let player else { return }
+        finishTask?.cancel()
+        finishTask = nil
         isEnabled = enabled
         player.setVolume(enabled ? Self.playbackVolume : 0, fadeDuration: 0.25)
         if enabled, playing, !player.isPlaying {
+            try? AVAudioSession.sharedInstance().setActive(true)
             player.play()
         } else if !enabled {
             player.pause()
+            deactivateAudioSession()
         }
     }
 
     func setPlaying(_ playing: Bool) {
         guard let player else { return }
+        finishTask?.cancel()
+        finishTask = nil
         if playing, isEnabled {
+            try? AVAudioSession.sharedInstance().setActive(true)
             player.play()
         } else {
             player.pause()
+            deactivateAudioSession()
         }
     }
 
     func finish() {
-        player?.setVolume(0, fadeDuration: 1.0)
+        guard let player else { return }
+        finishTask?.cancel()
+        player.setVolume(0, fadeDuration: 1.0)
+        finishTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                return
+            }
+            guard let self, self.player === player else { return }
+            player.pause()
+            self.deactivateAudioSession()
+            self.finishTask = nil
+        }
     }
 
     func rewind() {
         guard let player else { return }
+        finishTask?.cancel()
+        finishTask = nil
         player.currentTime = 0
         player.volume = 0
         player.pause()
         isEnabled = false
+        deactivateAudioSession()
     }
 
     func stop() {
+        finishTask?.cancel()
+        finishTask = nil
         player?.stop()
         player = nil
+        deactivateAudioSession()
+    }
+
+    private func deactivateAudioSession() {
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
     }
 }
 
