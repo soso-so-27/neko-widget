@@ -102,10 +102,44 @@ private final class SeasonalMoviePhotoKitRequest<Value>: @unchecked Sendable {
     }
 }
 
+private final class SeasonalMovieLocalMediaCache: @unchecked Sendable {
+    static let shared = SeasonalMovieLocalMediaCache()
+
+    private let videoAssets = NSCache<NSString, AVAsset>()
+    private let livePhotos = NSCache<NSString, PHLivePhoto>()
+
+    private init() {
+        videoAssets.countLimit = 16
+        livePhotos.countLimit = 16
+    }
+
+    func videoAsset(for identifier: String) -> AVAsset? {
+        videoAssets.object(forKey: identifier as NSString)
+    }
+
+    func storeVideoAsset(_ asset: AVAsset, identifier: String) {
+        videoAssets.setObject(asset, forKey: identifier as NSString)
+    }
+
+    func livePhoto(for key: String) -> PHLivePhoto? {
+        livePhotos.object(forKey: key as NSString)
+    }
+
+    func storeLivePhoto(_ livePhoto: PHLivePhoto, key: String) {
+        livePhotos.setObject(livePhoto, forKey: key as NSString)
+    }
+}
+
 enum SeasonalMovieLocalMediaLoader {
     private static let requestTimeoutNanoseconds: UInt64 = 5_000_000_000
 
     static func avAsset(for asset: PHAsset) async -> AVAsset? {
+        let identifier = asset.localIdentifier
+        if let cached = SeasonalMovieLocalMediaCache.shared.videoAsset(
+            for: identifier
+        ) {
+            return cached
+        }
         let manager = PHImageManager.default()
         let options = PHVideoRequestOptions()
         options.deliveryMode = .mediumQualityFormat
@@ -122,17 +156,34 @@ enum SeasonalMovieLocalMediaLoader {
                 completion(avAsset)
             }
         }
-        return await withTaskCancellationHandler {
+        let value = await withTaskCancellationHandler {
             await request.value()
         } onCancel: {
             request.cancel()
         }
+        if let value {
+            SeasonalMovieLocalMediaCache.shared.storeVideoAsset(
+                value,
+                identifier: identifier
+            )
+        }
+        return value
     }
 
     static func livePhoto(
         for asset: PHAsset,
         targetSize: CGSize
     ) async -> PHLivePhoto? {
+        let cacheKey = [
+            asset.localIdentifier,
+            String(Int(targetSize.width.rounded())),
+            String(Int(targetSize.height.rounded()))
+        ].joined(separator: "|")
+        if let cached = SeasonalMovieLocalMediaCache.shared.livePhoto(
+            for: cacheKey
+        ) {
+            return cached
+        }
         let manager = PHImageManager.default()
         let options = PHLivePhotoRequestOptions()
         options.deliveryMode = .highQualityFormat
@@ -155,11 +206,18 @@ enum SeasonalMovieLocalMediaLoader {
                 completion(wasCancelled || error != nil ? nil : livePhoto)
             }
         }
-        return await withTaskCancellationHandler {
+        let value = await withTaskCancellationHandler {
             await request.value()
         } onCancel: {
             request.cancel()
         }
+        if let value {
+            SeasonalMovieLocalMediaCache.shared.storeLivePhoto(
+                value,
+                key: cacheKey
+            )
+        }
+        return value
     }
 }
 
@@ -241,12 +299,11 @@ actor SeasonalMovieCandidateService {
                   let photo = byIdentifier[asset.localIdentifier],
                   let creationDate = photo.creationDate else { continue }
 
-            let isLivePhoto: Bool
-            if asset.mediaSubtypes.contains(.photoLive) {
-                isLivePhoto = await isLivePhotoLocallyAvailable(asset)
-            } else {
-                isLivePhoto = false
-            }
+            // This first stage must stay cheap enough to publish the photo
+            // recipe immediately. The subtype is local metadata; motion bytes
+            // are requested only for the few selected scenes during preload,
+            // and playback falls back to the still image when unavailable.
+            let isLivePhoto = asset.mediaSubtypes.contains(.photoLive)
             result.append(SeasonalMovieCandidate(
                 localIdentifier: photo.localIdentifier,
                 creationDate: creationDate,
@@ -450,10 +507,4 @@ actor SeasonalMovieCandidateService {
         await SeasonalMovieLocalMediaLoader.avAsset(for: asset)
     }
 
-    private func isLivePhotoLocallyAvailable(_ asset: PHAsset) async -> Bool {
-        await SeasonalMovieLocalMediaLoader.livePhoto(
-            for: asset,
-            targetSize: CGSize(width: 320, height: 320)
-        ) != nil
-    }
 }

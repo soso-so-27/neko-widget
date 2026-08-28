@@ -506,6 +506,7 @@ struct CuratedAlbumDetailView: View {
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
+    let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var isExportingPhotoBook = false
@@ -522,6 +523,10 @@ struct LikedPhotosView: View {
             LazyVStack(alignment: .leading, spacing: 22) {
                 if hasPhotoAccess {
                     automaticAlbumsCard
+                }
+
+                if hasPhotoAccess, !seasonalMovies.isEmpty {
+                    seasonalMovieSection
                 }
 
                 if photos.isEmpty {
@@ -669,6 +674,38 @@ struct LikedPhotosView: View {
         .padding(.horizontal, 16)
         .accessibilityIdentifier("memories-open-automatic-albums")
         .accessibilityHint("自動で整理された猫写真を開きます")
+    }
+
+    private var seasonalMovieSection: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack {
+                Label("季節の作品", systemImage: "film.stack")
+                    .font(.headline)
+                Spacer()
+                Text("このiPhoneだけ")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 12) {
+                    ForEach(seasonalMovies) { record in
+                        NavigationLink(
+                            value: MemoriesRoute.seasonalMovie(record.periodID)
+                        ) {
+                            SeasonalMovieArchiveCard(
+                                presentation: record.effectivePresentation
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .accessibilityIdentifier("memories-seasonal-movies")
     }
 
     private var creationPreviewCard: some View {

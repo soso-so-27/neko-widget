@@ -11,7 +11,8 @@ enum PhotoAssetImagePipeline {
 
     static func startCachingFullImages(
         localIdentifiers: [String],
-        targetPixelSize: CGSize
+        targetPixelSize: CGSize,
+        networkAccessAllowed: Bool = true
     ) {
         let assets = assets(withLocalIdentifiers: localIdentifiers)
         guard !assets.isEmpty else { return }
@@ -19,13 +20,16 @@ enum PhotoAssetImagePipeline {
             for: assets,
             targetSize: targetPixelSize,
             contentMode: .aspectFit,
-            options: fullImageRequestOptions()
+            options: fullImageRequestOptions(
+                networkAccessAllowed: networkAccessAllowed
+            )
         )
     }
 
     static func stopCachingFullImages(
         localIdentifiers: [String],
-        targetPixelSize: CGSize
+        targetPixelSize: CGSize,
+        networkAccessAllowed: Bool = true
     ) {
         let assets = assets(withLocalIdentifiers: localIdentifiers)
         guard !assets.isEmpty else { return }
@@ -33,7 +37,9 @@ enum PhotoAssetImagePipeline {
             for: assets,
             targetSize: targetPixelSize,
             contentMode: .aspectFit,
-            options: fullImageRequestOptions()
+            options: fullImageRequestOptions(
+                networkAccessAllowed: networkAccessAllowed
+            )
         )
     }
 
@@ -51,10 +57,12 @@ enum PhotoAssetImagePipeline {
         return assets
     }
 
-    private static func fullImageRequestOptions() -> PHImageRequestOptions {
+    private static func fullImageRequestOptions(
+        networkAccessAllowed: Bool
+    ) -> PHImageRequestOptions {
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
-        options.isNetworkAccessAllowed = true
+        options.isNetworkAccessAllowed = networkAccessAllowed
         options.version = .current
         options.resizeMode = .fast
         return options
@@ -70,6 +78,7 @@ struct PhotoAssetImageView: View {
     var targetAspectRatio: CGFloat
     var showsFullImage: Bool
     var networkAccessAllowed: Bool
+    var onLoadResult: (Bool) -> Void
 
     @StateObject private var loader = PhotoAssetImageLoader()
 
@@ -79,7 +88,8 @@ struct PhotoAssetImageView: View {
         targetPixelSize: CGSize = CGSize(width: 800, height: 800),
         targetAspectRatio: CGFloat = 1,
         showsFullImage: Bool = false,
-        networkAccessAllowed: Bool = true
+        networkAccessAllowed: Bool = true,
+        onLoadResult: @escaping (Bool) -> Void = { _ in }
     ) {
         self.localIdentifier = localIdentifier
         self.catBoundingBox = catBoundingBox
@@ -87,6 +97,7 @@ struct PhotoAssetImageView: View {
         self.targetAspectRatio = targetAspectRatio
         self.showsFullImage = showsFullImage
         self.networkAccessAllowed = networkAccessAllowed
+        self.onLoadResult = onLoadResult
     }
 
     var body: some View {
@@ -145,6 +156,16 @@ struct PhotoAssetImageView: View {
         }
         .onDisappear {
             loader.cancel()
+        }
+        .onReceive(loader.$state) { state in
+            switch state {
+            case .loading:
+                break
+            case .loaded:
+                onLoadResult(true)
+            case .failed:
+                onLoadResult(false)
+            }
         }
         .accessibilityLabel("猫の写真")
     }

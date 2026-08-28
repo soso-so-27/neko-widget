@@ -437,6 +437,26 @@ jobs:
             -o "$RUNNER_TEMP/verify-seasonal-movie"
           "$RUNNER_TEMP/verify-seasonal-movie"
 
+      - name: Verify seasonal movie archive
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            NekoWidget/Views/SeasonalMoviePresentation.swift \
+            NekoWidget/Services/SeasonalMovieArchiveStore.swift \
+            ci/verify-seasonal-movie-archive.swift \
+            -o "$RUNNER_TEMP/verify-seasonal-movie-archive"
+          "$RUNNER_TEMP/verify-seasonal-movie-archive"
+
+      - name: Verify seasonal movie export boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/test-seasonal-movie-export-boundaries.py
+
       - name: Verify scan recovery and Widget eligibility policies
         working-directory: NekoWidget
         shell: bash

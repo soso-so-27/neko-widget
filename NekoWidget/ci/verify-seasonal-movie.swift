@@ -48,8 +48,8 @@ private func candidate(
     _ capturedAt: Date,
     kind: SeasonalMovieMediaKind = .stillPhoto,
     memory: Bool = false,
-    box: CGRect = CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5),
-    area: Double = 0.25
+    box: CGRect? = CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5),
+    area: Double? = 0.25
 ) -> SeasonalMovieCandidate {
     SeasonalMovieCandidate(
         localIdentifier: id,
@@ -113,7 +113,7 @@ private func verifyCompletedQuarterAndStillOnlyEligibility() throws {
                 "the exact ten-scene boundary was not eligible")
     try require(proposal.movingSceneCount == 0,
                 "still-only input unexpectedly became moving media")
-    try require(proposal.estimatedDuration > 20 && proposal.estimatedDuration < 30,
+    try require(proposal.estimatedDuration > 14 && proposal.estimatedDuration < 22,
                 "still-only duration left the short-movie range")
     try require(proposal.scenes.map(\.creationDate) == proposal.scenes.map(\.creationDate).sorted(),
                 "seasonal scenes were not chronological")
@@ -181,6 +181,95 @@ private func verifyRapidDuplicatesAndBoundaryExclusion() throws {
                 "scene at the exclusive quarter end was included")
 }
 
+private func verifyShortSequenceVarietyAndMemoryProtection() throws {
+    let builder = SeasonalMovieBuilder(timeZone: utc)
+
+    let markedMemory = candidate(
+        "rapid-memory",
+        date(2026, 4, 2, second: 5),
+        memory: true
+    )
+    let memoryProposal = try ready(builder.buildMostRecent(
+        from: tenStillScenes() + [markedMemory],
+        through: date(2026, 8, 28)
+    ))
+    try require(memoryProposal.scenes.map(\.localIdentifier).contains("rapid-memory"),
+                "a user-marked memory lost its rapid-sequence representative slot")
+    try require(!memoryProposal.scenes.map(\.localIdentifier).contains("a1"),
+                "the automatic rapid-sequence representative displaced a memory")
+
+    let ordinary = candidate("sequence-ordinary", date(2026, 6, 24))
+    let laterMemory = candidate(
+        "sequence-memory",
+        date(2026, 6, 24).addingTimeInterval(45),
+        memory: true
+    )
+    let alternative = candidate("sequence-alternative", date(2026, 6, 25))
+    let varietyProposal = try ready(builder.buildMostRecent(
+        from: tenStillScenes() + [ordinary, laterMemory, alternative],
+        through: date(2026, 8, 28)
+    ))
+    let identifiers = varietyProposal.scenes.map(\.localIdentifier)
+    try require(varietyProposal.scenes.count == 12,
+                "a short-sequence repeat prevented a full diverse cut")
+    try require(identifiers.contains("sequence-memory"),
+                "short-sequence de-clustering discarded a user memory")
+    try require(!identifiers.contains("sequence-ordinary"),
+                "two strongly matching frames from one short sequence remained")
+    try require(identifiers.contains("sequence-alternative"),
+                "a different capture day did not replace the repetitive frame")
+
+    let unknownFramingA = candidate(
+        "unknown-framing-a",
+        date(2026, 6, 24),
+        box: nil,
+        area: nil
+    )
+    let unknownFramingB = candidate(
+        "unknown-framing-b",
+        date(2026, 6, 24).addingTimeInterval(45),
+        box: nil,
+        area: nil
+    )
+    let failOpenProposal = try ready(builder.buildMostRecent(
+        from: tenStillScenes() + [unknownFramingA, unknownFramingB],
+        through: date(2026, 8, 28)
+    ))
+    let failOpenIdentifiers = failOpenProposal.scenes.map(\.localIdentifier)
+    try require(failOpenIdentifiers.contains("unknown-framing-a")
+                    && failOpenIdentifiers.contains("unknown-framing-b"),
+                "missing framing metadata was treated as proof of duplication")
+}
+
+private func verifyCoverageContinuesPastTheMinimumGate() throws {
+    let builder = SeasonalMovieBuilder(timeZone: utc)
+    let values = (0..<18).map { index in
+        let dayIndex = index / 2
+        let month = 4 + dayIndex / 3
+        let day = 2 + dayIndex % 3 * 6
+        return candidate(
+            "coverage-\(index)",
+            date(2026, month, day, hour: 9 + index % 2),
+            box: CGRect(
+                x: 0.08 + CGFloat(index % 3) * 0.2,
+                y: 0.18,
+                width: 0.28,
+                height: 0.42
+            ),
+            area: 0.1176
+        )
+    }
+    let proposal = try ready(builder.buildMostRecent(
+        from: values,
+        through: date(2026, 8, 28)
+    ))
+    let selectedDays = Set(proposal.scenes.map {
+        calendar.startOfDay(for: $0.creationDate)
+    })
+    try require(selectedDays.count == 9,
+                "selection stopped spreading days after the six-day minimum")
+}
+
 private func verifyMotionBalanceAndDeterminism() throws {
     let builder = SeasonalMovieBuilder(timeZone: utc)
     var values: [SeasonalMovieCandidate] = []
@@ -211,14 +300,49 @@ private func verifyMotionBalanceAndDeterminism() throws {
         from: Array(values.reversed()),
         through: date(2026, 8, 28)
     ))
-    try require(first.scenes.count == 14, "seasonal output did not respect the 14-scene cap")
+    try require(first.scenes.count >= SeasonalMovieBuilder.minimumOutputSceneCount
+                    && first.scenes.count <= SeasonalMovieBuilder.maximumOutputSceneCount,
+                "seasonal output left the bounded scene range")
     try require(first.movingSceneCount > 0, "available moving scenes were ignored")
     try require(first.movingSceneCount <= 9,
                 "moving media crowded still scenes despite sufficient still input")
-    try require(first.estimatedDuration <= 30,
-                "the seasonal movie exceeded the short 30-second range")
+    try require(first.estimatedDuration <= SeasonalMovieBuilder.maximumPlaybackDuration,
+                "the seasonal movie exceeded the 22-second range")
     try require(first.scenes.map(\.localIdentifier) == second.scenes.map(\.localIdentifier),
                 "selection changed when input order changed")
+}
+
+private func verifyAllVideoCutStaysShort() throws {
+    let builder = SeasonalMovieBuilder(timeZone: utc)
+    let values = (0..<18).map { index in
+        candidate(
+            "video-only-\(index)",
+            date(2026, 4 + index % 3, 2 + index),
+            kind: .video,
+            memory: index == 17,
+            box: CGRect(
+                x: 0.05 + CGFloat(index % 4) * 0.18,
+                y: 0.15,
+                width: 0.25,
+                height: 0.45
+            ),
+            area: 0.1125
+        )
+    }
+    let proposal = try ready(builder.buildMostRecent(
+        from: values,
+        through: date(2026, 8, 28)
+    ))
+    try require(proposal.scenes.count >= SeasonalMovieBuilder.minimumOutputSceneCount,
+                "duration trim dropped below the eight-scene minimum")
+    try require(proposal.estimatedDuration <= SeasonalMovieBuilder.maximumPlaybackDuration,
+                "an all-video cut exceeded the 22-second playback budget")
+    try require(proposal.scenes.contains(where: { $0.isMemory }),
+                "duration trim removed a memory despite ordinary alternatives")
+    try require(Set(proposal.scenes.map {
+        calendar.startOfDay(for: $0.creationDate)
+    }).count >= SeasonalMovieBuilder.minimumCaptureDayCount,
+                "duration trim weakened capture-day diversity")
 }
 
 private func verifyYearRollover() throws {
@@ -236,7 +360,10 @@ private struct SeasonalMovieVerifier {
         try verifyCompletedQuarterAndStillOnlyEligibility()
         try verifyDiversityGates()
         try verifyRapidDuplicatesAndBoundaryExclusion()
+        try verifyShortSequenceVarietyAndMemoryProtection()
+        try verifyCoverageContinuesPastTheMinimumGate()
         try verifyMotionBalanceAndDeterminism()
+        try verifyAllVideoCutStaysShort()
         try verifyYearRollover()
         print("Seasonal movie proposal: PASS")
     }

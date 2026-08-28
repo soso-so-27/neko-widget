@@ -10,6 +10,13 @@ struct NekoWidgetApp: App {
         // A share sheet cannot survive a process relaunch. Remove only export
         // files with this app's exact prefixes before any new export is made.
         TemporaryExportFileLifecycle.removeManagedFiles()
+        Task {
+            // A seasonal movie share sheet also cannot survive relaunch. The
+            // service validates the exact managed UUID directory before delete.
+            try? await SeasonalMovieExportService.shared.cleanupStaleExports(
+                olderThan: 0
+            )
+        }
 #if DEBUG
         if ProcessInfo.processInfo.environment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] == "1" {
             let defaults = UserDefaults.standard

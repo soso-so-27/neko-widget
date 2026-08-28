@@ -3,13 +3,14 @@ import SwiftUI
 enum TodayRoute: Hashable {
     case photo(String)
     case automaticAlbums
-    case seasonalMovie(SeasonalMoviePresentation)
+    case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
 }
 
 enum MemoriesRoute: Hashable {
     case photo(String)
     case automaticAlbums
+    case seasonalMovie(SeasonalMoviePeriodID)
 }
 
 private struct SeasonalMoviePreparationKey: Hashable {
@@ -78,6 +79,7 @@ struct MainTabView: View {
     @State private var isAutomaticAlbumsInPath = false
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
+    @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -96,7 +98,9 @@ struct MainTabView: View {
                     showSettings: { showsSettings = true },
                     openSeasonalMovie: {
                         guard let seasonalMovie else { return }
-                        todayPath.append(TodayRoute.seasonalMovie(seasonalMovie))
+                        todayPath.append(TodayRoute.seasonalMovie(
+                            SeasonalMoviePeriodID(presentation: seasonalMovie)
+                        ))
                     },
                     setMemorySaved: setMemorySaved,
                     rescan: { Task { await rescan() } }
@@ -129,6 +133,7 @@ struct MainTabView: View {
                 LikedPhotosView(
                     photos: likedPhotos,
                     hasPhotoAccess: hasPhotoAccess,
+                    seasonalMovies: seasonalMovieArchive.records,
                     exportPhotoBook: exportPhotoBook
                 )
                     .navigationDestination(
@@ -206,6 +211,10 @@ struct MainTabView: View {
         .task(id: seasonalMoviePreparationKey) {
             await prepareSeasonalMovie()
         }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await seasonalMovieArchive.load()
+        }
     }
 
     private var settingsSheet: some View {
@@ -263,8 +272,8 @@ struct MainTabView: View {
                 .onAppear {
                     isAutomaticAlbumsInPath = true
                 }
-        case let .seasonalMovie(presentation):
-            SeasonalMovieView(presentation: presentation)
+        case let .seasonalMovie(periodID):
+            seasonalMovieDestination(periodID)
         case let .monthlyWindow(snapshot):
             MonthlyWindowView(
                 presentation: refreshedMonthlyWindow(snapshot),
@@ -329,6 +338,38 @@ struct MainTabView: View {
             memoryDetailView(for: localIdentifier)
         case .automaticAlbums:
             automaticAlbumsView
+        case let .seasonalMovie(periodID):
+            seasonalMovieDestination(periodID)
+        }
+    }
+
+    @ViewBuilder
+    private func seasonalMovieDestination(
+        _ periodID: SeasonalMoviePeriodID
+    ) -> some View {
+        if let presentation = seasonalMovieArchive.presentation(for: periodID) {
+            SeasonalMovieView(
+                presentation: presentation,
+                setSceneExcluded: { identifier, excluded in
+                    let updated = try await seasonalMovieArchive.setSceneExcluded(
+                        identifier,
+                        excluded: excluded,
+                        in: periodID
+                    )
+                    if seasonalMovie.map({
+                        SeasonalMoviePeriodID(presentation: $0)
+                    }) == periodID {
+                        seasonalMovie = updated
+                    }
+                    return updated
+                }
+            )
+        } else {
+            ContentUnavailableView(
+                "この季節の作品を開けません",
+                systemImage: "film.stack",
+                description: Text("元の写真や動画がこのiPhoneにあるか確認してください。")
+            )
         }
     }
 
@@ -530,13 +571,19 @@ struct MainTabView: View {
         let service = SeasonalMovieCandidateService()
         let photoCandidates = await service.photoCandidates(catPhotos, in: quarter)
         guard !Task.isCancelled else { return }
+        var archiveDraft: SeasonalMovieArchiveDraft?
         if case let .ready(photoPresentation) = builder.buildMostRecent(
             from: photoCandidates,
             through: now
         ) {
-            seasonalMovie = photoPresentation
-        } else {
-            seasonalMovie = nil
+            archiveDraft = await seasonalMovieArchive.recordDraft(
+                photoPresentation
+            )
+            seasonalMovie = archiveDraft?.presentation
+            guard archiveDraft != nil else {
+                completedSeasonalMoviePreparationKey = nil
+                return
+            }
         }
 
         let videoCandidates = await service.videoCandidates(
@@ -548,7 +595,26 @@ struct MainTabView: View {
             from: photoCandidates + videoCandidates,
             through: now
         ) {
-            seasonalMovie = richerPresentation
+            if let archiveDraft {
+                seasonalMovie = await seasonalMovieArchive.finalizeDraft(
+                    richerPresentation,
+                    from: archiveDraft
+                )
+            } else {
+                let richerDraft = await seasonalMovieArchive.recordDraft(
+                    richerPresentation
+                )
+                seasonalMovie = richerDraft?.presentation
+                guard richerDraft != nil else {
+                    // A foreground transition changes the preparation task
+                    // key, giving temporary protected-file/IO failure one
+                    // bounded retry without spinning in this session.
+                    completedSeasonalMoviePreparationKey = nil
+                    return
+                }
+            }
+        } else if archiveDraft == nil {
+            seasonalMovie = nil
         }
         completedSeasonalMoviePreparationKey = preparationKey
     }

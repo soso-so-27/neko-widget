@@ -96,6 +96,8 @@
 		10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025D /* SeasonalMoviePresentation.swift */; };
 		10000000000000000000017C /* SeasonalMovieCandidateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025E /* SeasonalMovieCandidateService.swift */; };
 		10000000000000000000017D /* SeasonalMovieView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025F /* SeasonalMovieView.swift */; };
+		10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */; };
+		10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000261 /* SeasonalMovieExportService.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
 		100000000000000000000132 /* LikedPhotosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000232 /* LikedPhotosView.swift */; };
 		100000000000000000000133 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000233 /* MainTabView.swift */; };
@@ -267,6 +269,8 @@
 		F0000000000000000000025D /* SeasonalMoviePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMoviePresentation.swift; sourceTree = "<group>"; };
 		F0000000000000000000025E /* SeasonalMovieCandidateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieCandidateService.swift; sourceTree = "<group>"; };
 		F0000000000000000000025F /* SeasonalMovieView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieView.swift; sourceTree = "<group>"; };
+		F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieArchiveStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000261 /* SeasonalMovieExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieExportService.swift; sourceTree = "<group>"; };
 		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F00000000000000000000232 /* LikedPhotosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LikedPhotosView.swift; sourceTree = "<group>"; };
 		F00000000000000000000233 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -588,6 +592,8 @@
 				F0000000000000000000025A /* MomentBackgroundRefreshService.swift */,
 				F00000000000000000000256 /* MomentShareHandoffProcessor.swift */,
 				F0000000000000000000025E /* SeasonalMovieCandidateService.swift */,
+				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
+				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -911,6 +917,8 @@
 				10000000000000000000017B /* SeasonalMoviePresentation.swift in Sources */,
 				10000000000000000000017C /* SeasonalMovieCandidateService.swift in Sources */,
 				10000000000000000000017D /* SeasonalMovieView.swift in Sources */,
+				10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */,
+				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				10000000000000000000014F /* GrowthAlbumSelector.swift in Sources */,
 				100000000000000000000150 /* GrowthAlbumView.swift in Sources */,
 				100000000000000000000153 /* CatCandidateCurationView.swift in Sources */,

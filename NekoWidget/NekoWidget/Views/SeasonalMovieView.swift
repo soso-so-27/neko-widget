@@ -74,21 +74,110 @@ struct SeasonalMovieCard: View {
     }
 }
 
-/// A restrained, device-only sequence. Photos use clean timed cuts/fades;
-/// videos and Live Photos play their own motion. There is no artificial pan or
-/// zoom, soundtrack, generated MP4, automatic save, or sharing action.
+/// A compact card used by the device-only archive under 思い出.
+struct SeasonalMovieArchiveCard: View {
+    let presentation: SeasonalMoviePresentation
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let cover = presentation.coverScene {
+                PhotoAssetImageView(
+                    localIdentifier: cover.localIdentifier,
+                    catBoundingBox: cover.catBoundingBox,
+                    targetPixelSize: CGSize(width: 720, height: 900),
+                    targetAspectRatio: 4.0 / 5.0,
+                    showsFullImage: true,
+                    networkAccessAllowed: false
+                )
+            }
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.78)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Image(systemName: "play.fill")
+                    .font(.caption.bold())
+                    .frame(width: 32, height: 32)
+                    .background(.black.opacity(0.42), in: Circle())
+                Text(presentation.periodTitle)
+                    .font(.subheadline.bold())
+                Text("\(presentation.scenes.count)場面")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+            .foregroundStyle(.white)
+            .padding(14)
+        }
+        .frame(width: 190, height: 238)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .contentShape(RoundedRectangle(cornerRadius: 22))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(presentation.periodTitle)の季節の作品")
+        .accessibilityHint("開くと再生します")
+    }
+}
+
+private struct RemovedSeasonalMovieScene {
+    let scene: SeasonalMovieCandidate
+    let index: Int
+}
+
+private struct SeasonalMovieShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// A restrained, device-only sequence. It keeps editing to one reversible
+/// action, uses a single optional original soundtrack, and never mutates the
+/// source items in Photos.
 struct SeasonalMovieView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
     let presentation: SeasonalMoviePresentation
+    let setSceneExcluded: (
+        String,
+        Bool
+    ) async throws -> SeasonalMoviePresentation
 
+    @AppStorage("seasonalMovieSoundEnabled") private var soundEnabled = true
+    @StateObject private var soundtrack = SeasonalMovieSoundtrackPlayer()
+    @State private var soundtrackHasStarted = false
+    @State private var activePresentation: SeasonalMoviePresentation
     @State private var currentIndex = 0
     @State private var isPlaying = true
     @State private var hasFinished = false
     @State private var currentSceneIsReady = false
     @State private var playbackGeneration = 0
+    @State private var showsExcludeConfirmation = false
+    @State private var showsMinimumSceneAlert = false
+    @State private var removedScene: RemovedSeasonalMovieScene?
+    @State private var resumesAfterSceneAction = false
+    @State private var isUpdatingScene = false
+    @State private var sceneEditTask: Task<Void, Never>?
+    @State private var sceneEditErrorMessage: String?
+    @State private var isExporting = false
+    @State private var exportTask: Task<Void, Never>?
+    @State private var movingPreheatTask: Task<Void, Never>?
+    @State private var preheatedSceneIdentifiers: Set<String> = []
+    @State private var shareItem: SeasonalMovieShareItem?
+    @State private var exportErrorMessage: String?
+
+    init(
+        presentation: SeasonalMoviePresentation,
+        setSceneExcluded: (
+            (String, Bool) async throws -> SeasonalMoviePresentation
+        )? = nil
+    ) {
+        self.presentation = presentation
+        self.setSceneExcluded = setSceneExcluded ?? { _, _ in presentation }
+        _activePresentation = State(initialValue: presentation)
+    }
 
     var body: some View {
         ZStack {
@@ -117,10 +206,16 @@ struct SeasonalMovieView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
+            sceneContext
             playerChrome
 
             if hasFinished {
                 ending
+                    .transition(.opacity)
+            }
+
+            if isExporting {
+                exportProgress
                     .transition(.opacity)
             }
         }
@@ -130,55 +225,192 @@ struct SeasonalMovieView: View {
         .task(id: playbackGeneration) {
             await continuePlayback()
         }
-        .onChange(of: scenePhase) { _, phase in
-            guard phase != .active, isPlaying else { return }
-            isPlaying = false
-            playbackGeneration += 1
+        .onAppear {
+            // Wait for the first real visual frame. Starting music while
+            // PhotoKit still shows a spinner makes every later cut feel late.
+            soundtrack.prepare(enabled: false)
+            preheatScenes(around: currentIndex)
         }
-        .onDisappear { playbackGeneration += 1 }
+        // Keep one opened playback recipe stable. If the background scan
+        // enriches the archive with moving scenes, that version is used the
+        // next time the work is opened instead of replacing a scene mid-cut.
+        .onChange(of: soundEnabled) { _, value in
+            soundtrack.setEnabled(
+                value,
+                playing: soundtrackHasStarted && isPlaying && !hasFinished
+            )
+        }
+        .onChange(of: currentIndex) { _, value in
+            preheatScenes(around: value)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active, isPlaying {
+                isPlaying = false
+                soundtrack.setPlaying(false)
+                playbackGeneration += 1
+            }
+        }
+        .onDisappear {
+            playbackGeneration += 1
+            soundtrack.stop()
+            exportTask?.cancel()
+            movingPreheatTask?.cancel()
+            stopPreheatingScenes()
+        }
+        .confirmationDialog(
+            "この作品から外しますか？",
+            isPresented: $showsExcludeConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("この作品から外す", role: .destructive) {
+                excludeCurrentScene()
+            }
+            Button("キャンセル", role: .cancel) {
+                resumeAfterSceneAction()
+            }
+        } message: {
+            Text("元の写真や動画は消えません。")
+        }
+        .alert("これ以上は外せません", isPresented: $showsMinimumSceneAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("季節の作品には8場面以上必要です。")
+        }
+        .alert(
+            "作品を更新できませんでした",
+            isPresented: Binding(
+                get: { sceneEditErrorMessage != nil },
+                set: { if !$0 { sceneEditErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { sceneEditErrorMessage = nil }
+        } message: {
+            Text(sceneEditErrorMessage ?? "もう一度お試しください。")
+        }
+        .alert(
+            "動画を準備できませんでした",
+            isPresented: Binding(
+                get: { exportErrorMessage != nil },
+                set: { if !$0 { exportErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { exportErrorMessage = nil }
+        } message: {
+            Text(exportErrorMessage ?? "もう一度お試しください。")
+        }
+        .sheet(item: $shareItem) { item in
+            SeasonalMovieShareSheet(url: item.url) {
+                completeSharing(item.url)
+            }
+        }
         .accessibilityIdentifier("seasonal-movie-player")
+    }
+
+    @ViewBuilder
+    private var sceneContext: some View {
+        VStack {
+            Spacer()
+            if currentIndex == 0, !hasFinished {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(activePresentation.title)
+                        .font(.title2.bold())
+                    Text(activePresentation.periodTitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.82))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 96)
+                .foregroundStyle(.white)
+                .transition(.opacity)
+            } else if showsMonthMarker, !hasFinished {
+                Text(monthMarkerText)
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 30)
+                    .background(.black.opacity(0.42), in: Capsule())
+                    .foregroundStyle(.white)
+                    .padding(.bottom, 104)
+                    .transition(.opacity)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     private var playerChrome: some View {
         VStack(spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(presentation.title)
-                        .font(.headline)
-                    Text(presentation.periodTitle)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.76))
+            HStack(spacing: 10) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 44, height: 44)
                 }
+                .accessibilityLabel("閉じる")
+                .accessibilityIdentifier("seasonal-movie-close")
+
                 Spacer()
-                Button("閉じる") { dismiss() }
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 44)
-                    .background(.black.opacity(0.46), in: Capsule())
-                    .accessibilityIdentifier("seasonal-movie-close")
+
+                Button {
+                    soundEnabled.toggle()
+                } label: {
+                    Image(systemName: soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel(soundEnabled ? "音を消す" : "音を出す")
+                .accessibilityIdentifier("seasonal-movie-sound-toggle")
+
+                if !hasFinished {
+                    Menu {
+                        Button(role: .destructive) {
+                            pauseForSceneAction()
+                        } label: {
+                            Label("この作品から外す", systemImage: "rectangle.badge.minus")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("この場面の操作")
+                    .disabled(isUpdatingScene)
+                }
             }
+            .buttonStyle(SeasonalMovieChromeButtonStyle())
 
             Spacer()
 
             if !hasFinished {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
+                    if let removedScene {
+                        HStack(spacing: 10) {
+                            Text("この作品から外しました")
+                                .font(.caption)
+                            Button("元に戻す") {
+                                restore(removedScene)
+                            }
+                            .font(.caption.bold())
+                            .disabled(isUpdatingScene)
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 36)
+                        .background(.black.opacity(0.54), in: Capsule())
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+
                     ProgressView(
                         value: Double(currentIndex + 1),
-                        total: Double(max(1, presentation.scenes.count))
+                        total: Double(max(1, activePresentation.scenes.count))
                     )
                     .tint(.white)
 
                     Button(action: togglePlayback) {
-                        Label(
-                            isPlaying ? "一時停止" : "つづきを見る",
-                            systemImage: isPlaying ? "pause.fill" : "play.fill"
-                        )
-                        .font(.subheadline.bold())
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(.black.opacity(0.46), in: Capsule())
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.headline)
+                            .frame(width: 48, height: 48)
+                            .background(.black.opacity(0.46), in: Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(isPlaying ? "一時停止" : "つづきを見る")
                     .accessibilityIdentifier("seasonal-movie-playback-toggle")
                 }
             }
@@ -190,20 +422,34 @@ struct SeasonalMovieView: View {
 
     private var ending: some View {
         VStack(spacing: 18) {
-            Text("この季節は、ここまで")
+            Text("この季節も、ここまで")
                 .font(.title2.bold())
 
-            Text("このiPhoneの中だけでつくりました。\n保存や共有はしていません。")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.74))
-                .multilineTextAlignment(.center)
+            Button(action: exportAndShare) {
+                Label("動画を保存・共有", systemImage: "square.and.arrow.up")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("seasonal-movie-export")
+
+            if activePresentation.scenes.contains(where: {
+                $0.mediaKind == .livePhoto
+            }) {
+                Text("Live Photoは、保存した動画では静止画になります。")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .multilineTextAlignment(.center)
+            }
 
             HStack(spacing: 12) {
+                Button(action: restart) {
+                    Label("もう一度", systemImage: "arrow.counterclockwise")
+                }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("seasonal-movie-replay")
                 Button("閉じる") { dismiss() }
                     .buttonStyle(.bordered)
-                Button("もう一度見る", action: restart)
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("seasonal-movie-replay")
             }
         }
         .foregroundStyle(.white)
@@ -212,11 +458,55 @@ struct SeasonalMovieView: View {
         .padding(24)
     }
 
+    private var exportProgress: some View {
+        ZStack {
+            Color.black.opacity(0.72).ignoresSafeArea()
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(.white)
+                Text("動画を準備しています")
+                    .font(.headline)
+                Text("写真や動画は、このiPhoneの中で処理します。")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.74))
+                Button("中止") {
+                    exportTask?.cancel()
+                }
+                .buttonStyle(.bordered)
+            }
+            .foregroundStyle(.white)
+            .padding(24)
+            .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 22))
+            .padding(24)
+        }
+        .accessibilityIdentifier("seasonal-movie-export-progress")
+    }
+
     private var currentScene: SeasonalMovieCandidate? {
-        guard presentation.scenes.indices.contains(currentIndex) else {
+        guard activePresentation.scenes.indices.contains(currentIndex) else {
             return nil
         }
-        return presentation.scenes[currentIndex]
+        return activePresentation.scenes[currentIndex]
+    }
+
+    private var showsMonthMarker: Bool {
+        guard currentIndex > 0,
+              activePresentation.scenes.indices.contains(currentIndex) else {
+            return false
+        }
+        return !Calendar.current.isDate(
+            activePresentation.scenes[currentIndex - 1].creationDate,
+            equalTo: activePresentation.scenes[currentIndex].creationDate,
+            toGranularity: .month
+        )
+    }
+
+    private var monthMarkerText: String {
+        guard let scene = currentScene else { return "" }
+        return scene.creationDate.formatted(
+            .dateTime.year().month(.wide).locale(Locale(identifier: "ja_JP"))
+        )
     }
 
     @MainActor
@@ -224,9 +514,12 @@ struct SeasonalMovieView: View {
         guard isPlaying,
               !hasFinished,
               currentSceneIsReady,
-              let scene = currentScene else { return }
+              currentScene != nil else { return }
         try? await Task.sleep(
-            nanoseconds: UInt64(scene.playbackDuration * 1_000_000_000)
+            nanoseconds: UInt64(
+                activePresentation.playbackDuration(at: currentIndex)
+                    * 1_000_000_000
+            )
         )
         guard !Task.isCancelled, isPlaying, !hasFinished else { return }
         advance()
@@ -234,16 +527,18 @@ struct SeasonalMovieView: View {
 
     @MainActor
     private func advance() {
-        guard currentIndex + 1 < presentation.scenes.count else {
+        guard currentIndex + 1 < activePresentation.scenes.count else {
             isPlaying = false
             currentSceneIsReady = false
+            soundtrack.finish()
             withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.45)) {
                 hasFinished = true
             }
             return
         }
         currentSceneIsReady = false
-        withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.55)) {
+        let transitionDuration = reduceMotion ? 0 : (nextSceneStartsMonth ? 0.24 : 0.08)
+        withAnimation(.easeInOut(duration: transitionDuration)) {
             currentIndex += 1
         }
         playbackGeneration += 1
@@ -255,6 +550,10 @@ struct SeasonalMovieView: View {
               !currentSceneIsReady,
               !hasFinished else { return }
         currentSceneIsReady = true
+        if !soundtrackHasStarted {
+            soundtrackHasStarted = true
+            soundtrack.setEnabled(soundEnabled, playing: isPlaying)
+        }
         playbackGeneration += 1
     }
 
@@ -267,6 +566,7 @@ struct SeasonalMovieView: View {
 
     private func togglePlayback() {
         isPlaying.toggle()
+        soundtrack.setPlaying(isPlaying)
         playbackGeneration += 1
     }
 
@@ -275,8 +575,334 @@ struct SeasonalMovieView: View {
         hasFinished = false
         isPlaying = true
         currentSceneIsReady = false
+        soundtrackHasStarted = false
+        soundtrack.rewind()
         playbackGeneration += 1
     }
+
+    private var nextSceneStartsMonth: Bool {
+        guard activePresentation.scenes.indices.contains(currentIndex + 1) else {
+            return false
+        }
+        return !Calendar.current.isDate(
+            activePresentation.scenes[currentIndex].creationDate,
+            equalTo: activePresentation.scenes[currentIndex + 1].creationDate,
+            toGranularity: .month
+        )
+    }
+
+    private func pauseForSceneAction() {
+        resumesAfterSceneAction = isPlaying
+        if isPlaying {
+            isPlaying = false
+            soundtrack.setPlaying(false)
+            playbackGeneration += 1
+        }
+        showsExcludeConfirmation = true
+    }
+
+    private func resumeAfterSceneAction() {
+        defer { resumesAfterSceneAction = false }
+        guard resumesAfterSceneAction,
+              !hasFinished,
+              scenePhase == .active else { return }
+        isPlaying = true
+        soundtrack.setPlaying(true)
+        playbackGeneration += 1
+    }
+
+    private func excludeCurrentScene() {
+        guard !isUpdatingScene else { return }
+        guard activePresentation.scenes.count
+                > SeasonalMovieBuilder.minimumOutputSceneCount else {
+            showsMinimumSceneAlert = true
+            resumeAfterSceneAction()
+            return
+        }
+        guard let scene = currentScene else { return }
+        let removed = RemovedSeasonalMovieScene(scene: scene, index: currentIndex)
+        isUpdatingScene = true
+        sceneEditErrorMessage = nil
+        sceneEditTask = Task { @MainActor in
+            do {
+                let updated = try await setSceneExcluded(
+                    scene.localIdentifier,
+                    true
+                )
+                withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.2)) {
+                    activePresentation = updated
+                    currentIndex = min(removed.index, max(0, updated.scenes.count - 1))
+                    removedScene = removed
+                }
+                currentSceneIsReady = false
+                isUpdatingScene = false
+                sceneEditTask = nil
+                resumeAfterSceneAction()
+                playbackGeneration += 1
+            } catch {
+                isUpdatingScene = false
+                sceneEditTask = nil
+                sceneEditErrorMessage = error.localizedDescription
+                resumeAfterSceneAction()
+            }
+        }
+    }
+
+    private func restore(_ removed: RemovedSeasonalMovieScene) {
+        guard !isUpdatingScene else { return }
+        let shouldResume = isPlaying
+        if isPlaying {
+            isPlaying = false
+            soundtrack.setPlaying(false)
+            playbackGeneration += 1
+        }
+        isUpdatingScene = true
+        sceneEditErrorMessage = nil
+        sceneEditTask = Task { @MainActor in
+            do {
+                let updated = try await setSceneExcluded(
+                    removed.scene.localIdentifier,
+                    false
+                )
+                let restoredIndex = updated.scenes.firstIndex(where: {
+                    $0.localIdentifier == removed.scene.localIdentifier
+                }) ?? min(removed.index, max(0, updated.scenes.count - 1))
+                withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.2)) {
+                    activePresentation = updated
+                    currentIndex = restoredIndex
+                    removedScene = nil
+                }
+                currentSceneIsReady = false
+                isUpdatingScene = false
+                sceneEditTask = nil
+                if shouldResume, !hasFinished, scenePhase == .active {
+                    isPlaying = true
+                    soundtrack.setPlaying(true)
+                }
+                playbackGeneration += 1
+            } catch {
+                isUpdatingScene = false
+                sceneEditTask = nil
+                sceneEditErrorMessage = error.localizedDescription
+                if shouldResume, !hasFinished, scenePhase == .active {
+                    isPlaying = true
+                    soundtrack.setPlaying(true)
+                    playbackGeneration += 1
+                }
+            }
+        }
+    }
+
+    private func exportAndShare() {
+        guard !isExporting else { return }
+        isPlaying = false
+        soundtrack.setPlaying(false)
+        playbackGeneration += 1
+        isExporting = true
+        exportErrorMessage = nil
+        let presentation = activePresentation
+        let includesSound = soundEnabled
+        exportTask = Task {
+            do {
+                let url = try await SeasonalMovieExportService.shared.export(
+                    presentation,
+                    soundEnabled: includesSound
+                )
+                guard !Task.isCancelled else {
+                    await SeasonalMovieExportService.shared.cleanupExport(at: url)
+                    await MainActor.run {
+                        isExporting = false
+                        exportTask = nil
+                    }
+                    return
+                }
+                await MainActor.run {
+                    isExporting = false
+                    exportTask = nil
+                    shareItem = SeasonalMovieShareItem(url: url)
+                }
+            } catch {
+                await MainActor.run {
+                    isExporting = false
+                    exportTask = nil
+                    if !(error is CancellationError),
+                       (error as? SeasonalMovieExportError) != .cancelled {
+                        exportErrorMessage = error.localizedDescription
+                    }
+                }
+            }
+        }
+    }
+
+    private func completeSharing(_ url: URL) {
+        shareItem = nil
+        Task {
+            await SeasonalMovieExportService.shared.cleanupExport(at: url)
+        }
+    }
+
+    private func preheatScenes(around index: Int) {
+        let upperBound = min(
+            activePresentation.scenes.endIndex,
+            index + 3
+        )
+        guard activePresentation.scenes.indices.contains(index),
+              index < upperBound else { return }
+        let identifiers = Set(activePresentation.scenes[index..<upperBound]
+            .filter { $0.mediaKind != .video }
+            .map(\.localIdentifier))
+        let identifiersToStop = preheatedSceneIdentifiers
+            .subtracting(identifiers)
+        let identifiersToStart = identifiers
+            .subtracting(preheatedSceneIdentifiers)
+        PhotoAssetImagePipeline.stopCachingFullImages(
+            localIdentifiers: Array(identifiersToStop),
+            targetPixelSize: CGSize(width: 1_600, height: 2_400),
+            networkAccessAllowed: false
+        )
+        PhotoAssetImagePipeline.startCachingFullImages(
+            localIdentifiers: Array(identifiersToStart),
+            targetPixelSize: CGSize(width: 1_600, height: 2_400),
+            networkAccessAllowed: false
+        )
+        preheatedSceneIdentifiers = identifiers
+
+        movingPreheatTask?.cancel()
+        let nextStart = min(index + 1, upperBound)
+        let movingScenes = nextStart < upperBound
+            ? Array(activePresentation.scenes[nextStart..<upperBound])
+                .filter { $0.mediaKind.isMoving }
+            : []
+        movingPreheatTask = Task {
+            for scene in movingScenes {
+                guard !Task.isCancelled else { return }
+                let result = PHAsset.fetchAssets(
+                    withLocalIdentifiers: [scene.localIdentifier],
+                    options: nil
+                )
+                guard let asset = result.firstObject else { continue }
+                switch scene.mediaKind {
+                case .livePhoto:
+                    _ = await SeasonalMovieLocalMediaLoader.livePhoto(
+                        for: asset,
+                        targetSize: UIScreen.main.bounds.size
+                    )
+                case .video:
+                    _ = await SeasonalMovieLocalMediaLoader.avAsset(for: asset)
+                case .stillPhoto:
+                    break
+                }
+            }
+        }
+    }
+
+    private func stopPreheatingScenes() {
+        movingPreheatTask?.cancel()
+        movingPreheatTask = nil
+        PhotoAssetImagePipeline.stopCachingFullImages(
+            localIdentifiers: Array(preheatedSceneIdentifiers),
+            targetPixelSize: CGSize(width: 1_600, height: 2_400),
+            networkAccessAllowed: false
+        )
+        preheatedSceneIdentifiers.removeAll()
+    }
+}
+
+private struct SeasonalMovieChromeButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white)
+            .background(.black.opacity(configuration.isPressed ? 0.68 : 0.46), in: Circle())
+            .contentShape(Circle())
+    }
+}
+
+@MainActor
+private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
+    private static let playbackVolume: Float = 0.55
+    private var player: AVAudioPlayer?
+    private var isEnabled = true
+
+    func prepare(enabled: Bool) {
+        guard player == nil,
+              let data = NSDataAsset(name: "SeasonalMovieAmbient")?.data else {
+            return
+        }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.ambient, mode: .default)
+            let player = try AVAudioPlayer(data: data)
+            player.numberOfLoops = -1
+            player.volume = 0
+            player.prepareToPlay()
+            isEnabled = enabled
+            if enabled {
+                player.play()
+                player.setVolume(Self.playbackVolume, fadeDuration: 0.4)
+            }
+            self.player = player
+        } catch {
+            player = nil
+        }
+    }
+
+    func setEnabled(_ enabled: Bool, playing: Bool) {
+        guard let player else { return }
+        isEnabled = enabled
+        player.setVolume(enabled ? Self.playbackVolume : 0, fadeDuration: 0.25)
+        if enabled, playing, !player.isPlaying {
+            player.play()
+        } else if !enabled {
+            player.pause()
+        }
+    }
+
+    func setPlaying(_ playing: Bool) {
+        guard let player else { return }
+        if playing, isEnabled {
+            player.play()
+        } else {
+            player.pause()
+        }
+    }
+
+    func finish() {
+        player?.setVolume(0, fadeDuration: 1.0)
+    }
+
+    func rewind() {
+        guard let player else { return }
+        player.currentTime = 0
+        player.volume = 0
+        player.pause()
+        isEnabled = false
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+    }
+}
+
+private struct SeasonalMovieShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    let completed: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(
+            activityItems: [url],
+            applicationActivities: nil
+        )
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            DispatchQueue.main.async(execute: completed)
+        }
+        return controller
+    }
+
+    func updateUIViewController(
+        _ uiViewController: UIActivityViewController,
+        context: Context
+    ) {}
 }
 
 private struct SeasonalMovieSceneView: View {
@@ -285,36 +911,110 @@ private struct SeasonalMovieSceneView: View {
     let onReady: () -> Void
     let onUnavailable: () -> Void
 
+    @State private var didResolveLoad = false
+
     var body: some View {
-        switch candidate.mediaKind {
-        case .stillPhoto:
-            PhotoAssetImageView(
-                localIdentifier: candidate.localIdentifier,
-                catBoundingBox: candidate.catBoundingBox,
-                targetPixelSize: CGSize(width: 1_600, height: 2_400),
-                targetAspectRatio: 2.0 / 3.0,
-                showsFullImage: true,
-                networkAccessAllowed: false
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onAppear(perform: onReady)
-        case .livePhoto:
-            LocalSeasonalLivePhotoView(
-                localIdentifier: candidate.localIdentifier,
-                isPlaying: isPlaying,
-                onReady: onReady,
-                onUnavailable: onUnavailable
-            )
-            .ignoresSafeArea()
-        case .video:
-            LocalSeasonalVideoView(
-                candidate: candidate,
-                isPlaying: isPlaying,
-                onReady: onReady,
-                onUnavailable: onUnavailable
-            )
-            .ignoresSafeArea()
+        Group {
+            switch candidate.mediaKind {
+            case .stillPhoto:
+                PhotoAssetImageView(
+                    localIdentifier: candidate.localIdentifier,
+                    catBoundingBox: candidate.catBoundingBox,
+                    targetPixelSize: CGSize(width: 1_600, height: 2_400),
+                    targetAspectRatio: 2.0 / 3.0,
+                    showsFullImage: true,
+                    networkAccessAllowed: false,
+                    onLoadResult: resolveLoad
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .livePhoto:
+                SeasonalMovieLivePhotoScene(
+                    candidate: candidate,
+                    isPlaying: isPlaying,
+                    onReady: { resolveLoad(true) },
+                    onUnavailable: { resolveLoad(false) }
+                )
+                .ignoresSafeArea()
+            case .video:
+                LocalSeasonalVideoView(
+                    candidate: candidate,
+                    isPlaying: isPlaying,
+                    onReady: { resolveLoad(true) },
+                    onUnavailable: { resolveLoad(false) }
+                )
+                .ignoresSafeArea()
+            }
         }
+        .task(id: candidate.localIdentifier) {
+            guard candidate.mediaKind != .livePhoto else { return }
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            resolveLoad(false)
+        }
+    }
+
+    private func resolveLoad(_ didLoad: Bool) {
+        guard !didResolveLoad else { return }
+        didResolveLoad = true
+        didLoad ? onReady() : onUnavailable()
+    }
+}
+
+private struct SeasonalMovieLivePhotoScene: View {
+    let candidate: SeasonalMovieCandidate
+    let isPlaying: Bool
+    let onReady: () -> Void
+    let onUnavailable: () -> Void
+
+    @State private var usesStillFallback = false
+    @State private var fallbackDidResolve = false
+
+    var body: some View {
+        Group {
+            if usesStillFallback {
+                PhotoAssetImageView(
+                    localIdentifier: candidate.localIdentifier,
+                    catBoundingBox: candidate.catBoundingBox,
+                    targetPixelSize: CGSize(width: 1_600, height: 2_400),
+                    targetAspectRatio: 2.0 / 3.0,
+                    showsFullImage: true,
+                    networkAccessAllowed: false,
+                    onLoadResult: { didLoad in
+                        resolveFallback(didLoad)
+                    }
+                )
+            } else {
+                LocalSeasonalLivePhotoView(
+                    localIdentifier: candidate.localIdentifier,
+                    isPlaying: isPlaying,
+                    onReady: onReady,
+                    onUnavailable: {
+                        usesStillFallback = true
+                    }
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: usesStillFallback) {
+            guard usesStillFallback else { return }
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            resolveFallback(false)
+        }
+    }
+
+    private func resolveFallback(_ didLoad: Bool) {
+        guard !fallbackDidResolve else { return }
+        fallbackDidResolve = true
+        didLoad ? onReady() : onUnavailable()
     }
 }
 

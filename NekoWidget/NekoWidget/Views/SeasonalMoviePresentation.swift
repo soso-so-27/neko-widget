@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-enum SeasonalMovieMediaKind: String, Hashable, Sendable {
+enum SeasonalMovieMediaKind: String, Codable, Hashable, Sendable {
     case stillPhoto
     case livePhoto
     case video
@@ -11,7 +11,7 @@ enum SeasonalMovieMediaKind: String, Hashable, Sendable {
 
 /// Privacy-minimal metadata for one locally available candidate. A candidate
 /// never contains image or video bytes; those remain under PhotoKit.
-struct SeasonalMovieCandidate: Identifiable, Hashable, Sendable {
+struct SeasonalMovieCandidate: Codable, Identifiable, Hashable, Sendable {
     let localIdentifier: String
     let creationDate: Date
     let mediaKind: SeasonalMovieMediaKind
@@ -27,16 +27,16 @@ struct SeasonalMovieCandidate: Identifiable, Hashable, Sendable {
 
     var playbackDuration: TimeInterval {
         switch mediaKind {
-        case .stillPhoto: 2.05
-        case .livePhoto: 2.1
-        case .video: max(1.0, min(2.1, suggestedDuration ?? 2.1))
+        case .stillPhoto: 1.45
+        case .livePhoto: 1.8
+        case .video: max(1.4, min(2.2, suggestedDuration ?? 2.0))
         }
     }
 }
 
-/// A device-only playback plan. This is not an exported movie file; the player
-/// renders each PhotoKit scene directly and never saves or shares a new asset.
-struct SeasonalMoviePresentation: Identifiable, Hashable, Sendable {
+/// A device-only playback recipe. It stores no media bytes. Playback resolves
+/// PhotoKit items directly; only an explicit export creates a temporary MP4.
+struct SeasonalMoviePresentation: Codable, Identifiable, Hashable, Sendable {
     let quarterStart: Date
     let quarterEnd: Date
     let startYearNumber: Int
@@ -75,7 +75,34 @@ struct SeasonalMoviePresentation: Identifiable, Hashable, Sendable {
     }
 
     var estimatedDuration: TimeInterval {
-        scenes.reduce(0) { $0 + $1.playbackDuration }
+        scenes.indices.reduce(0) { $0 + playbackDuration(at: $1) }
+    }
+
+    /// The opening and closing shots receive a little more room while the
+    /// middle stays compact. This creates a beginning and an ending without
+    /// turning the automatic piece into a configurable video editor.
+    func playbackDuration(at index: Int) -> TimeInterval {
+        guard scenes.indices.contains(index) else { return 0 }
+        let base = scenes[index].playbackDuration
+        if index == 0 { return max(base, 1.8) }
+        if index == scenes.index(before: scenes.endIndex) {
+            return max(base, 2.0)
+        }
+        return base
+    }
+
+    func replacingScenes(
+        _ replacement: [SeasonalMovieCandidate]
+    ) -> SeasonalMoviePresentation {
+        SeasonalMoviePresentation(
+            quarterStart: quarterStart,
+            quarterEnd: quarterEnd,
+            startYearNumber: startYearNumber,
+            startMonthNumber: startMonthNumber,
+            endYearNumber: endYearNumber,
+            endMonthNumber: endMonthNumber,
+            scenes: replacement
+        )
     }
 }
 
@@ -90,7 +117,7 @@ enum SeasonalMovieBuildResult: Hashable, Sendable {
     case unavailable(SeasonalMovieUnavailableReason)
 }
 
-/// Selects 8...14 scenes from the latest fully completed calendar quarter.
+/// Selects 8...12 scenes from the latest fully completed calendar quarter.
 ///
 /// Its gate is stricter than the monthly photo letter: at least ten distinct
 /// candidates, six capture days, and two months are required. Motion is mixed
@@ -100,12 +127,20 @@ struct SeasonalMovieBuilder {
     static let minimumCaptureDayCount = 6
     static let minimumMonthCount = 2
     static let minimumOutputSceneCount = 8
-    static let maximumOutputSceneCount = 14
+    static let maximumOutputSceneCount = 12
+    static let maximumPlaybackDuration: TimeInterval = 22
     static let targetMovingSceneRatio = 0.60
 
     private static let rapidNearDuplicateInterval: TimeInterval = 12
     private static let minimumBoundingBoxIntersectionOverUnion = 0.62
     private static let maximumLargestCatAreaDelta = 0.04
+    /// A second, stricter guard keeps two frames from the same short shooting
+    /// sequence out of the final cut when other days are available. This is
+    /// deliberately not a destructive candidate collapse: missing metadata
+    /// fails open, and a user-marked memory is never rejected by this rule.
+    private static let shortSequenceInterval: TimeInterval = 90
+    private static let shortSequenceBoundingBoxIntersectionOverUnion = 0.82
+    private static let shortSequenceLargestCatAreaDelta = 0.02
 
     private let calendar: Calendar
 
@@ -147,8 +182,10 @@ struct SeasonalMovieBuilder {
         }
 
         let targetCount = min(Self.maximumOutputSceneCount, distinct.count)
-        let selected = selectScenes(from: distinct, targetCount: targetCount)
-            .sorted(by: oldestFirst)
+        let selected = trimToPlaybackBudget(
+            selectScenes(from: distinct, targetCount: targetCount)
+                .sorted(by: oldestFirst)
+        )
         guard selected.count >= Self.minimumOutputSceneCount else {
             return .unavailable(.notEnoughDistinctScenes(available: selected.count))
         }
@@ -271,17 +308,62 @@ struct SeasonalMovieBuilder {
 
         func append(
             _ candidate: SeasonalMovieCandidate,
-            respectsDayLimit: Bool = true
+            respectsDayLimit: Bool = true,
+            avoidsShortSequenceRepeats: Bool = true
         ) {
+            // When a human-marked memory and an automatic choice are from the
+            // same short sequence, keep the human choice in the same coverage
+            // slot. The replaced identifier remains consumed so it cannot be
+            // added again by a later automatic pass.
+            if candidate.isMemory,
+               !selectedIDs.contains(candidate.localIdentifier),
+               let replacementIndex = selected.indices.first(where: {
+                   !selected[$0].isMemory
+                       && areConfidentShortSequenceMatches(
+                           selected[$0],
+                           candidate
+                       )
+               }) {
+                selectedIDs.insert(candidate.localIdentifier)
+                selected[replacementIndex] = candidate
+                return
+            }
+
             let scenesOnDay = selected.filter {
                 dayKey($0) == dayKey(candidate)
             }.count
             guard selected.count < targetCount,
                   (!respectsDayLimit || scenesOnDay < 2),
+                  (!avoidsShortSequenceRepeats
+                    || candidate.isMemory
+                    || !selected.contains(where: {
+                        areConfidentShortSequenceMatches($0, candidate)
+                    })),
                   selectedIDs.insert(candidate.localIdentifier).inserted else {
                 return
             }
             selected.append(candidate)
+        }
+
+        func coverageFirst(
+            _ lhs: SeasonalMovieCandidate,
+            _ rhs: SeasonalMovieCandidate
+        ) -> Bool {
+            let leftDayCount = selected.filter { dayKey($0) == dayKey(lhs) }.count
+            let rightDayCount = selected.filter { dayKey($0) == dayKey(rhs) }.count
+            if leftDayCount != rightDayCount {
+                return leftDayCount < rightDayCount
+            }
+            let leftMonthCount = selected.filter {
+                monthKey($0) == monthKey(lhs)
+            }.count
+            let rightMonthCount = selected.filter {
+                monthKey($0) == monthKey(rhs)
+            }.count
+            if leftMonthCount != rightMonthCount {
+                return leftMonthCount < rightMonthCount
+            }
+            return mostUsefulForCoverage(lhs, rhs)
         }
 
         let monthGroups = Dictionary(grouping: candidates, by: monthKey)
@@ -306,7 +388,7 @@ struct SeasonalMovieBuilder {
         let movingTarget = Int(ceil(Double(targetCount) * Self.targetMovingSceneRatio))
         for candidate in candidates
             .filter({ $0.mediaKind.isMoving })
-            .sorted(by: mostUsefulForCoverage) {
+            .sorted(by: coverageFirst) {
             guard selected.filter({ $0.mediaKind.isMoving }).count < movingTarget else {
                 break
             }
@@ -318,11 +400,11 @@ struct SeasonalMovieBuilder {
         // not contain enough stills without making motion a hard gate.
         for candidate in candidates
             .filter({ !$0.mediaKind.isMoving })
-            .sorted(by: preferredScene) {
+            .sorted(by: coverageFirst) {
             append(candidate)
         }
 
-        for candidate in candidates.sorted(by: mostUsefulForCoverage) {
+        for candidate in candidates.sorted(by: coverageFirst) {
             append(candidate)
         }
 
@@ -330,11 +412,109 @@ struct SeasonalMovieBuilder {
         // reach the minimum viable sequence. This is a last resort only; the
         // six-day gate and all earlier passes still prevent one-day albums.
         if selected.count < Self.minimumOutputSceneCount {
-            for candidate in candidates.sorted(by: mostUsefulForCoverage) {
-                append(candidate, respectsDayLimit: false)
+            for candidate in candidates.sorted(by: coverageFirst) {
+                append(
+                    candidate,
+                    respectsDayLimit: false,
+                    avoidsShortSequenceRepeats: false
+                )
             }
         }
         return selected
+    }
+
+    /// Motion scenes are naturally longer than stills. Keep the finished cut
+    /// inside the advertised short-movie range without weakening the six-day
+    /// or two-month diversity gates and without preferring to remove a memory.
+    private func trimToPlaybackBudget(
+        _ input: [SeasonalMovieCandidate]
+    ) -> [SeasonalMovieCandidate] {
+        var scenes = input
+        while scenes.count > Self.minimumOutputSceneCount,
+              estimatedPlaybackDuration(scenes)
+                > Self.maximumPlaybackDuration {
+            let removable = scenes.indices.filter { index in
+                let remaining = scenes.enumerated().compactMap {
+                    $0.offset == index ? nil : $0.element
+                }
+                return Set(remaining.map(dayKey)).count
+                        >= Self.minimumCaptureDayCount
+                    && Set(remaining.map(monthKey)).count
+                        >= Self.minimumMonthCount
+            }
+            guard let index = removable.sorted(by: { lhs, rhs in
+                let left = scenes[lhs]
+                let right = scenes[rhs]
+                if left.isMemory != right.isMemory {
+                    return !left.isMemory
+                }
+                let leftDayCount = scenes.filter {
+                    dayKey($0) == dayKey(left)
+                }.count
+                let rightDayCount = scenes.filter {
+                    dayKey($0) == dayKey(right)
+                }.count
+                if leftDayCount != rightDayCount {
+                    return leftDayCount > rightDayCount
+                }
+                let leftMonthCount = scenes.filter {
+                    monthKey($0) == monthKey(left)
+                }.count
+                let rightMonthCount = scenes.filter {
+                    monthKey($0) == monthKey(right)
+                }.count
+                if leftMonthCount != rightMonthCount {
+                    return leftMonthCount > rightMonthCount
+                }
+                if left.playbackDuration != right.playbackDuration {
+                    return left.playbackDuration > right.playbackDuration
+                }
+                let leftArea = left.largestCatAreaRatio ?? 0
+                let rightArea = right.largestCatAreaRatio ?? 0
+                if leftArea != rightArea { return leftArea < rightArea }
+                return oldestFirst(right, left)
+            }).first else { break }
+            scenes.remove(at: index)
+        }
+        return scenes
+    }
+
+    private func estimatedPlaybackDuration(
+        _ scenes: [SeasonalMovieCandidate]
+    ) -> TimeInterval {
+        scenes.indices.reduce(0) { result, index in
+            let base = scenes[index].playbackDuration
+            if index == scenes.startIndex {
+                return result + max(base, 1.8)
+            }
+            if index == scenes.index(before: scenes.endIndex) {
+                return result + max(base, 2.0)
+            }
+            return result + base
+        }
+    }
+
+    /// This never claims two assets are globally identical. It only detects a
+    /// high-confidence repetition inside one brief shooting sequence so the
+    /// selector can prefer a different day. The original candidate remains
+    /// available as a last resort when fewer than eight scenes would remain.
+    private func areConfidentShortSequenceMatches(
+        _ lhs: SeasonalMovieCandidate,
+        _ rhs: SeasonalMovieCandidate
+    ) -> Bool {
+        let elapsed = abs(lhs.creationDate.timeIntervalSince(rhs.creationDate))
+        guard elapsed <= Self.shortSequenceInterval,
+              let leftBox = lhs.catBoundingBox,
+              let rightBox = rhs.catBoundingBox,
+              intersectionOverUnion(leftBox, rightBox)
+                >= Self.shortSequenceBoundingBoxIntersectionOverUnion,
+              let leftArea = lhs.largestCatAreaRatio,
+              let rightArea = rhs.largestCatAreaRatio,
+              leftArea.isFinite,
+              rightArea.isFinite,
+              abs(leftArea - rightArea)
+                <= Self.shortSequenceLargestCatAreaDelta else { return false }
+        return true
     }
 
     private func mostUsefulForCoverage(
