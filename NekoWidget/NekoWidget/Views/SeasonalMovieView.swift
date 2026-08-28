@@ -642,7 +642,7 @@ struct SeasonalMovieView: View {
             } catch {
                 isUpdatingScene = false
                 sceneEditTask = nil
-                sceneEditErrorMessage = error.localizedDescription
+                sceneEditErrorMessage = sceneEditMessage(for: error)
                 resumeAfterSceneAction()
             }
         }
@@ -683,7 +683,7 @@ struct SeasonalMovieView: View {
             } catch {
                 isUpdatingScene = false
                 sceneEditTask = nil
-                sceneEditErrorMessage = error.localizedDescription
+                sceneEditErrorMessage = sceneEditMessage(for: error)
                 if shouldResume, !hasFinished, scenePhase == .active {
                     isPlaying = true
                     soundtrack.setPlaying(true)
@@ -727,7 +727,7 @@ struct SeasonalMovieView: View {
                     exportTask = nil
                     if !(error is CancellationError),
                        (error as? SeasonalMovieExportError) != .cancelled {
-                        exportErrorMessage = error.localizedDescription
+                        exportErrorMessage = exportMessage(for: error)
                     }
                 }
             }
@@ -739,6 +739,16 @@ struct SeasonalMovieView: View {
         Task {
             await SeasonalMovieExportService.shared.cleanupExport(at: url)
         }
+    }
+
+    private func sceneEditMessage(for error: Error) -> String {
+        (error as? SeasonalMovieArchiveError)?.errorDescription
+            ?? "作品を更新できませんでした。もう一度お試しください。"
+    }
+
+    private func exportMessage(for error: Error) -> String {
+        (error as? SeasonalMovieExportError)?.errorDescription
+            ?? "動画を書き出せませんでした。もう一度お試しください。"
     }
 
     private func preheatScenes(around index: Int) {

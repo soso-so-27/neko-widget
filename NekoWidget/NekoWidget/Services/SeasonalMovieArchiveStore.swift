@@ -345,7 +345,10 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
             records = try await store.load()
             lastErrorDescription = nil
         } catch {
-            lastErrorDescription = error.localizedDescription
+            lastErrorDescription = archiveMessage(
+                for: error,
+                fallback: "作品履歴を読み込めませんでした。"
+            )
         }
     }
 
@@ -364,7 +367,10 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
                     && record.presentation == presentation
             )
         } catch {
-            lastErrorDescription = error.localizedDescription
+            lastErrorDescription = archiveMessage(
+                for: error,
+                fallback: "作品を保存できませんでした。"
+            )
             // The Today card routes through the archive period ID. Showing an
             // unsaved draft would create a card that cannot be opened.
             return nil
@@ -387,7 +393,10 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         } catch {
             // The photo-first recipe is already durable and playable. A
             // failed enrichment must not hide or replace it in the UI.
-            lastErrorDescription = error.localizedDescription
+            lastErrorDescription = archiveMessage(
+                for: error,
+                fallback: "動画を含む作品へ更新できませんでした。"
+            )
             return draft.presentation
         }
     }
@@ -408,7 +417,10 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
             lastErrorDescription = nil
             return record.effectivePresentation
         } catch {
-            lastErrorDescription = error.localizedDescription
+            lastErrorDescription = archiveMessage(
+                for: error,
+                fallback: "作品を更新できませんでした。"
+            )
             throw error
         }
     }
@@ -423,5 +435,15 @@ final class SeasonalMovieArchiveLibrary: ObservableObject {
         records.removeAll { $0.periodID == record.periodID }
         records.append(record)
         records.sort { $0.presentation.quarterStart > $1.presentation.quarterStart }
+    }
+
+    private func archiveMessage(
+        for error: Error,
+        fallback: String
+    ) -> String {
+        guard let archiveError = error as? SeasonalMovieArchiveError else {
+            return fallback
+        }
+        return archiveError.errorDescription ?? fallback
     }
 }
