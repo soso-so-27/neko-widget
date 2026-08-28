@@ -583,7 +583,12 @@ jobs:
           fi
           grep -Fq '"pager": "bounded-native-paging"' \
             NekoWidget/Views/LikedPhotosView.swift
-          if grep -Fq 'LazyHStack(' NekoWidget/Views/LikedPhotosView.swift; then
+          if awk '
+            /^struct PhotoBrowserView: View \{/ { inside = 1 }
+            /^private struct PhotoBrowserPager:/ { inside = 0 }
+            inside && index($0, "LazyHStack(") { found = 1 }
+            END { exit found ? 0 : 1 }
+          ' NekoWidget/Views/LikedPhotosView.swift; then
             echo "The photo browser must keep a bounded page window" >&2
             exit 1
           fi
