@@ -172,7 +172,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             captures += self.widget_ui_test.count(f'captureScreenshot(named: "{name}"')
             self.assertEqual(captures, 1)
             self.assertEqual(self.exporter.count(f'"{name}"'), 1)
-        self.assertIn("開発者のサーバーへ写真を自動送信しません", self.ui_test)
+        self.assertIn("写真や動画を開発者のサーバーへ自動送信しません", self.ui_test)
         self.assertIn("--app-store-screenshot-fixture", self.ui_test)
         self.assertIn("app.wait(for: .runningForeground", self.widget_ui_test)
         self.assertIn(
@@ -200,7 +200,10 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             '"app-store-screenshot-fixture-photo-loaded-"',
             self.fixture,
         )
-        self.assertIn("requirements: [(12, 1)]", self.ui_test)
+        self.assertIn("requirements: [(18, 1)]", self.ui_test)
+        self.assertIn('app.buttons["memories-show-all-saved-photos"]', self.ui_test)
+        self.assertIn('app.buttons["saved-memories-selection-toggle"]', self.ui_test)
+        self.assertIn('app.buttons["memories-photo-book-action"]', self.ui_test)
         self.assertIn('"album-primary-all-cat-photos"', self.album_view)
         self.assertIn(
             'app.buttons["album-primary-all-cat-photos"]',

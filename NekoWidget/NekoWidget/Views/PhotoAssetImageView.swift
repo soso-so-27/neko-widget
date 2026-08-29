@@ -121,15 +121,21 @@ struct PhotoAssetImageView: View {
                 }
 
             case .failed:
-                ContentUnavailableView(
-                    "写真を表示できません",
-                    systemImage: "photo",
-                    description: Text(
-                        networkAccessAllowed
-                            ? "iCloud上の写真は、通信できるときに再度読み込みます。"
-                            : "この計測では、端末内にある写真だけを使います。"
+                if showsFullImage {
+                    ContentUnavailableView(
+                        "写真を表示できません",
+                        systemImage: "photo",
+                        description: Text(
+                            networkAccessAllowed
+                                ? "iCloud上の写真は、通信できるときに再度読み込みます。"
+                                : "この計測では、端末内にある写真だけを使います。"
                         )
-                )
+                    )
+                } else {
+                    Image(systemName: "photo")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
 
             case .loading:
                 ProgressView()
@@ -167,7 +173,16 @@ struct PhotoAssetImageView: View {
                 onLoadResult(false)
             }
         }
-        .accessibilityLabel("猫の写真")
+        .accessibilityLabel(imageAccessibilityLabel)
+    }
+
+    private var imageAccessibilityLabel: String {
+        switch loader.state {
+        case .failed:
+            return "写真を表示できません"
+        case .loading, .loaded:
+            return "猫の写真"
+        }
     }
 }
 

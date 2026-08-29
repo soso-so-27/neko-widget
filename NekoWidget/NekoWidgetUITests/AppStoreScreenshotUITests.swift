@@ -42,7 +42,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The local-only Photos privacy page did not finish preparing.", application: app)
             return
         }
-        guard app.staticTexts["・開発者のサーバーへ写真を自動送信しません"].exists else {
+        guard app.staticTexts["・写真や動画を開発者のサーバーへ自動送信しません"].exists else {
             fail("The disabled-build privacy statement was not visible.", application: app)
             return
         }
@@ -62,7 +62,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The deterministic Window fixture did not appear.", application: app)
             return
         }
-        guard waitForFixturePhotos(in: app, requirements: [(12, 1)]) else {
+        guard waitForFixturePhotos(in: app, requirements: [(18, 1)]) else {
             fail("The deterministic Window illustration did not finish loading.", application: app)
             return
         }
@@ -84,15 +84,36 @@ final class AppStoreScreenshotUITests: XCTestCase {
             )
             return
         }
-        let reflectionJump = app.buttons["memories-jump-reflections"]
-        guard reflectionJump.waitForExistence(timeout: 10) else {
-            fail("The Memories section shortcuts did not appear.", application: app)
+        guard waitForFixturePhotos(
+            in: app,
+            requirements: [(9, 1), (10, 1), (11, 1)]
+        ) else {
+            fail("The deterministic Likes illustrations did not finish loading.", application: app)
             return
         }
-        reflectionJump.tap()
+        let allSavedPhotos = app.buttons["memories-show-all-saved-photos"]
+        guard allSavedPhotos.waitForExistence(timeout: 10),
+              waitForHittable(allSavedPhotos) else {
+            fail("The complete saved-photo collection was not reachable.", application: app)
+            return
+        }
+        captureScreenshot(named: "04-liked-photos")
+
+        allSavedPhotos.tap()
+        guard app.navigationBars["残した写真"].waitForExistence(timeout: 10),
+              app.buttons["saved-memories-selection-toggle"].exists else {
+            fail("The complete saved-photo collection did not open separately.", application: app)
+            return
+        }
+        let savedPhotosBackButton = app.navigationBars["残した写真"].buttons["思い出"]
+        guard savedPhotosBackButton.waitForExistence(timeout: 5) else {
+            fail("The saved-photo collection could not return to Memories.", application: app)
+            return
+        }
+        savedPhotosBackButton.tap()
+
         let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
-        guard memoriesAutomaticAlbums.waitForExistence(timeout: 10),
-              waitForHittable(memoriesAutomaticAlbums),
+        guard scrollUpUntilHittable(memoriesAutomaticAlbums, application: app),
               app.staticTexts["ふりかえり"].exists else {
             fail(
                 "The automatic-albums entry could not be reached from Memories.",
@@ -131,33 +152,18 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         memoriesBackButton.tap()
-        let creationJump = app.buttons["memories-jump-creation"]
-        guard creationJump.waitForExistence(timeout: 10) else {
-            fail("The creation shortcut did not reappear.", application: app)
-            return
-        }
-        creationJump.tap()
-        let pdfAction = app.buttons["PDFにまとめる"]
-        guard pdfAction.waitForExistence(timeout: 10),
-              waitForHittable(pdfAction),
+        let pdfAction = app.buttons["memories-photo-book-action"]
+        guard scrollUpUntilHittable(pdfAction, application: app),
               app.staticTexts["かたちにする"].exists else {
-            fail("The deterministic Likes collection did not appear.", application: app)
+            fail("The PDF creation action could not be reached.", application: app)
             return
         }
-        let savedPhotosJump = app.buttons["memories-jump-saved-photos"]
-        guard savedPhotosJump.waitForExistence(timeout: 10) else {
-            fail("The saved-photos shortcut did not remain visible.", application: app)
+        pdfAction.tap()
+        guard app.navigationBars["PDFにまとめる"].waitForExistence(timeout: 10),
+              app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
+            fail("PDF selection did not open on its own screen.", application: app)
             return
         }
-        savedPhotosJump.tap()
-        guard waitForFixturePhotos(
-            in: app,
-            requirements: [(9, 1), (10, 1), (11, 1)]
-        ) else {
-            fail("The deterministic Likes illustrations did not finish loading.", application: app)
-            return
-        }
-        captureScreenshot(named: "04-liked-photos")
     }
 
     private var japaneseLaunchArguments: [String] {
@@ -198,6 +204,21 @@ final class AppStoreScreenshotUITests: XCTestCase {
             object: element
         )
         return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
+    }
+
+    @MainActor
+    private func scrollUpUntilHittable(
+        _ element: XCUIElement,
+        application: XCUIApplication,
+        maximumSwipes: Int = 8
+    ) -> Bool {
+        if element.exists, element.isHittable { return true }
+        for _ in 0..<maximumSwipes {
+            application.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+            if element.exists, element.isHittable { return true }
+        }
+        return false
     }
 
     @MainActor

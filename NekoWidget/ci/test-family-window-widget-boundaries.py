@@ -782,7 +782,6 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private struct MemoryCreationPreviewSheet:",
         )
         self.assertIn("if hasPhotoAccess", memory_view)
-        self.assertIn("if !isSelectingForExport", memory_view)
         self.assertIn("savedPhotosSection", memory_view)
         self.assertIn("reflectionSection", memory_view)
         self.assertIn("creationSection", memory_view)
@@ -817,7 +816,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('Button("注文', preview)
         self.assertNotIn("StoreKit", preview)
 
-    def test_memories_long_grid_has_persistent_section_shortcuts(self) -> None:
+    def test_memories_top_stays_short_and_moves_full_collection_to_own_screen(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
         memory_view = section(
             memories,
@@ -825,51 +824,16 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private struct MemoryCreationPreviewSheet:",
         )
 
-        self.assertIn("ScrollViewReader { proxy in", memory_view)
-        self.assertIn(".safeAreaInset(edge: .top, spacing: 0)", memory_view)
-        self.assertIn("sectionJumpBar(proxy)", memory_view)
-        self.assertIn("proxy.scrollTo(target, anchor: .top)", memory_view)
-        self.assertIn(
-            "@AccessibilityFocusState private var accessibilityFocusedSection",
-            memory_view,
-        )
-        self.assertIn("accessibilityFocusedSection = target", memory_view)
-        self.assertIn(
-            ".frame(maxWidth: .infinity, minHeight: 44)",
-            memory_view,
-        )
-        jump_button = section(
-            memory_view,
-            "private func sectionJumpButton(",
-            "private func sectionJumpIdentifier(",
-        )
-        self.assertNotIn("minimumScaleFactor", jump_button)
-        self.assertIn(".fixedSize(horizontal: false, vertical: true)", jump_button)
+        self.assertNotIn("ScrollViewReader { proxy in", memory_view)
+        self.assertNotIn(".safeAreaInset(edge: .top", memory_view)
+        self.assertNotIn("memories-section-jump-bar", memory_view)
+        self.assertIn("Array(photos.prefix(6))", memory_view)
+        self.assertIn("SavedMemoriesGalleryView(", memory_view)
+        self.assertIn("startsInExportMode: false", memory_view)
+        self.assertIn('accessibilityIdentifier("memories-show-all-saved-photos")', memory_view)
+        self.assertIn("startsInExportMode: true", memory_view)
+        self.assertIn('accessibilityIdentifier("memories-photo-book-action")', memory_view)
         self.assertEqual(memory_view.count(".accessibilityAddTraits(.isHeader)"), 3)
-        for anchor in ("savedPhotos", "reflections", "creation"):
-            self.assertIn(f"equals: .{anchor}", memory_view)
-        self.assertIn("creationSection(proxy)", memory_view)
-        self.assertIn("startExportSelection(proxy: proxy)", memory_view)
-        export_start = section(
-            memory_view,
-            "private func startExportSelection(proxy: ScrollViewProxy)",
-            "private func cancelExportSelection()",
-        )
-        self.assertIn(
-            "proxy.scrollTo(MemoriesSectionAnchor.savedPhotos, anchor: .top)",
-            export_start,
-        )
-        self.assertIn("accessibilityFocusedSection = .savedPhotos", export_start)
-        self.assertIn(
-            'accessibilityIdentifier("memories-section-jump-bar")',
-            memory_view,
-        )
-        for identifier in [
-            "memories-jump-saved-photos",
-            "memories-jump-reflections",
-            "memories-jump-creation",
-        ]:
-            self.assertIn(identifier, memory_view)
 
         self.assertLess(
             memory_view.index("savedPhotosSection"),
@@ -879,6 +843,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             memory_view.index("reflectionSection"),
             memory_view.index("creationSection"),
         )
+
+        gallery = section(
+            memories,
+            "struct SavedMemoriesGalleryView:",
+            "private struct MemoryCreationPreviewSheet:",
+        )
+        self.assertIn("ForEach(photos)", gallery)
+        self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", gallery)
+        self.assertIn('accessibilityIdentifier("photo-book-export")', gallery)
+        self.assertIn("if isDedicatedPhotoBookFlow", gallery)
+        self.assertIn("dismiss()", gallery)
 
     def test_monthly_window_is_local_read_only_and_reachable_from_today(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")

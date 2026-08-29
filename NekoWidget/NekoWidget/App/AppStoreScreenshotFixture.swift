@@ -36,7 +36,7 @@ enum AppStoreScreenshotFixture {
         "app-store-screenshot-fixture-photo-loaded-"
     static let loadTracker = AppStoreScreenshotFixtureLoadTracker()
 
-    private static let identifiers = (1...12).map {
+    private static let identifiers = (1...18).map {
         "\(identifierPrefix)\($0)"
     }
     private static var imageCache: [String: UIImage] = [:]
@@ -93,10 +93,10 @@ enum AppStoreScreenshotFixture {
     /// capture screen's pixels disjoint lets UI tests prove that the active
     /// tab, rather than an off-screen tab retained by `TabView`, has rendered.
     static var likedPhotos: [PhotoPresentation] {
-        Array(identifiers[8...10]).enumerated().map { index, identifier in
+        Array(identifiers[8...16]).enumerated().map { index, identifier in
             PhotoPresentation(
                 localIdentifier: identifier,
-                creationDate: date(year: 2025, month: 7 - index, day: 14 + index),
+                creationDate: date(year: 2025, month: 9 - index, day: 14),
                 catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
                 isLiked: true,
                 likedAt: date(year: 2026, month: 8, day: 18 - index),
@@ -115,7 +115,7 @@ enum AppStoreScreenshotFixture {
     /// left behind by that tab cannot satisfy the Memories or Likes wait gate.
     static var windowPhoto: PhotoPresentation {
         PhotoPresentation(
-            localIdentifier: identifiers[11],
+            localIdentifier: identifiers[17],
             creationDate: date(year: 2025, month: 12, day: 24),
             catBoundingBox: CGRect(x: 0.18, y: 0.13, width: 0.64, height: 0.76),
             isLiked: false,

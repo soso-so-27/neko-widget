@@ -500,15 +500,11 @@ struct CuratedAlbumDetailView: View {
     }
 }
 
-/// An uncapped collection of photos the user deliberately kept as memories.
-/// It stays one continuous, liked-at-ordered grid so it does not resemble the
-/// automatically organized "アルバム". PDF export is optional.
-private enum MemoriesSectionAnchor: Hashable {
-    case savedPhotos
-    case reflections
-    case creation
-}
-
+/// The entry point for photos the user deliberately kept as memories.
+/// It stays intentionally short: a preview of the manual collection,
+/// then automatic reflections and creation actions. The complete collection is
+/// presented on its own screen so later sections never disappear below a large
+/// photo library.
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
@@ -516,82 +512,21 @@ struct LikedPhotosView: View {
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
 
-    @State private var isExportingPhotoBook = false
-    @State private var photoBookExport: LikedPhotoBookExportFile?
-    @State private var photoBookExportDirectory: URL?
-    @State private var photoBookErrorMessage: String?
-    @State private var isSelectingForExport = false
-    @State private var selectedExportIdentifiers = Set<String>()
-    @State private var photoBookExportTask: Task<Void, Never>?
     @State private var showsCreationPreview = false
-    @AccessibilityFocusState private var accessibilityFocusedSection: MemoriesSectionAnchor?
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 30) {
-                    savedPhotosSection
-                        .id(MemoriesSectionAnchor.savedPhotos)
-
-                    if !isSelectingForExport {
-                        reflectionSection
-                            .id(MemoriesSectionAnchor.reflections)
-                        creationSection(proxy)
-                            .id(MemoriesSectionAnchor.creation)
-                    }
-                }
-                .padding(.vertical, 16)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 30) {
+                savedPhotosSection
+                reflectionSection
+                creationSection
             }
-            .accessibilityIdentifier("memories-scroll-view")
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if !isSelectingForExport {
-                    sectionJumpBar(proxy)
-                }
-            }
+            .padding(.vertical, 16)
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
-        .toolbar {
-            if isSelectingForExport {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("キャンセル") {
-                        cancelExportSelection()
-                    }
-                    .disabled(isExportingPhotoBook)
-                    .accessibilityIdentifier("liked-summary-selection-toggle")
-                }
-            }
-        }
         .sheet(isPresented: $showsCreationPreview) {
             MemoryCreationPreviewSheet()
-        }
-        .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
-            LikedPhotoBookActivityView(activityItems: [export.url])
-        }
-        .alert(
-            "PDFを作成できませんでした",
-            isPresented: Binding(
-                get: { photoBookErrorMessage != nil },
-                set: { isPresented in
-                    if !isPresented { photoBookErrorMessage = nil }
-                }
-            )
-        ) {
-            Button("閉じる", role: .cancel) {
-                photoBookErrorMessage = nil
-            }
-        } message: {
-            Text(photoBookErrorMessage ?? "時間をおいて、もう一度お試しください。")
-        }
-        .onChange(of: Set(photos.map(\.localIdentifier))) { _, available in
-            selectedExportIdentifiers.formIntersection(available)
-            if available.isEmpty {
-                isSelectingForExport = false
-            }
-        }
-        .onDisappear {
-            photoBookExportTask?.cancel()
-            photoBookExportTask = nil
         }
     }
 
@@ -599,82 +534,14 @@ struct LikedPhotosView: View {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
     }
 
-    private func sectionJumpBar(_ proxy: ScrollViewProxy) -> some View {
-        HStack(spacing: 0) {
-            sectionJumpButton(
-                "残した写真",
-                target: .savedPhotos,
-                proxy: proxy
-            )
-            Divider().padding(.vertical, 10)
-            sectionJumpButton(
-                "ふりかえり",
-                target: .reflections,
-                proxy: proxy
-            )
-            Divider().padding(.vertical, 10)
-            sectionJumpButton(
-                "かたちにする",
-                target: .creation,
-                proxy: proxy
-            )
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color(.systemGroupedBackground).opacity(0.96))
-        .overlay(alignment: .bottom) {
-            Divider()
-        }
-        .accessibilityIdentifier("memories-section-jump-bar")
-    }
-
-    private func sectionJumpButton(
-        _ title: String,
-        target: MemoriesSectionAnchor,
-        proxy: ScrollViewProxy
-    ) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.24)) {
-                proxy.scrollTo(target, anchor: .top)
-            }
-            accessibilityFocusedSection = target
-        } label: {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
-        .accessibilityLabel("\(title)へ移動")
-        .accessibilityIdentifier(sectionJumpIdentifier(for: target))
-    }
-
-    private func sectionJumpIdentifier(
-        for target: MemoriesSectionAnchor
-    ) -> String {
-        switch target {
-        case .savedPhotos:
-            return "memories-jump-saved-photos"
-        case .reflections:
-            return "memories-jump-reflections"
-        case .creation:
-            return "memories-jump-creation"
-        }
-    }
-
     private var savedPhotosSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let previewPhotos = Array(photos.prefix(6))
+
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("残した写真")
                     .font(.title3.bold())
                     .accessibilityAddTraits(.isHeader)
-                    .accessibilityFocused(
-                        $accessibilityFocusedSection,
-                        equals: .savedPhotos
-                    )
 
                 Spacer()
 
@@ -714,19 +581,46 @@ struct LikedPhotosView: View {
                 )
                 .padding(.horizontal, 16)
             } else {
-                if isSelectingForExport {
-                    exportSelectionCard
-                }
-
                 LazyVGrid(columns: photoColumns, spacing: 3) {
-                    ForEach(photos) { photo in
-                        likedPhotoGridItem(photo)
+                    ForEach(previewPhotos) { photo in
+                        NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
+                            MemoryPhotoThumbnail(photo: photo)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))
+                        .accessibilityHint("写真を大きく表示します")
                     }
                 }
                 .padding(.horizontal, 3)
+
+                if photos.count > previewPhotos.count {
+                    NavigationLink {
+                        SavedMemoriesGalleryView(
+                            photos: photos,
+                            startsInExportMode: false,
+                            exportPhotoBook: exportPhotoBook
+                        )
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("すべて見る")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text("\(photos.count.formatted())枚")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("memories-show-all-saved-photos")
+                }
             }
         }
-        .accessibilityIdentifier("memories-saved-photos-section")
     }
 
     private var reflectionSection: some View {
@@ -735,10 +629,6 @@ struct LikedPhotosView: View {
                 .font(.title3.bold())
                 .padding(.horizontal, 16)
                 .accessibilityAddTraits(.isHeader)
-                .accessibilityFocused(
-                    $accessibilityFocusedSection,
-                    equals: .reflections
-                )
 
             if hasPhotoAccess {
                 if let monthlyWindow {
@@ -767,23 +657,22 @@ struct LikedPhotosView: View {
                 .padding(.horizontal, 16)
             }
         }
-        .accessibilityIdentifier("memories-reflection-section")
     }
 
-    private func creationSection(_ proxy: ScrollViewProxy) -> some View {
+    private var creationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("かたちにする")
                 .font(.title3.bold())
                 .padding(.horizontal, 16)
                 .accessibilityAddTraits(.isHeader)
-                .accessibilityFocused(
-                    $accessibilityFocusedSection,
-                    equals: .creation
-                )
 
             if !photos.isEmpty {
-                Button {
-                    startExportSelection(proxy: proxy)
+                NavigationLink {
+                    SavedMemoriesGalleryView(
+                        photos: photos,
+                        startsInExportMode: true,
+                        exportPhotoBook: exportPhotoBook
+                    )
                 } label: {
                     actionCard(
                         systemImage: "doc.richtext",
@@ -792,15 +681,13 @@ struct LikedPhotosView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(isExportingPhotoBook)
                 .padding(.horizontal, 16)
-                .accessibilityIdentifier("liked-summary-selection-toggle")
+                .accessibilityIdentifier("memories-photo-book-action")
                 .accessibilityHint("残した写真を選びます")
             }
 
             creationPreviewCard
         }
-        .accessibilityIdentifier("memories-create-section")
     }
 
     private func monthlyWindowCard(
@@ -1020,81 +907,13 @@ struct LikedPhotosView: View {
         .accessibilityHint("思い出から作れるものを確認します")
     }
 
-    private var exportSelectionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("PDFにまとめる写真", systemImage: "doc.richtext")
-                    .font(.headline)
-                Spacer()
-                Text("\(selectedExportIdentifiers.count.formatted()) / \(PhotoBookPolicy.maximumPhotosPerExport.formatted())枚")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+}
 
-            Text("写真をタップして入れ替えられます。PDFは選んだ写真だけを撮影日の古い順に並べます。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+private struct MemoryPhotoThumbnail: View {
+    let photo: PhotoPresentation
+    var selectionState: Bool? = nil
 
-            Button {
-                if isExportingPhotoBook {
-                    photoBookExportTask?.cancel()
-                } else {
-                    createPhotoBookPDF()
-                }
-            } label: {
-                HStack {
-                    if isExportingPhotoBook {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    Text(isExportingPhotoBook ? "PDF作成をキャンセル" : "選んだ写真をPDFとして共有")
-                    Spacer()
-                }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
-            .accessibilityIdentifier("photo-book-export")
-        }
-        .padding(16)
-        .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
-        .padding(.horizontal, 16)
-    }
-
-    @ViewBuilder
-    private func likedPhotoGridItem(_ photo: PhotoPresentation) -> some View {
-        if isSelectingForExport {
-            let isSelected = selectedExportIdentifiers.contains(photo.localIdentifier)
-            Button {
-                toggleExportSelection(photo.localIdentifier)
-            } label: {
-                likedPhotoThumbnail(photo, isSelected: isSelected)
-            }
-            .buttonStyle(.plain)
-            .disabled(
-                isExportingPhotoBook
-                    || (!isSelected
-                        && selectedExportIdentifiers.count
-                            >= PhotoBookPolicy.maximumPhotosPerExport)
-            )
-            .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
-            .accessibilityValue(isSelected ? "PDFに選択中" : "未選択")
-        } else {
-            NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
-                likedPhotoThumbnail(photo, isSelected: false)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(likedPhotoAccessibilityLabel(photo))
-            .accessibilityHint("写真を大きく表示します")
-        }
-    }
-
-    private func likedPhotoThumbnail(
-        _ photo: PhotoPresentation,
-        isSelected: Bool
-    ) -> some View {
+    var body: some View {
         PhotoAssetImageView(
             localIdentifier: photo.localIdentifier,
             catBoundingBox: photo.catBoundingBox,
@@ -1103,12 +922,12 @@ struct LikedPhotosView: View {
         )
         .aspectRatio(1, contentMode: .fit)
         .overlay {
-            if isSelectingForExport, !isSelected {
+            if selectionState == false {
                 Color.black.opacity(0.22)
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if isSelectingForExport {
+            if let isSelected = selectionState {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.title2)
                     .symbolRenderingMode(.palette)
@@ -1120,7 +939,7 @@ struct LikedPhotosView: View {
             }
         }
         .overlay(alignment: .bottomLeading) {
-            if !isSelectingForExport, let likedAt = photo.likedAt {
+            if selectionState == nil, let likedAt = photo.likedAt {
                 HStack(spacing: 3) {
                     Image(systemName: "bookmark.fill")
                     Text(likedAt.formatted(.dateTime.year().month().day()))
@@ -1137,31 +956,209 @@ struct LikedPhotosView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 5))
     }
+}
 
-    private func likedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
-        if let likedAt = photo.likedAt {
-            let date = likedAt.formatted(.dateTime.year().month().day())
-            return "\(date)に思い出へ残した猫の写真"
-        }
-        return "思い出へ残した猫の写真"
+private func memoryPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
+    if let likedAt = photo.likedAt {
+        let date = likedAt.formatted(.dateTime.year().month().day())
+        return "\(date)に思い出へ残した猫の写真"
     }
+    return "思い出へ残した猫の写真"
+}
 
-    private func startExportSelection(proxy: ScrollViewProxy) {
-        isSelectingForExport = true
-        selectedExportIdentifiers = Set(
-            photos
-                .prefix(PhotoBookPolicy.maximumPhotosPerExport)
-                .map(\.localIdentifier)
+struct SavedMemoriesGalleryView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let photos: [PhotoPresentation]
+    let isDedicatedPhotoBookFlow: Bool
+    let exportPhotoBook: ([String]) async throws -> URL
+
+    @State private var isSelectingForExport: Bool
+    @State private var selectedExportIdentifiers: Set<String>
+    @State private var isExportingPhotoBook = false
+    @State private var photoBookExport: LikedPhotoBookExportFile?
+    @State private var photoBookExportDirectory: URL?
+    @State private var photoBookErrorMessage: String?
+    @State private var photoBookExportTask: Task<Void, Never>?
+
+    init(
+        photos: [PhotoPresentation],
+        startsInExportMode: Bool,
+        exportPhotoBook: @escaping ([String]) async throws -> URL
+    ) {
+        self.photos = photos
+        self.isDedicatedPhotoBookFlow = startsInExportMode
+        self.exportPhotoBook = exportPhotoBook
+        _isSelectingForExport = State(initialValue: startsInExportMode)
+        _selectedExportIdentifiers = State(
+            initialValue: startsInExportMode
+                ? Set(
+                    photos
+                        .prefix(PhotoBookPolicy.maximumPhotosPerExport)
+                        .map(\.localIdentifier)
+                )
+                : Set<String>()
         )
-        withAnimation(.easeInOut(duration: 0.24)) {
-            proxy.scrollTo(MemoriesSectionAnchor.savedPhotos, anchor: .top)
-        }
-        accessibilityFocusedSection = .savedPhotos
     }
 
-    private func cancelExportSelection() {
-        isSelectingForExport = false
-        selectedExportIdentifiers.removeAll()
+    var body: some View {
+        Group {
+            if photos.isEmpty {
+                ContentUnavailableView(
+                    "まだありません",
+                    systemImage: "bookmark",
+                    description: Text("写真で「思い出に残す」を押すと、ここに並びます")
+                )
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: photoColumns, spacing: 3) {
+                        ForEach(photos) { photo in
+                            gridItem(photo)
+                        }
+                    }
+                    .padding(3)
+                }
+            }
+        }
+        .navigationTitle(isSelectingForExport ? "PDFにまとめる" : "残した写真")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .toolbar {
+            if !photos.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isSelectingForExport ? "キャンセル" : "選ぶ") {
+                        toggleExportMode()
+                    }
+                    .disabled(isExportingPhotoBook)
+                    .accessibilityIdentifier("saved-memories-selection-toggle")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isSelectingForExport {
+                exportActionBar
+            }
+        }
+        .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
+            LikedPhotoBookActivityView(activityItems: [export.url])
+        }
+        .alert(
+            "PDFを作成できませんでした",
+            isPresented: Binding(
+                get: { photoBookErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented { photoBookErrorMessage = nil }
+                }
+            )
+        ) {
+            Button("閉じる", role: .cancel) {
+                photoBookErrorMessage = nil
+            }
+        } message: {
+            Text(photoBookErrorMessage ?? "時間をおいて、もう一度お試しください。")
+        }
+        .onChange(of: Set(photos.map(\.localIdentifier))) { _, available in
+            selectedExportIdentifiers.formIntersection(available)
+            if available.isEmpty {
+                isSelectingForExport = false
+            }
+        }
+        .onDisappear {
+            photoBookExportTask?.cancel()
+            photoBookExportTask = nil
+        }
+    }
+
+    private var photoColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
+    }
+
+    @ViewBuilder
+    private func gridItem(_ photo: PhotoPresentation) -> some View {
+        if isSelectingForExport {
+            let isSelected = selectedExportIdentifiers.contains(photo.localIdentifier)
+            Button {
+                toggleExportSelection(photo.localIdentifier)
+            } label: {
+                MemoryPhotoThumbnail(photo: photo, selectionState: isSelected)
+            }
+            .buttonStyle(.plain)
+            .disabled(
+                isExportingPhotoBook
+                    || (!isSelected
+                        && selectedExportIdentifiers.count
+                            >= PhotoBookPolicy.maximumPhotosPerExport)
+            )
+            .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))
+            .accessibilityValue(isSelected ? "PDFに選択中" : "未選択")
+        } else {
+            NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
+                MemoryPhotoThumbnail(photo: photo)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))
+            .accessibilityHint("写真を大きく表示します")
+        }
+    }
+
+    private var exportActionBar: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("\(selectedExportIdentifiers.count.formatted())枚を選択")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("最大\(PhotoBookPolicy.maximumPhotosPerExport.formatted())枚")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                if isExportingPhotoBook {
+                    photoBookExportTask?.cancel()
+                } else {
+                    createPhotoBookPDF()
+                }
+            } label: {
+                HStack {
+                    if isExportingPhotoBook {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    Text(isExportingPhotoBook ? "作成をキャンセル" : "PDFとして共有")
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
+            .accessibilityIdentifier("photo-book-export")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private func toggleExportMode() {
+        guard !isExportingPhotoBook else { return }
+
+        if isSelectingForExport {
+            selectedExportIdentifiers.removeAll()
+            if isDedicatedPhotoBookFlow {
+                dismiss()
+            } else {
+                isSelectingForExport = false
+            }
+        } else {
+            isSelectingForExport = true
+            selectedExportIdentifiers = Set(
+                photos
+                    .prefix(PhotoBookPolicy.maximumPhotosPerExport)
+                    .map(\.localIdentifier)
+            )
+        }
     }
 
     private func toggleExportSelection(_ identifier: String) {
