@@ -5,7 +5,6 @@ set -Eeuo pipefail
 PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
 REPORT_FILENAME="sharing-runtime-self-test.json"
-THUMBNAIL_WRITE_PROGRESS_FILENAME="sharing-thumbnail-write-runtime-progress.json"
 RENDERER_VERSION="cat-aware-full-bleed-v6"
 ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-sharing-runtime-matrix"
 DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSharingRuntimeDerivedData"
@@ -199,7 +198,6 @@ run_runtime_body() {
     local app_pid=""
     local group_container=""
     local source_report=""
-    local source_thumbnail_progress=""
     local report_published="false"
     local poll_attempt=0
     local validator_status=0
@@ -265,40 +263,6 @@ run_runtime_body() {
             "$runtime_artifacts/$REPORT_FILENAME" \
             --renderer-version "$RENDERER_VERSION" \
             || validator_status=$?
-    fi
-    source_thumbnail_progress="$group_container/$THUMBNAIL_WRITE_PROGRESS_FILENAME"
-    if [[ -f "$source_thumbnail_progress" ]]; then
-        python3 - \
-            "$source_thumbnail_progress" \
-            "$runtime_artifacts/$THUMBNAIL_WRITE_PROGRESS_FILENAME" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-source = Path(sys.argv[1])
-destination = Path(sys.argv[2])
-value = json.loads(source.read_text(encoding="utf-8"))
-allowed = {
-    "started",
-    "url-validated",
-    "secure-write-completed",
-    "directory-validated",
-    "file-validated",
-    "protection-validated",
-    "completed",
-}
-if (
-    not isinstance(value, dict)
-    or set(value) != {"schemaVersion", "phase"}
-    or value["schemaVersion"] != 1
-    or value["phase"] not in allowed
-):
-    raise SystemExit("thumbnail write progress has an invalid fixed schema")
-destination.write_text(
-    json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n",
-    encoding="utf-8",
-)
-PY
     fi
     return "$validator_status"
 }

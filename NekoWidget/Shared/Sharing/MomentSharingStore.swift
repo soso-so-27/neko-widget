@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import ImageIO
 
@@ -946,48 +947,6 @@ enum MomentSharingStateStore {
     /// delivery and heart status addressable without unbounded local growth.
     static let maximumTerminalOutboxMetadataCount = 200
     private static let reportedMetadataSeconds: TimeInterval = 90 * 24 * 60 * 60
-
-#if DEBUG
-    private static let thumbnailWriteProgressFilename =
-        "sharing-thumbnail-write-runtime-progress.json"
-
-    private enum ThumbnailWriteRuntimePhase: String, Codable {
-        case started
-        case urlValidated = "url-validated"
-        case secureWriteCompleted = "secure-write-completed"
-        case directoryValidated = "directory-validated"
-        case fileValidated = "file-validated"
-        case protectionValidated = "protection-validated"
-        case completed
-    }
-
-    /// Fixed DEBUG-only breadcrumb used only by generated-data Simulator CI.
-    /// It contains no path, identifier, image bytes, or arbitrary error text.
-    private struct ThumbnailWriteRuntimeProgress: Codable {
-        let schemaVersion: Int
-        let phase: ThumbnailWriteRuntimePhase
-    }
-
-    private static func writeThumbnailRuntimeProgress(
-        _ phase: ThumbnailWriteRuntimePhase
-    ) {
-        guard CommandLine.arguments.contains("--sharing-runtime-self-test"),
-              let root = SharedContainer.containerURL
-        else { return }
-        let value = ThumbnailWriteRuntimeProgress(
-            schemaVersion: 1,
-            phase: phase
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(value) else { return }
-        let url = root.appendingPathComponent(
-            thumbnailWriteProgressFilename,
-            isDirectory: false
-        )
-        try? data.write(to: url, options: .atomic)
-    }
-#endif
 
     static func load() throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
@@ -2105,23 +2064,14 @@ enum MomentSharingStateStore {
         _ data: Data,
         fileName: String
     ) throws {
-#if DEBUG
-        writeThumbnailRuntimeProgress(.started)
-#endif
         guard MomentOutboxItem.isValidLocalThumbnail(data) else {
             throw MomentSharingError.stateUnavailable
         }
         let url = try localThumbnailURL(fileName: fileName)
-#if DEBUG
-        writeThumbnailRuntimeProgress(.urlValidated)
-#endif
         try SharingSecureFile.write(
             data,
             to: url
         )
-#if DEBUG
-        writeThumbnailRuntimeProgress(.secureWriteCompleted)
-#endif
         // `localThumbnailURL` necessarily probes this path before the file is
         // created. Rebuild the URL after the atomic rename so Foundation
         // cannot satisfy the security postcondition from pre-write resource
@@ -2134,9 +2084,6 @@ enum MomentSharingStateStore {
             try? removeLocalThumbnail(fileName: fileName)
             throw MomentSharingError.stateUnavailable
         }
-#if DEBUG
-        writeThumbnailRuntimeProgress(.directoryValidated)
-#endif
         guard let values = try? committedURL.resourceValues(
             forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ),
@@ -2149,19 +2096,12 @@ enum MomentSharingStateStore {
             try? removeLocalThumbnail(fileName: fileName)
             throw MomentSharingError.stateUnavailable
         }
-#if DEBUG
-        writeThumbnailRuntimeProgress(.fileValidated)
-#endif
         guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
             committedURL
         ) else {
             try? removeLocalThumbnail(fileName: fileName)
             throw MomentSharingError.stateUnavailable
         }
-#if DEBUG
-        writeThumbnailRuntimeProgress(.protectionValidated)
-        writeThumbnailRuntimeProgress(.completed)
-#endif
     }
 
     private static func localThumbnailURL(fileName: String) throws -> URL {
@@ -2180,14 +2120,28 @@ enum MomentSharingStateStore {
         let standardizedDirectory = directory.standardizedFileURL
         let url = directory.appendingPathComponent(fileName, isDirectory: false)
             .standardizedFileURL
-        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
-        let resolvedURL = url.resolvingSymlinksInPath().standardizedFileURL
-        let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
-        guard url.deletingLastPathComponent() == standardizedDirectory,
-              resolvedURL.deletingLastPathComponent() == resolvedDirectory,
-              values?.isSymbolicLink != true
-        else {
+        guard url.deletingLastPathComponent() == standardizedDirectory else {
             throw MomentSharingError.stateUnavailable
+        }
+
+        // Do not ask Foundation to resolve a path that does not exist yet.
+        // On some iOS Simulator releases it canonicalizes only the existing
+        // prefix, making a valid direct child appear to escape its parent.
+        // `lstat` still rejects an existing symlink (including a broken one)
+        // without following it; an existing retry target must be a file.
+        var entry = stat()
+        let status = url.path.withCString { path in
+            Darwin.lstat(path, &entry)
+        }
+        if status == 0 {
+            guard (entry.st_mode & S_IFMT) == S_IFREG else {
+                throw MomentSharingError.stateUnavailable
+            }
+        } else {
+            let errorNumber = Darwin.errno
+            guard errorNumber == ENOENT else {
+                throw MomentSharingError.stateUnavailable
+            }
         }
         return url
     }
@@ -2201,17 +2155,32 @@ enum MomentSharingStateStore {
     ) throws -> Bool {
         let manager = FileManager.default
         let parent = directory.deletingLastPathComponent()
-        if requireExisting && !manager.fileExists(atPath: directory.path) {
+        let parentExists = manager.fileExists(atPath: parent.path)
+        let directoryExists = manager.fileExists(atPath: directory.path)
+        guard parentExists else { return false }
+        if requireExisting && !directoryExists {
             return false
         }
-        for candidate in [parent, directory]
-        where manager.fileExists(atPath: candidate.path) {
-            let values = try candidate.resourceValues(
-                forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        for candidate in [parent, directory] where
+            manager.fileExists(atPath: candidate.path) {
+            let attributes = try manager.attributesOfItem(
+                atPath: candidate.path
             )
-            guard values.isDirectory == true, values.isSymbolicLink != true
+            guard (attributes[.type] as? FileAttributeType) == .typeDirectory
             else { return false }
         }
+        let standardizedParent = parent.standardizedFileURL
+        let standardizedDirectory = directory.standardizedFileURL
+        guard standardizedDirectory.deletingLastPathComponent()
+                == standardizedParent
+        else { return false }
+
+        // A not-yet-created child cannot itself be a symlink. Its existing,
+        // app-owned parent was checked above, so resolving the missing child
+        // would only invite Foundation to return a partially canonicalized
+        // path on some iOS releases.
+        guard directoryExists else { return !requireExisting }
+
         let resolvedParent = parent.resolvingSymlinksInPath().standardizedFileURL
         let resolvedDirectory = directory.resolvingSymlinksInPath()
             .standardizedFileURL
