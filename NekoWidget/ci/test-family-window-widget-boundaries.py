@@ -2320,6 +2320,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("CGImageSourceGetStatus(source)", store)
         self.assertIn("kCGImageSourceShouldCacheImmediately", store)
         self.assertIn("CGImageSourceGetCount(source) == 1", store)
+        self.assertIn(") as NSDictionary?", store)
+        self.assertNotIn(") as? [CFString: Any]", store)
         self.assertIn("decodedImage.width", store)
         self.assertIn("decodedImage.height", store)
         self.assertIn("isSafeThumbnailDirectory", store)

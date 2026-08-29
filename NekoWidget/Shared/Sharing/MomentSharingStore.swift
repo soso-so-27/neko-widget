@@ -318,7 +318,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
                 source,
                 0,
                 nil
-              ) as? [CFString: Any],
+              ) as NSDictionary?,
               let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?
                 .intValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?
