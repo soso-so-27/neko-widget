@@ -119,7 +119,8 @@ struct MainTabView: View {
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
                         pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
                         pendingFamilyNotificationRoute:
-                            $pendingFamilyNotificationRoute
+                            $pendingFamilyNotificationRoute,
+                        showSettings: { showsSettings = true }
                     )
                 }
                 .tabItem {
@@ -135,7 +136,8 @@ struct MainTabView: View {
                     hasPhotoAccess: hasPhotoAccess,
                     monthlyWindow: currentMonthlyWindow,
                     seasonalMovies: seasonalMovieArchive.records,
-                    exportPhotoBook: exportPhotoBook
+                    exportPhotoBook: exportPhotoBook,
+                    showSettings: { showsSettings = true }
                 )
                     .navigationDestination(
                         for: MemoriesRoute.self,
@@ -770,6 +772,7 @@ private struct WindowListView: View {
     @Binding var opensActiveWindow: Bool
     @Binding var pendingFamilyMomentSourceDigest: String?
     @Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?
+    let showSettings: () -> Void
 
     @State private var windows: [PrivateWindowCatalogEntry] = []
     @State private var activeWindowID: String?
@@ -784,7 +787,7 @@ private struct WindowListView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 14) {
+            LazyVStack(spacing: 22) {
                 if isLoading, windows.isEmpty {
                     ProgressView("まどを確認しています…")
                         .frame(maxWidth: .infinity, minHeight: 240)
@@ -802,20 +805,26 @@ private struct WindowListView: View {
                         emptyWindowCard
                     } else {
                         if !connectedWindows.isEmpty {
-                            windowSectionTitle("接続済みのまど")
-                            ForEach(connectedWindows) { window in
-                                windowCard(window)
+                            VStack(alignment: .leading, spacing: 10) {
+                                windowSectionTitle("接続済みのまど")
+                                ForEach(connectedWindows) { window in
+                                    windowCard(window)
+                                }
                             }
-                            Text("名前は、まどを開いて設定から変更できます。")
+                        }
+                        if !setupWindows.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                windowSectionTitle("設定中のまど")
+                                ForEach(setupWindows) { window in
+                                    windowCard(window)
+                                }
+                            }
+                        }
+                        if !connectedWindows.isEmpty {
+                            Text("まどの名前は、開いた先の設定から変更できます。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        if !setupWindows.isEmpty {
-                            windowSectionTitle("設定中のまど")
-                            ForEach(setupWindows) { window in
-                                windowCard(window)
-                            }
                         }
                     }
 
@@ -843,6 +852,15 @@ private struct WindowListView: View {
         }
         .navigationTitle("まど")
         .background(Color(.systemGroupedBackground))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: showSettings) {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("設定")
+                .accessibilityIdentifier("window-list-settings-button")
+            }
+        }
         .confirmationDialog(
             "このiPhoneですることを選んでください",
             isPresented: $showsAddWindowConfirmation,
@@ -1005,7 +1023,6 @@ private struct WindowListView: View {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 4)
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -1030,7 +1047,7 @@ private struct WindowListView: View {
         return Button {
             open(window)
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 windowThumbnail(for: window)
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -1082,10 +1099,10 @@ private struct WindowListView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 20)
+                in: RoundedRectangle(cornerRadius: 18)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 20)
+                RoundedRectangle(cornerRadius: 18)
                     .strokeBorder(
                         isActive
                             ? Color.accentColor.opacity(0.18)
@@ -1093,7 +1110,7 @@ private struct WindowListView: View {
                         lineWidth: 1
                     )
             }
-            .contentShape(RoundedRectangle(cornerRadius: 20))
+            .contentShape(RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
         .disabled(
@@ -1114,10 +1131,10 @@ private struct WindowListView: View {
     @ViewBuilder
     private func windowThumbnail(for window: PrivateWindowCatalogEntry) -> some View {
         SubtleWindowThumbnail(showsSetupMark: window.spaceID == nil)
-            .frame(width: 72, height: 72)
+            .frame(width: 56, height: 56)
             .background(
                 Color.accentColor.opacity(0.07),
-                in: RoundedRectangle(cornerRadius: 16)
+                in: RoundedRectangle(cornerRadius: 13)
             )
             .accessibilityHidden(true)
     }

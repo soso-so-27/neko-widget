@@ -134,12 +134,17 @@ struct SettingsView: View {
                     }
                 }
 
+            } header: {
+                Text("写真とねこ")
+            }
+
+            Section {
                 Button(action: showWidgetPlacementGuide) {
                     Label("ウィジェットの置き方", systemImage: "rectangle.on.rectangle.angled")
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
             } header: {
-                Text("写真と表示")
+                Text("ウィジェット")
             }
 
             Section {

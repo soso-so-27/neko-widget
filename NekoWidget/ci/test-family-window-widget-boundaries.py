@@ -207,14 +207,14 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('entry.isBookmarked ? "残した" : "残す"', view)
         self.assertIn('systemImage: "bookmark"', view)
         self.assertIn('systemImage: "bookmark.fill"', view)
-        self.assertIn('compactTitle: "残す"', view)
-        self.assertIn('regularTitle: "思い出に残す"', view)
-        self.assertIn('regularTitle: "思い出に残した"', view)
+        self.assertIn('title: "残す"', view)
+        self.assertIn('title: "残した"', view)
         self.assertIn('if entry.isBookmarked {', view)
         self.assertIn('if entry.isLiked {', view)
         self.assertIn('fallbackIsLiked: false', view)
         self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
-        self.assertIn('actionPill(', view)
+        self.assertIn('directActionLabel(', view)
+        self.assertIn('statusBadge(', view)
         self.assertIn("写真アプリへの取り込みを確認するため、アプリを開きます", view)
         self.assertIn("SendFamilyWidgetHeartIntent", view)
 
@@ -232,6 +232,16 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("familyMemoryControl", larger_actions)
         self.assertIn("familyHeartControl(sourceDigest: sourceDigest)", larger_actions)
 
+        action_tray = section(
+            view,
+            "private func actionTray<Content: View>(",
+            "private func directActionLabel(",
+        )
+        self.assertIn("Spacer(minLength: 0)", action_tray)
+        self.assertIn("if family != .systemSmall", action_tray)
+        self.assertIn("LinearGradient(", action_tray)
+        self.assertIn(".frame(height: 54)", action_tray)
+
         intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
         personal_intent = section(
             intent,
@@ -242,37 +252,51 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("isLiked: true", personal_intent)
         self.assertNotIn("SharedLikeStore.toggle(", personal_intent)
         self.assertIn('systemImage: "heart"', view)
-        self.assertIn('compactTitle: "ハート"', view)
-        self.assertIn('regularTitle: "ハートを送る"', view)
-        self.assertIn('compactTitle: "待機中"', view)
-        self.assertIn('regularTitle: "ハート送信待ち"', view)
-        self.assertIn('compactTitle: "受付済み"', view)
-        self.assertIn('regularTitle: "ハート受付済み"', view)
-        self.assertNotIn('compactTitle: "送る"', view)
-        self.assertNotIn('compactTitle: "送った"', view)
+        self.assertIn('title: "ハート"', view)
+        self.assertIn('title: "待機中"', view)
+        self.assertIn('title: "受付済み"', view)
+        self.assertNotIn('title: "送る"', view)
+        self.assertNotIn('title: "送った"', view)
         self.assertIn("このiPhoneで送信待ちにし、アプリの同期後に送ります", view)
         self.assertIn("相手が確認したことを示す表示ではありません", view)
         self.assertNotIn("foregroundStyle(.pink)", view)
         self.assertNotIn("Color.accentColor.opacity(0.92)", view)
-        self.assertIn("private enum WidgetActionPillStyle", view)
-        self.assertIn("case action", view)
+        self.assertIn("private enum WidgetStatusBadgeStyle", view)
         self.assertIn("case pending", view)
         self.assertIn("case completed", view)
         self.assertIn("actionButtonSpacing", view)
-        self.assertIn("family == .systemSmall ? compactTitle : regularTitle", view)
-        self.assertIn("case .systemSmall, .systemMedium", view)
-        self.assertIn("return 44", view)
-        self.assertIn("return 46", view)
-        self.assertIn("actionPillVisualHeight(for: style)", view)
-        self.assertIn("actionPillContainerHeight(for: style)", view)
-        self.assertIn("return family == .systemSmall ? 34 : 36", view)
-        self.assertIn("return family == .systemSmall ? 30 : 32", view)
-        self.assertIn("Color.black.opacity(isPending ? 0.72 : 0.62)", view)
-        self.assertNotIn("Color.white.opacity(isPending ? 0.78 : 1)", view)
-        self.assertNotIn("Color.black.opacity(isPending ? 0.45 : 0.62)", view)
-        self.assertIn("Color.white.opacity(0.90)", view)
-        self.assertIn(".stroke(", view)
-        self.assertIn(".contentShape(Rectangle())", view)
+
+        direct_action = section(
+            view,
+            "private func directActionLabel(",
+            "private func statusBadge(",
+        )
+        self.assertIn("Capsule()", direct_action)
+        self.assertIn(".frame(minHeight: 44)", direct_action)
+        self.assertIn(".contentShape(Rectangle())", direct_action)
+        self.assertNotIn("RoundedRectangle", direct_action)
+
+        status_badge = section(
+            view,
+            "private func statusBadge(",
+            "@ViewBuilder\n    private var familySourceLabel",
+        )
+        self.assertIn("RoundedRectangle(cornerRadius: 7", status_badge)
+        self.assertIn(".fixedSize()", status_badge)
+        self.assertNotIn("Capsule()", status_badge)
+        self.assertNotIn(".contentShape", status_badge)
+
+        heart_control = section(
+            view,
+            "private func familyHeartControl(sourceDigest: String)",
+            "private func actionTray<Content: View>(",
+        )
+        pending = section(heart_control, "case .pending:", "case .serverAccepted:")
+        accepted = section(heart_control, "case .serverAccepted:", "case .hidden:")
+        for noninteractive_status in (pending, accepted):
+            self.assertIn("statusBadge(", noninteractive_status)
+            self.assertNotIn("Button(", noninteractive_status)
+            self.assertNotIn("Link(", noninteractive_status)
         self.assertIn(".buttonStyle(.plain)", view)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
@@ -293,12 +317,14 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "guard let localIdentifier",
         )
         self.assertIn("let localWindowID", family_branch)
+        self.assertIn("let familySourceDigest", family_branch)
+        self.assertIn("DeepLink.familyWindowPhoto(", family_branch)
+        self.assertIn("return exactPhotoURL", family_branch)
         self.assertIn(
             "DeepLink.familyWindow(localWindowID: localWindowID)",
             family_branch,
         )
         self.assertIn("return DeepLink.familyWindow()", family_branch)
-        self.assertNotIn("sourceDigest", family_branch)
 
         memory_action_url = section(entry, "var memoryActionURL: URL?", "\n    }\n}")
         self.assertIn(
@@ -318,15 +344,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn("Link(destination: memoryActionURL)", widget_view)
-        self.assertIn(".widgetURL(photoDestinationURL)", widget_view)
+        self.assertIn(".widgetURL(entry.photoURL)", widget_view)
         self.assertNotIn(".widgetURL(entry.memoryActionURL)", widget_view)
-        photo_destination = section(
-            widget_view,
-            "private var photoDestinationURL: URL?",
-            "@ViewBuilder\n    private var photoActionButtons",
-        )
-        self.assertIn("family == .systemSmall", photo_destination)
-        self.assertIn("entry.memoryActionURL ?? entry.photoURL", photo_destination)
+        self.assertNotIn("photoDestinationURL", widget_view)
+        self.assertNotIn("entry.memoryActionURL ?? entry.photoURL", widget_view)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
         serializer = section(
@@ -336,7 +357,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         family_serializer = section(
             serializer,
-            "case let .familyWindow(localWindowID, sourceDigest):",
+            "case let .familyWindow(localWindowID, sourceDigest, action):",
             "return components.url",
         )
         self.assertIn(
@@ -345,6 +366,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn(
             'URLQueryItem(name: "source", value: sourceDigest)',
+            family_serializer,
+        )
+        self.assertIn(
+            'URLQueryItem(name: "action", value: action.rawValue)',
             family_serializer,
         )
 
@@ -361,6 +386,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         parser = section(deep_link, 'if host == "family-window"', 'guard host == "photo"')
         self.assertIn('$0.name == "window"', parser)
         self.assertIn('$0.name == "source"', parser)
+        self.assertIn('$0.name == "action"', parser)
         self.assertIn("sourceDigest == nil || localWindowID != nil", parser)
         self.assertIn("isLowercaseSHA256", parser)
         self.assertIn("sourceDigest: sourceDigest", parser)
@@ -372,7 +398,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         family_route = section(
             app_model,
-            "case let .familyWindow(localWindowID, sourceDigest):",
+            "case let .familyWindow(localWindowID, sourceDigest, action):",
             "return\n        }",
         )
         self.assertLess(
@@ -381,8 +407,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertLess(
             family_route.index("pendingFamilyMomentSourceDigest = sourceDigest"),
-            family_route.index("isFamilyWindowPresented = true"),
+            family_route.rindex("isFamilyWindowPresented = true"),
         )
+        self.assertIn("action == .viewPhoto", family_route)
+        self.assertIn("WidgetCacheBuilder.retainedFamilyMomentID(", family_route)
+        self.assertIn("pendingFamilyNotificationRoute = MomentNotificationRoute(", family_route)
+        self.assertIn("kind: .newMoment", family_route)
 
         app_root = source("NekoWidget/App/AppRootView.swift")
         self.assertIn(
@@ -618,7 +648,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('return canRetry ? "ハートを再送" : "ハートを送れません"', family_view)
         self.assertIn("heart?.phase == .sent", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
-        self.assertIn('Label("ハートが届きました", systemImage: "heart.fill")', family_view)
+        self.assertIn('Label("ハート", systemImage: "heart.fill")', family_view)
+        self.assertIn('parts.append("ハートが届いています")', family_view)
         self.assertNotIn("family-window-received-paws", family_view)
 
         presentation = source("NekoWidget/Views/MomentSharingPresentation.swift")
@@ -806,9 +837,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("savedPhotosSection", memory_view)
         self.assertIn("reflectionSection", memory_view)
         self.assertIn("creationSection", memory_view)
-        self.assertIn('Text("残した写真")', memory_view)
-        self.assertIn('Text("ふりかえり")', memory_view)
-        self.assertIn('Text("かたちにする")', memory_view)
+        self.assertIn('case .saved: "残した"', memories)
+        self.assertIn('case .reflections: "ふりかえり"', memories)
+        self.assertIn('case .create: "つくる"', memories)
+        self.assertNotIn('Text("残した写真")', memory_view)
+        self.assertNotIn('Text("かたちにする")', memory_view)
         self.assertIn("MemoriesRoute.monthlyWindow(presentation)", memory_view)
         self.assertIn('Label("季節の作品", systemImage: "film.stack")', memory_view)
         self.assertIn('title: "PDFにまとめる"', memory_view)
@@ -849,6 +882,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("startsInExportMode: true", memory_view)
         self.assertIn('accessibilityIdentifier("memories-photo-book-action")', memory_view)
         self.assertEqual(memory_view.count(".accessibilityAddTraits(.isHeader)"), 3)
+        self.assertIn('accessibilityIdentifier("memories-saved-section")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-reflections-section")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-create-section")', memory_view)
 
         self.assertLess(
             memory_view.index("savedPhotosSection"),
@@ -1118,7 +1154,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn('windowSectionTitle("接続済みのまど")', main_tab)
         self.assertIn('windowSectionTitle("設定中のまど")', main_tab)
-        self.assertIn("名前は、まどを開いて設定から変更できます。", main_tab)
+        self.assertIn("まどの名前は、開いた先の設定から変更できます。", main_tab)
         self.assertIn("PrivateWindowListPresentationPolicy.make", main_tab)
         self.assertIn("if $0.createdAt != $1.createdAt", main_tab)
         self.assertNotIn("if $0.updatedAt != $1.updatedAt", main_tab)
@@ -1217,7 +1253,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         app_root = source("NekoWidget/App/AppRootView.swift")
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         for section_title in (
-            "写真と表示",
+            "写真とねこ",
+            "ウィジェット",
             "まど",
             "プライバシーとサポート",
             "アプリ",
@@ -2311,20 +2348,20 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
-        self.assertIn("自分が届けた写真", family)
-        self.assertIn("受付→到着の順です。到着は既読ではなく、プレビューはこのiPhoneだけに残ります", family)
+        self.assertNotIn('Text("自分が届けた写真")', family)
+        self.assertIn('Text("送信状況")', family)
+        self.assertIn('Text("履歴")', family)
+        self.assertIn("到着は閲覧や既読を示しません", family)
         self.assertIn("sentRecordThumbnail(record)", family)
         target_record = section(
             family,
             "private var outgoingStatusSection: some View",
             "private var visibleSentRecords",
         )
-        self.assertIn("if let notificationTargetSentRecord", target_record)
-        self.assertLess(
-            target_record.index("if let notificationTargetSentRecord"),
-            target_record.index("model.outgoingPresentation.statuses"),
-        )
-        self.assertIn("$0.momentID != focusedSentMomentID", target_record)
+        self.assertIn("LazyVGrid(columns: sentRecordColumns", target_record)
+        self.assertIn("ForEach(visibleSentRecords)", target_record)
+        self.assertIn("if let focusedSentMomentID", family)
+        self.assertIn("records.insert(target, at: records.startIndex)", family)
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
         self.assertIn("sentRecordDisplayLimit + 20", family)
         self.assertIn('Button("さらに見る")', family)
@@ -2510,14 +2547,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("sentSectionContent", paired)
         self.assertIn("sendPhotoAction", paired)
         self.assertLess(
-            paired.index("sendPhotoAction"),
             paired.index('Picker("まどに表示する内容"'),
+            paired.index("receivedSectionContent"),
         )
-        self.assertLess(
-            paired.index("if focusedSentMomentID != nil"),
-            paired.index("if !prioritizesNotificationTarget"),
-        )
-        self.assertIn("else if focusedSentMomentID == nil", paired)
+        self.assertIn("model.receivedMoments.isEmpty", paired)
+        self.assertIn("} else if prioritizesNotificationTarget {", paired)
+        self.assertIn("sentSectionContent\n                    sendPhotoAction", paired)
+        self.assertIn("sendPhotoAction\n                    sentSectionContent", paired)
         self.assertIn("pendingNotificationRoute?.target != nil || focusedSentMomentID != nil", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
@@ -2649,13 +2685,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func sentRecordCard(",
             "private func outgoingStatusCard(",
         )
-        self.assertLess(
-            sent.index("record.title"),
-            sent.index("Text(statusDate.formatted("),
-        )
-        self.assertIn("record.title", sent)
+        self.assertIn('arrived ? "到着" : "受付済み"', sent)
+        self.assertIn('Label("ハート", systemImage: "heart.fill")', sent)
+        self.assertIn(".scaledToFill()", sent)
+        self.assertIn(".aspectRatio(1, contentMode: .fit)", sent)
         self.assertNotIn("閲覧・既読の確認ではありません", sent)
-        self.assertIn("ハートが届きました", sent)
         self.assertIn("sentRecordAccessibilityLabel(record)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)
 

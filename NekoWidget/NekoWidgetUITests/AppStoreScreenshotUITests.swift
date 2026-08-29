@@ -76,8 +76,10 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The Memories tab was not available.", application: app)
             return
         }
-        let savedPhotosHeading = app.staticTexts["残した写真"]
-        guard savedPhotosHeading.waitForExistence(timeout: 15) else {
+        let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
+        let savedSegment = memoriesSectionPicker.buttons["残した"]
+        guard memoriesSectionPicker.waitForExistence(timeout: 15),
+              savedSegment.waitForExistence(timeout: 5) else {
             fail(
                 "The Memories information architecture did not appear.",
                 application: app
@@ -112,7 +114,6 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         savedPhotosBackButton.tap()
 
-        let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
         let reflectionsSegment = memoriesSectionPicker.buttons["ふりかえり"]
         guard memoriesSectionPicker.waitForExistence(timeout: 5),
               reflectionsSegment.waitForExistence(timeout: 5) else {
@@ -123,7 +124,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
 
         let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
         guard scrollUpUntilHittable(memoriesAutomaticAlbums, application: app),
-              app.staticTexts["ふりかえり"].exists else {
+              reflectionsSegment.isSelected else {
             fail(
                 "The automatic-albums entry could not be reached from Memories.",
                 application: app
@@ -171,7 +172,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
 
         let pdfAction = app.buttons["memories-photo-book-action"]
         guard scrollUpUntilHittable(pdfAction, application: app),
-              app.staticTexts["かたちにする"].exists else {
+              createSegment.isSelected else {
             fail("The PDF creation action could not be reached.", application: app)
             return
         }

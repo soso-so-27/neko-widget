@@ -158,10 +158,7 @@ struct HomeView: View {
     @ViewBuilder
     private var todayPhoto: some View {
         if let currentPhoto {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("今日の一枚")
-                    .font(.title3.bold())
-
+            VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .bottom) {
                     NavigationLink(value: TodayRoute.photo(currentPhoto.localIdentifier)) {
                         PhotoAssetImageView(
@@ -175,6 +172,7 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("window-current-photo")
+                    .accessibilityLabel("今日の一枚")
                     .accessibilityHint("写真を大きく表示します")
 
                     LinearGradient(
@@ -183,20 +181,6 @@ struct HomeView: View {
                         endPoint: .bottom
                     )
                     .allowsHitTesting(false)
-
-                    Text(todayPhotoSourceLabel(currentPhoto))
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.black.opacity(0.42), in: Capsule())
-                        .padding(14)
-                        .frame(
-                            maxWidth: .infinity,
-                            maxHeight: .infinity,
-                            alignment: .topLeading
-                        )
-                        .allowsHitTesting(false)
 
                     VStack {
                         Spacer()
@@ -213,14 +197,6 @@ struct HomeView: View {
         } else {
             emptyPhotoState
         }
-    }
-
-    private func todayPhotoSourceLabel(_ photo: PhotoPresentation) -> String {
-        guard let creationDate = photo.creationDate else {
-            return "このiPhoneの写真"
-        }
-        let year = Calendar.current.component(.year, from: creationDate)
-        return "このiPhone・\(year)年"
     }
 
     @ViewBuilder

@@ -1954,7 +1954,7 @@ final class AppViewModel: ObservableObject {
                 localIdentifier: localIdentifier,
                 shownAt: link.shownAt
             )
-        case let .familyWindow(localWindowID, sourceDigest):
+        case let .familyWindow(localWindowID, sourceDigest, action):
             guard SharingAPIConfiguration.current.isReviewVisible else {
                 SharedLog.app.info(
                     "deeplink",
@@ -1984,7 +1984,47 @@ final class AppViewModel: ObservableObject {
                     }
                 }
                 self.pendingFamilyNotificationRoute = nil
-                self.pendingFamilyMomentSourceDigest = sourceDigest
+                self.pendingFamilyMomentSourceDigest = nil
+                if action == .viewPhoto,
+                   let localWindowID,
+                   let sourceDigest {
+                    do {
+                        let bootstrap = try PairingInstallationGuard.bootstrap()
+                        guard let catalog = try PrivateWindowCatalogStore.load(),
+                              let window = catalog.windows.first(where: {
+                                  $0.localWindowID == localWindowID
+                              }),
+                              let spaceID = window.spaceID,
+                              let momentID = try WidgetCacheBuilder.retainedFamilyMomentID(
+                                  forSourceDigest: sourceDigest,
+                                  localWindowID: localWindowID,
+                                  validating: bootstrap.lifecycleToken
+                              )
+                        else {
+                            self.isFamilyWindowPresented = true
+                            SharedLog.app.info(
+                                "deeplink",
+                                "Opened private window because exact Widget photo expired"
+                            )
+                            return
+                        }
+                        self.pendingFamilyNotificationRoute = MomentNotificationRoute(
+                            kind: .newMoment,
+                            target: MomentNotificationRouteTarget(
+                                spaceID: spaceID,
+                                momentID: momentID
+                            )
+                        )
+                    } catch {
+                        Self.logError(
+                            error,
+                            category: "family-window",
+                            operation: "resolve_widget_photo"
+                        )
+                    }
+                } else {
+                    self.pendingFamilyMomentSourceDigest = sourceDigest
+                }
                 self.isFamilyWindowPresented = true
                 SharedLog.app.info("deeplink", "Opened private window from Widget")
             }

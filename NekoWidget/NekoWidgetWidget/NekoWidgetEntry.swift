@@ -63,6 +63,13 @@ struct NekoWidgetEntry: TimelineEntry {
                 // remain hidden until a stable local window ID is available.
                 return DeepLink.familyWindow()
             }
+            if let familySourceDigest,
+               let exactPhotoURL = DeepLink.familyWindowPhoto(
+                   localWindowID: localWindowID,
+                   sourceDigest: familySourceDigest
+               ) {
+                return exactPhotoURL
+            }
             return DeepLink.familyWindow(localWindowID: localWindowID)
         }
         guard let localIdentifier else { return nil }
@@ -70,9 +77,9 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     /// A received photo's explicit “思い出に残す” route. Keep this separate
-    /// from `photoURL`: tapping the photo itself opens the window without
-    /// starting an action, while the labeled control identifies one exact
-    /// window/photo pair and asks for confirmation in the app.
+    /// from `photoURL`: tapping the photo itself opens that photo without
+    /// starting an action, while the labeled control asks for memory-save
+    /// confirmation for the same exact window/photo pair.
     var memoryActionURL: URL? {
         guard WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier),
               let localWindowID = WidgetPhotoSource.localWindowID(

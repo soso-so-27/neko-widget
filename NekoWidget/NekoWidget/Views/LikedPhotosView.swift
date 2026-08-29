@@ -529,6 +529,7 @@ struct LikedPhotosView: View {
     let monthlyWindow: MonthlyWindowPresentation?
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
+    let showSettings: () -> Void
 
     @State private var selectedSection: MemoriesSection = .saved
 
@@ -550,6 +551,15 @@ struct LikedPhotosView: View {
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: showSettings) {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("設定")
+                .accessibilityIdentifier("memories-settings-button")
+            }
+        }
     }
 
     @ViewBuilder
@@ -598,21 +608,16 @@ struct LikedPhotosView: View {
         let previewPhotos = Array(photos.prefix(6))
 
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("残した写真")
-                    .font(.title3.bold())
-                    .accessibilityAddTraits(.isHeader)
-
-                Spacer()
-
-                if !photos.isEmpty {
+            if !photos.isEmpty {
+                HStack(alignment: .firstTextBaseline) {
+                    Spacer()
                     Text("\(photos.count.formatted())枚・残した順")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("photo-book-progress")
                 }
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 16)
 
             if photos.isEmpty {
                 HStack(spacing: 13) {
@@ -681,15 +686,14 @@ struct LikedPhotosView: View {
                 }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("残した写真")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("memories-saved-section")
     }
 
     private var reflectionSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("ふりかえり")
-                .font(.title3.bold())
-                .padding(.horizontal, 16)
-                .accessibilityAddTraits(.isHeader)
-
             if hasPhotoAccess {
                 if let monthlyWindow {
                     monthlyWindowCard(monthlyWindow)
@@ -717,15 +721,14 @@ struct LikedPhotosView: View {
                 .padding(.horizontal, 16)
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("ふりかえり")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("memories-reflections-section")
     }
 
     private var creationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("かたちにする")
-                .font(.title3.bold())
-                .padding(.horizontal, 16)
-                .accessibilityAddTraits(.isHeader)
-
             if !photos.isEmpty {
                 NavigationLink {
                     SavedMemoriesGalleryView(
@@ -748,6 +751,10 @@ struct LikedPhotosView: View {
 
             creationPreviewCard
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("つくる")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("memories-create-section")
     }
 
     private func monthlyWindowCard(

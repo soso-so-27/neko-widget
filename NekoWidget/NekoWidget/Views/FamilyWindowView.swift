@@ -488,22 +488,6 @@ struct FamilyWindowView: View {
                 }
 
                 if !model.isReportOnly {
-                    if pendingNotificationRoute?.target != nil {
-                        notificationRouteResolutionCard
-                    }
-
-                    if focusedSentMomentID != nil {
-                        sentSectionContent
-                    }
-
-                    // A notification is an explicit request to see one photo.
-                    // Keep the ordinary delivery CTA out of the way until that
-                    // target has been shown; the CTA remains available below a
-                    // heart target after the user has seen it.
-                    if !prioritizesNotificationTarget {
-                        sendPhotoAction
-                    }
-
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
                             Text(section.title).tag(section)
@@ -518,6 +502,10 @@ struct FamilyWindowView: View {
                         notificationAccessibilityFocus = nil
                     }
 
+                    if pendingNotificationRoute?.target != nil {
+                        notificationRouteResolutionCard
+                    }
+
                     manualRefreshResult
                 }
 
@@ -527,13 +515,19 @@ struct FamilyWindowView: View {
 
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
-                } else if focusedSentMomentID == nil {
+                    if !model.isReportOnly,
+                       model.receivedMoments.isEmpty,
+                       !prioritizesNotificationTarget {
+                        sendPhotoAction
+                    }
+                } else if prioritizesNotificationTarget {
+                    // A notification is an explicit request to see one photo.
+                    // Keep the target ahead of the ordinary delivery action.
                     sentSectionContent
-                }
-
-                if !model.isReportOnly,
-                   focusedSentMomentID != nil {
                     sendPhotoAction
+                } else {
+                    sendPhotoAction
+                    sentSectionContent
                 }
             }
             .padding(16)
@@ -560,8 +554,6 @@ struct FamilyWindowView: View {
     private var receivedSectionContent: some View {
         if !model.receivedMoments.isEmpty {
             HStack {
-                Text("届いた写真")
-                    .font(.headline)
                 Spacer()
                 Menu {
                     Picker("表示する写真", selection: $receivedPhotoFilter) {
@@ -718,10 +710,6 @@ struct FamilyWindowView: View {
             .onChange(of: selectedPhotoItem) { _, item in
                 prepareSelectedPhoto(item)
             }
-
-            Text("送る前に写真と届け先を確認できます")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             if let photoSelectionMessage {
                 Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
@@ -926,7 +914,7 @@ struct FamilyWindowView: View {
         Button {
             selectedMomentForDetail = item
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottom) {
                 if let url = model.imageURL(for: item) {
                     receivedPhotoSurface(
                         url: url,
@@ -936,30 +924,32 @@ struct FamilyWindowView: View {
                 } else {
                     receivedPhotoPlaceholder(aspectRatio: 1)
                 }
+
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.72)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+
                 HStack(spacing: 5) {
                     Text(item.receivedAt.formatted(.dateTime.month().day()))
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
                     Spacer(minLength: 2)
                     if model.isSavedMemory(item) {
                         Image(systemName: "bookmark.fill")
-                            .foregroundStyle(.tint)
                             .accessibilityLabel("思い出に残した写真")
                     }
                     if model.heartOutboxItem(for: item)?.phase == .sent {
                         Image(systemName: "heart.fill")
-                            .foregroundStyle(.tint)
                             .accessibilityLabel("ハートを送信済み")
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                .foregroundStyle(.white)
+                .padding(10)
             }
-            .background(
-                Color(uiColor: .secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: 16)
-            )
             .clipShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -1224,42 +1214,55 @@ struct FamilyWindowView: View {
     }
 
     private var outgoingStatusSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("自分が届けた写真")
-                    .font(.headline)
-                Spacer()
-                if canManageOutgoingPresentation {
-                    outgoingManagementMenu
+        VStack(alignment: .leading, spacing: 18) {
+            if hasOutgoingActivityState {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("送信状況")
+                            .font(.headline)
+                        Spacer()
+                        if canManageOutgoingPresentation {
+                            outgoingManagementMenu
+                        }
+                    }
+
+                    ForEach(model.outgoingPresentation.statuses) { status in
+                        outgoingStatusCard(status)
+                    }
+
+                    ForEach(model.outgoingPresentation.outcomes) { outcome in
+                        outgoingOutcomeCard(outcome)
+                    }
+
+                    if model.outgoingPresentation.sentRecords.isEmpty,
+                       let acceptance = model.outgoingPresentation.latestServerAcceptance {
+                        latestServerAcceptanceCard(acceptance)
+                    }
                 }
-            }
-            Text("受付→到着の順です。到着は既読ではなく、プレビューはこのiPhoneだけに残ります。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let notificationTargetSentRecord {
-                sentRecordCard(notificationTargetSentRecord)
-            }
-
-            ForEach(model.outgoingPresentation.statuses) { status in
-                outgoingStatusCard(status)
-            }
-
-            ForEach(model.outgoingPresentation.outcomes) { outcome in
-                outgoingOutcomeCard(outcome)
-            }
-
-            if model.outgoingPresentation.sentRecords.isEmpty,
-               let acceptance = model.outgoingPresentation.latestServerAcceptance {
-                latestServerAcceptanceCard(acceptance)
             }
 
             if !model.outgoingPresentation.sentRecords.isEmpty {
-                ForEach(visibleSentRecords.filter {
-                    $0.momentID != focusedSentMomentID
-                }) { record in
-                    sentRecordCard(record)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("履歴")
+                            .font(.headline)
+                        Spacer()
+                        if canManageOutgoingPresentation,
+                           !hasOutgoingActivityState {
+                            outgoingManagementMenu
+                        }
+                    }
+                    Text("到着は閲覧や既読を示しません。写真のプレビューはこのiPhoneだけに残ります。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    LazyVGrid(columns: sentRecordColumns, spacing: 10) {
+                        ForEach(visibleSentRecords) { record in
+                            sentRecordCard(record)
+                        }
+                    }
                 }
+
                 if model.outgoingPresentation.sentRecords.count > 3 {
                     HStack {
                         if sentRecordDisplayLimit > 3 {
@@ -1289,11 +1292,19 @@ struct FamilyWindowView: View {
         .accessibilityIdentifier("family-window-outgoing-status")
     }
 
-    private var notificationTargetSentRecord: MomentSentRecordPresentation? {
-        guard let focusedSentMomentID else { return nil }
-        return model.outgoingPresentation.sentRecords.first {
-            $0.momentID == focusedSentMomentID
-        }
+    private var hasOutgoingActivityState: Bool {
+        !model.outgoingPresentation.statuses.isEmpty
+            || !model.outgoingPresentation.outcomes.isEmpty
+            || (model.outgoingPresentation.sentRecords.isEmpty
+                && model.outgoingPresentation.latestServerAcceptance != nil)
+    }
+
+    private var sentRecordColumns: [GridItem] {
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        return Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 10),
+            count: count
+        )
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
@@ -1361,43 +1372,52 @@ struct FamilyWindowView: View {
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
-        let backgroundColor: Color = isNotificationTarget
-            ? Color.accentColor.opacity(0.12)
-            : (arrived
-                ? Color.green.opacity(0.1)
-                : Color(uiColor: .secondarySystemGroupedBackground))
-        return HStack(alignment: .center, spacing: 12) {
+
+        return ZStack(alignment: .bottomLeading) {
             sentRecordThumbnail(record)
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.78)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
+
             VStack(alignment: .leading, spacing: 5) {
-                Label(
-                    record.title,
-                    systemImage: arrived ? "iphone" : "server.rack"
-                )
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(arrived ? Color.green : Color.secondary)
+                HStack(spacing: 7) {
+                    Label(
+                        arrived ? "到着" : "受付済み",
+                        systemImage: arrived ? "iphone" : "server.rack"
+                    )
+                    if record.hasReceivedHeart {
+                        Label("ハート", systemImage: "heart.fill")
+                    }
+                }
+                .font(.caption2.bold())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
                 Text(statusDate.formatted(
                     .dateTime.month().day().hour().minute()
                 ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if record.hasReceivedHeart {
-                    Label("ハートが届きました", systemImage: "heart.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tint)
-                }
+                .font(.caption2.weight(.semibold))
             }
-            Spacer(minLength: 0)
+            .foregroundStyle(.white)
+            .padding(10)
         }
-        .padding(14)
         .background(
-            backgroundColor,
+            Color(uiColor: .secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 16)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay {
-            if isNotificationTarget {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.accentColor, lineWidth: 2)
-            }
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    isNotificationTarget
+                        ? Color.accentColor
+                        : Color.primary.opacity(0.05),
+                    lineWidth: isNotificationTarget ? 2 : 1
+                )
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(sentRecordAccessibilityLabel(record))
@@ -1436,25 +1456,24 @@ struct FamilyWindowView: View {
 
     @ViewBuilder
     private func sentRecordThumbnail(_ record: MomentSentRecordPresentation) -> some View {
-        if let data = record.localThumbnailJPEG,
-           let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 86, height: 86)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityHidden(true)
-        } else {
-            Image(systemName: "photo")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(width: 44, height: 44)
-                .background(
-                    Color(uiColor: .tertiarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
-                .accessibilityHidden(true)
+        ZStack {
+            Color(uiColor: .tertiarySystemGroupedBackground)
+            if let data = record.localThumbnailJPEG,
+               let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Image(systemName: "photo")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
+        .accessibilityHidden(true)
     }
 
     private func outgoingStatusCard(

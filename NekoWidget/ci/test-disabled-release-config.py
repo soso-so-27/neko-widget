@@ -235,7 +235,7 @@ class DisabledReleaseConfigTests(unittest.TestCase):
             encoding="utf-8"
         )
         family_case = app_model.split(
-            "case let .familyWindow(localWindowID, sourceDigest):",
+            "case let .familyWindow(localWindowID, sourceDigest, action):",
             1,
         )[1].split("\n        }\n        guard let readyRoute", 1)[0]
         self.assertIn("isReviewVisible", family_case)

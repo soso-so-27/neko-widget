@@ -622,7 +622,8 @@ enum MomentSharingPresentationVerifier {
               let parsed = DeepLink(url: url),
               parsed.destination == .familyWindow(
                 localWindowID: nil,
-                sourceDigest: nil
+                sourceDigest: nil,
+                action: nil
               ),
               parsed.shownAt == nil
         else { throw VerificationError("family Widget deep link was not stable") }
@@ -635,9 +636,21 @@ enum MomentSharingPresentationVerifier {
               let exact = DeepLink(url: exactURL),
               exact.destination == .familyWindow(
                 localWindowID: localWindowID,
-                sourceDigest: sourceDigest
+                sourceDigest: sourceDigest,
+                action: nil
               )
         else { throw VerificationError("exact family Widget deep link was not stable") }
+        guard let photoURL = DeepLink.familyWindowPhoto(
+                localWindowID: localWindowID,
+                sourceDigest: sourceDigest
+              ),
+              let photo = DeepLink(url: photoURL),
+              photo.destination == .familyWindow(
+                localWindowID: localWindowID,
+                sourceDigest: sourceDigest,
+                action: .viewPhoto
+              )
+        else { throw VerificationError("family Widget photo deep link was not stable") }
         try require(
             DeepLink(url: URL(string: "nekowidget://family-window?id=photo")!) == nil,
             "family Widget deep link accepted a photo identifier"
@@ -647,6 +660,18 @@ enum MomentSharingPresentationVerifier {
                 "nekowidget://family-window?window=\(localWindowID)&source=ABC"
             )!) == nil,
             "family Widget deep link accepted a malformed source digest"
+        )
+        try require(
+            DeepLink(url: URL(string:
+                "nekowidget://family-window?window=\(localWindowID)&action=view-photo"
+            )!) == nil,
+            "family Widget photo deep link accepted an action without a digest"
+        )
+        try require(
+            DeepLink(url: URL(string:
+                "nekowidget://family-window?window=\(localWindowID)&source=\(sourceDigest)&action=unknown"
+            )!) == nil,
+            "family Widget photo deep link accepted an unknown action"
         )
     }
 

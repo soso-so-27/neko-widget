@@ -1,9 +1,17 @@
 import Foundation
 
 struct DeepLink: Equatable, Sendable {
+    enum FamilyWindowAction: String, Equatable, Sendable {
+        case viewPhoto = "view-photo"
+    }
+
     enum Destination: Equatable, Sendable {
         case photo(localIdentifier: String)
-        case familyWindow(localWindowID: String?, sourceDigest: String?)
+        case familyWindow(
+            localWindowID: String?,
+            sourceDigest: String?,
+            action: FamilyWindowAction?
+        )
     }
 
     private static let scheme = "nekowidget"
@@ -31,7 +39,7 @@ struct DeepLink: Equatable, Sendable {
             }
             components.queryItems = queryItems
             return components.url
-        case let .familyWindow(localWindowID, sourceDigest):
+        case let .familyWindow(localWindowID, sourceDigest, action):
             var components = URLComponents()
             components.scheme = Self.scheme
             components.host = "family-window"
@@ -41,6 +49,9 @@ struct DeepLink: Equatable, Sendable {
             }
             if let sourceDigest {
                 queryItems.append(URLQueryItem(name: "source", value: sourceDigest))
+            }
+            if let action {
+                queryItems.append(URLQueryItem(name: "action", value: action.rawValue))
             }
             components.queryItems = queryItems.isEmpty ? nil : queryItems
             return components.url
@@ -55,7 +66,11 @@ struct DeepLink: Equatable, Sendable {
     }
 
     static func familyWindow() -> URL? {
-        DeepLink(destination: .familyWindow(localWindowID: nil, sourceDigest: nil)).url
+        DeepLink(destination: .familyWindow(
+            localWindowID: nil,
+            sourceDigest: nil,
+            action: nil
+        )).url
     }
 
     static func familyWindow(localWindowID: String) -> URL? {
@@ -65,7 +80,8 @@ struct DeepLink: Equatable, Sendable {
         return DeepLink(
             destination: .familyWindow(
                 localWindowID: localWindowID.lowercased(),
-                sourceDigest: nil
+                sourceDigest: nil,
+                action: nil
             )
         ).url
     }
@@ -78,7 +94,22 @@ struct DeepLink: Equatable, Sendable {
         return DeepLink(
             destination: .familyWindow(
                 localWindowID: localWindowID.lowercased(),
-                sourceDigest: sourceDigest
+                sourceDigest: sourceDigest,
+                action: nil
+            )
+        ).url
+    }
+
+    static func familyWindowPhoto(localWindowID: String, sourceDigest: String) -> URL? {
+        guard let uuid = UUID(uuidString: localWindowID),
+              uuid.uuidString.lowercased() == localWindowID.lowercased(),
+              Self.isLowercaseSHA256(sourceDigest)
+        else { return nil }
+        return DeepLink(
+            destination: .familyWindow(
+                localWindowID: localWindowID.lowercased(),
+                sourceDigest: sourceDigest,
+                action: .viewPhoto
             )
         ).url
     }
@@ -92,9 +123,11 @@ struct DeepLink: Equatable, Sendable {
             guard components.path.isEmpty, components.fragment == nil else { return nil }
             let items = components.queryItems ?? []
             let names = items.map(\.name)
-            guard items.count <= 2,
+            guard items.count <= 3,
                   Set(names).count == names.count,
-                  names.allSatisfy({ $0 == "window" || $0 == "source" }),
+                  names.allSatisfy({
+                      $0 == "window" || $0 == "source" || $0 == "action"
+                  }),
                   items.allSatisfy({ $0.value != nil })
             else { return nil }
             let localWindowID: String?
@@ -107,12 +140,23 @@ struct DeepLink: Equatable, Sendable {
                 localWindowID = nil
             }
             let sourceDigest = items.first(where: { $0.name == "source" })?.value
+            let action: FamilyWindowAction?
+            if let rawAction = items.first(where: { $0.name == "action" })?.value {
+                guard let parsedAction = FamilyWindowAction(rawValue: rawAction) else {
+                    return nil
+                }
+                action = parsedAction
+            } else {
+                action = nil
+            }
             guard sourceDigest == nil || localWindowID != nil,
-                  sourceDigest.map(Self.isLowercaseSHA256) ?? true
+                  sourceDigest.map(Self.isLowercaseSHA256) ?? true,
+                  action == nil || sourceDigest != nil
             else { return nil }
             self.init(destination: .familyWindow(
                 localWindowID: localWindowID,
-                sourceDigest: sourceDigest
+                sourceDigest: sourceDigest,
+                action: action
             ))
             return
         }

@@ -61,7 +61,7 @@ struct NekoWidgetView: View {
                 emptyState
             }
         }
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: .bottom) {
             photoActionButtons
         }
         .overlay(alignment: .topLeading) {
@@ -70,18 +70,10 @@ struct NekoWidgetView: View {
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
-        .widgetURL(photoDestinationURL)
-    }
-
-    /// Small received-photo widgets reserve their one visible control for the
-    /// social response. Tapping the photo itself still carries the exact
-    /// window/photo capability into the app so private saving is not lost.
-    private var photoDestinationURL: URL? {
-        if family == .systemSmall,
-           WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
-            return entry.memoryActionURL ?? entry.photoURL
-        }
-        return entry.photoURL
+        // A photo is always navigation, never an implicit memory action.
+        // Explicit controls below keep the action routes discoverable without
+        // changing what a tap on the image means across widget families.
+        .widgetURL(entry.photoURL)
     }
 
     @ViewBuilder
@@ -89,29 +81,24 @@ struct NekoWidgetView: View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
-            Group {
+            actionTray {
                 if family == .systemSmall {
-                    // Keep the smallest widget focused on one social action.
-                    // Saving a received photo can require confirmation and
-                    // Photos access, so the photo tap carries that exact route
-                    // into the app and larger widget families show both.
+                    // Keep the smallest received-photo widget focused on one
+                    // social response. Saving remains an explicit labeled
+                    // control in larger families and never hijacks photo taps.
                     familyHeartControl(sourceDigest: sourceDigest)
                 } else {
-                    HStack(spacing: actionButtonSpacing) {
-                        familyMemoryControl
-                        familyHeartControl(sourceDigest: sourceDigest)
-                    }
+                    familyMemoryControl
+                    familyHeartControl(sourceDigest: sourceDigest)
                 }
             }
-            .padding(actionButtonInset)
         } else if let localIdentifier = entry.localIdentifier,
                   entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
                   entry.isLikeInteractionEnabled {
-            Group {
+            actionTray {
                 if entry.isLiked {
-                    actionPill(
-                        compactTitle: "残した",
-                        regularTitle: "思い出に残した",
+                    statusBadge(
+                        title: "残した",
                         systemImage: "bookmark.fill",
                         style: .completed
                     )
@@ -125,11 +112,9 @@ struct NekoWidgetView: View {
                             fallbackIsLiked: false
                         )
                     ) {
-                        actionPill(
-                            compactTitle: "残す",
-                            regularTitle: "思い出に残す",
+                        directActionLabel(
+                            title: "残す",
                             systemImage: "bookmark",
-                            style: .action,
                             invalidatesContent: true
                         )
                     }
@@ -138,16 +123,14 @@ struct NekoWidgetView: View {
                     .accessibilityHint("アプリを開かず、自分の思い出一覧に追加します")
                 }
             }
-            .padding(actionButtonInset)
         }
     }
 
     @ViewBuilder
     private var familyMemoryControl: some View {
         if entry.isBookmarked {
-            actionPill(
-                compactTitle: "残した",
-                regularTitle: "思い出に残した",
+            statusBadge(
+                title: "残した",
                 systemImage: "bookmark.fill",
                 style: .completed
             )
@@ -156,11 +139,9 @@ struct NekoWidgetView: View {
             .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
         } else if let memoryActionURL = entry.memoryActionURL {
             Link(destination: memoryActionURL) {
-                actionPill(
-                    compactTitle: "残す",
-                    regularTitle: "思い出に残す",
-                    systemImage: "bookmark",
-                    style: .action
+                directActionLabel(
+                    title: "残す",
+                    systemImage: "bookmark"
                 )
             }
             .buttonStyle(.plain)
@@ -174,11 +155,9 @@ struct NekoWidgetView: View {
         switch entry.familyHeartStatus {
         case .ready:
             Button(intent: SendFamilyWidgetHeartIntent(sourceDigest: sourceDigest)) {
-                actionPill(
-                    compactTitle: "ハート",
-                    regularTitle: "ハートを送る",
+                directActionLabel(
+                    title: "ハート",
                     systemImage: "heart",
-                    style: .action,
                     invalidatesContent: true
                 )
             }
@@ -186,20 +165,18 @@ struct NekoWidgetView: View {
             .accessibilityLabel("ハートを送る")
             .accessibilityHint("このiPhoneで送信待ちにし、アプリの同期後に送ります")
         case .pending:
-            actionPill(
-                compactTitle: "待機中",
-                regularTitle: "ハート送信待ち",
-                systemImage: "heart",
+            statusBadge(
+                title: "待機中",
+                systemImage: "clock",
                 style: .pending,
                 invalidatesContent: true
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("ハートは送信待ちです")
         case .serverAccepted:
-            actionPill(
-                compactTitle: "受付済み",
-                regularTitle: "ハート受付済み",
-                systemImage: "heart.fill",
+            statusBadge(
+                title: "受付済み",
+                systemImage: "checkmark.circle.fill",
                 style: .completed,
                 invalidatesContent: true
             )
@@ -211,62 +188,94 @@ struct NekoWidgetView: View {
         }
     }
 
-    private func actionPill(
-        compactTitle: String,
-        regularTitle: String,
+    private func actionTray<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: actionButtonSpacing) {
+            Spacer(minLength: 0)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.horizontal, actionButtonInset)
+        .padding(.bottom, actionButtonInset)
+        .background(alignment: .bottom) {
+            if family != .systemSmall {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.42)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 54)
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private func directActionLabel(
+        title: String,
         systemImage: String,
-        style: WidgetActionPillStyle,
         invalidatesContent: Bool = false
     ) -> some View {
-        let isCompleted = style == .completed
-        let isPending = style == .pending
-
-        return HStack(spacing: 4) {
+        HStack(spacing: 4) {
             if invalidatesContent {
                 Image(systemName: systemImage)
                     .invalidatableContent()
             } else {
                 Image(systemName: systemImage)
             }
-            Text(family == .systemSmall ? compactTitle : regularTitle)
+            Text(title)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
         }
-        .font(.caption2.bold())
-        .foregroundStyle(
-            isCompleted
-                ? selectedActionForeground
-                : Color.white
-        )
-        .padding(.horizontal, family == .systemSmall ? 8 : 10)
-        .frame(height: actionPillVisualHeight(for: style))
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .frame(height: family == .systemSmall ? 34 : 32)
         .background(
-            isCompleted
-                ? selectedActionFill
-                : Color.black.opacity(isPending ? 0.72 : 0.62),
+            Color.black.opacity(0.64),
             in: Capsule()
         )
         .overlay {
             Capsule()
                 .stroke(
-                    Color.white.opacity(
-                        isCompleted ? 0.42 : 0.30
-                    ),
+                    Color.white.opacity(0.30),
                     lineWidth: 0.75
                 )
         }
-        .frame(minHeight: actionPillContainerHeight(for: style))
+        .frame(minHeight: 44)
         .contentShape(Rectangle())
     }
 
-    /// Bookmark and heart completion are different concepts, but both use
-    /// one neutral selected palette so color never implies a third meaning.
-    private var selectedActionForeground: Color {
-        Color.black.opacity(0.82)
-    }
-
-    private var selectedActionFill: Color {
-        Color.white.opacity(0.90)
+    /// Pending and completed values are compact, noninteractive status badges.
+    /// Their rounded rectangles deliberately differ from action capsules.
+    private func statusBadge(
+        title: String,
+        systemImage: String,
+        style: WidgetStatusBadgeStyle,
+        invalidatesContent: Bool = false
+    ) -> some View {
+        HStack(spacing: 4) {
+            if invalidatesContent {
+                Image(systemName: systemImage)
+                    .invalidatableContent()
+            } else {
+                Image(systemName: systemImage)
+            }
+            Text(title)
+                .lineLimit(1)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.white.opacity(style == .pending ? 0.82 : 0.94))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(
+            Color.black.opacity(style == .pending ? 0.58 : 0.50),
+            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 0.75)
+        }
+        .fixedSize()
     }
 
     @ViewBuilder
@@ -288,36 +297,8 @@ struct NekoWidgetView: View {
         }
     }
 
-    private var actionButtonSize: CGFloat {
-        switch family {
-        case .systemSmall, .systemMedium:
-            return 44
-        default:
-            return 46
-        }
-    }
-
-    private func actionPillVisualHeight(
-        for style: WidgetActionPillStyle
-    ) -> CGFloat {
-        switch style {
-        case .action:
-            return family == .systemSmall ? 34 : 36
-        case .pending, .completed:
-            return family == .systemSmall ? 30 : 32
-        }
-    }
-
-    private func actionPillContainerHeight(
-        for style: WidgetActionPillStyle
-    ) -> CGFloat {
-        style == .action
-            ? actionButtonSize
-            : actionPillVisualHeight(for: style)
-    }
-
     private var actionButtonSpacing: CGFloat {
-        family == .systemSmall ? 8 : 10
+        family == .systemSmall ? 6 : 8
     }
 
     private var actionButtonInset: CGFloat {
@@ -365,8 +346,7 @@ struct NekoWidgetView: View {
     }
 }
 
-private enum WidgetActionPillStyle {
-    case action
+private enum WidgetStatusBadgeStyle {
     case pending
     case completed
 }
