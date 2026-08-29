@@ -139,7 +139,7 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings-widget-placement-guide")
             } header: {
-                Text("日常")
+                Text("写真と表示")
             }
 
             Section {
@@ -193,7 +193,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("共有と安全")
+                Text("まどと安全")
             }
 
             Section {
@@ -222,8 +222,8 @@ struct SettingsView: View {
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("診断モード")
-                            Text("不具合の調査や検証データ")
+                            Text("診断情報")
+                            Text("不具合を調べるための情報")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -567,7 +567,7 @@ struct SettingsView: View {
                 Text("アプリとウィジェットのログを統合表示します。写真自体やPhotoKitの識別子全文は記録しません。")
             }
         }
-        .navigationTitle("診断モード")
+        .navigationTitle("診断情報")
         .navigationBarTitleDisplayMode(.inline)
     }
 

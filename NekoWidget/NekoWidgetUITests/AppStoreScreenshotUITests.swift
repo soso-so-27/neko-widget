@@ -68,15 +68,38 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "02-local-photo-window")
 
-        let automaticAlbums = app.buttons["today-open-automatic-albums"]
-        guard automaticAlbums.waitForExistence(timeout: 10) else {
-            fail("The automatic-albums action was not available from Today.", application: app)
+        guard tapTab(
+            application: app,
+            identifier: "main-tab-memories",
+            fallbackLabel: "思い出"
+        ) else {
+            fail("The Memories tab was not available.", application: app)
             return
         }
-        automaticAlbums.tap()
+        let savedPhotosHeading = app.staticTexts["残した写真"]
+        guard savedPhotosHeading.waitForExistence(timeout: 15) else {
+            fail(
+                "The Memories information architecture did not appear.",
+                application: app
+            )
+            return
+        }
+        let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
+        guard scrollToHittable(memoriesAutomaticAlbums, in: app),
+              app.staticTexts["ふりかえり"].exists else {
+            fail(
+                "The automatic-albums entry could not be reached from Memories.",
+                application: app
+            )
+            return
+        }
+        memoriesAutomaticAlbums.tap()
         let allCatPhotosAlbum = app.buttons["album-primary-all-cat-photos"]
         guard allCatPhotosAlbum.waitForExistence(timeout: 15) else {
-            fail("The deterministic primary album did not appear.", application: app)
+            fail(
+                "The deterministic primary album did not appear.",
+                application: app
+            )
             return
         }
         // The primary uses fixture photo 1; household growth and 2022 both
@@ -92,31 +115,6 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "03-organized-memories")
 
-        guard tapTab(
-            application: app,
-            identifier: "main-tab-memories",
-            fallbackLabel: "思い出"
-        ) else {
-            fail("The Memories tab was not available.", application: app)
-            return
-        }
-        let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
-        guard memoriesAutomaticAlbums.waitForExistence(timeout: 15) else {
-            fail(
-                "The automatic-albums entry was not available from Memories.",
-                application: app
-            )
-            return
-        }
-        memoriesAutomaticAlbums.tap()
-        guard app.buttons["album-primary-all-cat-photos"]
-            .waitForExistence(timeout: 15) else {
-            fail(
-                "The Memories automatic-albums entry did not open the albums.",
-                application: app
-            )
-            return
-        }
         let memoriesBackButton = app.navigationBars["自動アルバム"].buttons["思い出"]
         guard memoriesBackButton.waitForExistence(timeout: 5) else {
             fail(
@@ -126,9 +124,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         memoriesBackButton.tap()
-        guard app.buttons["PDFにまとめる"].waitForExistence(timeout: 15) else {
+        let pdfAction = app.buttons["PDFにまとめる"]
+        guard scrollToHittable(pdfAction, in: app),
+              app.staticTexts["かたちにする"].exists else {
             fail("The deterministic Likes collection did not appear.", application: app)
             return
+        }
+        let memoriesScrollView = app.scrollViews["memories-scroll-view"]
+        for _ in 0..<4 where !savedPhotosHeading.isHittable {
+            memoriesScrollView.swipeDown()
         }
         guard waitForFixturePhotos(
             in: app,
@@ -165,6 +169,20 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return true
         }
         return false
+    }
+
+    @MainActor
+    private func scrollToHittable(
+        _ element: XCUIElement,
+        in application: XCUIApplication
+    ) -> Bool {
+        let scrollView = application.scrollViews["memories-scroll-view"]
+        guard scrollView.waitForExistence(timeout: 10) else { return false }
+        for _ in 0..<6 {
+            if element.exists, element.isHittable { return true }
+            scrollView.swipeUp()
+        }
+        return element.exists && element.isHittable
     }
 
     @MainActor

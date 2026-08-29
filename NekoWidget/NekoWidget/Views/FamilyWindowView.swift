@@ -531,9 +531,9 @@ struct FamilyWindowView: View {
                 momentCard(latest)
             } else {
                 ContentUnavailableView(
-                    "思い出に残した写真はまだありません",
+                    "このまどで思い出に残した写真はありません",
                     systemImage: "photo.stack",
-                    description: Text("写真の「思い出に残す」を押すと、ここで見返せます。")
+                    description: Text("「すべて」に戻すと、届いた写真を見られます。")
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)

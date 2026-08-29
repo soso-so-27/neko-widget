@@ -28,23 +28,13 @@ struct HomeView: View {
                     photoAccessCard
                 }
 
-                if hasPhotoAccess, let seasonalMovie {
-                    SeasonalMovieCard(
-                        presentation: seasonalMovie,
-                        open: openSeasonalMovie
-                    )
-                }
-
-                if hasPhotoAccess, let monthlyWindow {
-                    MonthlyWindowCard(presentation: monthlyWindow)
+                if hasPhotoAccess,
+                   monthlyWindow != nil || seasonalMovie != nil {
+                    reflectionSection
                 }
 
                 if shouldOfferWidgetPlacementGuide {
                     widgetPlacementCard
-                }
-
-                if hasPhotoAccess {
-                    automaticAlbumsCard
                 }
 
                 if hasPhotoAccess, isLimitedAccess {
@@ -145,44 +135,24 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
-    private var automaticAlbumsCard: some View {
-        NavigationLink(value: TodayRoute.automaticAlbums) {
-            HStack(spacing: 14) {
-                Image(systemName: "square.grid.3x3.fill")
-                    .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(.tint)
-                    .frame(width: 48, height: 48)
-                    .background(
-                        Color.accentColor.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 14)
-                    )
+    private var reflectionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("最近のふりかえり")
+                .font(.title3.bold())
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("自動アルバム")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text("成長・年ごとに自動でまとまった写真を見ます。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+            if let monthlyWindow {
+                MonthlyWindowCard(presentation: monthlyWindow)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 20)
-            )
+
+            if let seasonalMovie {
+                SeasonalMovieCard(
+                    presentation: seasonalMovie,
+                    open: openSeasonalMovie
+                )
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("today-open-automatic-albums")
-        .accessibilityHint("自動でまとまった猫写真を開きます")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("today-reflections")
     }
 
     @ViewBuilder
@@ -316,9 +286,9 @@ struct HomeView: View {
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))
         } else if scan.hasPreliminaryResult && scan.displayedCatCount == 0 {
             ContentUnavailableView {
-                Label("速報ではまだ見つかっていません", systemImage: "photo.on.rectangle")
+                Label("猫の写真を探しています", systemImage: "photo.on.rectangle")
             } description: {
-                Text("全件スキャンを続けています。見つかるとここに表示します。")
+                Text("見つかるとここに表示します。")
             }
             .frame(maxWidth: .infinity, minHeight: 280)
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24))

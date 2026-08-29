@@ -2,7 +2,6 @@ import SwiftUI
 
 enum TodayRoute: Hashable {
     case photo(String)
-    case automaticAlbums
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
 }
@@ -11,6 +10,7 @@ enum MemoriesRoute: Hashable {
     case photo(String)
     case automaticAlbums
     case seasonalMovie(SeasonalMoviePeriodID)
+    case monthlyWindow(MonthlyWindowPresentation)
 }
 
 private struct SeasonalMoviePreparationKey: Hashable {
@@ -77,7 +77,6 @@ struct MainTabView: View {
     @State private var widgetOpenedPhotoIdentifier: String?
     @State private var widgetShownAt: Date?
     @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
-    @State private var isAutomaticAlbumsInPath = false
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
@@ -134,6 +133,7 @@ struct MainTabView: View {
                 LikedPhotosView(
                     photos: likedPhotos,
                     hasPhotoAccess: hasPhotoAccess,
+                    monthlyWindow: currentMonthlyWindow,
                     seasonalMovies: seasonalMovieArchive.records,
                     exportPhotoBook: exportPhotoBook
                 )
@@ -167,7 +167,6 @@ struct MainTabView: View {
             widgetShownAt = selection.shownAt
             showsSettings = false
             selectedTab = .today
-            isAutomaticAlbumsInPath = false
             todayPath = NavigationPath()
             todayPath.append(TodayRoute.photo(identifier))
             deepLinkedPhotoIdentifier = nil
@@ -186,7 +185,6 @@ struct MainTabView: View {
         }
         .onChange(of: todayPath) { _, path in
             guard path.isEmpty else { return }
-            isAutomaticAlbumsInPath = false
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
         }
@@ -194,14 +192,7 @@ struct MainTabView: View {
             // A legacy single-cat reference replaces calendar-year albums with
             // age/adoption buckets. Pop typed routes whose album may no longer
             // exist after the setting changes.
-            todayPath = NavigationPath()
-        }
-        .onChange(of: selectedAlbumScope) { _, _ in
-            if selectedTab == .today, isAutomaticAlbumsInPath {
-                var albumRootPath = NavigationPath()
-                albumRootPath.append(TodayRoute.automaticAlbums)
-                todayPath = albumRootPath
-            }
+            memoriesPath = NavigationPath()
         }
         .onChange(of: catProfilesPresentation.availableScopes) { _, scopes in
             guard scopes.contains(selectedAlbumScope) else {
@@ -268,11 +259,6 @@ struct MainTabView: View {
         switch route {
         case let .photo(localIdentifier):
             detailView(for: localIdentifier)
-        case .automaticAlbums:
-            automaticAlbumsView
-                .onAppear {
-                    isAutomaticAlbumsInPath = true
-                }
         case let .seasonalMovie(periodID):
             seasonalMovieDestination(periodID)
         case let .monthlyWindow(snapshot):
@@ -341,6 +327,11 @@ struct MainTabView: View {
             automaticAlbumsView
         case let .seasonalMovie(periodID):
             seasonalMovieDestination(periodID)
+        case let .monthlyWindow(snapshot):
+            MonthlyWindowView(
+                presentation: refreshedMonthlyWindow(snapshot),
+                setMemorySaved: setMemorySaved
+            )
         }
     }
 
@@ -830,10 +821,6 @@ private struct WindowListView: View {
                         addWindowButton
                     }
 
-                    Text("まどごとに名前・相手・届いた写真が分かれます。現在は1つのまどにつながる相手は1人です。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(.horizontal, 16)

@@ -506,6 +506,7 @@ struct CuratedAlbumDetailView: View {
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
+    let monthlyWindow: MonthlyWindowPresentation?
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
 
@@ -520,79 +521,24 @@ struct LikedPhotosView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
-                if hasPhotoAccess {
-                    automaticAlbumsCard
-                }
+            LazyVStack(alignment: .leading, spacing: 30) {
+                savedPhotosSection
 
-                if hasPhotoAccess, !seasonalMovies.isEmpty {
-                    seasonalMovieSection
-                }
-
-                if photos.isEmpty {
-                    ContentUnavailableView {
-                        Label {
-                            Text("残した写真はまだありません")
-                        } icon: {
-                            Image(systemName: "photo.stack")
-                                .font(.system(size: 28, weight: .semibold))
-                        }
-                    } description: {
-                        Text("「思い出に残す」を押した写真だけが、ここに溜まります。")
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 260)
-                    .padding()
-                } else {
-                    if !isSelectingForExport {
-                        creationPreviewCard
-                    }
-
-                    if isSelectingForExport {
-                        exportSelectionCard
-                    }
-
-                    VStack(alignment: .leading, spacing: 9) {
-                        HStack {
-                            Label(
-                                "自分で残した写真",
-                                systemImage: "bookmark.fill"
-                            )
-                            .font(.headline)
-                            Spacer()
-                            HStack(spacing: 4) {
-                                Text("\(photos.count.formatted())枚")
-                                Text("・")
-                                    .accessibilityHidden(true)
-                                Text("残した順")
-                            }
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 16)
-                        .accessibilityIdentifier("photo-book-progress")
-
-                        LazyVGrid(columns: photoColumns, spacing: 3) {
-                            ForEach(photos) { photo in
-                                likedPhotoGridItem(photo)
-                            }
-                        }
-                        .padding(.horizontal, 3)
-                    }
+                if !isSelectingForExport {
+                    reflectionSection
+                    creationSection
                 }
             }
-            .padding(.vertical, 12)
+            .padding(.vertical, 16)
         }
+        .accessibilityIdentifier("memories-scroll-view")
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
         .toolbar {
-            if !photos.isEmpty {
+            if isSelectingForExport {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isSelectingForExport ? "キャンセル" : "PDFにまとめる") {
-                        if isSelectingForExport {
-                            cancelExportSelection()
-                        } else {
-                            startExportSelection()
-                        }
+                    Button("キャンセル") {
+                        cancelExportSelection()
                     }
                     .disabled(isExportingPhotoBook)
                     .accessibilityIdentifier("liked-summary-selection-toggle")
@@ -636,6 +582,222 @@ struct LikedPhotosView: View {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
     }
 
+    private var savedPhotosSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("残した写真")
+                    .font(.title3.bold())
+
+                Spacer()
+
+                if !photos.isEmpty {
+                    Text("\(photos.count.formatted())枚・残した順")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("photo-book-progress")
+                }
+            }
+            .padding(.horizontal, 16)
+
+            if photos.isEmpty {
+                HStack(spacing: 13) {
+                    Image(systemName: "bookmark")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 42, height: 42)
+                        .background(
+                            Color.accentColor.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("まだありません")
+                            .font(.headline)
+                        Text("写真で「思い出に残す」を押すと、ここに並びます")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 18)
+                )
+                .padding(.horizontal, 16)
+            } else {
+                if isSelectingForExport {
+                    exportSelectionCard
+                }
+
+                LazyVGrid(columns: photoColumns, spacing: 3) {
+                    ForEach(photos) { photo in
+                        likedPhotoGridItem(photo)
+                    }
+                }
+                .padding(.horizontal, 3)
+            }
+        }
+        .accessibilityIdentifier("memories-saved-photos-section")
+    }
+
+    private var reflectionSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("ふりかえり")
+                .font(.title3.bold())
+                .padding(.horizontal, 16)
+
+            if hasPhotoAccess {
+                if let monthlyWindow {
+                    monthlyWindowCard(monthlyWindow)
+                }
+
+                if !seasonalMovies.isEmpty {
+                    seasonalMovieSection
+                }
+
+                automaticAlbumsCard
+            } else {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .foregroundStyle(Color.accentColor)
+                    Text("写真へのアクセスを許可すると表示されます")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 18)
+                )
+                .padding(.horizontal, 16)
+            }
+        }
+        .accessibilityIdentifier("memories-reflection-section")
+    }
+
+    private var creationSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("かたちにする")
+                .font(.title3.bold())
+                .padding(.horizontal, 16)
+
+            if !photos.isEmpty {
+                Button {
+                    startExportSelection()
+                } label: {
+                    actionCard(
+                        systemImage: "doc.richtext",
+                        title: "PDFにまとめる",
+                        detail: "写真を選んで書き出す"
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isExportingPhotoBook)
+                .padding(.horizontal, 16)
+                .accessibilityIdentifier("liked-summary-selection-toggle")
+                .accessibilityHint("残した写真を選びます")
+            }
+
+            creationPreviewCard
+        }
+        .accessibilityIdentifier("memories-create-section")
+    }
+
+    private func monthlyWindowCard(
+        _ presentation: MonthlyWindowPresentation
+    ) -> some View {
+        NavigationLink(value: MemoriesRoute.monthlyWindow(presentation)) {
+            HStack(spacing: 0) {
+                Group {
+                    if let cover = presentation.coverPhoto {
+                        PhotoAssetImageView(
+                            localIdentifier: cover.localIdentifier,
+                            catBoundingBox: cover.catBoundingBox,
+                            targetPixelSize: CGSize(width: 360, height: 360),
+                            targetAspectRatio: 1
+                        )
+                    } else {
+                        Image(systemName: "envelope.open")
+                            .font(.title2)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color.accentColor.opacity(0.10))
+                    }
+                }
+                .frame(width: 104, height: 104)
+                .clipped()
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(presentation.title)
+                        .font(.headline)
+                    Text("\(presentation.photos.count.formatted())枚の小さな便り")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.trailing, 14)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 18)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .accessibilityIdentifier("memories-monthly-window")
+        .accessibilityLabel(
+            "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
+        )
+        .accessibilityHint("小さな便りを開きます")
+    }
+
+    private func actionCard(
+        systemImage: String,
+        title: String,
+        detail: String
+    ) -> some View {
+        HStack(spacing: 13) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 38, height: 38)
+                .background(
+                    Color.accentColor.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 11)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 4)
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 18)
+        )
+    }
+
     private var automaticAlbumsCard: some View {
         NavigationLink(value: MemoriesRoute.automaticAlbums) {
             HStack(spacing: 13) {
@@ -649,9 +811,9 @@ struct LikedPhotosView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("自動アルバムを見る")
+                    Text("自動アルバム")
                         .font(.headline)
-                    Text("猫写真をテーマごとに整理")
+                    Text("テーマごとに写真を見る")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
@@ -724,7 +886,7 @@ struct LikedPhotosView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text("かたちにする")
+                        Text("これからできるもの")
                             .font(.headline)
                         Text("準備中")
                             .font(.caption2.weight(.bold))
@@ -734,7 +896,7 @@ struct LikedPhotosView: View {
                             .background(Color.accentColor.opacity(0.10), in: Capsule())
                     }
 
-                    Text("一枚を贈る・卓上に飾る・小さな本")
+                    Text("カード・卓上・小さな本")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
@@ -756,8 +918,8 @@ struct LikedPhotosView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
         .accessibilityIdentifier("memory-creation-preview")
-        .accessibilityLabel("かたちにする、準備中")
-        .accessibilityHint("今後、思い出から作れるものを確認します。まだ注文はできません")
+        .accessibilityLabel("これからできるもの、準備中")
+        .accessibilityHint("思い出から作れるものを確認します")
     }
 
     private var exportSelectionCard: some View {
@@ -958,9 +1120,9 @@ private struct MemoryCreationPreviewSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("思い出から、つくれるもの")
+                        Text("これからできるもの")
                             .font(.title2.bold())
-                        Text("この先、残した写真から選べるようになります。")
+                        Text("残した写真から選べるようになります")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -992,7 +1154,7 @@ private struct MemoryCreationPreviewSheet: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Label("準備中", systemImage: "clock")
                             .font(.headline)
-                        Text("まだ注文できません。購入できるようになったら、この画面でお知らせします。")
+                        Text("まだ注文はできません")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
