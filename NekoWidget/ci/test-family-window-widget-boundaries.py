@@ -1205,7 +1205,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('Text("まどの設定")', settings)
         self.assertIn('Image(systemName: "rectangle.split.2x2")', settings)
         self.assertIn('Text("名前・相手・iPhone")', family)
-        self.assertIn('"まど名を変更できます"', family)
+        self.assertIn('"相手と接続済み・まど名を変更できます"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
         self.assertIn(
             "await saveDetectionSettings(requestedConfidence, requestedMinimumArea)",

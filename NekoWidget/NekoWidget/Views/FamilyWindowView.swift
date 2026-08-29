@@ -1141,8 +1141,8 @@ struct FamilyWindowView: View {
                         model.isShowingLastKnownState
                             ? "接続状態を確認できません"
                             : (canEditWindowName
-                                ? "まど名を変更できます"
-                                : "接続相手とiPhoneを確認"),
+                                ? "相手と接続済み・まど名を変更できます"
+                                : "相手と接続済み・iPhoneを確認"),
                         systemImage: model.isShowingLastKnownState
                             ? "exclamationmark.triangle.fill"
                             : (canEditWindowName ? "pencil" : "checkmark.circle.fill")
