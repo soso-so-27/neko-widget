@@ -302,15 +302,16 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
 
         // JPEG marker payloads can legally contain the byte pair used by the
         // end marker, so a raw byte scan can reject valid ImageIO output.
-        // Keep the hard byte/pixel bounds above and require ImageIO to parse
-        // exactly one JPEG and fully decode its bounded image instead.
+        // ImageIO's source status is also not a reliable decode-completeness
+        // signal for non-incremental data sources across iOS releases. Keep
+        // the hard byte/pixel bounds, require one JPEG, then prove that its
+        // bounded image can actually be decoded.
         let readOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(
                 data as CFData,
                 readOptions
               ),
               CGImageSourceGetCount(source) == 1,
-              CGImageSourceGetStatus(source) == .statusComplete,
               let type = CGImageSourceGetType(source),
               (type as String) == "public.jpeg",
               let properties = CGImageSourceCopyPropertiesAtIndex(
@@ -324,11 +325,17 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
                 .intValue,
               (1...maximumLocalThumbnailPixelDimension).contains(width),
               (1...maximumLocalThumbnailPixelDimension).contains(height),
-              CGImageSourceCreateImageAtIndex(
+              let decodedImage = CGImageSourceCreateImageAtIndex(
                 source,
                 0,
                 [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
-              ) != nil
+              ),
+              (1...maximumLocalThumbnailPixelDimension).contains(
+                decodedImage.width
+              ),
+              (1...maximumLocalThumbnailPixelDimension).contains(
+                decodedImage.height
+              )
         else { return false }
         return true
     }
