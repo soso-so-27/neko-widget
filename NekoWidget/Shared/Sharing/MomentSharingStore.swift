@@ -300,16 +300,17 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
               data.suffix(2).elementsEqual([UInt8(0xff), 0xd9])
         else { return false }
 
-        // JPEG entropy bytes escape 0xff, so the first EOI marker must also
-        // be the final two bytes. This rejects concatenated images/trailers
-        // before asking ImageIO to validate the single complete image.
-        let bytes = [UInt8](data)
-        guard let firstEndMarker = (2..<(bytes.count - 1)).first(where: {
-            bytes[$0] == 0xff && bytes[$0 + 1] == 0xd9
-        }), firstEndMarker == bytes.count - 2,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
+        // JPEG marker payloads can legally contain the byte pair used by the
+        // end marker, so a raw byte scan can reject valid ImageIO output.
+        // Keep the hard byte/pixel bounds above and require ImageIO to parse
+        // exactly one JPEG and fully decode its bounded image instead.
+        let readOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(
+                data as CFData,
+                readOptions
+              ),
               CGImageSourceGetCount(source) == 1,
-              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              CGImageSourceGetStatus(source) == .statusComplete,
               let type = CGImageSourceGetType(source),
               (type as String) == "public.jpeg",
               let properties = CGImageSourceCopyPropertiesAtIndex(
@@ -322,7 +323,12 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?
                 .intValue,
               (1...maximumLocalThumbnailPixelDimension).contains(width),
-              (1...maximumLocalThumbnailPixelDimension).contains(height)
+              (1...maximumLocalThumbnailPixelDimension).contains(height),
+              CGImageSourceCreateImageAtIndex(
+                source,
+                0,
+                [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+              ) != nil
         else { return false }
         return true
     }
