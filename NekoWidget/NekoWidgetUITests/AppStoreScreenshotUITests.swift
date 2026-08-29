@@ -84,8 +84,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
             )
             return
         }
+        let reflectionJump = app.buttons["memories-jump-reflections"]
+        guard reflectionJump.waitForExistence(timeout: 10) else {
+            fail("The Memories section shortcuts did not appear.", application: app)
+            return
+        }
+        reflectionJump.tap()
         let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
-        guard scrollToHittable(memoriesAutomaticAlbums, in: app),
+        guard memoriesAutomaticAlbums.waitForExistence(timeout: 10),
+              waitForHittable(memoriesAutomaticAlbums),
               app.staticTexts["ふりかえり"].exists else {
             fail(
                 "The automatic-albums entry could not be reached from Memories.",
@@ -124,16 +131,25 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         memoriesBackButton.tap()
+        let creationJump = app.buttons["memories-jump-creation"]
+        guard creationJump.waitForExistence(timeout: 10) else {
+            fail("The creation shortcut did not reappear.", application: app)
+            return
+        }
+        creationJump.tap()
         let pdfAction = app.buttons["PDFにまとめる"]
-        guard scrollToHittable(pdfAction, in: app),
+        guard pdfAction.waitForExistence(timeout: 10),
+              waitForHittable(pdfAction),
               app.staticTexts["かたちにする"].exists else {
             fail("The deterministic Likes collection did not appear.", application: app)
             return
         }
-        let memoriesScrollView = app.scrollViews["memories-scroll-view"]
-        for _ in 0..<4 where !savedPhotosHeading.isHittable {
-            memoriesScrollView.swipeDown()
+        let savedPhotosJump = app.buttons["memories-jump-saved-photos"]
+        guard savedPhotosJump.waitForExistence(timeout: 10) else {
+            fail("The saved-photos shortcut did not remain visible.", application: app)
+            return
         }
+        savedPhotosJump.tap()
         guard waitForFixturePhotos(
             in: app,
             requirements: [(9, 1), (10, 1), (11, 1)]
@@ -172,17 +188,16 @@ final class AppStoreScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func scrollToHittable(
+    private func waitForHittable(
         _ element: XCUIElement,
-        in application: XCUIApplication
+        timeout: TimeInterval = 5
     ) -> Bool {
-        let scrollView = application.scrollViews["memories-scroll-view"]
-        guard scrollView.waitForExistence(timeout: 10) else { return false }
-        for _ in 0..<6 {
-            if element.exists, element.isHittable { return true }
-            scrollView.swipeUp()
-        }
-        return element.exists && element.isHittable
+        if element.isHittable { return true }
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "isHittable == true"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [ready], timeout: timeout) == .completed
     }
 
     @MainActor

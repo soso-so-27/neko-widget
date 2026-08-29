@@ -779,6 +779,7 @@ private struct WindowListView: View {
     @State private var pairingPhases: [String: PairingPhase] = [:]
     @State private var catalogReloadRevision = 0
     @State private var showsAddWindowConfirmation = false
+    @State private var requestedSetupPath: PairingSetupPath?
 
     var body: some View {
         ScrollView {
@@ -799,8 +800,17 @@ private struct WindowListView: View {
                     if windows.isEmpty {
                         emptyWindowCard
                     } else {
-                        ForEach(windows) { window in
-                            windowCard(window)
+                        if !connectedWindows.isEmpty {
+                            windowSectionTitle("つながっているまど")
+                            ForEach(connectedWindows) { window in
+                                windowCard(window)
+                            }
+                        }
+                        if !setupWindows.isEmpty {
+                            windowSectionTitle("設定中のまど")
+                            ForEach(setupWindows) { window in
+                                windowCard(window)
+                            }
                         }
                     }
 
@@ -829,16 +839,22 @@ private struct WindowListView: View {
         .navigationTitle("まど")
         .background(Color(.systemGroupedBackground))
         .confirmationDialog(
-            "別のまどを追加しますか？",
+            "どのまどを追加しますか？",
             isPresented: $showsAddWindowConfirmation,
             titleVisibility: .visible
         ) {
-            Button("追加して設定へ進む") {
-                createAndOpenWindow()
+            Button("新しいまどを作る") {
+                createAndOpenWindow(setupPath: .create)
+            }
+            Button("招待されたまどに参加") {
+                createAndOpenWindow(setupPath: .join)
+            }
+            Button("このiPhoneを以前のまどに追加") {
+                createAndOpenWindow(setupPath: .recover)
             }
             Button("やめる", role: .cancel) {}
         } message: {
-            Text("まどを1つ追加し、次の画面で名前を付けて、作成または招待への参加を選びます。")
+            Text("選んだ操作の入力画面へ、そのまま進みます。")
         }
         .navigationDestination(isPresented: $opensActiveWindow) {
             activeWindowDestination
@@ -957,7 +973,38 @@ private struct WindowListView: View {
         .accessibilityIdentifier("window-list-add")
     }
 
-    private func createAndOpenWindow() {
+    private var connectedWindows: [PrivateWindowCatalogEntry] {
+        groupedWindows.connectedWindowIDs.compactMap { windowByID($0) }
+    }
+
+    private var setupWindows: [PrivateWindowCatalogEntry] {
+        groupedWindows.setupWindowIDs.compactMap { windowByID($0) }
+    }
+
+    private var groupedWindows: PrivateWindowListPresentation {
+        PrivateWindowListPresentationPolicy.make(inputs: windows.map { window in
+            PrivateWindowListPresentationInput(
+                localWindowID: window.localWindowID,
+                createdAt: window.createdAt,
+                phase: pairingPhases[window.localWindowID]
+            )
+        })
+    }
+
+    private func windowByID(_ id: String) -> PrivateWindowCatalogEntry? {
+        windows.first { $0.localWindowID == id }
+    }
+
+    private func windowSectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func createAndOpenWindow(setupPath: PairingSetupPath) {
         Task {
             let previousActiveWindowID = activeWindowID
             await model.createAnotherPrivateWindow()
@@ -965,6 +1012,7 @@ private struct WindowListView: View {
             guard let createdWindowID = activeWindowID,
                   createdWindowID != previousActiveWindowID
             else { return }
+            requestedSetupPath = setupPath
             opensActiveWindow = true
         }
     }
@@ -972,6 +1020,7 @@ private struct WindowListView: View {
     private func windowCard(_ window: PrivateWindowCatalogEntry) -> some View {
         let isActive = window.localWindowID == activeWindowID
         let isSwitching = window.localWindowID == switchingWindowID
+        let isSetup = groupedWindows.setupWindowIDs.contains(window.localWindowID)
 
         return Button {
             open(window)
@@ -999,6 +1048,12 @@ private struct WindowListView: View {
                     Text(windowConnectionLabel(for: window))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+
+                    if isSetup {
+                        Label("名前と次の手順を確認", systemImage: "pencil.and.list.clipboard")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tint)
+                    }
 
                     if let pendingCount = pendingPreparationCounts[window.localWindowID],
                        pendingCount > 0 {
@@ -1069,6 +1124,7 @@ private struct WindowListView: View {
     private func open(_ window: PrivateWindowCatalogEntry) {
         guard !model.isWorking, !isLoading else { return }
         guard window.localWindowID != activeWindowID else {
+            requestedSetupPath = nil
             opensActiveWindow = true
             return
         }
@@ -1080,6 +1136,7 @@ private struct WindowListView: View {
             await reloadCatalogPresentation()
             switchingWindowID = nil
             guard activeWindowID == window.localWindowID else { return }
+            requestedSetupPath = nil
             opensActiveWindow = true
         }
     }
@@ -1131,10 +1188,6 @@ private struct WindowListView: View {
         guard let catalog = try PrivateWindowCatalogStore.load() else {
             return nil
         }
-        let sortedWindows = catalog.windows.sorted {
-            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
-            return $0.localWindowID < $1.localWindowID
-        }
         let phasePairs: [(String, PairingPhase)] = catalog.windows.compactMap { window in
             guard let state = try? PairingStateStore.load(
                 localWindowID: window.localWindowID
@@ -1142,7 +1195,10 @@ private struct WindowListView: View {
             return (window.localWindowID, state.phase)
         }
         return CatalogPresentationSnapshot(
-            windows: sortedWindows,
+            windows: catalog.windows.sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.localWindowID < $1.localWindowID
+            },
             activeWindowID: catalog.activeWindowID,
             pairingPhases: Dictionary(uniqueKeysWithValues: phasePairs)
         )
@@ -1216,11 +1272,12 @@ private struct WindowListView: View {
     private var activeWindowDestination: some View {
         if SharingAPIConfiguration.current.isMediaAvailable {
             FamilyWindowView(
+                initialSetupPath: requestedSetupPath,
                 pendingMemorySourceDigest: $pendingFamilyMomentSourceDigest,
                 pendingNotificationRoute: $pendingFamilyNotificationRoute
             )
         } else if SharingAPIConfiguration.current.isAvailable {
-            PairingView()
+            PairingView(initialSetupPath: requestedSetupPath)
         } else if SharingAPIConfiguration.current.isReviewPreviewEnabled {
             SharingReviewPreviewView()
         } else {

@@ -340,15 +340,17 @@ enum MomentSharingPresentationVerifier {
     }
 
     private static func verifiesSentRecordsAreBoundedAndPrivacySafe() throws {
-        var deliveries = (0..<25).map { index in
+        let localThumbnail = Data([0xff, 0xd8, 0xff, 0xd9])
+        var deliveries = (0..<205).map { index in
             delivery(
                 "sent-\(String(format: "%02d", index))",
                 "space-\(index % 2)",
                 .committed,
-                updatedAt: TimeInterval(900 + index),
+                updatedAt: index == 204 ? 1_150 : TimeInterval(900 + index),
                 committedAt: TimeInterval(900 + index),
-                recipientDeliveryConfirmedAt: index == 24 ? 950 : nil,
-                hasReceivedHeart: index == 24
+                recipientDeliveryConfirmedAt: index == 204 ? 1_150 : nil,
+                hasReceivedHeart: index == 204,
+                localThumbnailJPEG: index == 204 ? localThumbnail : nil
             )
         }
         deliveries.append(
@@ -356,8 +358,8 @@ enum MomentSharingPresentationVerifier {
                 "not-committed",
                 "space-a",
                 .uploaded,
-                updatedAt: 1_000,
-                recipientDeliveryConfirmedAt: 1_001
+                updatedAt: 10_000,
+                recipientDeliveryConfirmedAt: 10_001
             )
         )
 
@@ -371,7 +373,7 @@ enum MomentSharingPresentationVerifier {
             "sent delivery ledger exceeded its presentation bound"
         )
         try require(
-            presentation.sentRecords.first?.serverAcceptedAt == date(924)
+            presentation.sentRecords.first?.serverAcceptedAt == date(1_104)
                 && presentation.sentRecords.last?.serverAcceptedAt == date(905),
             "committed sent records were not ordered newest-first before bounding"
         )
@@ -380,8 +382,9 @@ enum MomentSharingPresentationVerifier {
         }
         try require(
             arrived.deliveryState == .recipientDeviceArrivalConfirmed
-                && arrived.recipientDeliveryConfirmedAt == date(950)
-                && arrived.hasReceivedHeart,
+                && arrived.recipientDeliveryConfirmedAt == date(1_150)
+                && arrived.hasReceivedHeart
+                && arrived.localThumbnailJPEG == localThumbnail,
             "recipient device arrival was collapsed into server acceptance"
         )
         try require(
@@ -399,21 +402,18 @@ enum MomentSharingPresentationVerifier {
             "server acceptance or its per-photo heart state was misrepresented"
         )
         try require(
-            !presentation.sentRecords.contains { $0.serverAcceptedAt == date(1_000) },
+            !presentation.sentRecords.contains { $0.serverAcceptedAt == date(10_000) },
             "an uncommitted delivery leaked into the sent ledger"
         )
 
         let fieldNames = Mirror(reflecting: arrived).children.compactMap(\.label)
-        let forbiddenFragments = [
-            "image", "thumb", "photo", "media", "url", "path", "file",
-            "stable", "destination", "space"
-        ]
+        let forbiddenFragments = ["url", "path", "file", "stable", "destination", "space"]
         try require(
             fieldNames.allSatisfy { fieldName in
                 let normalized = fieldName.lowercased()
                 return !forbiddenFragments.contains(where: normalized.contains)
             },
-            "sent delivery presentation exposed image or thumbnail data"
+            "sent delivery presentation exposed a path, URL, or routing identity"
         )
 
         let invalidConfirmation = MomentSharingPresentationPolicy.make(
@@ -437,7 +437,7 @@ enum MomentSharingPresentationVerifier {
     }
 
     private static func verifiesHeartNotificationTargetOutsideBoundIsAdmittedOnce() throws {
-        let deliveries = (0..<25).map { index in
+        let deliveries = (0..<205).map { index in
             delivery(
                 "sent-\(index)",
                 "space-a",
@@ -678,7 +678,8 @@ enum MomentSharingPresentationVerifier {
         recipientCount: Int? = nil,
         recipientDeliveryConfirmedAt: TimeInterval? = nil,
         hasReceivedHeart: Bool = false,
-        serverMomentID: String? = nil
+        serverMomentID: String? = nil,
+        localThumbnailJPEG: Data? = nil
     ) -> MomentDeliveryPresentationInput {
         MomentDeliveryPresentationInput(
             stableID: id,
@@ -692,7 +693,8 @@ enum MomentSharingPresentationVerifier {
             recipientCount: recipientCount,
             recipientDeliveryConfirmedAt: recipientDeliveryConfirmedAt.map { date($0) },
             hasReceivedHeart: hasReceivedHeart,
-            serverMomentID: serverMomentID
+            serverMomentID: serverMomentID,
+            localThumbnailJPEG: localThumbnailJPEG
         )
     }
 

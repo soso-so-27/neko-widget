@@ -1,5 +1,7 @@
 import Darwin
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 /// Host-only half of the Share Extension handoff. The extension can place a
 /// bounded canonical JPEG in the App Group, but only this service runs after
@@ -92,6 +94,7 @@ struct MomentShareHandoffProcessor: Sendable {
         }
         for item in discarded {
             try? MomentSharingStateStore.removeCiphertext(for: item)
+            try? MomentSharingStateStore.removeLocalThumbnail(for: item)
         }
     }
 
@@ -531,9 +534,52 @@ struct MomentShareHandoffProcessor: Sendable {
             return try MomentSharingStateStore.enqueueWhileLifecycleLocked(
                 payload: payload,
                 senderPolicyVersion: current.senderPolicyVersion,
-                senderPolicyAcceptedAt: current.senderPolicyAcceptedAt
+                senderPolicyAcceptedAt: current.senderPolicyAcceptedAt,
+                localThumbnailJPEG: Self.sentHistoryThumbnail(
+                    from: current.canonicalJPEG
+                )
             )
         }
+    }
+
+    /// Makes a bounded, metadata-free local preview. Failing to create one is
+    /// never a send failure: the history falls back to its concise status row.
+    static func sentHistoryThumbnail(from canonicalJPEG: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(
+            canonicalJPEG as CFData,
+            nil
+        ) else { return nil }
+        for candidate in [(240, 0.72), (160, 0.60)] {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: candidate.0
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                options as CFDictionary
+            ) else { continue }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                output,
+                UTType.jpeg.identifier as CFString,
+                1,
+                nil
+            ) else { continue }
+            CGImageDestinationAddImage(
+                destination,
+                image,
+                [kCGImageDestinationLossyCompressionQuality: candidate.1]
+                    as CFDictionary
+            )
+            guard CGImageDestinationFinalize(destination) else { continue }
+            let result = output as Data
+            if result.count <= MomentOutboxItem.maximumLocalThumbnailBytes {
+                return result
+            }
+        }
+        return nil
     }
 
     private func existingOutbox(

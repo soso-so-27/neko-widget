@@ -61,6 +61,7 @@ struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let initialPresentation: FamilyWindowInitialPresentation
+    private let initialSetupPath: PairingSetupPath?
     @Binding private var pendingMemorySourceDigest: String?
     @Binding private var pendingNotificationRoute: MomentNotificationRoute?
     @StateObject private var model = MomentSharingViewModel()
@@ -72,7 +73,7 @@ struct FamilyWindowView: View {
     @State private var showsSendGuide = false
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
-    @State private var showsAllSentRecords = false
+    @State private var sentRecordDisplayLimit = 3
     @State private var receivedPhotoFilter: ReceivedPhotoFilter = .all
     @State private var selectedSection: FamilyWindowSection = .received
     @State private var memoryActionMomentID: String?
@@ -98,10 +99,12 @@ struct FamilyWindowView: View {
 
     init(
         initialPresentation: FamilyWindowInitialPresentation = .content,
+        initialSetupPath: PairingSetupPath? = nil,
         pendingMemorySourceDigest: Binding<String?> = .constant(nil),
         pendingNotificationRoute: Binding<MomentNotificationRoute?> = .constant(nil)
     ) {
         self.initialPresentation = initialPresentation
+        self.initialSetupPath = initialSetupPath
         _pendingMemorySourceDigest = pendingMemorySourceDigest
         _pendingNotificationRoute = pendingNotificationRoute
     }
@@ -124,7 +127,7 @@ struct FamilyWindowView: View {
                 temporarilyUnavailableContent(message: message)
             case .ready:
                 if !model.isPaired {
-                    PairingView()
+                    PairingView(initialSetupPath: initialSetupPath)
                 } else if !model.hasCurrentMediaSharingConsent {
                     consentRequiredContent
                 } else if initialPresentation == .settings {
@@ -1169,7 +1172,7 @@ struct FamilyWindowView: View {
                     outgoingManagementMenu
                 }
             }
-            Text("この一覧には画像を保存せず、送信結果だけを表示します。")
+            Text("新しく届けた写真は、小さなプレビューをこのiPhoneだけに一時保存します。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1191,11 +1194,28 @@ struct FamilyWindowView: View {
                     sentRecordCard(record)
                 }
                 if model.outgoingPresentation.sentRecords.count > 3 {
-                    Button(showsAllSentRecords ? "表示を戻す" : "すべて見る") {
-                        withAnimation { showsAllSentRecords.toggle() }
+                    HStack {
+                        if sentRecordDisplayLimit > 3 {
+                            Button("最新3件に戻す") {
+                                withAnimation { sentRecordDisplayLimit = 3 }
+                            }
+                        }
+                        Spacer(minLength: 12)
+                        if sentRecordDisplayLimit
+                            < model.outgoingPresentation.sentRecords.count {
+                            Button("さらに見る") {
+                                withAnimation {
+                                    sentRecordDisplayLimit = min(
+                                        sentRecordDisplayLimit + 20,
+                                        model.outgoingPresentation.sentRecords.count
+                                    )
+                                }
+                            }
+                        }
                     }
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("family-window-sent-record-pagination")
                 }
             }
         }
@@ -1203,18 +1223,14 @@ struct FamilyWindowView: View {
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
-        var records: [MomentSentRecordPresentation]
-        if showsAllSentRecords {
-            records = model.outgoingPresentation.sentRecords
-        } else {
-            records = Array(model.outgoingPresentation.sentRecords.prefix(3))
-        }
+        let allRecords = model.outgoingPresentation.sentRecords
+        var records = Array(allRecords.prefix(max(3, sentRecordDisplayLimit)))
         if let focusedSentMomentID,
-           let index = records.firstIndex(where: {
+           let target = allRecords.first(where: {
                $0.momentID == focusedSentMomentID
-           }),
-           index != records.startIndex {
-            records.insert(records.remove(at: index), at: records.startIndex)
+           }) {
+            records.removeAll { $0.momentID == focusedSentMomentID }
+            records.insert(target, at: records.startIndex)
         }
         return records
     }
@@ -1274,11 +1290,9 @@ struct FamilyWindowView: View {
             : (arrived
                 ? Color.green.opacity(0.1)
                 : Color(uiColor: .secondarySystemGroupedBackground))
-        return HStack(alignment: .top, spacing: 12) {
-            Image(systemName: arrived ? "checkmark.circle.fill" : "server.rack")
-                .foregroundStyle(arrived ? Color.green : Color.accentColor)
-                .frame(width: 22, height: 22)
-            VStack(alignment: .leading, spacing: 3) {
+        return HStack(alignment: .center, spacing: 12) {
+            sentRecordThumbnail(record)
+            VStack(alignment: .leading, spacing: 5) {
                 Text(record.serverAcceptedAt.formatted(
                     .dateTime.month().day().hour().minute()
                 ))
@@ -1289,13 +1303,8 @@ struct FamilyWindowView: View {
                 )
                     .font(.caption)
                     .foregroundStyle(arrived ? Color.green : Color.secondary)
-                Text(arrived
-                    ? "相手のiPhoneへ到着・閲覧や既読の確認ではありません"
-                    : "サーバー受付済み・相手のiPhoneへの到着待ち")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if let confirmedAt = record.recipientDeliveryConfirmedAt {
-                    Text("到着 \(confirmedAt.formatted(.dateTime.month().day().hour().minute()))")
+                if arrived {
+                    Text("閲覧・既読の確認ではありません")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1319,6 +1328,29 @@ struct FamilyWindowView: View {
             }
         }
         .accessibilityIdentifier("family-window-sent-record-\(record.id)")
+    }
+
+    @ViewBuilder
+    private func sentRecordThumbnail(_ record: MomentSentRecordPresentation) -> some View {
+        if let data = record.localThumbnailJPEG,
+           let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 86, height: 86)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .accessibilityLabel("届けた写真のプレビュー")
+        } else {
+            Image(systemName: "photo")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .background(
+                    Color(uiColor: .tertiarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
+                .accessibilityLabel("写真のプレビューはこのiPhoneに残っていません")
+        }
     }
 
     private func outgoingStatusCard(
@@ -1820,7 +1852,6 @@ struct FamilyWindowView: View {
                 focusedMomentID = nil
                 selectedMomentForDetail = nil
                 selectedSection = .sent
-                showsAllSentRecords = true
                 focusedSentMomentID = momentID
             }
             return
@@ -1841,7 +1872,7 @@ struct FamilyWindowView: View {
             selectedSection = .sent
             // A heart may refer to an older sent record. Keep every retained
             // status visible instead of hiding it behind the three-row summary.
-            showsAllSentRecords = true
+            sentRecordDisplayLimit = model.outgoingPresentation.sentRecords.count
         }
     }
 

@@ -1406,6 +1406,13 @@ enum SharedContainer {
         sharingCacheDirectoryURL?.appendingPathComponent("received-moments", isDirectory: true)
     }
 
+    static var momentSharingSentThumbnailDirectoryURL: URL? {
+        sharingCacheDirectoryURL?.appendingPathComponent(
+            "sent-moment-thumbnails",
+            isDirectory: true
+        )
+    }
+
     /// Short-lived, capture-only handoff from the Share Extension to the host
     /// app. It is shared by all local windows so the extension can present a
     /// verified destination picker without changing the app's active window.

@@ -139,6 +139,9 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     /// local delivery row. It is never rendered or included in accessibility
     /// copy.
     let serverMomentID: String?
+    /// Optional, metadata-free preview retained only on this sender's device.
+    /// It is never required for a delivery row and never comes from the relay.
+    let localThumbnailJPEG: Data?
 
     init(
         stableID: String,
@@ -152,7 +155,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         recipientCount: Int?,
         recipientDeliveryConfirmedAt: Date? = nil,
         hasReceivedHeart: Bool = false,
-        serverMomentID: String? = nil
+        serverMomentID: String? = nil,
+        localThumbnailJPEG: Data? = nil
     ) {
         self.stableID = stableID
         self.destinationKey = destinationKey
@@ -166,6 +170,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
         self.hasReceivedHeart = hasReceivedHeart
         self.serverMomentID = serverMomentID
+        self.localThumbnailJPEG = localThumbnailJPEG
     }
 }
 
@@ -339,8 +344,9 @@ enum MomentSentRecordDeliveryState: Equatable, Sendable {
     case recipientDeviceArrivalConfirmed
 }
 
-/// Privacy-safe delivery ledger entry. It deliberately contains no image,
-/// thumbnail, local path, URL, filename, or user-visible identifier.
+/// Privacy-safe delivery ledger entry. It may contain a bounded, metadata-free
+/// preview that originated on this device; it never contains a path, URL,
+/// filename, recipient identity, or image downloaded back from the relay.
 struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let id: Int
     /// Opaque relay identifier retained only for notification-target matching.
@@ -349,19 +355,22 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let serverAcceptedAt: Date
     let recipientDeliveryConfirmedAt: Date?
     let hasReceivedHeart: Bool
+    let localThumbnailJPEG: Data?
 
     init(
         id: Int,
         momentID: String? = nil,
         serverAcceptedAt: Date,
         recipientDeliveryConfirmedAt: Date?,
-        hasReceivedHeart: Bool
+        hasReceivedHeart: Bool,
+        localThumbnailJPEG: Data? = nil
     ) {
         self.id = id
         self.momentID = momentID
         self.serverAcceptedAt = serverAcceptedAt
         self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
         self.hasReceivedHeart = hasReceivedHeart
+        self.localThumbnailJPEG = localThumbnailJPEG
     }
 
     var deliveryState: MomentSentRecordDeliveryState {
@@ -442,7 +451,9 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
 /// keys so additional windows and concurrent sends do not require UI-specific
 /// branching.
 enum MomentSharingPresentationPolicy {
-    static let sentRecordLimit = 20
+    /// Matches the bounded local delivery ledger. The view reveals these in
+    /// small pages so retained photos never disappear behind a second limit.
+    static let sentRecordLimit = 200
 
     static func make(
         preparations: [MomentPreparationPresentationInput],
@@ -594,7 +605,8 @@ enum MomentSharingPresentationPolicy {
                     momentID: delivery.serverMomentID,
                     serverAcceptedAt: serverAcceptedAt,
                     recipientDeliveryConfirmedAt: confirmedAt,
-                    hasReceivedHeart: delivery.hasReceivedHeart
+                    hasReceivedHeart: delivery.hasReceivedHeart,
+                    localThumbnailJPEG: delivery.localThumbnailJPEG
                 )
             }
 

@@ -65,6 +65,45 @@ struct PendingFamilyMemoryTargetPresentationPolicy {
     }
 }
 
+/// Stable, presentation-only grouping for the private-window catalog.
+///
+/// Synchronization updates `updatedAt` frequently, so it must never decide the
+/// visual order. Connected windows keep their creation order while unfinished
+/// setup is shown separately. Activating a window only moves the "current"
+/// badge; it does not move the row.
+struct PrivateWindowListPresentationInput: Equatable, Sendable {
+    let localWindowID: String
+    let createdAt: Date
+    let phase: PairingPhase?
+}
+
+struct PrivateWindowListPresentation: Equatable, Sendable {
+    let connectedWindowIDs: [String]
+    let setupWindowIDs: [String]
+}
+
+enum PrivateWindowListPresentationPolicy {
+    static func make(
+        inputs: [PrivateWindowListPresentationInput]
+    ) -> PrivateWindowListPresentation {
+        let stable = inputs.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            return $0.localWindowID < $1.localWindowID
+        }
+        let isSetup: (PrivateWindowListPresentationInput) -> Bool = { input in
+            // A space identifier exists before pairing is complete, so it is
+            // not proof of a connected window. Unknown state stays in the
+            // setup section rather than overstating that two people are linked.
+            guard let phase = input.phase else { return true }
+            return phase != .paired
+        }
+        return PrivateWindowListPresentation(
+            connectedWindowIDs: stable.filter { !isSetup($0) }.map(\.localWindowID),
+            setupWindowIDs: stable.filter(isSetup).map(\.localWindowID)
+        )
+    }
+}
+
 /// User-facing guidance for one selected window and its one peer.
 ///
 /// This type deliberately accepts only the public phase and role. It cannot

@@ -78,12 +78,13 @@ struct NekoWidgetView: View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
-            HStack(spacing: family == .systemSmall ? 6 : 8) {
+            HStack(spacing: actionButtonSpacing) {
                 if entry.isBookmarked {
                     actionPill(
-                        "残した",
+                        compactTitle: "残した",
+                        regularTitle: "思い出に残した",
                         systemImage: "bookmark.fill",
-                        isActive: true
+                        style: .completed
                     )
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("思い出に残した写真")
@@ -91,12 +92,14 @@ struct NekoWidgetView: View {
                 } else if let memoryActionURL = entry.memoryActionURL {
                     Link(destination: memoryActionURL) {
                         actionPill(
-                            "残す",
+                            compactTitle: "残す",
+                            regularTitle: "思い出に残す",
                             systemImage: "bookmark",
-                            isActive: false
+                            style: .action
                         )
                     }
-                    .accessibilityLabel("アプリで思い出に残す")
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("思い出に残す")
                     .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
                 }
 
@@ -109,9 +112,10 @@ struct NekoWidgetView: View {
             Group {
                 if entry.isLiked {
                     actionPill(
-                        "残した",
+                        compactTitle: "残した",
+                        regularTitle: "思い出に残した",
                         systemImage: "bookmark.fill",
-                        isActive: true
+                        style: .completed
                     )
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("思い出に残した写真")
@@ -124,9 +128,10 @@ struct NekoWidgetView: View {
                         )
                     ) {
                         actionPill(
-                            "残す",
+                            compactTitle: "残す",
+                            regularTitle: "思い出に残す",
                             systemImage: "bookmark",
-                            isActive: false,
+                            style: .action,
                             invalidatesContent: true
                         )
                     }
@@ -145,64 +150,88 @@ struct NekoWidgetView: View {
         case .ready:
             Button(intent: SendFamilyWidgetHeartIntent(sourceDigest: sourceDigest)) {
                 actionPill(
-                    "ハート",
+                    compactTitle: "ハート",
+                    regularTitle: "ハートを送る",
                     systemImage: "heart",
-                    isActive: false,
+                    style: .action,
                     invalidatesContent: true
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("ハートを送信待ちに追加")
-            .accessibilityHint("アプリの同期後、サーバー受付済みとして表示します")
+            .accessibilityLabel("ハートを送る")
+            .accessibilityHint("このiPhoneで送信待ちにし、アプリの同期後に送ります")
         case .pending:
             actionPill(
-                "送信待ち",
-                systemImage: "clock.fill",
-                isActive: false,
+                compactTitle: "待機中",
+                regularTitle: "ハート送信待ち",
+                systemImage: "heart",
+                style: .pending,
                 invalidatesContent: true
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("ハートは送信待ちです")
         case .serverAccepted:
             actionPill(
-                "受付済み",
+                compactTitle: "受付済み",
+                regularTitle: "ハート受付済み",
                 systemImage: "heart.fill",
-                isActive: true,
+                style: .completed,
                 invalidatesContent: true
             )
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートはサーバー受付済みです")
+            .accessibilityLabel("ハートを送信しました")
+            .accessibilityHint("相手が確認したことを示す表示ではありません")
         case .hidden:
             EmptyView()
         }
     }
 
     private func actionPill(
-        _ title: String,
+        compactTitle: String,
+        regularTitle: String,
         systemImage: String,
-        isActive: Bool,
+        style: WidgetActionPillStyle,
         invalidatesContent: Bool = false
     ) -> some View {
-        HStack(spacing: 4) {
+        let isCompleted = style == .completed
+        let isPending = style == .pending
+
+        return HStack(spacing: 4) {
             if invalidatesContent {
                 Image(systemName: systemImage)
                     .invalidatableContent()
             } else {
                 Image(systemName: systemImage)
             }
-            Text(title)
+            Text(family == .systemSmall ? compactTitle : regularTitle)
                 .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .minimumScaleFactor(0.72)
         }
         .font(.caption2.bold())
-        .foregroundStyle(.white)
-        .padding(.horizontal, family == .systemSmall ? 7 : 9)
-        .frame(height: actionButtonSize)
+        .foregroundStyle(
+            isCompleted
+                ? Color.black.opacity(0.82)
+                : Color.white
+        )
+        .padding(.horizontal, family == .systemSmall ? 8 : 10)
+        .frame(height: actionPillVisualHeight(for: style))
         .background(
-            isActive ? Color.accentColor.opacity(0.92) : Color.black.opacity(0.56),
+            isCompleted
+                ? Color.white.opacity(0.90)
+                : Color.black.opacity(isPending ? 0.72 : 0.62),
             in: Capsule()
         )
-        .contentShape(Capsule())
+        .overlay {
+            Capsule()
+                .stroke(
+                    Color.white.opacity(
+                        isCompleted ? 0.42 : 0.30
+                    ),
+                    lineWidth: 0.75
+                )
+        }
+        .frame(minHeight: actionPillContainerHeight(for: style))
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -226,13 +255,34 @@ struct NekoWidgetView: View {
 
     private var actionButtonSize: CGFloat {
         switch family {
-        case .systemSmall:
-            return 38
-        case .systemMedium:
-            return 40
+        case .systemSmall, .systemMedium:
+            return 44
         default:
-            return 42
+            return 46
         }
+    }
+
+    private func actionPillVisualHeight(
+        for style: WidgetActionPillStyle
+    ) -> CGFloat {
+        switch style {
+        case .action:
+            return family == .systemSmall ? 34 : 36
+        case .pending, .completed:
+            return family == .systemSmall ? 30 : 32
+        }
+    }
+
+    private func actionPillContainerHeight(
+        for style: WidgetActionPillStyle
+    ) -> CGFloat {
+        style == .action
+            ? actionButtonSize
+            : actionPillVisualHeight(for: style)
+    }
+
+    private var actionButtonSpacing: CGFloat {
+        family == .systemSmall ? 8 : 10
     }
 
     private var actionButtonInset: CGFloat {
@@ -278,6 +328,12 @@ struct NekoWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
     }
+}
+
+private enum WidgetActionPillStyle {
+    case action
+    case pending
+    case completed
 }
 
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE

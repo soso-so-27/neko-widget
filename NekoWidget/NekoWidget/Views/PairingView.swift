@@ -2,6 +2,12 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+enum PairingSetupPath {
+    case create
+    case join
+    case recover
+}
+
 struct PairingView: View {
     @StateObject private var model = PairingViewModel()
     @State private var dailyUpdateTime = Self.defaultUpdateTime()
@@ -11,8 +17,12 @@ struct PairingView: View {
     @State private var showsCopyConfirmation = false
     @State private var showsCopyRecoveryConfirmation = false
     @State private var windowDisplayNameDraft = PrivateWindowDisplayName.fallback
-    @State private var setupPath: SetupPath?
+    @State private var setupPath: PairingSetupPath?
     @State private var showsDeviceChangeFlow = false
+
+    init(initialSetupPath: PairingSetupPath? = nil) {
+        _setupPath = State(initialValue: initialSetupPath)
+    }
 
     var body: some View {
         Form {
@@ -91,7 +101,9 @@ struct PairingView: View {
             hasAcceptedPairingTerms = false
         }
         .onChange(of: model.state?.phase) { previousPhase, currentPhase in
-            if currentPhase == .unpaired, previousPhase != .unpaired {
+            if currentPhase == .unpaired,
+               let previousPhase,
+               previousPhase != .unpaired {
                 setupPath = nil
                 hasAcceptedPairingTerms = false
                 showsDeviceChangeFlow = false
@@ -367,6 +379,9 @@ struct PairingView: View {
                 .font(.subheadline.weight(.semibold))
             Text(guidance.nextActionTitle)
                 .font(.headline)
+            Text(guidance.nextActionDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         } header: {
             Text("次にすること")
         }
@@ -407,7 +422,7 @@ struct PairingView: View {
         }
     }
 
-    private func selectedSetupSection(_ path: SetupPath) -> some View {
+    private func selectedSetupSection(_ path: PairingSetupPath) -> some View {
         let title: String
         let icon: String
         switch path {
@@ -1158,9 +1173,4 @@ struct PairingView: View {
         ) ?? .now
     }
 
-    private enum SetupPath {
-        case create
-        case join
-        case recover
-    }
 }

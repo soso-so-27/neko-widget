@@ -70,7 +70,7 @@ final class MomentSharingViewModel: ObservableObject {
     }
 
     /// Makes one validated heart target available even when it is older than
-    /// the ordinary 20-row presentation bound. The opaque ID is used only for
+    /// the bounded delivery-history presentation. The opaque ID is used only for
     /// local lookup and is never rendered.
     func prepareSentNotificationTarget(momentID: String) {
         notificationTargetSentMomentID = momentID
@@ -835,7 +835,9 @@ final class MomentSharingViewModel: ObservableObject {
                     hasReceivedHeart: $0.serverMomentID.map {
                         receivedHeartMomentIDs.contains($0)
                     } ?? false,
-                    serverMomentID: $0.serverMomentID
+                    serverMomentID: $0.serverMomentID,
+                    localThumbnailJPEG: MomentSharingStateStore
+                        .readLocalThumbnail(for: $0)
                 )
             },
             outcomes: sharingState.outgoingOutcomes.map {

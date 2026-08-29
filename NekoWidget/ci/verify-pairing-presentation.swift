@@ -74,6 +74,7 @@ enum PairingPresentationVerifier {
         try verifyAvailabilityGuidance()
         try verifyBuildIdentity()
         try verifyPendingFamilyMemoryTargetPolicy()
+        try verifyStablePrivateWindowList()
         try verifySafeError(
             PairingError.requestRejected(
                 status: 410,
@@ -140,6 +141,49 @@ enum PairingPresentationVerifier {
         guard dispositions == [.preserve, .preserve, .resolve] else {
             throw PairingPresentationVerificationError.failed(
                 "Pending Widget target was consumed before bootstrap became ready"
+            )
+        }
+    }
+
+    private static func verifyStablePrivateWindowList() throws {
+        let base = Date(timeIntervalSince1970: 10_000)
+        let presentation = PrivateWindowListPresentationPolicy.make(inputs: [
+            PrivateWindowListPresentationInput(
+                localWindowID: "connected-newer",
+                createdAt: base.addingTimeInterval(20),
+                phase: .paired
+            ),
+            PrivateWindowListPresentationInput(
+                localWindowID: "setup-oldest",
+                createdAt: base,
+                phase: .awaitingInvitee
+            ),
+            PrivateWindowListPresentationInput(
+                localWindowID: "connected-oldest",
+                createdAt: base.addingTimeInterval(10),
+                phase: .paired
+            ),
+            PrivateWindowListPresentationInput(
+                localWindowID: "state-unreadable",
+                createdAt: base.addingTimeInterval(15),
+                phase: nil
+            ),
+            PrivateWindowListPresentationInput(
+                localWindowID: "setup-local-only",
+                createdAt: base.addingTimeInterval(5),
+                phase: nil
+            )
+        ])
+        guard presentation.connectedWindowIDs == [
+            "connected-oldest",
+            "connected-newer"
+        ], presentation.setupWindowIDs == [
+            "setup-oldest",
+            "setup-local-only",
+            "state-unreadable"
+        ] else {
+            throw PairingPresentationVerificationError.failed(
+                "Private windows did not keep stable creation order and setup grouping"
             )
         }
     }

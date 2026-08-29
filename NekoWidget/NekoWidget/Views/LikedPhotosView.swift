@@ -503,6 +503,12 @@ struct CuratedAlbumDetailView: View {
 /// An uncapped collection of photos the user deliberately kept as memories.
 /// It stays one continuous, liked-at-ordered grid so it does not resemble the
 /// automatically organized "アルバム". PDF export is optional.
+private enum MemoriesSectionAnchor: Hashable {
+    case savedPhotos
+    case reflections
+    case creation
+}
+
 struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
@@ -518,20 +524,31 @@ struct LikedPhotosView: View {
     @State private var selectedExportIdentifiers = Set<String>()
     @State private var photoBookExportTask: Task<Void, Never>?
     @State private var showsCreationPreview = false
+    @AccessibilityFocusState private var accessibilityFocusedSection: MemoriesSectionAnchor?
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 30) {
-                savedPhotosSection
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 30) {
+                    savedPhotosSection
+                        .id(MemoriesSectionAnchor.savedPhotos)
 
+                    if !isSelectingForExport {
+                        reflectionSection
+                            .id(MemoriesSectionAnchor.reflections)
+                        creationSection(proxy)
+                            .id(MemoriesSectionAnchor.creation)
+                    }
+                }
+                .padding(.vertical, 16)
+            }
+            .accessibilityIdentifier("memories-scroll-view")
+            .safeAreaInset(edge: .top, spacing: 0) {
                 if !isSelectingForExport {
-                    reflectionSection
-                    creationSection
+                    sectionJumpBar(proxy)
                 }
             }
-            .padding(.vertical, 16)
         }
-        .accessibilityIdentifier("memories-scroll-view")
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
         .toolbar {
@@ -582,11 +599,82 @@ struct LikedPhotosView: View {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
     }
 
+    private func sectionJumpBar(_ proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 0) {
+            sectionJumpButton(
+                "残した写真",
+                target: .savedPhotos,
+                proxy: proxy
+            )
+            Divider().padding(.vertical, 10)
+            sectionJumpButton(
+                "ふりかえり",
+                target: .reflections,
+                proxy: proxy
+            )
+            Divider().padding(.vertical, 10)
+            sectionJumpButton(
+                "かたちにする",
+                target: .creation,
+                proxy: proxy
+            )
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(.systemGroupedBackground).opacity(0.96))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityIdentifier("memories-section-jump-bar")
+    }
+
+    private func sectionJumpButton(
+        _ title: String,
+        target: MemoriesSectionAnchor,
+        proxy: ScrollViewProxy
+    ) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.24)) {
+                proxy.scrollTo(target, anchor: .top)
+            }
+            accessibilityFocusedSection = target
+        } label: {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .accessibilityLabel("\(title)へ移動")
+        .accessibilityIdentifier(sectionJumpIdentifier(for: target))
+    }
+
+    private func sectionJumpIdentifier(
+        for target: MemoriesSectionAnchor
+    ) -> String {
+        switch target {
+        case .savedPhotos:
+            return "memories-jump-saved-photos"
+        case .reflections:
+            return "memories-jump-reflections"
+        case .creation:
+            return "memories-jump-creation"
+        }
+    }
+
     private var savedPhotosSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("残した写真")
                     .font(.title3.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityFocused(
+                        $accessibilityFocusedSection,
+                        equals: .savedPhotos
+                    )
 
                 Spacer()
 
@@ -646,6 +734,11 @@ struct LikedPhotosView: View {
             Text("ふりかえり")
                 .font(.title3.bold())
                 .padding(.horizontal, 16)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused(
+                    $accessibilityFocusedSection,
+                    equals: .reflections
+                )
 
             if hasPhotoAccess {
                 if let monthlyWindow {
@@ -677,15 +770,20 @@ struct LikedPhotosView: View {
         .accessibilityIdentifier("memories-reflection-section")
     }
 
-    private var creationSection: some View {
+    private func creationSection(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("かたちにする")
                 .font(.title3.bold())
                 .padding(.horizontal, 16)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused(
+                    $accessibilityFocusedSection,
+                    equals: .creation
+                )
 
             if !photos.isEmpty {
                 Button {
-                    startExportSelection()
+                    startExportSelection(proxy: proxy)
                 } label: {
                     actionCard(
                         systemImage: "doc.richtext",
@@ -1048,13 +1146,17 @@ struct LikedPhotosView: View {
         return "思い出へ残した猫の写真"
     }
 
-    private func startExportSelection() {
+    private func startExportSelection(proxy: ScrollViewProxy) {
         isSelectingForExport = true
         selectedExportIdentifiers = Set(
             photos
                 .prefix(PhotoBookPolicy.maximumPhotosPerExport)
                 .map(\.localIdentifier)
         )
+        withAnimation(.easeInOut(duration: 0.24)) {
+            proxy.scrollTo(MemoriesSectionAnchor.savedPhotos, anchor: .top)
+        }
+        accessibilityFocusedSection = .savedPhotos
     }
 
     private func cancelExportSelection() {

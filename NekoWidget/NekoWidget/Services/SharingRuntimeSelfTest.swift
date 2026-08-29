@@ -3698,6 +3698,27 @@ actor SharingRuntimeSelfTestRunner {
         defer { try? clearMomentSharingFixture() }
 
         let lifecycleToken = try SharingLifecycleGate.issueToken()
+        guard let fixtureJPEG = generatedImage(
+            size: CGSize(width: 640, height: 480)
+        ).jpegData(compressionQuality: 0.92) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let privateMarker = Data("Exif\u{0}\u{0}sent-history-private-fixture".utf8)
+        let privateMarkerLength = privateMarker.count + 2
+        var privateJPEG = Data([0xff, 0xd8, 0xff, 0xe1])
+        privateJPEG.append(UInt8((privateMarkerLength >> 8) & 0xff))
+        privateJPEG.append(UInt8(privateMarkerLength & 0xff))
+        privateJPEG.append(privateMarker)
+        privateJPEG.append(fixtureJPEG.dropFirst(2))
+        guard privateJPEG.range(of: privateMarker) != nil,
+              let historyThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+                from: privateJPEG
+              ),
+              historyThumbnail.count <= MomentOutboxItem.maximumLocalThumbnailBytes,
+              historyThumbnail.starts(with: [UInt8(0xff), 0xd8, 0xff]),
+              historyThumbnail.suffix(2).elementsEqual([UInt8(0xff), 0xd9]),
+              historyThumbnail.range(of: privateMarker) == nil
+        else { throw MomentSharingError.stateUnavailable }
         let createdAt = Date(
             timeIntervalSince1970: floor(Date().timeIntervalSince1970)
         )
@@ -3732,21 +3753,57 @@ actor SharingRuntimeSelfTestRunner {
             updatedAt: committedAt
         ).validated()
 
-        // Additive persistence must keep pre-feature committed metadata valid.
-        let encoded = try JSONEncoder().encode(committed)
-        guard var legacyJSON = try JSONSerialization.jsonObject(with: encoded)
-                as? [String: Any]
+        // Recreate the short-lived Build 92 inline state and verify that load
+        // moves it to a protected file, then rewrites JSON without image bytes.
+        var legacyState = MomentSharingState.empty
+        legacyState.outbox = [committed]
+        let stateEncoder = JSONEncoder()
+        stateEncoder.dateEncodingStrategy = .iso8601
+        stateEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let encodedState = try stateEncoder.encode(legacyState)
+        guard var legacyStateJSON = try JSONSerialization.jsonObject(
+            with: encodedState
+        ) as? [String: Any],
+        var legacyOutbox = legacyStateJSON["outbox"] as? [[String: Any]],
+        legacyOutbox.count == 1,
+        let stateURL = SharedContainer.momentSharingStateURL
         else { throw MomentSharingError.stateUnavailable }
-        legacyJSON.removeValue(forKey: "recipientDeliveryConfirmedAt")
-        let legacyData = try JSONSerialization.data(withJSONObject: legacyJSON)
-        let legacy = try JSONDecoder().decode(MomentOutboxItem.self, from: legacyData)
-        guard try legacy.validated().recipientDeliveryConfirmedAt == nil else {
+        legacyOutbox[0]["localThumbnailJPEG"] = historyThumbnail.base64EncodedString()
+        legacyStateJSON["outbox"] = legacyOutbox
+        try SharingSecureFile.write(
+            try JSONSerialization.data(withJSONObject: legacyStateJSON),
+            to: stateURL
+        )
+        let migratedState = try MomentSharingStateStore.load()
+        guard let migrated = migratedState.outbox.first,
+              migrated.legacyInlineLocalThumbnailJPEG == nil,
+              migrated.localThumbnailFileName
+                == MomentOutboxItem.localThumbnailFileName(for: clientMomentID),
+              MomentSharingStateStore.readLocalThumbnail(for: migrated)
+                == historyThumbnail,
+              let thumbnailDirectory =
+                SharedContainer.momentSharingSentThumbnailDirectoryURL,
+              let thumbnailFileName = migrated.localThumbnailFileName,
+              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
+                thumbnailDirectory.appendingPathComponent(thumbnailFileName)
+              ),
+              let rewrittenJSON = try JSONSerialization.jsonObject(
+                with: Data(contentsOf: stateURL)
+              ) as? [String: Any],
+              let rewrittenOutbox = rewrittenJSON["outbox"] as? [[String: Any]],
+              rewrittenOutbox.first?["localThumbnailJPEG"] == nil,
+              rewrittenOutbox.first?["localThumbnailFileName"] as? String
+                == thumbnailFileName
+        else { throw MomentSharingError.stateUnavailable }
+        var traversal = migrated
+        traversal.localThumbnailFileName = "../private.jpg"
+        do {
+            _ = try traversal.validated()
             throw MomentSharingError.stateUnavailable
+        } catch MomentSharingError.stateUnavailable {
+            // Exact UUID-derived basenames reject traversal and substitution.
         }
 
-        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            state.outbox.append(committed)
-        }
         guard !(try MomentSharingStateStore.markRecipientDeliveryConfirmed(
             serverMomentID: "moment_unrelated_fixture",
             clientMomentID: clientMomentID,
@@ -3766,6 +3823,8 @@ actor SharingRuntimeSelfTestRunner {
         let confirmed = try MomentSharingStateStore.load().outbox[0]
         guard confirmed.recipientDeliveryConfirmedAt == firstObservation,
               confirmed.updatedAt == firstObservation,
+              MomentSharingStateStore.readLocalThumbnail(for: confirmed)
+                == historyThumbnail,
               !(try MomentSharingStateStore.markRecipientDeliveryConfirmed(
                 serverMomentID: "moment_sent_receipt_fixture",
                 clientMomentID: clientMomentID,
@@ -3774,6 +3833,30 @@ actor SharingRuntimeSelfTestRunner {
               )),
               (try MomentSharingStateStore.load().outbox[0])
                 .recipientDeliveryConfirmedAt == firstObservation
+        else { throw MomentSharingError.stateUnavailable }
+
+        // An optional corrupt Build-92 preview must be dropped without making
+        // the otherwise valid sharing ledger unavailable.
+        guard var invalidLegacyJSON = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: stateURL)
+        ) as? [String: Any],
+        var invalidLegacyOutbox = invalidLegacyJSON["outbox"] as? [[String: Any]],
+        invalidLegacyOutbox.count == 1
+        else { throw MomentSharingError.stateUnavailable }
+        invalidLegacyOutbox[0].removeValue(forKey: "localThumbnailFileName")
+        invalidLegacyOutbox[0]["localThumbnailJPEG"] = Data([
+            0xff, 0xd8, 0xff, 0xd9
+        ]).base64EncodedString()
+        invalidLegacyJSON["outbox"] = invalidLegacyOutbox
+        try SharingSecureFile.write(
+            try JSONSerialization.data(withJSONObject: invalidLegacyJSON),
+            to: stateURL
+        )
+        let recoveredWithoutPreview = try MomentSharingStateStore.load()
+        guard recoveredWithoutPreview.outbox.count == 1,
+              recoveredWithoutPreview.outbox[0].id == clientMomentID,
+              recoveredWithoutPreview.outbox[0].localThumbnailFileName == nil,
+              recoveredWithoutPreview.outbox[0].legacyInlineLocalThumbnailJPEG == nil
         else { throw MomentSharingError.stateUnavailable }
     }
 
@@ -4269,6 +4352,14 @@ actor SharingRuntimeSelfTestRunner {
         let lifecycleToken = try SharingLifecycleGate.issueToken()
         let roomKey = Data(repeating: 0x61, count: 32)
         let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+        guard let thumbnailSource = generatedImage(
+            size: CGSize(width: 320, height: 240)
+        ).jpegData(compressionQuality: 0.9),
+        let localThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+            from: thumbnailSource
+        ),
+        MomentOutboxItem.isValidLocalThumbnail(localThumbnail)
+        else { throw MomentSharingError.stateUnavailable }
 
         func payload(index: Int) throws -> MomentPreparedPayload {
             try MomentCrypto.prepare(
@@ -4294,6 +4385,9 @@ actor SharingRuntimeSelfTestRunner {
                 payload: payload(index: index),
                 senderPolicyVersion: 1,
                 senderPolicyAcceptedAt: baseDate,
+                localThumbnailJPEG: index == 0 || index == 2
+                    ? localThumbnail
+                    : (index == 1 ? Data([0xff, 0xd8, 0xff, 0xd9]) : nil),
                 validating: lifecycleToken,
                 now: baseDate
             )
@@ -4311,7 +4405,22 @@ actor SharingRuntimeSelfTestRunner {
             // Expected: offline use cannot grow a hidden unbounded queue.
         }
 
-        let ambiguous = try MomentSharingStateStore.load().outbox[0]
+        let initialOutbox = try MomentSharingStateStore.load().outbox
+        let ambiguous = initialOutbox[0]
+        let invalidPreviewItem = initialOutbox[1]
+        let pendingPreviewItem = initialOutbox[2]
+        guard invalidPreviewItem.localThumbnailFileName == nil,
+              let thumbnailDirectory =
+                SharedContainer.momentSharingSentThumbnailDirectoryURL,
+              let ambiguousThumbnailName = ambiguous.localThumbnailFileName,
+              let pendingThumbnailName = pendingPreviewItem.localThumbnailFileName
+        else { throw MomentSharingError.stateUnavailable }
+        let ambiguousThumbnailURL = thumbnailDirectory.appendingPathComponent(
+            ambiguousThumbnailName
+        )
+        let pendingThumbnailURL = thumbnailDirectory.appendingPathComponent(
+            pendingThumbnailName
+        )
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             guard let index = state.outbox.firstIndex(where: { $0.id == ambiguous.id })
             else { throw MomentSharingError.stateUnavailable }
@@ -4324,7 +4433,9 @@ actor SharingRuntimeSelfTestRunner {
         let afterDiscard = try MomentSharingStateStore.load().outbox
         guard afterDiscard.count == 1,
               afterDiscard[0].id == ambiguous.id,
-              afterDiscard[0].phase == .committing
+              afterDiscard[0].phase == .committing,
+              FileManager.default.fileExists(atPath: ambiguousThumbnailURL.path),
+              !FileManager.default.fileExists(atPath: pendingThumbnailURL.path)
         else {
             throw MomentSharingError.stateUnavailable
         }
@@ -4381,13 +4492,37 @@ actor SharingRuntimeSelfTestRunner {
               )
         else { throw MomentSharingError.stateUnavailable }
         try MomentSharingStateStore.discardFailedOutbox(validating: lifecycleToken)
-        guard try MomentSharingStateStore.load().outbox.isEmpty
+        guard try MomentSharingStateStore.load().outbox.isEmpty,
+              !FileManager.default.fileExists(atPath: ambiguousThumbnailURL.path)
         else { throw MomentSharingError.stateUnavailable }
 
-        let expiring = try MomentSharingStateStore.enqueue(
+        let reportOnlyItem = try MomentSharingStateStore.enqueue(
             payload: payload(index: 11),
             senderPolicyVersion: 1,
             senderPolicyAcceptedAt: baseDate,
+            localThumbnailJPEG: localThumbnail,
+            validating: lifecycleToken,
+            now: baseDate
+        )
+        guard let reportOnlyThumbnailName = reportOnlyItem.localThumbnailFileName
+        else { throw MomentSharingError.stateUnavailable }
+        let reportOnlyThumbnailURL = thumbnailDirectory.appendingPathComponent(
+            reportOnlyThumbnailName
+        )
+        try MomentSharingStateStore.enterReportOnlyMode(
+            until: baseDate.addingTimeInterval(60 * 60),
+            validating: lifecycleToken,
+            now: baseDate
+        )
+        guard !FileManager.default.fileExists(atPath: reportOnlyThumbnailURL.path)
+        else { throw MomentSharingError.stateUnavailable }
+        try clearMomentSharingFixture()
+
+        let expiring = try MomentSharingStateStore.enqueue(
+            payload: payload(index: 12),
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: baseDate,
+            localThumbnailJPEG: localThumbnail,
             validating: lifecycleToken,
             now: baseDate
         )
@@ -4397,6 +4532,8 @@ actor SharingRuntimeSelfTestRunner {
         guard let expired = try MomentSharingStateStore.load().outbox.first,
               expired.id == expiring.id,
               expired.phase == .failed,
+              MomentSharingStateStore.readLocalThumbnail(for: expired)
+                == localThumbnail,
               let directory = SharedContainer.momentSharingCiphertextDirectoryURL,
               !FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent(expired.ciphertextFileName).path
@@ -4404,17 +4541,40 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
 
         try MomentSharingStateStore.pruneLocalHistory(
-            now: expired.updatedAt.addingTimeInterval(30 * 24 * 60 * 60 + 1)
+            now: expired.updatedAt.addingTimeInterval(30 * 24 * 60 * 60)
         )
-        guard try MomentSharingStateStore.load().outbox.isEmpty else {
+        guard let exactBoundary = try MomentSharingStateStore.load().outbox.first,
+              MomentSharingStateStore.readLocalThumbnail(for: exactBoundary)
+                == localThumbnail,
+              let expiringThumbnailDirectory =
+                SharedContainer.momentSharingSentThumbnailDirectoryURL,
+              let expiringThumbnailName = exactBoundary.localThumbnailFileName
+        else {
             throw MomentSharingError.stateUnavailable
         }
+        let expiringThumbnailURL = expiringThumbnailDirectory.appendingPathComponent(
+            expiringThumbnailName
+        )
+        try MomentSharingStateStore.pruneLocalHistory(
+            now: expired.updatedAt.addingTimeInterval(30 * 24 * 60 * 60 + 1)
+        )
+        guard try MomentSharingStateStore.load().outbox.isEmpty,
+              !FileManager.default.fileExists(atPath: expiringThumbnailURL.path)
+        else { throw MomentSharingError.stateUnavailable }
 
         var oldestTerminalID: UUID?
+        var oldestThumbnailFileName: String?
+        guard let terminalThumbnailDirectory =
+                SharedContainer.momentSharingSentThumbnailDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             for index in 0...MomentSharingStateStore.maximumTerminalOutboxMetadataCount {
                 let id = UUID()
-                if index == 0 { oldestTerminalID = id }
+                let thumbnailFileName = MomentOutboxItem.localThumbnailFileName(for: id)
+                if index == 0 {
+                    oldestTerminalID = id
+                    oldestThumbnailFileName = thumbnailFileName
+                }
                 let createdAt = baseDate.addingTimeInterval(
                     60 * 24 * 60 * 60 + TimeInterval(index)
                 )
@@ -4440,14 +4600,22 @@ actor SharingRuntimeSelfTestRunner {
                     attemptCount: 1,
                     lastErrorCode: "state-unavailable",
                     createdAt: createdAt,
-                    updatedAt: createdAt
+                    updatedAt: createdAt,
+                    localThumbnailFileName: thumbnailFileName
                 ).validated())
+                try SharingSecureFile.write(
+                    localThumbnail,
+                    to: terminalThumbnailDirectory.appendingPathComponent(
+                        thumbnailFileName
+                    )
+                )
             }
         }
         guard let crashCiphertextDirectory =
                 SharedContainer.momentSharingCiphertextDirectoryURL,
               let crashReceivedDirectory =
-                SharedContainer.momentSharingReceivedDirectoryURL
+                SharedContainer.momentSharingReceivedDirectoryURL,
+              let oldestThumbnailFileName
         else { throw MomentSharingError.stateUnavailable }
         let crashCiphertext = crashCiphertextDirectory.appendingPathComponent(
             ".sharing-secure-runtime-crash-ciphertext",
@@ -4457,19 +4625,33 @@ actor SharingRuntimeSelfTestRunner {
             ".sharing-secure-runtime-crash-jpeg",
             isDirectory: false
         )
+        let crashThumbnail = terminalThumbnailDirectory.appendingPathComponent(
+            ".sharing-secure-runtime-crash-thumbnail",
+            isDirectory: false
+        )
         try SharingSecureFile.write(Data([0x71]), to: crashCiphertext)
         try SharingSecureFile.write(Data([0x72]), to: crashReceivedJPEG)
+        try SharingSecureFile.write(localThumbnail, to: crashThumbnail)
         try MomentSharingStateStore.pruneLocalHistory(
             now: baseDate.addingTimeInterval(60 * 24 * 60 * 60 + 200)
         )
         let boundedTerminal = try MomentSharingStateStore.load().outbox
         guard boundedTerminal.count
                 == MomentSharingStateStore.maximumTerminalOutboxMetadataCount,
+              boundedTerminal.allSatisfy({
+                  MomentSharingStateStore.readLocalThumbnail(for: $0) == localThumbnail
+              }),
               oldestTerminalID.map({ id in
                   !boundedTerminal.contains(where: { $0.id == id })
               }) == true,
+              !FileManager.default.fileExists(
+                atPath: terminalThumbnailDirectory.appendingPathComponent(
+                    oldestThumbnailFileName
+                ).path
+              ),
               !FileManager.default.fileExists(atPath: crashCiphertext.path),
-              !FileManager.default.fileExists(atPath: crashReceivedJPEG.path)
+              !FileManager.default.fileExists(atPath: crashReceivedJPEG.path),
+              FileManager.default.fileExists(atPath: crashThumbnail.path)
         else { throw MomentSharingError.stateUnavailable }
     }
 
@@ -5129,6 +5311,7 @@ actor SharingRuntimeSelfTestRunner {
                 SharedContainer.momentSharingStateURL,
                 SharedContainer.momentSharingCiphertextDirectoryURL,
                 SharedContainer.momentSharingReceivedDirectoryURL,
+                SharedContainer.momentSharingSentThumbnailDirectoryURL,
                 SharedContainer.momentShareHandoffReportOnlyMarkerURL
             ].compactMap({ $0 }) where FileManager.default.fileExists(atPath: url.path) {
                 try FileManager.default.removeItem(at: url)
