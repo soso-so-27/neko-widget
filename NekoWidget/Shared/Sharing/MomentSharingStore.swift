@@ -237,9 +237,8 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
               recipientDeliveryConfirmedAt.map { confirmedAt in
                   confirmedAt >= (committedAt ?? createdAt) && confirmedAt <= updatedAt
               } ?? true,
-              localThumbnailFileName.map {
-                  $0 == Self.localThumbnailFileName(for: id)
-              } ?? true,
+              localThumbnailFileName == nil
+                || localThumbnailFileName == Self.localThumbnailFileName(for: id),
               legacyInlineLocalThumbnailJPEG.map(Self.isValidLocalThumbnail) ?? true,
               localThumbnailFileName == nil || legacyInlineLocalThumbnailJPEG == nil,
               Self.hasValidCommitMetadata(
