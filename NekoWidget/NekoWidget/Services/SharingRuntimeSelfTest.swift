@@ -367,6 +367,8 @@ actor SharingRuntimeSelfTestRunner {
     private static let launchArgument = "--sharing-runtime-self-test"
     private static let reportFilename = "sharing-runtime-self-test.json"
     private static let progressFilename = "sharing-runtime-self-test-progress.json"
+    private static let thumbnailProgressFilename =
+        "sharing-thumbnail-runtime-progress.json"
     private var didRun = false
 
     private struct CaseResult: Codable {
@@ -388,6 +390,38 @@ actor SharingRuntimeSelfTestRunner {
         let schemaVersion: Int
         let caseID: String
         let phase: String
+    }
+
+    /// Fixed DEBUG-only checkpoints for the two sent-thumbnail boundary
+    /// cases. Values never contain paths, identifiers, image bytes, or error
+    /// text; they only make a failed CI assertion attributable to one stage.
+    private struct ThumbnailProgress: Codable {
+        let schemaVersion: Int
+        var phases: [String: String]
+    }
+
+    private enum ThumbnailProgressCase: String {
+        case sentDeliveryReceipt = "sent-delivery-receipt"
+        case outboxBounds = "outbox-bounds"
+    }
+
+    private enum ThumbnailProgressPhase: String {
+        case started
+        case sourceGenerated = "source-generated"
+        case thumbnailGenerated = "thumbnail-generated"
+        case thumbnailValidated = "thumbnail-validated"
+        case legacyStateWritten = "legacy-state-written"
+        case migratedStateLoaded = "migrated-state-loaded"
+        case migratedStateValidated = "migrated-state-validated"
+        case deliveryConfirmed = "delivery-confirmed"
+        case invalidMigrationRecovered = "invalid-migration-recovered"
+        case outboxEnqueued = "outbox-enqueued"
+        case pendingDiscarded = "pending-discarded"
+        case ambiguityRecovered = "ambiguity-recovered"
+        case reportOnlyValidated = "report-only-validated"
+        case expiryValidated = "expiry-validated"
+        case terminalBoundsValidated = "terminal-bounds-validated"
+        case completed
     }
 
     private struct StoreFixture {
@@ -1366,6 +1400,26 @@ actor SharingRuntimeSelfTestRunner {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(value) else { return }
         let url = root.appendingPathComponent(progressFilename, isDirectory: false)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private static func writeThumbnailProgress(
+        caseID: ThumbnailProgressCase,
+        phase: ThumbnailProgressPhase
+    ) {
+        guard let root = SharedContainer.containerURL else { return }
+        let url = root.appendingPathComponent(
+            thumbnailProgressFilename,
+            isDirectory: false
+        )
+        let decoder = JSONDecoder()
+        var value = (try? Data(contentsOf: url))
+            .flatMap { try? decoder.decode(ThumbnailProgress.self, from: $0) }
+            ?? ThumbnailProgress(schemaVersion: 1, phases: [:])
+        value.phases[caseID.rawValue] = phase.rawValue
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: .atomic)
     }
 
@@ -3696,6 +3750,10 @@ actor SharingRuntimeSelfTestRunner {
     private static func testMomentSentDeliveryReceiptBoundary() throws {
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .started
+        )
 
         let lifecycleToken = try SharingLifecycleGate.issueToken()
         guard let fixtureJPEG = generatedImage(
@@ -3703,6 +3761,10 @@ actor SharingRuntimeSelfTestRunner {
         ).jpegData(compressionQuality: 0.92) else {
             throw MomentSharingError.stateUnavailable
         }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .sourceGenerated
+        )
         let privateMarker = Data("Exif\u{0}\u{0}sent-history-private-fixture".utf8)
         let privateMarkerLength = privateMarker.count + 2
         var privateJPEG = Data([0xff, 0xd8, 0xff, 0xe1])
@@ -3719,6 +3781,10 @@ actor SharingRuntimeSelfTestRunner {
               historyThumbnail.suffix(2).elementsEqual([UInt8(0xff), 0xd9]),
               historyThumbnail.range(of: privateMarker) == nil
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .thumbnailGenerated
+        )
         let createdAt = Date(
             timeIntervalSince1970: floor(Date().timeIntervalSince1970)
         )
@@ -3774,7 +3840,15 @@ actor SharingRuntimeSelfTestRunner {
             try JSONSerialization.data(withJSONObject: legacyStateJSON),
             to: stateURL
         )
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .legacyStateWritten
+        )
         let migratedState = try MomentSharingStateStore.load()
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedStateLoaded
+        )
         guard let migrated = migratedState.outbox.first,
               migrated.legacyInlineLocalThumbnailJPEG == nil,
               migrated.localThumbnailFileName
@@ -3795,6 +3869,10 @@ actor SharingRuntimeSelfTestRunner {
               rewrittenOutbox.first?["localThumbnailFileName"] as? String
                 == thumbnailFileName
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedStateValidated
+        )
         var traversal = migrated
         traversal.localThumbnailFileName = "../private.jpg"
         do {
@@ -3834,6 +3912,10 @@ actor SharingRuntimeSelfTestRunner {
               (try MomentSharingStateStore.load().outbox[0])
                 .recipientDeliveryConfirmedAt == firstObservation
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .deliveryConfirmed
+        )
 
         // An optional corrupt Build-92 preview must be dropped without making
         // the otherwise valid sharing ledger unavailable.
@@ -3858,6 +3940,14 @@ actor SharingRuntimeSelfTestRunner {
               recoveredWithoutPreview.outbox[0].localThumbnailFileName == nil,
               recoveredWithoutPreview.outbox[0].legacyInlineLocalThumbnailJPEG == nil
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .invalidMigrationRecovered
+        )
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .completed
+        )
     }
 
     private static func testMomentPawReactionBoundary() throws {
@@ -4349,6 +4439,10 @@ actor SharingRuntimeSelfTestRunner {
     private static func testMomentOutboxBoundsAndExpiry() throws {
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .started
+        )
         let lifecycleToken = try SharingLifecycleGate.issueToken()
         let roomKey = Data(repeating: 0x61, count: 32)
         let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -4360,6 +4454,10 @@ actor SharingRuntimeSelfTestRunner {
         ),
         MomentOutboxItem.isValidLocalThumbnail(localThumbnail)
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .thumbnailValidated
+        )
 
         func payload(index: Int) throws -> MomentPreparedPayload {
             try MomentCrypto.prepare(
@@ -4392,6 +4490,10 @@ actor SharingRuntimeSelfTestRunner {
                 now: baseDate
             )
         }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .outboxEnqueued
+        )
         do {
             _ = try MomentSharingStateStore.enqueue(
                 payload: payload(index: 10),
@@ -4439,6 +4541,10 @@ actor SharingRuntimeSelfTestRunner {
         else {
             throw MomentSharingError.stateUnavailable
         }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .pendingDiscarded
+        )
         try MomentSharingStateStore.markOutboxFailed(
             itemID: ambiguous.id,
             code: "must-not-overwrite-commit-ambiguity",
@@ -4495,6 +4601,10 @@ actor SharingRuntimeSelfTestRunner {
         guard try MomentSharingStateStore.load().outbox.isEmpty,
               !FileManager.default.fileExists(atPath: ambiguousThumbnailURL.path)
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .ambiguityRecovered
+        )
 
         let reportOnlyItem = try MomentSharingStateStore.enqueue(
             payload: payload(index: 11),
@@ -4516,6 +4626,10 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard !FileManager.default.fileExists(atPath: reportOnlyThumbnailURL.path)
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .reportOnlyValidated
+        )
         try clearMomentSharingFixture()
 
         let expiring = try MomentSharingStateStore.enqueue(
@@ -4561,6 +4675,10 @@ actor SharingRuntimeSelfTestRunner {
         guard try MomentSharingStateStore.load().outbox.isEmpty,
               !FileManager.default.fileExists(atPath: expiringThumbnailURL.path)
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .expiryValidated
+        )
 
         var oldestTerminalID: UUID?
         var oldestThumbnailFileName: String?
@@ -4653,6 +4771,14 @@ actor SharingRuntimeSelfTestRunner {
               !FileManager.default.fileExists(atPath: crashReceivedJPEG.path),
               FileManager.default.fileExists(atPath: crashThumbnail.path)
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .terminalBoundsValidated
+        )
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .completed
+        )
     }
 
     private static func testBuild61NonEmptySchema7Migration() throws {
