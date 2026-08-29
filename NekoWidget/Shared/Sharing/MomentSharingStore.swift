@@ -947,6 +947,48 @@ enum MomentSharingStateStore {
     static let maximumTerminalOutboxMetadataCount = 200
     private static let reportedMetadataSeconds: TimeInterval = 90 * 24 * 60 * 60
 
+#if DEBUG
+    private static let thumbnailWriteProgressFilename =
+        "sharing-thumbnail-write-runtime-progress.json"
+
+    private enum ThumbnailWriteRuntimePhase: String, Codable {
+        case started
+        case urlValidated = "url-validated"
+        case secureWriteCompleted = "secure-write-completed"
+        case directoryValidated = "directory-validated"
+        case fileValidated = "file-validated"
+        case protectionValidated = "protection-validated"
+        case completed
+    }
+
+    /// Fixed DEBUG-only breadcrumb used only by generated-data Simulator CI.
+    /// It contains no path, identifier, image bytes, or arbitrary error text.
+    private struct ThumbnailWriteRuntimeProgress: Codable {
+        let schemaVersion: Int
+        let phase: ThumbnailWriteRuntimePhase
+    }
+
+    private static func writeThumbnailRuntimeProgress(
+        _ phase: ThumbnailWriteRuntimePhase
+    ) {
+        guard CommandLine.arguments.contains("--sharing-runtime-self-test"),
+              let root = SharedContainer.containerURL
+        else { return }
+        let value = ThumbnailWriteRuntimeProgress(
+            schemaVersion: 1,
+            phase: phase
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value) else { return }
+        let url = root.appendingPathComponent(
+            thumbnailWriteProgressFilename,
+            isDirectory: false
+        )
+        try? data.write(to: url, options: .atomic)
+    }
+#endif
+
     static func load() throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
             try loadWhileLocked()
@@ -2063,14 +2105,23 @@ enum MomentSharingStateStore {
         _ data: Data,
         fileName: String
     ) throws {
+#if DEBUG
+        writeThumbnailRuntimeProgress(.started)
+#endif
         guard MomentOutboxItem.isValidLocalThumbnail(data) else {
             throw MomentSharingError.stateUnavailable
         }
         let url = try localThumbnailURL(fileName: fileName)
+#if DEBUG
+        writeThumbnailRuntimeProgress(.urlValidated)
+#endif
         try SharingSecureFile.write(
             data,
             to: url
         )
+#if DEBUG
+        writeThumbnailRuntimeProgress(.secureWriteCompleted)
+#endif
         // `localThumbnailURL` necessarily probes this path before the file is
         // created. Rebuild the URL after the atomic rename so Foundation
         // cannot satisfy the security postcondition from pre-write resource
@@ -2079,13 +2130,18 @@ enum MomentSharingStateStore {
         guard try isSafeThumbnailDirectory(
             committedURL.deletingLastPathComponent(),
             requireExisting: true
-        ),
-        let values = try? committedURL.resourceValues(
+        ) else {
+            try? removeLocalThumbnail(fileName: fileName)
+            throw MomentSharingError.stateUnavailable
+        }
+#if DEBUG
+        writeThumbnailRuntimeProgress(.directoryValidated)
+#endif
+        guard let values = try? committedURL.resourceValues(
             forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ),
         values.isRegularFile == true,
-        values.isSymbolicLink != true,
-        SharingSecureFile.hasRequiredProtectionAndBackupExclusion(committedURL)
+        values.isSymbolicLink != true
         else {
             // Re-enter the containment/symlink checks before cleanup. If the
             // directory changed during the postcondition, leaving one bounded
@@ -2093,6 +2149,19 @@ enum MomentSharingStateStore {
             try? removeLocalThumbnail(fileName: fileName)
             throw MomentSharingError.stateUnavailable
         }
+#if DEBUG
+        writeThumbnailRuntimeProgress(.fileValidated)
+#endif
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
+            committedURL
+        ) else {
+            try? removeLocalThumbnail(fileName: fileName)
+            throw MomentSharingError.stateUnavailable
+        }
+#if DEBUG
+        writeThumbnailRuntimeProgress(.protectionValidated)
+        writeThumbnailRuntimeProgress(.completed)
+#endif
     }
 
     private static func localThumbnailURL(fileName: String) throws -> URL {
