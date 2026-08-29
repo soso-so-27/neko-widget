@@ -412,10 +412,23 @@ actor SharingRuntimeSelfTestRunner {
         case thumbnailValidated = "thumbnail-validated"
         case legacyStateWritten = "legacy-state-written"
         case migratedStateLoaded = "migrated-state-loaded"
+        case migratedFieldsValidated = "migrated-fields-validated"
+        case migratedThumbnailReadable = "migrated-thumbnail-readable"
+        case migratedLocationValidated = "migrated-location-validated"
+        case migratedProtectionValidated = "migrated-protection-validated"
+        case migratedJSONValidated = "migrated-json-validated"
         case migratedStateValidated = "migrated-state-validated"
         case deliveryConfirmed = "delivery-confirmed"
         case invalidMigrationRecovered = "invalid-migration-recovered"
         case outboxEnqueued = "outbox-enqueued"
+        case outboxCapacityWrongError = "outbox-capacity-wrong-error"
+        case outboxCapacityUnexpectedlyAccepted =
+            "outbox-capacity-unexpectedly-accepted"
+        case outboxCapacityValidated = "outbox-capacity-validated"
+        case outboxLoaded = "outbox-loaded"
+        case thumbnailReferencesValidated = "thumbnail-references-validated"
+        case committingStateWritten = "committing-state-written"
+        case pendingDiscardExecuted = "pending-discard-executed"
         case pendingDiscarded = "pending-discarded"
         case ambiguityRecovered = "ambiguity-recovered"
         case reportOnlyValidated = "report-only-validated"
@@ -3852,16 +3865,41 @@ actor SharingRuntimeSelfTestRunner {
         guard let migrated = migratedState.outbox.first,
               migrated.legacyInlineLocalThumbnailJPEG == nil,
               migrated.localThumbnailFileName
-                == MomentOutboxItem.localThumbnailFileName(for: clientMomentID),
-              MomentSharingStateStore.readLocalThumbnail(for: migrated)
-                == historyThumbnail,
-              let thumbnailDirectory =
+                == MomentOutboxItem.localThumbnailFileName(for: clientMomentID)
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedFieldsValidated
+        )
+        guard MomentSharingStateStore.readLocalThumbnail(for: migrated)
+                == historyThumbnail
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedThumbnailReadable
+        )
+        guard let thumbnailDirectory =
                 SharedContainer.momentSharingSentThumbnailDirectoryURL,
               let thumbnailFileName = migrated.localThumbnailFileName,
-              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
+              FileManager.default.fileExists(
+                atPath: thumbnailDirectory.appendingPathComponent(
+                    thumbnailFileName
+                ).path
+              )
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedLocationValidated
+        )
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(
                 thumbnailDirectory.appendingPathComponent(thumbnailFileName)
-              ),
-              let rewrittenJSON = try JSONSerialization.jsonObject(
+              )
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedProtectionValidated
+        )
+        guard let rewrittenJSON = try JSONSerialization.jsonObject(
                 with: Data(contentsOf: stateURL)
               ) as? [String: Any],
               let rewrittenOutbox = rewrittenJSON["outbox"] as? [[String: Any]],
@@ -3869,6 +3907,10 @@ actor SharingRuntimeSelfTestRunner {
               rewrittenOutbox.first?["localThumbnailFileName"] as? String
                 == thumbnailFileName
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .sentDeliveryReceipt,
+            phase: .migratedJSONValidated
+        )
         writeThumbnailProgress(
             caseID: .sentDeliveryReceipt,
             phase: .migratedStateValidated
@@ -4494,6 +4536,7 @@ actor SharingRuntimeSelfTestRunner {
             caseID: .outboxBounds,
             phase: .outboxEnqueued
         )
+        var capacityWasUnexpectedlyAccepted = false
         do {
             _ = try MomentSharingStateStore.enqueue(
                 payload: payload(index: 10),
@@ -4502,12 +4545,36 @@ actor SharingRuntimeSelfTestRunner {
                 validating: lifecycleToken,
                 now: baseDate
             )
-            throw MomentSharingError.stateUnavailable
+            capacityWasUnexpectedlyAccepted = true
         } catch MomentSharingError.outboxFull {
             // Expected: offline use cannot grow a hidden unbounded queue.
+        } catch {
+            writeThumbnailProgress(
+                caseID: .outboxBounds,
+                phase: .outboxCapacityWrongError
+            )
+            throw error
         }
+        guard !capacityWasUnexpectedlyAccepted else {
+            writeThumbnailProgress(
+                caseID: .outboxBounds,
+                phase: .outboxCapacityUnexpectedlyAccepted
+            )
+            throw MomentSharingError.stateUnavailable
+        }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .outboxCapacityValidated
+        )
 
         let initialOutbox = try MomentSharingStateStore.load().outbox
+        guard initialOutbox.count == 10 else {
+            throw MomentSharingError.stateUnavailable
+        }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .outboxLoaded
+        )
         let ambiguous = initialOutbox[0]
         let invalidPreviewItem = initialOutbox[1]
         let pendingPreviewItem = initialOutbox[2]
@@ -4517,6 +4584,10 @@ actor SharingRuntimeSelfTestRunner {
               let ambiguousThumbnailName = ambiguous.localThumbnailFileName,
               let pendingThumbnailName = pendingPreviewItem.localThumbnailFileName
         else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .thumbnailReferencesValidated
+        )
         let ambiguousThumbnailURL = thumbnailDirectory.appendingPathComponent(
             ambiguousThumbnailName
         )
@@ -4531,7 +4602,15 @@ actor SharingRuntimeSelfTestRunner {
             state.outbox[index].commitStartedAt = baseDate
             state.outbox[index].uploadExpiresAt = baseDate.addingTimeInterval(60 * 60)
         }
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .committingStateWritten
+        )
         try MomentSharingStateStore.discardPendingOutbox(validating: lifecycleToken)
+        writeThumbnailProgress(
+            caseID: .outboxBounds,
+            phase: .pendingDiscardExecuted
+        )
         let afterDiscard = try MomentSharingStateStore.load().outbox
         guard afterDiscard.count == 1,
               afterDiscard[0].id == ambiguous.id,

@@ -2071,18 +2071,26 @@ enum MomentSharingStateStore {
             data,
             to: url
         )
+        // `localThumbnailURL` necessarily probes this path before the file is
+        // created. Rebuild the URL after the atomic rename so Foundation
+        // cannot satisfy the security postcondition from pre-write resource
+        // values cached by an older iOS release.
+        let committedURL = URL(fileURLWithPath: url.path, isDirectory: false)
         guard try isSafeThumbnailDirectory(
-            url.deletingLastPathComponent(),
+            committedURL.deletingLastPathComponent(),
             requireExisting: true
         ),
-        let values = try? url.resourceValues(
+        let values = try? committedURL.resourceValues(
             forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
         ),
         values.isRegularFile == true,
         values.isSymbolicLink != true,
-        SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url)
+        SharingSecureFile.hasRequiredProtectionAndBackupExclusion(committedURL)
         else {
-            try? FileManager.default.removeItem(at: url)
+            // Re-enter the containment/symlink checks before cleanup. If the
+            // directory changed during the postcondition, leaving one bounded
+            // optional preview is safer than deleting through an unsafe path.
+            try? removeLocalThumbnail(fileName: fileName)
             throw MomentSharingError.stateUnavailable
         }
     }

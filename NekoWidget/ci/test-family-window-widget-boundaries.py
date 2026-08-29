@@ -2311,6 +2311,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("Never re-encode legacyInlineLocalThumbnailJPEG", store)
         self.assertIn("migrateLegacyInlineThumbnailsWhileLocked", store)
         self.assertIn("SharingSecureFile.write(", store)
+        self.assertIn("let committedURL = URL(fileURLWithPath: url.path", store)
+        self.assertIn("committedURL.resourceValues", store)
         self.assertIn("readLocalThumbnail(for item", store)
         self.assertIn("removeLocalThumbnail(for item", store)
         self.assertIn("momentSharingSentThumbnailDirectoryURL", container)
