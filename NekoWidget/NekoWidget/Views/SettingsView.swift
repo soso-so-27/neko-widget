@@ -166,34 +166,8 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-sharing-review")
                 }
-
-                LabeledContent {
-                    Text("このiPhone内")
-                } label: {
-                    Label("写真の検出", systemImage: "lock.iphone")
-                }
-
-                if SharingAPIConfiguration.current.isMediaAvailable {
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("共有する写真")
-                            Text("縮小・位置情報削除・暗号化")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "shield.lefthalf.filled")
-                    }
-                }
-
-                if SharingAPIConfiguration.current.isReviewVisible,
-                   let url = SharingAPIConfiguration.current.communityStandardsURL {
-                    Link(destination: url) {
-                        Label("コミュニティ基準", systemImage: "checkmark.shield")
-                    }
-                }
             } header: {
-                Text("まどと安全")
+                Text("まど")
             }
 
             Section {
@@ -211,6 +185,17 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-support-page")
                 }
 
+                if SharingAPIConfiguration.current.isReviewVisible,
+                   let url = SharingAPIConfiguration.current.communityStandardsURL {
+                    Link(destination: url) {
+                        Label("コミュニティ基準", systemImage: "checkmark.shield")
+                    }
+                }
+            } header: {
+                Text("プライバシーとサポート")
+            }
+
+            Section {
                 LabeledContent {
                     Text("iOS 17.1以上")
                 } label: {
@@ -232,7 +217,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("アプリについて")
+                Text("アプリ")
             }
         }
         .navigationTitle("設定")

@@ -112,6 +112,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         savedPhotosBackButton.tap()
 
+        let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
+        let reflectionsSegment = memoriesSectionPicker.buttons["ふりかえり"]
+        guard memoriesSectionPicker.waitForExistence(timeout: 5),
+              reflectionsSegment.waitForExistence(timeout: 5) else {
+            fail("The Memories section picker was not reachable.", application: app)
+            return
+        }
+        reflectionsSegment.tap()
+
         let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
         guard scrollUpUntilHittable(memoriesAutomaticAlbums, application: app),
               app.staticTexts["ふりかえり"].exists else {
@@ -152,6 +161,14 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         memoriesBackButton.tap()
+
+        let createSegment = memoriesSectionPicker.buttons["つくる"]
+        guard createSegment.waitForExistence(timeout: 5) else {
+            fail("The Memories creation section was not reachable.", application: app)
+            return
+        }
+        createSegment.tap()
+
         let pdfAction = app.buttons["memories-photo-book-action"]
         guard scrollUpUntilHittable(pdfAction, application: app),
               app.staticTexts["かたちにする"].exists else {

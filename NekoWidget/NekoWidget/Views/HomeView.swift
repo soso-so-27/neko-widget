@@ -159,14 +159,8 @@ struct HomeView: View {
     private var todayPhoto: some View {
         if let currentPhoto {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("今日の一枚")
-                        .font(.title3.bold())
-                    Spacer()
-                    Text("タップで写真をひらく")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("今日の一枚")
+                    .font(.title3.bold())
 
                 ZStack(alignment: .bottom) {
                     NavigationLink(value: TodayRoute.photo(currentPhoto.localIdentifier)) {
@@ -181,6 +175,7 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("window-current-photo")
+                    .accessibilityHint("写真を大きく表示します")
 
                     LinearGradient(
                         colors: [.clear, .black.opacity(0.62)],

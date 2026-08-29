@@ -802,10 +802,14 @@ private struct WindowListView: View {
                         emptyWindowCard
                     } else {
                         if !connectedWindows.isEmpty {
-                            windowSectionTitle("つながっているまど")
+                            windowSectionTitle("接続済みのまど")
                             ForEach(connectedWindows) { window in
                                 windowCard(window)
                             }
+                            Text("名前は、まどを開いて設定から変更できます。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if !setupWindows.isEmpty {
                             windowSectionTitle("設定中のまど")
@@ -840,7 +844,7 @@ private struct WindowListView: View {
         .navigationTitle("まど")
         .background(Color(.systemGroupedBackground))
         .confirmationDialog(
-            "どのまどを追加しますか？",
+            "このiPhoneですることを選んでください",
             isPresented: $showsAddWindowConfirmation,
             titleVisibility: .visible
         ) {
@@ -855,7 +859,7 @@ private struct WindowListView: View {
             }
             Button("やめる", role: .cancel) {}
         } message: {
-            Text("選んだ操作の入力画面へ、そのまま進みます。")
+            Text("選んだ操作の入力画面へ進みます。")
         }
         .navigationDestination(isPresented: $opensActiveWindow) {
             activeWindowDestination
@@ -938,12 +942,12 @@ private struct WindowListView: View {
             Label("まだまどがありません", systemImage: "rectangle.on.rectangle.slash")
                 .font(.headline)
 
-            Text("まどを作るか、届いた招待コードで参加します。")
+            Text("新しく作るか、招待・機種変更のコードを使います。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button("まどを作る・参加する") {
-                opensActiveWindow = true
+            Button("まどをはじめる") {
+                showsAddWindowConfirmation = true
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("window-list-start")

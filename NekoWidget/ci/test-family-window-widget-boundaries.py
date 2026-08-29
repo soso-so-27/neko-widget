@@ -218,6 +218,20 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("写真アプリへの取り込みを確認するため、アプリを開きます", view)
         self.assertIn("SendFamilyWidgetHeartIntent", view)
 
+        photo_actions = section(
+            view,
+            "private var photoActionButtons: some View",
+            "@ViewBuilder\n    private var familyMemoryControl",
+        )
+        family_actions = photo_actions.split(
+            "if family == .systemSmall {", 1
+        )[1]
+        small_actions, larger_actions = family_actions.split("} else {", 1)
+        self.assertIn("familyHeartControl(sourceDigest: sourceDigest)", small_actions)
+        self.assertNotIn("familyMemoryControl", small_actions)
+        self.assertIn("familyMemoryControl", larger_actions)
+        self.assertIn("familyHeartControl(sourceDigest: sourceDigest)", larger_actions)
+
         intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
         personal_intent = section(
             intent,
@@ -304,8 +318,15 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn("Link(destination: memoryActionURL)", widget_view)
-        self.assertIn(".widgetURL(entry.photoURL)", widget_view)
+        self.assertIn(".widgetURL(photoDestinationURL)", widget_view)
         self.assertNotIn(".widgetURL(entry.memoryActionURL)", widget_view)
+        photo_destination = section(
+            widget_view,
+            "private var photoDestinationURL: URL?",
+            "@ViewBuilder\n    private var photoActionButtons",
+        )
+        self.assertIn("family == .systemSmall", photo_destination)
+        self.assertIn("entry.memoryActionURL ?? entry.photoURL", photo_destination)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
         serializer = section(
@@ -779,7 +800,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         memory_view = section(
             memories,
             "struct LikedPhotosView:",
-            "private struct MemoryCreationPreviewSheet:",
+            "private struct LikedPhotoBookExportFile:",
         )
         self.assertIn("if hasPhotoAccess", memory_view)
         self.assertIn("savedPhotosSection", memory_view)
@@ -793,35 +814,29 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('title: "PDFにまとめる"', memory_view)
         self.assertIn("creationPreviewCard", memory_view)
         self.assertNotIn("if hasPhotoAccess, !photos.isEmpty", memory_view)
-        self.assertIn('Text("準備中")', memory_view)
-        self.assertIn('Text("カード・卓上・小さな本")', memory_view)
+        self.assertIn('Text("準備中・カード・卓上・小さな本")', memory_view)
         self.assertIn('accessibilityIdentifier("memory-creation-preview")', memory_view)
+        self.assertIn('Picker("表示する思い出"', memory_view)
+        self.assertIn('.pickerStyle(.segmented)', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-section-picker")', memory_view)
+        self.assertIn("dynamicTypeSize.isAccessibilitySize", memory_view)
+        self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
+        self.assertNotIn("showsCreationPreview", memory_view)
         self.assertIn("case monthlyWindow(MonthlyWindowPresentation)", main_tab)
         self.assertIn("monthlyWindow: currentMonthlyWindow", main_tab)
         self.assertIn("presentation: refreshedMonthlyWindow(snapshot)", main_tab)
 
-        preview = section(
-            memories,
-            "private struct MemoryCreationPreviewSheet:",
-            "private struct LikedPhotoBookExportFile:",
-        )
-        for future_form in [
-            'title: "一枚を贈る"',
-            'title: "卓上に飾る"',
-            'title: "小さな本にまとめる"',
-        ]:
-            self.assertIn(future_form, preview)
-        self.assertIn("まだ注文はできません", preview)
-        self.assertNotIn('Button("購入', preview)
-        self.assertNotIn('Button("注文', preview)
-        self.assertNotIn("StoreKit", preview)
+        self.assertNotIn("MemoryCreationPreviewSheet", memories)
+        self.assertNotIn('Button("購入', memory_view)
+        self.assertNotIn('Button("注文', memory_view)
+        self.assertNotIn("StoreKit", memory_view)
 
     def test_memories_top_stays_short_and_moves_full_collection_to_own_screen(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
         memory_view = section(
             memories,
             "struct LikedPhotosView:",
-            "private struct MemoryCreationPreviewSheet:",
+            "private struct LikedPhotoBookExportFile:",
         )
 
         self.assertNotIn("ScrollViewReader { proxy in", memory_view)
@@ -847,7 +862,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         gallery = section(
             memories,
             "struct SavedMemoriesGalleryView:",
-            "private struct MemoryCreationPreviewSheet:",
+            "private struct LikedPhotoBookExportFile:",
         )
         self.assertIn("ForEach(photos)", gallery)
         self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", gallery)
@@ -1101,8 +1116,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         pairing_presentation = source("NekoWidget/Views/PairingPresentation.swift")
         self.assertIn("ForEach(connectedWindows)", main_tab)
         self.assertIn("ForEach(setupWindows)", main_tab)
-        self.assertIn('windowSectionTitle("つながっているまど")', main_tab)
+        self.assertIn('windowSectionTitle("接続済みのまど")', main_tab)
         self.assertIn('windowSectionTitle("設定中のまど")', main_tab)
+        self.assertIn("名前は、まどを開いて設定から変更できます。", main_tab)
         self.assertIn("PrivateWindowListPresentationPolicy.make", main_tab)
         self.assertIn("if $0.createdAt != $1.createdAt", main_tab)
         self.assertNotIn("if $0.updatedAt != $1.updatedAt", main_tab)
@@ -1154,6 +1170,14 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("createAndOpenWindow(setupPath: .join)", main_tab)
         self.assertIn("createAndOpenWindow(setupPath: .recover)", main_tab)
         self.assertIn("initialSetupPath: requestedSetupPath", main_tab)
+        empty_window = section(
+            window_list,
+            "private var emptyWindowCard: some View",
+            "private var addWindowButton: some View",
+        )
+        self.assertIn("showsAddWindowConfirmation = true", empty_window)
+        self.assertNotIn("opensActiveWindow = true", empty_window)
+        self.assertIn('Button("まどをはじめる")', empty_window)
         pairing_view = source("NekoWidget/Views/PairingView.swift")
         self.assertIn("init(initialSetupPath: PairingSetupPath? = nil)", pairing_view)
         self.assertIn("if setupPath == .create", pairing_view)
@@ -1192,8 +1216,15 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         settings = source("NekoWidget/Views/SettingsView.swift")
         app_root = source("NekoWidget/App/AppRootView.swift")
         family = source("NekoWidget/Views/FamilyWindowView.swift")
-        for section_title in ("写真と表示", "まどと安全", "アプリについて"):
+        for section_title in (
+            "写真と表示",
+            "まど",
+            "プライバシーとサポート",
+            "アプリ",
+        ):
             self.assertIn(f'Text("{section_title}")', settings)
+        self.assertNotIn('Label("写真の検出", systemImage: "lock.iphone")', settings)
+        self.assertNotIn('Text("縮小・位置情報削除・暗号化")', settings)
 
         self.assertIn('Label("写真の表示と整理"', settings)
         self.assertIn("private var photoSettingsView: some View", settings)
@@ -2283,6 +2314,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("自分が届けた写真", family)
         self.assertIn("受付→到着の順です。到着は既読ではなく、プレビューはこのiPhoneだけに残ります", family)
         self.assertIn("sentRecordThumbnail(record)", family)
+        target_record = section(
+            family,
+            "private var outgoingStatusSection: some View",
+            "private var visibleSentRecords",
+        )
+        self.assertIn("if let notificationTargetSentRecord", target_record)
+        self.assertLess(
+            target_record.index("if let notificationTargetSentRecord"),
+            target_record.index("model.outgoingPresentation.statuses"),
+        )
+        self.assertIn("$0.momentID != focusedSentMomentID", target_record)
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
         self.assertIn("sentRecordDisplayLimit + 20", family)
         self.assertIn('Button("さらに見る")', family)
@@ -2471,6 +2513,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             paired.index("sendPhotoAction"),
             paired.index('Picker("まどに表示する内容"'),
         )
+        self.assertLess(
+            paired.index("if focusedSentMomentID != nil"),
+            paired.index("if !prioritizesNotificationTarget"),
+        )
+        self.assertIn("else if focusedSentMomentID == nil", paired)
+        self.assertIn("pendingNotificationRoute?.target != nil || focusedSentMomentID != nil", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
             family,
@@ -2482,7 +2530,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("privacyDisclosure", settings)
         self.assertNotIn("statusCard", paired)
         self.assertNotIn("howToSendCard", paired)
-        self.assertIn("family-window-send-guide", family)
+        self.assertNotIn("family-window-send-guide", family)
+        self.assertNotIn('Text("ほかの送り方")', paired)
         self.assertIn("family-window-widget-guide", family)
         self.assertIn("ウィジェットの表示", family)
         self.assertIn("ウィジェットを編集", family)
@@ -2937,6 +2986,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("await model.retryBootstrap()", unavailable)
         self.assertIn("保存済みの写真と接続情報は削除していません", unavailable)
         self.assertIn("LogView()", unavailable)
+        self.assertIn("ScrollView", unavailable)
+        self.assertIn("DisclosureGroup", unavailable)
+        self.assertIn(".scrollBounceBehavior(.basedOnSize)", unavailable)
         self.assertNotIn("PairingView()", unavailable)
 
         pairing = source("NekoWidget/Views/PairingView.swift")

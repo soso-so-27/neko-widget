@@ -70,7 +70,18 @@ struct NekoWidgetView: View {
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
-        .widgetURL(entry.photoURL)
+        .widgetURL(photoDestinationURL)
+    }
+
+    /// Small received-photo widgets reserve their one visible control for the
+    /// social response. Tapping the photo itself still carries the exact
+    /// window/photo capability into the app so private saving is not lost.
+    private var photoDestinationURL: URL? {
+        if family == .systemSmall,
+           WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+            return entry.memoryActionURL ?? entry.photoURL
+        }
+        return entry.photoURL
     }
 
     @ViewBuilder
@@ -78,32 +89,19 @@ struct NekoWidgetView: View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
            entry.isBookmarkInteractionEnabled {
-            HStack(spacing: actionButtonSpacing) {
-                if entry.isBookmarked {
-                    actionPill(
-                        compactTitle: "残した",
-                        regularTitle: "思い出に残した",
-                        systemImage: "bookmark.fill",
-                        style: .completed
-                    )
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("思い出に残した写真")
-                    .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
-                } else if let memoryActionURL = entry.memoryActionURL {
-                    Link(destination: memoryActionURL) {
-                        actionPill(
-                            compactTitle: "残す",
-                            regularTitle: "思い出に残す",
-                            systemImage: "bookmark",
-                            style: .action
-                        )
+            Group {
+                if family == .systemSmall {
+                    // Keep the smallest widget focused on one social action.
+                    // Saving a received photo can require confirmation and
+                    // Photos access, so the photo tap carries that exact route
+                    // into the app and larger widget families show both.
+                    familyHeartControl(sourceDigest: sourceDigest)
+                } else {
+                    HStack(spacing: actionButtonSpacing) {
+                        familyMemoryControl
+                        familyHeartControl(sourceDigest: sourceDigest)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("思い出に残す")
-                    .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
                 }
-
-                familyHeartControl(sourceDigest: sourceDigest)
             }
             .padding(actionButtonInset)
         } else if let localIdentifier = entry.localIdentifier,
@@ -141,6 +139,33 @@ struct NekoWidgetView: View {
                 }
             }
             .padding(actionButtonInset)
+        }
+    }
+
+    @ViewBuilder
+    private var familyMemoryControl: some View {
+        if entry.isBookmarked {
+            actionPill(
+                compactTitle: "残した",
+                regularTitle: "思い出に残した",
+                systemImage: "bookmark.fill",
+                style: .completed
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("思い出に残した写真")
+            .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
+        } else if let memoryActionURL = entry.memoryActionURL {
+            Link(destination: memoryActionURL) {
+                actionPill(
+                    compactTitle: "残す",
+                    regularTitle: "思い出に残す",
+                    systemImage: "bookmark",
+                    style: .action
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("思い出に残す")
+            .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
         }
     }
 
@@ -210,14 +235,14 @@ struct NekoWidgetView: View {
         .font(.caption2.bold())
         .foregroundStyle(
             isCompleted
-                ? Color.black.opacity(0.82)
+                ? selectedActionForeground
                 : Color.white
         )
         .padding(.horizontal, family == .systemSmall ? 8 : 10)
         .frame(height: actionPillVisualHeight(for: style))
         .background(
             isCompleted
-                ? Color.white.opacity(0.90)
+                ? selectedActionFill
                 : Color.black.opacity(isPending ? 0.72 : 0.62),
             in: Capsule()
         )
@@ -232,6 +257,16 @@ struct NekoWidgetView: View {
         }
         .frame(minHeight: actionPillContainerHeight(for: style))
         .contentShape(Rectangle())
+    }
+
+    /// Bookmark and heart completion are different concepts, but both use
+    /// one neutral selected palette so color never implies a third meaning.
+    private var selectedActionForeground: Color {
+        Color.black.opacity(0.82)
+    }
+
+    private var selectedActionFill: Color {
+        Color.white.opacity(0.90)
     }
 
     @ViewBuilder

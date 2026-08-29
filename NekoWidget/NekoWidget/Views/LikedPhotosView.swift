@@ -500,33 +500,93 @@ struct CuratedAlbumDetailView: View {
     }
 }
 
+private enum MemoriesSection: String, CaseIterable, Identifiable {
+    case saved
+    case reflections
+    case create
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .saved: "残した"
+        case .reflections: "ふりかえり"
+        case .create: "つくる"
+        }
+    }
+}
+
 /// The entry point for photos the user deliberately kept as memories.
-/// It stays intentionally short: a preview of the manual collection,
-/// then automatic reflections and creation actions. The complete collection is
-/// presented on its own screen so later sections never disappear below a large
-/// photo library.
+/// It stays intentionally short by switching between the manual collection,
+/// automatic reflections, and creation actions. The complete collection is
+/// presented on its own screen so the other sections never disappear below a
+/// large photo library.
 struct LikedPhotosView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
     let monthlyWindow: MonthlyWindowPresentation?
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
 
-    @State private var showsCreationPreview = false
+    @State private var selectedSection: MemoriesSection = .saved
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 30) {
-                savedPhotosSection
-                reflectionSection
-                creationSection
+            LazyVStack(alignment: .leading, spacing: 20) {
+                memoriesSectionControl
+
+                switch selectedSection {
+                case .saved:
+                    savedPhotosSection
+                case .reflections:
+                    reflectionSection
+                case .create:
+                    creationSection
+                }
             }
             .padding(.vertical, 16)
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
-        .sheet(isPresented: $showsCreationPreview) {
-            MemoryCreationPreviewSheet()
+    }
+
+    @ViewBuilder
+    private var memoriesSectionControl: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            Menu {
+                ForEach(MemoriesSection.allCases) { section in
+                    Button {
+                        selectedSection = section
+                    } label: {
+                        if selectedSection == section {
+                            Label(section.title, systemImage: "checkmark")
+                        } else {
+                            Text(section.title)
+                        }
+                    }
+                }
+            } label: {
+                Label(
+                    "表示：\(selectedSection.title)",
+                    systemImage: "line.3.horizontal.decrease.circle"
+                )
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("memories-section-menu")
+        } else {
+            Picker("表示する思い出", selection: $selectedSection) {
+                ForEach(MemoriesSection.allCases) { section in
+                    Text(section.title).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("memories-section-picker")
         }
     }
 
@@ -856,55 +916,38 @@ struct LikedPhotosView: View {
     }
 
     private var creationPreviewCard: some View {
-        Button {
-            showsCreationPreview = true
-        } label: {
-            HStack(spacing: 13) {
-                Image(systemName: "square.grid.2x2")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 38, height: 38)
-                    .background(
-                        Color.accentColor.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 11)
-                    )
+        HStack(spacing: 13) {
+            Image(systemName: "square.grid.2x2")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 38, height: 38)
+                .background(
+                    Color.secondary.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 11)
+                )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text("これからできるもの")
-                            .font(.headline)
-                        Text("準備中")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Color.accentColor.opacity(0.10), in: Capsule())
-                    }
+            VStack(alignment: .leading, spacing: 3) {
+                Text("これからできるもの")
+                    .font(.headline)
 
-                    Text("カード・卓上・小さな本")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
+                Text("準備中・カード・卓上・小さな本")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 18)
-            )
+
+            Spacer(minLength: 4)
         }
-        .buttonStyle(.plain)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 18)
+        )
         .padding(.horizontal, 16)
         .accessibilityIdentifier("memory-creation-preview")
-        .accessibilityLabel("これからできるもの、準備中")
-        .accessibilityHint("思い出から作れるものを確認します")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("これからできるもの。カード、卓上、小さな本。準備中")
     }
 
 }
@@ -1208,99 +1251,6 @@ struct SavedMemoriesGalleryView: View {
         }
         photoBookExportDirectory = nil
         photoBookExport = nil
-    }
-}
-
-private struct MemoryCreationPreviewSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("これからできるもの")
-                            .font(.title2.bold())
-                        Text("残した写真から選べるようになります")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    VStack(spacing: 0) {
-                        creationRow(
-                            systemImage: "envelope",
-                            title: "一枚を贈る",
-                            detail: "写真カードにして、自分や相手へ"
-                        )
-                        Divider().padding(.leading, 54)
-                        creationRow(
-                            systemImage: "photo.on.rectangle.angled",
-                            title: "卓上に飾る",
-                            detail: "4枚を入れ替えて飾る"
-                        )
-                        Divider().padding(.leading, 54)
-                        creationRow(
-                            systemImage: "book.closed",
-                            title: "小さな本にまとめる",
-                            detail: "20枚を一冊にまとめる"
-                        )
-                    }
-                    .background(
-                        Color(.secondarySystemBackground),
-                        in: RoundedRectangle(cornerRadius: 18)
-                    )
-
-                    VStack(alignment: .leading, spacing: 7) {
-                        Label("準備中", systemImage: "clock")
-                            .font(.headline)
-                        Text("まだ注文はできません")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
-                }
-                .padding(16)
-            }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("かたちにする")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    private func creationRow(
-        systemImage: String,
-        title: String,
-        detail: String
-    ) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.headline)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 30)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .accessibilityElement(children: .combine)
     }
 }
 

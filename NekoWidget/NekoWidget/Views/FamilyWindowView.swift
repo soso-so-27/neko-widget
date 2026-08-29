@@ -71,7 +71,6 @@ struct FamilyWindowView: View {
     @State private var showsPendingCancelConfirmation = false
     @State private var showsPreparationCancelConfirmation = false
     @State private var showsTerminalResultDismissConfirmation = false
-    @State private var showsSendGuide = false
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 3
@@ -97,6 +96,7 @@ struct FamilyWindowView: View {
     @State private var isDeliveringSelectedPhoto = false
     @State private var photoSelectionMessage: String?
     @State private var selectedDeliveryMessage: String?
+    @State private var showsUnavailableSupportDetails = false
 
     init(
         initialPresentation: FamilyWindowInitialPresentation = .content,
@@ -215,36 +215,49 @@ struct FamilyWindowView: View {
     private func temporarilyUnavailableContent(message: String) -> some View {
         let presentation = PairingAvailabilityPresentation
             .temporarilyUnavailable(detail: message)
-        return VStack(spacing: 20) {
-            ContentUnavailableView(
-                presentation.title,
-                systemImage: "arrow.triangle.2.circlepath",
-                description: Text(presentation.detail)
-            )
+        return ScrollView {
+            VStack(spacing: 20) {
+                ContentUnavailableView(
+                    presentation.title,
+                    systemImage: "arrow.triangle.2.circlepath",
+                    description: Text(presentation.detail)
+                )
 
-            if let retryButtonTitle = presentation.retryButtonTitle {
-                Button(retryButtonTitle) {
-                    Task { await model.retryBootstrap() }
+                if let retryButtonTitle = presentation.retryButtonTitle {
+                    Button(retryButtonTitle) {
+                        Task { await model.retryBootstrap() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("family-window-bootstrap-retry")
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("family-window-bootstrap-retry")
+
+                Text("保存済みの写真と接続情報は削除していません。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                DisclosureGroup(
+                    "サポート情報",
+                    isExpanded: $showsUnavailableSupportDetails
+                ) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        NavigationLink {
+                            LogView()
+                        } label: {
+                            Label("診断情報を確認・共有", systemImage: "stethoscope")
+                        }
+                        .accessibilityIdentifier("family-window-open-diagnostics")
+
+                        buildIdentityText
+                    }
+                    .padding(.top, 8)
+                }
+                .font(.subheadline)
             }
-
-            Text("保存済みの写真と接続情報は削除していません。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            NavigationLink {
-                LogView()
-            } label: {
-                Label("診断情報を確認・共有", systemImage: "stethoscope")
-            }
-            .accessibilityIdentifier("family-window-open-diagnostics")
-
-            buildIdentityText
+            .padding(24)
+            .frame(maxWidth: .infinity)
         }
-        .padding(24)
+        .scrollBounceBehavior(.basedOnSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -479,7 +492,17 @@ struct FamilyWindowView: View {
                         notificationRouteResolutionCard
                     }
 
-                    sendPhotoAction
+                    if focusedSentMomentID != nil {
+                        sentSectionContent
+                    }
+
+                    // A notification is an explicit request to see one photo.
+                    // Keep the ordinary delivery CTA out of the way until that
+                    // target has been shown; the CTA remains available below a
+                    // heart target after the user has seen it.
+                    if !prioritizesNotificationTarget {
+                        sendPhotoAction
+                    }
 
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
@@ -488,6 +511,12 @@ struct FamilyWindowView: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("family-window-section")
+                    .onChange(of: selectedSection) { _, section in
+                        guard section != .sent,
+                              focusedSentMomentID != nil else { return }
+                        focusedSentMomentID = nil
+                        notificationAccessibilityFocus = nil
+                    }
 
                     manualRefreshResult
                 }
@@ -498,8 +527,13 @@ struct FamilyWindowView: View {
 
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
-                } else {
+                } else if focusedSentMomentID == nil {
                     sentSectionContent
+                }
+
+                if !model.isReportOnly,
+                   focusedSentMomentID != nil {
+                    sendPhotoAction
                 }
             }
             .padding(16)
@@ -516,6 +550,10 @@ struct FamilyWindowView: View {
                 .accessibilityLabel("まどの設定")
             }
         }
+    }
+
+    private var prioritizesNotificationTarget: Bool {
+        pendingNotificationRoute?.target != nil || focusedSentMomentID != nil
     }
 
     @ViewBuilder
@@ -684,17 +722,6 @@ struct FamilyWindowView: View {
             Text("送る前に写真と届け先を確認できます")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            DisclosureGroup(isExpanded: $showsSendGuide) {
-                Text("写真アプリで1枚を開き、共有から「ねこのまど」を選ぶこともできます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
-            } label: {
-                Text("ほかの送り方")
-                    .font(.caption.weight(.semibold))
-            }
-            .accessibilityIdentifier("family-window-send-guide")
 
             if let photoSelectionMessage {
                 Label(photoSelectionMessage, systemImage: "exclamationmark.circle")
@@ -1210,6 +1237,10 @@ struct FamilyWindowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            if let notificationTargetSentRecord {
+                sentRecordCard(notificationTargetSentRecord)
+            }
+
             ForEach(model.outgoingPresentation.statuses) { status in
                 outgoingStatusCard(status)
             }
@@ -1224,7 +1255,9 @@ struct FamilyWindowView: View {
             }
 
             if !model.outgoingPresentation.sentRecords.isEmpty {
-                ForEach(visibleSentRecords) { record in
+                ForEach(visibleSentRecords.filter {
+                    $0.momentID != focusedSentMomentID
+                }) { record in
                     sentRecordCard(record)
                 }
                 if model.outgoingPresentation.sentRecords.count > 3 {
@@ -1254,6 +1287,13 @@ struct FamilyWindowView: View {
             }
         }
         .accessibilityIdentifier("family-window-outgoing-status")
+    }
+
+    private var notificationTargetSentRecord: MomentSentRecordPresentation? {
+        guard let focusedSentMomentID else { return nil }
+        return model.outgoingPresentation.sentRecords.first {
+            $0.momentID == focusedSentMomentID
+        }
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
