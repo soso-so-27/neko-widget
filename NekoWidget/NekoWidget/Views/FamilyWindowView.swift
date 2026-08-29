@@ -60,6 +60,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
 struct FamilyWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AccessibilityFocusState private var notificationAccessibilityFocus: String?
     private let initialPresentation: FamilyWindowInitialPresentation
     private let initialSetupPath: PairingSetupPath?
     @Binding private var pendingMemorySourceDigest: String?
@@ -438,10 +439,17 @@ struct FamilyWindowView: View {
         .sheet(item: $preparedDelivery) { delivery in
             deliveryConfirmation(delivery)
         }
-        .sheet(item: $selectedMomentForDetail) { item in
+        .sheet(
+            item: $selectedMomentForDetail,
+            onDismiss: { notificationAccessibilityFocus = nil }
+        ) { item in
             NavigationStack {
                 ScrollView {
-                    momentCard(item)
+                    momentCard(
+                        item,
+                        receivesNotificationFocus:
+                            notificationAccessibilityFocus == item.id
+                    )
                         .padding(16)
                 }
                 .background(Color(uiColor: .systemGroupedBackground))
@@ -449,7 +457,10 @@ struct FamilyWindowView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("閉じる") { selectedMomentForDetail = nil }
+                        Button("閉じる") {
+                            notificationAccessibilityFocus = nil
+                            selectedMomentForDetail = nil
+                        }
                     }
                 }
             }
@@ -924,8 +935,25 @@ struct FamilyWindowView: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(compactMomentAccessibilityLabel(item))
         .accessibilityHint("写真を大きく表示して操作します")
         .accessibilityIdentifier("family-window-photo-thumbnail-\(item.id)")
+    }
+
+    private func compactMomentAccessibilityLabel(_ item: MomentInboxItem) -> String {
+        var parts = [
+            "届いた写真",
+            captureLabel(item),
+            "届いた日 \(item.receivedAt.formatted(.dateTime.month().day()))"
+        ]
+        if model.isSavedMemory(item) {
+            parts.append("思い出に残しました")
+        }
+        if model.heartOutboxItem(for: item)?.phase == .sent {
+            parts.append("ハートを送信済みです")
+        }
+        return parts.joined(separator: "。")
     }
 
     private func sharingErrorCard(_ message: String) -> some View {
@@ -1094,7 +1122,10 @@ struct FamilyWindowView: View {
     }
 
     private var sharingManagementLink: some View {
-        NavigationLink {
+        let canEditWindowName = model.pairingState.map {
+            $0.role != .invitee && $0.localDeviceIsAdditional != true
+        } ?? false
+        return NavigationLink {
             PairingView()
         } label: {
             HStack(spacing: 12) {
@@ -1104,21 +1135,23 @@ struct FamilyWindowView: View {
                     .frame(width: 40, height: 40)
                     .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("相手と端末")
+                    Text("名前・相手・iPhone")
                         .font(.subheadline.weight(.semibold))
                     Label(
                         model.isShowingLastKnownState
                             ? "接続状態を確認できません"
-                            : "相手と接続済み",
+                            : (canEditWindowName
+                                ? "まど名を変更できます"
+                                : "接続相手とiPhoneを確認"),
                         systemImage: model.isShowingLastKnownState
                             ? "exclamationmark.triangle.fill"
-                            : "checkmark.circle.fill"
+                            : (canEditWindowName ? "pencil" : "checkmark.circle.fill")
                     )
                         .font(.caption)
                         .foregroundStyle(
                             model.isShowingLastKnownState
                                 ? Color.orange
-                                : Color.green
+                                : Color.secondary
                         )
                 }
                 Spacer()
@@ -1133,6 +1166,7 @@ struct FamilyWindowView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityHint("まどの名前、接続相手、使っているiPhoneを確認します")
         .accessibilityIdentifier("family-window-sharing-settings")
     }
 
@@ -1172,7 +1206,7 @@ struct FamilyWindowView: View {
                     outgoingManagementMenu
                 }
             }
-            Text("新しく届けた写真は、小さなプレビューをこのiPhoneだけに一時保存します。")
+            Text("受付→到着の順です。到着は既読ではなく、プレビューはこのiPhoneだけに残ります。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1282,6 +1316,8 @@ struct FamilyWindowView: View {
 
     private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
         let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
+        let statusDate = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
+        let accessibilityFocusID = record.momentID ?? "sent-record-\(record.id)"
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
@@ -1293,23 +1329,19 @@ struct FamilyWindowView: View {
         return HStack(alignment: .center, spacing: 12) {
             sentRecordThumbnail(record)
             VStack(alignment: .leading, spacing: 5) {
-                Text(record.serverAcceptedAt.formatted(
-                    .dateTime.month().day().hour().minute()
-                ))
-                    .font(.subheadline.weight(.semibold))
                 Label(
                     record.title,
                     systemImage: arrived ? "iphone" : "server.rack"
                 )
-                    .font(.caption)
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(arrived ? Color.green : Color.secondary)
-                if arrived {
-                    Text("閲覧・既読の確認ではありません")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text(statusDate.formatted(
+                    .dateTime.month().day().hour().minute()
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if record.hasReceivedHeart {
-                    Label("この写真にハートが届きました", systemImage: "heart.fill")
+                    Label("ハートが届きました", systemImage: "heart.fill")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tint)
                 }
@@ -1327,7 +1359,39 @@ struct FamilyWindowView: View {
                     .stroke(Color.accentColor, lineWidth: 2)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(sentRecordAccessibilityLabel(record))
+        .accessibilityHint(
+            isNotificationTarget
+                ? "通知で開いた写真です"
+                : "到着は閲覧や既読の確認ではありません"
+        )
+        .accessibilityFocused(
+            $notificationAccessibilityFocus,
+            equals: accessibilityFocusID
+        )
         .accessibilityIdentifier("family-window-sent-record-\(record.id)")
+    }
+
+    private func sentRecordAccessibilityLabel(
+        _ record: MomentSentRecordPresentation
+    ) -> String {
+        let delivery = record.deliveryState == .recipientDeviceArrivalConfirmed
+            ? "相手のiPhoneへ到着"
+            : "サーバー受付済み"
+        let statusDate = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
+        var parts = [
+            "届けた写真",
+            delivery,
+            statusDate.formatted(.dateTime.month().day().hour().minute())
+        ]
+        if record.hasReceivedHeart {
+            parts.append("ハートが届いています")
+        }
+        if record.localThumbnailJPEG == nil {
+            parts.append("写真のプレビューはこのiPhoneに残っていません")
+        }
+        return parts.joined(separator: "。")
     }
 
     @ViewBuilder
@@ -1339,7 +1403,7 @@ struct FamilyWindowView: View {
                 .scaledToFill()
                 .frame(width: 86, height: 86)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityLabel("届けた写真のプレビュー")
+                .accessibilityHidden(true)
         } else {
             Image(systemName: "photo")
                 .font(.body)
@@ -1349,7 +1413,7 @@ struct FamilyWindowView: View {
                     Color(uiColor: .tertiarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 10)
                 )
-                .accessibilityLabel("写真のプレビューはこのiPhoneに残っていません")
+                .accessibilityHidden(true)
         }
     }
 
@@ -1476,17 +1540,15 @@ struct FamilyWindowView: View {
             : Color(uiColor: .secondarySystemGroupedBackground)
     }
 
-    private func momentCard(_ item: MomentInboxItem) -> some View {
+    private func momentCard(
+        _ item: MomentInboxItem,
+        receivesNotificationFocus: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let url = model.imageURL(for: item) {
-                receivedPhotoSurface(
-                    url: url,
-                    aspectRatio: 4.0 / 3.0,
-                    contentMode: .fit
-                )
-            } else {
-                receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)
-            }
+            receivedPhotoHeader(
+                item,
+                receivesNotificationFocus: receivesNotificationFocus
+            )
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(captureLabel(item))
@@ -1533,58 +1595,7 @@ struct FamilyWindowView: View {
             .padding(13)
             if !model.isReportOnly, !model.isShowingLastKnownState {
                 Divider()
-                let heart = model.heartOutboxItem(for: item)
-                HStack(spacing: 10) {
-                    memoryActionControl(item)
-
-                    if model.canSendHeart(for: item) || heart != nil {
-                        Button {
-                            memoryActionMomentID = nil
-                            memoryResultMomentID = nil
-                            heartResultMomentID = nil
-                            heartActionMomentID = item.id
-                            Task {
-                                await model.sendHeart(item)
-                                heartActionMomentID = nil
-                                heartResultMomentID = item.id
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                if heartActionMomentID == item.id,
-                                   model.isPerformingAction {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else {
-                                    Image(systemName: heartActionIcon(
-                                        heart,
-                                        canRetry: model.canSendHeart(for: item)
-                                    ))
-                                }
-                                Text(heartActionTitle(
-                                    heart,
-                                    canRetry: model.canSendHeart(for: item)
-                                ))
-                            }
-                            .font(.caption.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.accentColor)
-                        .disabled(
-                            model.isPerformingAction
-                                || heart?.phase == .sent
-                                || (heart != nil && !model.canSendHeart(for: item))
-                        )
-                        .accessibilityLabel(
-                            heartAccessibilityLabel(
-                                heart,
-                                canRetry: model.canSendHeart(for: item)
-                            )
-                        )
-                        .accessibilityIdentifier("family-window-send-paw")
-                    }
-                }
-                .padding(13)
+                receivedPhotoActionControls(item)
 
                 if memoryResultMomentID == item.id,
                    let message = model.memoryActionMessage ?? model.errorMessage {
@@ -1632,6 +1643,100 @@ struct FamilyWindowView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
+    @ViewBuilder
+    private func receivedPhotoHeader(
+        _ item: MomentInboxItem,
+        receivesNotificationFocus: Bool
+    ) -> some View {
+        let photo = Group {
+            if let url = model.imageURL(for: item) {
+                receivedPhotoSurface(
+                    url: url,
+                    aspectRatio: 4.0 / 3.0,
+                    contentMode: .fit
+                )
+            } else {
+                receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)
+            }
+        }
+        .accessibilityLabel("届いた写真。\(captureLabel(item))")
+
+        if receivesNotificationFocus {
+            photo.accessibilityFocused(
+                $notificationAccessibilityFocus,
+                equals: item.id
+            )
+        } else {
+            photo
+        }
+    }
+
+    private func receivedPhotoActionControls(_ item: MomentInboxItem) -> some View {
+        let heart = model.heartOutboxItem(for: item)
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
+
+        return layout {
+            memoryActionControl(item)
+            if model.canSendHeart(for: item) || heart != nil {
+                heartActionControl(item, heart: heart)
+            }
+        }
+        .padding(13)
+    }
+
+    private func heartActionControl(
+        _ item: MomentInboxItem,
+        heart: MomentPawOutboxItem?
+    ) -> some View {
+        Button {
+            memoryActionMomentID = nil
+            memoryResultMomentID = nil
+            heartResultMomentID = nil
+            heartActionMomentID = item.id
+            Task {
+                await model.sendHeart(item)
+                heartActionMomentID = nil
+                heartResultMomentID = item.id
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if heartActionMomentID == item.id,
+                   model.isPerformingAction {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: heartActionIcon(
+                        heart,
+                        canRetry: model.canSendHeart(for: item)
+                    ))
+                }
+                Text(heartActionTitle(
+                    heart,
+                    canRetry: model.canSendHeart(for: item)
+                ))
+            }
+            .font(.caption.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .tint(.accentColor)
+        .disabled(
+            model.isPerformingAction
+                || heart?.phase == .sent
+                || (heart != nil && !model.canSendHeart(for: item))
+        )
+        .accessibilityLabel(
+            heartAccessibilityLabel(
+                heart,
+                canRetry: model.canSendHeart(for: item)
+            )
+        )
+        .accessibilityIdentifier("family-window-send-paw")
+    }
+
     private func receivedPhotoSurface(
         url: URL,
         aspectRatio: CGFloat,
@@ -1672,6 +1777,8 @@ struct FamilyWindowView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                         .accessibilityLabel("思い出の操作")
                 }
                 .disabled(
@@ -1683,7 +1790,7 @@ struct FamilyWindowView: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 34)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .background(
                 Color(uiColor: .tertiarySystemGroupedBackground),
                 in: RoundedRectangle(cornerRadius: 8)
@@ -1705,7 +1812,8 @@ struct FamilyWindowView: View {
                     Text("思い出に残す")
                 }
                 .font(.caption.weight(.semibold))
-                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
             .disabled(
@@ -1841,6 +1949,10 @@ struct FamilyWindowView: View {
                 receivedPhotoFilter = .all
                 focusedMomentID = momentID
                 selectedMomentForDetail = target
+                Task { @MainActor in
+                    await Task.yield()
+                    notificationAccessibilityFocus = momentID
+                }
             case .heart:
                 model.prepareSentNotificationTarget(momentID: momentID)
                 let matches = model.outgoingPresentation.sentRecords.filter {
@@ -1853,6 +1965,10 @@ struct FamilyWindowView: View {
                 selectedMomentForDetail = nil
                 selectedSection = .sent
                 focusedSentMomentID = momentID
+                Task { @MainActor in
+                    await Task.yield()
+                    notificationAccessibilityFocus = momentID
+                }
             }
             return
         }
@@ -1860,6 +1976,7 @@ struct FamilyWindowView: View {
         // Legacy v1 notifications intentionally contain only the kind. They
         // retain the original selected-window section fallback.
         pendingNotificationRoute = nil
+        notificationAccessibilityFocus = nil
         widgetMemoryTarget = nil
         focusedMomentID = nil
         focusedSentMomentID = nil

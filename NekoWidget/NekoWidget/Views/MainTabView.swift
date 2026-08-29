@@ -764,6 +764,7 @@ struct MainTabView: View {
 
 private struct WindowListView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var model = PairingViewModel()
 
     @Binding var opensActiveWindow: Bool
@@ -1033,7 +1034,9 @@ private struct WindowListView: View {
                         Text(window.displayName)
                             .font(.headline)
                             .foregroundStyle(.primary)
-                            .lineLimit(1)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
 
                         if isActive {
                             Text("現在のまど")
@@ -1045,15 +1048,9 @@ private struct WindowListView: View {
                         }
                     }
 
-                    Text(windowConnectionLabel(for: window))
+                    Text(windowPrimaryStatusLabel(for: window))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-
-                    if isSetup {
-                        Label("名前と次の手順を確認", systemImage: "pencil.and.list.clipboard")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tint)
-                    }
 
                     if let pendingCount = pendingPreparationCounts[window.localWindowID],
                        pendingCount > 0 {
@@ -1236,6 +1233,14 @@ private struct WindowListView: View {
         case .failed:
             return "設定を確認"
         }
+    }
+
+    private func windowPrimaryStatusLabel(
+        for window: PrivateWindowCatalogEntry
+    ) -> String {
+        pairingPhases[window.localWindowID] == .unpaired
+            ? "名前を決めて設定を続ける"
+            : windowConnectionLabel(for: window)
     }
 
     private func reloadPreparationCounts() {

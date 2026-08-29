@@ -597,7 +597,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('return canRetry ? "ハートを再送" : "ハートを送れません"', family_view)
         self.assertIn("heart?.phase == .sent", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
-        self.assertIn('Label("この写真にハートが届きました", systemImage: "heart.fill")', family_view)
+        self.assertIn('Label("ハートが届きました", systemImage: "heart.fill")', family_view)
         self.assertNotIn("family-window-received-paws", family_view)
 
         presentation = source("NekoWidget/Views/MomentSharingPresentation.swift")
@@ -1181,10 +1181,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("case .awaitingInvitee:", window_list)
         self.assertIn('return "相手の参加待ち"', window_list)
         self.assertIn('Text("現在のまど")', window_list)
+        self.assertIn('"名前を決めて設定を続ける"', window_list)
+        self.assertIn(
+            "pairingPhases[window.localWindowID] == .unpaired",
+            window_list,
+        )
+        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 2 : 1", window_list)
 
     def test_settings_prioritizes_daily_safety_and_about_tasks(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
         app_root = source("NekoWidget/App/AppRootView.swift")
+        family = source("NekoWidget/Views/FamilyWindowView.swift")
         for section_title in ("写真と表示", "まどと安全", "アプリについて"):
             self.assertIn(f'Text("{section_title}")', settings)
 
@@ -1197,6 +1204,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('FamilyWindowView(initialPresentation: .settings)', settings)
         self.assertIn('Text("まどの設定")', settings)
         self.assertIn('Image(systemName: "rectangle.split.2x2")', settings)
+        self.assertIn('Text("名前・相手・iPhone")', family)
+        self.assertIn('"まど名を変更できます"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
         self.assertIn(
             "await saveDetectionSettings(requestedConfidence, requestedMinimumArea)",
@@ -2272,15 +2281,18 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
         self.assertIn("自分が届けた写真", family)
-        self.assertIn("新しく届けた写真は、小さなプレビューをこのiPhoneだけに一時保存します", family)
+        self.assertIn("受付→到着の順です。到着は既読ではなく、プレビューはこのiPhoneだけに残ります", family)
         self.assertIn("sentRecordThumbnail(record)", family)
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
         self.assertIn("sentRecordDisplayLimit + 20", family)
         self.assertIn('Button("さらに見る")', family)
         self.assertIn('Button("最新3件に戻す")', family)
         self.assertIn("static let sentRecordLimit = 200", presentation)
-        self.assertIn("Text(record.serverAcceptedAt.formatted(", family)
-        self.assertIn("if arrived", family)
+        self.assertIn(
+            "record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt",
+            family,
+        )
+        self.assertIn("let arrived = record.deliveryState", family)
         self.assertIn("localThumbnailFileName", store)
         self.assertIn("legacyInlineLocalThumbnailJPEG", store)
         self.assertIn("Never re-encode legacyInlineLocalThumbnailJPEG", store)
@@ -2350,6 +2362,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("model.isPerformingAction", memory_control)
         self.assertIn("model.isShowingLastKnownState", memory_control)
         self.assertIn("model.isReportOnly", memory_control)
+        self.assertIn(".frame(width: 44, height: 44)", memory_control)
         self.assertNotIn(".disabled(model.isWorking)", memory_control)
 
         for start, end in (
@@ -2588,12 +2601,24 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func outgoingStatusCard(",
         )
         self.assertLess(
-            sent.index("Text(record.serverAcceptedAt.formatted("),
             sent.index("record.title"),
+            sent.index("Text(statusDate.formatted("),
         )
         self.assertIn("record.title", sent)
-        self.assertIn("閲覧・既読の確認ではありません", sent)
-        self.assertIn("この写真にハートが届きました", sent)
+        self.assertNotIn("閲覧・既読の確認ではありません", sent)
+        self.assertIn("ハートが届きました", sent)
+        self.assertIn("sentRecordAccessibilityLabel(record)", sent)
+        self.assertIn("accessibilityElement(children: .ignore)", sent)
+
+        actions = section(
+            family,
+            "private func receivedPhotoActionControls(",
+            "private func receivedPhotoSurface(",
+        )
+        self.assertIn("AnyLayout(VStackLayout", actions)
+        self.assertIn("AnyLayout(HStackLayout", actions)
+        self.assertIn("minHeight: 44", actions)
+        self.assertIn("notificationAccessibilityFocus = momentID", family)
 
     def test_host_photo_picker_uses_the_existing_bounded_handoff(self) -> None:
         family = source("NekoWidget/Views/FamilyWindowView.swift")
