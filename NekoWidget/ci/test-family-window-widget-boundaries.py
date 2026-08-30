@@ -653,7 +653,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("heart?.phase == .sent", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
         self.assertIn(
-            'Label("ハートが届きました", systemImage: "heart.fill")',
+            'sentRecordBadge("ハート", systemImage: "heart.fill")',
             family_view,
         )
         self.assertIn('parts.append("ハートが届いています")', family_view)
@@ -2521,8 +2521,15 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private var outgoingStatusSection: some View",
             "private var visibleSentRecords",
         )
-        self.assertIn("LazyVStack(spacing: 10)", target_record)
+        self.assertIn("LazyVGrid(columns: sentRecordColumns, spacing: 10)", target_record)
         self.assertIn("ForEach(visibleSentRecords)", target_record)
+        sent_columns = section(
+            family,
+            "private var sentRecordColumns:",
+            "private var visibleSentRecords:",
+        )
+        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 1 : 2", sent_columns)
+        self.assertIn("GridItem(.flexible(minimum: 0)", sent_columns)
         self.assertIn("if let focusedSentMomentID", family)
         self.assertIn("records.insert(target, at: records.startIndex)", family)
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
@@ -2709,20 +2716,39 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("receivedSectionContent", paired)
         self.assertIn("sentSectionContent", paired)
         self.assertIn("sendPhotoAction", paired)
-        self.assertEqual(paired.count("sendPhotoAction"), 1)
+        self.assertEqual(paired.count("sendPhotoAction"), 2)
+
+        received_start = paired.index(
+            "if model.isReportOnly || selectedSection == .received {"
+        )
+        priority_start = paired.index(
+            "} else if prioritizesNotificationTarget {",
+            received_start,
+        )
+        ordinary_start = paired.index("} else {", priority_start)
+        received_branch = paired[received_start:priority_start]
+        notification_target_branch = paired[priority_start:ordinary_start]
+        ordinary_sent_branch = paired[ordinary_start:]
+
+        self.assertIn("receivedSectionContent", received_branch)
+        self.assertNotIn("sendPhotoAction", received_branch)
         self.assertLess(
-            paired.index('Picker("まどに表示する内容"'),
-            paired.index("sendPhotoAction"),
+            notification_target_branch.index("sentSectionContent"),
+            notification_target_branch.index("sendPhotoAction"),
         )
         self.assertLess(
-            paired.index("sendPhotoAction"),
-            paired.index("receivedSectionContent"),
+            ordinary_sent_branch.index("sendPhotoAction"),
+            ordinary_sent_branch.index("sentSectionContent"),
         )
-        self.assertLess(
-            paired.index("sendPhotoAction"),
-            paired.index("sentSectionContent"),
+
+        notification_priority = section(
+            family,
+            "private var prioritizesNotificationTarget:",
+            "@ViewBuilder\n    private var receivedSectionContent",
         )
-        self.assertNotIn("prioritizesNotificationTarget", family)
+        self.assertIn("pendingNotificationRoute?.kind == .heart", notification_priority)
+        self.assertIn("pendingNotificationRoute?.target != nil", notification_priority)
+        self.assertIn("focusedSentMomentID != nil", notification_priority)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
             family,
@@ -2854,13 +2880,24 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func sentRecordCard(",
             "private func outgoingStatusCard(",
         )
-        self.assertIn('arrived ? "相手のiPhoneへ到着" : "サーバー受付済み"', sent)
-        self.assertIn('Label("ハートが届きました", systemImage: "heart.fill")', sent)
+        self.assertIn("sentRecordPhotoSurface(record)", sent)
+        self.assertIn('arrived ? "到着" : "受付済み"', sent)
+        self.assertIn('sentRecordBadge("ハート", systemImage: "heart.fill")', sent)
+        self.assertIn("private func sentRecordBadge(", sent)
+        self.assertIn(".font(.caption2.bold())", sent)
+        self.assertIn(".background(.black.opacity(0.48), in: Capsule())", sent)
+
+        sent_photo = section(
+            family,
+            "private func sentRecordPhotoSurface(",
+            "private func sentRecordAccessibilityLabel(",
+        )
+        self.assertIn("if let thumbnail = sentRecordThumbnail(record)", sent_photo)
         self.assertIn(".scaledToFill()", sent)
-        self.assertIn(".frame(width: 72, height: 72)", sent)
-        self.assertNotIn(".aspectRatio(1, contentMode: .fit)", sent)
-        self.assertIn("if thumbnail == nil", sent)
-        self.assertIn(".fixedSize(horizontal: false, vertical: true)", sent)
+        self.assertIn('Text("プレビューなし")', sent_photo)
+        self.assertIn(".aspectRatio(1, contentMode: .fit)", sent_photo)
+        self.assertNotIn(".frame(width: 72, height: 72)", sent)
+        self.assertNotIn("LazyVStack", sent)
         self.assertNotIn("閲覧・既読の確認ではありません", sent)
         self.assertIn("sentRecordAccessibilityLabel(record)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)

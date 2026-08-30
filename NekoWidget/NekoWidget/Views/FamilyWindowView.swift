@@ -488,8 +488,6 @@ struct FamilyWindowView: View {
                         notificationAccessibilityFocus = nil
                     }
 
-                    sendPhotoAction
-
                     if pendingNotificationRoute?.target != nil {
                         notificationRouteResolutionCard
                     }
@@ -503,7 +501,14 @@ struct FamilyWindowView: View {
 
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
+                } else if prioritizesNotificationTarget {
+                    // A notification is an explicit request to see one sent
+                    // photo. Keep that photo ahead of the ordinary delivery
+                    // action instead of hiding it below the primary CTA.
+                    sentSectionContent
+                    sendPhotoAction
                 } else {
+                    sendPhotoAction
                     sentSectionContent
                 }
             }
@@ -521,6 +526,12 @@ struct FamilyWindowView: View {
                 .accessibilityLabel("まどの設定")
             }
         }
+    }
+
+    private var prioritizesNotificationTarget: Bool {
+        (pendingNotificationRoute?.kind == .heart
+            && pendingNotificationRoute?.target != nil)
+            || focusedSentMomentID != nil
     }
 
     @ViewBuilder
@@ -1195,7 +1206,7 @@ struct FamilyWindowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    LazyVStack(spacing: 10) {
+                    LazyVGrid(columns: sentRecordColumns, spacing: 10) {
                         ForEach(visibleSentRecords) { record in
                             sentRecordCard(record)
                         }
@@ -1236,6 +1247,14 @@ struct FamilyWindowView: View {
             || !model.outgoingPresentation.outcomes.isEmpty
             || (model.outgoingPresentation.sentRecords.isEmpty
                 && model.outgoingPresentation.latestServerAcceptance != nil)
+    }
+
+    private var sentRecordColumns: [GridItem] {
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        return Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 10),
+            count: count
+        )
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
@@ -1299,68 +1318,45 @@ struct FamilyWindowView: View {
     private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
         let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
         let statusDate = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
-        let thumbnail = sentRecordThumbnail(record)
         let accessibilityFocusID = record.momentID ?? "sent-record-\(record.id)"
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
 
-        return HStack(alignment: .center, spacing: 12) {
-            if let thumbnail {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 72, height: 72)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .accessibilityHidden(true)
-            } else {
-                Image(systemName: arrived ? "iphone" : "server.rack")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(arrived ? Color.green : Color.accentColor)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        (arrived ? Color.green : Color.accentColor).opacity(0.12),
-                        in: Circle()
-                    )
-                    .accessibilityHidden(true)
-            }
+        return ZStack(alignment: .bottomLeading) {
+            sentRecordPhotoSurface(record)
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.76)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 5) {
-                Label(
-                    arrived ? "相手のiPhoneへ到着" : "サーバー受付済み",
-                    systemImage: arrived ? "iphone" : "server.rack"
-                )
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(arrived ? Color.green : Color.primary)
-                .fixedSize(horizontal: false, vertical: true)
-
-                if record.hasReceivedHeart {
-                    Label("ハートが届きました", systemImage: "heart.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
-                        .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 5) {
+                    sentRecordBadge(
+                        arrived ? "到着" : "受付済み",
+                        systemImage: arrived ? "iphone" : "server.rack"
+                    )
+                    if record.hasReceivedHeart {
+                        sentRecordBadge("ハート", systemImage: "heart.fill")
+                    }
                 }
 
                 Text(statusDate.formatted(
                     .dateTime.month().day().hour().minute()
                 ))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                if thumbnail == nil {
-                    Text("写真のプレビューはこのiPhoneに残っていません")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
         }
-        .padding(12)
         .background(
             Color(uiColor: .secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 16)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
@@ -1382,6 +1378,46 @@ struct FamilyWindowView: View {
             equals: accessibilityFocusID
         )
         .accessibilityIdentifier("family-window-sent-record-\(record.id)")
+    }
+
+    private func sentRecordBadge(
+        _ title: String,
+        systemImage: String
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption2.bold())
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.48), in: Capsule())
+    }
+
+    private func sentRecordPhotoSurface(
+        _ record: MomentSentRecordPresentation
+    ) -> some View {
+        ZStack {
+            Color(uiColor: .tertiarySystemGroupedBackground)
+            if let thumbnail = sentRecordThumbnail(record) {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 7) {
+                    Image(systemName: "photo")
+                        .font(.title2)
+                    Text("プレビューなし")
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
+        .accessibilityHidden(true)
     }
 
     private func sentRecordAccessibilityLabel(
