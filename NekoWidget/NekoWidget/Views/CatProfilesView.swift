@@ -139,7 +139,10 @@ struct CatProfilesView: View {
         } header: {
             Text("プロフィール")
         } footer: {
-            Text("猫ごとに分けるかどうかは任意です。アプリが写真だけで個体を決めることはありません。")
+            VStack(alignment: .leading, spacing: 4) {
+                Text(CatIndividualRecognitionCopy.unavailable)
+                Text("猫ごとに分けるかどうかは任意です。")
+            }
         }
     }
 
