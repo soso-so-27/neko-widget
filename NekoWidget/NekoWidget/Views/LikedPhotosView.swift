@@ -524,6 +524,7 @@ struct LikedPhotosView: View {
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
     let monthlyWindowCollection: MonthlyWindowCollectionPresentation?
+    let latestMonthlyWindowIsUnread: Bool
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let automaticAlbumPreviewPhotos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
@@ -791,13 +792,17 @@ struct LikedPhotosView: View {
         _ presentation: MonthlyWindowPresentation
     ) -> some View {
         NavigationLink(value: MemoriesRoute.monthlyWindow(presentation)) {
-            MonthlySummaryHeroCard(presentation: presentation)
+            MonthlySummaryHeroCard(
+                presentation: presentation,
+                isUnread: latestMonthlyWindowIsUnread
+            )
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
         .accessibilityIdentifier("memories-monthly-window")
         .accessibilityLabel(
             "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
+                + (latestMonthlyWindowIsUnread ? "、未読" : "")
         )
         .accessibilityHint("小さな便りを開きます")
     }
@@ -977,6 +982,7 @@ struct LikedPhotosView: View {
 
 private struct MonthlySummaryHeroCard: View {
     let presentation: MonthlyWindowPresentation
+    let isUnread: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -986,8 +992,19 @@ private struct MonthlySummaryHeroCard: View {
                 .clipped()
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(presentation.title)
-                    .font(.title2.bold())
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(presentation.title)
+                        .font(.title2.bold())
+
+                    if isUnread {
+                        Text("未読")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    }
+                }
                 Text(detailText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

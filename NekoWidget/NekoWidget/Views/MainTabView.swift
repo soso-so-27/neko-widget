@@ -23,7 +23,8 @@ private struct SeasonalMoviePreparationKey: Hashable {
 private struct MonthlyWindowCollectionKey: Hashable {
     let canBuild: Bool
     let currentMonthStart: Date?
-    let photoDigest: Int
+    let sourceAlbumIdentifier: String?
+    let photoPresentationVersion: LibraryPresentationVersion
 }
 
 struct MainTabView: View {
@@ -33,6 +34,7 @@ struct MainTabView: View {
     let likedPhotos: [PhotoPresentation]
     let catPhotos: [PhotoPresentation]
     let libraryPhotos: [PhotoPresentation]
+    let photoPresentationVersion: LibraryPresentationVersion
     let scan: ScanPresentation
     let albumState: AlbumPresentationState
     let settings: SettingsPresentation
@@ -86,6 +88,8 @@ struct MainTabView: View {
     @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     @State private var completedMonthlyWindowCollectionKey: MonthlyWindowCollectionKey?
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
+    @AppStorage(MonthlyWindowReadReceipt.storageKey)
+    private var readMonthlyWindowPeriodIdentifier = ""
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -142,6 +146,7 @@ struct MainTabView: View {
                     photos: likedPhotos,
                     hasPhotoAccess: hasPhotoAccess,
                     monthlyWindowCollection: monthlyWindowCollection,
+                    latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
                     seasonalMovies: seasonalMovieArchive.records,
                     automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos,
                     exportPhotoBook: exportPhotoBook,
@@ -156,6 +161,7 @@ struct MainTabView: View {
                 Label("思い出", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
             }
+            .badge(latestMonthlyWindowIsUnread ? 1 : 0)
             .tag(AppTab.memories)
         }
         .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
@@ -368,6 +374,9 @@ struct MainTabView: View {
                 presentation: refreshedMonthlyWindow(snapshot),
                 setMemorySaved: setMemorySaved
             )
+            .onAppear {
+                markMonthlyWindowReadIfLatest(snapshot)
+            }
         }
     }
 
@@ -565,19 +574,24 @@ struct MainTabView: View {
     }
 
     private var monthlyWindowCollectionKey: MonthlyWindowCollectionKey {
+        let sourceAlbumIdentifier: String?
         let sourceIsAvailable: Bool
         switch photoSourceStatus {
-        case .allLibrary, .selected:
+        case .allLibrary:
+            sourceAlbumIdentifier = nil
+            sourceIsAvailable = true
+        case let .selected(album):
+            sourceAlbumIdentifier = album.localIdentifier
             sourceIsAvailable = true
         case .unavailable:
+            sourceAlbumIdentifier = nil
             sourceIsAvailable = false
         }
 
-        var hasher = Hasher()
-        for photo in catPhotos {
-            hasher.combine(photo)
-        }
-        let currentMonthStart = Calendar.current.dateInterval(
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = .current
+        let currentMonthStart = calendar.dateInterval(
             of: .month,
             for: Date()
         )?.start
@@ -587,8 +601,31 @@ struct MainTabView: View {
                 && scan.hasFinalResult
                 && !isScanning,
             currentMonthStart: currentMonthStart,
-            photoDigest: hasher.finalize()
+            sourceAlbumIdentifier: sourceAlbumIdentifier,
+            photoPresentationVersion: photoPresentationVersion
         )
+    }
+
+    private var latestMonthlyWindowPeriodIdentifier: String? {
+        monthlyWindowCollection?.letters.first?.periodIdentifier
+    }
+
+    private var latestMonthlyWindowIsUnread: Bool {
+        MonthlyWindowReadReceipt.hasUnread(
+            latestPeriodIdentifier: latestMonthlyWindowPeriodIdentifier,
+            readPeriodIdentifier: readMonthlyWindowPeriodIdentifier
+        )
+    }
+
+    private func markMonthlyWindowReadIfLatest(
+        _ presentation: MonthlyWindowPresentation
+    ) {
+        readMonthlyWindowPeriodIdentifier = MonthlyWindowReadReceipt
+            .readPeriodIdentifier(
+                afterOpening: presentation.periodIdentifier,
+                latestPeriodIdentifier: latestMonthlyWindowPeriodIdentifier,
+                currentReadPeriodIdentifier: readMonthlyWindowPeriodIdentifier
+            )
     }
 
     @MainActor
@@ -605,12 +642,17 @@ struct MainTabView: View {
 
         let photos = catPhotos
         let referenceDate = Date()
-        let collection = await Task.detached(priority: .utility) {
+        let buildTask = Task.detached(priority: .utility) {
             MonthlyWindowBuilder().buildCompletedCollection(
                 from: photos,
                 through: referenceDate
             )
-        }.value
+        }
+        let collection = await withTaskCancellationHandler {
+            await buildTask.value
+        } onCancel: {
+            buildTask.cancel()
+        }
         guard !Task.isCancelled, monthlyWindowCollectionKey == key else {
             return
         }

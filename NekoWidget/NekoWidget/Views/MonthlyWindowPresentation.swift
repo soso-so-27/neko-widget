@@ -13,6 +13,14 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
 
     var id: Date { monthStart }
 
+    /// A calendar-stable receipt key. The read state intentionally tracks only
+    /// the completed year and month, not the selected photo identifiers, so a
+    /// later local-library refresh does not turn an already-read letter back
+    /// into an unread notification.
+    var periodIdentifier: String {
+        String(format: "%04d-%02d", yearNumber, monthNumber)
+    }
+
     var title: String {
         "\(monthNumber)月の小さな便り"
     }
@@ -38,6 +46,34 @@ struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
         photos.filter(\.isLiked).count
     }
 
+}
+
+/// Keeps the latest monthly letter discoverable without introducing an
+/// account, server receipt, notification permission, or a growing unread
+/// counter. Opening an older letter must never clear the newest unread letter.
+enum MonthlyWindowReadReceipt {
+    static let storageKey = "monthlyWindow.latestReadPeriod.v1"
+
+    static func hasUnread(
+        latestPeriodIdentifier: String?,
+        readPeriodIdentifier: String
+    ) -> Bool {
+        guard let latestPeriodIdentifier else { return false }
+        return readPeriodIdentifier.isEmpty
+            || latestPeriodIdentifier > readPeriodIdentifier
+    }
+
+    static func readPeriodIdentifier(
+        afterOpening openedPeriodIdentifier: String,
+        latestPeriodIdentifier: String?,
+        currentReadPeriodIdentifier: String
+    ) -> String {
+        guard openedPeriodIdentifier == latestPeriodIdentifier,
+              openedPeriodIdentifier > currentReadPeriodIdentifier else {
+            return currentReadPeriodIdentifier
+        }
+        return openedPeriodIdentifier
+    }
 }
 
 enum MonthlyWindowUnavailableReason: Hashable, Sendable {
@@ -182,6 +218,9 @@ struct MonthlyWindowBuilder {
         from inputPhotos: [PhotoPresentation],
         through referenceDate: Date
     ) -> MonthlyWindowCollectionPresentation {
+        guard !currentTaskIsCancelled() else {
+            return MonthlyWindowCollectionPresentation(letters: [], unavailable: nil)
+        }
         guard let currentInterval = calendar.dateInterval(
             of: .month,
             for: referenceDate
@@ -197,8 +236,14 @@ struct MonthlyWindowBuilder {
         }
 
         let photos = canonicalPhotos(inputPhotos)
+        guard !currentTaskIsCancelled() else {
+            return MonthlyWindowCollectionPresentation(letters: [], unavailable: nil)
+        }
         var months: [Date: [PhotoPresentation]] = [:]
         for photo in photos {
+            guard !currentTaskIsCancelled() else {
+                return MonthlyWindowCollectionPresentation(letters: [], unavailable: nil)
+            }
             guard let capturedAt = photo.creationDate,
                   capturedAt < currentInterval.start,
                   let monthStart = calendar.dateInterval(
@@ -213,6 +258,7 @@ struct MonthlyWindowBuilder {
         }
         let letters: [MonthlyWindowPresentation] = sortedMonthStarts.compactMap {
             monthStart -> MonthlyWindowPresentation? in
+            guard !currentTaskIsCancelled() else { return nil }
             guard let monthPhotos = months[monthStart] else { return nil }
             guard case let .ready(presentation) = build(
                 from: monthPhotos,
@@ -567,5 +613,11 @@ struct MonthlyWindowBuilder {
             availableSceneCount: availableSceneCount,
             minimumSceneCount: Self.minimumSceneCount
         )
+    }
+
+    private func currentTaskIsCancelled() -> Bool {
+        withUnsafeCurrentTask { task in
+            task?.isCancelled ?? false
+        }
     }
 }

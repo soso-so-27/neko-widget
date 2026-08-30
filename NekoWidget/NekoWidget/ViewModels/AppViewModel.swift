@@ -60,7 +60,7 @@ private actor MomentNotificationRoutingGate {
 
 private let momentNotificationRoutingGate = MomentNotificationRoutingGate()
 
-struct LibraryPresentationVersion: Equatable {
+struct LibraryPresentationVersion: Hashable {
     let snapshotUpdatedAt: Date
     let snapshotAssetCount: Int
     let analysisFingerprint: String

@@ -115,6 +115,8 @@ private func verifyMinimumAndExactDuplicateBoundary() throws {
     try require(proposal.title == "8月の小さな便り", "monthly title changed")
     try require(proposal.accessibilityTitle == "2026年8月の小さな便り",
                 "accessible monthly title lost its year")
+    try require(proposal.periodIdentifier == "2026-08",
+                "monthly read receipt identifier changed")
 
     let fourPlusDuplicate = Array(five.prefix(4)) + [five[0]]
     let insufficient = try unavailable(builder.build(
@@ -127,6 +129,68 @@ private func verifyMinimumAndExactDuplicateBoundary() throws {
                 "automatic-album identifier deduplication was not reused")
     try require(insufficient.remainingSceneCount == 1,
                 "remaining-scene guidance changed")
+}
+
+private func verifyLatestMonthlyLetterReadReceipt() throws {
+    try require(
+        !MonthlyWindowReadReceipt.hasUnread(
+            latestPeriodIdentifier: nil,
+            readPeriodIdentifier: ""
+        ),
+        "a missing monthly letter appeared unread"
+    )
+    try require(
+        MonthlyWindowReadReceipt.hasUnread(
+            latestPeriodIdentifier: "2026-08",
+            readPeriodIdentifier: "2026-07"
+        ),
+        "a newly completed month did not become unread"
+    )
+    try require(
+        !MonthlyWindowReadReceipt.hasUnread(
+            latestPeriodIdentifier: "2026-06",
+            readPeriodIdentifier: "2026-08"
+        ),
+        "an older fallback month was falsely marked unread"
+    )
+
+    let unchanged = MonthlyWindowReadReceipt.readPeriodIdentifier(
+        afterOpening: "2026-07",
+        latestPeriodIdentifier: "2026-08",
+        currentReadPeriodIdentifier: "2026-06"
+    )
+    try require(unchanged == "2026-06",
+                "opening an older letter cleared the latest unread state")
+
+    let didNotRollBack = MonthlyWindowReadReceipt.readPeriodIdentifier(
+        afterOpening: "2026-07",
+        latestPeriodIdentifier: "2026-07",
+        currentReadPeriodIdentifier: "2026-08"
+    )
+    try require(didNotRollBack == "2026-08",
+                "an older fallback month rolled the read receipt backward")
+
+    let read = MonthlyWindowReadReceipt.readPeriodIdentifier(
+        afterOpening: "2026-08",
+        latestPeriodIdentifier: "2026-08",
+        currentReadPeriodIdentifier: "2026-06"
+    )
+    try require(read == "2026-08",
+                "opening the latest letter did not store its read receipt")
+    try require(
+        !MonthlyWindowReadReceipt.hasUnread(
+            latestPeriodIdentifier: "2026-08",
+            readPeriodIdentifier: read
+        ),
+        "the latest letter stayed unread after it was opened"
+    )
+    try require(
+        MonthlyWindowReadReceipt.hasUnread(
+            latestPeriodIdentifier: "2026-09",
+            readPeriodIdentifier: read
+        ),
+        "the next completed month did not become unread"
+    )
 }
 
 private func verifyEmptyAndUnknownDatesFailClosed() throws {
@@ -573,6 +637,7 @@ private func verifyTimingAndFramingKeepDistinctScenesSeparate() throws {
 private struct MonthlyWindowVerifier {
     static func main() throws {
         try verifyMinimumAndExactDuplicateBoundary()
+        try verifyLatestMonthlyLetterReadReceipt()
         try verifyEmptyAndUnknownDatesFailClosed()
         try verifyRepresentativeCapCoverageAndDeterminism()
         try verifyExplicitMemoriesLeadWithinTheirTimeBand()

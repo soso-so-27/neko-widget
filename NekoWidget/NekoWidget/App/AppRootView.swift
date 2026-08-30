@@ -202,6 +202,7 @@ struct AppRootView: View {
             likedPhotos: photoProjection.likedPhotos,
             catPhotos: photoProjection.catPhotos,
             libraryPhotos: photoProjection.libraryPhotos,
+            photoPresentationVersion: viewModel.presentationVersion,
             scan: hasPhotoAccess
                 ? scanPresentation(records: visibleCatAssets)
                 : ScanPresentation(),

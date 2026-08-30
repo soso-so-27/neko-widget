@@ -1019,7 +1019,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("struct MonthlyWindowCollectionKey", main)
         self.assertIn(".task(id: monthlyWindowCollectionKey)", main)
+        self.assertIn("photoPresentationVersion: LibraryPresentationVersion", main)
+        self.assertIn("photoPresentationVersion: photoPresentationVersion", main)
+        collection_key = section(
+            main,
+            "private var monthlyWindowCollectionKey:",
+            "private var latestMonthlyWindowPeriodIdentifier:",
+        )
+        self.assertNotIn("for photo in catPhotos", collection_key)
         self.assertIn("Task.detached(priority: .utility)", main)
+        self.assertIn("withTaskCancellationHandler", main)
+        self.assertIn("buildTask.cancel()", main)
         self.assertIn("completedMonthlyWindowCollectionKey != key", main)
         self.assertIn(
             "monthlyWindowCollection: MonthlyWindowCollectionPresentation?",
@@ -1040,15 +1050,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("static let minimumSceneCount = 5", model)
         self.assertIn("static let maximumSceneCount = 7", model)
         self.assertIn("struct MonthlyWindowCollectionPresentation", model)
+        self.assertIn("enum MonthlyWindowReadReceipt", model)
+        self.assertIn('static let storageKey = "monthlyWindow.latestReadPeriod.v1"', model)
+        self.assertIn("openedPeriodIdentifier == latestPeriodIdentifier", model)
+        self.assertIn("latestPeriodIdentifier > readPeriodIdentifier", model)
         self.assertIn("func buildCompletedCollection(", model)
         self.assertIn("let sortedMonthStarts = months.keys.sorted", model)
         self.assertIn("collapseRapidNearDuplicates", model)
         self.assertIn("boundingBoxIntersectionOverUnion", model)
         self.assertIn("lhs.albumPostures == rhs.albumPostures", model)
         self.assertIn("capturedAt >= interval.start && capturedAt < interval.end", model)
+        self.assertIn("currentTaskIsCancelled()", model)
         self.assertNotIn("URLSession", model)
         self.assertNotIn("UserDefaults", model)
         self.assertNotIn("PHAsset", model)
+
+        self.assertIn("@AppStorage(MonthlyWindowReadReceipt.storageKey)", main)
+        self.assertIn(".badge(latestMonthlyWindowIsUnread ? 1 : 0)", main)
+        self.assertIn("markMonthlyWindowReadIfLatest(snapshot)", main)
+        self.assertIn("latestMonthlyWindowIsUnread: Bool", memories)
+        self.assertNotIn('return "まとめ・未読"', memories)
 
         self.assertIn("写真は送信しません。", view)
         self.assertIn('Button("思い出へ戻る")', view)

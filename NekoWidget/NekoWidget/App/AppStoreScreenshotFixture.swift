@@ -278,6 +278,15 @@ struct AppStoreScreenshotFixtureRootView: View {
             likedPhotos: likedPhotos,
             catPhotos: photos,
             libraryPhotos: photos,
+            photoPresentationVersion: LibraryPresentationVersion(
+                snapshotUpdatedAt: .distantPast,
+                snapshotAssetCount: photos.count,
+                analysisFingerprint: "app-store-screenshot-fixture",
+                curationMutationRevision: 0,
+                identityMutationRevision: nil,
+                sourceResolutionRevision: 0,
+                canPresent: true
+            ),
             scan: scan,
             albumState: .ready(photoCount: photos.count, updatedAt: nil),
             settings: SettingsPresentation(),
