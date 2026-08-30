@@ -1045,31 +1045,63 @@ actor SharingRuntimeSelfTestRunner {
         // so it cannot perturb the destructive terminal-revocation fixture.
         let recoveredOwnerName = try PrivateWindowPresentationStore
             .applySynchronizedOwnerName(
-                displayName: "妻のまど",
+                displayName: "マイファミリー",
                 ownerRevision: 1,
                 pairing: recovered.state,
                 validating: recovered.lifecycleToken
             )
-        guard recoveredOwnerName.displayName == "妻のまど",
+        guard recoveredOwnerName.presentation.displayName == "マイファミリー",
+              recoveredOwnerName.requiresPresentationRefresh,
               let synchronizedCatalog = try PrivateWindowCatalogStore.load(),
               let synchronizedEntry = synchronizedCatalog.windows.first(where: {
                   $0.localWindowID == synchronizedCatalog.activeWindowID
               }),
-              synchronizedEntry.displayName == "妻のまど",
+              synchronizedEntry.displayName == "マイファミリー",
               synchronizedEntry.spaceID == recovered.state.spaceID,
               synchronizedEntry.credentialAccount == recovered.state.credentialAccount
         else { throw PairingError.stateUnavailable }
+
+        // Reproduce the Build 100 split projection seen on a second iPhone:
+        // the authenticated presentation is current, but the window picker
+        // catalog still carries its older local label. Reapplying the exact
+        // accepted owner value must report the catalog repair to the
+        // coordinator so it posts a presentation refresh notification.
+        try SharingLifecycleGate.withValidatedToken(recovered.lifecycleToken) {
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: "妻のまど",
+                spaceID: recovered.state.spaceID,
+                credentialAccount: recovered.state.credentialAccount
+            )
+        }
+        let repairedCatalogMirror = try PrivateWindowPresentationStore
+            .applySynchronizedOwnerName(
+                displayName: "マイファミリー",
+                ownerRevision: 1,
+                pairing: recovered.state,
+                validating: recovered.lifecycleToken
+            )
+        guard repairedCatalogMirror.presentation.displayName == "マイファミリー",
+              !repairedCatalogMirror.presentationDisplayNameChanged,
+              repairedCatalogMirror.catalogMetadataChanged,
+              repairedCatalogMirror.requiresPresentationRefresh,
+              let repairedCatalog = try PrivateWindowCatalogStore.load(),
+              repairedCatalog.windows.first(where: {
+                  $0.localWindowID == repairedCatalog.activeWindowID
+              })?.displayName == "マイファミリー"
+        else { throw PairingError.stateUnavailable }
+
         let staleFallback = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
             displayName: PrivateWindowDisplayName.fallback,
             ownerRevision: 0,
             pairing: recovered.state,
             validating: recovered.lifecycleToken
         )
-        guard staleFallback.displayName == "妻のまど",
+        guard staleFallback.presentation.displayName == "マイファミリー",
+              !staleFallback.requiresPresentationRefresh,
               let catalogAfterStaleFallback = try PrivateWindowCatalogStore.load(),
               catalogAfterStaleFallback.windows.first(where: {
                   $0.localWindowID == catalogAfterStaleFallback.activeWindowID
-              })?.displayName == "妻のまど"
+              })?.displayName == "マイファミリー"
         else { throw PairingError.stateUnavailable }
 
         _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()

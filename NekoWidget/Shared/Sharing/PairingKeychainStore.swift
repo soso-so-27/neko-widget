@@ -469,6 +469,20 @@ struct PrivateWindowPresentationState: Codable, Equatable, Sendable {
     }
 }
 
+/// Describes both local projections affected by an authenticated owner-name
+/// application. Callers must not infer UI refresh work from the presentation
+/// record alone: a recovered/additional device may already have the current
+/// presentation while its device-local window catalog still has a stale name.
+struct PrivateWindowPresentationApplyResult: Equatable, Sendable {
+    let presentation: PrivateWindowPresentationState
+    let presentationDisplayNameChanged: Bool
+    let catalogMetadataChanged: Bool
+
+    var requiresPresentationRefresh: Bool {
+        presentationDisplayNameChanged || catalogMetadataChanged
+    }
+}
+
 enum PrivateWindowPresentationStore {
     /// Missing, stale, or malformed presentation metadata is not sharing
     /// authority. Callers may always fall back without blocking encryption or
@@ -570,7 +584,7 @@ enum PrivateWindowPresentationStore {
         pairing: PairingState,
         validating lifecycleToken: SharingLifecycleGate.Token,
         now: Date = .now
-    ) throws -> PrivateWindowPresentationState {
+    ) throws -> PrivateWindowPresentationApplyResult {
         let displayName = PrivateWindowDisplayName.normalized(rawValue)
         guard ownerRevision >= 0,
               PrivateWindowDisplayName.isValid(displayName),
@@ -596,25 +610,32 @@ enum PrivateWindowPresentationStore {
             // keep showing that fallback after an authenticated owner name
             // has been accepted.
             func mirrorCatalog(
-                _ presentation: PrivateWindowPresentationState
-            ) throws -> PrivateWindowPresentationState {
+                _ presentation: PrivateWindowPresentationState,
+                presentationDisplayNameChanged: Bool
+            ) throws -> PrivateWindowPresentationApplyResult {
                 guard let catalog = try PrivateWindowCatalogStore.load(),
                       let active = catalog.windows.first(where: {
                           $0.localWindowID == catalog.activeWindowID
                       })
                 else { throw PairingError.stateUnavailable }
-                if active.displayName == presentation.displayName,
-                   active.spaceID == currentPairing.spaceID,
-                   active.credentialAccount == currentPairing.credentialAccount {
-                    return presentation
+                let catalogMetadataChanged =
+                    active.displayName != presentation.displayName
+                    || active.spaceID != currentPairing.spaceID
+                    || active.credentialAccount != currentPairing.credentialAccount
+                if catalogMetadataChanged {
+                    try PrivateWindowCatalogStore
+                        .updateActiveMetadataWhileLifecycleLocked(
+                            displayName: presentation.displayName,
+                            spaceID: currentPairing.spaceID,
+                            credentialAccount: currentPairing.credentialAccount,
+                            now: now
+                        )
                 }
-                try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
-                    displayName: presentation.displayName,
-                    spaceID: currentPairing.spaceID,
-                    credentialAccount: currentPairing.credentialAccount,
-                    now: now
+                return PrivateWindowPresentationApplyResult(
+                    presentation: presentation,
+                    presentationDisplayNameChanged: presentationDisplayNameChanged,
+                    catalogMetadataChanged: catalogMetadataChanged
                 )
-                return presentation
             }
             try PrivateWindowCatalogStore
                 .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
@@ -622,16 +643,24 @@ enum PrivateWindowPresentationStore {
                 )
             let loaded = try? loadWhileLifecycleLocked()
             let current = loaded?.pairingBindingSHA256 == currentBinding ? loaded : nil
+            let displayNameBeforeApply = current?.displayName
+                ?? PrivateWindowDisplayName.fallback
 
             if pairing.role == .inviter, let current {
                 if current.storageRevision > ownerRevision {
-                    return try mirrorCatalog(current)
+                    return try mirrorCatalog(
+                        current,
+                        presentationDisplayNameChanged: false
+                    )
                 }
                 if current.storageRevision == ownerRevision {
                     guard current.displayName == displayName else {
                         throw PairingError.stateUnavailable
                     }
-                    return try mirrorCatalog(current)
+                    return try mirrorCatalog(
+                        current,
+                        presentationDisplayNameChanged: false
+                    )
                 }
             }
             let localRevision: Int
@@ -642,7 +671,10 @@ enum PrivateWindowPresentationStore {
                 guard !increment.overflow else { throw PairingError.stateUnavailable }
                 localRevision = increment.partialValue
             } else if let current {
-                return try mirrorCatalog(current)
+                return try mirrorCatalog(
+                    current,
+                    presentationDisplayNameChanged: false
+                )
             } else {
                 localRevision = 0
             }
@@ -659,7 +691,11 @@ enum PrivateWindowPresentationStore {
                   committed.pairingBindingSHA256 == next.pairingBindingSHA256,
                   committed.displayName == next.displayName
             else { throw PairingError.stateUnavailable }
-            return try mirrorCatalog(committed)
+            return try mirrorCatalog(
+                committed,
+                presentationDisplayNameChanged:
+                    committed.displayName != displayNameBeforeApply
+            )
         }
     }
 

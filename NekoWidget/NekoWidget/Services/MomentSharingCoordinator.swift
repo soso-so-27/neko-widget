@@ -1242,17 +1242,13 @@ actor MomentSharingCoordinator {
                 pairing: pairing,
                 validating: lifecycleToken
             ) {
-                let before = PrivateWindowPresentationStore.resolvedDisplayName(
-                    pairing: pairing,
-                    validating: lifecycleToken
-                )
                 let applied = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
                     displayName: displayName,
                     ownerRevision: payload.context.ownerRevision,
                     pairing: pairing,
                     validating: lifecycleToken
                 )
-                changed = applied.displayName != before
+                changed = applied.requiresPresentationRefresh
                 if requiresOwnerResign {
                     // The recovered owner proves continuity by accepting the
                     // predecessor-signed value once, then increments the local
@@ -1342,17 +1338,13 @@ actor MomentSharingCoordinator {
             pairing: pairing,
             validating: lifecycleToken
         ) else { return changed }
-        let before = PrivateWindowPresentationStore.resolvedDisplayName(
-            pairing: pairing,
-            validating: lifecycleToken
-        )
         let applied = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
             displayName: committedName,
             ownerRevision: committedPayload.context.ownerRevision,
             pairing: pairing,
             validating: lifecycleToken
         )
-        return changed || applied.displayName != before
+        return changed || applied.requiresPresentationRefresh
     }
 
     /// A terminal safety window permits report delivery only. This guard is

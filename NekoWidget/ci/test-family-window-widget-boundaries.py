@@ -1598,7 +1598,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "static func applySynchronizedOwnerName(",
             "private static func binding(for pairing: PairingState)",
         )
-        self.assertIn("return try mirrorCatalog(committed)", apply_name)
+        self.assertIn("return try mirrorCatalog(\n                committed,", apply_name)
         self.assertIn("committed.schemaVersion == next.schemaVersion", apply_name)
         self.assertIn("committed.storageRevision == next.storageRevision", apply_name)
         self.assertIn(
@@ -1607,6 +1607,88 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("committed.displayName == next.displayName", apply_name)
         self.assertNotIn("committed == next", apply_name)
+
+    def test_catalog_only_window_name_repair_refreshes_the_window_list(self) -> None:
+        store = source("Shared/Sharing/PairingKeychainStore.swift")
+        apply_result = section(
+            store,
+            "struct PrivateWindowPresentationApplyResult",
+            "enum PrivateWindowPresentationStore",
+        )
+        self.assertIn("let presentationDisplayNameChanged: Bool", apply_result)
+        self.assertIn("let catalogMetadataChanged: Bool", apply_result)
+        self.assertIn(
+            "presentationDisplayNameChanged || catalogMetadataChanged",
+            apply_result,
+        )
+
+        apply_name = section(
+            store,
+            "static func applySynchronizedOwnerName(",
+            "private static func binding(for pairing: PairingState)",
+        )
+        mirror_catalog = section(
+            apply_name,
+            "func mirrorCatalog(",
+            "try PrivateWindowCatalogStore\n                .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(",
+        )
+        self.assertIn(
+            "active.displayName != presentation.displayName",
+            mirror_catalog,
+        )
+        self.assertIn(
+            "active.spaceID != currentPairing.spaceID",
+            mirror_catalog,
+        )
+        self.assertIn(
+            "active.credentialAccount != currentPairing.credentialAccount",
+            mirror_catalog,
+        )
+        self.assertIn("if catalogMetadataChanged", mirror_catalog)
+        self.assertIn(
+            "catalogMetadataChanged: catalogMetadataChanged",
+            mirror_catalog,
+        )
+
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        name_sync = section(
+            coordinator,
+            "private func synchronizeWindowName(\n",
+            "private func requireWindowNameSynchronizationAllowed(",
+        )
+        self.assertIn("changed = applied.requiresPresentationRefresh", name_sync)
+        self.assertIn(
+            "return changed || applied.requiresPresentationRefresh",
+            name_sync,
+        )
+
+        best_effort = section(
+            coordinator,
+            "private func synchronizeWindowNameBestEffort(",
+            "private func synchronizeWindowName(\n",
+        )
+        self.assertIn("if changed", best_effort)
+        self.assertIn(".momentSharingPresentationNeedsRefresh", best_effort)
+
+        main_tab = source("NekoWidget/Views/MainTabView.swift")
+        window_list = section(
+            main_tab,
+            "private struct WindowListView: View",
+            "private struct SubtleWindowThumbnail: View",
+        )
+        refresh_receiver = section(
+            window_list,
+            ".onReceive(\n            NotificationCenter.default.publisher(\n                for: .momentSharingPresentationNeedsRefresh",
+            ".onReceive(\n            NotificationCenter.default.publisher(\n                for: .momentSharingContentNeedsReload",
+        )
+        self.assertIn("Task { await reloadCatalogPresentation() }", refresh_receiver)
+        reload_catalog = section(
+            window_list,
+            "private func reloadCatalogPresentation() async",
+            "private nonisolated static func loadCatalogPresentationSnapshot()",
+        )
+        self.assertIn("windows = snapshot.windows", reload_catalog)
+        self.assertIn("activeWindowID = snapshot.activeWindowID", reload_catalog)
 
     def test_legacy_family_widget_stays_bound_to_migrated_first_window(self) -> None:
         configuration = source("NekoWidgetWidget/NekoWidgetConfigurationIntent.swift")
