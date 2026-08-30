@@ -900,14 +900,19 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('case .summaries: "まとめ"', memories)
         self.assertNotIn('Text("残した写真")', memory_view)
         self.assertIn("MemoriesRoute.monthlyWindow(presentation)", memory_view)
-        self.assertIn('Label("季節の作品", systemImage: "film.stack")', memory_view)
+        self.assertIn('Text("季節のムービー")', memory_view)
         self.assertIn(
             'Label("かたちにする", systemImage: "square.and.arrow.up")',
             memory_view,
         )
-        self.assertIn("creationPreviewCard", memory_view)
-        self.assertIn('Text("準備中・カード・卓上・小さな本")', memory_view)
-        self.assertIn('accessibilityIdentifier("memory-creation-preview")', memory_view)
+        self.assertNotIn("creationPreviewCard", memory_view)
+        self.assertNotIn('Text("準備中・カード・卓上・小さな本")', memory_view)
+        self.assertNotIn('accessibilityIdentifier("memory-creation-preview")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-latest-summary")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-summary-empty-state")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-seasonal-movies")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-open-automatic-albums")', memory_view)
+        self.assertIn("AutomaticAlbumPreview(", memory_view)
         self.assertIn('Picker("表示する思い出"', memory_view)
         self.assertIn('.pickerStyle(.segmented)', memory_view)
         self.assertIn('accessibilityIdentifier("memories-section-picker")', memory_view)
@@ -915,7 +920,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
         self.assertNotIn("showsCreationPreview", memory_view)
         self.assertIn("case monthlyWindow(MonthlyWindowPresentation)", main_tab)
-        self.assertIn("monthlyWindow: currentMonthlyWindow", main_tab)
+        self.assertIn("monthlyWindowResult: currentMonthlyWindowResult", main_tab)
+        self.assertIn(
+            "automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos",
+            main_tab,
+        )
         self.assertIn("presentation: refreshedMonthlyWindow(snapshot)", main_tab)
 
         self.assertNotIn("MemoryCreationPreviewSheet", memories)
@@ -944,7 +953,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             'accessibilityIdentifier("memories-create-from-photos-action")',
             memory_view,
         )
-        self.assertEqual(memory_view.count(".accessibilityAddTraits(.isHeader)"), 2)
+        self.assertIn('identifier: "memories-latest-summary-title"', memory_view)
+        self.assertIn('identifier: "memories-automatic-albums-title"', memory_view)
         self.assertIn('accessibilityIdentifier("memories-saved-section")', memory_view)
         self.assertIn('accessibilityIdentifier("memories-summaries-section")', memory_view)
 
@@ -982,6 +992,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("from: catPhotos", main)
         self.assertIn("buildMostRecent", main)
         self.assertIn("through: Date()", main)
+        self.assertIn("currentMonthlyWindowResult: MonthlyWindowBuildResult?", main)
+        self.assertIn("if case .unavailable = result, !scan.hasFinalResult", main)
+        self.assertIn("monthlyWindowResult: MonthlyWindowBuildResult?", memories)
+        self.assertIn("presentation.remainingSceneCount.formatted()", memories)
         photos_routes = section(main, "enum PhotosRoute:", "enum MemoriesRoute:")
         memory_routes = section(
             main,
@@ -1109,6 +1123,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('Text("できました")', view)
         self.assertNotIn("ができました", view)
         self.assertIn('Text("季節の作品")', view)
+        self.assertIn('の季節のムービー、\\(presentation.scenes.count)場面', view)
         self.assertIn("nextWorkDescription", view)
         self.assertIn('return "次は\\(releaseMonth)月ごろ', view)
         self.assertIn("SeasonalMovieAboutSheet", view)
@@ -1434,6 +1449,27 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("case automaticAlbums", memory_routes)
         self.assertNotIn("PhotosRoute.automaticAlbums", home)
         self.assertIn("MemoriesRoute.automaticAlbums", memories)
+        self.assertIn("AutomaticAlbumPreview(", memories)
+        self.assertIn(
+            "automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos",
+            main_tab,
+        )
+        preview_source = section(
+            main_tab,
+            "private var automaticAlbumPreviewPhotos: [PhotoPresentation]",
+            "private var seasonalMoviePreparationKey:",
+        )
+        self.assertIn("from: catPhotos", preview_source)
+        self.assertIn("CuratedAlbumGroup.time", preview_source)
+        self.assertIn(".cuteness", preview_source)
+        self.assertIn(".special", preview_source)
+        self.assertIn("group == .time ? section.albums.last", preview_source)
+        self.assertIn("seenIdentifiers.insert(photo.localIdentifier)", preview_source)
+        self.assertIn("if result.count == 4", preview_source)
+        self.assertIn('Text("年・近くで・特別な日")', memories)
+        self.assertNotIn('Text("成長・年・特別な日")', memories)
+        self.assertIn("photos.count == 2", memories)
+        self.assertIn("photos.count == 3", memories)
 
     def test_named_window_is_presentation_only_and_migration_safe(self) -> None:
         container = source("Shared/AppGroup/SharedContainer.swift")

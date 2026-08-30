@@ -214,7 +214,9 @@ struct SeasonalMovieArchiveCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .contentShape(RoundedRectangle(cornerRadius: 22))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(presentation.periodTitle)の季節の作品")
+        .accessibilityLabel(
+            "\(presentation.periodTitle)の季節のムービー、\(presentation.scenes.count)場面"
+        )
         .accessibilityHint("開くと再生します")
     }
 }

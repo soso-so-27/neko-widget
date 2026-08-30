@@ -133,8 +133,9 @@ struct MainTabView: View {
                 LikedPhotosView(
                     photos: likedPhotos,
                     hasPhotoAccess: hasPhotoAccess,
-                    monthlyWindow: currentMonthlyWindow,
+                    monthlyWindowResult: currentMonthlyWindowResult,
                     seasonalMovies: seasonalMovieArchive.records,
+                    automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos,
                     exportPhotoBook: exportPhotoBook,
                     showSettings: { showsSettings = true }
                 )
@@ -517,13 +518,51 @@ struct MainTabView: View {
         return sections
     }
 
-    private var currentMonthlyWindow: MonthlyWindowPresentation? {
+    private var currentMonthlyWindowResult: MonthlyWindowBuildResult? {
+        guard hasPhotoAccess else { return nil }
         let result = MonthlyWindowBuilder().buildMostRecent(
             from: catPhotos,
             through: Date()
         )
-        guard case let .ready(presentation) = result else { return nil }
-        return presentation
+        if case .unavailable = result, !scan.hasFinalResult {
+            return nil
+        }
+        return result
+    }
+
+    private var automaticAlbumPreviewPhotos: [PhotoPresentation] {
+        let sections = CuratedAlbumBuilder().sections(
+            from: catPhotos,
+            lifeReference: nil,
+            includesGrowth: false
+        )
+        let themedCovers = [
+            CuratedAlbumGroup.time,
+            .cuteness,
+            .special,
+        ].compactMap { group -> PhotoPresentation? in
+            guard let section = sections.first(where: { $0.id == group }) else {
+                return nil
+            }
+            let album = group == .time ? section.albums.last : section.albums.first
+            return album?.coverPhoto
+        }
+        let allPhotos = sections
+            .first(where: { $0.id == .all })?
+            .albums
+            .first(where: { $0.id == .allCatPhotos })?
+            .photos ?? catPhotos
+
+        var seenIdentifiers = Set<String>()
+        var result: [PhotoPresentation] = []
+        for photo in themedCovers + allPhotos {
+            guard seenIdentifiers.insert(photo.localIdentifier).inserted else {
+                continue
+            }
+            result.append(photo)
+            if result.count == 4 { break }
+        }
+        return result
     }
 
     private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {

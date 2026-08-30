@@ -516,15 +516,16 @@ private enum MemoriesSection: String, CaseIterable, Identifiable {
 
 /// The entry point for photos the user deliberately kept as memories.
 /// The complete manual collection stays directly visible, while automatic
-/// reflections and future forms live in a separate summary pane. PDF creation
-/// begins from the explicit photo-selection action in the photo pane.
+/// reflections and thematic browsing live in a separate summary pane. PDF
+/// creation begins from the explicit photo-selection action in the photo pane.
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
-    let monthlyWindow: MonthlyWindowPresentation?
+    let monthlyWindowResult: MonthlyWindowBuildResult?
     let seasonalMovies: [SeasonalMovieArchiveRecord]
+    let automaticAlbumPreviewPhotos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
     let showSettings: () -> Void
 
@@ -673,17 +674,15 @@ struct LikedPhotosView: View {
     }
 
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 28) {
             if hasPhotoAccess {
-                if let monthlyWindow {
-                    monthlyWindowCard(monthlyWindow)
-                }
+                latestSummarySection
 
                 if !seasonalMovies.isEmpty {
-                    seasonalMovieSection
+                    seasonalMovieSection(seasonalMovies)
                 }
 
-                automaticAlbumsCard
+                automaticAlbumsSection
             } else {
                 HStack(spacing: 12) {
                     Image(systemName: "photo.badge.exclamationmark")
@@ -700,61 +699,52 @@ struct LikedPhotosView: View {
                 )
                 .padding(.horizontal, 16)
             }
-
-            creationPreviewCard
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("まとめ")
-        .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("memories-summaries-section")
+    }
+
+    private var latestSummarySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            summarySectionTitle(
+                "月の便り",
+                identifier: "memories-latest-summary-title"
+            )
+
+            if let monthlyWindow = readyMonthlyWindow {
+                monthlyWindowCard(monthlyWindow)
+            } else {
+                summaryEmptyState
+            }
+        }
+        .accessibilityIdentifier("memories-latest-summary")
+    }
+
+    private var readyMonthlyWindow: MonthlyWindowPresentation? {
+        guard let monthlyWindowResult,
+              case let .ready(presentation) = monthlyWindowResult else {
+            return nil
+        }
+        return presentation
+    }
+
+    private func summarySectionTitle(
+        _ title: String,
+        identifier: String
+    ) -> some View {
+        Text(title)
+            .font(.title3.bold())
+            .padding(.horizontal, 16)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier(identifier)
     }
 
     private func monthlyWindowCard(
         _ presentation: MonthlyWindowPresentation
     ) -> some View {
         NavigationLink(value: MemoriesRoute.monthlyWindow(presentation)) {
-            HStack(spacing: 0) {
-                Group {
-                    if let cover = presentation.coverPhoto {
-                        PhotoAssetImageView(
-                            localIdentifier: cover.localIdentifier,
-                            catBoundingBox: cover.catBoundingBox,
-                            targetPixelSize: CGSize(width: 360, height: 360),
-                            targetAspectRatio: 1
-                        )
-                    } else {
-                        Image(systemName: "envelope.open")
-                            .font(.title2)
-                            .foregroundStyle(Color.accentColor)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(Color.accentColor.opacity(0.10))
-                    }
-                }
-                .frame(width: 104, height: 104)
-                .clipped()
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(presentation.title)
-                        .font(.headline)
-                    Text("\(presentation.photos.count.formatted())枚の小さな便り")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 14)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 18)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+            MonthlySummaryHeroCard(presentation: presentation)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
@@ -765,51 +755,102 @@ struct LikedPhotosView: View {
         .accessibilityHint("小さな便りを開きます")
     }
 
-    private var automaticAlbumsCard: some View {
-        NavigationLink(value: MemoriesRoute.automaticAlbums) {
-            HStack(spacing: 13) {
-                Image(systemName: "rectangle.stack.fill")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 38, height: 38)
-                    .background(
-                        Color.accentColor.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 11)
-                    )
+    private var summaryEmptyState: some View {
+        HStack(spacing: 13) {
+            Image(systemName: "sparkles.rectangle.stack")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 42, height: 42)
+                .background(
+                    Color.accentColor.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("自動アルバム")
-                        .font(.headline)
-                    Text("テーマごとに写真を見る")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("次のまとめを準備中")
+                    .font(.headline)
+                Text(summaryEmptyMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 18)
-            )
         }
-        .buttonStyle(.plain)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 18)
+        )
         .padding(.horizontal, 16)
-        .accessibilityIdentifier("memories-open-automatic-albums")
-        .accessibilityHint("自動で整理された猫写真を開きます")
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("memories-summary-empty-state")
     }
 
-    private var seasonalMovieSection: some View {
+    private var summaryEmptyMessage: String {
+        guard let monthlyWindowResult,
+              case let .unavailable(presentation) = monthlyWindowResult else {
+            return "写真を確認しています"
+        }
+        switch presentation.reason {
+        case .noDatedPhotos:
+            return "写真がそろうと、ここに月の便りができます"
+        case .notEnoughDistinctScenes:
+            return "あと\(presentation.remainingSceneCount.formatted())場面で、月の便りができます"
+        }
+    }
+
+    private var automaticAlbumsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            summarySectionTitle(
+                "テーマから見る",
+                identifier: "memories-automatic-albums-title"
+            )
+
+            NavigationLink(value: MemoriesRoute.automaticAlbums) {
+                HStack(spacing: 14) {
+                    AutomaticAlbumPreview(
+                        photos: automaticAlbumPreviewPhotos
+                    )
+                    .frame(width: 104, height: 104)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("自動アルバム")
+                            .font(.headline)
+                        Text("年・近くで・特別な日")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 14)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 18)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("memories-open-automatic-albums")
+            .accessibilityLabel("自動アルバム。年、近くで、特別な日")
+            .accessibilityHint("自動で整理された猫写真を開きます")
+        }
+    }
+
+    private func seasonalMovieSection(
+        _ records: [SeasonalMovieArchiveRecord]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 11) {
-            HStack {
-                Label("季節の作品", systemImage: "film.stack")
-                    .font(.headline)
+            HStack(alignment: .firstTextBaseline) {
+                Text("季節のムービー")
+                    .font(.title3.bold())
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text("このiPhoneだけ")
                     .font(.caption.weight(.semibold))
@@ -819,7 +860,7 @@ struct LikedPhotosView: View {
 
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 12) {
-                    ForEach(seasonalMovies) { record in
+                    ForEach(records) { record in
                         NavigationLink(
                             value: MemoriesRoute.seasonalMovie(record.periodID)
                         ) {
@@ -837,41 +878,169 @@ struct LikedPhotosView: View {
         .accessibilityIdentifier("memories-seasonal-movies")
     }
 
-    private var creationPreviewCard: some View {
-        HStack(spacing: 13) {
-            Image(systemName: "square.grid.2x2")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 38, height: 38)
-                .background(
-                    Color.secondary.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 11)
-                )
+}
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("これからできるもの")
-                    .font(.headline)
+private struct MonthlySummaryHeroCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-                Text("準備中・カード・卓上・小さな本")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
+    let presentation: MonthlyWindowPresentation
+
+    var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibilityLayout
+            } else {
+                overlayLayout
             }
-
-            Spacer(minLength: 4)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 18)
+            in: RoundedRectangle(cornerRadius: 22)
         )
-        .padding(.horizontal, 16)
-        .accessibilityIdentifier("memory-creation-preview")
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("これからできるもの。カード、卓上、小さな本。準備中")
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .contentShape(RoundedRectangle(cornerRadius: 22))
     }
 
+    private var overlayLayout: some View {
+        ZStack(alignment: .bottomLeading) {
+            coverImage
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.82)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("月の便り")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(.black.opacity(0.38), in: Capsule())
+                Text(presentation.title)
+                    .font(.title2.bold())
+                Text(detailText)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+            .foregroundStyle(.white)
+            .padding(18)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 218)
+    }
+
+    private var accessibilityLayout: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            coverImage
+                .frame(maxWidth: .infinity)
+                .frame(height: 164)
+                .clipped()
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("月の便り")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.10), in: Capsule())
+                Text(presentation.title)
+                    .font(.title2.bold())
+                Text(detailText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var coverImage: some View {
+        if let cover = presentation.coverPhoto {
+            PhotoAssetImageView(
+                localIdentifier: cover.localIdentifier,
+                catBoundingBox: cover.catBoundingBox,
+                targetPixelSize: CGSize(width: 1_080, height: 720),
+                targetAspectRatio: 3.0 / 2.0
+            )
+        } else {
+            Image(systemName: "envelope.open")
+                .font(.largeTitle)
+                .foregroundStyle(Color.accentColor)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.accentColor.opacity(0.10))
+        }
+    }
+
+    private var detailText: String {
+        "\(presentation.yearNumber)年・\(presentation.photos.count.formatted())枚"
+    }
+}
+
+private struct AutomaticAlbumPreview: View {
+    let photos: [PhotoPresentation]
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 2),
+        GridItem(.flexible(), spacing: 2),
+    ]
+
+    var body: some View {
+        Group {
+            if photos.isEmpty {
+                Image(systemName: "rectangle.stack.fill")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.accentColor.opacity(0.10))
+            } else if photos.count == 1, let photo = photos.first {
+                previewPhoto(photo)
+                    .aspectRatio(1, contentMode: .fill)
+            } else if photos.count == 2 {
+                HStack(spacing: 2) {
+                    ForEach(photos) { photo in
+                        previewPhoto(photo)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+            } else if photos.count == 3 {
+                HStack(spacing: 2) {
+                    previewPhoto(photos[0])
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: 2) {
+                        previewPhoto(photos[1])
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        previewPhoto(photos[2])
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+            } else {
+                LazyVGrid(columns: columns, spacing: 2) {
+                    ForEach(Array(photos.prefix(4))) { photo in
+                        previewPhoto(photo)
+                            .aspectRatio(1, contentMode: .fill)
+                    }
+                }
+            }
+        }
+        .background(Color(.tertiarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .accessibilityHidden(true)
+    }
+
+    private func previewPhoto(_ photo: PhotoPresentation) -> some View {
+        PhotoAssetImageView(
+            localIdentifier: photo.localIdentifier,
+            catBoundingBox: photo.catBoundingBox,
+            targetPixelSize: CGSize(width: 320, height: 320),
+            targetAspectRatio: 1
+        )
+        .clipped()
+    }
 }
 
 private struct MemoryPhotoThumbnail: View {
