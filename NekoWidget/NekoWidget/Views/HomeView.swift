@@ -3,8 +3,6 @@ import UIKit
 
 struct HomeView: View {
     let currentPhoto: PhotoPresentation?
-    let seasonalMovie: SeasonalMoviePresentation?
-    let monthlyWindow: MonthlyWindowPresentation?
     let scan: ScanPresentation
     let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
@@ -13,7 +11,6 @@ struct HomeView: View {
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let showSettings: () -> Void
-    let openSeasonalMovie: () -> Void
     let setMemorySaved: (String, Bool) -> Void
     let rescan: () -> Void
 
@@ -26,11 +23,6 @@ struct HomeView: View {
                     todayPhoto
                 } else {
                     photoAccessCard
-                }
-
-                if hasPhotoAccess,
-                   monthlyWindow != nil || seasonalMovie != nil {
-                    reflectionSection
                 }
 
                 if shouldOfferWidgetPlacementGuide {
@@ -135,26 +127,6 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
-    private var reflectionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("最近のふりかえり")
-                .font(.title3.bold())
-
-            if let monthlyWindow {
-                MonthlyWindowCard(presentation: monthlyWindow)
-            }
-
-            if let seasonalMovie {
-                SeasonalMovieCard(
-                    presentation: seasonalMovie,
-                    open: openSeasonalMovie
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier("today-reflections")
-    }
-
     @ViewBuilder
     private var todayPhoto: some View {
         if let currentPhoto {
@@ -184,11 +156,16 @@ struct HomeView: View {
 
                     VStack {
                         Spacer()
-                        HStack {
+                        HStack(alignment: .bottom, spacing: 12) {
+                            Text(todayPhotoContext(currentPhoto))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.92))
+                                .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+
                             Spacer()
                             todayMemoryControl(currentPhoto)
-                                .padding(12)
                         }
+                        .padding(12)
                     }
                 }
                 .aspectRatio(1, contentMode: .fit)
@@ -197,6 +174,14 @@ struct HomeView: View {
         } else {
             emptyPhotoState
         }
+    }
+
+    private func todayPhotoContext(_ photo: PhotoPresentation) -> String {
+        guard let creationDate = photo.creationDate else {
+            return "このiPhoneの写真"
+        }
+        let year = Calendar.current.component(.year, from: creationDate)
+        return "このiPhone・\(year)年"
     }
 
     @ViewBuilder

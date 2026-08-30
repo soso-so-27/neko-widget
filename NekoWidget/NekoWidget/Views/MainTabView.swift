@@ -2,8 +2,6 @@ import SwiftUI
 
 enum TodayRoute: Hashable {
     case photo(String)
-    case seasonalMovie(SeasonalMoviePeriodID)
-    case monthlyWindow(MonthlyWindowPresentation)
 }
 
 enum MemoriesRoute: Hashable {
@@ -86,8 +84,6 @@ struct MainTabView: View {
             NavigationStack(path: $todayPath) {
                 HomeView(
                     currentPhoto: currentPhoto,
-                    seasonalMovie: seasonalMovie,
-                    monthlyWindow: currentMonthlyWindow,
                     scan: scan,
                     hasPhotoAccess: hasPhotoAccess,
                     isLimitedAccess: isLimitedAccess,
@@ -96,12 +92,6 @@ struct MainTabView: View {
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showSettings: { showsSettings = true },
-                    openSeasonalMovie: {
-                        guard let seasonalMovie else { return }
-                        todayPath.append(TodayRoute.seasonalMovie(
-                            SeasonalMoviePeriodID(presentation: seasonalMovie)
-                        ))
-                    },
                     setMemorySaved: setMemorySaved,
                     rescan: { Task { await rescan() } }
                 )
@@ -261,13 +251,6 @@ struct MainTabView: View {
         switch route {
         case let .photo(localIdentifier):
             detailView(for: localIdentifier)
-        case let .seasonalMovie(periodID):
-            seasonalMovieDestination(periodID)
-        case let .monthlyWindow(snapshot):
-            MonthlyWindowView(
-                presentation: refreshedMonthlyWindow(snapshot),
-                setMemorySaved: setMemorySaved
-            )
         }
     }
 

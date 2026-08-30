@@ -1,62 +1,6 @@
 import SwiftUI
 import UIKit
 
-struct MonthlyWindowCard: View {
-    let presentation: MonthlyWindowPresentation
-
-    var body: some View {
-        NavigationLink(value: TodayRoute.monthlyWindow(presentation)) {
-            ZStack(alignment: .bottomLeading) {
-                if let coverPhoto = presentation.coverPhoto {
-                    PhotoAssetImageView(
-                        localIdentifier: coverPhoto.localIdentifier,
-                        catBoundingBox: coverPhoto.catBoundingBox,
-                        targetPixelSize: CGSize(width: 1_000, height: 620),
-                        targetAspectRatio: 16.0 / 10.0
-                    )
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                }
-
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.82)],
-                    startPoint: .center,
-                    endPoint: .bottom
-                )
-
-                HStack(alignment: .bottom, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(presentation.title)
-                            .font(.title3.bold())
-                        Text("猫の写真から\(presentation.photos.count.formatted())枚を選びました")
-                            .font(.subheadline)
-                    }
-                    .foregroundStyle(.white)
-
-                    Spacer(minLength: 4)
-
-                    Image(systemName: "chevron.right")
-                        .font(.subheadline.bold())
-                        .foregroundStyle(.white)
-                        .frame(width: 38, height: 38)
-                        .background(.black.opacity(0.42), in: Circle())
-                }
-                .padding(16)
-            }
-            .frame(maxWidth: .infinity)
-            .aspectRatio(16.0 / 10.0, contentMode: .fit)
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("today-monthly-window")
-        .accessibilityLabel(
-            "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
-        )
-        .accessibilityHint("小さな便りを開きます")
-    }
-}
-
 /// A short, finished photo letter. Opening the card enters one continuous
 /// reading surface; there is no gallery or playback mode to understand first.
 struct MonthlyWindowView: View {
@@ -173,7 +117,7 @@ struct MonthlyWindowView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            Button("今日へ戻る") {
+            Button("思い出へ戻る") {
                 dismiss()
             }
             .buttonStyle(.borderedProminent)

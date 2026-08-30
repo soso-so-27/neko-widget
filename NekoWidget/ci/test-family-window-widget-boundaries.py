@@ -906,22 +906,30 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("if isDedicatedPhotoBookFlow", gallery)
         self.assertIn("dismiss()", gallery)
 
-    def test_monthly_window_is_local_read_only_and_reachable_from_today(self) -> None:
+    def test_monthly_window_is_local_read_only_and_reachable_from_memories_only(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
         main = source("NekoWidget/Views/MainTabView.swift")
+        memories = source("NekoWidget/Views/LikedPhotosView.swift")
         model = source("NekoWidget/Views/MonthlyWindowPresentation.swift")
         view = source("NekoWidget/Views/MonthlyWindowView.swift")
         project = source("NekoWidget.xcodeproj/project.pbxproj")
 
-        self.assertIn("monthlyWindow != nil || seasonalMovie != nil", home)
-        self.assertIn("reflectionSection", home)
-        self.assertIn('Text("最近のふりかえり")', home)
-        self.assertIn("if let monthlyWindow", home)
-        self.assertIn("MonthlyWindowCard(presentation: monthlyWindow)", home)
+        self.assertNotIn("monthlyWindow", home)
+        self.assertNotIn("seasonalMovie", home)
+        self.assertNotIn("reflectionSection", home)
+        self.assertIn("MemoriesRoute.monthlyWindow", memories)
+        self.assertIn('accessibilityIdentifier("memories-reflections-section")', memories)
         self.assertIn("from: catPhotos", main)
         self.assertIn("buildMostRecent", main)
         self.assertIn("through: Date()", main)
-        self.assertIn("case monthlyWindow", main)
+        today_routes = section(main, "enum TodayRoute:", "enum MemoriesRoute:")
+        memory_routes = section(
+            main,
+            "enum MemoriesRoute:",
+            "private struct SeasonalMoviePreparationKey:",
+        )
+        self.assertNotIn("case monthlyWindow", today_routes)
+        self.assertIn("case monthlyWindow", memory_routes)
         self.assertNotIn("case monthlyPhoto", main)
         self.assertIn("refreshedMonthlyWindow(snapshot)", main)
 
@@ -936,6 +944,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("PHAsset", model)
 
         self.assertIn("写真は送信しません。", view)
+        self.assertIn('Button("思い出へ戻る")', view)
         self.assertIn("ScrollView", view)
         self.assertIn("LazyVStack(spacing: 0)", view)
         self.assertIn('Text("この月の便りは、ここまで")', view)
@@ -953,9 +962,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("MonthlyWindowPresentation.swift in Sources", project)
         self.assertIn("MonthlyWindowView.swift in Sources", project)
 
-    def test_seasonal_movie_is_bounded_local_and_reachable_from_today(self) -> None:
+    def test_seasonal_movie_is_bounded_local_and_reachable_from_memories_only(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")
         main = source("NekoWidget/Views/MainTabView.swift")
+        memories = source("NekoWidget/Views/LikedPhotosView.swift")
         model = source("NekoWidget/Views/SeasonalMoviePresentation.swift")
         service = source("NekoWidget/Services/SeasonalMovieCandidateService.swift")
         archive = source("NekoWidget/Services/SeasonalMovieArchiveStore.swift")
@@ -964,11 +974,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         project = source("NekoWidget.xcodeproj/project.pbxproj")
         config = source("Config.xcconfig")
 
-        self.assertIn("monthlyWindow != nil || seasonalMovie != nil", home)
-        self.assertIn("reflectionSection", home)
-        self.assertIn("if let seasonalMovie", home)
-        self.assertIn("SeasonalMovieCard(", home)
-        self.assertIn("case seasonalMovie(SeasonalMoviePeriodID)", main)
+        self.assertNotIn("seasonalMovie", home)
+        self.assertNotIn("reflectionSection", home)
+        self.assertIn("MemoriesRoute.seasonalMovie", memories)
+        today_routes = section(main, "enum TodayRoute:", "enum MemoriesRoute:")
+        memory_routes = section(
+            main,
+            "enum MemoriesRoute:",
+            "private struct SeasonalMoviePreparationKey:",
+        )
+        self.assertNotIn("case seasonalMovie", today_routes)
+        self.assertIn("case seasonalMovie(SeasonalMoviePeriodID)", memory_routes)
         self.assertIn("SeasonalMovieView(", main)
         self.assertIn("seasonalMovies: seasonalMovieArchive.records", main)
         self.assertIn("let service = SeasonalMovieCandidateService()", main)
@@ -2133,6 +2149,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn('Label("思い出", systemImage: "photo.stack.fill")', main_tab)
         self.assertIn('.navigationTitle("今日")', home)
+        self.assertIn('return "このiPhone・\\(year)年"', home)
         self.assertNotIn('.navigationTitle("まど")', home)
         self.assertNotIn("TodayRoute.automaticAlbums", home)
         self.assertNotIn('Text("自動アルバム")', home)
