@@ -674,13 +674,15 @@ struct LikedPhotosView: View {
     }
 
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: 18) {
             if hasPhotoAccess {
                 latestSummarySection
 
-                if !seasonalMovies.isEmpty {
-                    seasonalMovieSection(seasonalMovies)
-                }
+                summarySectionDivider
+
+                seasonalMovieSection(seasonalMovies)
+
+                summarySectionDivider
 
                 automaticAlbumsSection
             } else {
@@ -709,6 +711,8 @@ struct LikedPhotosView: View {
         VStack(alignment: .leading, spacing: 12) {
             summarySectionTitle(
                 "月の便り",
+                subtitle: "直近の月を、写真で振り返る",
+                systemImage: "calendar",
                 identifier: "memories-latest-summary-title"
             )
 
@@ -731,13 +735,50 @@ struct LikedPhotosView: View {
 
     private func summarySectionTitle(
         _ title: String,
+        subtitle: String,
+        systemImage: String,
+        badge: String? = nil,
         identifier: String
     ) -> some View {
-        Text(title)
-            .font(.title3.bold())
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 34, height: 34)
+                .background(
+                    Color.accentColor.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 6)
+
+            if let badge {
+                Text(badge)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color(.tertiarySystemFill), in: Capsule())
+            }
+        }
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var summarySectionDivider: some View {
+        Divider()
             .padding(.horizontal, 16)
-            .accessibilityAddTraits(.isHeader)
-            .accessibilityIdentifier(identifier)
+            .accessibilityHidden(true)
     }
 
     private func monthlyWindowCard(
@@ -802,6 +843,8 @@ struct LikedPhotosView: View {
         VStack(alignment: .leading, spacing: 12) {
             summarySectionTitle(
                 "テーマから見る",
+                subtitle: "成長や写り方から写真を探す",
+                systemImage: "square.grid.2x2",
                 identifier: "memories-automatic-albums-title"
             )
 
@@ -813,9 +856,9 @@ struct LikedPhotosView: View {
                     .frame(width: 104, height: 104)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("自動アルバム")
+                        Text("アルバムを開く")
                             .font(.headline)
-                        Text("テーマごとに写真を見る")
+                        Text("写真は自動でまとまります")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.leading)
@@ -838,7 +881,7 @@ struct LikedPhotosView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .accessibilityIdentifier("memories-open-automatic-albums")
-            .accessibilityLabel("自動アルバム。テーマごとに写真を見る")
+            .accessibilityLabel("テーマから見る。アルバムを開く")
             .accessibilityHint("自動で整理された猫写真を開きます")
         }
     }
@@ -846,34 +889,49 @@ struct LikedPhotosView: View {
     private func seasonalMovieSection(
         _ records: [SeasonalMovieArchiveRecord]
     ) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("季節のムービー")
-                    .font(.title3.bold())
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                Text("このiPhoneだけ")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16)
+        VStack(alignment: .leading, spacing: 12) {
+            summarySectionTitle(
+                "季節のムービー",
+                subtitle: "季節の写真を、短いムービーで見る",
+                systemImage: "play.rectangle",
+                badge: "このiPhone",
+                identifier: "memories-seasonal-movies-title"
+            )
 
-            ScrollView(.horizontal) {
-                LazyHStack(spacing: 12) {
-                    ForEach(records) { record in
-                        NavigationLink(
-                            value: MemoriesRoute.seasonalMovie(record.periodID)
-                        ) {
-                            SeasonalMovieArchiveCard(
-                                presentation: record.effectivePresentation
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
+            if records.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "film")
+                        .foregroundStyle(Color.accentColor)
+                    Text("写真がそろうと表示されます")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 16)
+                )
                 .padding(.horizontal, 16)
+                .accessibilityIdentifier("memories-seasonal-movies-empty-state")
+            } else {
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(records) { record in
+                            NavigationLink(
+                                value: MemoriesRoute.seasonalMovie(record.periodID)
+                            ) {
+                                SeasonalMovieArchiveCard(
+                                    presentation: record.effectivePresentation
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         }
         .accessibilityIdentifier("memories-seasonal-movies")
     }
@@ -887,16 +945,10 @@ private struct MonthlySummaryHeroCard: View {
         VStack(alignment: .leading, spacing: 0) {
             coverImage
                 .frame(maxWidth: .infinity)
-                .frame(height: 178)
+                .frame(height: 148)
                 .clipped()
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("月の便り")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Color.accentColor.opacity(0.10), in: Capsule())
                 Text(presentation.title)
                     .font(.title2.bold())
                 Text(detailText)
