@@ -3,6 +3,7 @@ import UIKit
 
 struct HomeView: View {
     let currentPhoto: PhotoPresentation?
+    let catPhotos: [PhotoPresentation]
     let scan: ScanPresentation
     let hasPhotoAccess: Bool
     let isLimitedAccess: Bool
@@ -13,14 +14,76 @@ struct HomeView: View {
     let showSettings: () -> Void
     let setMemorySaved: (String, Bool) -> Void
     let rescan: () -> Void
+    let excludedCatPhotos: [ExcludedCatPhotoPresentation]
+    let photoSourceAlbums: [PhotoSourceAlbumOption]
+    let photoSourceStatus: PhotoSourceAlbumStatus
+    let restoreCatCandidates: ([String]) async -> Void
+    let selectPhotoSourceAlbum: (String?) async -> Void
+    let refreshPhotoSourceAlbums: () async -> Void
+    let catProfilesPresentation: CatProfilesPresentation
+    let catProfilesActions: CatProfilesViewActions
 
     @State private var pendingMemoryRemovalIdentifier: String?
+    @State private var visibleDetectedPhotoCount = 24
+
+    init(
+        currentPhoto: PhotoPresentation?,
+        scan: ScanPresentation,
+        hasPhotoAccess: Bool,
+        isLimitedAccess: Bool,
+        shouldOfferWidgetPlacementGuide: Bool,
+        requestPhotoAccess: @escaping () -> Void,
+        chooseMorePhotos: @escaping () -> Void,
+        showWidgetPlacementGuide: @escaping () -> Void,
+        showSettings: @escaping () -> Void,
+        setMemorySaved: @escaping (String, Bool) -> Void,
+        rescan: @escaping () -> Void,
+        catPhotos: [PhotoPresentation] = [],
+        excludedCatPhotos: [ExcludedCatPhotoPresentation] = [],
+        photoSourceAlbums: [PhotoSourceAlbumOption] = [],
+        photoSourceStatus: PhotoSourceAlbumStatus = .allLibrary,
+        restoreCatCandidates: @escaping ([String]) async -> Void = { _ in },
+        selectPhotoSourceAlbum: @escaping (String?) async -> Void = { _ in },
+        refreshPhotoSourceAlbums: @escaping () async -> Void = {},
+        catProfilesPresentation: CatProfilesPresentation = .init(),
+        catProfilesActions: CatProfilesViewActions = .noOp
+    ) {
+        self.currentPhoto = currentPhoto
+        self.catPhotos = catPhotos
+        self.scan = scan
+        self.hasPhotoAccess = hasPhotoAccess
+        self.isLimitedAccess = isLimitedAccess
+        self.shouldOfferWidgetPlacementGuide = shouldOfferWidgetPlacementGuide
+        self.requestPhotoAccess = requestPhotoAccess
+        self.chooseMorePhotos = chooseMorePhotos
+        self.showWidgetPlacementGuide = showWidgetPlacementGuide
+        self.showSettings = showSettings
+        self.setMemorySaved = setMemorySaved
+        self.rescan = rescan
+        self.excludedCatPhotos = excludedCatPhotos
+        self.photoSourceAlbums = photoSourceAlbums
+        self.photoSourceStatus = photoSourceStatus
+        self.restoreCatCandidates = restoreCatCandidates
+        self.selectPhotoSourceAlbum = selectPhotoSourceAlbum
+        self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
+        self.catProfilesPresentation = catProfilesPresentation
+        self.catProfilesActions = catProfilesActions
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
                 if hasPhotoAccess {
+                    if isLimitedAccess {
+                        LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
+                    }
+
+                    if !catPhotos.isEmpty {
+                        detectedPhotosSection
+                    }
+
                     todayPhoto
+                    photoLibraryActions
                 } else {
                     photoAccessCard
                 }
@@ -28,15 +91,11 @@ struct HomeView: View {
                 if shouldOfferWidgetPlacementGuide {
                     widgetPlacementCard
                 }
-
-                if hasPhotoAccess, isLimitedAccess {
-                    LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .navigationTitle("今日")
+        .navigationTitle("写真")
         .background(Color(.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -130,50 +189,183 @@ struct HomeView: View {
     @ViewBuilder
     private var todayPhoto: some View {
         if let currentPhoto {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .bottom) {
-                    NavigationLink(value: TodayRoute.photo(currentPhoto.localIdentifier)) {
+            HStack(spacing: 0) {
+                NavigationLink(value: PhotosRoute.photo(currentPhoto.localIdentifier)) {
+                    PhotoAssetImageView(
+                        localIdentifier: currentPhoto.localIdentifier,
+                        catBoundingBox: currentPhoto.catBoundingBox,
+                        targetPixelSize: CGSize(width: 520, height: 520),
+                        targetAspectRatio: 1
+                    )
+                    .frame(width: 132, height: 132)
+                    .clipped()
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("window-current-photo")
+                .accessibilityLabel("今日の一枚")
+                .accessibilityHint("写真を大きく表示します")
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("今日の1枚")
+                        .font(.headline)
+                    Text(todayPhotoContext(currentPhoto))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 2)
+                    todayMemoryControl(currentPhoto)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+            }
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .accessibilityElement(children: .contain)
+        } else if catPhotos.isEmpty {
+            emptyPhotoState
+        }
+    }
+
+    private var detectedPhotosSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("見つけた写真")
+                    .font(.title3.bold())
+                Spacer()
+                Text("\(catPhotos.count.formatted())枚")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3),
+                spacing: 2
+            ) {
+                ForEach(catPhotos.prefix(visibleDetectedPhotoCount)) { photo in
+                    NavigationLink(value: PhotosRoute.collectionPhoto(photo.localIdentifier)) {
                         PhotoAssetImageView(
-                            localIdentifier: currentPhoto.localIdentifier,
-                            catBoundingBox: currentPhoto.catBoundingBox,
-                            targetPixelSize: CGSize(width: 900, height: 900),
+                            localIdentifier: photo.localIdentifier,
+                            catBoundingBox: photo.catBoundingBox,
+                            targetPixelSize: CGSize(width: 360, height: 360),
                             targetAspectRatio: 1
                         )
-                        .frame(maxWidth: .infinity)
                         .aspectRatio(1, contentMode: .fit)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("window-current-photo")
-                    .accessibilityLabel("今日の一枚")
+                    .accessibilityLabel(detectedPhotoAccessibilityLabel(photo))
                     .accessibilityHint("写真を大きく表示します")
-
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.62)],
-                        startPoint: .center,
-                        endPoint: .bottom
-                    )
-                    .allowsHitTesting(false)
-
-                    VStack {
-                        Spacer()
-                        HStack(alignment: .bottom, spacing: 12) {
-                            Text(todayPhotoContext(currentPhoto))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.92))
-                                .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
-
-                            Spacer()
-                            todayMemoryControl(currentPhoto)
-                        }
-                        .padding(12)
-                    }
                 }
-                .aspectRatio(1, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 24))
             }
-        } else {
-            emptyPhotoState
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            if visibleDetectedPhotoCount < catPhotos.count {
+                Button {
+                    visibleDetectedPhotoCount += 24
+                } label: {
+                    Text("もっと見る")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("次の写真を24枚表示します")
+            }
         }
+        .padding(.top, 2)
+        .accessibilityIdentifier("photo-hub-detected-grid")
+    }
+
+    private var photoLibraryActions: some View {
+        VStack(spacing: 0) {
+            NavigationLink {
+                CatCandidateCurationView(
+                    excludedPhotos: excludedCatPhotos,
+                    sourceAlbums: photoSourceAlbums,
+                    sourceStatus: photoSourceStatus,
+                    isLimitedAccess: isLimitedAccess,
+                    isScanning: scan.isScanning,
+                    chooseMorePhotos: chooseMorePhotos,
+                    restoreCatCandidates: restoreCatCandidates,
+                    selectSourceAlbum: selectPhotoSourceAlbum,
+                    refreshSourceAlbums: refreshPhotoSourceAlbums
+                )
+            } label: {
+                photoLibraryActionRow(
+                    title: "写真の対象と整理",
+                    detail: photoSourceDetail,
+                    systemImage: "photo.on.rectangle.angled"
+                )
+            }
+
+            Divider()
+                .padding(.leading, 54)
+
+            NavigationLink {
+                CatProfilesView(
+                    presentation: catProfilesPresentation,
+                    actions: catProfilesActions
+                )
+            } label: {
+                photoLibraryActionRow(
+                    title: "ねこのプロフィール",
+                    detail: profileDetail,
+                    systemImage: "cat.fill"
+                )
+            }
+        }
+        .buttonStyle(.plain)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .accessibilityIdentifier("photo-hub-library-actions")
+    }
+
+    private func photoLibraryActionRow(
+        title: String,
+        detail: String,
+        systemImage: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: 64)
+        .contentShape(Rectangle())
+    }
+
+    private var photoSourceDetail: String {
+        switch photoSourceStatus {
+        case .allLibrary:
+            isLimitedAccess ? "選択した写真から探しています" : "すべての写真から探しています"
+        case let .selected(album):
+            "「\(album.title)」から探しています"
+        case .unavailable:
+            "写真の対象を確認してください"
+        }
+    }
+
+    private var profileDetail: String {
+        if catProfilesPresentation.profiles.isEmpty {
+            return "名前や写真をあとから設定できます"
+        }
+        return "\(catProfilesPresentation.profiles.count.formatted())匹を登録"
+    }
+
+    private func detectedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
+        guard let creationDate = photo.creationDate else { return "撮影日不明の猫写真" }
+        return "\(creationDate.formatted(.dateTime.year().month().day()))の猫写真"
     }
 
     private func todayPhotoContext(_ photo: PhotoPresentation) -> String {
@@ -198,25 +390,22 @@ struct HomeView: View {
                         .accessibilityLabel("思い出の操作")
                 }
             }
-            .font(.subheadline.bold())
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 48)
-            .background(Color.accentColor, in: Capsule())
-            .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 38)
+            .background(Color(.tertiarySystemFill), in: Capsule())
             .accessibilityIdentifier("today-memory-saved-state")
         } else {
             Button {
                 setMemorySaved(photo.localIdentifier, true)
             } label: {
                 Label("思い出に残す", systemImage: "bookmark")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 48)
-                    .background(Color.black.opacity(0.62), in: Capsule())
-                    .shadow(color: .black.opacity(0.20), radius: 8, y: 3)
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
             .accessibilityHint("自分の思い出一覧に残します")
         }
     }

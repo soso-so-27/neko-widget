@@ -14,6 +14,7 @@ enum MomentSharingPresentationVerifier {
         try verifiesHeartNotificationTargetOutsideBoundIsAdmittedOnce()
         try verifiesFamilyWindowSafetyAndOrdering()
         try verifiesFamilyWindowFreshnessBoundary()
+        try verifiesPhotoDeepLinkCompatibility()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
         print("Moment sharing presentation verifier passed")
     }
@@ -614,6 +615,27 @@ enum MomentSharingPresentationVerifier {
             boundary.safeCount == 1 && boundary.latestImageURL == input.imageURL,
             "two-hour expiry incorrectly removed family history"
         )
+    }
+
+    private static func verifiesPhotoDeepLinkCompatibility() throws {
+        guard let legacyURL = URL(string: "nekowidget://photo?id=legacy-photo"),
+              let legacy = DeepLink(url: legacyURL),
+              legacy.destination == .photo(localIdentifier: "legacy-photo"),
+              legacy.shownAt == nil
+        else { throw VerificationError("legacy photo Widget deep link stopped parsing") }
+
+        let shownAtText = "2026-08-30T01:02:03Z"
+        let formatter = ISO8601DateFormatter()
+        guard let expectedShownAt = formatter.date(from: shownAtText),
+              let timestampedURL = URL(
+                string: "nekowidget://photo?id=timestamped-photo&shownAt=\(shownAtText)"
+              ),
+              let timestamped = DeepLink(url: timestampedURL),
+              timestamped.destination == .photo(
+                localIdentifier: "timestamped-photo"
+              ),
+              timestamped.shownAt == expectedShownAt
+        else { throw VerificationError("timestamped photo Widget deep link stopped parsing") }
     }
 
     private static func verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier() throws {

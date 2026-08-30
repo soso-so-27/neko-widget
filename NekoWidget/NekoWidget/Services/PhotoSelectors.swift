@@ -126,7 +126,7 @@ struct WeightedPhotoSelector {
     }
 }
 
-/// The app's "今日" surface is intentionally independent from WidgetKit's
+/// The photo tab's daily suggestion is intentionally independent from WidgetKit's
 /// 10–30 minute timeline. Persist only the local calendar day and selected
 /// Photos identifier so an ordinary reload or process restart cannot turn
 /// "today" into another random feed. The library snapshot remains untouched.

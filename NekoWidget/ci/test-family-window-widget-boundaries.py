@@ -838,6 +838,15 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             today_detail,
         )
 
+        collection_detail = section(
+            main,
+            "private func collectionDetailView(for localIdentifier: String) -> some View",
+            "private func memoryDetailView(for localIdentifier: String) -> some View",
+        )
+        self.assertIn("photos: catPhotos", collection_detail)
+        self.assertIn("showsWidgetTiming: false", collection_detail)
+        self.assertIn("PhotosRoute.collectionPhoto", home)
+
         memory_detail = section(
             main,
             "private func memoryDetailView(for localIdentifier: String) -> some View",
@@ -857,7 +866,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn(".sorted", ordering)
 
         self.assertIn("写真は時間とともに変わります。", home)
-        self.assertIn("今日の1枚を選びます。", onboarding)
+        self.assertIn("見つけた写真を並べます。", onboarding)
         self.assertIn("時間とともに変わります。", onboarding)
         self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
         self.assertIn("UIApplication.significantTimeChangeNotification", model)
@@ -874,7 +883,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('} else if photo.isLiked {', thumbnail)
         self.assertIn('Image(systemName: "bookmark.fill")', thumbnail)
 
-    def test_memories_preview_future_physical_forms_without_a_false_purchase_action(self) -> None:
+    def test_memories_use_photo_and_summary_sections_without_a_false_purchase_action(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
         main_tab = source("NekoWidget/Views/MainTabView.swift")
         memory_view = section(
@@ -884,18 +893,19 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("if hasPhotoAccess", memory_view)
         self.assertIn("savedPhotosSection", memory_view)
-        self.assertIn("reflectionSection", memory_view)
-        self.assertIn("creationSection", memory_view)
-        self.assertIn('case .saved: "残した"', memories)
-        self.assertIn('case .reflections: "ふりかえり"', memories)
-        self.assertIn('case .create: "つくる"', memories)
+        self.assertIn("summarySection", memory_view)
+        self.assertNotIn("reflectionSection", memory_view)
+        self.assertNotIn("creationSection", memory_view)
+        self.assertIn('case .photos: "写真"', memories)
+        self.assertIn('case .summaries: "まとめ"', memories)
         self.assertNotIn('Text("残した写真")', memory_view)
-        self.assertNotIn('Text("かたちにする")', memory_view)
         self.assertIn("MemoriesRoute.monthlyWindow(presentation)", memory_view)
         self.assertIn('Label("季節の作品", systemImage: "film.stack")', memory_view)
-        self.assertIn('title: "PDFにまとめる"', memory_view)
+        self.assertIn(
+            'Label("かたちにする", systemImage: "square.and.arrow.up")',
+            memory_view,
+        )
         self.assertIn("creationPreviewCard", memory_view)
-        self.assertNotIn("if hasPhotoAccess, !photos.isEmpty", memory_view)
         self.assertIn('Text("準備中・カード・卓上・小さな本")', memory_view)
         self.assertIn('accessibilityIdentifier("memory-creation-preview")', memory_view)
         self.assertIn('Picker("表示する思い出"', memory_view)
@@ -913,7 +923,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('Button("注文', memory_view)
         self.assertNotIn("StoreKit", memory_view)
 
-    def test_memories_top_stays_short_and_moves_full_collection_to_own_screen(self) -> None:
+    def test_memories_show_the_complete_saved_collection_and_select_exports_separately(self) -> None:
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
         memory_view = section(
             memories,
@@ -924,24 +934,23 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("ScrollViewReader { proxy in", memory_view)
         self.assertNotIn(".safeAreaInset(edge: .top", memory_view)
         self.assertNotIn("memories-section-jump-bar", memory_view)
-        self.assertIn("Array(photos.prefix(6))", memory_view)
+        self.assertNotIn("Array(photos.prefix(6))", memory_view)
+        self.assertIn("ForEach(photos)", memory_view)
         self.assertIn("SavedMemoriesGalleryView(", memory_view)
-        self.assertIn("startsInExportMode: false", memory_view)
-        self.assertIn('accessibilityIdentifier("memories-show-all-saved-photos")', memory_view)
+        self.assertNotIn("startsInExportMode: false", memory_view)
+        self.assertNotIn('accessibilityIdentifier("memories-show-all-saved-photos")', memory_view)
         self.assertIn("startsInExportMode: true", memory_view)
-        self.assertIn('accessibilityIdentifier("memories-photo-book-action")', memory_view)
-        self.assertEqual(memory_view.count(".accessibilityAddTraits(.isHeader)"), 3)
+        self.assertIn(
+            'accessibilityIdentifier("memories-create-from-photos-action")',
+            memory_view,
+        )
+        self.assertEqual(memory_view.count(".accessibilityAddTraits(.isHeader)"), 2)
         self.assertIn('accessibilityIdentifier("memories-saved-section")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-reflections-section")', memory_view)
-        self.assertIn('accessibilityIdentifier("memories-create-section")', memory_view)
+        self.assertIn('accessibilityIdentifier("memories-summaries-section")', memory_view)
 
         self.assertLess(
             memory_view.index("savedPhotosSection"),
-            memory_view.index("reflectionSection"),
-        )
-        self.assertLess(
-            memory_view.index("reflectionSection"),
-            memory_view.index("creationSection"),
+            memory_view.index("summarySection"),
         )
 
         gallery = section(
@@ -950,6 +959,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private struct LikedPhotoBookExportFile:",
         )
         self.assertIn("ForEach(photos)", gallery)
+        self.assertIn('_selectedExportIdentifiers = State(initialValue: Set<String>())', gallery)
+        self.assertIn('isSelectingForExport ? "写真を選ぶ"', gallery)
         self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", gallery)
         self.assertIn('accessibilityIdentifier("photo-book-export")', gallery)
         self.assertIn("if isDedicatedPhotoBookFlow", gallery)
@@ -967,17 +978,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("seasonalMovie", home)
         self.assertNotIn("reflectionSection", home)
         self.assertIn("MemoriesRoute.monthlyWindow", memories)
-        self.assertIn('accessibilityIdentifier("memories-reflections-section")', memories)
+        self.assertIn('accessibilityIdentifier("memories-summaries-section")', memories)
         self.assertIn("from: catPhotos", main)
         self.assertIn("buildMostRecent", main)
         self.assertIn("through: Date()", main)
-        today_routes = section(main, "enum TodayRoute:", "enum MemoriesRoute:")
+        photos_routes = section(main, "enum PhotosRoute:", "enum MemoriesRoute:")
         memory_routes = section(
             main,
             "enum MemoriesRoute:",
             "private struct SeasonalMoviePreparationKey:",
         )
-        self.assertNotIn("case monthlyWindow", today_routes)
+        self.assertNotIn("case monthlyWindow", photos_routes)
         self.assertIn("case monthlyWindow", memory_routes)
         self.assertNotIn("case monthlyPhoto", main)
         self.assertIn("refreshedMonthlyWindow(snapshot)", main)
@@ -1026,13 +1037,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("seasonalMovie", home)
         self.assertNotIn("reflectionSection", home)
         self.assertIn("MemoriesRoute.seasonalMovie", memories)
-        today_routes = section(main, "enum TodayRoute:", "enum MemoriesRoute:")
+        photos_routes = section(main, "enum PhotosRoute:", "enum MemoriesRoute:")
         memory_routes = section(
             main,
             "enum MemoriesRoute:",
             "private struct SeasonalMoviePreparationKey:",
         )
-        self.assertNotIn("case seasonalMovie", today_routes)
+        self.assertNotIn("case seasonalMovie", photos_routes)
         self.assertIn("case seasonalMovie(SeasonalMoviePeriodID)", memory_routes)
         self.assertIn("SeasonalMovieView(", main)
         self.assertIn("seasonalMovies: seasonalMovieArchive.records", main)
@@ -1413,15 +1424,15 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         main_tab = source("NekoWidget/Views/MainTabView.swift")
         home = source("NekoWidget/Views/HomeView.swift")
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
-        today_routes = section(main_tab, "enum TodayRoute:", "enum MemoriesRoute:")
+        photos_routes = section(main_tab, "enum PhotosRoute:", "enum MemoriesRoute:")
         memory_routes = section(
             main_tab,
             "enum MemoriesRoute:",
             "private struct SeasonalMoviePreparationKey:",
         )
-        self.assertNotIn("case automaticAlbums", today_routes)
+        self.assertNotIn("case automaticAlbums", photos_routes)
         self.assertIn("case automaticAlbums", memory_routes)
-        self.assertNotIn("TodayRoute.automaticAlbums", home)
+        self.assertNotIn("PhotosRoute.automaticAlbums", home)
         self.assertIn("MemoriesRoute.automaticAlbums", memories)
 
     def test_named_window_is_presentation_only_and_migration_safe(self) -> None:
@@ -2188,7 +2199,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
         self.assertIn('detail: "このiPhoneで見つけた猫写真"', widget_configuration)
         self.assertNotIn('name: "このiPhoneの写真"', widget_configuration)
-        self.assertIn('Label("今日", systemImage: "sun.max.fill")', main_tab)
+        self.assertIn(
+            'Label("写真", systemImage: "photo.on.rectangle.angled")',
+            main_tab,
+        )
         self.assertIn(
             'Label("まど", systemImage: "rectangle.split.2x2")',
             main_tab,
@@ -2198,10 +2212,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             home,
         )
         self.assertIn('Label("思い出", systemImage: "photo.stack.fill")', main_tab)
-        self.assertIn('.navigationTitle("今日")', home)
+        self.assertIn('.navigationTitle("写真")', home)
         self.assertIn('return "このiPhone・\\(year)年"', home)
         self.assertNotIn('.navigationTitle("まど")', home)
-        self.assertNotIn("TodayRoute.automaticAlbums", home)
+        self.assertNotIn("PhotosRoute.automaticAlbums", home)
         self.assertNotIn('Text("自動アルバム")', home)
         self.assertIn("NavigationLink(value: MemoriesRoute.automaticAlbums)", liked)
         self.assertIn('Text("自動アルバム")', liked)
@@ -2212,8 +2226,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn("model.activatePrivateWindow", main_tab)
         self.assertIn('Label("別のまどを追加"', main_tab)
-        self.assertIn("selectedTab = .today", main_tab)
-        self.assertIn("todayPath.append(TodayRoute.photo(identifier))", main_tab)
+        self.assertIn("selectedTab = .photos", main_tab)
+        self.assertIn("photosPath.append(PhotosRoute.photo(identifier))", main_tab)
         self.assertIn("selectedTab = .windows", main_tab)
         self.assertIn("Task.detached(priority: .userInitiated)", main_tab)
         self.assertIn("catalogReloadRevision", main_tab)

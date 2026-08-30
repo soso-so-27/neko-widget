@@ -1,7 +1,8 @@
 import SwiftUI
 
-enum TodayRoute: Hashable {
+enum PhotosRoute: Hashable {
     case photo(String)
+    case collectionPhoto(String)
 }
 
 enum MemoriesRoute: Hashable {
@@ -66,8 +67,8 @@ struct MainTabView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let exportJSON: () async -> URL?
 
-    @State private var selectedTab: AppTab = .today
-    @State private var todayPath = NavigationPath()
+    @State private var selectedTab: AppTab = .photos
+    @State private var photosPath = NavigationPath()
     @State private var memoriesPath = NavigationPath()
     @State private var showsSettings = false
     @State private var replaysWidgetGuideAfterSettingsDismiss = false
@@ -80,7 +81,7 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack(path: $todayPath) {
+            NavigationStack(path: $photosPath) {
                 HomeView(
                     currentPhoto: currentPhoto,
                     scan: scan,
@@ -92,15 +93,24 @@ struct MainTabView: View {
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showSettings: { showsSettings = true },
                     setMemorySaved: setMemorySaved,
-                    rescan: { Task { await rescan() } }
+                    rescan: { Task { await rescan() } },
+                    catPhotos: catPhotos,
+                    excludedCatPhotos: excludedCatPhotos,
+                    photoSourceAlbums: photoSourceAlbums,
+                    photoSourceStatus: photoSourceStatus,
+                    restoreCatCandidates: restoreCatCandidates,
+                    selectPhotoSourceAlbum: selectPhotoSourceAlbum,
+                    refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
+                    catProfilesPresentation: catProfilesPresentation,
+                    catProfilesActions: catProfilesActions
                 )
-                .navigationDestination(for: TodayRoute.self, destination: todayDestination)
+                .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
             }
             .tabItem {
-                Label("今日", systemImage: "sun.max.fill")
-                    .accessibilityIdentifier("main-tab-today")
+                Label("写真", systemImage: "photo.on.rectangle.angled")
+                    .accessibilityIdentifier("main-tab-photos")
             }
-            .tag(AppTab.today)
+            .tag(AppTab.photos)
 
             if SharingAPIConfiguration.current.isReviewVisible {
                 NavigationStack {
@@ -157,9 +167,9 @@ struct MainTabView: View {
             widgetOpenedPhotoIdentifier = identifier
             widgetShownAt = selection.shownAt
             showsSettings = false
-            selectedTab = .today
-            todayPath = NavigationPath()
-            todayPath.append(TodayRoute.photo(identifier))
+            selectedTab = .photos
+            photosPath = NavigationPath()
+            photosPath.append(PhotosRoute.photo(identifier))
             deepLinkedPhotoIdentifier = nil
             deepLinkedPhotoShownAt = nil
         }
@@ -174,7 +184,7 @@ struct MainTabView: View {
             selectedTab = .windows
             deepLinkedFamilyWindowIsPresented = true
         }
-        .onChange(of: todayPath) { _, path in
+        .onChange(of: photosPath) { _, path in
             guard path.isEmpty else { return }
             widgetOpenedPhotoIdentifier = nil
             widgetShownAt = nil
@@ -246,10 +256,12 @@ struct MainTabView: View {
     }
 
     @ViewBuilder
-    private func todayDestination(for route: TodayRoute) -> some View {
+    private func photosDestination(for route: PhotosRoute) -> some View {
         switch route {
         case let .photo(localIdentifier):
             detailView(for: localIdentifier)
+        case let .collectionPhoto(localIdentifier):
+            collectionDetailView(for: localIdentifier)
         }
     }
 
@@ -257,14 +269,38 @@ struct MainTabView: View {
     private func detailView(for localIdentifier: String) -> some View {
         let initialPhoto = photo(for: localIdentifier)
         PhotoBrowserView(
-            // "今日" and a Widget tap are both one-photo entry points. Other
-            // library photos remain available through the explicit same-day
-            // action instead of becoming an unexplained horizontal feed.
+            // A proposed photo and a Widget tap are one-photo entry points.
+            // The grid uses a separate route whose browser can page through
+            // the detected cat-photo collection.
             photos: [initialPhoto],
             libraryPhotos: libraryPhotos,
             initialPhoto: initialPhoto,
             widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
             showsWidgetTiming: widgetOpenedPhotoIdentifier == localIdentifier,
+            setMemorySaved: setMemorySaved,
+            excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+            excludeFromCatCandidates: { identifiers in
+                Task { await excludeFromCatCandidates(identifiers) }
+            },
+            restoreCatCandidates: { identifiers in
+                Task { await restoreCatCandidates(identifiers) }
+            },
+            profiles: catProfilesPresentation.profiles,
+            assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+            replaceProfileAssignments: { values in
+                Task { await catProfilesActions.replacePhotoAssignments(values) }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func collectionDetailView(for localIdentifier: String) -> some View {
+        PhotoBrowserView(
+            photos: catPhotos,
+            libraryPhotos: libraryPhotos,
+            initialPhoto: photo(for: localIdentifier),
+            widgetShownAt: nil,
+            showsWidgetTiming: false,
             setMemorySaved: setMemorySaved,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
             excludeFromCatCandidates: { identifiers in

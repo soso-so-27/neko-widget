@@ -112,7 +112,7 @@ final class PhotoPermissionUITests: XCTestCase {
         let continueFromZero = firstExistingButton(
             in: app,
             identifiers: ["initial-scan-continue"],
-            labels: ["次へ", "今日を見る"],
+            labels: ["次へ", "写真を見る"],
             timeout: 10
         )
         guard let continueFromZero else {
@@ -165,11 +165,11 @@ final class PhotoPermissionUITests: XCTestCase {
 
         guard firstExistingButton(
             in: app,
-            identifiers: ["main-tab-today"],
-            labels: ["今日"],
+            identifiers: ["main-tab-photos"],
+            labels: ["写真"],
             timeout: 10
         ) != nil else {
-            fail("The primary Today tab was not available.", app: app)
+            fail("The primary Photos tab was not available.", app: app)
             return
         }
 

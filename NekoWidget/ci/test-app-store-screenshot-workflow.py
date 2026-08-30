@@ -201,9 +201,9 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.fixture,
         )
         self.assertIn("requirements: [(18, 1)]", self.ui_test)
-        self.assertIn('app.buttons["memories-show-all-saved-photos"]', self.ui_test)
+        self.assertIn('app.buttons["memories-create-from-photos-action"]', self.ui_test)
         self.assertIn('app.buttons["saved-memories-selection-toggle"]', self.ui_test)
-        self.assertIn('app.buttons["memories-photo-book-action"]', self.ui_test)
+        self.assertIn('app.buttons["photo-book-export"]', self.ui_test)
         self.assertIn('"album-primary-all-cat-photos"', self.album_view)
         self.assertIn(
             'app.buttons["album-primary-all-cat-photos"]',

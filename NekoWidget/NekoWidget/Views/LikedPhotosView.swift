@@ -376,7 +376,7 @@ struct CuratedAlbumDetailView: View {
                 pendingExclusionIdentifiers.removeAll()
             }
         } message: {
-            Text("「今日」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("アプリの「写真」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -501,26 +501,23 @@ struct CuratedAlbumDetailView: View {
 }
 
 private enum MemoriesSection: String, CaseIterable, Identifiable {
-    case saved
-    case reflections
-    case create
+    case photos
+    case summaries
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .saved: "残した"
-        case .reflections: "ふりかえり"
-        case .create: "つくる"
+        case .photos: "写真"
+        case .summaries: "まとめ"
         }
     }
 }
 
 /// The entry point for photos the user deliberately kept as memories.
-/// It stays intentionally short by switching between the manual collection,
-/// automatic reflections, and creation actions. The complete collection is
-/// presented on its own screen so the other sections never disappear below a
-/// large photo library.
+/// The complete manual collection stays directly visible, while automatic
+/// reflections and future forms live in a separate summary pane. PDF creation
+/// begins from the explicit photo-selection action in the photo pane.
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -531,7 +528,7 @@ struct LikedPhotosView: View {
     let exportPhotoBook: ([String]) async throws -> URL
     let showSettings: () -> Void
 
-    @State private var selectedSection: MemoriesSection = .saved
+    @State private var selectedSection: MemoriesSection = .photos
 
     var body: some View {
         ScrollView {
@@ -539,12 +536,10 @@ struct LikedPhotosView: View {
                 memoriesSectionControl
 
                 switch selectedSection {
-                case .saved:
+                case .photos:
                     savedPhotosSection
-                case .reflections:
-                    reflectionSection
-                case .create:
-                    creationSection
+                case .summaries:
+                    summarySection
                 }
             }
             .padding(.vertical, 16)
@@ -605,16 +600,28 @@ struct LikedPhotosView: View {
     }
 
     private var savedPhotosSection: some View {
-        let previewPhotos = Array(photos.prefix(6))
-
-        return VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 12) {
             if !photos.isEmpty {
                 HStack(alignment: .firstTextBaseline) {
-                    Spacer()
                     Text("\(photos.count.formatted())枚・残した順")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("photo-book-progress")
+
+                    Spacer()
+
+                    NavigationLink {
+                        SavedMemoriesGalleryView(
+                            photos: photos,
+                            startsInExportMode: true,
+                            exportPhotoBook: exportPhotoBook
+                        )
+                    } label: {
+                        Label("かたちにする", systemImage: "square.and.arrow.up")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .accessibilityIdentifier("memories-create-from-photos-action")
+                    .accessibilityHint("写真を選んでPDFにまとめます")
                 }
                 .padding(.horizontal, 16)
             }
@@ -647,7 +654,7 @@ struct LikedPhotosView: View {
                 .padding(.horizontal, 16)
             } else {
                 LazyVGrid(columns: photoColumns, spacing: 3) {
-                    ForEach(previewPhotos) { photo in
+                    ForEach(photos) { photo in
                         NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
                             MemoryPhotoThumbnail(photo: photo)
                         }
@@ -657,33 +664,6 @@ struct LikedPhotosView: View {
                     }
                 }
                 .padding(.horizontal, 3)
-
-                if photos.count > previewPhotos.count {
-                    NavigationLink {
-                        SavedMemoriesGalleryView(
-                            photos: photos,
-                            startsInExportMode: false,
-                            exportPhotoBook: exportPhotoBook
-                        )
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text("すべて見る")
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text("\(photos.count.formatted())枚")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 16)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("memories-show-all-saved-photos")
-                }
             }
         }
         .accessibilityElement(children: .contain)
@@ -692,7 +672,7 @@ struct LikedPhotosView: View {
         .accessibilityIdentifier("memories-saved-section")
     }
 
-    private var reflectionSection: some View {
+    private var summarySection: some View {
         VStack(alignment: .leading, spacing: 14) {
             if hasPhotoAccess {
                 if let monthlyWindow {
@@ -720,41 +700,13 @@ struct LikedPhotosView: View {
                 )
                 .padding(.horizontal, 16)
             }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("ふりかえり")
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityIdentifier("memories-reflections-section")
-    }
-
-    private var creationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !photos.isEmpty {
-                NavigationLink {
-                    SavedMemoriesGalleryView(
-                        photos: photos,
-                        startsInExportMode: true,
-                        exportPhotoBook: exportPhotoBook
-                    )
-                } label: {
-                    actionCard(
-                        systemImage: "doc.richtext",
-                        title: "PDFにまとめる",
-                        detail: "写真を選んで書き出す"
-                    )
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 16)
-                .accessibilityIdentifier("memories-photo-book-action")
-                .accessibilityHint("残した写真を選びます")
-            }
 
             creationPreviewCard
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("つくる")
+        .accessibilityLabel("まとめ")
         .accessibilityAddTraits(.isHeader)
-        .accessibilityIdentifier("memories-create-section")
+        .accessibilityIdentifier("memories-summaries-section")
     }
 
     private func monthlyWindowCard(
@@ -811,43 +763,6 @@ struct LikedPhotosView: View {
             "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
         )
         .accessibilityHint("小さな便りを開きます")
-    }
-
-    private func actionCard(
-        systemImage: String,
-        title: String,
-        detail: String
-    ) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: systemImage)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 38, height: 38)
-                .background(
-                    Color.accentColor.opacity(0.10),
-                    in: RoundedRectangle(cornerRadius: 11)
-                )
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 4)
-
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.tertiary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 18)
-        )
     }
 
     private var automaticAlbumsCard: some View {
@@ -1040,15 +955,7 @@ struct SavedMemoriesGalleryView: View {
         self.isDedicatedPhotoBookFlow = startsInExportMode
         self.exportPhotoBook = exportPhotoBook
         _isSelectingForExport = State(initialValue: startsInExportMode)
-        _selectedExportIdentifiers = State(
-            initialValue: startsInExportMode
-                ? Set(
-                    photos
-                        .prefix(PhotoBookPolicy.maximumPhotosPerExport)
-                        .map(\.localIdentifier)
-                )
-                : Set<String>()
-        )
+        _selectedExportIdentifiers = State(initialValue: Set<String>())
     }
 
     var body: some View {
@@ -1070,7 +977,7 @@ struct SavedMemoriesGalleryView: View {
                 }
             }
         }
-        .navigationTitle(isSelectingForExport ? "PDFにまとめる" : "残した写真")
+        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "残した写真")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
@@ -1610,7 +1517,7 @@ struct PhotoBrowserView: View {
                 pendingExclusionIdentifier = nil
             }
         } message: {
-            Text("「今日」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
+            Text("アプリの「写真」・ウィジェット・「自動アルバム」の候補から外します。写真アプリの写真は削除・変更されません。設定からいつでも戻せます。")
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(

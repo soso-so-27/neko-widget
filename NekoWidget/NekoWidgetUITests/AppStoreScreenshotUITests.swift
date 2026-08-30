@@ -77,9 +77,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
-        let savedSegment = memoriesSectionPicker.buttons["残した"]
+        let photosSegment = memoriesSectionPicker.buttons["写真"]
         guard memoriesSectionPicker.waitForExistence(timeout: 15),
-              savedSegment.waitForExistence(timeout: 5) else {
+              photosSegment.waitForExistence(timeout: 5) else {
             fail(
                 "The Memories information architecture did not appear.",
                 application: app
@@ -93,38 +93,42 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("The deterministic Likes illustrations did not finish loading.", application: app)
             return
         }
-        let allSavedPhotos = app.buttons["memories-show-all-saved-photos"]
-        guard allSavedPhotos.waitForExistence(timeout: 10),
-              waitForHittable(allSavedPhotos) else {
-            fail("The complete saved-photo collection was not reachable.", application: app)
+        let selectSavedPhotos = app.buttons["memories-create-from-photos-action"]
+        guard selectSavedPhotos.waitForExistence(timeout: 10),
+              waitForHittable(selectSavedPhotos) else {
+            fail("The saved-photo selection action was not reachable.", application: app)
             return
         }
         captureScreenshot(named: "04-liked-photos")
 
-        allSavedPhotos.tap()
-        guard app.navigationBars["残した写真"].waitForExistence(timeout: 10),
+        selectSavedPhotos.tap()
+        guard app.navigationBars["写真を選ぶ"].waitForExistence(timeout: 10),
               app.buttons["saved-memories-selection-toggle"].exists else {
-            fail("The complete saved-photo collection did not open separately.", application: app)
+            fail("The saved-photo selection flow did not open.", application: app)
             return
         }
-        let savedPhotosBackButton = app.navigationBars["残した写真"].buttons["思い出"]
+        guard app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
+            fail("PDF creation was not available after photo selection opened.", application: app)
+            return
+        }
+        let savedPhotosBackButton = app.navigationBars["写真を選ぶ"].buttons["思い出"]
         guard savedPhotosBackButton.waitForExistence(timeout: 5) else {
-            fail("The saved-photo collection could not return to Memories.", application: app)
+            fail("Photo selection could not return to Memories.", application: app)
             return
         }
         savedPhotosBackButton.tap()
 
-        let reflectionsSegment = memoriesSectionPicker.buttons["ふりかえり"]
+        let summariesSegment = memoriesSectionPicker.buttons["まとめ"]
         guard memoriesSectionPicker.waitForExistence(timeout: 5),
-              reflectionsSegment.waitForExistence(timeout: 5) else {
+              summariesSegment.waitForExistence(timeout: 5) else {
             fail("The Memories section picker was not reachable.", application: app)
             return
         }
-        reflectionsSegment.tap()
+        summariesSegment.tap()
 
         let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
         guard scrollUpUntilHittable(memoriesAutomaticAlbums, application: app),
-              reflectionsSegment.isSelected else {
+              summariesSegment.isSelected else {
             fail(
                 "The automatic-albums entry could not be reached from Memories.",
                 application: app
@@ -162,26 +166,6 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         memoriesBackButton.tap()
-
-        let createSegment = memoriesSectionPicker.buttons["つくる"]
-        guard createSegment.waitForExistence(timeout: 5) else {
-            fail("The Memories creation section was not reachable.", application: app)
-            return
-        }
-        createSegment.tap()
-
-        let pdfAction = app.buttons["memories-photo-book-action"]
-        guard scrollUpUntilHittable(pdfAction, application: app),
-              createSegment.isSelected else {
-            fail("The PDF creation action could not be reached.", application: app)
-            return
-        }
-        pdfAction.tap()
-        guard app.navigationBars["PDFにまとめる"].waitForExistence(timeout: 10),
-              app.buttons["photo-book-export"].waitForExistence(timeout: 10) else {
-            fail("PDF selection did not open on its own screen.", application: app)
-            return
-        }
     }
 
     private var japaneseLaunchArguments: [String] {
