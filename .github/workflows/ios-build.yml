@@ -523,7 +523,7 @@ jobs:
           grep -Fq 'timeoutNanoseconds: UInt64 = 120_000_000_000' "$exporter"
           grep -Fq 'Label("思い出", systemImage: "photo.stack.fill")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Label("今日", systemImage: "sun.max.fill")' \
+          grep -Fq 'Label("写真", systemImage: "photo.on.rectangle.angled")' \
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("まど", systemImage: "rectangle.split.2x2")' \
             NekoWidget/Views/MainTabView.swift
@@ -532,10 +532,10 @@ jobs:
           grep -Fq 'NavigationLink(value: MemoriesRoute.automaticAlbums)' \
             NekoWidget/Views/LikedPhotosView.swift
           if grep -Fq 'reflectionSection' NekoWidget/Views/HomeView.swift; then
-            echo 'Today must not duplicate the Memories reflection collection.' >&2
+            echo 'Photos must not duplicate the Memories summary collection.' >&2
             exit 1
           fi
-          grep -Fq 'accessibilityIdentifier("memories-reflections-section")' \
+          grep -Fq 'accessibilityIdentifier("memories-summaries-section")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'accessibilityIdentifier("window-settings-button")' \
             NekoWidget/Views/HomeView.swift
@@ -548,7 +548,7 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'private var footerHeight: CGFloat = 48' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'title: "PDFにまとめる"' \
+          grep -Fq 'Label("かたちにする", systemImage: "square.and.arrow.up")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq '枚・残した順' \
             NekoWidget/Views/LikedPhotosView.swift
