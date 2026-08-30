@@ -6953,6 +6953,27 @@ actor SharingRuntimeSelfTestRunner {
             expected: unpaired,
             lifecycleToken: snapshot.lifecycleToken
         )
+        let creatorDraftName = try PairingStateStore.updateActiveDraftDisplayName(
+            "  朝のまど  ",
+            expected: creating,
+            lifecycleToken: snapshot.lifecycleToken
+        )
+        guard creatorDraftName.displayName == "朝のまど" else {
+            throw PairingError.stateUnavailable
+        }
+        var staleCreating = creating
+        staleCreating.storageRevision = max(0, (creating.storageRevision ?? 0) - 1)
+        var staleDraftWasRejected = false
+        do {
+            _ = try PairingStateStore.updateActiveDraftDisplayName(
+                "古い操作の名前",
+                expected: staleCreating,
+                lifecycleToken: snapshot.lifecycleToken
+            )
+        } catch PairingError.stateUnavailable {
+            staleDraftWasRejected = true
+        }
+        guard staleDraftWasRejected else { throw PairingError.stateUnavailable }
         var paired = creating
         paired.phase = .paired
         paired.spaceID = spaceID
@@ -6977,6 +6998,19 @@ actor SharingRuntimeSelfTestRunner {
             expected: creating,
             lifecycleToken: snapshot.lifecycleToken
         )
+        var connectedDraftWasRejected = false
+        do {
+            _ = try PairingStateStore.updateActiveDraftDisplayName(
+                "接続後のdraft上書き",
+                expected: paired,
+                lifecycleToken: snapshot.lifecycleToken
+            )
+        } catch PairingError.stateUnavailable {
+            connectedDraftWasRejected = true
+        }
+        // Connected windows must use the creator-authenticated encrypted
+        // presentation path, never the local draft shortcut.
+        guard connectedDraftWasRejected else { throw PairingError.stateUnavailable }
         // A normal read may hide legacy diagnostic text in memory, but it must
         // never rewrite the full PairingState without the lifecycle flock. A
         // locked operation performs the physical scrub without changing the
@@ -7449,6 +7483,17 @@ actor SharingRuntimeSelfTestRunner {
             let second = try PrivateWindowCatalogStore
                 .createAndActivateWhileLifecycleLocked()
             guard second.displayName == "\(PrivateWindowDisplayName.fallback) 2"
+            else { throw PairingError.stateUnavailable }
+            let renamedDraft = try PrivateWindowCatalogStore
+                .updateActiveDraftDisplayNameWhileLifecycleLocked(
+                    "  旅のまど  ",
+                    expectedCredentialAccount: nil
+                )
+            guard renamedDraft.localWindowID == second.localWindowID,
+                  renamedDraft.displayName == "旅のまど",
+                  try PrivateWindowCatalogStore.load()?.windows.first(where: {
+                      $0.localWindowID == second.localWindowID
+                  })?.displayName == "旅のまど"
             else { throw PairingError.stateUnavailable }
             do {
                 try PrivateWindowCatalogStore

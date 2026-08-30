@@ -73,7 +73,9 @@ struct CatProfilesView: View {
 
     var body: some View {
         Form {
-            optionalSetupSection
+            if presentation.profiles.isEmpty {
+                optionalSetupSection
+            }
             profilesSection
             unassignedSection
             legacyExclusionSection
@@ -137,7 +139,7 @@ struct CatProfilesView: View {
         } header: {
             Text("プロフィール")
         } footer: {
-            Text(CatIndividualRecognitionCopy.unavailable)
+            Text("猫ごとに分けるかどうかは任意です。アプリが写真だけで個体を決めることはありません。")
         }
     }
 

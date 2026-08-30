@@ -51,6 +51,20 @@ final class PairingViewModel: ObservableObject {
     var canEditWindowDisplayName: Bool {
         state?.role != .invitee && state?.localDeviceIsAdditional != true
     }
+    var windowNameIsLocalDraft: Bool {
+        guard let state else { return false }
+        return Self.isLocalWindowNameDraft(state)
+    }
+    var canPersistWindowDisplayName: Bool {
+        guard let state, canEditWindowDisplayName else { return false }
+        return Self.isLocalWindowNameDraft(state)
+            || (state.role == .inviter
+                && state.spaceID != nil
+                && state.participantID != nil)
+    }
+    var shouldShowWindowName: Bool {
+        windowNameIsLocalDraft || state?.spaceID != nil
+    }
     var userFacingStatusMessage: String? {
         if let operationErrorMessage { return operationErrorMessage }
         if let bootstrapRetryMessage { return bootstrapRetryMessage }
@@ -69,8 +83,12 @@ final class PairingViewModel: ObservableObject {
     var hasPendingDeviceRecovery: Bool {
         state?.recoveryID != nil && state?.recoveryCompletedAt == nil
     }
+    var hasPrivateWindowSetupInProgress: Bool {
+        privateWindows.contains(where: privateWindowNeedsSetup)
+    }
     var canCreateAnotherPrivateWindow: Bool {
-        privateWindows.count < PrivateWindowCatalogState.maximumWindowCount
+        privateWindows.count < PrivateWindowCatalogState.maximumProductWindowCount
+            && !hasPrivateWindowSetupInProgress
     }
     var canCreateDeviceRecoveryInvitation: Bool {
         guard let state, state.phase == .paired else { return false }
@@ -130,7 +148,7 @@ final class PairingViewModel: ObservableObject {
                 current.lastUpdatedAt = .now
                 current = try persist(current, operation: operation)
             }
-            windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+            windowDisplayName = resolvedWindowDisplayName(
                 pairing: current,
                 validating: lifecycleToken
             )
@@ -196,6 +214,26 @@ final class PairingViewModel: ObservableObject {
             return false
         }
         do {
+            if Self.isLocalWindowNameDraft(operation.expectedState) {
+                let saved = try PairingStateStore.updateActiveDraftDisplayName(
+                    rawValue,
+                    expected: operation.expectedState,
+                    lifecycleToken: operation.lifecycleToken
+                )
+                windowDisplayName = saved.displayName
+                reloadPrivateWindowCatalog()
+                configurationMessage = nil
+                windowNameStatusIsError = false
+                windowNameStatusMessage = "このiPhoneに名前を保存しました。"
+                NotificationCenter.default.post(
+                    name: .momentSharingPresentationNeedsRefresh,
+                    object: nil
+                )
+                return true
+            }
+            guard canPersistWindowDisplayName else {
+                throw PairingError.stateUnavailable
+            }
             let saved = try PrivateWindowPresentationStore.save(
                 displayName: rawValue,
                 pairing: operation.expectedState,
@@ -271,7 +309,7 @@ final class PairingViewModel: ObservableObject {
     func reloadWindowDisplayName() {
         do {
             let operation = try beginOperation()
-            windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+            windowDisplayName = resolvedWindowDisplayName(
                 pairing: operation.expectedState,
                 validating: operation.lifecycleToken
             )
@@ -288,7 +326,12 @@ final class PairingViewModel: ObservableObject {
         // without passing through this model. Re-read the authoritative
         // catalog before using its count or active selection.
         reloadPrivateWindowCatalog()
-        guard canCreateAnotherPrivateWindow else { return }
+        guard canCreateAnotherPrivateWindow else {
+            operationErrorMessage = hasPrivateWindowSetupInProgress
+                ? "先に、設定中のまどを完了してください。"
+                : "初期版では、まどは合計3個までです。"
+            return
+        }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -339,7 +382,7 @@ final class PairingViewModel: ObservableObject {
         _ result: PairingInstallationGuard.BootstrapResult
     ) {
         state = result.state
-        windowDisplayName = PrivateWindowPresentationStore.resolvedDisplayName(
+        windowDisplayName = resolvedWindowDisplayName(
             pairing: result.state,
             validating: result.lifecycleToken
         )
@@ -372,6 +415,39 @@ final class PairingViewModel: ObservableObject {
             return $0.localWindowID < $1.localWindowID
         }
         activePrivateWindowID = catalog.activeWindowID
+    }
+
+    private func privateWindowNeedsSetup(_ window: PrivateWindowCatalogEntry) -> Bool {
+        do {
+            guard let pairing = try PairingStateStore.load(
+                localWindowID: window.localWindowID
+            ) else { return true }
+            return pairing.phase != .paired
+        } catch {
+            // An unreadable slot must not become authority to create another
+            // draft beside it. Keep the existing slot visible for recovery.
+            return true
+        }
+    }
+
+    private func resolvedWindowDisplayName(
+        pairing: PairingState,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) -> String {
+        if let presentation = try? PrivateWindowPresentationStore.load(
+            pairing: pairing,
+            validating: lifecycleToken
+        ) {
+            return presentation.displayName
+        }
+        return (try? SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let catalog = try PrivateWindowCatalogStore.load(),
+                  let active = catalog.windows.first(where: {
+                      $0.localWindowID == catalog.activeWindowID
+                  })
+            else { throw PairingError.stateUnavailable }
+            return active.displayName
+        }) ?? PrivateWindowDisplayName.fallback
     }
 
     func createInvitation(dailyBoundaryMinuteUTC: Int) async {
@@ -2022,6 +2098,13 @@ final class PairingViewModel: ObservableObject {
         )
     }
 
+    private static func isLocalWindowNameDraft(_ state: PairingState) -> Bool {
+        state.phase == .unpaired
+            || (state.role == .inviter
+                && state.spaceID == nil
+                && [.creatingInvitation, .failed].contains(state.phase))
+    }
+
     private func clearTransientOperationFeedback() {
         manualCheckMessage = nil
         manualCheckCompletedAt = nil
@@ -2286,6 +2369,16 @@ final class PairingViewModel: ObservableObject {
         }
         if let pairingError = error as? PairingError {
             return message(for: pairingError)
+        }
+        if let catalogError = error as? PrivateWindowCatalogStore.Error {
+            switch catalogError {
+            case .windowLimitReached:
+                return "初期版では、まどは合計3個までです。"
+            case .setupWindowAlreadyExists:
+                return "先に、設定中のまどを完了してください。"
+            default:
+                break
+            }
         }
         if error is URLError {
             return "通信を完了できませんでした。接続を確認して、もう一度お試しください。"

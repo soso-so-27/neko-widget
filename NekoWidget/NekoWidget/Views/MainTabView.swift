@@ -843,7 +843,7 @@ private struct WindowListView: View {
                             }
                         }
                         if !connectedWindows.isEmpty {
-                            Text("まどの名前は、開いた先の設定から変更できます。")
+                            Text("まどの名前は、作成した人の最初のiPhoneから変更できます。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -864,7 +864,7 @@ private struct WindowListView: View {
                     }
 
                     if !windows.isEmpty {
-                        addWindowButton
+                        windowAdditionControl
                     }
 
                 }
@@ -1013,9 +1013,35 @@ private struct WindowListView: View {
         .disabled(
             model.isWorking
                 || pausesWindowChanges
-                || windows.count >= PrivateWindowCatalogState.maximumWindowCount
         )
         .accessibilityIdentifier("window-list-add")
+    }
+
+    @ViewBuilder
+    private var windowAdditionControl: some View {
+        if !setupWindows.isEmpty {
+            Label(
+                "設定中のまどは同時に1個です。先に開いて設定を続けてください",
+                systemImage: "arrow.up.left.square"
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("window-list-setup-limit")
+        } else if windows.count >= PrivateWindowCatalogState.maximumProductWindowCount {
+            Label(
+                windows.count > PrivateWindowCatalogState.maximumProductWindowCount
+                    ? "現在は新しいまどを追加できません。既存のまどはそのまま使えます"
+                    : "初期版では、まどは合計3個までです",
+                systemImage: "rectangle.stack"
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("window-list-product-limit")
+        } else {
+            addWindowButton
+        }
     }
 
     private var connectedWindows: [PrivateWindowCatalogEntry] {
@@ -1267,7 +1293,7 @@ private struct WindowListView: View {
         for window: PrivateWindowCatalogEntry
     ) -> String {
         pairingPhases[window.localWindowID] == .unpaired
-            ? "名前を決めて設定を続ける"
+            ? "設定を続ける"
             : windowConnectionLabel(for: window)
     }
 

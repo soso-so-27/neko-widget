@@ -537,6 +537,13 @@ struct FamilyWindowView: View {
     @ViewBuilder
     private var receivedSectionContent: some View {
         if !model.receivedMoments.isEmpty {
+            Label(
+                "このiPhoneに一時保存。取り込む前は最長90日（500枚・256MBまで）です。「取り込んで残す」で写真アプリと思い出へ入ります。",
+                systemImage: "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("family-window-received-retention-summary")
             if let latest = orderedReceivedMoments.first {
                 momentCard(latest)
             }
@@ -1202,7 +1209,7 @@ struct FamilyWindowView: View {
                             outgoingManagementMenu
                         }
                     }
-                    Text("到着は閲覧や既読を示しません。写真のプレビューはこのiPhoneだけに残ります。")
+                    Text("到着は閲覧や既読ではありません。プレビュー画像は送信したiPhoneだけに最長30日残り、別のiPhoneや再インストール後には表示されません。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -1408,8 +1415,9 @@ struct FamilyWindowView: View {
                 VStack(spacing: 7) {
                     Image(systemName: "photo")
                         .font(.title2)
-                    Text("プレビューなし")
+                    Text("送信履歴のみ\n画像はありません")
                         .font(.caption2.weight(.semibold))
+                        .multilineTextAlignment(.center)
                 }
                 .foregroundStyle(.secondary)
             }

@@ -1230,7 +1230,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn('windowSectionTitle("接続済みのまど")', main_tab)
         self.assertIn('windowSectionTitle("設定中のまど")', main_tab)
-        self.assertIn("まどの名前は、開いた先の設定から変更できます。", main_tab)
+        self.assertIn("まどの名前は、作成した人の最初のiPhoneから変更できます。", main_tab)
         self.assertIn("PrivateWindowListPresentationPolicy.make", main_tab)
         self.assertIn("if $0.createdAt != $1.createdAt", main_tab)
         self.assertNotIn("if $0.updatedAt != $1.updatedAt", main_tab)
@@ -1318,7 +1318,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('return "相手の参加待ち"', window_list)
         self.assertNotIn('Text("現在のまど")', window_list)
         self.assertIn('"このまどを開きます"', window_list)
-        self.assertIn('"名前を決めて設定を続ける"', window_list)
+        self.assertIn('"設定を続ける"', window_list)
         self.assertIn(
             "pairingPhases[window.localWindowID] == .unpaired",
             window_list,
@@ -2133,9 +2133,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func saveWindowNameIfPossible()",
             "private var utcBoundaryMinute",
         )
-        self.assertIn("guard model.canEditWindowDisplayName", save_name)
+        self.assertIn("guard model.canPersistWindowDisplayName", save_name)
         self.assertIn(
-            "state.spaceID != nil, !model.canEditWindowDisplayName",
+            "if !model.canPersistWindowDisplayName",
             pairing_view,
         )
         self.assertIn("追加したiPhoneでは名前を変更できません", pairing_view)
@@ -2514,7 +2514,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('Text("自分が届けた写真")', family)
         self.assertIn('Text("送信状況")', family)
         self.assertNotIn('Text("履歴")', family)
-        self.assertIn("到着は閲覧や既読を示しません", family)
+        self.assertIn("到着は閲覧や既読ではありません", family)
+        self.assertIn("プレビュー画像は送信したiPhoneだけに最長30日残り", family)
+        self.assertIn("別のiPhoneや再インストール後には表示されません", family)
         self.assertIn("let thumbnail = sentRecordThumbnail(record)", family)
         target_record = section(
             family,
@@ -2692,7 +2694,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertLess(
             create.index("reloadPrivateWindowCatalog()"),
-            create.index("guard canCreateAnotherPrivateWindow else { return }"),
+            create.index("guard canCreateAnotherPrivateWindow else {"),
         )
 
         activate = section(
@@ -2704,6 +2706,82 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             activate.index("reloadPrivateWindowCatalog()"),
             activate.index("guard localWindowID != activePrivateWindowID else { return }"),
         )
+
+    def test_draft_window_name_and_initial_product_limit_are_explicit(self) -> None:
+        container = source("Shared/AppGroup/SharedContainer.swift")
+        model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        pairing = source("NekoWidget/Views/PairingView.swift")
+        main_tab = source("NekoWidget/Views/MainTabView.swift")
+        installation = source("NekoWidget/Services/PairingInstallationGuard.swift")
+
+        self.assertIn("maximumWindowCount = 20", container)
+        self.assertIn("maximumProductWindowCount = 3", container)
+        self.assertIn("updateActiveDraftDisplayNameWhileLifecycleLocked", container)
+        self.assertIn("case setupWindowAlreadyExists", container)
+        self.assertIn("validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked", container)
+        create_window = section(
+            installation,
+            "static func createAndActivatePrivateWindow() throws",
+            "static func createAndActivatePrivateWindowAsync()",
+        )
+        self.assertIn("pairing.phase == .paired", create_window)
+        self.assertIn("setupWindowAlreadyExists", create_window)
+        self.assertIn("Self.isLocalWindowNameDraft(operation.expectedState)", model)
+        self.assertIn("PairingStateStore.updateActiveDraftDisplayName", model)
+        self.assertIn("canPersistWindowDisplayName", model)
+        self.assertIn("model.shouldShowWindowName", pairing)
+        self.assertIn("expectedCredentialAccount: String?", container)
+        self.assertNotIn("PairingState", section(
+            container,
+            "static func updateActiveDraftDisplayNameWhileLifecycleLocked(",
+            "static func validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(",
+        ))
+        self.assertIn("state.windows[index].spaceID == nil", container)
+        pairing_store = source("Shared/Sharing/PairingKeychainStore.swift")
+        draft_save = section(
+            pairing_store,
+            "static func updateActiveDraftDisplayName(",
+            "private static func saveCASWhileLifecycleLocked(",
+        )
+        self.assertIn("current == expected", draft_save)
+        self.assertIn("current.role == .inviter", draft_save)
+        self.assertIn("current.spaceID == nil", draft_save)
+        low_level_create = section(
+            container,
+            "static func createAndActivateWhileLifecycleLocked(",
+            "private static func nextDefaultDisplayName(",
+        )
+        self.assertIn("maximumWindowCount", low_level_create)
+        self.assertNotIn("maximumProductWindowCount", low_level_create)
+        self.assertIn("maximumProductWindowCount", create_window)
+        self.assertIn('Text("名前を保存")', pairing)
+        save_name = section(
+            pairing,
+            "private func saveWindowNameIfPossible() async -> Bool",
+            "private var utcBoundaryMinute",
+        )
+        self.assertNotIn("spaceID", save_name)
+        self.assertNotIn("participantID", save_name)
+        self.assertIn("window-list-setup-limit", main_tab)
+        self.assertIn("window-list-product-limit", main_tab)
+
+    def test_cat_profile_detail_has_one_photo_addition_entry(self) -> None:
+        profile = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
+        detail = section(
+            profile,
+            "struct CatProfileDetailView: View",
+            "private struct CatProfilePhotoSourcesView: View",
+        )
+        sources = section(
+            profile,
+            "private struct CatProfilePhotoSourcesView: View",
+            "private struct CatProfilePhotoAlbumSelectionView: View",
+        )
+        self.assertEqual(detail.count('Text("写真を追加")'), 1)
+        self.assertIn('"この子の写真を見る"', detail)
+        self.assertIn('Text("この子の時間")', detail)
+        self.assertIn('Text("アプリで写真を選ぶ")', sources)
+        self.assertIn('Text("写真アプリのアルバムをつなぐ")', sources)
 
     def test_family_window_separates_received_sent_and_settings(self) -> None:
         family = source("NekoWidget/Views/FamilyWindowView.swift")
@@ -2894,7 +2972,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("if let thumbnail = sentRecordThumbnail(record)", sent_photo)
         self.assertIn(".scaledToFill()", sent)
-        self.assertIn('Text("プレビューなし")', sent_photo)
+        self.assertIn('Text("送信履歴のみ\\n画像はありません")', sent_photo)
         self.assertIn(".aspectRatio(1, contentMode: .fit)", sent_photo)
         self.assertNotIn(".frame(width: 72, height: 72)", sent)
         self.assertNotIn("LazyVStack", sent)

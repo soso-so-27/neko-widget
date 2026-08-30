@@ -387,6 +387,33 @@ enum PairingStateStore {
         }
     }
 
+    /// Renames only the active device-local draft. The exact persisted
+    /// PairingState is revalidated inside the lifecycle lock so an invitee,
+    /// a connected window, or a stale pre-await operation cannot reach the
+    /// catalog-only draft path.
+    @discardableResult
+    static func updateActiveDraftDisplayName(
+        _ rawValue: String,
+        expected: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> PrivateWindowCatalogEntry {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let current = try loadWhileLifecycleLockedMigratingDiagnostics(),
+                  current == expected
+            else { throw PairingError.stateUnavailable }
+            let isLocalDraft = current.phase == .unpaired
+                || (current.role == .inviter
+                    && current.spaceID == nil
+                    && [.creatingInvitation, .failed].contains(current.phase))
+            guard isLocalDraft else { throw PairingError.stateUnavailable }
+            return try PrivateWindowCatalogStore
+                .updateActiveDraftDisplayNameWhileLifecycleLocked(
+                    rawValue,
+                    expectedCredentialAccount: current.credentialAccount
+                )
+        }
+    }
+
     private static func saveCASWhileLifecycleLocked(
         _ state: PairingState,
         expected: PairingState

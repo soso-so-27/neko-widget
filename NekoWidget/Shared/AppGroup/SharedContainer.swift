@@ -42,7 +42,11 @@ struct PrivateWindowCatalogEntry: Codable, Equatable, Identifiable, Sendable {
 
 struct PrivateWindowCatalogState: Codable, Equatable, Sendable {
     static let schemaVersion = 1
+    /// The catalog remains able to decode and preserve up to 20 windows for
+    /// rolling-upgrade and recovery compatibility. The initial product keeps
+    /// creation deliberately smaller while multi-window sync is still in beta.
     static let maximumWindowCount = 20
+    static let maximumProductWindowCount = 3
 
     var schemaVersion: Int = Self.schemaVersion
     var storageRevision: Int = 0
@@ -95,6 +99,7 @@ enum PrivateWindowCatalogStore {
     enum Error: Swift.Error, Equatable, Sendable {
         case invalidCatalog
         case windowLimitReached
+        case setupWindowAlreadyExists
         case unknownWindow
         case duplicateWindowName
         case conflictingLegacyMigration
@@ -532,6 +537,11 @@ enum PrivateWindowCatalogStore {
         now: Date = .now
     ) throws -> PrivateWindowCatalogEntry {
         var state = try bootstrapLegacyMigrationWhileLifecycleLocked(now: now)
+        // This low-level store preserves the durable compatibility ceiling.
+        // Product policy (currently three user-created windows) belongs to
+        // PairingInstallationGuard, where setup-in-progress is checked under
+        // the same lifecycle lock. Keeping the layers separate lets existing
+        // catalogs with four through twenty windows remain readable.
         guard state.windows.count < PrivateWindowCatalogState.maximumWindowCount else {
             throw Error.windowLimitReached
         }
@@ -623,6 +633,39 @@ enum PrivateWindowCatalogStore {
         state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
         state.storageRevision += 1
         try saveWhileLifecycleLocked(state)
+    }
+
+    /// Persists the device-local draft name before a relay space or encrypted
+    /// presentation record exists. It does not publish or synchronize the
+    /// value; invitation creation later promotes the same name into the
+    /// creator-authored encrypted presentation.
+    @discardableResult
+    static func updateActiveDraftDisplayNameWhileLifecycleLocked(
+        _ rawValue: String,
+        expectedCredentialAccount: String?,
+        now: Date = .now
+    ) throws -> PrivateWindowCatalogEntry {
+        let normalized = PrivateWindowDisplayName.normalized(rawValue)
+        let displayName = normalized.isEmpty
+            ? PrivateWindowDisplayName.fallback
+            : normalized
+        guard PrivateWindowDisplayName.isValid(displayName),
+              var state = try load(),
+              let index = state.windows.firstIndex(where: {
+                  $0.localWindowID == state.activeWindowID
+              }),
+              state.windows[index].spaceID == nil,
+              state.windows[index].credentialAccount == expectedCredentialAccount
+        else { throw Error.invalidCatalog }
+        try validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+            displayName,
+            catalog: state
+        )
+        state.windows[index].displayName = displayName
+        state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+        return state.windows[index]
     }
 
     /// Renaming must not create two visually identical destinations. Existing

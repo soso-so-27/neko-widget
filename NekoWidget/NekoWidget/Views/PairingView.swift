@@ -255,6 +255,7 @@ struct PairingView: View {
             guidanceSection(state)
         }
         if state.phase != .unpaired,
+           model.shouldShowWindowName,
            ![.claimingRecovery, .pendingRecoveryApproval, .recoveryAwaitingCompletion]
             .contains(state.phase) {
             windowNameSection(state)
@@ -262,6 +263,9 @@ struct PairingView: View {
 
         switch state.phase {
         case .unpaired:
+            if setupPath == nil || setupPath == .create {
+                windowNameSection(state)
+            }
             if let setupPath {
                 if setupPath == .recover {
                     deviceChangeRoleSection(
@@ -273,7 +277,6 @@ struct PairingView: View {
                 }
 
                 if setupPath == .create {
-                    windowNameSection(state)
                     consentSection
                     createSection
                 } else if setupPath == .join {
@@ -449,52 +452,68 @@ struct PairingView: View {
 
     private func windowNameSection(_ state: PairingState) -> some View {
         Section {
-            if state.spaceID != nil, !model.canEditWindowDisplayName {
+            if !model.canPersistWindowDisplayName {
                 LabeledContent("名前", value: model.windowDisplayName)
             } else {
                 TextField("例：しずくのまど", text: $windowDisplayNameDraft)
                     .textInputAutocapitalization(.sentences)
                     .autocorrectionDisabled()
 
-                if state.spaceID != nil, state.participantID != nil {
+                if state.phase != .unpaired || setupPath == nil {
                     Button {
                         Task { await saveWindowNameIfPossible() }
                     } label: {
                         if model.isSynchronizingWindowName {
                             Label("相手へ共有中…", systemImage: "arrow.triangle.2.circlepath")
+                        } else if state.phase == .unpaired, setupPath == nil {
+                            Text("仮の名前を保存")
+                        } else if model.windowNameIsLocalDraft {
+                            Text("名前を保存")
                         } else {
                             Text("名前を保存して相手と共有")
                         }
                     }
-                    .disabled(model.isWorking || model.isSynchronizingWindowName)
+                    .disabled(
+                        model.isWorking
+                            || model.isSynchronizingWindowName
+                            || !model.canPersistWindowDisplayName
+                    )
+                }
 
-                    if let message = model.windowNameStatusMessage {
-                        HStack(spacing: 8) {
-                            if model.isSynchronizingWindowName {
-                                ProgressView()
-                            } else {
-                                Image(
-                                    systemName: model.windowNameStatusIsError
-                                        ? "exclamationmark.triangle.fill"
-                                        : "checkmark.circle.fill"
-                                )
-                            }
-                            Text(message)
+                if let message = model.windowNameStatusMessage {
+                    HStack(spacing: 8) {
+                        if model.isSynchronizingWindowName {
+                            ProgressView()
+                        } else {
+                            Image(
+                                systemName: model.windowNameStatusIsError
+                                    ? "exclamationmark.triangle.fill"
+                                    : "checkmark.circle.fill"
+                            )
                         }
-                        .font(.footnote)
-                        .foregroundStyle(
-                            model.windowNameStatusIsError ? Color.orange : Color.secondary
-                        )
+                        Text(message)
                     }
+                    .font(.footnote)
+                    .foregroundStyle(
+                        model.windowNameStatusIsError ? Color.orange : Color.secondary
+                    )
                 }
             }
         } header: {
-            Text("まどの名前")
+            Text(state.phase == .unpaired && setupPath == nil
+                ? "設定中の名前"
+                : "まどの名前")
         } footer: {
             if state.localDeviceIsAdditional == true, state.spaceID != nil {
                 Text("追加したiPhoneでは名前を変更できません。最初のiPhoneで変更すると、暗号化してこのiPhoneにも届きます。")
             } else if state.role == .invitee, state.spaceID != nil {
                 Text("名前は暗号化して共有されています。変更は、まどを作った人のiPhoneで行います。")
+            } else if state.phase == .unpaired, setupPath == nil {
+                Text("このiPhoneだけで使う仮の名前です。新しく作ると正式名になり、招待に参加すると作成者が付けた名前に変わります。")
+            } else if state.phase == .unpaired, setupPath == .create {
+                Text("この名前でまどを作ると、暗号化して招待相手にも表示します。")
+            } else if model.windowNameIsLocalDraft {
+                Text("このiPhoneに保存できます。招待作成が完了すると、暗号化して相手にも表示します。")
             } else if state.spaceID == nil {
                 Text("名前は暗号化して、招待した相手にも表示します。")
             } else {
@@ -507,6 +526,7 @@ struct PairingView: View {
         Section {
             Button {
                 Task {
+                    guard await saveWindowNameIfPossible() else { return }
                     if model.isMediaSyncEnabled {
                         guard model.recordMediaSharingConsent() else { return }
                         hasAcceptedPairingTerms = false
@@ -1145,14 +1165,14 @@ struct PairingView: View {
         }
     }
 
-    private func saveWindowNameIfPossible() async {
-        guard model.canEditWindowDisplayName,
-              model.state?.spaceID != nil,
-              model.state?.participantID != nil
-        else { return }
+    @discardableResult
+    private func saveWindowNameIfPossible() async -> Bool {
+        guard model.canPersistWindowDisplayName else { return false }
         if await model.updateWindowDisplayName(windowDisplayNameDraft) {
             windowDisplayNameDraft = model.windowDisplayName
+            return true
         }
+        return false
     }
 
     private var utcBoundaryMinute: Int {

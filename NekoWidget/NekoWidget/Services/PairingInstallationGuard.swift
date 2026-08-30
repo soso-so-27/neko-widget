@@ -174,8 +174,20 @@ enum PairingInstallationGuard {
             guard let marker = try readLocalMarker() else {
                 throw PairingError.installationChanged
             }
-            _ = try PrivateWindowCatalogStore
+            let catalog = try PrivateWindowCatalogStore
                 .bootstrapLegacyMigrationWhileLifecycleLocked()
+            guard catalog.windows.count
+                    < PrivateWindowCatalogState.maximumProductWindowCount
+            else {
+                throw PrivateWindowCatalogStore.Error.windowLimitReached
+            }
+            for window in catalog.windows {
+                guard let pairing = try PairingStateStore.load(
+                    localWindowID: window.localWindowID
+                ), pairing.phase == .paired else {
+                    throw PrivateWindowCatalogStore.Error.setupWindowAlreadyExists
+                }
+            }
             _ = try SharingLifecycleGate.bumpEpochWhileLocked()
             try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
             _ = try PrivateWindowCatalogStore.createAndActivateWhileLifecycleLocked()

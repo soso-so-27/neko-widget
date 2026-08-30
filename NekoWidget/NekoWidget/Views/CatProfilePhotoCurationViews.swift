@@ -15,93 +15,52 @@ struct CatProfileDetailView: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 14) {
-                    CatProfileThumbnail(photo: profile.coverPhoto)
-                        .frame(width: 82, height: 82)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(profile.displayName)
-                            .font(.title2.bold())
-                        Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-            }
-
-            Section {
                 Button {
                     draftName = profile.name ?? ""
                     showsNameEditor = true
                 } label: {
-                    LabeledContent("名前", value: profile.displayName)
+                    HStack(spacing: 14) {
+                        CatProfileThumbnail(photo: profile.coverPhoto)
+                            .frame(width: 82, height: 82)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(profile.displayName)
+                                .font(.title2.bold())
+                                .foregroundStyle(.primary)
+                            Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "pencil")
+                            .foregroundStyle(.tint)
+                    }
+                    .contentShape(Rectangle())
                 }
-
-                Button {
-                    showsLifeReferenceEditor = true
-                } label: {
-                    LabeledContent("日付の基準", value: lifeReferenceSummary)
-                }
-            } header: {
-                Text("この子の時間")
-            } footer: {
-                Text(timeGroupingExplanation)
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(profile.displayName)。この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
+                .accessibilityHint("名前を変更します")
             }
 
             Section {
                 NavigationLink {
-                    UnassignedCatPhotosView(
-                        photos: manualCandidatePhotos,
-                        profiles: allProfiles,
-                        actions: actions,
-                        navigationTitle: "\(profile.displayName)の写真を選ぶ",
-                        preselectedProfileIdentifier: profile.identifier
-                    )
-                } label: {
-                    Label {
-                        LabeledContent(
-                            "アプリで写真を選ぶ",
-                            value: manualCandidatePhotos.isEmpty
-                                ? "追加できる写真なし"
-                                : "候補 \(manualCandidatePhotos.count.formatted())枚"
-                        )
-                    } icon: {
-                        Image(systemName: "photo.badge.plus")
-                    }
-                }
-                .disabled(manualCandidatePhotos.isEmpty)
-
-                NavigationLink {
-                    CatProfilePhotoAlbumSelectionView(
+                    CatProfilePhotoSourcesView(
                         profile: profile,
-                        albums: photoAlbumOptions,
+                        allProfiles: allProfiles,
+                        manualCandidatePhotos: manualCandidatePhotos,
+                        photoAlbumOptions: photoAlbumOptions,
                         actions: actions
                     )
                 } label: {
                     Label {
-                        LabeledContent(
-                            "写真アプリのアルバムをつなぐ",
-                            value: profile.photoAlbumLink?.displayTitle ?? "未連携"
-                        )
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("写真を追加")
+                                .foregroundStyle(.primary)
+                            Text(photoSourceSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     } icon: {
-                        Image(systemName: "rectangle.stack.badge.plus")
-                    }
-                }
-
-                if let link = profile.photoAlbumLink {
-                    if link.isAvailable {
-                        Label(
-                            "「\(link.displayTitle)」から \(link.profilePhotoCount.formatted())枚を表示中",
-                            systemImage: "checkmark.circle.fill"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    } else {
-                        Label(
-                            "つないだアルバムを利用できません。以前確認できた写真は保持しています。",
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
+                        Image(systemName: "photo.badge.plus")
                     }
                 }
 
@@ -114,22 +73,39 @@ struct CatProfileDetailView: View {
                 } label: {
                     Label {
                         LabeledContent(
-                            "この子の写真",
+                            "この子の写真を見る",
                             value: "\(profile.confirmedPhotoCount.formatted())枚"
                         )
                     } icon: {
-                        Image(systemName: "checkmark.circle")
+                        Image(systemName: "photo.on.rectangle")
                     }
                 }
                 .disabled(profile.confirmedPhotos.isEmpty)
+            } header: {
+                Text("写真")
             } footer: {
-                Text("自動で個体を決めません。アプリで指定した写真と、明示的につないだ通常アルバムだけを使います。写真アプリの写真を削除・移動しません。2匹が一緒なら両方へ追加できます。")
+                Text("アプリで選ぶか、写真アプリのアルバムをつないで追加できます。写真を移動・削除することはありません。")
+            }
+
+            Section {
+                Button {
+                    showsLifeReferenceEditor = true
+                } label: {
+                    LabeledContent("誕生日・迎えた日", value: lifeReferenceSummary)
+                }
+                .foregroundStyle(.primary)
+            } header: {
+                Text("この子の時間")
+            } footer: {
+                Text(timeGroupingExplanation)
             }
 
             Section {
                 Button("プロフィールを削除", role: .destructive) {
                     showsDeleteConfirmation = true
                 }
+            } header: {
+                Text("その他")
             } footer: {
                 Text("プロフィールを削除しても写真は削除されません。この子への手動所属とアルバム連携だけを外し、他の子の所属は保ちます。")
             }
@@ -182,6 +158,89 @@ struct CatProfileDetailView: View {
         case .adoptionDay:
             return "迎えた日を基準に「お迎えしたころ」「いっしょに暮らして1年」のようにまとめます。"
         }
+    }
+
+    private var photoSourceSummary: String {
+        if let link = profile.photoAlbumLink {
+            return link.isAvailable
+                ? "アプリで選ぶ・「\(link.displayTitle)」と連携中"
+                : "アプリで選ぶ・アルバム連携を確認"
+        }
+        return "アプリで選ぶ・写真アプリのアルバム"
+    }
+}
+
+private struct CatProfilePhotoSourcesView: View {
+    let profile: CatProfilePresentation
+    let allProfiles: [CatProfilePresentation]
+    let manualCandidatePhotos: [CatProfilePhotoPresentation]
+    let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
+    let actions: CatProfilesViewActions
+
+    var body: some View {
+        List {
+            Section {
+                NavigationLink {
+                    UnassignedCatPhotosView(
+                        photos: manualCandidatePhotos,
+                        profiles: allProfiles,
+                        actions: actions,
+                        navigationTitle: "\(profile.displayName)の写真を選ぶ",
+                        preselectedProfileIdentifier: profile.identifier
+                    )
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("アプリで写真を選ぶ")
+                            Text(manualCandidatePhotos.isEmpty
+                                ? "追加できる候補はありません"
+                                : "候補 \(manualCandidatePhotos.count.formatted())枚")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "photo.badge.plus")
+                    }
+                }
+                .disabled(manualCandidatePhotos.isEmpty)
+
+                NavigationLink {
+                    CatProfilePhotoAlbumSelectionView(
+                        profile: profile,
+                        albums: photoAlbumOptions,
+                        actions: actions
+                    )
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("写真アプリのアルバムをつなぐ")
+                            Text(profile.photoAlbumLink?.displayTitle ?? "未連携")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "rectangle.stack.badge.plus")
+                    }
+                }
+            } header: {
+                Text("追加方法")
+            } footer: {
+                Text("この子を写真だけで自動判定しません。2匹が一緒なら、両方のプロフィールへ追加できます。")
+            }
+
+            if let link = profile.photoAlbumLink, !link.isAvailable {
+                Section {
+                    Label(
+                        "つないだアルバムを利用できません。以前確認した写真は保持しています。写真へのアクセス範囲を確認するか、別のアルバムを選んでください。",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                }
+            }
+        }
+        .navigationTitle("写真を追加")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
