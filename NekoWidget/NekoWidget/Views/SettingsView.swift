@@ -882,7 +882,7 @@ struct SharingReviewPreviewView: View {
                     flowStep(1, title: "標準カメラで撮る", detail: "または写真アプリで1枚を選ぶ")
                     flowStep(2, title: "共有ボタンを押す", detail: "共有先から「ねこのまど」を選ぶ")
                     flowStep(3, title: "写真と届け先を確認する", detail: "この端末へ短時間だけ一時保存する。まだ送信されない")
-                    flowStep(4, title: "「ねこのまど」を開く", detail: "現在のまどを確認し、安全確認・暗号化をして届ける")
+                    flowStep(4, title: "「ねこのまど」を開く", detail: "届け先のまどを確認し、安全確認・暗号化をして届ける")
 
                     Label("無料の送信枠は1日5枚", systemImage: "paperplane.circle")
                         .font(.footnote)

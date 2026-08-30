@@ -208,6 +208,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('systemImage: "bookmark"', view)
         self.assertIn('systemImage: "bookmark.fill"', view)
         self.assertIn('title: "残す"', view)
+        self.assertIn('title: "取り込む"', view)
         self.assertIn('title: "残した"', view)
         self.assertIn('if entry.isBookmarked {', view)
         self.assertIn('if entry.isLiked {', view)
@@ -215,6 +216,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
         self.assertIn('directActionLabel(', view)
         self.assertIn('statusBadge(', view)
+        self.assertIn('accessibilityLabel("写真アプリに取り込んで残す")', view)
         self.assertIn("写真アプリへの取り込みを確認するため、アプリを開きます", view)
         self.assertIn("SendFamilyWidgetHeartIntent", view)
 
@@ -500,10 +502,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("widgetMemoryTarget = target", resolver)
         self.assertIn('alert("この写真は更新されました"', family_view)
         self.assertIn("ウィジェットの新しい写真で、もう一度お試しください。", family_view)
-        self.assertIn('"この写真を思い出に残しますか？"', family_view)
+        self.assertIn("memorySaveDialogTitle", family_view)
+        self.assertIn('"この写真を取り込んで残しますか？"', family_view)
+        self.assertIn('"写真アプリにコピーして残す"', family_view)
         confirmation = section(
             family_view,
-            '.confirmationDialog(\n            "この写真を思い出に残しますか？"',
+            ".confirmationDialog(\n            memorySaveDialogTitle",
             "private var pairedContent: some View",
         )
         self.assertIn("focusedMomentID = nil", confirmation)
@@ -648,7 +652,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('return canRetry ? "ハートを再送" : "ハートを送れません"', family_view)
         self.assertIn("heart?.phase == .sent", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
-        self.assertIn('Label("ハート", systemImage: "heart.fill")', family_view)
+        self.assertIn(
+            'Label("ハートが届きました", systemImage: "heart.fill")',
+            family_view,
+        )
         self.assertIn('parts.append("ハートが届いています")', family_view)
         self.assertNotIn("family-window-received-paws", family_view)
 
@@ -812,6 +819,48 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             family,
         )
         self.assertNotIn("model.toggleSavedMemory", family)
+
+    def test_today_widget_and_memory_photo_contexts_remain_distinct(self) -> None:
+        main = source("NekoWidget/Views/MainTabView.swift")
+        browser = source("NekoWidget/Views/LikedPhotosView.swift")
+        home = source("NekoWidget/Views/HomeView.swift")
+        onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
+        model = source("NekoWidget/ViewModels/AppViewModel.swift")
+
+        today_detail = section(
+            main,
+            "private func detailView(for localIdentifier: String) -> some View",
+            "private func memoryDetailView(for localIdentifier: String) -> some View",
+        )
+        self.assertIn("photos: [initialPhoto]", today_detail)
+        self.assertIn(
+            "showsWidgetTiming: widgetOpenedPhotoIdentifier == localIdentifier",
+            today_detail,
+        )
+
+        memory_detail = section(
+            main,
+            "private func memoryDetailView(for localIdentifier: String) -> some View",
+            "private func memoriesDestination(for route: MemoriesRoute) -> some View",
+        )
+        self.assertIn("photos: likedPhotos", memory_detail)
+        self.assertIn("showsWidgetTiming: false", memory_detail)
+        self.assertIn("if showsWidgetTiming", browser)
+        self.assertIn("更新時刻は目安で、iOSにより前後します", browser)
+
+        ordering = section(
+            browser,
+            "private static func makeBrowserPhotos(",
+            "private var selectedPhoto: PhotoPresentation?",
+        )
+        self.assertIn("return ordered", ordering)
+        self.assertNotIn(".sorted", ordering)
+
+        self.assertIn("写真は時間とともに変わります。", home)
+        self.assertIn("今日の1枚を選びます。", onboarding)
+        self.assertIn("時間とともに変わります。", onboarding)
+        self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
+        self.assertIn("UIApplication.significantTimeChangeNotification", model)
 
     def test_album_grid_distinguishes_saved_bookmarks_from_selection(self) -> None:
         albums = source("NekoWidget/Views/LikedPhotosView.swift")
@@ -1252,11 +1301,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("SubtleWindowThumbnail(showsSetupMark:", window_list)
         self.assertIn("private struct SubtleWindowThumbnail: View", main_tab)
         self.assertIn("Color.accentColor.opacity(0.07)", window_list)
-        self.assertIn("Color.accentColor.opacity(0.18)", window_list)
+        self.assertNotIn("Color.accentColor.opacity(0.18)", window_list)
         self.assertIn("PairingStateStore.load(", reload_catalog)
         self.assertIn("case .awaitingInvitee:", window_list)
         self.assertIn('return "相手の参加待ち"', window_list)
-        self.assertIn('Text("現在のまど")', window_list)
+        self.assertNotIn('Text("現在のまど")', window_list)
+        self.assertIn('"このまどを開きます"', window_list)
         self.assertIn('"名前を決めて設定を続ける"', window_list)
         self.assertIn(
             "pairingPhases[window.localWindowID] == .unpaired",
@@ -2365,17 +2415,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
-        self.assertNotIn('Text("自分が届けた写真")', family)
+        self.assertIn('Text("自分が届けた写真")', family)
         self.assertIn('Text("送信状況")', family)
-        self.assertIn('Text("履歴")', family)
+        self.assertNotIn('Text("履歴")', family)
         self.assertIn("到着は閲覧や既読を示しません", family)
-        self.assertIn("sentRecordThumbnail(record)", family)
+        self.assertIn("let thumbnail = sentRecordThumbnail(record)", family)
         target_record = section(
             family,
             "private var outgoingStatusSection: some View",
             "private var visibleSentRecords",
         )
-        self.assertIn("LazyVGrid(columns: sentRecordColumns", target_record)
+        self.assertIn("LazyVStack(spacing: 10)", target_record)
         self.assertIn("ForEach(visibleSentRecords)", target_record)
         self.assertIn("if let focusedSentMomentID", family)
         self.assertIn("records.insert(target, at: records.startIndex)", family)
@@ -2563,15 +2613,20 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("receivedSectionContent", paired)
         self.assertIn("sentSectionContent", paired)
         self.assertIn("sendPhotoAction", paired)
+        self.assertEqual(paired.count("sendPhotoAction"), 1)
         self.assertLess(
             paired.index('Picker("まどに表示する内容"'),
+            paired.index("sendPhotoAction"),
+        )
+        self.assertLess(
+            paired.index("sendPhotoAction"),
             paired.index("receivedSectionContent"),
         )
-        self.assertIn("model.receivedMoments.isEmpty", paired)
-        self.assertIn("} else if prioritizesNotificationTarget {", paired)
-        self.assertIn("sentSectionContent\n                    sendPhotoAction", paired)
-        self.assertIn("sendPhotoAction\n                    sentSectionContent", paired)
-        self.assertIn("pendingNotificationRoute?.target != nil || focusedSentMomentID != nil", family)
+        self.assertLess(
+            paired.index("sendPhotoAction"),
+            paired.index("sentSectionContent"),
+        )
+        self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
             family,
@@ -2683,8 +2738,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("iCloud写真の設定により、iCloudにも同期される場合があります", family)
         self.assertIn("if model.hasImportedMemory(item)", family)
         self.assertIn("写真アプリへコピーした写真は削除されません", family)
-        self.assertIn('case .memories: "思い出に残した"', family)
-        self.assertNotIn('case .memories: "保存済みだけ"', family)
+        self.assertNotIn("ReceivedPhotoFilter", family)
+        self.assertNotIn("family-window-photo-filter", family)
+        self.assertIn("private var orderedReceivedMoments", family)
         self.assertIn('"接続状態を確認できません"', family)
 
         pending_widget = section(
@@ -2702,10 +2758,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func sentRecordCard(",
             "private func outgoingStatusCard(",
         )
-        self.assertIn('arrived ? "到着" : "受付済み"', sent)
-        self.assertIn('Label("ハート", systemImage: "heart.fill")', sent)
+        self.assertIn('arrived ? "相手のiPhoneへ到着" : "サーバー受付済み"', sent)
+        self.assertIn('Label("ハートが届きました", systemImage: "heart.fill")', sent)
         self.assertIn(".scaledToFill()", sent)
-        self.assertIn(".aspectRatio(1, contentMode: .fit)", sent)
+        self.assertIn(".frame(width: 72, height: 72)", sent)
+        self.assertNotIn(".aspectRatio(1, contentMode: .fit)", sent)
+        self.assertIn("if thumbnail == nil", sent)
+        self.assertIn(".fixedSize(horizontal: false, vertical: true)", sent)
         self.assertNotIn("閲覧・既読の確認ではありません", sent)
         self.assertIn("sentRecordAccessibilityLabel(record)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)
@@ -2960,12 +3019,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
         self.assertIn('Button("思い出から外す", role: .destructive)', family)
-        self.assertIn('Text("思い出に残す")', family)
+        self.assertIn('"取り込んで残す"', family)
+        self.assertIn('"写真アプリにコピーして残す"', family)
         self.assertIn("通常の思い出と写真まとめに入り", family)
         self.assertIn("相手へは通知しません", family)
         self.assertIn("アプリ削除のあとも写真アプリに残ります", family)
         self.assertNotIn('Label("写真アプリへコピー"', family)
-        self.assertIn('case .memories: "思い出に残した"', family)
+        self.assertNotIn("ReceivedPhotoFilter", family)
 
         app_model = source("NekoWidget/ViewModels/AppViewModel.swift")
         app_root = source("NekoWidget/App/AppRootView.swift")

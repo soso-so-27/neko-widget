@@ -52,10 +52,10 @@ enum OnboardingPresentationCopy {
         "猫の写真は、",
         "撮るだけ撮って",
         "見ていないことが多い。",
-        "このアプリは、その中から",
-        "猫だけを自動で選んで、",
-        "毎日ちがう1枚を",
-        "ホーム画面に出します。"
+        "このアプリが猫だけを見つけ、",
+        "今日の1枚を選びます。",
+        "ウィジェットの写真は",
+        "時間とともに変わります。"
     ]
     static let purposeAction = "はじめる"
 
@@ -232,11 +232,14 @@ struct OnboardingPresentationState: Equatable, Sendable {
         }
     }
 
-    /// Skipping Photos permission must not end onboarding. It jumps directly
-    /// to the product-critical Widget instructions.
+    /// "あとで" enters the app without Photos access. Widget placement and
+    /// memory instructions depend on an available photo, so presenting them
+    /// after this choice would teach actions the user cannot perform. Home is
+    /// the persistent recovery point for granting access later.
     mutating func skipPhotoPermission() {
         guard mode == .firstRun, currentPage == .photoPermission else { return }
-        routeFirstRun(to: .widgetGuide)
+        completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+        self.currentPage = nil
     }
 
     /// An interrupted first run may resume on the scan page after Photos

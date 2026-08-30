@@ -6,7 +6,7 @@ enum OnboardingPresentationVerifier {
         try verifiesExactlyFivePagesInTheApprovedOrder()
         try verifiesApprovedJapaneseCopy()
         try verifiesOrdinaryFirstRunTransitions()
-        try verifiesPermissionSkipRoutesToWidgetGuide()
+        try verifiesPermissionSkipEntersTheApp()
         try verifiesWidgetGuideSkipStillReachesFinalPage()
         try verifiesRevokedPhotoAccessReturnsToPermission()
         try verifiesResumeProgressIsClamped()
@@ -39,10 +39,10 @@ enum OnboardingPresentationVerifier {
                 "猫の写真は、",
                 "撮るだけ撮って",
                 "見ていないことが多い。",
-                "このアプリは、その中から",
-                "猫だけを自動で選んで、",
-                "毎日ちがう1枚を",
-                "ホーム画面に出します。"
+                "このアプリが猫だけを見つけ、",
+                "今日の1枚を選びます。",
+                "ウィジェットの写真は",
+                "時間とともに変わります。"
             ],
             "page-one product promise changed"
         )
@@ -184,15 +184,22 @@ enum OnboardingPresentationVerifier {
         try require(state.isFirstRunComplete, "final action did not complete onboarding")
     }
 
-    private static func verifiesPermissionSkipRoutesToWidgetGuide() throws {
+    private static func verifiesPermissionSkipEntersTheApp() throws {
         var state = OnboardingPresentationState(persistedResumePageIndex: 1)
         try require(state.currentPage == .photoPermission, "permission resume setup failed")
         state.skipPhotoPermission()
         try require(
-            state.currentPage == .widgetGuide,
-            "permission skip bypassed the product-critical Widget guide"
+            !state.isPresented,
+            "permission skip kept presenting instructions that require Photos access"
         )
-        try require(state.resumePageIndex == 3, "permission skip progress was not resumable")
+        try require(
+            state.isFirstRunComplete,
+            "permission skip did not enter the app"
+        )
+        try require(
+            state.resumePageIndex == OnboardingPresentationPage.photoPermission.rawValue,
+            "permission skip rewrote the last page the user actually saw"
+        )
     }
 
     private static func verifiesWidgetGuideSkipStillReachesFinalPage() throws {

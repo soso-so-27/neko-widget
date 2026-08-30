@@ -204,6 +204,7 @@ final class AppViewModel: ObservableObject {
     private let widgetCacheBuilder: WidgetCacheBuilder
     private let imageLoader: PhotoImageLoader
     private let photoSelector: WeightedPhotoSelector
+    private let todayPhotoSelectionStore: TodayPhotoSelectionStore
     private let albumSelector: AlbumCandidateSelector
     private let exporter: JSONExporter
     private let momentSharingCoordinator: MomentSharingCoordinator
@@ -215,6 +216,7 @@ final class AppViewModel: ObservableObject {
     private let identityStoreInitializationError: String?
 
     private var hasStarted = false
+    private var todayPhotoSelectionState: TodayPhotoSelectionState?
     private var hasFinishedSnapshotLoad = false
     /// Loading and failure are different: loading must preserve scanner state
     /// internally, while public candidate surfaces stay hidden. Failure also
@@ -263,6 +265,7 @@ final class AppViewModel: ObservableObject {
     private var sharingSyncObserver: NSObjectProtocol?
     private var momentPresentationRefreshObserver: NSObjectProtocol?
     private var receivedMemoryImportObserver: NSObjectProtocol?
+    private var todayDayChangeObserver: NSObjectProtocol?
     private var familyWindowRefreshSequence = 0
     private var momentNotificationRouteGeneration = 0
     /// nil means no additional in-memory source filter. When an album is
@@ -288,6 +291,9 @@ final class AppViewModel: ObservableObject {
         imageLoader = PhotoImageLoader()
         widgetCacheBuilder = WidgetCacheBuilder()
         photoSelector = WeightedPhotoSelector()
+        let todaySelectionStore = TodayPhotoSelectionStore()
+        todayPhotoSelectionStore = todaySelectionStore
+        todayPhotoSelectionState = todaySelectionStore.load()
         albumSelector = AlbumCandidateSelector()
         exporter = JSONExporter()
         momentSharingCoordinator = MomentSharingCoordinator()
@@ -361,6 +367,18 @@ final class AppViewModel: ObservableObject {
                 )
             }
         }
+        todayDayChangeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.significantTimeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                // Includes local midnight and time-zone changes. The pure
+                // policy keeps the current photo when the local day is still
+                // the same and issues a new receipt only when needed.
+                self?.chooseCurrentAssetIfNeeded()
+            }
+        }
     }
 
     deinit {
@@ -372,6 +390,9 @@ final class AppViewModel: ObservableObject {
         }
         if let receivedMemoryImportObserver {
             NotificationCenter.default.removeObserver(receivedMemoryImportObserver)
+        }
+        if let todayDayChangeObserver {
+            NotificationCenter.default.removeObserver(todayDayChangeObserver)
         }
     }
 
@@ -1686,11 +1707,7 @@ final class AppViewModel: ObservableObject {
         snapshot.settings = normalized
         snapshot.updatedAt = .now
         if displayRangeChanged || widgetPolicyChanged {
-            let eligible = candidateSnapshot(snapshot)
-            currentAsset = photoSelector.selectOne(
-                from: eligible.assets,
-                settings: normalized
-            )
+            chooseCurrentAssetIfNeeded()
         }
         await saveSnapshot(reportErrors: true)
 
@@ -3195,31 +3212,33 @@ final class AppViewModel: ObservableObject {
             return
         }
         let eligible = candidateSnapshot(snapshot)
-        if let currentAsset,
-           let updated = eligible.assets.first(where: {
-                $0.localIdentifier == currentAsset.localIdentifier
-                    && $0.isWidgetEligible(settings: settings)
-           }) {
-            self.currentAsset = updated
-            return
-        }
-        currentAsset = photoSelector.selectOne(
+        let resolution = TodayPhotoSelectionPolicy.resolve(
             from: eligible.assets,
-            settings: settings
+            settings: settings,
+            previousState: todayPhotoSelectionState,
+            selector: photoSelector
         )
+        currentAsset = resolution.asset
+        if resolution.state != todayPhotoSelectionState {
+            todayPhotoSelectionState = resolution.state
+            todayPhotoSelectionStore.save(resolution.state)
+            SharedLog.app.info(
+                "today",
+                "Today photo selection changed",
+                metadata: [
+                    "asset": resolution.asset.map {
+                        SharedLog.shortHash($0.localIdentifier)
+                    } ?? "none"
+                ]
+            )
+        }
     }
 
     private func refreshCurrentAsset() {
-        guard let identifier = currentAsset?.localIdentifier else { return }
-        guard let updated = candidateSnapshot(snapshot).assets.first(where: {
-            $0.localIdentifier == identifier
-                && $0.isWidgetEligible(settings: settings)
-        }) else {
-            currentAsset = nil
-            chooseCurrentAssetIfNeeded()
-            return
-        }
-        currentAsset = updated
+        // Re-resolve the persisted local-day receipt as well as the asset
+        // value. This keeps midnight/foreground activation correct while an
+        // ordinary snapshot or like refresh retains the same eligible photo.
+        chooseCurrentAssetIfNeeded()
     }
 
     private func createOrUpdateAlbum(reportErrors: Bool) async {

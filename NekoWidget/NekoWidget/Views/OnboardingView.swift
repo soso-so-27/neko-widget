@@ -17,6 +17,7 @@ struct OnboardingView: View {
     let isLimitedAccess: Bool
 
     let requestPhotoAccess: () -> Void
+    let skipPhotoAccess: () -> Void
     let openPhotoSettings: () -> Void
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
@@ -67,11 +68,7 @@ struct OnboardingView: View {
             OnboardingPhotoPermissionPage(
                 isRequestReady: isPhotoRequestReady,
                 requestAccess: requestPhotoAccess,
-                skip: {
-                    // Permission is the only skippable page that jumps over
-                    // scanning. The Widget guide must still be seen.
-                    page = .widgetGuide
-                }
+                skip: skipPhotoAccess
             )
 
         case .denied, .restricted:
@@ -83,7 +80,7 @@ struct OnboardingView: View {
                 )
 
                 Button(OnboardingPresentationCopy.permissionSkipAction) {
-                    page = .widgetGuide
+                    skipPhotoAccess()
                 }
                 .font(.subheadline.weight(.semibold))
                 .padding(.bottom, 24)

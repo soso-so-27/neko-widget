@@ -452,7 +452,7 @@ private struct WidgetPlacementFallbackIllustration: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("ねこのまど")
                         .font(.headline)
-                    Text("毎日ちがう猫写真")
+                    Text("時間とともに変わる猫写真")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

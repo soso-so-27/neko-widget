@@ -41,7 +41,6 @@ struct MainTabView: View {
     let isLimitedAccess: Bool
     let isScanning: Bool
     let shouldOfferWidgetPlacementGuide: Bool
-    let widgetIntervalMinutes: Int
     let privateWindowDisplayName: String
     @Binding var deepLinkedPhotoIdentifier: String?
     @Binding var deepLinkedPhotoShownAt: Date?
@@ -256,12 +255,16 @@ struct MainTabView: View {
 
     @ViewBuilder
     private func detailView(for localIdentifier: String) -> some View {
+        let initialPhoto = photo(for: localIdentifier)
         PhotoBrowserView(
-            photos: catPhotos,
+            // "今日" and a Widget tap are both one-photo entry points. Other
+            // library photos remain available through the explicit same-day
+            // action instead of becoming an unexplained horizontal feed.
+            photos: [initialPhoto],
             libraryPhotos: libraryPhotos,
-            initialPhoto: photo(for: localIdentifier),
+            initialPhoto: initialPhoto,
             widgetShownAt: widgetOpenedPhotoIdentifier == localIdentifier ? widgetShownAt : nil,
-            widgetIntervalMinutes: widgetIntervalMinutes,
+            showsWidgetTiming: widgetOpenedPhotoIdentifier == localIdentifier,
             setMemorySaved: setMemorySaved,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
             excludeFromCatCandidates: { identifiers in
@@ -285,7 +288,7 @@ struct MainTabView: View {
             libraryPhotos: libraryPhotos,
             initialPhoto: photo(for: localIdentifier),
             widgetShownAt: nil,
-            widgetIntervalMinutes: widgetIntervalMinutes,
+            showsWidgetTiming: false,
             setMemorySaved: setMemorySaved,
             exportMemoryPhoto: exportMemoryPhoto,
             excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
@@ -416,7 +419,7 @@ struct MainTabView: View {
                     libraryPhotos: libraryPhotos,
                     initialPhoto: initialPhoto,
                     widgetShownAt: nil,
-                    widgetIntervalMinutes: widgetIntervalMinutes,
+                    showsWidgetTiming: false,
                     setMemorySaved: setMemorySaved,
                     excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
                     excludeFromCatCandidates: { identifiers in
@@ -1034,23 +1037,12 @@ private struct WindowListView: View {
                 windowThumbnail(for: window)
 
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 7) {
-                        Text(window.displayName)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .layoutPriority(1)
-
-                        if isActive {
-                            Text("現在のまど")
-                                .font(.caption2.bold())
-                                .foregroundStyle(.tint)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Color.accentColor.opacity(0.12), in: Capsule())
-                        }
-                    }
+                    Text(window.displayName)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
 
                     Text(windowPrimaryStatusLabel(for: window))
                         .font(.subheadline)
@@ -1087,9 +1079,7 @@ private struct WindowListView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 18)
                     .strokeBorder(
-                        isActive
-                            ? Color.accentColor.opacity(0.18)
-                            : Color.primary.opacity(0.05),
+                        Color.primary.opacity(0.05),
                         lineWidth: 1
                     )
             }
@@ -1103,11 +1093,9 @@ private struct WindowListView: View {
         )
         .accessibilityIdentifier("window-list-row-\(window.localWindowID)")
         .accessibilityHint(
-            isActive
-                ? "このまどを開きます"
-                : (pausesWindowChanges
-                    ? "更新が完了すると、このまどへ切り替えられます"
-                    : "このまどへ切り替えて開きます")
+            pausesWindowChanges && !isActive
+                ? "更新が完了すると、このまどを開けます"
+                : "このまどを開きます"
         )
     }
 

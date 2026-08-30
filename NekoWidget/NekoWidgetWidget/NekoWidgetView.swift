@@ -140,12 +140,12 @@ struct NekoWidgetView: View {
         } else if let memoryActionURL = entry.memoryActionURL {
             Link(destination: memoryActionURL) {
                 directActionLabel(
-                    title: "残す",
+                    title: "取り込む",
                     systemImage: "bookmark"
                 )
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("思い出に残す")
+            .accessibilityLabel("写真アプリに取り込んで残す")
             .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
         }
     }

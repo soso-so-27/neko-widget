@@ -293,7 +293,6 @@ struct AppStoreScreenshotFixtureRootView: View {
             isLimitedAccess: false,
             isScanning: false,
             shouldOfferWidgetPlacementGuide: false,
-            widgetIntervalMinutes: 60,
             privateWindowDisplayName: "ミケのまど",
             deepLinkedPhotoIdentifier: $selectedPhotoIdentifier,
             deepLinkedPhotoShownAt: $selectedPhotoShownAt,

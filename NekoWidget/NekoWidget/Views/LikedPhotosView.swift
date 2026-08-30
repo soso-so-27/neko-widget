@@ -1322,9 +1322,7 @@ struct PhotoBrowserView: View {
     let libraryPhotos: [PhotoPresentation]
     let initialPhoto: PhotoPresentation
     let widgetShownAt: Date?
-    /// Sourced from AppSettings rather than fixed in this view so a future
-    /// cadence change keeps the explanation aligned with generated timelines.
-    let widgetIntervalMinutes: Int
+    let showsWidgetTiming: Bool
     let setMemorySaved: (String, Bool) -> Void
     let exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)?
     let excludedCatCandidateIdentifiers: Set<String>
@@ -1355,7 +1353,7 @@ struct PhotoBrowserView: View {
         libraryPhotos: [PhotoPresentation],
         initialPhoto: PhotoPresentation,
         widgetShownAt: Date?,
-        widgetIntervalMinutes: Int,
+        showsWidgetTiming: Bool,
         setMemorySaved: @escaping (String, Bool) -> Void,
         exportMemoryPhoto: ((String) async throws -> MemoryPhotoJPEGExport)? = nil,
         excludedCatCandidateIdentifiers: Set<String>,
@@ -1379,7 +1377,7 @@ struct PhotoBrowserView: View {
         self.libraryPhotos = libraryPhotos
         self.initialPhoto = initialPhoto
         self.widgetShownAt = widgetShownAt
-        self.widgetIntervalMinutes = widgetIntervalMinutes
+        self.showsWidgetTiming = showsWidgetTiming
         self.setMemorySaved = setMemorySaved
         self.exportMemoryPhoto = exportMemoryPhoto
         self.excludedCatCandidateIdentifiers = excludedCatCandidateIdentifiers
@@ -1515,7 +1513,9 @@ struct PhotoBrowserView: View {
                             .accessibilityElement(children: .contain)
                         }
 
-                        widgetTiming
+                        if showsWidgetTiming {
+                            widgetTiming
+                        }
                     }
                     .padding(16)
                 }
@@ -1729,26 +1729,22 @@ struct PhotoBrowserView: View {
         photos: [PhotoPresentation],
         initialPhoto: PhotoPresentation
     ) -> [PhotoPresentation] {
-        var unique: [String: PhotoPresentation] = [:]
+        var seenIdentifiers = Set<String>()
+        var ordered: [PhotoPresentation] = []
+        ordered.reserveCapacity(photos.count + 1)
         for photo in photos {
-            unique[photo.localIdentifier] = photo
-        }
-        if unique[initialPhoto.localIdentifier] == nil {
-            unique[initialPhoto.localIdentifier] = initialPhoto
-        }
-        return unique.values.sorted { lhs, rhs in
-            switch (lhs.creationDate, rhs.creationDate) {
-            case let (left?, right?):
-                if left == right { return lhs.localIdentifier < rhs.localIdentifier }
-                return left < right
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            case (nil, nil):
-                return lhs.localIdentifier < rhs.localIdentifier
+            if seenIdentifiers.insert(photo.localIdentifier).inserted {
+                ordered.append(photo)
             }
         }
+        if seenIdentifiers.insert(initialPhoto.localIdentifier).inserted {
+            ordered.append(initialPhoto)
+        }
+        // The caller owns the collection's meaning: Memories passes
+        // newest-saved first, while curated albums pass their own deliberate
+        // order. Re-sorting everything by capture date here broke that
+        // context as soon as a person opened the detail pager.
+        return ordered
     }
 
     private var selectedPhoto: PhotoPresentation? {
@@ -1808,7 +1804,7 @@ struct PhotoBrowserView: View {
     private var widgetTiming: some View {
         VStack(spacing: 4) {
             Label(
-                "ウィジェットは約\(widgetIntervalMinutes)分ごとに変わります",
+                "ウィジェットの写真は時間とともに変わります",
                 systemImage: "clock.arrow.circlepath"
             )
                 .font(.caption.weight(.semibold))
@@ -1819,10 +1815,10 @@ struct PhotoBrowserView: View {
                         .font(.caption)
                         .monospacedDigit()
                 }
-            } else {
-                Text("最後に変わった時刻は、ウィジェットから開くと表示されます")
-                    .font(.caption)
             }
+
+            Text("更新時刻は目安で、iOSにより前後します")
+                .font(.caption)
         }
         .multilineTextAlignment(.center)
         .foregroundStyle(.secondary)

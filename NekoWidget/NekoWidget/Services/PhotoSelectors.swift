@@ -12,7 +12,7 @@ struct WeightedPhotoSelector {
         settings: AppSettings,
         now: Date = .now
     ) -> AssetRecord? {
-        let scoped = scopedCandidates(from: assets, settings: settings, now: now)
+        let scoped = eligibleCandidates(from: assets, settings: settings, now: now)
         guard !scoped.isEmpty else { return nil }
 
         let recentCutoff = calendar.date(byAdding: .day, value: -30, to: now) ?? now
@@ -29,7 +29,7 @@ struct WeightedPhotoSelector {
         count: Int,
         now: Date = .now
     ) -> [AssetRecord] {
-        let all = scopedCandidates(from: assets, settings: settings, now: now)
+        let all = eligibleCandidates(from: assets, settings: settings, now: now)
         guard !all.isEmpty, count > 0 else { return [] }
 
         let recentCutoff = calendar.date(byAdding: .day, value: -30, to: now) ?? now
@@ -64,7 +64,7 @@ struct WeightedPhotoSelector {
         settings: AppSettings,
         now: Date = .now
     ) -> [AssetRecord] {
-        let all = scopedCandidates(from: assets, settings: settings, now: now)
+        let all = eligibleCandidates(from: assets, settings: settings, now: now)
         let recentCutoff = calendar.date(byAdding: .day, value: -30, to: now) ?? now
         let fresh = all.filter {
             guard let lastShownAt = $0.lastShownAt else { return true }
@@ -75,7 +75,7 @@ struct WeightedPhotoSelector {
         return weightedOrder(fresh) + weightedOrder(older)
     }
 
-    private func scopedCandidates(
+    func eligibleCandidates(
         from assets: [AssetRecord],
         settings: AppSettings,
         now: Date
@@ -123,6 +123,112 @@ struct WeightedPhotoSelector {
         if asset.isFavorite { value *= 2 }
         if asset.burstIdentifier != nil { value *= 1.5 }
         return value
+    }
+}
+
+/// The app's "今日" surface is intentionally independent from WidgetKit's
+/// 10–30 minute timeline. Persist only the local calendar day and selected
+/// Photos identifier so an ordinary reload or process restart cannot turn
+/// "today" into another random feed. The library snapshot remains untouched.
+struct TodayPhotoSelectionState: Codable, Equatable, Sendable {
+    let localDayKey: String
+    let localIdentifier: String
+}
+
+struct TodayPhotoSelectionResolution: Equatable {
+    let asset: AssetRecord?
+    let state: TodayPhotoSelectionState?
+}
+
+enum TodayPhotoSelectionPolicy {
+    static func resolve(
+        from assets: [AssetRecord],
+        settings: AppSettings,
+        previousState: TodayPhotoSelectionState?,
+        selector: WeightedPhotoSelector,
+        now: Date = .now,
+        calendar: Calendar = .current
+    ) -> TodayPhotoSelectionResolution {
+        let eligible = selector.eligibleCandidates(
+            from: assets,
+            settings: settings,
+            now: now
+        )
+        // A transient empty snapshot can occur while Photos permission,
+        // identity or scan state is being reconciled. Keep the tiny receipt so
+        // the same eligible photo returns later in the day instead of losing
+        // the user's stable Today selection.
+        guard !eligible.isEmpty else {
+            return TodayPhotoSelectionResolution(asset: nil, state: previousState)
+        }
+
+        let dayKey = localDayKey(for: now, calendar: calendar)
+        if previousState?.localDayKey == dayKey,
+           let identifier = previousState?.localIdentifier,
+           let retained = eligible.first(where: {
+               $0.localIdentifier == identifier
+           }) {
+            return TodayPhotoSelectionResolution(
+                asset: retained,
+                state: previousState
+            )
+        }
+
+        guard let selected = selector.selectOne(
+            from: eligible,
+            settings: settings,
+            now: now
+        ) else {
+            return TodayPhotoSelectionResolution(asset: nil, state: previousState)
+        }
+        return TodayPhotoSelectionResolution(
+            asset: selected,
+            state: TodayPhotoSelectionState(
+                localDayKey: dayKey,
+                localIdentifier: selected.localIdentifier
+            )
+        )
+    }
+
+    static func localDayKey(
+        for date: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        let components = calendar.dateComponents(
+            [.era, .year, .month, .day],
+            from: date
+        )
+        return [
+            components.era ?? 0,
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0,
+        ].map { String($0) }.joined(separator: "-")
+    }
+}
+
+/// A new, isolated UserDefaults receipt. It neither migrates nor rewrites the
+/// library snapshot, shared likes, Widget cache or Photos assets.
+struct TodayPhotoSelectionStore {
+    private static let stateKey = "today-photo.selection.v1"
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func load() -> TodayPhotoSelectionState? {
+        guard let data = defaults.data(forKey: Self.stateKey) else { return nil }
+        return try? JSONDecoder().decode(TodayPhotoSelectionState.self, from: data)
+    }
+
+    func save(_ state: TodayPhotoSelectionState?) {
+        guard let state,
+              let data = try? JSONEncoder().encode(state) else {
+            defaults.removeObject(forKey: Self.stateKey)
+            return
+        }
+        defaults.set(data, forKey: Self.stateKey)
     }
 }
 

@@ -69,8 +69,9 @@ struct PendingFamilyMemoryTargetPresentationPolicy {
 ///
 /// Synchronization updates `updatedAt` frequently, so it must never decide the
 /// visual order. Connected windows keep their creation order while unfinished
-/// setup is shown separately. Activating a window only moves the "current"
-/// badge; it does not move the row.
+/// setup is shown separately. Opening a window can change the internal active
+/// context required by legacy stores, but that implementation detail never
+/// changes list order or appears as a user-facing state.
 struct PrivateWindowListPresentationInput: Equatable, Sendable {
     let localWindowID: String
     let createdAt: Date

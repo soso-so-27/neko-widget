@@ -103,7 +103,7 @@ struct HomeView: View {
                     Text("ウィジェットを置く")
                         .font(.headline)
                         .foregroundStyle(.primary)
-                    Text("毎日ちがう猫写真をホーム画面に。")
+                    Text("写真は時間とともに変わります。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)

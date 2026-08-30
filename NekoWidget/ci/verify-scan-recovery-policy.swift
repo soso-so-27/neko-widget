@@ -75,6 +75,103 @@ private func verifyDetectionAndWidgetPoliciesAreSeparated() throws {
                 "detected-cat population was still area-gated")
 }
 
+private func verifyTodayPhotoSelectionIsStablePerLocalDay() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let dayOne = calendar.date(
+        from: DateComponents(year: 2026, month: 8, day: 30, hour: 9)
+    )!
+    let dayTwo = calendar.date(byAdding: .day, value: 1, to: dayOne)!
+    let selector = WeightedPhotoSelector(calendar: calendar)
+    let first = record("today-first", areaRatio: 0.20)
+    let second = record("today-second", areaRatio: 0.20)
+    let retainedState = TodayPhotoSelectionState(
+        localDayKey: TodayPhotoSelectionPolicy.localDayKey(
+            for: dayOne,
+            calendar: calendar
+        ),
+        localIdentifier: first.localIdentifier
+    )
+
+    let sameDay = TodayPhotoSelectionPolicy.resolve(
+        from: [second, first],
+        settings: .default,
+        previousState: retainedState,
+        selector: selector,
+        now: dayOne,
+        calendar: calendar
+    )
+    try require(
+        sameDay.asset?.localIdentifier == first.localIdentifier
+            && sameDay.state == retainedState,
+        "Today photo did not survive a same-day reload"
+    )
+
+    let nextDay = TodayPhotoSelectionPolicy.resolve(
+        from: [first, second],
+        settings: .default,
+        previousState: retainedState,
+        selector: selector,
+        now: dayTwo,
+        calendar: calendar
+    )
+    try require(
+        nextDay.asset != nil
+            && nextDay.state?.localDayKey
+                == TodayPhotoSelectionPolicy.localDayKey(
+                    for: dayTwo,
+                    calendar: calendar
+                ),
+        "Today photo receipt did not roll to the next local day"
+    )
+
+    let ineligibleFirst = record("today-first", areaRatio: 0.01)
+    let replacement = TodayPhotoSelectionPolicy.resolve(
+        from: [ineligibleFirst, second],
+        settings: .default,
+        previousState: retainedState,
+        selector: selector,
+        now: dayOne,
+        calendar: calendar
+    )
+    try require(
+        replacement.asset?.localIdentifier == second.localIdentifier
+            && replacement.state?.localIdentifier == second.localIdentifier,
+        "an ineligible Today photo was not replaced"
+    )
+
+    let temporarilyEmpty = TodayPhotoSelectionPolicy.resolve(
+        from: [],
+        settings: .default,
+        previousState: retainedState,
+        selector: selector,
+        now: dayOne,
+        calendar: calendar
+    )
+    try require(
+        temporarilyEmpty.asset == nil && temporarilyEmpty.state == retainedState,
+        "a transient empty snapshot destroyed the same-day Today receipt"
+    )
+}
+
+private func verifyTodayPhotoSelectionReceiptPersistsAcrossRestart() throws {
+    let suiteName = "jp.nekowidget.ci.today-selection.\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: suiteName) else {
+        throw VerificationError.failed("could not create isolated defaults")
+    }
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let state = TodayPhotoSelectionState(
+        localDayKey: "1-2026-8-30",
+        localIdentifier: "persisted-photo"
+    )
+    TodayPhotoSelectionStore(defaults: defaults).save(state)
+    let relaunchedStore = TodayPhotoSelectionStore(defaults: defaults)
+    try require(
+        relaunchedStore.load() == state,
+        "Today photo receipt did not survive a store recreation"
+    )
+}
+
 private func verifyMinimumAreaDoesNotInvalidateVisionEvidence() throws {
     var settings = AppSettings.default
     let fingerprint = settings.analysisFingerprint
@@ -336,6 +433,8 @@ private func requireObject(_ value: Any) throws -> [String: Any] {
 private struct ScanRecoveryPolicyVerifier {
     static func main() throws {
         try verifyDetectionAndWidgetPoliciesAreSeparated()
+        try verifyTodayPhotoSelectionIsStablePerLocalDay()
+        try verifyTodayPhotoSelectionReceiptPersistsAcrossRestart()
         try verifyMinimumAreaDoesNotInvalidateVisionEvidence()
         try verifyPositiveV2MigrationKeepsExistingWidgetPopulation()
         try verifyEvidenceAndStateBackwardCompatibility()
