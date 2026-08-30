@@ -7473,7 +7473,9 @@ actor SharingRuntimeSelfTestRunner {
                   originalCatalog.windows.count == 1,
                   originalCatalog.activeWindowID
                     == originalCatalog.windows.first?.localWindowID,
-                  let firstWindowID = originalCatalog.windows.first?.localWindowID
+                  let firstWindowID = originalCatalog.windows.first?.localWindowID,
+                  let firstWindowDisplayName = originalCatalog.windows.first?.displayName,
+                  firstWindowDisplayName == "朝のまど"
             else { throw PairingError.stateUnavailable }
 
             // An unrelated catalog slot with unreadable/mismatched authority
@@ -7482,7 +7484,7 @@ actor SharingRuntimeSelfTestRunner {
             // performed by the guard.
             let second = try PrivateWindowCatalogStore
                 .createAndActivateWhileLifecycleLocked()
-            guard second.displayName == "\(PrivateWindowDisplayName.fallback) 2"
+            guard second.displayName == PrivateWindowDisplayName.fallback
             else { throw PairingError.stateUnavailable }
             let renamedDraft = try PrivateWindowCatalogStore
                 .updateActiveDraftDisplayNameWhileLifecycleLocked(
@@ -7498,7 +7500,7 @@ actor SharingRuntimeSelfTestRunner {
             do {
                 try PrivateWindowCatalogStore
                     .updateActiveMetadataWhileLifecycleLocked(
-                        displayName: PrivateWindowDisplayName.fallback,
+                        displayName: firstWindowDisplayName,
                         spaceID: nil,
                         credentialAccount: nil
                     )
