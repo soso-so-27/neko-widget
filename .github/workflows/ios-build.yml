@@ -623,8 +623,11 @@ jobs:
           fi
           grep -Fq 'static let minimumInterval: TimeInterval = 1.0' \
             NekoWidget/Services/PhotoSelectors.swift
-          if grep -Fq '.badge(' NekoWidget/Views/MainTabView.swift; then
-            echo "Top-level collection totals must not use unread-style badges" >&2
+          badge_count="$(grep -Fc '.badge(' NekoWidget/Views/MainTabView.swift || true)"
+          if [ "$badge_count" -ne 1 ] || ! grep -Fq \
+            '.badge(latestMonthlyWindowIsUnread ? 1 : 0)' \
+            NekoWidget/Views/MainTabView.swift; then
+            echo "Only the latest unread monthly letter may badge a top-level tab" >&2
             exit 1
           fi
           if grep -Fq '.tag(AppTab.settings)' NekoWidget/Views/MainTabView.swift; then
