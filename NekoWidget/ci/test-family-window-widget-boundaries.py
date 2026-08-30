@@ -1122,7 +1122,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         self.assertNotIn('Text("できました")', view)
         self.assertNotIn("ができました", view)
-        self.assertIn('Text("季節の作品")', view)
+        self.assertIn('Text("季節のムービー")', view)
         self.assertIn('の季節のムービー、\\(presentation.scenes.count)場面', view)
         self.assertIn("nextWorkDescription", view)
         self.assertIn('return "次は\\(releaseMonth)月ごろ', view)
@@ -1191,7 +1191,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertEqual(project.count("SeasonalMovieExportService.swift in Sources"), 2)
         self.assertIn("猫の写真を端末内で見つけて", config)
         self.assertIn("アルバムとウィジェットへ反映し", config)
-        self.assertIn("猫が写る写真や動画から季節の作品", config)
+        self.assertIn("猫が写る写真や動画から季節のムービー", config)
         self.assertIn("元の写真や動画を変更・削除しません", config)
 
     def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
@@ -1466,7 +1466,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("group == .time ? section.albums.last", preview_source)
         self.assertIn("seenIdentifiers.insert(photo.localIdentifier)", preview_source)
         self.assertIn("if result.count == 4", preview_source)
-        self.assertIn('Text("年・近くで・特別な日")', memories)
+        self.assertIn('Text("テーマごとに写真を見る")', memories)
         self.assertNotIn('Text("成長・年・特別な日")', memories)
         self.assertIn("photos.count == 2", memories)
         self.assertIn("photos.count == 3", memories)

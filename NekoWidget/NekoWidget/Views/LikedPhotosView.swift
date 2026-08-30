@@ -815,7 +815,7 @@ struct LikedPhotosView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("自動アルバム")
                             .font(.headline)
-                        Text("年・近くで・特別な日")
+                        Text("テーマごとに写真を見る")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.leading)
@@ -838,7 +838,7 @@ struct LikedPhotosView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .accessibilityIdentifier("memories-open-automatic-albums")
-            .accessibilityLabel("自動アルバム。年、近くで、特別な日")
+            .accessibilityLabel("自動アルバム。テーマごとに写真を見る")
             .accessibilityHint("自動で整理された猫写真を開きます")
         }
     }
@@ -881,65 +881,16 @@ struct LikedPhotosView: View {
 }
 
 private struct MonthlySummaryHeroCard: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     let presentation: MonthlyWindowPresentation
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                accessibilityLayout
-            } else {
-                overlayLayout
-            }
-        }
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 22)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 22))
-        .contentShape(RoundedRectangle(cornerRadius: 22))
-    }
-
-    private var overlayLayout: some View {
-        ZStack(alignment: .bottomLeading) {
-            coverImage
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.82)],
-                startPoint: .center,
-                endPoint: .bottom
-            )
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text("月の便り")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(.black.opacity(0.38), in: Capsule())
-                Text(presentation.title)
-                    .font(.title2.bold())
-                Text(detailText)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.82))
-            }
-            .foregroundStyle(.white)
-            .padding(18)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 218)
-    }
-
-    private var accessibilityLayout: some View {
         VStack(alignment: .leading, spacing: 0) {
             coverImage
                 .frame(maxWidth: .infinity)
-                .frame(height: 164)
+                .frame(height: 178)
                 .clipped()
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("月の便り")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
@@ -955,6 +906,9 @@ private struct MonthlySummaryHeroCard: View {
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .contentShape(RoundedRectangle(cornerRadius: 22))
     }
 
     @ViewBuilder

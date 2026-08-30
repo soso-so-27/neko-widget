@@ -17,7 +17,7 @@ enum SeasonalMovieArchiveError: LocalizedError {
         case .invalidRecord:
             return "作品履歴の内容を確認できませんでした。"
         case .periodNotFound:
-            return "この季節の作品が見つかりませんでした。"
+            return "この季節のムービーが見つかりませんでした。"
         case .sceneNotFound:
             return "この場面は作品に含まれていません。"
         case .minimumSceneCount:

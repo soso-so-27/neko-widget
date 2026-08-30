@@ -36,7 +36,7 @@ struct SeasonalMovieCard: View {
 
                     VStack(alignment: .leading, spacing: 7) {
                         HStack {
-                            Text("季節の作品")
+                            Text("季節のムービー")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.white.opacity(0.82))
                             Spacer()
@@ -82,7 +82,7 @@ struct SeasonalMovieCard: View {
                         Image(systemName: "info.circle")
                             .frame(width: 32, height: 32)
                     }
-                    .accessibilityLabel("季節の作品の選び方")
+                    .accessibilityLabel("季節のムービーの選び方")
                     .accessibilityIdentifier("seasonal-movie-about-button")
                 }
                 .font(.caption)
@@ -151,7 +151,7 @@ private struct SeasonalMovieAboutSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .navigationTitle("季節の作品について")
+            .navigationTitle("季節のムービーについて")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -389,7 +389,7 @@ struct SeasonalMovieView: View {
         .alert("これ以上は外せません", isPresented: $showsMinimumSceneAlert) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("季節の作品には8場面以上必要です。")
+            Text("季節のムービーには8場面以上必要です。")
         }
         .alert(
             "作品を更新できませんでした",

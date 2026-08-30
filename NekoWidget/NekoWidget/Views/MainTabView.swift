@@ -389,7 +389,7 @@ struct MainTabView: View {
             )
         } else {
             ContentUnavailableView(
-                "この季節の作品を開けません",
+                "この季節のムービーを開けません",
                 systemImage: "film.stack",
                 description: Text("元の写真や動画がこのiPhoneにあるか確認してください。")
             )
