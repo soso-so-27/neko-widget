@@ -46,7 +46,10 @@ const SHARING_BETA_PAGES = Object.freeze([
     visibleRevision: false,
     requiredPhrases: Object.freeze([
       SHARING_BETA_BOUNDARY_PHRASE,
-      "1台のiPhoneで最大20個の名前付き非公開なまど",
+      "1台のiPhoneで合計3個までの名前付き非公開なまど",
+      "設定中のまどは同時に1個",
+      "端末内の保存形式は最大20個を保持でき",
+      "既存のまどが3個を超えていても削除・非表示にはしません",
       "1つのまどは作成者と信頼できる招待相手1人だけ",
       "各参加者は、承認した最大4台のiPhone",
       "家族に限定しません",

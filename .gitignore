@@ -46,6 +46,9 @@ Packages/
 __pycache__/
 *.py[cod]
 
+# Local Codex diagnostics and screenshots (may contain private app state)
+.codex-artifacts/
+
 # Wrangler local auth/account cache (never commit)
 .wrangler/
 

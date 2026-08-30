@@ -69,7 +69,7 @@ App Store ConnectのApp PrivacyはTestFlight uploadと別の手動gateです。�
 
 - 最終binaryで暗号化通報操作が非表示で、coreと旧outbox再送もfail closedになっている
 - staging D1はmedia=ON、APNs=ON、report-ingestion=OFFで、日次`limited-external-beta`監視が合格している
-- 公開Privacy、Community Standards、Supportがrevision `2026-08-27`で配備され、TestFlight workflowの公開policy gateが合格している
+- 公開Privacy、Community Standards、Supportがrevision `2026-08-30`で配備され、TestFlight workflowの公開policy gateが合格している
 - Feedback EmailとReview Contactが実値で、休日を含め48時間以内に初回確認できる
 - Build 71専用の新しいexternal groupを作り、既知で信頼できるtester 1人だけを追加する。public linkはOFF、Build 71候補以外を追加しない
 - 安全連絡は写真や招待秘密を添付しないTestFlight feedback、即時の保護はblock／共有解除、必要時は共有data-plane緊急OFFを使う

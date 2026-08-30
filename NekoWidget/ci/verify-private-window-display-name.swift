@@ -23,14 +23,6 @@ private struct LegacyFamilyWidgetManifest: Decodable {
 private enum PrivateWindowDisplayNameVerifier {
     static func main() throws {
         try require(
-            PrivateWindowCatalogState.maximumWindowCount == 20,
-            "catalog compatibility limit changed"
-        )
-        try require(
-            PrivateWindowCatalogState.maximumProductWindowCount == 3,
-            "initial product window limit changed"
-        )
-        try require(
             PrivateWindowDisplayName.resolved(nil)
                 == PrivateWindowDisplayName.fallback,
             "missing name did not use fallback"

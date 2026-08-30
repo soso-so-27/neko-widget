@@ -116,7 +116,10 @@ class PublicPolicySiteTests(unittest.TestCase):
     def test_private_window_capability_boundary_is_consistent(self):
         required = (
             "この共有仕様は、招待した少人数だけの限定外部TestFlightベータとして確認中です。App Storeで一般提供している版ではありません。",
-            "1台のiPhoneで最大20個の名前付き非公開なまど",
+            "1台のiPhoneで合計3個までの名前付き非公開なまど",
+            "設定中のまどは同時に1個",
+            "端末内の保存形式は最大20個を保持でき",
+            "既存のまどが3個を超えていても削除・非表示にはしません",
             "1つのまどは作成者と信頼できる招待相手1人だけ",
             "各参加者は、承認した最大4台のiPhone",
             "家族に限定しません",
@@ -423,7 +426,7 @@ class PublicPolicySiteTests(unittest.TestCase):
 
         gate = workflow.split(gate_name, 1)[1].split("\n      - name:", 1)[0]
         self.assertEqual(gate.count('policy_revision="2026-08-26"'), 2)
-        self.assertEqual(gate.count('policy_revision="2026-08-27"'), 1)
+        self.assertEqual(gate.count('policy_revision="2026-08-30"'), 1)
         disabled = gate.split("disabled)", 1)[1].split(";;", 1)[0]
         self.assertIn('policy_profile="local-only"', disabled)
         self.assertIn(
@@ -431,7 +434,7 @@ class PublicPolicySiteTests(unittest.TestCase):
             disabled,
         )
         media = gate.split("media-staging)", 1)[1].split(";;", 1)[0]
-        self.assertIn('policy_revision="2026-08-27"', media)
+        self.assertIn('policy_revision="2026-08-30"', media)
         self.assertIn('policy_profile="sharing-beta"', media)
         self.assertIn(
             'policy_site_base="https://soso-so-27.github.io/neko-widget/"',

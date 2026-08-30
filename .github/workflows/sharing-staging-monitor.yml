@@ -23,7 +23,7 @@ jobs:
         include:
           - profile: sharing-beta
             site_base: https://soso-so-27.github.io/neko-widget/
-            revision: "2026-08-27"
+            revision: "2026-08-30"
           - profile: local-only
             site_base: https://soso-so-27.github.io/neko-widget/app/
             revision: "2026-08-26"
