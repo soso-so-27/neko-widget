@@ -208,7 +208,11 @@ struct MonthlyWindowBuilder {
             months[monthStart, default: []].append(photo)
         }
 
-        let letters = months.keys.sorted(by: >).compactMap { monthStart in
+        let sortedMonthStarts = months.keys.sorted { lhs, rhs in
+            lhs > rhs
+        }
+        let letters: [MonthlyWindowPresentation] = sortedMonthStarts.compactMap {
+            monthStart -> MonthlyWindowPresentation? in
             guard let monthPhotos = months[monthStart] else { return nil }
             guard case let .ready(presentation) = build(
                 from: monthPhotos,

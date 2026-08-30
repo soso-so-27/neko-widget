@@ -1041,7 +1041,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("static let maximumSceneCount = 7", model)
         self.assertIn("struct MonthlyWindowCollectionPresentation", model)
         self.assertIn("func buildCompletedCollection(", model)
-        self.assertIn("months.keys.sorted", model)
+        self.assertIn("let sortedMonthStarts = months.keys.sorted", model)
         self.assertIn("collapseRapidNearDuplicates", model)
         self.assertIn("boundingBoxIntersectionOverUnion", model)
         self.assertIn("lhs.albumPostures == rhs.albumPostures", model)
