@@ -4,7 +4,7 @@ import Foundation
 /// A read-only monthly suggestion assembled from the same privacy-minimal
 /// presentation values used by the automatic albums. No image bytes are read,
 /// copied, uploaded, or persisted while this value is built.
-struct MonthlyWindowPresentation: Identifiable, Hashable {
+struct MonthlyWindowPresentation: Identifiable, Hashable, Sendable {
     let monthStart: Date
     let yearNumber: Int
     let monthNumber: Int
@@ -40,12 +40,12 @@ struct MonthlyWindowPresentation: Identifiable, Hashable {
 
 }
 
-enum MonthlyWindowUnavailableReason: Hashable {
+enum MonthlyWindowUnavailableReason: Hashable, Sendable {
     case noDatedPhotos
     case notEnoughDistinctScenes
 }
 
-struct MonthlyWindowUnavailablePresentation: Hashable {
+struct MonthlyWindowUnavailablePresentation: Hashable, Sendable {
     let monthStart: Date
     let reason: MonthlyWindowUnavailableReason
     let availableSceneCount: Int
@@ -56,9 +56,25 @@ struct MonthlyWindowUnavailablePresentation: Hashable {
     }
 }
 
-enum MonthlyWindowBuildResult: Hashable {
+enum MonthlyWindowBuildResult: Hashable, Sendable {
     case ready(MonthlyWindowPresentation)
     case unavailable(MonthlyWindowUnavailablePresentation)
+}
+
+/// All finished monthly letters that can currently be rebuilt from the local
+/// photo library. The collection stores no image bytes and is intentionally
+/// rebuilt from the current `PhotoPresentation` values, so removed or
+/// unavailable photos are never presented as a cloud-backed archive.
+struct MonthlyWindowCollectionPresentation: Hashable, Sendable {
+    let letters: [MonthlyWindowPresentation]
+    let unavailable: MonthlyWindowUnavailablePresentation?
+
+    var latestResult: MonthlyWindowBuildResult? {
+        if let latest = letters.first {
+            return .ready(latest)
+        }
+        return unavailable.map(MonthlyWindowBuildResult.unavailable)
+    }
 }
 
 /// Produces a deterministic 5...7-scene monthly letter from the same
@@ -144,14 +160,39 @@ struct MonthlyWindowBuilder {
         from inputPhotos: [PhotoPresentation],
         through referenceDate: Date
     ) -> MonthlyWindowBuildResult {
+        let collection = buildCompletedCollection(
+            from: inputPhotos,
+            through: referenceDate
+        )
+        if let latestResult = collection.latestResult {
+            return latestResult
+        }
+        return unavailableResult(
+            monthStart: referenceDate,
+            reason: .noDatedPhotos,
+            availableSceneCount: 0
+        )
+    }
+
+    /// Builds every completed month that has enough distinct local scenes,
+    /// newest first. Input is canonicalized and grouped once so a library with
+    /// many years of photos does not rescan the whole array for every month.
+    /// The current, still-changing month is never included.
+    func buildCompletedCollection(
+        from inputPhotos: [PhotoPresentation],
+        through referenceDate: Date
+    ) -> MonthlyWindowCollectionPresentation {
         guard let currentInterval = calendar.dateInterval(
             of: .month,
             for: referenceDate
         ) else {
-            return unavailableResult(
-                monthStart: referenceDate,
-                reason: .noDatedPhotos,
-                availableSceneCount: 0
+            return MonthlyWindowCollectionPresentation(
+                letters: [],
+                unavailable: unavailablePresentation(
+                    monthStart: referenceDate,
+                    reason: .noDatedPhotos,
+                    availableSceneCount: 0
+                )
             )
         }
 
@@ -167,14 +208,20 @@ struct MonthlyWindowBuilder {
             months[monthStart, default: []].append(photo)
         }
 
-        if let newestReadyMonth = months
-            .filter({
-                collapseRapidNearDuplicates($0.value).count
-                    >= Self.minimumSceneCount
-            })
-            .map(\.key)
-            .max() {
-            return build(from: photos, monthContaining: newestReadyMonth)
+        let letters = months.keys.sorted(by: >).compactMap { monthStart in
+            guard let monthPhotos = months[monthStart] else { return nil }
+            guard case let .ready(presentation) = build(
+                from: monthPhotos,
+                monthContaining: monthStart
+            ) else { return nil }
+            return presentation
+        }
+
+        if !letters.isEmpty {
+            return MonthlyWindowCollectionPresentation(
+                letters: letters,
+                unavailable: nil
+            )
         }
 
         let previousMonth = calendar.date(
@@ -182,7 +229,25 @@ struct MonthlyWindowBuilder {
             value: -1,
             to: currentInterval.start
         ) ?? referenceDate
-        return build(from: photos, monthContaining: previousMonth)
+        let fallback = build(from: photos, monthContaining: previousMonth)
+        guard case let .unavailable(unavailable) = fallback else {
+            // A ready result here would have been present in `letters`, but
+            // keep the method total if Calendar behavior ever changes.
+            if case let .ready(presentation) = fallback {
+                return MonthlyWindowCollectionPresentation(
+                    letters: [presentation],
+                    unavailable: nil
+                )
+            }
+            return MonthlyWindowCollectionPresentation(
+                letters: [],
+                unavailable: nil
+            )
+        }
+        return MonthlyWindowCollectionPresentation(
+            letters: [],
+            unavailable: unavailable
+        )
     }
 
     /// Cat photos normally arrive with one record per Photos identifier. This
@@ -480,11 +545,23 @@ struct MonthlyWindowBuilder {
         reason: MonthlyWindowUnavailableReason,
         availableSceneCount: Int
     ) -> MonthlyWindowBuildResult {
-        .unavailable(MonthlyWindowUnavailablePresentation(
+        .unavailable(unavailablePresentation(
+            monthStart: monthStart,
+            reason: reason,
+            availableSceneCount: availableSceneCount
+        ))
+    }
+
+    private func unavailablePresentation(
+        monthStart: Date,
+        reason: MonthlyWindowUnavailableReason,
+        availableSceneCount: Int
+    ) -> MonthlyWindowUnavailablePresentation {
+        MonthlyWindowUnavailablePresentation(
             monthStart: monthStart,
             reason: reason,
             availableSceneCount: availableSceneCount,
             minimumSceneCount: Self.minimumSceneCount
-        ))
+        )
     }
 }

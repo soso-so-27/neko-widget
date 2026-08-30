@@ -928,7 +928,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
         self.assertNotIn("showsCreationPreview", memory_view)
         self.assertIn("case monthlyWindow(MonthlyWindowPresentation)", main_tab)
-        self.assertIn("monthlyWindowResult: currentMonthlyWindowResult", main_tab)
+        self.assertIn(
+            "monthlyWindowCollection: monthlyWindowCollection",
+            main_tab,
+        )
         self.assertIn(
             "automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos",
             main_tab,
@@ -965,6 +968,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('identifier: "memories-automatic-albums-title"', memory_view)
         self.assertIn('identifier: "memories-seasonal-movies-title"', memory_view)
         self.assertIn('.frame(height: 148)', memory_view)
+        self.assertIn('Text("これまでの便り")', memory_view)
+        self.assertIn("MonthlyWindowArchiveCard(", memory_view)
+        self.assertIn(
+            'accessibilityIdentifier("memories-previous-monthly-windows")',
+            memory_view,
+        )
         self.assertNotIn('Text("月の便り")\n                    .font(.caption', memory_view)
         self.assertIn('accessibilityIdentifier("memories-saved-section")', memory_view)
         self.assertIn('accessibilityIdentifier("memories-summaries-section")', memory_view)
@@ -1001,11 +1010,21 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("MemoriesRoute.monthlyWindow", memories)
         self.assertIn('accessibilityIdentifier("memories-summaries-section")', memories)
         self.assertIn("from: catPhotos", main)
-        self.assertIn("buildMostRecent", main)
-        self.assertIn("through: Date()", main)
-        self.assertIn("currentMonthlyWindowResult: MonthlyWindowBuildResult?", main)
-        self.assertIn("if case .unavailable = result, !scan.hasFinalResult", main)
-        self.assertIn("monthlyWindowResult: MonthlyWindowBuildResult?", memories)
+        self.assertIn("buildCompletedCollection", main)
+        self.assertIn("let referenceDate = Date()", main)
+        self.assertIn("through: referenceDate", main)
+        self.assertIn(
+            "monthlyWindowCollection: MonthlyWindowCollectionPresentation?",
+            main,
+        )
+        self.assertIn("struct MonthlyWindowCollectionKey", main)
+        self.assertIn(".task(id: monthlyWindowCollectionKey)", main)
+        self.assertIn("Task.detached(priority: .utility)", main)
+        self.assertIn("completedMonthlyWindowCollectionKey != key", main)
+        self.assertIn(
+            "monthlyWindowCollection: MonthlyWindowCollectionPresentation?",
+            memories,
+        )
         self.assertIn("presentation.remainingSceneCount.formatted()", memories)
         photos_routes = section(main, "enum PhotosRoute:", "enum MemoriesRoute:")
         memory_routes = section(
@@ -1020,6 +1039,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         self.assertIn("static let minimumSceneCount = 5", model)
         self.assertIn("static let maximumSceneCount = 7", model)
+        self.assertIn("struct MonthlyWindowCollectionPresentation", model)
+        self.assertIn("func buildCompletedCollection(", model)
+        self.assertIn("months.keys.sorted", model)
         self.assertIn("collapseRapidNearDuplicates", model)
         self.assertIn("boundingBoxIntersectionOverUnion", model)
         self.assertIn("lhs.albumPostures == rhs.albumPostures", model)

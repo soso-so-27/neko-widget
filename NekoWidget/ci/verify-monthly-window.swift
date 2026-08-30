@@ -271,6 +271,114 @@ private func verifyMostRecentReadyMonthSurvivesMonthTurnover() throws {
                 "the newest completed month did not replace the older letter")
 }
 
+private func verifyCompletedCollectionContainsEveryReadyPastMonth() throws {
+    let builder = MonthlyWindowBuilder(timeZone: utc)
+    let july = (1...5).map {
+        photo("july-\($0)", date(2026, 7, $0))
+    }
+    let august = (1...7).map {
+        photo("august-archive-\($0)", date(2026, 8, $0))
+    }
+    let insufficientJune = (1...4).map {
+        photo("june-\($0)", date(2026, 6, $0))
+    }
+    let currentSeptember = (1...5).map {
+        photo("current-september-\($0)", date(2026, 9, $0))
+    }
+    let input = insufficientJune + july + august + currentSeptember
+
+    let collection = builder.buildCompletedCollection(
+        from: input,
+        through: date(2026, 9, 15)
+    )
+    try require(collection.letters.map(\.monthNumber) == [8, 7],
+                "completed letters were not newest-first or skipped a ready month")
+    try require(collection.letters.map(\.yearNumber) == [2026, 2026],
+                "completed letters lost their calendar year")
+    try require(collection.letters.allSatisfy { $0.photos.count >= 5 },
+                "an insufficient month entered the completed collection")
+    try require(!collection.letters.contains { $0.monthNumber == 9 },
+                "the current changing month entered the completed collection")
+    try require(collection.unavailable == nil,
+                "a ready collection also exposed an unavailable fallback")
+
+    let reversed = builder.buildCompletedCollection(
+        from: Array(input.reversed()),
+        through: date(2026, 9, 15)
+    )
+    try require(
+        collection.letters.map { $0.photos.map(\.localIdentifier) }
+            == reversed.letters.map { $0.photos.map(\.localIdentifier) },
+        "completed collection changed with input order"
+    )
+
+    let unavailableCollection = builder.buildCompletedCollection(
+        from: insufficientJune,
+        through: date(2026, 7, 10)
+    )
+    try require(unavailableCollection.letters.isEmpty,
+                "an insufficient month produced a completed letter")
+    try require(
+        unavailableCollection.unavailable?.reason == .notEnoughDistinctScenes,
+        "an empty collection lost its previous-month progress"
+    )
+}
+
+private func verifyCompletedCollectionScalesAcrossYears() throws {
+    let builder = MonthlyWindowBuilder(timeZone: utc)
+    let firstMonth = date(2006, 1, 1, hour: 0)
+    var input: [PhotoPresentation] = []
+    input.reserveCapacity(12_000)
+    for monthOffset in 0..<240 {
+        guard let monthStart = utcCalendar.date(
+            byAdding: .month,
+            value: monthOffset,
+            to: firstMonth
+        ) else {
+            throw VerificationError.failed("could not form large monthly fixture")
+        }
+        for photoIndex in 0..<50 {
+            guard let capturedAt = utcCalendar.date(
+                byAdding: .hour,
+                value: photoIndex * 12,
+                to: monthStart
+            ) else {
+                throw VerificationError.failed("could not form large photo fixture")
+            }
+            input.append(photo(
+                "large-\(monthOffset)-\(photoIndex)",
+                capturedAt,
+                isMemory: photoIndex == 0,
+                area: Double((photoIndex % 10) + 1) / 20
+            ))
+        }
+    }
+
+    let collection = builder.buildCompletedCollection(
+        from: input,
+        through: date(2026, 1, 1, hour: 0)
+    )
+    try require(collection.letters.count == 240,
+                "a multi-year library lost a completed monthly letter")
+    try require(
+        collection.letters.first?.yearNumber == 2025
+            && collection.letters.first?.monthNumber == 12,
+        "the large collection did not begin with the newest completed month"
+    )
+    try require(
+        collection.letters.last?.yearNumber == 2006
+            && collection.letters.last?.monthNumber == 1,
+        "the large collection did not retain the oldest ready month"
+    )
+    try require(
+        collection.letters[11].yearNumber == 2025
+            && collection.letters[11].monthNumber == 1
+            && collection.letters[12].yearNumber == 2024
+            && collection.letters[12].monthNumber == 12,
+        "year-boundary ordering is not newest-first"
+    )
+}
+
 private func verifyLocalMonthBoundary() throws {
     let tokyo = TimeZone(identifier: "Asia/Tokyo")!
     var tokyoCalendar = Calendar(identifier: .gregorian)
@@ -470,6 +578,8 @@ private struct MonthlyWindowVerifier {
         try verifyExplicitMemoriesLeadWithinTheirTimeBand()
         try verifyConflictingDuplicatesAreInputOrderIndependent()
         try verifyMostRecentReadyMonthSurvivesMonthTurnover()
+        try verifyCompletedCollectionContainsEveryReadyPastMonth()
+        try verifyCompletedCollectionScalesAcrossYears()
         try verifyLocalMonthBoundary()
         try verifyRapidNearIdenticalShotsCollapseDeterministically()
         try verifyTimingAndFramingKeepDistinctScenesSeparate()

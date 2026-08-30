@@ -20,6 +20,12 @@ private struct SeasonalMoviePreparationKey: Hashable {
     let sourceAlbumIdentifier: String?
 }
 
+private struct MonthlyWindowCollectionKey: Hashable {
+    let canBuild: Bool
+    let currentMonthStart: Date?
+    let photoDigest: Int
+}
+
 struct MainTabView: View {
     @Environment(\.scenePhase) private var scenePhase
 
@@ -77,6 +83,8 @@ struct MainTabView: View {
     @State private var selectedAlbumScope: CatProfileScopePresentation = .everyone
     @State private var seasonalMovie: SeasonalMoviePresentation?
     @State private var completedSeasonalMoviePreparationKey: SeasonalMoviePreparationKey?
+    @State private var monthlyWindowCollection: MonthlyWindowCollectionPresentation?
+    @State private var completedMonthlyWindowCollectionKey: MonthlyWindowCollectionKey?
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
 
     var body: some View {
@@ -133,7 +141,7 @@ struct MainTabView: View {
                 LikedPhotosView(
                     photos: likedPhotos,
                     hasPhotoAccess: hasPhotoAccess,
-                    monthlyWindowResult: currentMonthlyWindowResult,
+                    monthlyWindowCollection: monthlyWindowCollection,
                     seasonalMovies: seasonalMovieArchive.records,
                     automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos,
                     exportPhotoBook: exportPhotoBook,
@@ -204,6 +212,9 @@ struct MainTabView: View {
         }
         .task(id: seasonalMoviePreparationKey) {
             await prepareSeasonalMovie()
+        }
+        .task(id: monthlyWindowCollectionKey) {
+            await prepareMonthlyWindowCollection()
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -518,18 +529,6 @@ struct MainTabView: View {
         return sections
     }
 
-    private var currentMonthlyWindowResult: MonthlyWindowBuildResult? {
-        guard hasPhotoAccess else { return nil }
-        let result = MonthlyWindowBuilder().buildMostRecent(
-            from: catPhotos,
-            through: Date()
-        )
-        if case .unavailable = result, !scan.hasFinalResult {
-            return nil
-        }
-        return result
-    }
-
     private var automaticAlbumPreviewPhotos: [PhotoPresentation] {
         let sections = CuratedAlbumBuilder().sections(
             from: catPhotos,
@@ -563,6 +562,60 @@ struct MainTabView: View {
             if result.count == 4 { break }
         }
         return result
+    }
+
+    private var monthlyWindowCollectionKey: MonthlyWindowCollectionKey {
+        let sourceIsAvailable: Bool
+        switch photoSourceStatus {
+        case .allLibrary, .selected:
+            sourceIsAvailable = true
+        case .unavailable:
+            sourceIsAvailable = false
+        }
+
+        var hasher = Hasher()
+        for photo in catPhotos {
+            hasher.combine(photo)
+        }
+        let currentMonthStart = Calendar.current.dateInterval(
+            of: .month,
+            for: Date()
+        )?.start
+        return MonthlyWindowCollectionKey(
+            canBuild: hasPhotoAccess
+                && sourceIsAvailable
+                && scan.hasFinalResult
+                && !isScanning,
+            currentMonthStart: currentMonthStart,
+            photoDigest: hasher.finalize()
+        )
+    }
+
+    @MainActor
+    private func prepareMonthlyWindowCollection() async {
+        let key = monthlyWindowCollectionKey
+        guard key.canBuild else {
+            if !hasPhotoAccess || photoSourceStatus == .unavailable {
+                monthlyWindowCollection = nil
+                completedMonthlyWindowCollectionKey = nil
+            }
+            return
+        }
+        guard completedMonthlyWindowCollectionKey != key else { return }
+
+        let photos = catPhotos
+        let referenceDate = Date()
+        let collection = await Task.detached(priority: .utility) {
+            MonthlyWindowBuilder().buildCompletedCollection(
+                from: photos,
+                through: referenceDate
+            )
+        }.value
+        guard !Task.isCancelled, monthlyWindowCollectionKey == key else {
+            return
+        }
+        monthlyWindowCollection = collection
+        completedMonthlyWindowCollectionKey = key
     }
 
     private var seasonalMoviePreparationKey: SeasonalMoviePreparationKey {

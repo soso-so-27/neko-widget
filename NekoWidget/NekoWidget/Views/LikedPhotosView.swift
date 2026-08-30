@@ -523,7 +523,7 @@ struct LikedPhotosView: View {
 
     let photos: [PhotoPresentation]
     let hasPhotoAccess: Bool
-    let monthlyWindowResult: MonthlyWindowBuildResult?
+    let monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let automaticAlbumPreviewPhotos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
@@ -718,6 +718,10 @@ struct LikedPhotosView: View {
 
             if let monthlyWindow = readyMonthlyWindow {
                 monthlyWindowCard(monthlyWindow)
+
+                if !previousMonthlyWindows.isEmpty {
+                    previousMonthlyWindowsSection
+                }
             } else {
                 summaryEmptyState
             }
@@ -726,11 +730,13 @@ struct LikedPhotosView: View {
     }
 
     private var readyMonthlyWindow: MonthlyWindowPresentation? {
-        guard let monthlyWindowResult,
-              case let .ready(presentation) = monthlyWindowResult else {
-            return nil
-        }
-        return presentation
+        monthlyWindowCollection?.letters.first
+    }
+
+    private var previousMonthlyWindows: [MonthlyWindowPresentation] {
+        guard let letters = monthlyWindowCollection?.letters,
+              letters.count > 1 else { return [] }
+        return Array(letters.dropFirst())
     }
 
     private func summarySectionTitle(
@@ -796,6 +802,38 @@ struct LikedPhotosView: View {
         .accessibilityHint("小さな便りを開きます")
     }
 
+    private var previousMonthlyWindowsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("これまでの便り")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .accessibilityAddTraits(.isHeader)
+
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 12) {
+                    ForEach(previousMonthlyWindows) { presentation in
+                        NavigationLink(
+                            value: MemoriesRoute.monthlyWindow(presentation)
+                        ) {
+                            MonthlyWindowArchiveCard(
+                                presentation: presentation
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(
+                            "\(presentation.accessibilityTitle)、\(presentation.photos.count.formatted())枚"
+                        )
+                        .accessibilityHint("小さな便りを開きます")
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .accessibilityIdentifier("memories-previous-monthly-windows")
+    }
+
     private var summaryEmptyState: some View {
         HStack(spacing: 13) {
             Image(systemName: "sparkles.rectangle.stack")
@@ -827,8 +865,7 @@ struct LikedPhotosView: View {
     }
 
     private var summaryEmptyMessage: String {
-        guard let monthlyWindowResult,
-              case let .unavailable(presentation) = monthlyWindowResult else {
+        guard let presentation = monthlyWindowCollection?.unavailable else {
             return "写真を確認しています"
         }
         switch presentation.reason {
@@ -983,6 +1020,54 @@ private struct MonthlySummaryHeroCard: View {
 
     private var detailText: String {
         "\(presentation.yearNumber)年・\(presentation.photos.count.formatted())枚"
+    }
+}
+
+private struct MonthlyWindowArchiveCard: View {
+    let presentation: MonthlyWindowPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            coverImage
+                .frame(width: 164, height: 108)
+                .clipped()
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(monthTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text("\(presentation.photos.count.formatted())枚")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .frame(width: 164, alignment: .leading)
+        }
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var coverImage: some View {
+        if let cover = presentation.coverPhoto {
+            PhotoAssetImageView(
+                localIdentifier: cover.localIdentifier,
+                catBoundingBox: cover.catBoundingBox,
+                targetPixelSize: CGSize(width: 492, height: 324),
+                targetAspectRatio: 164.0 / 108.0
+            )
+        } else {
+            Image(systemName: "envelope.open")
+                .font(.title2)
+                .foregroundStyle(Color.accentColor)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.accentColor.opacity(0.10))
+        }
+    }
+
+    private var monthTitle: String {
+        "\(presentation.yearNumber)年\(presentation.monthNumber)月"
     }
 }
 
