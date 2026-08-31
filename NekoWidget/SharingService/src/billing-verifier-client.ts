@@ -1,4 +1,6 @@
 import {
+  BILLING_NOTIFICATION_VERIFIER_PATH,
+  BILLING_SUBSCRIPTION_STATUS_PATH,
   BILLING_VERIFIER_PATH,
   BILLING_VERIFIER_PROTOCOL_VERSION,
   billingVerifierRequestTranscript,
@@ -30,7 +32,12 @@ export interface VerifiedBillingTransaction {
   isUpgraded: boolean;
 }
 
-interface VerifierConfig {
+export type BillingVerifierServicePath =
+  | typeof BILLING_VERIFIER_PATH
+  | typeof BILLING_NOTIFICATION_VERIFIER_PATH
+  | typeof BILLING_SUBSCRIPTION_STATUS_PATH;
+
+export interface VerifierConfig {
   origin: string;
   sharedSecret: string;
   bundleId: string;
@@ -56,7 +63,7 @@ function requiredSetting(value: string | undefined): string {
   return value;
 }
 
-function loadVerifierConfig(env: Env): VerifierConfig {
+export function loadVerifierConfig(env: Env): VerifierConfig {
   const rawOrigin = requiredSetting(env.BILLING_VERIFIER_ORIGIN);
   let parsedOrigin: URL;
   try {
@@ -160,7 +167,7 @@ function positiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null;
 }
 
-function normalizeResponse(
+export function normalizeVerifiedBillingTransaction(
   raw: unknown,
   config: VerifierConfig,
 ): VerifiedBillingTransaction {
@@ -228,11 +235,29 @@ export async function verifyAppleTransactionViaService(
   env: Env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<VerifiedBillingTransaction> {
+  const decoded = await callBillingVerifierService(
+    BILLING_VERIFIER_PATH,
+    {
+      protocolVersion: BILLING_VERIFIER_PROTOCOL_VERSION,
+      signedTransactionInfo,
+    },
+    env,
+    fetchImpl,
+  );
+  return normalizeVerifiedBillingTransaction(decoded, loadVerifierConfig(env));
+}
+
+export async function callBillingVerifierService(
+  path: BillingVerifierServicePath,
+  value: Record<string, unknown>,
+  env: Env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<unknown> {
   const config = loadVerifierConfig(env);
-  const body = new TextEncoder().encode(JSON.stringify({
-    protocolVersion: BILLING_VERIFIER_PROTOCOL_VERSION,
-    signedTransactionInfo,
-  }));
+  const body = new TextEncoder().encode(JSON.stringify(value));
+  if (body.length > 64 * 1024) {
+    throw new ApiError(400, "invalid_apple_payload", "The App Store payload is invalid.");
+  }
   const timestamp = Math.floor(Date.now() / 1_000);
   const nonce = randomBase64url(16);
   let signature: string;
@@ -247,7 +272,7 @@ export async function verifyAppleTransactionViaService(
 
   let response: Response;
   try {
-    response = await fetchImpl(`${config.origin}${BILLING_VERIFIER_PATH}`, {
+    response = await fetchImpl(`${config.origin}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -297,5 +322,5 @@ export async function verifyAppleTransactionViaService(
   } catch {
     throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
   }
-  return normalizeResponse(decoded, config);
+  return decoded;
 }

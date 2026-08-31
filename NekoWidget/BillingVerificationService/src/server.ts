@@ -1,15 +1,30 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { SignedDataVerifier } from "@apple/app-store-server-library";
 import {
   AppleTransactionVerifier,
   InvalidAppleTransactionError,
   RetryableAppleVerificationError,
   type NormalizedBillingTransaction,
 } from "./apple-transaction.js";
+import {
+  AppleNotificationVerifier,
+  InvalidAppleNotificationError,
+  RetryableAppleNotificationError,
+  type NormalizedAppleNotification,
+} from "./apple-notification.js";
+import {
+  AppleSubscriptionStatusService,
+  InvalidAppleSubscriptionStatusError,
+  RetryableAppleSubscriptionStatusError,
+  type NormalizedSubscriptionStatus,
+} from "./apple-subscription-status.js";
 import type { VerificationServiceConfig } from "./config.js";
 import {
   PROTOCOL_VERSION,
+  SUBSCRIPTION_STATUS_PATH,
   VERIFY_PATH,
+  VERIFY_NOTIFICATION_PATH,
   bodySHA256,
   requestTranscript,
   responseTranscript,
@@ -19,6 +34,19 @@ import {
 
 interface TransactionVerifier {
   verify(signedTransactionInfo: string): Promise<NormalizedBillingTransaction>;
+}
+
+interface NotificationVerifier {
+  verify(signedPayload: string): Promise<NormalizedAppleNotification>;
+}
+
+interface SubscriptionStatusService {
+  get(transactionId: string): Promise<NormalizedSubscriptionStatus>;
+}
+
+export interface BillingAppleServices {
+  notificationVerifier?: NotificationVerifier;
+  subscriptionStatusService?: SubscriptionStatusService;
 }
 
 class RequestError extends Error {
@@ -100,6 +128,53 @@ function parseTransactionBody(body: Buffer): string {
   return record.signedTransactionInfo;
 }
 
+function parseSingleJWSBody(body: Buffer, field: "signedPayload"): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    throw new RequestError(400);
+  }
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw new RequestError(400);
+  }
+  const record = value as Record<string, unknown>;
+  const fields = Object.keys(record).sort();
+  if (
+    fields.length !== 2
+    || fields[0] !== "protocolVersion"
+    || fields[1] !== field
+    || record.protocolVersion !== PROTOCOL_VERSION
+    || typeof record[field] !== "string"
+    || record[field].length > 60 * 1024
+    || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(record[field])
+  ) throw new RequestError(400);
+  return record[field];
+}
+
+function parseStatusBody(body: Buffer): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    throw new RequestError(400);
+  }
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw new RequestError(400);
+  }
+  const record = value as Record<string, unknown>;
+  const fields = Object.keys(record).sort();
+  if (
+    fields.length !== 2
+    || fields[0] !== "originalTransactionId"
+    || fields[1] !== "protocolVersion"
+    || record.protocolVersion !== PROTOCOL_VERSION
+    || typeof record.originalTransactionId !== "string"
+    || !/^\d{1,32}$/u.test(record.originalTransactionId)
+  ) throw new RequestError(400);
+  return record.originalTransactionId;
+}
+
 function sendUnsigned(response: ServerResponse, status: number): void {
   const body = Buffer.from(JSON.stringify({ error: { code: "unauthorized" } }));
   response.writeHead(status, {
@@ -136,7 +211,28 @@ function sendSigned(
 export function createBillingVerificationServer(
   config: VerificationServiceConfig,
   transactionVerifier: TransactionVerifier = new AppleTransactionVerifier(config),
+  suppliedServices: BillingAppleServices = {},
 ) {
+  let signedDataVerifier: SignedDataVerifier | undefined;
+  const sharedSignedDataVerifier = (): SignedDataVerifier => {
+    signedDataVerifier ??= new SignedDataVerifier(
+      config.rootCertificates,
+      true,
+      config.environment,
+      config.bundleId,
+      config.appAppleId,
+    );
+    return signedDataVerifier;
+  };
+  // Disabled capabilities must not initialize credentials, certificates, or
+  // network clients. This keeps each runtime switch an actual isolation
+  // boundary instead of merely rejecting after partial startup.
+  const notificationVerifier = suppliedServices.notificationVerifier
+    ?? (config.notificationVerificationEnabled === true
+      ? new AppleNotificationVerifier(config, sharedSignedDataVerifier()) : null);
+  const subscriptionStatusService = suppliedServices.subscriptionStatusService
+    ?? (config.subscriptionStatusEnabled === true && config.serverAPI !== undefined
+      ? new AppleSubscriptionStatusService(config, sharedSignedDataVerifier()) : null);
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       const body = Buffer.from(JSON.stringify({ status: "ok", protocolVersion: 1 }));
@@ -149,7 +245,10 @@ export function createBillingVerificationServer(
       response.end(body);
       return;
     }
-    if (request.method !== "POST" || request.url !== VERIFY_PATH) {
+    const supportedPath = request.url === VERIFY_PATH
+      || request.url === VERIFY_NOTIFICATION_PATH
+      || request.url === SUBSCRIPTION_STATUS_PATH;
+    if (request.method !== "POST" || !supportedPath) {
       sendUnsigned(response, 404);
       return;
     }
@@ -167,11 +266,55 @@ export function createBillingVerificationServer(
     }
 
     try {
-      const signedTransactionInfo = parseTransactionBody(body);
-      const verified = await transactionVerifier.verify(signedTransactionInfo);
-      sendSigned(response, 200, verified, nonce, config.sharedSecret);
+      if (request.url === VERIFY_PATH) {
+        const signedTransactionInfo = parseTransactionBody(body);
+        const verified = await transactionVerifier.verify(signedTransactionInfo);
+        sendSigned(response, 200, verified, nonce, config.sharedSecret);
+      } else if (request.url === VERIFY_NOTIFICATION_PATH) {
+        if (config.notificationVerificationEnabled !== true || notificationVerifier === null) {
+          sendSigned(
+            response,
+            503,
+            { error: { code: "apple_notification_verifier_disabled" } },
+            nonce,
+            config.sharedSecret,
+          );
+          return;
+        }
+        const signedPayload = parseSingleJWSBody(body, "signedPayload");
+        sendSigned(
+          response,
+          200,
+          await notificationVerifier.verify(signedPayload),
+          nonce,
+          config.sharedSecret,
+        );
+      } else {
+        if (config.subscriptionStatusEnabled !== true || subscriptionStatusService === null) {
+          sendSigned(
+            response,
+            503,
+            { error: { code: "apple_subscription_status_disabled" } },
+            nonce,
+            config.sharedSecret,
+          );
+          return;
+        }
+        const originalTransactionId = parseStatusBody(body);
+        sendSigned(
+          response,
+          200,
+          await subscriptionStatusService.get(originalTransactionId),
+          nonce,
+          config.sharedSecret,
+        );
+      }
     } catch (error) {
-      if (error instanceof RetryableAppleVerificationError) {
+      if (
+        error instanceof RetryableAppleVerificationError
+        || error instanceof RetryableAppleNotificationError
+        || error instanceof RetryableAppleSubscriptionStatusError
+      ) {
         sendSigned(
           response,
           503,
@@ -181,6 +324,8 @@ export function createBillingVerificationServer(
         );
       } else {
         const status = error instanceof InvalidAppleTransactionError
+          || error instanceof InvalidAppleNotificationError
+          || error instanceof InvalidAppleSubscriptionStatusError
           || error instanceof RequestError ? 400 : 500;
         sendSigned(
           response,

@@ -35,6 +35,8 @@ export interface Env {
   /// enable billing by themselves.
   BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED?: string;
   BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED?: string;
+  BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED?: string;
+  BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED?: string;
   /// HTTPS origin of the isolated, real-Node Apple JWS verifier.
   BILLING_VERIFIER_ORIGIN?: string;
   /// Secret base64url-encoded 32-byte HMAC key shared only with the verifier.
@@ -97,6 +99,18 @@ export function billingTransactionIngestionRuntimeEnabled(
   env: Pick<Env, "BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED">,
 ): boolean {
   return env.BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED === "YES";
+}
+
+export function billingAppleNotificationRuntimeEnabled(
+  env: Pick<Env, "BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED">,
+): boolean {
+  return env.BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED === "YES";
+}
+
+export function billingSubscriptionReconciliationRuntimeEnabled(
+  env: Pick<Env, "BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED">,
+): boolean {
+  return env.BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED === "YES";
 }
 
 export function positiveIntegerSetting(value: string, fallback: number): number {

@@ -1,7 +1,7 @@
 # ADR-025：StoreKitと課金IDの境界
 
 作成：2026-08-31  
-状態：クライアント通信・Server記録／暫定status基盤を採用。全runtime OFF。販売・sponsorship・課金UIは未実装
+状態：クライアント通信、Server記録、Notifications V2／Subscription Status監査基盤を採用。全runtime OFF。権限状態機械・販売・sponsorship・課金UIは未実装
 
 関連：[ADR-024](ADR-024-無料体験とPlusと物販.md)、[ADR-018](ADR-018-名前付きの非公開なまど.md)、[共有設計](共有設計.md)
 
@@ -35,7 +35,7 @@ StoreKitの購入権復元も、写真原本、届いた写真、まど、E2E暗
 
 verified transactionは、Apple署名付きJWSをServerへ渡し、BillingAccountID・transaction ID・original transaction IDが一致する記録ackを受け取った後にだけ `finish()` する。`candidate|nonEntitling`はServer時刻で評価する監査情報であり、端末時刻との境界差を理由に正常な記録ackを拒否しない。未署名の`Transaction.jsonRepresentation`は送信証明に使わない。通信失敗・ID不一致時はfinishせず、StoreKitから再配信できる状態を保つ。transaction ID単位の重複記録をServerが安全に受理できることを販売開始条件とする。
 
-記録ackと暫定statusは、検証済みイベント台帳から見た候補にすぎない。`provisional = true`かつ`grantsPlus = false`を固定し、App Store Server Notifications V2とSubscription Status APIによる再照合が完成するまで、クライアントは`.serverConfirmed`へ昇格せず確認不能を維持する。
+記録ackと暫定statusは、検証済みイベント台帳から見た候補にすぎない。`provisional = true`かつ`grantsPlus = false`を固定する。App Store Server Notifications V2は権限変更命令にせず再照合triggerに限定し、Subscription Status API応答の内側transaction／renewal JWSまで検証したappend-only observationだけを現在状態の正本候補とする。observationから解約・返金・請求猶予・失効を導出する状態機械が完成するまで、クライアントは`.serverConfirmed`へ昇格せず確認不能を維持する。
 
 端末の状態は単純な有料booleanへ保存しない。少なくとも無効、確認中、非加入、StoreKit確認済み、確認不能を区別する。確認不能になっても既存の写真、まど、思い出、作品を削除または不可視化しない。
 
@@ -58,8 +58,12 @@ Server側も、Wranglerの上限スイッチとD1の下限スイッチを独立�
 ```text
 BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED = NO
 BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED = NO
+BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED = NO
+BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED = NO
 billing_runtime_gate.account_bootstrap_enabled = 0
 billing_runtime_gate.transaction_ingestion_enabled = 0
+billing_runtime_gate.apple_notification_ingestion_enabled = 0
+billing_runtime_gate.subscription_reconciliation_enabled = 0
 ```
 
 どちらか片方でもOFF、設定不足、検証サービス不通の場合はfail closedとする。この基盤を追加しただけでは購入、価格表示、権利付与、既存まどの制限を開始しない。
@@ -81,6 +85,9 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 - 検証サービスはApple root chain、オンライン失効確認、bundle ID、environment、App Apple ID、subscription group、商品allowlist、`appAccountToken`、transaction type、所有種別、日付を検証する。
 - 初期商品ではFamily Sharingを無効にする。`FAMILY_SHARED`は`appAccountToken`でBillingAccountIDへ安全に結べないため検証サービスで拒否し、Worker側でも防御的にPlus候補にしない。本人購入の返金済み・upgrade済みイベントは監査用に記録するが、Plus候補にしない。
 - D1は同じ正規化イベントを冪等に受け入れ、取引系譜を別BillingAccountIDへ付け替えない。現段階の取引responseは`candidate|nonEntitling`と、署名付きGETでも取得できる暫定statusを返す。どちらも`provisional = true`、`grantsPlus = false`であり、まどの権利を直接付与しない。
+- Notifications V2は`notificationUUID`とpayload hashで冪等化し、生の外側・内側JWSを保存しない。通知の順序や通知内statusから権限を確定せず、対象取引系譜のSubscription Status再照合だけを予約する。
+- 再照合jobはleaseとrequest generationを持ち、処理中に新しい通知が来た場合は古い成功・失敗で新要求を消したり遅延させたりしない。Status APIの署名済みsnapshotはappend-onlyで保存する。契約中・請求再試行中・猶予中は24時間後にも再照合し、新通知はその予定を即時へ前倒しする。失効・取消は定期jobを終了する。
+- BillingAccountID、Apple transaction ID、通知UUIDは仮名識別子でも個人データになり得る。生JWS・写真・まどIDとの結合は保存しない。会計上必要な保持根拠・期間、利用者向けexport、法的保持を除く削除手順が未確定のため、現行のappend-only台帳をproductionで有効化しない。保持・削除runbookとPrivacy表示は販売開始条件とする。
 
 ## 課金鍵の機種変更を急いで実装しない理由
 
@@ -103,7 +110,7 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 1. App Store Connectで月額・年額を同じsubscription group・同じlevel、Family Sharing無効で作成する
 2. 無効状態で実装済みの課金bootstrap／Keychain／署名clientを、販売準備用の内部導線へ接続して実機検証する
 3. `AppTransaction` JWSと購入JWSの二重照合によるBillingAccountID復旧・端末鍵rotationを実装する
-4. App Store Server Notifications V2、Subscription Status API、再照合jobを接続する
+4. 実装済みのNotifications V2、Subscription Status API、再照合jobを隔離stagingへ配備し、Notification History復旧・再送・順序逆転・障害backoffを運用検証する
 5. 購入者からまどへのsponsorship、解約、返金、請求猶予、失効、オフラインの状態遷移を実装する
 6. 既存β利用者のまどを失わない移行を実装する
 7. 検証サービスを隔離環境へdeployし、Apple root、secret、監視、rotation、共有nonce store、ingress rate limit、緊急OFFを運用検証する

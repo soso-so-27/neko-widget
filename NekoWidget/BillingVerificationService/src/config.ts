@@ -9,11 +9,28 @@ export interface VerificationServiceConfig {
   appAppleId?: number;
   subscriptionGroupId: string;
   productIds: ReadonlySet<string>;
+  notificationVerificationEnabled?: boolean;
+  subscriptionStatusEnabled?: boolean;
+  serverAPI?: {
+    signingKey: string;
+    keyId: string;
+    issuerId: string;
+  };
 }
 
 const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const productIdPattern = /^[A-Za-z0-9._-]{1,100}$/u;
 const bundleIdPattern = /^[A-Za-z0-9.-]{3,255}$/u;
+const keyIdPattern = /^[A-Z0-9]{10}$/u;
+const issuerIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+function explicitSwitch(env: NodeJS.ProcessEnv, name: string): boolean {
+  const value = env[name] ?? "NO";
+  if (value !== "YES" && value !== "NO") {
+    throw new Error(`${name} must be YES or NO`);
+  }
+  return value === "YES";
+}
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
@@ -109,7 +126,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationSe
     bundleId,
     subscriptionGroupId,
     productIds: new Set([monthlyProductId, annualProductId]),
+    notificationVerificationEnabled: explicitSwitch(
+      env,
+      "BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED",
+    ),
+    subscriptionStatusEnabled: explicitSwitch(
+      env,
+      "BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED",
+    ),
   };
   if (appAppleId !== undefined) config.appAppleId = appAppleId;
+  if (config.subscriptionStatusEnabled === true) {
+    const signingKey = required(env, "APP_STORE_SERVER_API_PRIVATE_KEY");
+    const keyId = required(env, "APP_STORE_SERVER_API_KEY_ID");
+    const issuerId = required(env, "APP_STORE_SERVER_API_ISSUER_ID").toLowerCase();
+    if (
+      signingKey.length > 16_384
+      || !signingKey.startsWith("-----BEGIN PRIVATE KEY-----")
+      || !signingKey.endsWith("-----END PRIVATE KEY-----")
+      || !keyIdPattern.test(keyId)
+      || !issuerIdPattern.test(issuerId)
+    ) {
+      throw new Error("App Store Server API credential is invalid");
+    }
+    config.serverAPI = { signingKey, keyId, issuerId };
+  } else if (
+    env.APP_STORE_SERVER_API_PRIVATE_KEY !== undefined
+    || env.APP_STORE_SERVER_API_KEY_ID !== undefined
+    || env.APP_STORE_SERVER_API_ISSUER_ID !== undefined
+  ) {
+    throw new Error("App Store Server API credentials require the exact runtime switch");
+  }
   return config;
 }

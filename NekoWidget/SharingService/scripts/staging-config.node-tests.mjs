@@ -34,6 +34,8 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(config.vars.LEGACY_SHARING_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED, "NO");
+  assert.equal(config.vars.BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED, "NO");
+  assert.equal(config.vars.BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED, "NO");
   assert.equal(config.limits, undefined);
   assert.equal(config.d1_databases[0].database_name, "neko-window-sharing-staging");
   assert.notEqual(config.r2_buckets[0].bucket_name, config.r2_buckets[1].bucket_name);

@@ -2,6 +2,8 @@ import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
+  billingAppleNotificationRuntimeEnabled,
+  billingSubscriptionReconciliationRuntimeEnabled,
   billingTransactionIngestionRuntimeEnabled,
   legacySharingRuntimeEnabled,
   momentRuntimeEnabled,
@@ -14,6 +16,10 @@ import {
   getBillingEntitlement,
   recordBillingTransaction,
 } from "./billing";
+import {
+  ingestAppleBillingNotification,
+  runBillingSubscriptionReconciliation,
+} from "./billing-authority";
 import {
   apnsGateOpen,
   effectiveRuntimeGateHeaders,
@@ -119,6 +125,10 @@ export async function route(
       || pathname === "/v1/billing/entitlement")
     && !billingTransactionIngestionRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  if (
+    pathname === "/v1/billing/apple-notifications"
+    && !billingAppleNotificationRuntimeEnabled(env)
+  ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   if (request.method === "POST" && pathname === "/v1/billing/accounts") {
     return createBillingAccount(request, env);
   }
@@ -127,6 +137,9 @@ export async function route(
   }
   if (request.method === "GET" && pathname === "/v1/billing/entitlement") {
     return getBillingEntitlement(request, env);
+  }
+  if (request.method === "POST" && pathname === "/v1/billing/apple-notifications") {
+    return ingestAppleBillingNotification(request, env);
   }
   if (pathname === "/v1/sharing" || pathname.startsWith("/v1/sharing/")) {
     if (!legacySharingRuntimeEnabled(env)) {
@@ -402,6 +415,9 @@ export default {
       ctx.waitUntil(drainNotificationOutbox(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
+      if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
+        ctx.waitUntil(runBillingSubscriptionReconciliation(env));
+      }
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -341,6 +341,10 @@ describe.sequential("disabled Plus billing foundation", () => {
       "SELECT COUNT(*) AS count FROM billing_transaction_events WHERE transaction_id = ?",
     ).bind(verified.transactionId).first<{ count: number }>();
     expect(count).toEqual({ count: 1 });
+    expect(await testEnv.DB.prepare(
+      `SELECT request_generation FROM billing_reconciliation_jobs
+        WHERE original_transaction_id = ?`,
+    ).bind(verified.originalTransactionId).first()).toEqual({ request_generation: 2 });
     const rows = await testEnv.DB.prepare(
       `SELECT event_fingerprint, transaction_id, original_transaction_id,
               billing_account_id, product_id, subscription_group_id,

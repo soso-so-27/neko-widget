@@ -10,6 +10,7 @@ import {
   type VerifiedBillingTransaction,
   verifyAppleTransactionViaService,
 } from "./billing-verifier-client";
+import { requestBillingReconciliation } from "./billing-reconciliation-queue";
 import {
   randomBase64url,
   sha256Base64url,
@@ -198,7 +199,7 @@ export async function createBillingAccount(request: Request, env: Env): Promise<
   }), 201);
 }
 
-async function semanticFingerprint(value: VerifiedBillingTransaction): Promise<string> {
+export async function semanticFingerprint(value: VerifiedBillingTransaction): Promise<string> {
   return sha256Base64url(new TextEncoder().encode(JSON.stringify([
     BILLING_PROTOCOL_VERSION, value.transactionId, value.originalTransactionId,
     value.billingAccountId, value.productId, value.subscriptionGroupId,
@@ -301,12 +302,13 @@ async function loadEvent(env: Env, fingerprint: string): Promise<TransactionEven
   ).bind(fingerprint).first<TransactionEventRow>();
 }
 
-async function storeVerifiedTransaction(
+export async function storeVerifiedTransaction(
   env: Env,
   value: VerifiedBillingTransaction,
-  submitter: AuthenticatedBillingAccount,
+  source: { kind: "app"; submitter: AuthenticatedBillingAccount }
+    | { kind: "apple_notification" },
 ): Promise<TransactionEventRow> {
-  if (value.billingAccountId !== submitter.billingAccountId) {
+  if (source.kind === "app" && value.billingAccountId !== source.submitter.billingAccountId) {
     throw new ApiError(409, "billing_account_mismatch", "The App Store transaction is invalid.");
   }
   const fingerprint = await semanticFingerprint(value);
@@ -346,10 +348,12 @@ async function storeVerifiedTransaction(
            transaction_reason, purchase_date_ms, original_purchase_date_ms,
            expires_date_ms, signed_date_ms, revocation_date_ms,
            revocation_reason, is_upgraded
-         ) VALUES (?, ?, ?, ?, ?, 'app', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         fingerprint, value.transactionId, value.originalTransactionId,
-        value.billingAccountId, submitter.billingKeyId, value.productId,
+        value.billingAccountId,
+        source.kind === "app" ? source.submitter.billingKeyId : null,
+        source.kind, value.productId,
         value.subscriptionGroupId, value.environment, value.ownershipType,
         value.transactionReason, value.purchaseDateMs, value.originalPurchaseDateMs,
         value.expiresDateMs, value.signedDateMs, value.revocationDateMs,
@@ -417,6 +421,11 @@ export async function recordBillingTransaction(
   ) throw new ApiError(400, "invalid_apple_transaction", "The App Store transaction is invalid.");
 
   const verified = await verify(signedTransactionInfo, env);
-  const event = await storeVerifiedTransaction(env, verified, account);
+  const event = await storeVerifiedTransaction(
+    env,
+    verified,
+    { kind: "app", submitter: account },
+  );
+  await requestBillingReconciliation(env, verified.originalTransactionId);
   return jsonResponse(await transactionResponse(env, verified, event));
 }

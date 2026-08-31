@@ -9,13 +9,18 @@ import {
 import type { VerificationServiceConfig } from "../src/config.js";
 import {
   PROTOCOL_VERSION,
+  SUBSCRIPTION_STATUS_PATH,
+  VERIFY_NOTIFICATION_PATH,
   bodySHA256,
   requestTranscript,
   responseTranscript,
   signTranscript,
   verifyTranscript,
 } from "../src/internal-auth.js";
-import { createBillingVerificationServer } from "../src/server.js";
+import {
+  createBillingVerificationServer,
+  type BillingAppleServices,
+} from "../src/server.js";
 
 const sharedSecret = Buffer.from(
   "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
@@ -57,8 +62,10 @@ function transaction(): NormalizedBillingTransaction {
 async function withServer(
   verify: (signedTransactionInfo: string) => Promise<NormalizedBillingTransaction>,
   run: (origin: string) => Promise<void>,
+  serverConfig: VerificationServiceConfig = config,
+  services: BillingAppleServices = {},
 ): Promise<void> {
-  const server = createBillingVerificationServer(config, { verify });
+  const server = createBillingVerificationServer(serverConfig, { verify }, services);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -71,6 +78,46 @@ async function withServer(
       server.close((error) => error === undefined ? resolve() : reject(error));
     });
   }
+}
+
+async function signedInternalRequest(
+  origin: string,
+  path: string,
+  value: Record<string, unknown>,
+): Promise<{ nonce: string; response: Response }> {
+  const body = Buffer.from(JSON.stringify(value));
+  const timestamp = Math.floor(Date.now() / 1_000);
+  const nonce = "4pKv7Kqzb_sLLmA3k6Pn5A";
+  return {
+    nonce,
+    response: await fetch(`${origin}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Neko-Billing-Protocol-Version": String(PROTOCOL_VERSION),
+        "Neko-Billing-Timestamp": String(timestamp),
+        "Neko-Billing-Nonce": nonce,
+        "Neko-Billing-Signature": signTranscript(
+          sharedSecret,
+          requestTranscript(timestamp, nonce, bodySHA256(body)),
+        ),
+      },
+      body,
+    }),
+  };
+}
+
+async function assertSignedResponse(
+  response: Response,
+  nonce: string,
+): Promise<unknown> {
+  const body = Buffer.from(await response.arrayBuffer());
+  assert.equal(verifyTranscript(
+    sharedSecret,
+    response.headers.get("neko-billing-response-signature") ?? "",
+    responseTranscript(nonce, response.status, bodySHA256(body)),
+  ), true);
+  return JSON.parse(body.toString("utf8"));
 }
 
 async function signedRequest(origin: string, signatureOverride?: string): Promise<{
@@ -153,4 +200,112 @@ test("returns an authenticated retryable error when Apple verification is unavai
       responseTranscript(nonce, response.status, bodySHA256(body)),
     ), true);
   });
+});
+
+test("keeps notification and subscription-status endpoints independently gated", async () => {
+  let notificationCalls = 0;
+  let statusCalls = 0;
+  const services: BillingAppleServices = {
+    notificationVerifier: {
+      async verify() {
+        notificationCalls += 1;
+        return {
+          protocolVersion: 1,
+          notificationUUID: "b113ede5-4eba-4e06-8a9d-3b21243041a7",
+          notificationType: "TEST",
+          subtype: null,
+          signedDateMs: Date.now(),
+          environment: "Sandbox",
+          bundleId: config.bundleId,
+          status: null,
+          relevant: false,
+          transaction: null,
+          renewal: null,
+        };
+      },
+    },
+    subscriptionStatusService: {
+      async get(originalTransactionId) {
+        statusCalls += 1;
+        const value = transaction();
+        return {
+          protocolVersion: 1,
+          requestedTransactionId: originalTransactionId,
+          environment: "Sandbox",
+          bundleId: config.bundleId,
+          fetchedAtMs: Date.now(),
+          items: [{
+            status: 1,
+            originalTransactionId,
+            transaction: value,
+            renewal: {
+              originalTransactionId,
+              billingAccountId: value.billingAccountId,
+              productId: value.productId,
+              autoRenewProductId: value.productId,
+              autoRenewStatus: 1,
+              isInBillingRetryPeriod: false,
+              gracePeriodExpiresDateMs: null,
+              renewalDateMs: value.expiresDateMs,
+              signedDateMs: value.signedDateMs,
+              environment: "Sandbox",
+            },
+          }],
+        };
+      },
+    },
+  };
+  await withServer(async () => transaction(), async (origin) => {
+    const disabledNotification = await signedInternalRequest(
+      origin,
+      VERIFY_NOTIFICATION_PATH,
+      { protocolVersion: 1, signedPayload: "header.payload.signature" },
+    );
+    assert.equal(disabledNotification.response.status, 503);
+    await assertSignedResponse(disabledNotification.response, disabledNotification.nonce);
+    const disabledStatus = await signedInternalRequest(
+      origin,
+      SUBSCRIPTION_STATUS_PATH,
+      { protocolVersion: 1, originalTransactionId: "200000000000001" },
+    );
+    assert.equal(disabledStatus.response.status, 503);
+    await assertSignedResponse(disabledStatus.response, disabledStatus.nonce);
+  }, config, services);
+  assert.equal(notificationCalls, 0);
+  assert.equal(statusCalls, 0);
+
+  const enabledConfig: VerificationServiceConfig = {
+    ...config,
+    notificationVerificationEnabled: true,
+    subscriptionStatusEnabled: true,
+  };
+  await withServer(async () => transaction(), async (origin) => {
+    const notificationResponse = await signedInternalRequest(
+      origin,
+      VERIFY_NOTIFICATION_PATH,
+      { protocolVersion: 1, signedPayload: "header.payload.signature" },
+    );
+    assert.equal(notificationResponse.response.status, 200);
+    const body = await assertSignedResponse(
+      notificationResponse.response,
+      notificationResponse.nonce,
+    ) as { notificationUUID: string; relevant: boolean };
+    assert.equal(body.notificationUUID, "b113ede5-4eba-4e06-8a9d-3b21243041a7");
+    assert.equal(body.relevant, false);
+  }, enabledConfig, services);
+  assert.equal(notificationCalls, 1);
+  assert.equal(statusCalls, 0);
+
+  await withServer(async () => transaction(), async (origin) => {
+    const statusResponse = await signedInternalRequest(
+      origin,
+      SUBSCRIPTION_STATUS_PATH,
+      { protocolVersion: 1, originalTransactionId: "200000000000001" },
+    );
+    assert.equal(statusResponse.response.status, 200);
+    const body = await assertSignedResponse(statusResponse.response, statusResponse.nonce);
+    assert.equal((body as { requestedTransactionId: string }).requestedTransactionId,
+      "200000000000001");
+  }, enabledConfig, services);
+  assert.equal(statusCalls, 1);
 });
