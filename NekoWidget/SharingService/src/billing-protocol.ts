@@ -62,3 +62,32 @@ export function billingSignedRequestTranscript(
     fields.bodySHA256,
   ]);
 }
+
+export interface WindowSponsorshipConsentFields {
+  operation: "sponsor" | "unsponsor";
+  clientRequestId: string;
+  billingAccountId: string;
+  windowLineageId: string;
+  expectedGeneration: number;
+  expectedCurrentBillingAccountId?: string | undefined;
+  consentSpaceId?: string | undefined;
+  ownerParticipantId?: string | undefined;
+  ownerDeviceId?: string | undefined;
+  consentIssuedAt?: number | undefined;
+  consentMembershipRevision?: number | undefined;
+  ownerConsentNonce?: string | undefined;
+}
+
+export function windowSponsorshipConsentTranscript(
+  fields: WindowSponsorshipConsentFields,
+): Uint8Array {
+  return encodeCanonicalFields([
+    "NWB1.WINDOW.SPONSORSHIP", "1", fields.operation, fields.clientRequestId,
+    fields.billingAccountId, fields.windowLineageId, String(fields.expectedGeneration),
+    fields.expectedCurrentBillingAccountId ?? "",
+    fields.consentSpaceId ?? "", fields.ownerParticipantId ?? "", fields.ownerDeviceId ?? "",
+    fields.consentIssuedAt === undefined ? "" : String(fields.consentIssuedAt),
+    fields.consentMembershipRevision === undefined ? "" : String(fields.consentMembershipRevision),
+    fields.ownerConsentNonce ?? "",
+  ]);
+}

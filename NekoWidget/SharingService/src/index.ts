@@ -5,6 +5,7 @@ import {
   billingAppleNotificationRuntimeEnabled,
   billingEffectiveEntitlementRuntimeEnabled,
   billingAccountRecoveryRuntimeEnabled,
+  billingWindowSponsorshipRuntimeEnabled,
   billingSubscriptionReconciliationRuntimeEnabled,
   billingTransactionIngestionRuntimeEnabled,
   legacySharingRuntimeEnabled,
@@ -19,6 +20,7 @@ import {
   recordBillingTransaction,
 } from "./billing";
 import { recoverBillingAccount } from "./billing-recovery";
+import { changeWindowSponsorship, getWindowSponsorshipGrant } from "./billing-window-sponsorship";
 import {
   ingestAppleBillingNotification,
   runBillingSubscriptionReconciliation,
@@ -120,6 +122,16 @@ export async function route(
     );
   }
   if (
+    pathname.startsWith("/v1/billing/window-sponsorships/")
+    && (!billingWindowSponsorshipRuntimeEnabled(env)
+      || (request.method === "PUT" && !billingEffectiveEntitlementRuntimeEnabled(env)))
+  ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  if (pathname === "/v1/window-sponsorship"
+    && (!billingWindowSponsorshipRuntimeEnabled(env)
+      || !billingEffectiveEntitlementRuntimeEnabled(env))) {
+    throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  }
+  if (
     pathname === "/v1/billing/accounts/recover"
     && !billingAccountRecoveryRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
@@ -144,6 +156,14 @@ export async function route(
   }
   if (request.method === "POST" && pathname === "/v1/billing/accounts/recover") {
     return recoverBillingAccount(request, env);
+  }
+  const sponsorshipMatch = pathname.match(/^\/v1\/billing\/window-sponsorships\/([^/]+)$/u);
+  if ((request.method === "PUT" || request.method === "DELETE")
+    && sponsorshipMatch?.[1] !== undefined) {
+    return changeWindowSponsorship(request, env, sponsorshipMatch[1]);
+  }
+  if (request.method === "GET" && pathname === "/v1/window-sponsorship") {
+    return getWindowSponsorshipGrant(request, env);
   }
   if (request.method === "POST" && pathname === "/v1/billing/transactions") {
     return recordBillingTransaction(request, env);
