@@ -11,6 +11,7 @@ import {
   verifyAppleTransactionViaService,
 } from "./billing-verifier-client";
 import { requestBillingReconciliation } from "./billing-reconciliation-queue";
+import { effectiveBillingEntitlement } from "./billing-entitlement";
 import {
   randomBase64url,
   sha256Base64url,
@@ -40,6 +41,7 @@ const compactJWSPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
 interface BillingGateRow {
   account_bootstrap_enabled: 0 | 1;
   transaction_ingestion_enabled: 0 | 1;
+  effective_entitlement_enabled: 0 | 1;
 }
 
 interface BootstrapRow {
@@ -89,7 +91,8 @@ async function loadBillingGate(env: Env): Promise<BillingGateRow> {
   let gate: BillingGateRow | null;
   try {
     gate = await env.DB.prepare(
-      `SELECT account_bootstrap_enabled, transaction_ingestion_enabled
+      `SELECT account_bootstrap_enabled, transaction_ingestion_enabled,
+              effective_entitlement_enabled
          FROM billing_runtime_gate WHERE singleton = 1`,
     ).first<BillingGateRow>();
   } catch {
@@ -376,7 +379,7 @@ export async function storeVerifiedTransaction(
 }
 
 export async function getBillingEntitlement(request: Request, env: Env): Promise<Response> {
-  if ((await loadBillingGate(env)).transaction_ingestion_enabled !== 1) {
+  if ((await loadBillingGate(env)).effective_entitlement_enabled !== 1) {
     throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   }
   await enforceRateLimit(
@@ -391,7 +394,7 @@ export async function getBillingEntitlement(request: Request, env: Env): Promise
   return jsonResponse({
     protocolVersion: BILLING_PROTOCOL_VERSION,
     billingAccountId: account.billingAccountId,
-    entitlement: await provisionalEntitlement(env, account.billingAccountId),
+    entitlement: await effectiveBillingEntitlement(env, account.billingAccountId),
   });
 }
 

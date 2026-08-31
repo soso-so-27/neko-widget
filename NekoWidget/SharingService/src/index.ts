@@ -3,6 +3,7 @@ import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
   billingAppleNotificationRuntimeEnabled,
+  billingEffectiveEntitlementRuntimeEnabled,
   billingSubscriptionReconciliationRuntimeEnabled,
   billingTransactionIngestionRuntimeEnabled,
   legacySharingRuntimeEnabled,
@@ -121,9 +122,12 @@ export async function route(
     && !billingAccountBootstrapRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   if (
-    (pathname === "/v1/billing/transactions"
-      || pathname === "/v1/billing/entitlement")
+    pathname === "/v1/billing/transactions"
     && !billingTransactionIngestionRuntimeEnabled(env)
+  ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  if (
+    pathname === "/v1/billing/entitlement"
+    && !billingEffectiveEntitlementRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   if (
     pathname === "/v1/billing/apple-notifications"

@@ -12,20 +12,20 @@ protocol BillingAPIClientProtocol: Sendable {
         credential: BillingCredential
     ) async throws -> BillingTransactionRecordAcknowledgement
 
-    func fetchProvisionalEntitlement(
+    func fetchAuthoritativeEntitlement(
         credential: BillingCredential
-    ) async throws -> BillingProvisionalEntitlement
+    ) async throws -> BillingAuthoritativeEntitlement
 }
 
 private enum BillingEndpoint {
     case accountCreation
     case transaction
-    case provisionalEntitlement
+    case authoritativeEntitlement
 
     var method: String {
         switch self {
         case .accountCreation, .transaction: return "POST"
-        case .provisionalEntitlement: return "GET"
+        case .authoritativeEntitlement: return "GET"
         }
     }
 
@@ -33,7 +33,7 @@ private enum BillingEndpoint {
         switch self {
         case .accountCreation: return BillingProtocolV1.accountCreationPath
         case .transaction: return BillingProtocolV1.transactionPath
-        case .provisionalEntitlement:
+        case .authoritativeEntitlement:
             return BillingProtocolV1.entitlementPath
         }
     }
@@ -41,21 +41,21 @@ private enum BillingEndpoint {
     var expectedStatus: Int {
         switch self {
         case .accountCreation: return 201
-        case .transaction, .provisionalEntitlement: return 200
+        case .transaction, .authoritativeEntitlement: return 200
         }
     }
 
     var requiresAuthentication: Bool {
         switch self {
         case .accountCreation: return false
-        case .transaction, .provisionalEntitlement: return true
+        case .transaction, .authoritativeEntitlement: return true
         }
     }
 
     func accepts(body: Data) -> Bool {
         switch self {
         case .accountCreation, .transaction: return !body.isEmpty
-        case .provisionalEntitlement: return body.isEmpty
+        case .authoritativeEntitlement: return body.isEmpty
         }
     }
 }
@@ -209,6 +209,97 @@ actor BillingAccountBootstrapCoordinator {
     }
 }
 
+/// Internal live wiring between StoreKit observation and the independent
+/// billing account. It never creates an account while resuming, and it never
+/// rebinds an old transaction to a new installation. A missing/mismatched
+/// credential with an existing purchase must enter a future JWS-backed account
+/// recovery flow instead of silently claiming or replacing the old account.
+actor PlusBillingSession {
+    private let apiClient: any BillingAPIClientProtocol
+    private let bootstrap: BillingAccountBootstrapCoordinator
+
+    init(apiClient: any BillingAPIClientProtocol) {
+        self.apiClient = apiClient
+        bootstrap = BillingAccountBootstrapCoordinator(apiClient: apiClient)
+    }
+
+    static func configured(
+        purchaseConfiguration: PlusPurchaseConfiguration,
+        billingConfiguration: BillingClientConfiguration = .current
+    ) -> PlusBillingSession? {
+        guard purchaseConfiguration.isConfigured,
+              billingConfiguration.isConfigured,
+              let apiClient = try? URLSessionBillingAPIClient(
+                  configuration: billingConfiguration
+              )
+        else { return nil }
+        return PlusBillingSession(apiClient: apiClient)
+    }
+
+    /// Reserved for a future explicit purchase flow. The authorization proves
+    /// that no configured StoreKit entitlement exists, so this cannot be used
+    /// as an account-recovery shortcut.
+    func createFreshBillingAccount(
+        authorizedBy authorization: BillingFreshAccountAuthorization
+    ) async throws -> BillingAccountID {
+        let credential = try await bootstrap.createFreshCredential(
+            authorizedBy: authorization
+        )
+        return try billingAccountID(for: credential)
+    }
+
+    func recordVerifiedTransactionEvent(
+        _ event: PlusVerifiedTransactionEvent,
+        billingAccountID: BillingAccountID
+    ) async throws -> BillingTransactionRecordAcknowledgement {
+        guard event.transaction.appAccountToken == billingAccountID.rawValue else {
+            throw BillingClientError.identityMismatch
+        }
+        let credential = try await resumeCredentialForExistingInstallation()
+        guard try self.billingAccountID(for: credential) == billingAccountID else {
+            throw BillingClientError.identityMismatch
+        }
+        return try await apiClient.recordTransaction(
+            signedTransactionInfo: event.signedTransactionInfo,
+            expectedTransactionID: String(event.transaction.id),
+            expectedOriginalTransactionID: String(event.transaction.originalID),
+            credential: credential
+        )
+    }
+
+    func fetchAuthoritativeEntitlement()
+        async throws -> BillingAuthoritativeEntitlement {
+        let credential = try await resumeCredentialForExistingInstallation()
+        return try await apiClient.fetchAuthoritativeEntitlement(
+            credential: credential
+        )
+    }
+
+    private func resumeCredentialForExistingInstallation()
+        async throws -> BillingCredential {
+        do {
+            return try await bootstrap.resumeExistingCredential()
+        } catch let error as BillingClientError {
+            switch error {
+            case .billingCredentialMissing, .installationChanged:
+                throw BillingClientError.billingAccountRecoveryRequired
+            default:
+                throw error
+            }
+        }
+    }
+
+    private func billingAccountID(
+        for credential: BillingCredential
+    ) throws -> BillingAccountID {
+        let credential = try credential.validated()
+        guard credential.phase == .registered,
+              let rawValue = credential.billingAccountUUID
+        else { throw BillingClientError.malformedCredential }
+        return BillingAccountID(rawValue: rawValue)
+    }
+}
+
 actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
     private let baseURL: URL
     private let session: URLSession
@@ -329,15 +420,15 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         )
     }
 
-    func fetchProvisionalEntitlement(
+    func fetchAuthoritativeEntitlement(
         credential: BillingCredential
-    ) async throws -> BillingProvisionalEntitlement {
+    ) async throws -> BillingAuthoritativeEntitlement {
         let credential = try credential.validated()
         guard credential.phase == .registered,
               let billingAccountID = credential.billingAccountID
         else { throw BillingClientError.malformedCredential }
-        let response: BillingEntitlementResponse = try await sendData(
-            endpoint: .provisionalEntitlement,
+        let response: BillingAuthoritativeEntitlementResponse = try await sendData(
+            endpoint: .authoritativeEntitlement,
             body: Data(),
             authentication: credential
         )
@@ -548,10 +639,10 @@ private struct BillingTransactionResponse: Decodable {
     let entitlement: BillingProvisionalEntitlement
 }
 
-private struct BillingEntitlementResponse: Decodable {
+private struct BillingAuthoritativeEntitlementResponse: Decodable {
     let protocolVersion: Int
     let billingAccountId: String
-    let entitlement: BillingProvisionalEntitlement
+    let entitlement: BillingAuthoritativeEntitlement
 }
 
 private struct BillingAPIErrorResponse: Decodable {

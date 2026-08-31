@@ -225,6 +225,98 @@ enum BillingProvisionalEntitlementStatus: String, Codable, Sendable {
     case noActiveCandidate
 }
 
+enum BillingAuthoritativeEntitlementStatus: String, Codable, Sendable {
+    case active
+    case gracePeriod
+    case billingRetry
+    case expired
+    case revoked
+    case upgraded
+    case unconfirmed
+
+    var grantsAccess: Bool {
+        switch self {
+        case .active, .gracePeriod:
+            return true
+        case .billingRetry, .expired, .revoked, .upgraded, .unconfirmed:
+            return false
+        }
+    }
+}
+
+/// The only server response that may grant Plus on this client. The server's
+/// Apple subscription status and its bounded freshness window are both
+/// required: a long StoreKit expiry can never outlive stale server authority.
+struct BillingAuthoritativeEntitlement: Codable, Equatable, Sendable {
+    private static let maximumClockSkewMs = 5 * 60 * 1_000
+    private static let maximumAuthorityFreshnessMs =
+        36 * 60 * 60 * 1_000 + maximumClockSkewMs
+
+    let status: BillingAuthoritativeEntitlementStatus
+    let productId: String?
+    let accessUntilMs: Int?
+    let authorityStaleAtMs: Int?
+    let evaluatedAtMs: Int
+    let provisional: Bool
+    let grantsPlus: Bool
+
+    var effectiveAccessUntilMs: Int? {
+        guard let accessUntilMs, let authorityStaleAtMs else { return nil }
+        return min(accessUntilMs, authorityStaleAtMs)
+    }
+
+    func validated(now: Date = .now) throws -> Self {
+        let nowMs = Int(now.timeIntervalSince1970 * 1_000)
+        guard evaluatedAtMs > 0,
+              evaluatedAtMs <= nowMs + Self.maximumClockSkewMs,
+              !provisional,
+              grantsPlus == status.grantsAccess,
+              productId.map(BillingValidation.productID) ?? true,
+              accessUntilMs.map({ $0 > 0 }) ?? true,
+              authorityStaleAtMs.map({ $0 > 0 }) ?? true
+        else { throw BillingClientError.invalidServerResponse }
+
+        switch status {
+        case .active, .gracePeriod:
+            guard productId != nil,
+                  let accessUntilMs,
+                  let authorityStaleAtMs,
+                  accessUntilMs > evaluatedAtMs,
+                  authorityStaleAtMs > evaluatedAtMs,
+                  authorityStaleAtMs - evaluatedAtMs
+                    <= Self.maximumAuthorityFreshnessMs,
+                  min(accessUntilMs, authorityStaleAtMs) > nowMs
+            else { throw BillingClientError.invalidServerResponse }
+        case .billingRetry, .expired, .revoked, .upgraded:
+            guard productId != nil,
+                  accessUntilMs == nil,
+                  authorityStaleAtMs != nil
+            else { throw BillingClientError.invalidServerResponse }
+        case .unconfirmed:
+            let hasNoAuthority = productId == nil
+                && accessUntilMs == nil
+                && authorityStaleAtMs == nil
+            let hasUnsupportedAuthority = productId != nil
+                && accessUntilMs == nil
+                && authorityStaleAtMs != nil
+            let hasExpiredOrStaleAuthority: Bool
+            if productId != nil,
+               let accessUntilMs,
+               let authorityStaleAtMs {
+                hasExpiredOrStaleAuthority = accessUntilMs <= evaluatedAtMs
+                    || authorityStaleAtMs <= evaluatedAtMs
+            } else {
+                hasExpiredOrStaleAuthority = false
+            }
+            guard hasNoAuthority
+                    || hasUnsupportedAuthority
+                    || hasExpiredOrStaleAuthority
+            else { throw BillingClientError.invalidServerResponse }
+        }
+        return self
+    }
+}
+
 /// A deliberately non-authoritative summary of the verified transaction
 /// ledger. Even `activeCandidate` must never grant Plus or sponsorship; only a
 /// future authoritative status contract may do that.

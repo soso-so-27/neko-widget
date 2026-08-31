@@ -11,6 +11,29 @@ def source(relative: str) -> str:
 
 
 class BillingClientFoundationTests(unittest.TestCase):
+    def test_authoritative_freshness_is_client_bounded(self) -> None:
+        core = source("NekoWidget/Services/BillingClientCore.swift")
+        authority = core[
+            core.index("struct BillingAuthoritativeEntitlement:"):
+            core.index("struct BillingProvisionalEntitlement:")
+        ]
+        self.assertIn("36 * 60 * 60 * 1_000", authority)
+        self.assertIn("+ maximumClockSkewMs", authority)
+        self.assertIn(
+            "authorityStaleAtMs - evaluatedAtMs",
+            authority,
+        )
+        self.assertIn(
+            "<= Self.maximumAuthorityFreshnessMs",
+            authority,
+        )
+        self.assertIn("case .unconfirmed:", authority)
+        self.assertIn("let hasNoAuthority", authority)
+        self.assertIn("let hasUnsupportedAuthority", authority)
+        self.assertIn("let hasExpiredOrStaleAuthority", authority)
+        self.assertIn("accessUntilMs <= evaluatedAtMs", authority)
+        self.assertIn("authorityStaleAtMs <= evaluatedAtMs", authority)
+
     def test_source_configuration_remains_closed(self) -> None:
         config = source("Config.xcconfig")
         self.assertRegex(config, r"(?m)^PLUS_STOREFRONT_ENABLED = NO$")
@@ -83,7 +106,7 @@ class BillingClientFoundationTests(unittest.TestCase):
         keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
         bootstrap = client[
             client.index("actor BillingAccountBootstrapCoordinator"):
-            client.index("actor URLSessionBillingAPIClient")
+            client.index("actor PlusBillingSession")
         ]
         self.assertIn("fileprivate init(validFor lifetime: Duration)", authorizer)
         self.assertIn("authorizationLifetime: Duration = .seconds(30)", authorizer)
@@ -226,20 +249,43 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("response.recorded", client)
         self.assertIn("expectedTransactionID", client)
         self.assertIn("expectedOriginalTransactionID", client)
-        self.assertIn("func fetchProvisionalEntitlement(", client)
-        self.assertIn("case .provisionalEntitlement: return \"GET\"", client)
-        self.assertIn("endpoint: .provisionalEntitlement", client)
+        self.assertIn("func fetchAuthoritativeEntitlement(", client)
+        self.assertIn("case .authoritativeEntitlement: return \"GET\"", client)
+        self.assertIn("endpoint: .authoritativeEntitlement", client)
         self.assertIn("body: Data()", client)
         self.assertIn("response.billingAccountId == billingAccountID", client)
         api_actor = client.index("actor URLSessionBillingAPIClient")
         transaction = client[
             client.index("func recordTransaction(", api_actor):
-            client.index("func fetchProvisionalEntitlement(", api_actor)
+            client.index("func fetchAuthoritativeEntitlement(", api_actor)
         ]
         self.assertIn("_ = try response.entitlement.validated()", transaction)
         self.assertNotIn("serverConfirmed", transaction)
         self.assertIn(
             "let entitlement: BillingProvisionalEntitlement",
+            client,
+        )
+        authority = core[
+            core.index("enum BillingAuthoritativeEntitlementStatus:"):
+            core.index("struct BillingProvisionalEntitlement:")
+        ]
+        for status in (
+            "active",
+            "gracePeriod",
+            "billingRetry",
+            "expired",
+            "revoked",
+            "upgraded",
+            "unconfirmed",
+        ):
+            self.assertIn(f"case {status}", authority)
+        self.assertIn("!provisional", authority)
+        self.assertIn("grantsPlus == status.grantsAccess", authority)
+        self.assertIn("accessUntilMs > evaluatedAtMs", authority)
+        self.assertIn("authorityStaleAtMs > evaluatedAtMs", authority)
+        self.assertIn("min(accessUntilMs, authorityStaleAtMs)", authority)
+        self.assertIn(
+            "let entitlement: BillingAuthoritativeEntitlement",
             client,
         )
         self.assertIn("http.url == url", client)

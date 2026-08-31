@@ -10,6 +10,7 @@ import type {
   VerifiedSubscriptionStatus,
 } from "../src/billing-apple-client";
 import { requestBillingReconciliation } from "../src/billing-reconciliation-queue";
+import { effectiveBillingEntitlement } from "../src/billing-entitlement";
 import type { VerifiedBillingTransaction } from "../src/billing-verifier-client";
 import { ApiError } from "../src/errors";
 import type { Env } from "../src/env";
@@ -276,12 +277,13 @@ describe.sequential("App Store billing authority", () => {
       runAt,
     );
     expect(await testEnv.DB.prepare(
-      `SELECT apple_status, is_in_billing_retry_period
+      `SELECT apple_status, is_in_billing_retry_period, ownership_type
          FROM billing_subscription_authority_observations
         WHERE original_transaction_id = ?`,
     ).bind(value.originalTransactionId).first()).toEqual({
       apple_status: 4,
       is_in_billing_retry_period: 1,
+      ownership_type: "PURCHASED",
     });
     expect(await testEnv.DB.prepare(
       `SELECT attempts, not_before FROM billing_reconciliation_jobs
@@ -335,6 +337,144 @@ describe.sequential("App Store billing authority", () => {
     expect(await testEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
     ).bind(value.originalTransactionId).first()).toEqual({ count: 0 });
+  });
+
+  it("does not materialize a late successful fetch after its generation is superseded", async () => {
+    await setAuthorityGates(true, true);
+    const billingAccountId = "5f30c0de-0000-4000-8000-000000000106";
+    await registerAccount(billingAccountId);
+    const value = transaction(billingAccountId, {
+      transactionId: "210000000000050",
+      originalTransactionId: "210000000000050",
+    });
+    await ingestAppleBillingNotification(
+      notificationRequest("header.stale_success_marker.signature"),
+      testEnv,
+      async () => notification(
+        "1ab3d5f7-1234-4abc-8def-123456789150",
+        value,
+      ),
+    );
+    const runAt = Math.floor(Date.now() / 1_000) + 20;
+    await runBillingSubscriptionReconciliation(testEnv, async () => {
+      await requestBillingReconciliation(testEnv, value.originalTransactionId, runAt + 1);
+      return status(value, 1);
+    }, runAt);
+    expect(await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM billing_effective_entitlement_current
+        WHERE original_transaction_id = ?`,
+    ).bind(value.originalTransactionId).first()).toEqual({ count: 0 });
+    expect(await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM billing_effective_entitlement_decisions
+        WHERE original_transaction_id = ?`,
+    ).bind(value.originalTransactionId).first()).toEqual({ count: 0 });
+
+    await runBillingSubscriptionReconciliation(
+      testEnv,
+      async () => status(value, 5),
+      runAt,
+    );
+    expect(await testEnv.DB.prepare(
+      `SELECT materialized_status, materialized_grants_plus, request_generation
+         FROM billing_effective_entitlement_current
+        WHERE original_transaction_id = ?`,
+    ).bind(value.originalTransactionId).first()).toEqual({
+      materialized_status: "revoked",
+      materialized_grants_plus: 0,
+      request_generation: 2,
+    });
+  });
+
+  it("does not materialize or complete a response after its lease expires", async () => {
+    await setAuthorityGates(true, true);
+    const billingAccountId = "5f30c0de-0000-4000-8000-000000000108";
+    await registerAccount(billingAccountId);
+    const value = transaction(billingAccountId, {
+      transactionId: "210000000000070",
+      originalTransactionId: "210000000000070",
+    });
+    await ingestAppleBillingNotification(
+      notificationRequest("header.expired_lease_marker.signature"),
+      testEnv,
+      async () => notification(
+        "1ab3d5f7-1234-4abc-8def-123456789170",
+        value,
+      ),
+    );
+    const runAt = Math.floor(Date.now() / 1_000) + 40;
+    const completedAt = runAt + 121;
+    await runBillingSubscriptionReconciliation(
+      testEnv,
+      async () => status(value, 1),
+      runAt,
+      completedAt,
+    );
+    expect(await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM billing_effective_entitlement_decisions
+        WHERE original_transaction_id = ?`,
+    ).bind(value.originalTransactionId).first()).toEqual({ count: 0 });
+    expect(await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM billing_effective_entitlement_current
+        WHERE original_transaction_id = ?`,
+    ).bind(value.originalTransactionId).first()).toEqual({ count: 0 });
+    expect(await testEnv.DB.prepare(
+      `SELECT request_generation, attempts, not_before, lease_token, lease_expires_at
+         FROM billing_reconciliation_jobs WHERE original_transaction_id = ?`,
+    ).bind(value.originalTransactionId).first()).toEqual({
+      request_generation: 1,
+      attempts: 0,
+      not_before: completedAt,
+      lease_token: null,
+      lease_expires_at: null,
+    });
+  });
+
+  it("grants an account when any independently reconciled purchased lineage is active", async () => {
+    await setAuthorityGates(true, true);
+    const billingAccountId = "5f30c0de-0000-4000-8000-000000000107";
+    await registerAccount(billingAccountId);
+    const expired = transaction(billingAccountId, {
+      transactionId: "210000000000060",
+      originalTransactionId: "210000000000060",
+      expiresDateMs: nowMs - 1_000,
+    });
+    const active = transaction(billingAccountId, {
+      transactionId: "210000000000061",
+      originalTransactionId: "210000000000061",
+      productId: "jp.nekowidget.plus.annual",
+    });
+    await ingestAppleBillingNotification(
+      notificationRequest("header.multiple_lineage_expired.signature"),
+      testEnv,
+      async () => notification(
+        "1ab3d5f7-1234-4abc-8def-123456789160",
+        expired,
+      ),
+    );
+    await ingestAppleBillingNotification(
+      notificationRequest("header.multiple_lineage_active.signature"),
+      testEnv,
+      async () => notification(
+        "1ab3d5f7-1234-4abc-8def-123456789161",
+        active,
+      ),
+    );
+    const runAt = Math.floor(Date.now() / 1_000) + 30;
+    await runBillingSubscriptionReconciliation(testEnv, async (originalTransactionId) => {
+      return originalTransactionId === expired.originalTransactionId
+        ? status(expired, 2)
+        : status(active, 1);
+    }, runAt);
+    expect(await effectiveBillingEntitlement(
+      testEnv,
+      billingAccountId,
+      runAt * 1_000,
+    )).toMatchObject({
+      status: "active",
+      productId: active.productId,
+      grantsPlus: true,
+      provisional: false,
+    });
   });
 
   it("leases one reconciliation at a time and backs off only an ordinary failure", async () => {

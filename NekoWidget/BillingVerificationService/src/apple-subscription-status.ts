@@ -67,7 +67,9 @@ export async function normalizeSubscriptionStatus(
   nowMs = Date.now(),
 ): Promise<NormalizedSubscriptionStatus> {
   if (
-    !transactionIdPattern.test(requestedTransactionId)
+    response === null
+    || typeof response !== "object"
+    || !transactionIdPattern.test(requestedTransactionId)
     || response.bundleId !== config.bundleId
     || response.environment !== config.environment
     || (config.environment === Environment.PRODUCTION && response.appAppleId !== config.appAppleId)
@@ -76,11 +78,21 @@ export async function normalizeSubscriptionStatus(
 
   const items: NormalizedSubscriptionStatusItem[] = [];
   for (const group of response.data) {
-    if (group.subscriptionGroupIdentifier !== config.subscriptionGroupId) continue;
-    if (!Array.isArray(group.lastTransactions)) {
+    if (
+      group === null
+      || typeof group !== "object"
+      || typeof group.subscriptionGroupIdentifier !== "string"
+      || !Array.isArray(group.lastTransactions)
+    ) {
       throw new InvalidAppleSubscriptionStatusError();
     }
+    if (group.subscriptionGroupIdentifier !== config.subscriptionGroupId) continue;
     for (const item of group.lastTransactions) {
+      if (
+        item === null
+        || typeof item !== "object"
+        || item.originalTransactionId !== requestedTransactionId
+      ) continue;
       const status = normalizedStatus(item.status);
       if (
         status === null
@@ -127,7 +139,7 @@ export async function normalizeSubscriptionStatus(
       });
     }
   }
-  if (!items.some((item) => item.originalTransactionId === requestedTransactionId)) {
+  if (items.length === 0) {
     throw new InvalidAppleSubscriptionStatusError();
   }
   return {

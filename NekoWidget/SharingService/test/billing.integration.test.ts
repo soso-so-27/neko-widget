@@ -71,28 +71,50 @@ async function sign(keys: KeyPair, message: Uint8Array): Promise<string> {
 
 async function setLowerGate(enabled: boolean): Promise<void> {
   const row = await testEnv.DB.prepare(
-    `SELECT generation, account_bootstrap_enabled, transaction_ingestion_enabled
+    `SELECT generation, account_bootstrap_enabled, transaction_ingestion_enabled,
+            effective_entitlement_enabled
        FROM billing_runtime_gate WHERE singleton = 1`,
   ).first<{
     generation: number;
     account_bootstrap_enabled: number;
     transaction_ingestion_enabled: number;
+    effective_entitlement_enabled: number;
   }>();
   if (row === null) throw new Error("missing billing runtime gate");
   const target = enabled ? 1 : 0;
   if (
     row.account_bootstrap_enabled === target
     && row.transaction_ingestion_enabled === target
+    && row.effective_entitlement_enabled === target
   ) return;
   const result = await testEnv.DB.prepare(
     `UPDATE billing_runtime_gate
         SET generation = generation + 1,
             account_bootstrap_enabled = ?,
             transaction_ingestion_enabled = ?,
+            effective_entitlement_enabled = ?,
             updated_at = unixepoch()
       WHERE singleton = 1 AND generation = ?`,
-  ).bind(target, target, row.generation).run();
+  ).bind(target, target, target, row.generation).run();
   if (result.meta.changes !== 1) throw new Error("billing runtime gate CAS failed");
+}
+
+async function setEffectiveLowerGate(enabled: boolean): Promise<void> {
+  const row = await testEnv.DB.prepare(
+    `SELECT generation, effective_entitlement_enabled
+       FROM billing_runtime_gate WHERE singleton = 1`,
+  ).first<{ generation: number; effective_entitlement_enabled: number }>();
+  if (row === null) throw new Error("missing billing runtime gate");
+  const target = enabled ? 1 : 0;
+  if (row.effective_entitlement_enabled === target) return;
+  const result = await testEnv.DB.prepare(
+    `UPDATE billing_runtime_gate
+        SET generation = generation + 1,
+            effective_entitlement_enabled = ?,
+            updated_at = unixepoch()
+      WHERE singleton = 1 AND generation = ?`,
+  ).bind(target, row.generation).run();
+  if (result.meta.changes !== 1) throw new Error("billing entitlement gate CAS failed");
 }
 
 async function accountRequest(keys: KeyPair, clientRequestId: string): Promise<Request> {
@@ -230,6 +252,7 @@ describe.sequential("disabled Plus billing foundation", () => {
       get(_target, property) {
         if (property === "BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED") return "NO";
         if (property === "BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED") return "NO";
+        if (property === "BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED") return "NO";
         throw new Error(`unexpected environment read: ${String(property)}`);
       },
     });
@@ -268,6 +291,14 @@ describe.sequential("disabled Plus billing foundation", () => {
       code: "billing_runtime_disabled",
     });
     await setLowerGate(true);
+    await setEffectiveLowerGate(false);
+    await expect(getBillingEntitlement(new Request(
+      "https://sharing.invalid/v1/billing/entitlement",
+    ), testEnv)).rejects.toMatchObject({
+      status: 503,
+      code: "billing_runtime_disabled",
+    });
+    await setEffectiveLowerGate(true);
     await expect(testEnv.DB.prepare(
       `UPDATE billing_runtime_gate
           SET account_bootstrap_enabled = 0,
@@ -461,7 +492,7 @@ describe.sequential("disabled Plus billing foundation", () => {
     expect(verifierCalls).toBe(1);
   });
 
-  it("folds only the latest fact per transaction into a provisional account status", async () => {
+  it("keeps transaction responses provisional until effective authority exists", async () => {
     await setLowerGate(true);
     const account = await createAccount();
     const now = Date.now();
@@ -519,11 +550,11 @@ describe.sequential("disabled Plus billing foundation", () => {
     expect(await activeStatus.json()).toMatchObject({
       billingAccountId: account.billingAccountId,
       entitlement: {
-        status: "activeCandidate",
-        productId: renewal.productId,
-        expiresDateMs: renewal.expiresDateMs,
-        lastEventSignedDateMs: renewal.signedDateMs,
-        provisional: true,
+        status: "unconfirmed",
+        productId: null,
+        accessUntilMs: null,
+        authorityStaleAtMs: null,
+        provisional: false,
         grantsPlus: false,
       },
     });
@@ -535,9 +566,9 @@ describe.sequential("disabled Plus billing foundation", () => {
     expect(await isolatedStatus.json()).toMatchObject({
       billingAccountId: otherAccount.billingAccountId,
       entitlement: {
-        status: "noActiveCandidate",
+        status: "unconfirmed",
         productId: null,
-        provisional: true,
+        provisional: false,
         grantsPlus: false,
       },
     });
@@ -558,11 +589,10 @@ describe.sequential("disabled Plus billing foundation", () => {
     );
     expect(await inactiveStatus.json()).toMatchObject({
       entitlement: {
-        status: "noActiveCandidate",
+        status: "unconfirmed",
         productId: null,
-        expiresDateMs: null,
-        lastEventSignedDateMs: now - 1_000,
-        provisional: true,
+        accessUntilMs: null,
+        provisional: false,
         grantsPlus: false,
       },
     });

@@ -9,6 +9,11 @@ import {
   BILLING_PROTOCOL_VERSION,
   storeVerifiedTransaction,
 } from "./billing";
+import {
+  BILLING_AUTHORITY_FRESHNESS_MS,
+  evaluateAuthoritativeStatusItem,
+  selectAuthoritativeStatusItem,
+} from "./billing-entitlement";
 import { requestBillingReconciliation } from "./billing-reconciliation-queue";
 import { randomBase64url, sha256Base64url } from "./encoding";
 import { ApiError } from "./errors";
@@ -193,6 +198,7 @@ function observationFingerprint(
     transaction.billingAccountId,
     transaction.productId,
     transaction.environment,
+    transaction.ownershipType,
     transaction.expiresDateMs,
     transaction.revocationDateMs,
     transaction.revocationReason,
@@ -212,6 +218,10 @@ async function recordAuthorityObservations(
   status: VerifiedSubscriptionStatus,
   lineage: LineageRow,
   originalTransactionId: string,
+  job: ReconciliationJobRow,
+  leaseToken: string,
+  evaluatedAtMs: number,
+  completedAt: number,
 ): Promise<boolean> {
   const matching = status.items.filter((item) =>
     item.originalTransactionId === originalTransactionId
@@ -226,10 +236,16 @@ async function recordAuthorityObservations(
       "The App Store subscription status is invalid.",
     );
   }
+  const observations: Array<{
+    item: VerifiedSubscriptionStatusItem;
+    fingerprint: string;
+  }> = [];
   const statements: D1PreparedStatement[] = [];
   for (const item of matching) {
     const transaction = item.transaction;
     const renewal = item.renewal;
+    const fingerprint = await observationFingerprint(item, status.fetchedAtMs);
+    observations.push({ item, fingerprint });
     statements.push(env.DB.prepare(
       `INSERT OR IGNORE INTO billing_subscription_authority_observations(
          observation_fingerprint, original_transaction_id, billing_account_id,
@@ -238,10 +254,10 @@ async function recordAuthorityObservations(
          is_upgraded, auto_renew_product_id, auto_renew_status,
          is_in_billing_retry_period, grace_period_expires_date_ms,
          renewal_date_ms, transaction_signed_date_ms, renewal_signed_date_ms,
-         fetched_at_ms
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         fetched_at_ms, ownership_type
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      await observationFingerprint(item, status.fetchedAtMs),
+      fingerprint,
       originalTransactionId,
       lineage.billing_account_id,
       lineage.environment,
@@ -262,10 +278,132 @@ async function recordAuthorityObservations(
       transaction.signedDateMs,
       renewal.signedDateMs,
       status.fetchedAtMs,
+      transaction.ownershipType,
     ));
   }
+
+  const selectedItem = selectAuthoritativeStatusItem(matching);
+  const selected = observations.find((value) => value.item === selectedItem)!;
+  const decision = evaluateAuthoritativeStatusItem(
+    selectedItem,
+    evaluatedAtMs,
+    evaluatedAtMs + BILLING_AUTHORITY_FRESHNESS_MS,
+  );
+  const transaction = selectedItem.transaction;
+  const renewal = selectedItem.renewal;
+  const decisionId = randomBase64url(16);
+  const fenceSQL = `EXISTS (
+    SELECT 1 FROM billing_reconciliation_jobs
+     WHERE original_transaction_id = ? AND request_generation = ? AND lease_token = ?
+       AND lease_expires_at > ?
+  )`;
+  statements.push(env.DB.prepare(
+    `INSERT INTO billing_effective_entitlement_decisions(
+       decision_id, observation_fingerprint, original_transaction_id,
+       billing_account_id, environment, subscription_group_id, ownership_type,
+       request_generation, lease_token, apple_status, transaction_id, product_id,
+       expires_date_ms, revocation_date_ms, revocation_reason, is_upgraded,
+       grace_period_expires_date_ms, source_fetched_at_ms, decision_status,
+       grants_plus, access_until_ms, authority_stale_at_ms, evaluated_at_ms
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE ${fenceSQL}`,
+  ).bind(
+    decisionId,
+    selected.fingerprint,
+    originalTransactionId,
+    lineage.billing_account_id,
+    lineage.environment,
+    lineage.subscription_group_id,
+    transaction.ownershipType,
+    job.request_generation,
+    leaseToken,
+    selectedItem.status,
+    transaction.transactionId,
+    transaction.productId,
+    transaction.expiresDateMs,
+    transaction.revocationDateMs,
+    transaction.revocationReason,
+    transaction.isUpgraded ? 1 : 0,
+    renewal.gracePeriodExpiresDateMs,
+    status.fetchedAtMs,
+    decision.status,
+    decision.grantsPlus ? 1 : 0,
+    decision.accessUntilMs,
+    decision.authorityStaleAtMs,
+    evaluatedAtMs,
+    originalTransactionId,
+    job.request_generation,
+    leaseToken,
+    completedAt,
+  ));
+  statements.push(env.DB.prepare(
+    `INSERT INTO billing_effective_entitlement_current(
+       original_transaction_id, billing_account_id, environment,
+       subscription_group_id, decision_id, observation_fingerprint,
+       ownership_type, request_generation, lease_token, apple_status,
+       transaction_id, product_id, expires_date_ms, revocation_date_ms,
+       revocation_reason, is_upgraded, grace_period_expires_date_ms,
+       source_fetched_at_ms, materialized_status, materialized_grants_plus,
+       access_until_ms, authority_stale_at_ms, evaluated_at_ms, updated_at
+     )
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
+      WHERE ${fenceSQL}
+     ON CONFLICT(original_transaction_id) DO UPDATE SET
+       decision_id = excluded.decision_id,
+       observation_fingerprint = excluded.observation_fingerprint,
+       ownership_type = excluded.ownership_type,
+       request_generation = excluded.request_generation,
+       lease_token = excluded.lease_token,
+       apple_status = excluded.apple_status,
+       transaction_id = excluded.transaction_id,
+       product_id = excluded.product_id,
+       expires_date_ms = excluded.expires_date_ms,
+       revocation_date_ms = excluded.revocation_date_ms,
+       revocation_reason = excluded.revocation_reason,
+       is_upgraded = excluded.is_upgraded,
+       grace_period_expires_date_ms = excluded.grace_period_expires_date_ms,
+       source_fetched_at_ms = excluded.source_fetched_at_ms,
+       materialized_status = excluded.materialized_status,
+       materialized_grants_plus = excluded.materialized_grants_plus,
+       access_until_ms = excluded.access_until_ms,
+       authority_stale_at_ms = excluded.authority_stale_at_ms,
+       evaluated_at_ms = excluded.evaluated_at_ms,
+       updated_at = unixepoch()
+     WHERE excluded.request_generation > billing_effective_entitlement_current.request_generation
+        OR (excluded.request_generation = billing_effective_entitlement_current.request_generation
+            AND excluded.evaluated_at_ms >= billing_effective_entitlement_current.evaluated_at_ms)`,
+  ).bind(
+    originalTransactionId,
+    lineage.billing_account_id,
+    lineage.environment,
+    lineage.subscription_group_id,
+    decisionId,
+    selected.fingerprint,
+    transaction.ownershipType,
+    job.request_generation,
+    leaseToken,
+    selectedItem.status,
+    transaction.transactionId,
+    transaction.productId,
+    transaction.expiresDateMs,
+    transaction.revocationDateMs,
+    transaction.revocationReason,
+    transaction.isUpgraded ? 1 : 0,
+    renewal.gracePeriodExpiresDateMs,
+    status.fetchedAtMs,
+    decision.status,
+    decision.grantsPlus ? 1 : 0,
+    decision.accessUntilMs,
+    decision.authorityStaleAtMs,
+    evaluatedAtMs,
+    originalTransactionId,
+    job.request_generation,
+    leaseToken,
+    completedAt,
+  ));
   await env.DB.batch(statements);
-  return matching.some((item) => item.status === 1 || item.status === 3 || item.status === 4);
+  return selectedItem.status === 1 || selectedItem.status === 3 || selectedItem.status === 4;
 }
 
 async function releaseSuccessfulLease(
@@ -282,26 +420,34 @@ async function releaseSuccessfulLease(
               lease_expires_at = NULL, last_error_code = NULL,
               updated_at = unixepoch()
         WHERE original_transaction_id = ? AND lease_token = ?
-          AND request_generation = ?`,
+          AND request_generation = ? AND lease_expires_at > ?`,
     ).bind(
       now + periodicReconciliationSeconds,
       job.original_transaction_id,
       leaseToken,
       job.request_generation,
+      now,
     ).run()
     : await env.DB.prepare(
       `DELETE FROM billing_reconciliation_jobs
         WHERE original_transaction_id = ? AND lease_token = ?
-          AND request_generation = ?`,
-    ).bind(job.original_transaction_id, leaseToken, job.request_generation).run();
+          AND request_generation = ? AND lease_expires_at > ?`,
+    ).bind(job.original_transaction_id, leaseToken, job.request_generation, now).run();
   if (completed.meta.changes === 0) {
     await env.DB.prepare(
       `UPDATE billing_reconciliation_jobs
           SET attempts = 0, not_before = ?, lease_token = NULL,
               lease_expires_at = NULL, last_error_code = NULL,
               updated_at = unixepoch()
-        WHERE original_transaction_id = ? AND lease_token = ?`,
-    ).bind(now, job.original_transaction_id, leaseToken).run();
+        WHERE original_transaction_id = ? AND lease_token = ?
+          AND (request_generation <> ? OR lease_expires_at <= ?)`,
+    ).bind(
+      now,
+      job.original_transaction_id,
+      leaseToken,
+      job.request_generation,
+      now,
+    ).run();
   }
 }
 
@@ -321,7 +467,7 @@ async function releaseFailedLease(
             lease_expires_at = NULL, last_error_code = ?,
             updated_at = unixepoch()
       WHERE original_transaction_id = ? AND lease_token = ?
-        AND request_generation = ?`,
+        AND request_generation = ? AND lease_expires_at > ?`,
   ).bind(
     attempts,
     now + delay,
@@ -329,6 +475,7 @@ async function releaseFailedLease(
     job.original_transaction_id,
     leaseToken,
     job.request_generation,
+    now,
   ).run();
   if (updated.meta.changes === 0) {
     // A newer notification arrived while this request was in flight. Preserve
@@ -339,8 +486,15 @@ async function releaseFailedLease(
           SET attempts = 0, not_before = ?, lease_token = NULL,
               lease_expires_at = NULL, last_error_code = NULL,
               updated_at = unixepoch()
-        WHERE original_transaction_id = ? AND lease_token = ?`,
-    ).bind(now, job.original_transaction_id, leaseToken).run();
+        WHERE original_transaction_id = ? AND lease_token = ?
+          AND (request_generation <> ? OR lease_expires_at <= ?)`,
+    ).bind(
+      now,
+      job.original_transaction_id,
+      leaseToken,
+      job.request_generation,
+      now,
+    ).run();
   }
 }
 
@@ -348,6 +502,7 @@ export async function runBillingSubscriptionReconciliation(
   env: Env,
   fetchStatus: AppleSubscriptionStatusFetcher = fetchAppleSubscriptionStatusViaService,
   now = Math.floor(Date.now() / 1_000),
+  completedAtOverride?: number,
 ): Promise<void> {
   const gate = await loadGate(env);
   if (gate?.subscription_reconciliation_enabled !== 1) return;
@@ -387,18 +542,26 @@ export async function runBillingSubscriptionReconciliation(
         throw new ApiError(409, "billing_lineage_missing", "Billing is temporarily unavailable.");
       }
       const status = await fetchStatus(job.original_transaction_id, env);
+      const completedAt = completedAtOverride
+        ?? Math.max(now, Math.floor(Date.now() / 1_000));
       const keepPeriodic = await recordAuthorityObservations(
         env,
         status,
         lineage,
         job.original_transaction_id,
+        job,
+        leaseToken,
+        completedAt * 1_000,
+        completedAt,
       );
-      await releaseSuccessfulLease(env, job, leaseToken, now, keepPeriodic);
+      await releaseSuccessfulLease(env, job, leaseToken, completedAt, keepPeriodic);
     } catch (error) {
       const code = error instanceof ApiError
         ? error.code.replace(/[^a-z0-9_]/gu, "_").slice(0, 64)
         : "billing_reconciliation_unavailable";
-      await releaseFailedLease(env, job, leaseToken, now, code);
+      const failedAt = completedAtOverride
+        ?? Math.max(now, Math.floor(Date.now() / 1_000));
+      await releaseFailedLease(env, job, leaseToken, failedAt, code);
     }
   }
 }

@@ -57,6 +57,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             "private func loadProducts() async",
         )
         self.assertIn("try await AppStore.sync()", restore)
+        self.assertGreaterEqual(restore.count("refreshServerAuthority()"), 1)
         start = section(
             self.store,
             "func start() async",
@@ -72,6 +73,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         )
         self.assertIn("billingAccountID: BillingAccountID", purchase)
         self.assertIn("recordVerifiedTransactionEvent != nil", purchase)
+        self.assertIn("fetchAuthoritativeEntitlement != nil", purchase)
         self.assertIn(".appAccountToken(billingAccountID.rawValue)", purchase)
         self.assertIn("verification.jwsRepresentation", purchase)
         self.assertLess(
@@ -82,6 +84,10 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             purchase.index("try await recordVerifiedTransactionEvent("),
             purchase.index("await transaction.finish()"),
         )
+        self.assertLess(
+            purchase.index("await transaction.finish()"),
+            purchase.index("await refreshServerAuthority()"),
+        )
         failure = section(
             purchase,
             "} catch {",
@@ -89,7 +95,13 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         )
         self.assertIn("markServerConfirmationIndeterminate()", failure)
         self.assertNotIn("finish()", failure)
-        self.assertNotIn("return .purchased", purchase)
+        confirmed = section(
+            purchase,
+            "switch await refreshServerAuthority()",
+            "} catch {",
+        )
+        self.assertIn("case .confirmed:", confirmed)
+        self.assertIn("return .purchased", confirmed)
         self.assertIn("return .awaitingServerConfirmation", purchase)
 
     def test_updates_record_all_configured_verified_changes_before_finish(self) -> None:
@@ -121,18 +133,68 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         )
         self.assertNotIn("expectedDisposition", self.store)
         self.assertNotIn("entitlementState = .serverConfirmed(preferred.1)", self.store)
+        authority = section(
+            self.store,
+            "private func refreshServerAuthority() async",
+            "private func markServerConfirmationIndeterminate()",
+        )
+        self.assertIn("authority.status.grantsAccess", authority)
+        self.assertIn("authority.status == .unconfirmed", authority)
+        self.assertLess(
+            authority.index("authority.status == .unconfirmed"),
+            authority.index("guard authority.status.grantsAccess"),
+        )
+        self.assertIn("entitlementState = .inactive", authority)
+        self.assertIn("entitlementState = .serverConfirmed(entitlement)", authority)
+        self.assertIn("markServerConfirmationIndeterminate()", authority)
+        self.assertIn("authority.accessUntilMs", authority)
+        self.assertIn("authority.authorityStaleAtMs", authority)
+        self.assertIn("var expirationDate: Date { min(accessUntilDate, authorityStaleAt) }", self.store)
+        self.assertIn("case let .serverConfirmed(entitlement):", self.store)
+        self.assertIn("return entitlement.isUsable()", self.store)
+        reconcile = section(
+            self.store,
+            "private func reconcileCurrentEntitlements() async",
+            "private func refreshServerAuthority() async",
+        )
+        self.assertNotIn("preferred", reconcile)
+        self.assertIn("_ = await refreshServerAuthority()", reconcile)
         self.assertIn("transaction.productType == .autoRenewable", self.store)
         self.assertIn("transaction.ownershipType == .purchased", self.store)
         self.assertIn("transaction.revocationDate == nil", self.store)
         self.assertIn("!transaction.isUpgraded", self.store)
-        self.assertIn("let expirationDate = transaction.expirationDate", self.store)
-        self.assertIn("expirationDate > Date.now", self.store)
+        self.assertIn("transaction.expirationDate != nil", self.store)
+        self.assertNotIn("expirationDate > Date.now", self.store)
         self.assertNotIn("expirationDate.map", self.store)
         self.assertNotIn(".distantFuture", self.store)
         self.assertNotIn("jsonRepresentation", self.store)
         self.assertNotIn("UserDefaults", self.store)
         self.assertNotIn("@AppStorage", self.store)
         self.assertNotIn("PairingCredential", self.store)
+
+    def test_live_session_is_only_injected_when_both_configs_are_explicit(self) -> None:
+        client = source("NekoWidget/Services/BillingAPIClient.swift")
+        session = section(
+            client,
+            "actor PlusBillingSession",
+            "actor URLSessionBillingAPIClient",
+        )
+        self.assertIn("purchaseConfiguration.isConfigured", session)
+        self.assertIn("billingConfiguration.isConfigured", session)
+        self.assertIn("bootstrap.resumeExistingCredential()", session)
+        self.assertIn("billingAccountRecoveryRequired", session)
+        self.assertIn("createFreshBillingAccount(", session)
+        self.assertIn("authorizedBy authorization: BillingFreshAccountAuthorization", session)
+        self.assertIn("apiClient.fetchAuthoritativeEntitlement(", session)
+
+        initializer = section(
+            self.store,
+            "init(\n        configuration:",
+            "deinit {",
+        )
+        self.assertIn("PlusBillingSession.configured(", initializer)
+        self.assertIn("recordVerifiedTransactionEvent == nil", initializer)
+        self.assertIn("fetchAuthoritativeEntitlement == nil", initializer)
 
     def test_storekit_is_app_target_only_and_has_no_current_ui_or_gate(self) -> None:
         project = source("NekoWidget.xcodeproj/project.pbxproj")

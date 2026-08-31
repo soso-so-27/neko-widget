@@ -103,24 +103,139 @@ function decoder() {
 }
 
 test("normalizes active, grace-period, and revoked authority observations", async () => {
-  const requestedTransactionId = "200000000000001";
   const ids = [
-    { id: requestedTransactionId, status: Status.ACTIVE },
+    { id: "200000000000001", status: Status.ACTIVE },
     { id: "200000000000002", status: Status.BILLING_GRACE_PERIOD },
     { id: "200000000000003", status: Status.REVOKED },
     { id: "200000000000004", status: Status.BILLING_RETRY },
     { id: "200000000000005", status: Status.EXPIRED },
   ];
+  const values = await Promise.all(ids.map(({ id, status }) => normalizeSubscriptionStatus(
+    response([{ id, status }]),
+    id,
+    decoder(),
+    config,
+    now,
+  )));
+  assert.deepEqual(values.map((value) => value.items[0]?.status), [1, 4, 5, 3, 2]);
+  assert.equal(values[1]?.items[0]?.renewal.isInBillingRetryPeriod, true);
+  assert.equal(values[2]?.items[0]?.transaction.revocationReason, 1);
+});
+
+test("ignores unsupported and malformed unrelated lineages in the requested group", async () => {
+  const requestedTransactionId = "200000000000001";
+  const input = response([{ id: requestedTransactionId, status: Status.ACTIVE }]);
+  const [group] = input.data ?? [];
+  assert.ok(group);
+  const lastTransactions = group.lastTransactions;
+  assert.ok(lastTransactions);
+  lastTransactions.unshift(
+    {
+      status: 99 as Status,
+      originalTransactionId: "200000000000002",
+      signedTransactionInfo: "unsupported.unrelated.jws",
+      signedRenewalInfo: "unsupported.unrelated.jws",
+    },
+    {
+      status: Status.ACTIVE,
+      originalTransactionId: "200000000000003",
+    } as never,
+    null as never,
+    {} as never,
+  );
+  const verifiedJWS: string[] = [];
+  const recordingDecoder = {
+    async verifyAndDecodeTransaction(jws: string) {
+      verifiedJWS.push(jws);
+      return transaction(requestedTransactionId);
+    },
+    async verifyAndDecodeRenewalInfo(jws: string) {
+      verifiedJWS.push(jws);
+      return renewal(requestedTransactionId);
+    },
+  };
+
   const value = await normalizeSubscriptionStatus(
-    response(ids),
+    input,
+    requestedTransactionId,
+    recordingDecoder,
+    config,
+    now,
+  );
+
+  assert.deepEqual(value.items.map((item) => item.originalTransactionId), [requestedTransactionId]);
+  assert.deepEqual(verifiedJWS, [
+    `transaction.${requestedTransactionId}.jws`,
+    `renewal.${requestedTransactionId}.jws`,
+  ]);
+});
+
+test("rejects malformed requested lineage entries", async () => {
+  const requestedTransactionId = "200000000000001";
+  const input = response([{ id: requestedTransactionId, status: Status.ACTIVE }]);
+  const [group] = input.data ?? [];
+  assert.ok(group);
+  const lastTransactions = group.lastTransactions;
+  assert.ok(lastTransactions);
+  lastTransactions[0] = {
+    status: 99 as Status,
+    originalTransactionId: requestedTransactionId,
+    signedTransactionInfo: `transaction.${requestedTransactionId}.jws`,
+    signedRenewalInfo: `renewal.${requestedTransactionId}.jws`,
+  };
+
+  await assert.rejects(normalizeSubscriptionStatus(
+    input,
     requestedTransactionId,
     decoder(),
     config,
     now,
-  );
-  assert.deepEqual(value.items.map((item) => item.status), [1, 4, 5, 3, 2]);
-  assert.equal(value.items[1]?.renewal.isInBillingRetryPeriod, true);
-  assert.equal(value.items[2]?.transaction.revocationReason, 1);
+  ), InvalidAppleSubscriptionStatusError);
+});
+
+test("rejects malformed top-level and group containers", async () => {
+  const requestedTransactionId = "200000000000001";
+  const malformedGroup = response([{ id: requestedTransactionId, status: Status.ACTIVE }]);
+  malformedGroup.data = [{
+    subscriptionGroupIdentifier: config.subscriptionGroupId,
+  }] as never;
+
+  await assert.rejects(normalizeSubscriptionStatus(
+    malformedGroup,
+    requestedTransactionId,
+    decoder(),
+    config,
+    now,
+  ), InvalidAppleSubscriptionStatusError);
+  await assert.rejects(normalizeSubscriptionStatus(
+    null as never,
+    requestedTransactionId,
+    decoder(),
+    config,
+    now,
+  ), InvalidAppleSubscriptionStatusError);
+});
+
+test("rejects Family Shared ownership for the requested lineage", async () => {
+  const requestedTransactionId = "200000000000001";
+  const familySharedDecoder = {
+    async verifyAndDecodeTransaction() {
+      return transaction(requestedTransactionId, {
+        inAppOwnershipType: InAppOwnershipType.FAMILY_SHARED,
+      });
+    },
+    async verifyAndDecodeRenewalInfo() {
+      return renewal(requestedTransactionId);
+    },
+  };
+
+  await assert.rejects(normalizeSubscriptionStatus(
+    response([{ id: requestedTransactionId, status: Status.ACTIVE }]),
+    requestedTransactionId,
+    familySharedDecoder,
+    config,
+    now,
+  ), InvalidAppleSubscriptionStatusError);
 });
 
 test("rejects a response that does not contain the requested verified lineage", async () => {
