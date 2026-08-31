@@ -67,7 +67,7 @@ npx --no-install wrangler r2 bucket domain list neko-window-sharing-staging-mode
 
 このstaging configはWorkers Freeでもdeployできるよう、`limits`を設定せずaccount planの既定値を使います。R2は月額基本料0でも無料枠超過分は従量課金です。写真runtimeをOFFに保ち、意図しないobject作成をsmokeで確認します。
 
-Rate Limiting bindingの`namespace_id`は、Cloudflare account内で一意な正の整数を文字列として指定します。3 binding間でも、他のWorkerとも共有しない3値を決めます。namespace resourceを別途作成する操作はありません。
+Rate Limiting bindingの`namespace_id`は、Cloudflare account内で一意な正の整数を文字列として指定します。4 binding間でも、他のWorkerとも共有しない4値を決めます。namespace resourceを別途作成する操作はありません。
 
 ## 3. untracked configの生成
 
@@ -78,6 +78,7 @@ $env:NEKO_STAGING_D1_DATABASE_ID = Read-Host "staging D1 database ID"
 $env:NEKO_STAGING_CREATE_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のcreate rate namespace ID"
 $env:NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のinvite rate namespace ID"
 $env:NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のmember rate namespace ID"
+$env:NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のbilling rate namespace ID"
 npm run staging:config:render
 npm run staging:config:check
 git check-ignore -v wrangler.staging.jsonc
@@ -87,15 +88,23 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 
 - Worker、D1、通常R2、通報R2がstaging固有名である
 - `workers_dev=true`かつpreview URLとcustom routeが無効である
-- `ENVIRONMENT=staging`、`MOMENT_RUNTIME_ENABLED=NO`、`WINDOW_NAME_RUNTIME_ENABLED=NO`、`LEGACY_SHARING_RUNTIME_ENABLED=NO`である
+- `ENVIRONMENT=staging`であり、写真・反応・まど名・通知・旧共有・通報受付と7つの課金runtimeがすべて`NO`である
 - Workers Paid専用のcustom `limits`が存在しない
-- rate limit 3本が固有namespaceで、5/min・10/min・120/minである
+- rate limit 4本が固有namespaceで、作成5/min・招待10/min・member 120/min・課金30/minである
 - cleanup／通知配送を含むCron 3本がある
 - account固有のIDや未置換placeholderをtracked templateへ持ち込まない
 
 ## 4. migrationの事前確認と適用
 
-D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0018_moderation_operator_case_reference_binding.sql`までの18件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ18件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。`0012`は既存のcommitted reportを未着手caseとして安全にbackfillし、以後のcommitから48時間の初回確認期限とappend-only review eventを作る。`0015`は予約をreview開始と扱わず、DB時刻で作った証拠intentを2分以内にledgerへ確定した同じtransaction内でだけ`review_started`を追加する。`0016`はAccess session、失敗時にも再利用できない一回限りのassertion attempt、固定分類だけのappend-only access auditを加える。過去のsession／attempt／auditを推測でbackfillせず、旧未完了操作は新しい副作用へ進めない。`0017`はoperator、alias、credential、attestation evidenceのexact tupleを、初回だけallowlist済みoffline authority 2者、通常enrollmentではtarget本人とは異なるcurrent admitted security admin 1名のprovenanceへ束縛する。credential recoveryは追加登録ではなく直前admissionのcredentialを置換し、targetとは異なるcurrent admitted security admin 2名を要求する。侵害時に旧credentialを先にrevokeしても復旧でき、未revokeならrecovery admissionと同じstatementで旧credentialをrevokeする。既存operatorをbackfillせず、admissionのない新規session／challengeを拒否する。`0018`はcase referenceのdomain、protocol version、HMAC key version、report ID、derived HMACをimmutableな正本rowへ束縛し、旧互換rowを同じstatementで作る。既存のversionなしrowはbackfillせず、新しいoperator chainから拒否する。SQLiteは署名、attestation、HMACを検証したとは主張せず、review済みfuture verifierの結果だけを記録する。D1へ直接writeできる管理者はこのtrust boundary内にあり、rowをforgeできるため、offline authorityの追加とadmissionは独立したDB管理監査を必須とする。intent作成後はsession失効やoperator revoke後も固定された2分以内なら安全に確定を再開できる。結果確定とcontent削除はcanonical evidenceとdomain outboxが未完成のため拒否する。`0016`から`0018`もHTTP route、D1/R2 binding、削除、runtime ONを追加しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0024_billing_window_owner_detach.sql`までの24件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ24件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。
+
+`0012`〜`0018`は通報・管理操作のappend-only監査と権限境界を追加し、既存記録を推測で補完しません。`0019`〜`0024`は共有identityと分離した課金account、Apple authority、実効権限、課金鍵復旧、最大3まどの購入者支援、まど所有者による支援解除を追加します。課金migrationはすべて下限gateを`0`で作り、HTTP上限もtracked configでは`NO`のままです。migration適用だけで購入、Plus権限、支援、復旧を開始しません。SQLiteの合成訓練は署名、Apple JWS、実際のStoreKit購入を検証したとは主張しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+
+課金migrationをremoteへ適用する前に、次の完全ローカル訓練を通します。system temp配下に一時SQLiteを作り、全migration、上下gateの既定OFF、世代CAS、購入者による支援・解除、実効権限OFF中の所有者解除、全課金下限gateをOFFへ戻す終了状態を合成データだけで確認します。ネットワーク、Wrangler、Cloudflare、Apple、秘密情報は使用しません。
+
+```powershell
+npm run billing-sponsorship:local-drill
+```
 
 ```powershell
 npx --no-install wrangler d1 migrations list neko-window-sharing-staging --remote --config wrangler.staging.jsonc --experimental-provision=false --experimental-auto-create=false
@@ -144,8 +153,8 @@ npx --no-install wrangler deploy --dry-run --config wrangler.staging.jsonc --out
 - Worker名が`neko-window-sharing-staging`
 - D1が`neko-window-sharing-staging`
 - `MEDIA`と`MODERATION_MEDIA`が異なるstaging bucket
-- 3本のRate Limit binding
-- `MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`LEGACY_SHARING_RUNTIME_ENABLED`がすべて`NO`
+- 4本のRate Limit binding
+- 写真・反応・まど名・通知・旧共有・通報受付と7つの課金runtimeがすべて`NO`
 
 現在のrepositoryは、account／Worker／固定origin／期待active version／事前承認済みOFF versionをexact manifestへ束縛し、呼び出し側のactive snapshotが不一致なら副作用のない切替planすら返さないpure契約まで実装しています。既定はdry-runで、実provider、Cloudflare query、version切替、origin確認はありません。Cloudflareの公開version切替APIにexpected-currentの原子的preconditionがないため、GET後のPOSTを条件付き切替やcompare-and-swapとは表現しません。この手順ではdry-runより先へ進まず、通常の`wrangler deploy`やDashboardの手動var編集でも代用しません。安全な切替方式、直後の同一origin exact OFF確認、rollback訓練が実装・承認された後にだけ別手順で実配備します。
 
@@ -184,7 +193,7 @@ Cloudflare dashboardで3本のCronが登録済みであり、両R2 bucketが引�
 - 同じcommitのmedia-staging TestFlight Buildを本人所有の2台だけへ配布している
 - 通常R2と通報R2が非公開で、対応担当者、48時間以内の初回確認、kill switch手順が決まっている
 
-section 3と同じ4つの環境変数を設定したPowerShell processで、OFFとONを別々に生成します。既存fileを上書きしないため、再生成が必要なら対象がこのdirectory内のignored configであることを確認してから手動で削除します。
+section 3と同じ5つの環境変数を設定したPowerShell processで、OFFとONを別々に生成します。既存fileを上書きしないため、再生成が必要なら対象がこのdirectory内のignored configであることを確認してから手動で削除します。
 
 ```powershell
 npm run staging:config:render

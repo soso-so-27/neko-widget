@@ -72,22 +72,22 @@ CREATE TABLE billing_account_recovery_requests (
 CREATE TRIGGER billing_recovery_validate_before_insert
 BEFORE INSERT ON billing_account_recovery_requests
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM billing_account_key_state
      WHERE billing_account_id = NEW.billing_account_id
        AND generation = NEW.expected_generation
-  ) THEN RAISE(ABORT, 'billing recovery generation conflict') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'billing recovery generation conflict') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM billing_account_keys
      WHERE id = NEW.replaced_billing_key_id
        AND billing_account_id = NEW.billing_account_id AND state = 'active'
-  ) THEN RAISE(ABORT, 'billing recovery active key conflict') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'billing recovery active key conflict') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM billing_transaction_lineages
      WHERE original_transaction_id = NEW.expected_original_transaction_id
        AND billing_account_id = NEW.billing_account_id
-  ) THEN RAISE(ABORT, 'billing recovery lineage conflict') END;
-  SELECT CASE WHEN EXISTS (
+  ) THEN RAISE(ABORT, 'billing recovery lineage conflict') END);
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM billing_account_apple_identities
      WHERE billing_account_id = NEW.billing_account_id
        AND app_transaction_id_hash <> NEW.app_transaction_id_hash
@@ -95,11 +95,11 @@ BEGIN
     SELECT 1 FROM billing_account_apple_identities
      WHERE app_transaction_id_hash = NEW.app_transaction_id_hash
        AND billing_account_id <> NEW.billing_account_id
-  ) THEN RAISE(ABORT, 'billing recovery Apple identity conflict') END;
-  SELECT CASE WHEN EXISTS (
+  ) THEN RAISE(ABORT, 'billing recovery Apple identity conflict') END);
+  SELECT (CASE WHEN EXISTS (
     SELECT 1 FROM billing_account_keys
      WHERE signing_public_key = NEW.new_signing_public_key
-  ) THEN RAISE(ABORT, 'billing recovery signing key conflict') END;
+  ) THEN RAISE(ABORT, 'billing recovery signing key conflict') END);
 END;
 
 CREATE TRIGGER billing_recovery_rotate_after_insert

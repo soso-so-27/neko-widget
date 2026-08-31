@@ -33,20 +33,20 @@ DROP TRIGGER billing_window_sponsorship_state_validate_update;
 
 CREATE TRIGGER billing_window_owner_detach_request_validate
 BEFORE INSERT ON billing_window_sponsorship_owner_detach_requests BEGIN
- SELECT CASE WHEN NOT EXISTS(
+ SELECT (CASE WHEN NOT EXISTS(
    SELECT 1 FROM billing_runtime_gate
     WHERE singleton=1 AND window_sponsorship_enabled=1
- ) THEN RAISE(ABORT,'sponsorship runtime gate closed') END;
- SELECT CASE WHEN NEW.recorded_at<>unixepoch() THEN RAISE(ABORT,'owner detach audit requires database time') END;
- SELECT CASE WHEN NOT EXISTS(
+ ) THEN RAISE(ABORT,'sponsorship runtime gate closed') END);
+ SELECT (CASE WHEN NEW.recorded_at<>unixepoch() THEN RAISE(ABORT,'owner detach audit requires database time') END);
+ SELECT (CASE WHEN NOT EXISTS(
    SELECT 1
      FROM billing_window_sponsorships current
     WHERE current.window_lineage_id=NEW.window_lineage_id
       AND current.state='active'
       AND current.generation=NEW.expected_generation
       AND current.billing_account_id=NEW.expected_billing_account_id
- ) THEN RAISE(ABORT,'owner detach sponsorship conflict') END;
- SELECT CASE WHEN NOT EXISTS(
+ ) THEN RAISE(ABORT,'owner detach sponsorship conflict') END);
+ SELECT (CASE WHEN NOT EXISTS(
    SELECT 1
      FROM moment_spaces space
      JOIN moment_participants owner ON owner.space_id=space.space_id
@@ -64,7 +64,7 @@ BEFORE INSERT ON billing_window_sponsorship_owner_detach_requests BEGIN
         SELECT 1 FROM moment_blocks block
          WHERE block.space_id=space.space_id AND block.state='active'
       )
- ) THEN RAISE(ABORT,'current unblocked owner required') END;
+ ) THEN RAISE(ABORT,'current unblocked owner required') END);
 END;
 
 CREATE TRIGGER billing_window_sponsorship_apply
@@ -74,20 +74,20 @@ AFTER INSERT ON billing_window_sponsorship_requests BEGIN
    updated_at,last_request_id,last_owner_detach_request_id
  ) VALUES(
    NEW.window_lineage_id,
-   CASE WHEN NEW.operation='sponsor' THEN NEW.billing_account_id ELSE NULL END,
-   CASE WHEN NEW.operation='sponsor' THEN 'active' ELSE 'unsponsored' END,
+   (CASE WHEN NEW.operation='sponsor' THEN NEW.billing_account_id ELSE NULL END),
+   (CASE WHEN NEW.operation='sponsor' THEN 'active' ELSE 'unsponsored' END),
    NEW.resulting_generation,
-   CASE WHEN NEW.operation='sponsor' THEN NEW.recorded_at ELSE NULL END,
+   (CASE WHEN NEW.operation='sponsor' THEN NEW.recorded_at ELSE NULL END),
    NEW.recorded_at,NEW.client_request_id,NULL
  )
  ON CONFLICT(window_lineage_id) DO UPDATE SET
    billing_account_id=excluded.billing_account_id,
    state=excluded.state,
    generation=excluded.generation,
-   sponsored_at=CASE
+   sponsored_at=(CASE
      WHEN excluded.state='active' THEN excluded.updated_at
      ELSE billing_window_sponsorships.sponsored_at
-   END,
+   END),
    updated_at=excluded.updated_at,
    last_request_id=excluded.last_request_id,
    last_owner_detach_request_id=NULL;

@@ -1,6 +1,6 @@
 # ねこのまど SharingService
 
-Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）、旧Phase 2（日次canonical set）、Phase 3（追記型の「今の一枚」）を実装しています。Phase 2は互換用に残すだけで新製品UIからは呼びません。repositoryの既定値とproduction用templateではPhase 3、まど名同期、旧共有、課金bootstrap、課金取引受付、Apple通知受付、契約状態再照合をすべてOFFにし、productionのD1/R2作成、deploy、secret設定は行っていません。
+Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）、旧Phase 2（日次canonical set）、Phase 3（追記型の「今の一枚」）を実装しています。Phase 2は互換用に残すだけで新製品UIからは呼びません。repositoryの既定値とproduction用templateではPhase 3、まど名同期、旧共有、通知・通報受付と、bootstrapからまど支援までの全課金runtimeをOFFにし、productionのD1/R2作成、deploy、secret設定は行っていません。
 
 課金基盤は共有identityから分離しています。このWorkerはBillingAccountIDと正規化済み取引イベントを記録しますが、Apple JWSの証明書検証は実Node環境の[`BillingVerificationService`](../BillingVerificationService/README.md)が担当します。どちらも未deploy・runtime OFFで、購入UIやPlus権限はまだ有効になりません。
 
@@ -103,13 +103,16 @@ Phase 3の追加APIは次のとおりです。署名headerはv1と同じです�
 | Method | Path | 認証 | 用途 |
 |---|---|---|---|
 | `POST` | `/v1/billing/accounts` | 課金公開鍵による自己署名bootstrap | StoreKit `appAccountToken`に使うBillingAccountIDを初回発行する |
+| `POST` | `/v1/billing/accounts/recover` | 新課金鍵の自己署名 + 検証service | AppTransactionと現在購入の二重検証後に課金鍵だけを交換する |
 | `POST` | `/v1/billing/transactions` | BillingAccountID + 課金鍵の署名 | Apple検証済み取引を冪等な監査ledgerへ記録する。まど権限は付与しない |
-| `GET` | `/v1/billing/entitlement` | BillingAccountID + 課金鍵の署名 | 取引ごとの最新ledger事実を畳み込んだ暫定状態を返す |
+| `GET` | `/v1/billing/entitlement` | BillingAccountID + 課金鍵の署名 | Apple authorityから導出した有界な実効権限を返す |
 | `POST` | `/v1/billing/apple-notifications` | Apple署名JWS | Notifications V2を検証し、重複排除してSubscription Status再照合を予約する。通知だけでは権限を変えない |
+| `PUT` / `DELETE` | `/v1/billing/window-sponsorships/{lineageID}` | BillingAccountID + 課金鍵の署名 | 所有者同意を伴うまど支援、または現在の購入者による支援解除 |
+| `GET` / `DELETE` | `/v1/window-sponsorship` | まどmember署名 | 現在の支援状態を読む、またはまど所有者が支援を解除する |
 
 BootstrapのEd25519署名は`NWB1.ACCOUNT.CREATE / 1 / clientRequestId / signingPublicKey`を、既存protocolと同じUInt16 big-endian length prefixで連結したbytesを対象にします。冪等性もこの意味内容のhashで判定し、JSONのfield順や空白へ依存しません。
 
-機種変更時の課金account recovery APIはまだありません。取引JWSだけを鍵置換の証明にするとbearer token化するため採用しません。追加前に、Apple検証済み`AppTransaction` JWSの安定した`appTransactionID`と現在の購入JWSを両方検証し、Serverに事前登録したaccount bindingへ一致させる設計・失効・冪等性を実装します。この復旧も写真、まど、共有鍵、作品の復元とは分離します。
+機種変更時の課金account recoveryは、Apple検証済み`AppTransaction` JWSと現在の購入JWSを両方検証し、同じBillingAccountID・取引系譜・新端末へ一致するときだけ課金鍵を原子的に交換します。取引JWS単独をbearer tokenとして扱いません。この復旧は写真、まど、共有鍵、作品の復元とは分離し、上下のruntime gateは既定OFFです。
 
 課金取引requestは`Neko-Billing-Protocol-Version`、`Neko-Billing-Account-ID`、`Neko-Billing-Key-ID`、`Neko-Billing-Timestamp`、`Neko-Billing-Nonce`、`Neko-Billing-Signature`を使います。署名対象は`NWB1.REQUEST / 1 / account / key / timestamp / nonce / method / pathname / body SHA-256`です。WorkerとNode検証serviceのHMAC境界は[`billing-verifier-protocol-v1.json`](../ci/fixtures/billing-verifier-protocol-v1.json)を正本にします。
 
@@ -244,6 +247,6 @@ offline toolの存在だけではProduction gateを満たしません。
 [`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)を参照してください。
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 
-[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0021`の21 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`、`BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED`、`BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED`、`BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED`、`BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED`、`BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要なものを`YES`へ変更します。D1側にも独立した5つの課金下限gateがあり、上限・下限の両方がONでなければ処理しません。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
+[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0024`の24 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`と、bootstrap・取引受付・Apple通知・再照合・実効権限・課金鍵復旧・まど支援の7つの課金runtimeは既定`NO`のままにします。migration、非公開bucket、moderation運用、rate limit、client release gateを全て確認した隔離環境だけで、必要なものを個別に`YES`へ変更します。D1側にも独立した7つの課金下限gateがあり、対応する上限・下限の両方がONでなければ処理しません。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
 
 両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、3本のCron、削除backlogの最古時刻をreviewします。
