@@ -308,7 +308,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
 #endif
         // APNs and the existing local fallback both contain only generic text.
         // Keep them visible in the foreground without adding sound or a badge.
-        [.banner]
+        return [.banner]
     }
 
     func userNotificationCenter(
