@@ -19,6 +19,14 @@ CURRENT_PROJECT_VERSION = 1
 APP_PRIVACY_URL =
 APP_SUPPORT_URL =
 
+// Plus billing stays fail closed until StoreKit products, the independent
+// BillingAccountID bootstrap, and idempotent server confirmation are ready.
+// Product identifiers are intentionally empty in source and must never reuse
+// a window participant, device, or Keychain credential identifier.
+PLUS_STOREFRONT_ENABLED = NO
+PLUS_MONTHLY_PRODUCT_ID =
+PLUS_ANNUAL_PRODUCT_ID =
+
 // Empty by default. The manual, erased-Simulator App Store screenshot workflow
 // alone injects a compiler condition into the Widget extension's Debug target.
 WIDGET_SCREENSHOT_FIXTURE_CONDITION =

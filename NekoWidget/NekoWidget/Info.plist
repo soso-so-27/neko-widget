@@ -53,6 +53,12 @@
 	<string>$(PHOTO_LIBRARY_USAGE_DESCRIPTION)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
+	<key>PlusStorefrontEnabled</key>
+	<string>$(PLUS_STOREFRONT_ENABLED)</string>
+	<key>PlusMonthlyProductID</key>
+	<string>$(PLUS_MONTHLY_PRODUCT_ID)</string>
+	<key>PlusAnnualProductID</key>
+	<string>$(PLUS_ANNUAL_PRODUCT_ID)</string>
 	<key>SharingAPIBaseURL</key>
 	<string>$(SHARING_API_BASE_URL)</string>
 	<key>SharingReleaseMode</key>

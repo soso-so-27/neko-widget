@@ -50,10 +50,21 @@ struct NekoWidgetApp: App {
 
 @MainActor
 private struct ProductionAppRootView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = AppViewModel()
+    @StateObject private var plusPurchases = PlusPurchaseStore()
 
     var body: some View {
         AppRootView(viewModel: viewModel)
+            .task {
+                await plusPurchases.start()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                guard newPhase == .active else { return }
+                Task {
+                    await plusPurchases.refreshAfterForegroundEntry()
+                }
+            }
     }
 }
 

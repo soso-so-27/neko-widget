@@ -343,6 +343,13 @@ jobs:
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj
 
+      - name: Verify disabled Plus purchase foundation
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/test-plus-purchase-foundation.py
+
       - name: Verify normalized bbox posture classification
         working-directory: NekoWidget
         shell: bash
