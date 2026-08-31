@@ -474,6 +474,8 @@ struct FamilyWindowView: View {
                 }
 
                 if !model.isReportOnly {
+                    sendPhotoAction
+
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
                             Text(section.title).tag(section)
@@ -501,14 +503,7 @@ struct FamilyWindowView: View {
 
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
-                } else if prioritizesNotificationTarget {
-                    // A notification is an explicit request to see one sent
-                    // photo. Keep that photo ahead of the ordinary delivery
-                    // action instead of hiding it below the primary CTA.
-                    sentSectionContent
-                    sendPhotoAction
                 } else {
-                    sendPhotoAction
                     sentSectionContent
                 }
             }
@@ -526,12 +521,6 @@ struct FamilyWindowView: View {
                 .accessibilityLabel("まどの設定")
             }
         }
-    }
-
-    private var prioritizesNotificationTarget: Bool {
-        (pendingNotificationRoute?.kind == .heart
-            && pendingNotificationRoute?.target != nil)
-            || focusedSentMomentID != nil
     }
 
     @ViewBuilder

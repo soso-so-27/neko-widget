@@ -2884,39 +2884,24 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("receivedSectionContent", paired)
         self.assertIn("sentSectionContent", paired)
         self.assertIn("sendPhotoAction", paired)
-        self.assertEqual(paired.count("sendPhotoAction"), 2)
+        self.assertEqual(paired.count("sendPhotoAction"), 1)
+        self.assertLess(
+            paired.index("sendPhotoAction"),
+            paired.index('Picker("まどに表示する内容"'),
+        )
 
         received_start = paired.index(
             "if model.isReportOnly || selectedSection == .received {"
         )
-        priority_start = paired.index(
-            "} else if prioritizesNotificationTarget {",
-            received_start,
-        )
-        ordinary_start = paired.index("} else {", priority_start)
-        received_branch = paired[received_start:priority_start]
-        notification_target_branch = paired[priority_start:ordinary_start]
-        ordinary_sent_branch = paired[ordinary_start:]
+        sent_start = paired.index("} else {", received_start)
+        received_branch = paired[received_start:sent_start]
+        sent_branch = paired[sent_start:]
 
         self.assertIn("receivedSectionContent", received_branch)
         self.assertNotIn("sendPhotoAction", received_branch)
-        self.assertLess(
-            notification_target_branch.index("sentSectionContent"),
-            notification_target_branch.index("sendPhotoAction"),
-        )
-        self.assertLess(
-            ordinary_sent_branch.index("sendPhotoAction"),
-            ordinary_sent_branch.index("sentSectionContent"),
-        )
-
-        notification_priority = section(
-            family,
-            "private var prioritizesNotificationTarget:",
-            "@ViewBuilder\n    private var receivedSectionContent",
-        )
-        self.assertIn("pendingNotificationRoute?.kind == .heart", notification_priority)
-        self.assertIn("pendingNotificationRoute?.target != nil", notification_priority)
-        self.assertIn("focusedSentMomentID != nil", notification_priority)
+        self.assertIn("sentSectionContent", sent_branch)
+        self.assertNotIn("sendPhotoAction", sent_branch)
+        self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
             family,
