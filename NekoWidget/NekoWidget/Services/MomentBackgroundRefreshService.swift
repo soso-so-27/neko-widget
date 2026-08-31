@@ -159,6 +159,16 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
     private var tokenRegistration: Task<Void, Never>?
     private var tokenRegistrationEpoch: UInt64 = 0
 
+#if DEBUG
+    private static var suppressesNormalServicesForDebugLaunch: Bool {
+        CommandLine.arguments.contains("--sharing-runtime-self-test")
+            || CommandLine.arguments.contains(
+                AppStoreScreenshotFixture.launchArgument
+            )
+            || BillingInternalDiagnosticsLaunch.isActive
+    }
+#endif
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [
@@ -166,9 +176,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         ]? = nil
     ) -> Bool {
 #if DEBUG
-        guard !CommandLine.arguments.contains("--sharing-runtime-self-test"),
-              !CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument)
-        else { return true }
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return true }
 #endif
         UNUserNotificationCenter.current().delegate = self
         BGTaskScheduler.shared.register(
@@ -191,6 +199,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return }
+#endif
         // Notification permission and the APNs token can change outside the
         // app. Reconcile on every foreground activation; the signed PUT is
         // idempotent and extends the server-side bounded subscription lease.
@@ -198,6 +209,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return }
+#endif
         guard SharingAPIConfiguration.current.isMediaAvailable else { return }
         scheduleNextRefresh()
     }
@@ -206,6 +220,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return }
+#endif
         // Do not cancel an in-flight callback here. If its network request has
         // already reached the relay, cancellation could prevent the actor from
         // observing staleness and re-registering the newest selected window.
@@ -225,6 +242,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return }
+#endif
         // The framework error can contain device/environment details. Keep the
         // log generic; a future activation retries registration automatically.
         SharedLog.app.warning(
@@ -238,6 +258,12 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else {
+            completionHandler(.noData)
+            return
+        }
+#endif
         guard let route = MomentNotificationRoutePayload.route(from: userInfo) else {
             // A malformed or unknown envelope must never be interpreted as a
             // generic wake for whichever private window happens to be active.
@@ -277,6 +303,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return [] }
+#endif
         // APNs and the existing local fallback both contain only generic text.
         // Keep them visible in the foreground without adding sound or a badge.
         [.banner]
@@ -286,6 +315,9 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+#if DEBUG
+        guard !Self.suppressesNormalServicesForDebugLaunch else { return }
+#endif
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               let route = MomentNotificationRoutePayload.route(
                   from: response.notification.request.content.userInfo

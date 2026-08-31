@@ -7,18 +7,26 @@ struct NekoWidgetApp: App {
     private var appDelegate
 
     init() {
+#if DEBUG
+        let shouldRunLaunchCleanup = !BillingInternalDiagnosticsLaunch.isActive
+#else
+        let shouldRunLaunchCleanup = true
+#endif
         // A share sheet cannot survive a process relaunch. Remove only export
         // files with this app's exact prefixes before any new export is made.
-        TemporaryExportFileLifecycle.removeManagedFiles()
-        Task {
-            // A seasonal movie share sheet also cannot survive relaunch. The
-            // service validates the exact managed UUID directory before delete.
-            try? await SeasonalMovieExportService.shared.cleanupStaleExports(
-                olderThan: 0
-            )
+        if shouldRunLaunchCleanup {
+            TemporaryExportFileLifecycle.removeManagedFiles()
+            Task {
+                // A seasonal movie share sheet also cannot survive relaunch.
+                // The service validates the exact managed UUID directory.
+                try? await SeasonalMovieExportService.shared.cleanupStaleExports(
+                    olderThan: 0
+                )
+            }
         }
 #if DEBUG
-        if ProcessInfo.processInfo.environment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] == "1" {
+        if !BillingInternalDiagnosticsLaunch.isActive,
+           ProcessInfo.processInfo.environment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] == "1" {
             let defaults = UserDefaults.standard
             defaults.removeObject(
                 forKey: OnboardingPresentationPersistence.completedVersionKey
@@ -34,7 +42,9 @@ struct NekoWidgetApp: App {
     var body: some Scene {
         WindowGroup {
 #if DEBUG
-            if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
+            if BillingInternalDiagnosticsLaunch.isActive {
+                BillingInternalDiagnosticsRootView()
+            } else if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
                 AppStoreScreenshotFixtureRootView()
             } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()

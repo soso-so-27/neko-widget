@@ -351,6 +351,13 @@ jobs:
           python3 ci/test-plus-purchase-foundation.py
           python3 ci/test-billing-client-foundation.py
 
+      - name: Verify DEBUG-only billing diagnostics boundary
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ci/test-billing-internal-diagnostics.py
+
       - name: Verify normalized bbox posture classification
         working-directory: NekoWidget
         shell: bash
