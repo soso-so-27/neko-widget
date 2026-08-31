@@ -4,6 +4,7 @@ export const BILLING_VERIFIER_PROTOCOL_VERSION = 1 as const;
 export const BILLING_VERIFIER_PATH = "/internal/v1/apple-transactions/verify";
 export const BILLING_NOTIFICATION_VERIFIER_PATH = "/internal/v1/apple-notifications/verify";
 export const BILLING_SUBSCRIPTION_STATUS_PATH = "/internal/v1/apple-subscriptions/status";
+export const BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH = "/internal/v1/apple-billing-recoveries/verify";
 
 const encoder = new TextEncoder();
 

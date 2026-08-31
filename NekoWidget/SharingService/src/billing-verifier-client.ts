@@ -3,6 +3,7 @@ import {
   BILLING_SUBSCRIPTION_STATUS_PATH,
   BILLING_VERIFIER_PATH,
   BILLING_VERIFIER_PROTOCOL_VERSION,
+  BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH,
   billingVerifierRequestTranscript,
   billingVerifierResponseTranscript,
   bodySHA256,
@@ -35,7 +36,13 @@ export interface VerifiedBillingTransaction {
 export type BillingVerifierServicePath =
   | typeof BILLING_VERIFIER_PATH
   | typeof BILLING_NOTIFICATION_VERIFIER_PATH
-  | typeof BILLING_SUBSCRIPTION_STATUS_PATH;
+  | typeof BILLING_SUBSCRIPTION_STATUS_PATH
+  | typeof BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH;
+
+export interface VerifiedAccountRecoveryEvidence {
+  appTransactionIdHash: string;
+  transaction: VerifiedBillingTransaction;
+}
 
 export interface VerifierConfig {
   origin: string;
@@ -247,6 +254,38 @@ export async function verifyAppleTransactionViaService(
   return normalizeVerifiedBillingTransaction(decoded, loadVerifierConfig(env));
 }
 
+export async function verifyAppleAccountRecoveryViaService(
+  input: {
+    signedAppTransactionInfo: string;
+    signedTransactionInfo: string;
+    deviceVerificationId: string;
+    expectedAppTransactionId: string;
+    expectedTransactionId: string;
+    expectedOriginalTransactionId: string;
+    billingAccountId: string;
+  },
+  env: Env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<VerifiedAccountRecoveryEvidence> {
+  const raw = record(await callBillingVerifierService(
+    BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH,
+    { protocolVersion: BILLING_VERIFIER_PROTOCOL_VERSION, ...input },
+    env,
+    fetchImpl,
+  ));
+  const fields = Object.keys(raw).sort();
+  if (fields.join(",") !== "appTransactionIdHash,protocolVersion,transaction"
+    || raw.protocolVersion !== 1
+    || typeof raw.appTransactionIdHash !== "string"
+    || !/^[A-Za-z0-9_-]{43}$/u.test(raw.appTransactionIdHash)) {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  }
+  return {
+    appTransactionIdHash: raw.appTransactionIdHash,
+    transaction: normalizeVerifiedBillingTransaction(raw.transaction, loadVerifierConfig(env)),
+  };
+}
+
 export async function callBillingVerifierService(
   path: BillingVerifierServicePath,
   value: Record<string, unknown>,
@@ -255,7 +294,9 @@ export async function callBillingVerifierService(
 ): Promise<unknown> {
   const config = loadVerifierConfig(env);
   const body = new TextEncoder().encode(JSON.stringify(value));
-  if (body.length > 64 * 1024) {
+  const maximumBodyBytes = path === BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH
+    ? 128 * 1024 : 64 * 1024;
+  if (body.length > maximumBodyBytes) {
     throw new ApiError(400, "invalid_apple_payload", "The App Store payload is invalid.");
   }
   const timestamp = Math.floor(Date.now() / 1_000);

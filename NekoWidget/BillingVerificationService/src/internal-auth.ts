@@ -4,6 +4,7 @@ export const PROTOCOL_VERSION = 1 as const;
 export const VERIFY_PATH = "/internal/v1/apple-transactions/verify";
 export const VERIFY_NOTIFICATION_PATH = "/internal/v1/apple-notifications/verify";
 export const SUBSCRIPTION_STATUS_PATH = "/internal/v1/apple-subscriptions/status";
+export const ACCOUNT_RECOVERY_VERIFY_PATH = "/internal/v1/apple-billing-recoveries/verify";
 
 export function bodySHA256(body: Buffer): string {
   return createHash("sha256").update(body).digest("base64url");

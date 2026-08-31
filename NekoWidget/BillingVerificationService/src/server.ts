@@ -21,8 +21,14 @@ import {
 } from "./apple-subscription-status.js";
 import type { VerificationServiceConfig } from "./config.js";
 import {
+  AppleAccountRecoveryVerifier,
+  type AccountRecoveryEvidence,
+  type AccountRecoveryVerificationInput,
+} from "./apple-account-recovery.js";
+import {
   PROTOCOL_VERSION,
   SUBSCRIPTION_STATUS_PATH,
+  ACCOUNT_RECOVERY_VERIFY_PATH,
   VERIFY_PATH,
   VERIFY_NOTIFICATION_PATH,
   bodySHA256,
@@ -44,9 +50,14 @@ interface SubscriptionStatusService {
   get(transactionId: string): Promise<NormalizedSubscriptionStatus>;
 }
 
+interface AccountRecoveryVerifier {
+  verify(input: AccountRecoveryVerificationInput): Promise<AccountRecoveryEvidence>;
+}
+
 export interface BillingAppleServices {
   notificationVerifier?: NotificationVerifier;
   subscriptionStatusService?: SubscriptionStatusService;
+  accountRecoveryVerifier?: AccountRecoveryVerifier;
 }
 
 class RequestError extends Error {
@@ -55,13 +66,13 @@ class RequestError extends Error {
   }
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer> {
+async function readBody(request: IncomingMessage, maximumBytes = 64 * 1024): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
-    if (total > 64 * 1024) throw new RequestError(413);
+    if (total > maximumBytes) throw new RequestError(413);
     chunks.push(buffer);
   }
   return Buffer.concat(chunks, total);
@@ -175,6 +186,39 @@ function parseStatusBody(body: Buffer): string {
   return record.originalTransactionId;
 }
 
+function parseRecoveryBody(body: Buffer): AccountRecoveryVerificationInput {
+  let value: unknown;
+  try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
+  catch { throw new RequestError(400); }
+  if (value === null || Array.isArray(value) || typeof value !== "object") throw new RequestError(400);
+  const record = value as Record<string, unknown>;
+  const expected = [
+    "billingAccountId", "deviceVerificationId", "expectedAppTransactionId", "expectedOriginalTransactionId",
+    "expectedTransactionId", "protocolVersion", "signedAppTransactionInfo",
+    "signedTransactionInfo",
+  ].sort();
+  const actual = Object.keys(record).sort();
+  const jws = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+  const appleUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+  const tx = /^\d{1,32}$/u;
+  if (
+    actual.length !== expected.length || actual.some((field, index) => field !== expected[index])
+    || record.protocolVersion !== PROTOCOL_VERSION
+    || typeof record.billingAccountId !== "string" || !uuid.test(record.billingAccountId)
+    || typeof record.deviceVerificationId !== "string" || !appleUuid.test(record.deviceVerificationId)
+    || typeof record.expectedAppTransactionId !== "string"
+    || !/^[^\u0000-\u001f\u007f-\u009f]{1,256}$/u.test(record.expectedAppTransactionId)
+    || typeof record.expectedTransactionId !== "string" || !tx.test(record.expectedTransactionId)
+    || typeof record.expectedOriginalTransactionId !== "string" || !tx.test(record.expectedOriginalTransactionId)
+    || typeof record.signedAppTransactionInfo !== "string"
+    || record.signedAppTransactionInfo.length > 60 * 1024 || !jws.test(record.signedAppTransactionInfo)
+    || typeof record.signedTransactionInfo !== "string"
+    || record.signedTransactionInfo.length > 60 * 1024 || !jws.test(record.signedTransactionInfo)
+  ) throw new RequestError(400);
+  return record as unknown as AccountRecoveryVerificationInput;
+}
+
 function sendUnsigned(response: ServerResponse, status: number): void {
   const body = Buffer.from(JSON.stringify({ error: { code: "unauthorized" } }));
   response.writeHead(status, {
@@ -233,6 +277,9 @@ export function createBillingVerificationServer(
   const subscriptionStatusService = suppliedServices.subscriptionStatusService
     ?? (config.subscriptionStatusEnabled === true && config.serverAPI !== undefined
       ? new AppleSubscriptionStatusService(config, sharedSignedDataVerifier()) : null);
+  const accountRecoveryVerifier = suppliedServices.accountRecoveryVerifier
+    ?? (config.accountRecoveryVerificationEnabled === true
+      ? new AppleAccountRecoveryVerifier(config, sharedSignedDataVerifier()) : null);
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
       const body = Buffer.from(JSON.stringify({ status: "ok", protocolVersion: 1 }));
@@ -247,7 +294,8 @@ export function createBillingVerificationServer(
     }
     const supportedPath = request.url === VERIFY_PATH
       || request.url === VERIFY_NOTIFICATION_PATH
-      || request.url === SUBSCRIPTION_STATUS_PATH;
+      || request.url === SUBSCRIPTION_STATUS_PATH
+      || request.url === ACCOUNT_RECOVERY_VERIFY_PATH;
     if (request.method !== "POST" || !supportedPath) {
       sendUnsigned(response, 404);
       return;
@@ -258,7 +306,7 @@ export function createBillingVerificationServer(
     try {
       if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase()
         !== "application/json") throw new RequestError(415);
-      body = await readBody(request);
+      body = await readBody(request, request.url === ACCOUNT_RECOVERY_VERIFY_PATH ? 128 * 1024 : 64 * 1024);
       nonce = authenticate(request, body, config.sharedSecret);
     } catch (error) {
       sendUnsigned(response, error instanceof RequestError ? error.status : 400);
@@ -289,7 +337,7 @@ export function createBillingVerificationServer(
           nonce,
           config.sharedSecret,
         );
-      } else {
+      } else if (request.url === SUBSCRIPTION_STATUS_PATH) {
         if (config.subscriptionStatusEnabled !== true || subscriptionStatusService === null) {
           sendSigned(
             response,
@@ -308,6 +356,12 @@ export function createBillingVerificationServer(
           nonce,
           config.sharedSecret,
         );
+      } else {
+        if (config.accountRecoveryVerificationEnabled !== true || accountRecoveryVerifier === null) {
+          sendSigned(response, 503, { error: { code: "apple_account_recovery_verifier_disabled" } }, nonce, config.sharedSecret);
+          return;
+        }
+        sendSigned(response, 200, await accountRecoveryVerifier.verify(parseRecoveryBody(body)), nonce, config.sharedSecret);
       }
     } catch (error) {
       if (

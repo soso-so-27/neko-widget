@@ -4,6 +4,7 @@ import {
   billingAccountBootstrapRuntimeEnabled,
   billingAppleNotificationRuntimeEnabled,
   billingEffectiveEntitlementRuntimeEnabled,
+  billingAccountRecoveryRuntimeEnabled,
   billingSubscriptionReconciliationRuntimeEnabled,
   billingTransactionIngestionRuntimeEnabled,
   legacySharingRuntimeEnabled,
@@ -17,6 +18,7 @@ import {
   getBillingEntitlement,
   recordBillingTransaction,
 } from "./billing";
+import { recoverBillingAccount } from "./billing-recovery";
 import {
   ingestAppleBillingNotification,
   runBillingSubscriptionReconciliation,
@@ -118,6 +120,10 @@ export async function route(
     );
   }
   if (
+    pathname === "/v1/billing/accounts/recover"
+    && !billingAccountRecoveryRuntimeEnabled(env)
+  ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  if (
     pathname === "/v1/billing/accounts"
     && !billingAccountBootstrapRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
@@ -135,6 +141,9 @@ export async function route(
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   if (request.method === "POST" && pathname === "/v1/billing/accounts") {
     return createBillingAccount(request, env);
+  }
+  if (request.method === "POST" && pathname === "/v1/billing/accounts/recover") {
+    return recoverBillingAccount(request, env);
   }
   if (request.method === "POST" && pathname === "/v1/billing/transactions") {
     return recordBillingTransaction(request, env);

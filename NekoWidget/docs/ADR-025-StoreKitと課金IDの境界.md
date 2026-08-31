@@ -1,7 +1,7 @@
 # ADR-025：StoreKitと課金IDの境界
 
 作成：2026-08-31  
-状態：クライアント通信、Server記録、Notifications V2／Subscription Status監査、無効状態の実効権限状態機械を採用。全runtime OFF。販売・sponsorship・課金UIは未実装
+状態：クライアント通信、Server記録、Notifications V2／Subscription Status監査、無効状態の実効権限状態機械、AppTransaction二重JWSによる課金鍵復旧foundationを採用。全runtime OFF。販売・sponsorship・課金UIは未実装
 
 関連：[ADR-024](ADR-024-無料体験とPlusと物販.md)、[ADR-018](ADR-018-名前付きの非公開なまど.md)、[共有設計](共有設計.md)
 
@@ -20,6 +20,7 @@ StoreKitの購入権復元も、写真原本、届いた写真、まど、E2E暗
 - 新規Keychainがない場合の初回発行だけは、設定済み商品に対する`Transaction.currentEntitlements`を最後まで走査し、検証済み・未検証のどちらの購入証拠もなかったときに限り、30秒有効で呼出側から生成できないauthorizationを発行して許可する。既存registered鍵の読取と既存pending requestの再送はこのauthorizationを要求しないが、Keychainなしのまま自動作成もしない。
 - 課金Keychainは`WhenUnlockedThisDeviceOnly`・iCloud同期なし・App Groupなしとし、通常コンテナのinstallation markerが一致しない残存鍵を新しいインストールの権限にしない。markerと最初のpending鍵はcreate-if-absentで競合の勝者を共有し、複数Coordinatorから別request・別BillingAccountIDを発行しない。読取不能・破損・marker不一致を理由に自動削除や別BillingAccountIDの再発行をしない。
 - ServerはAppleの取引系譜とBillingAccountIDを検証し、購入者とPlus対象まどの`sponsorship`を別レコードで結ぶ。
+- 機種変更時の課金鍵は、検証済みAppTransaction JWSと現在購入JWSの両方を同じApple Account・同じ新端末・同じBillingAccountIDへ結び、直後のSubscription Statusが有効な場合だけ原子的に交換する。写真、まど、E2E鍵はこの操作で復元しない。
 
 ## 決定2：StoreKitの確認だけでServer権限を確定しない
 
@@ -52,6 +53,7 @@ PLUS_STOREFRONT_ENABLED = NO
 PLUS_MONTHLY_PRODUCT_ID =
 PLUS_ANNUAL_PRODUCT_ID =
 PLUS_BILLING_CLIENT_ENABLED = NO
+PLUS_BILLING_RECOVERY_ENABLED = NO
 PLUS_BILLING_API_BASE_URL =
 ```
 
@@ -63,11 +65,14 @@ BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED = NO
 BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED = NO
 BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED = NO
 BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED = NO
+BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED = NO
+BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED = NO
 billing_runtime_gate.account_bootstrap_enabled = 0
 billing_runtime_gate.transaction_ingestion_enabled = 0
 billing_runtime_gate.apple_notification_ingestion_enabled = 0
 billing_runtime_gate.subscription_reconciliation_enabled = 0
 billing_runtime_gate.effective_entitlement_enabled = 0
+billing_runtime_gate.account_recovery_enabled = 0
 ```
 
 どちらか片方でもOFF、設定不足、検証サービス不通の場合はfail closedとする。この基盤を追加しただけでは購入、価格表示、権利付与、既存まどの制限を開始しない。
@@ -94,11 +99,13 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 - 実効権限decisionもappend-onlyで残し、current lineage stateだけを更新可能にする。権限GETは取引受付gateを流用せず、独立した上限・下限gateの両方がONのときだけこのcurrent stateをaccount単位で評価する。transaction responseの暫定候補は引き続き権限を付与しない。
 - BillingAccountID、Apple transaction ID、通知UUIDは仮名識別子でも個人データになり得る。生JWS・写真・まどIDとの結合は保存しない。会計上必要な保持根拠・期間、利用者向けexport、法的保持を除く削除手順が未確定のため、現行のappend-only台帳をproductionで有効化しない。保持・削除runbookとPrivacy表示は販売開始条件とする。
 
-## 課金鍵の機種変更を急いで実装しない理由
+## 課金鍵の機種変更と実装済みの境界
 
-新しいiPhoneではStoreKit購入権を取得できても、`ThisDeviceOnly`の課金秘密鍵は移らない。購入JWSだけをbearer tokenのように扱って鍵を交換すると、漏えいした取引情報による乗っ取り境界になるため採用しない。
+新しいiPhoneではStoreKit購入権を取得できても、`ThisDeviceOnly`の課金秘密鍵は移らない。購入JWSだけをbearer tokenのように扱う鍵交換は採用しない。
 
-将来の鍵交換は、少なくとも検証済み`AppTransaction` JWSの安定した`appTransactionID`と、現在の購入JWSの`originalTransactionId`・`appAccountToken`を、既存Server対応へ照合した場合だけ許可する。新鍵の自己署名、冪等request、旧鍵失効を同じ原子的遷移に含める。この実装が終わるまでmarker不一致は「購入情報の引き継ぎが必要」としてfail closedにする。
+無効状態のfoundationでは、検証済み`AppTransaction` JWSと購入JWSの`appTransactionID`一致、両JWSの新端末SHA-384証明、`originalTransactionId`・`appAccountToken`・既存Server系譜を照合する。さらに復旧直前のSubscription Statusが本人購入の有効期間または請求猶予期間内である場合だけ、新鍵の自己署名済み冪等requestを受ける。D1の同一statementで旧鍵失効、新鍵登録、Apple安定IDのハッシュ結合、generation更新を行い、途中失敗は全体をrollbackする。生JWS、端末ID、署名は保存しない。
+
+このfoundationは通常起動・foreground・購入・写真・まど・UIへ接続せず、クライアント、Worker、検証サービス、D1の独立gateをすべてOFFに保つ。macOS/Xcode実compile、署名実機、隔離stagingでの応答消失・同時実行・猶予境界訓練が完了するまで有効化しない。
 
 ## 復元という言葉の境界
 
@@ -114,7 +121,7 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 
 1. App Store Connectで月額・年額を同じsubscription group・同じlevel、Family Sharing無効で作成する
 2. 無効状態で実装済みの課金bootstrap／Keychain／署名clientを、販売準備用の内部導線へ接続して実機検証する
-3. `AppTransaction` JWSと購入JWSの二重照合によるBillingAccountID復旧・端末鍵rotationを実装する
+3. 実装済みの二重JWS復旧foundationをmacOS/Xcodeでcompileし、署名実機と隔離stagingで応答消失・同時実行・猶予境界・強制終了を訓練する
 4. 実装済みのNotifications V2、Subscription Status API、再照合jobを隔離stagingへ配備し、Notification History復旧・再送・順序逆転・障害backoffを運用検証する
 5. 購入者からまどへのsponsorshipとオフライン猶予を実装し、実装済みの解約・返金・請求猶予・失効状態機械へ接続する
 6. 既存β利用者のまどを失わない移行を実装する
@@ -128,6 +135,8 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 - [Apple: currentEntitlements](https://developer.apple.com/documentation/storekit/transaction/currententitlements)
 - [Apple: AppStore.sync](https://developer.apple.com/documentation/storekit/appstore/sync())
 - [Apple: AppTransaction](https://developer.apple.com/documentation/storekit/apptransaction)
+- [Apple: AppStore.deviceVerificationID](https://developer.apple.com/documentation/storekit/appstore/deviceverificationid)
+- [Apple: Transaction.deviceVerification](https://developer.apple.com/documentation/storekit/transaction/deviceverification)
 - [Apple: 自動更新サブスクリプションの設定](https://developer.apple.com/help/app-store-connect/manage-subscriptions/offer-auto-renewable-subscriptions/)
 - [Apple: App Store Server Library for Node](https://github.com/apple/app-store-server-library-node)
 - [Apple: App Store Server Notifications](https://developer.apple.com/documentation/appstoreservernotifications)

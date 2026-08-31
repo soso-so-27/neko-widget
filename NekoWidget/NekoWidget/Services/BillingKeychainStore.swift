@@ -6,6 +6,8 @@ import Security
 enum BillingKeychainStore {
     private static let service = "jp.nekowidget.billing.credentials.v1.host"
     private static let account = "primary"
+    private static let recoveryService =
+        "jp.nekowidget.billing.recovery-attempt.v1.host"
     private static let lock = NSLock()
 
     static func load() throws -> BillingCredential? {
@@ -109,10 +111,171 @@ enum BillingKeychainStore {
         }
     }
 
+    static func loadRecoveryAttempt() throws -> BillingAccountRecoveryAttempt? {
+        try withLock { try loadRecoveryAttemptUnlocked() }
+    }
+
+    /// Cleans up only an attempt whose server-confirmed key is already the
+    /// installed primary credential (for example, after a crash between the
+    /// primary write and pending-item deletion).
+    static func removeRecoveryAttemptIfCommitted(
+        to registered: BillingCredential
+    ) throws {
+        try withLock {
+            let registered = try registered.validated()
+            guard registered.phase == .registered,
+                  let attempt = try loadRecoveryAttemptUnlocked()
+            else { return }
+            guard registered.clientRequestID == attempt.clientRequestID,
+                  registered.signingPrivateKey == attempt.signingPrivateKey,
+                  registered.billingAccountID == attempt.billingAccountID
+            else { throw BillingClientError.credentialChanged }
+            let status = SecItemDelete(recoveryItemQuery() as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
+    /// Persists the new signing key and idempotency ID before the first
+    /// recovery request. A duplicate never overwrites an in-flight request.
+    static func insertRecoveryAttemptIfAbsent(
+        _ candidate: BillingAccountRecoveryAttempt
+    ) throws -> BillingAccountRecoveryAttempt {
+        try withLock {
+            let candidate = try candidate.validated()
+            let attributes = try encodedRecoveryAttributes(for: candidate)
+            let addQuery = recoveryItemQuery().merging(attributes) { _, new in new }
+            let status = SecItemAdd(addQuery as CFDictionary, nil)
+            switch status {
+            case errSecSuccess:
+                return candidate
+            case errSecDuplicateItem:
+                guard let winner = try loadRecoveryAttemptUnlocked() else {
+                    throw BillingClientError.credentialChanged
+                }
+                return winner
+            default:
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
+    /// Compare-and-delete for a terminal server rejection. Transport errors,
+    /// 503 responses, and malformed responses never call this method, keeping
+    /// the exact request available for a safe retry.
+    static func deleteRecoveryAttempt(
+        ifMatches expected: BillingAccountRecoveryAttempt
+    ) throws {
+        try withLock {
+            let expected = try expected.validated()
+            guard let current = try loadRecoveryAttemptUnlocked() else { return }
+            guard current == expected else {
+                throw BillingClientError.credentialChanged
+            }
+            let status = SecItemDelete(recoveryItemQuery() as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
+    /// Commits a recovered registered credential only after the server returns
+    /// a response bound to the exact pending request. Until this call, an old
+    /// retained primary credential remains untouched.
+    static func saveRecoveredCredential(
+        _ registered: BillingCredential,
+        from attempt: BillingAccountRecoveryAttempt,
+        replacing previous: BillingCredential?
+    ) throws {
+        try withLock {
+            let registered = try registered.validated()
+            let attempt = try attempt.validated()
+            let previous = try previous?.validated()
+            guard registered.phase == .registered,
+                  registered.clientRequestID == attempt.clientRequestID,
+                  registered.signingPrivateKey == attempt.signingPrivateKey,
+                  registered.billingAccountID == attempt.billingAccountID,
+                  try loadRecoveryAttemptUnlocked() == attempt
+            else { throw BillingClientError.credentialChanged }
+
+            let current = try loadUnlocked()
+            if current != registered {
+                guard current == previous else {
+                    throw BillingClientError.credentialChanged
+                }
+                let attributes = try encodedAttributes(for: registered)
+                let status: OSStatus
+                if current == nil {
+                    let addQuery = itemQuery().merging(attributes) { _, new in new }
+                    status = SecItemAdd(addQuery as CFDictionary, nil)
+                } else {
+                    status = SecItemUpdate(
+                        itemQuery() as CFDictionary,
+                        attributes as CFDictionary
+                    )
+                }
+                guard status == errSecSuccess else {
+                    throw mappedWriteError(status)
+                }
+                guard try loadUnlocked() == registered else {
+                    throw BillingClientError.credentialChanged
+                }
+            }
+
+            let deleteStatus = SecItemDelete(recoveryItemQuery() as CFDictionary)
+            guard deleteStatus == errSecSuccess
+                    || deleteStatus == errSecItemNotFound
+            else { throw mappedWriteError(deleteStatus) }
+        }
+    }
+
+    private static func loadRecoveryAttemptUnlocked() throws
+        -> BillingAccountRecoveryAttempt? {
+        var query = recoveryItemQuery()
+        query[kSecReturnData] = kCFBooleanTrue
+        query[kSecMatchLimit] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            break
+        case errSecItemNotFound:
+            return nil
+        case errSecInteractionNotAllowed, errSecNotAvailable:
+            throw BillingClientError.protectedDataUnavailable
+        default:
+            throw BillingClientError.keychainUnavailable
+        }
+        guard let data = result as? Data else {
+            throw BillingClientError.malformedCredential
+        }
+        do {
+            return try JSONDecoder().decode(
+                BillingAccountRecoveryAttempt.self,
+                from: data
+            ).validated()
+        } catch let error as BillingClientError {
+            throw error
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+    }
+
     private static func itemQuery() -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecAttrSynchronizable: kCFBooleanFalse as Any
+        ]
+    }
+
+    private static func recoveryItemQuery() -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: recoveryService,
             kSecAttrAccount: account,
             kSecAttrSynchronizable: kCFBooleanFalse as Any
         ]
@@ -135,6 +298,25 @@ enum BillingKeychainStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             data = try encoder.encode(try credential.validated())
+        } catch let error as BillingClientError {
+            throw error
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+        return [
+            kSecValueData: data,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+    }
+
+    private static func encodedRecoveryAttributes(
+        for attempt: BillingAccountRecoveryAttempt
+    ) throws -> [CFString: Any] {
+        let data: Data
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            data = try encoder.encode(try attempt.validated())
         } catch let error as BillingClientError {
             throw error
         } catch {

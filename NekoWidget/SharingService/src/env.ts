@@ -38,6 +38,7 @@ export interface Env {
   BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED?: string;
   BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED?: string;
   BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED?: string;
+  BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED?: string;
   /// HTTPS origin of the isolated, real-Node Apple JWS verifier.
   BILLING_VERIFIER_ORIGIN?: string;
   /// Secret base64url-encoded 32-byte HMAC key shared only with the verifier.
@@ -119,6 +120,10 @@ export function billingEffectiveEntitlementRuntimeEnabled(
 ): boolean {
   return env.BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED === "YES";
 }
+
+export function billingAccountRecoveryRuntimeEnabled(
+  env: Pick<Env, "BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED">,
+): boolean { return env.BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED === "YES"; }
 
 export function positiveIntegerSetting(value: string, fallback: number): number {
   const parsed = Number(value);

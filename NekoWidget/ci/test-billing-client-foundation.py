@@ -41,6 +41,7 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertRegex(config, r"(?m)^PLUS_ANNUAL_PRODUCT_ID =$")
         self.assertRegex(config, r"(?m)^PLUS_BILLING_CLIENT_ENABLED = NO$")
         self.assertRegex(config, r"(?m)^PLUS_BILLING_API_BASE_URL =$")
+        self.assertRegex(config, r"(?m)^PLUS_BILLING_RECOVERY_ENABLED = NO$")
 
         with (ROOT / "NekoWidget/Info.plist").open("rb") as handle:
             info = plistlib.load(handle)
@@ -51,6 +52,10 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertEqual(
             info["PlusBillingAPIBaseURL"],
             "$(PLUS_BILLING_API_BASE_URL)",
+        )
+        self.assertEqual(
+            info["PlusBillingRecoveryEnabled"],
+            "$(PLUS_BILLING_RECOVERY_ENABLED)",
         )
         core = source("NekoWidget/Services/BillingClientCore.swift")
         self.assertIn('info["PlusBillingClientEnabled"]', core)
@@ -210,7 +215,10 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn(".withoutOverwriting", keychain)
         self.assertNotIn(".atomic", keychain)
         self.assertIn("if let winner = try loadIfPresent(at: url)", keychain)
-        self.assertNotIn("SecItemDelete", keychain)
+        bootstrap_keychain = keychain[:keychain.index(
+            "static func loadRecoveryAttempt()"
+        )]
+        self.assertNotIn("SecItemDelete", bootstrap_keychain)
 
         app = source("NekoWidget/App/NekoWidgetApp.swift")
         self.assertNotIn("BillingAccountBootstrapCoordinator", app)
@@ -291,6 +299,172 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("http.url == url", client)
         self.assertIn("completionHandler(nil)", client)
         self.assertIn("URLSessionConfiguration.ephemeral", client)
+
+    def test_explicit_account_recovery_is_device_bound_and_crash_resumable(self) -> None:
+        core = source("NekoWidget/Services/BillingClientCore.swift")
+        client = source("NekoWidget/Services/BillingAPIClient.swift")
+        storekit = source(
+            "NekoWidget/Services/BillingFreshAccountAuthorization.swift"
+        )
+        keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
+        plus = source("NekoWidget/Services/PlusPurchaseStore.swift")
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+
+        self.assertIn(
+            'static let accountRecoveryPath = "/v1/billing/accounts/recover"',
+            core,
+        )
+        transcript = core[
+            core.index("static func accountRecoveryTranscript("):
+            core.index("static func signedRequestTranscript(")
+        ]
+        transcript_fields = transcript[transcript.index(
+            "return try encodeCanonicalFields(["
+        ):]
+        ordered_fields = (
+            '"NWB1.ACCOUNT.RECOVER"',
+            "attempt.clientRequestID",
+            "attempt.billingAccountID",
+            "signingPublicKey",
+            "evidence.deviceVerificationID",
+            "attempt.appTransactionID",
+            "attempt.expectedTransactionID",
+            "attempt.expectedOriginalTransactionID",
+            "sha256(Data(evidence.signedAppTransactionInfo.utf8))",
+            "sha256(Data(evidence.signedTransactionInfo.utf8))",
+        )
+        positions = [transcript_fields.index(field) for field in ordered_fields]
+        self.assertEqual(positions, sorted(positions))
+
+        attempt = core[
+            core.index("struct BillingAccountRecoveryAttempt:"):
+            core.index("struct BillingAccountRecoveryResult:")
+        ]
+        for persisted in (
+            "clientRequestID",
+            "signingPrivateKey",
+            "billingAccountID",
+            "deviceVerificationID",
+            "appTransactionID",
+            "signedAppTransactionInfo",
+            "signedTransactionInfo",
+            "expectedTransactionID",
+            "expectedOriginalTransactionID",
+        ):
+            self.assertIn(f"var {persisted}:", attempt)
+        self.assertIn("func matchesCurrentAccount(", attempt)
+        self.assertIn("func matchesExactWireEvidence(", attempt)
+        current_match = attempt[
+            attempt.index("func matchesCurrentAccount("):
+            attempt.index("func matchesExactWireEvidence(")
+        ]
+        self.assertNotIn("expectedTransactionID ==", current_match)
+        self.assertNotIn("signedTransactionInfo ==", current_match)
+        exact_match = attempt[
+            attempt.index("func matchesExactWireEvidence("):
+            attempt.index("var persistedEvidence:")
+        ]
+        self.assertIn("signedAppTransactionInfo", exact_match)
+        self.assertIn("signedTransactionInfo", exact_match)
+        self.assertIn("expectedTransactionID", exact_match)
+
+        collector = storekit[
+            storekit.index("actor BillingStoreKitRecoveryEvidenceCollector"):
+        ]
+        self.assertIn("func collectForExplicitRecovery()", collector)
+        self.assertIn("try await AppTransaction.shared", collector)
+        self.assertIn("try await AppTransaction.refresh()", collector)
+        self.assertNotIn("AppStore.sync", collector.replace(
+            "AppStore.sync() is intentionally never used here.", ""
+        ))
+        self.assertIn("AppStore.deviceVerificationID", collector)
+        self.assertIn("SHA384.hash", collector)
+        self.assertIn("nonce.uuidString.lowercased()", collector)
+        self.assertIn("deviceVerificationID.uuidString.lowercased()", collector)
+        self.assertGreaterEqual(collector.count("verifyDeviceBinding("), 3)
+        self.assertIn("Transaction.currentEntitlements", collector)
+        self.assertIn("transaction.ownershipType == .purchased", collector)
+        self.assertIn("transaction.revocationDate == nil", collector)
+        self.assertIn("!transaction.isUpgraded", collector)
+        self.assertIn("purchases.count == 1", collector)
+        self.assertIn("purchase.value.appTransactionID", collector)
+        self.assertIn("appTransaction.value.appTransactionID", collector)
+
+        coordinator = client[
+            client.index("actor BillingAccountRecoveryCoordinator"):
+            client.index("actor PlusBillingSession")
+        ]
+        self.assertIn("configuration.isEnabled", coordinator)
+        self.assertIn("recoverFromExplicitUserAction", coordinator)
+        self.assertIn("insertRecoveryAttempt(candidate)", coordinator)
+        self.assertIn("attempt.persistedEvidence", coordinator)
+        self.assertLess(
+            coordinator.index("insertRecoveryAttempt(candidate)"),
+            coordinator.index("apiClient.recoverAccount("),
+        )
+        self.assertLess(
+            coordinator.index("apiClient.recoverAccount("),
+            coordinator.index("saveRecoveredCredential(registered"),
+        )
+        rejection = coordinator[
+            coordinator.index("} catch let error as BillingClientError {"):
+            coordinator.index("let registered = try attempt.registering(")
+        ]
+        self.assertIn("[400, 401, 409].contains(status)", rejection)
+        self.assertIn("try deleteRecoveryAttempt(attempt)", rejection)
+        self.assertNotIn("Pairing", coordinator)
+        self.assertNotIn("Moment", coordinator)
+        self.assertNotIn("Photo", coordinator)
+
+        self.assertIn(
+            '"jp.nekowidget.billing.recovery-attempt.v1.host"',
+            keychain,
+        )
+        recovery_storage = keychain[
+            keychain.index("static func insertRecoveryAttemptIfAbsent("):
+            keychain.index("private static func withLock")
+        ]
+        self.assertIn("kSecAttrAccessibleWhenUnlockedThisDeviceOnly", recovery_storage)
+        self.assertIn("kSecAttrSynchronizable", recovery_storage)
+        self.assertIn("SecItemAdd", recovery_storage)
+        cas_delete = keychain[
+            keychain.index("static func deleteRecoveryAttempt("):
+            keychain.index("static func saveRecoveredCredential(")
+        ]
+        self.assertLess(
+            cas_delete.index("guard current == expected"),
+            cas_delete.index("SecItemDelete"),
+        )
+        self.assertIn("SecItemDelete(recoveryItemQuery()", recovery_storage)
+        self.assertIn("removeRecoveryAttemptIfCommitted", keychain)
+
+        recovery_api = client[
+            client.index("func recoverAccount(", client.index(
+                "actor URLSessionBillingAPIClient"
+            )):
+            client.index("func recordTransaction(", client.index(
+                "actor URLSessionBillingAPIClient"
+            ))
+        ]
+        for field in (
+            "deviceVerificationId",
+            "expectedAppTransactionId",
+            "signedAppTransactionInfo",
+            "signedTransactionInfo",
+            "expectedTransactionId",
+            "expectedOriginalTransactionId",
+            "recoverySignature",
+        ):
+            self.assertIn(field, recovery_api)
+        self.assertIn("authentication: nil", recovery_api)
+        self.assertNotIn("timestamp", recovery_api)
+        self.assertNotIn("nonce", recovery_api.lower())
+        self.assertIn("response.clientRequestId", recovery_api)
+        self.assertIn("response.billingAccountId", recovery_api)
+
+        self.assertNotIn("recoverBillingAccountExplicitly", plus)
+        self.assertNotIn("recoverBillingAccountExplicitly", app)
+        self.assertNotIn("BillingAccountRecoveryCoordinator", app)
 
 
 if __name__ == "__main__":

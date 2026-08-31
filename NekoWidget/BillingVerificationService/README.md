@@ -30,6 +30,7 @@
 | `BILLING_ANNUAL_PRODUCT_ID` | 年額商品ID |
 | `BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED` | 通知検証endpointを正確に`YES`で有効化。既定`NO` |
 | `BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED` | Subscription Status照合endpointを正確に`YES`で有効化。既定`NO` |
+| `BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED` | 端末移行用のAppTransaction/Transaction二重検証endpointを正確に`YES`で有効化。既定`NO` |
 | `APP_STORE_SERVER_API_PRIVATE_KEY` | Status照合ON時だけ必須の専用`.p8`秘密鍵 |
 | `APP_STORE_SERVER_API_KEY_ID` | Status照合ON時だけ必須の10文字Key ID |
 | `APP_STORE_SERVER_API_ISSUER_ID` | Status照合ON時だけ必須のIssuer ID |

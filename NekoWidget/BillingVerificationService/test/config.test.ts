@@ -25,6 +25,7 @@ test("loads only an explicit Sandbox verifier configuration", () => {
   assert.equal(result.appAppleId, undefined);
   assert.equal(result.notificationVerificationEnabled, false);
   assert.equal(result.subscriptionStatusEnabled, false);
+  assert.equal(result.accountRecoveryVerificationEnabled, false);
   assert.equal(result.serverAPI, undefined);
 });
 
@@ -76,4 +77,12 @@ test("requires isolated Server API credentials only behind the exact status swit
   const disabled = environment();
   disabled.APP_STORE_SERVER_API_PRIVATE_KEY = status.APP_STORE_SERVER_API_PRIVATE_KEY;
   assert.throws(() => loadConfig(disabled), /require the exact runtime switch/u);
+});
+
+test("keeps account recovery verification behind its own exact switch", () => {
+  const recovery = environment();
+  recovery.BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED = "YES";
+  assert.equal(loadConfig(recovery).accountRecoveryVerificationEnabled, true);
+  recovery.BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED = "yes";
+  assert.throws(() => loadConfig(recovery), /must be YES or NO/u);
 });

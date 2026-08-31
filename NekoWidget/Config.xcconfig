@@ -28,6 +28,9 @@ PLUS_MONTHLY_PRODUCT_ID =
 PLUS_ANNUAL_PRODUCT_ID =
 PLUS_BILLING_CLIENT_ENABLED = NO
 PLUS_BILLING_API_BASE_URL =
+// Account recovery is a separate explicit-user-action gate. Keep it closed
+// even when exercising the billing transport or storefront internally.
+PLUS_BILLING_RECOVERY_ENABLED = NO
 
 // Empty by default. The manual, erased-Simulator App Store screenshot workflow
 // alone injects a compiler condition into the Widget extension's Debug target.

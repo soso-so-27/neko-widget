@@ -6,6 +6,7 @@ import Foundation
 enum BillingProtocolV1 {
     static let version = 1
     static let accountCreationPath = "/v1/billing/accounts"
+    static let accountRecoveryPath = "/v1/billing/accounts/recover"
     static let transactionPath = "/v1/billing/transactions"
     static let entitlementPath = "/v1/billing/entitlement"
     static let maximumSignedTransactionBytes = 48 * 1_024
@@ -28,6 +29,8 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
     case billingCredentialMissing
     case installationChanged
     case billingAccountRecoveryRequired
+    case billingAccountRecoveryUnavailable
+    case billingAccountRecoveryEvidenceChanged
     case freshAccountAuthorizationExpired
     case credentialChanged
     case invalidServerResponse
@@ -49,6 +52,10 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
             return "このiPhoneの購入情報を引き継ぐ必要があります。"
         case .billingAccountRecoveryRequired:
             return "購入情報を引き継いでから、もう一度お試しください。"
+        case .billingAccountRecoveryUnavailable:
+            return "引き継げる購入情報を確認できませんでした。"
+        case .billingAccountRecoveryEvidenceChanged:
+            return "購入情報が変わりました。引き継ぎを最初からやり直してください。"
         case .freshAccountAuthorizationExpired:
             return "購入情報をもう一度確認してください。"
         case .credentialChanged:
@@ -119,6 +126,28 @@ struct BillingClientConfiguration: Equatable, Sendable {
               })
         else { return false }
         return true
+    }
+}
+
+/// An independent, source-controlled gate for account recovery. The billing
+/// transport and storefront can be enabled for internal work without making a
+/// recovery operation reachable by accident.
+struct BillingRecoveryConfiguration: Equatable, Sendable {
+    let isEnabled: Bool
+
+    static var current: Self {
+        let value = (Bundle.main.infoDictionary ?? [:])[
+            "PlusBillingRecoveryEnabled"
+        ]
+        let enabled: Bool
+        if let number = value as? NSNumber {
+            enabled = number.boolValue
+        } else if let string = value as? String {
+            enabled = ["1", "true", "yes"].contains(string.lowercased())
+        } else {
+            enabled = false
+        }
+        return Self(isEnabled: enabled)
     }
 }
 
@@ -208,6 +237,168 @@ struct BillingAccountBootstrapResult: Equatable, Sendable {
         guard BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
               BillingValidation.canonicalOpaqueID(billingKeyID, bytes: 16),
               createdAt > 0
+        else { throw BillingClientError.invalidServerResponse }
+        return self
+    }
+}
+
+/// StoreKit evidence collected only after an explicit recovery action. Raw
+/// JWS values and the device verification identifier are never logged or
+/// written to ordinary app storage.
+struct BillingStoreKitRecoveryEvidence: Equatable, Sendable {
+    let billingAccountID: String
+    let deviceVerificationID: String
+    let appTransactionID: String
+    let signedAppTransactionInfo: String
+    let signedTransactionInfo: String
+    let expectedTransactionID: String
+    let expectedOriginalTransactionID: String
+
+    func validated() throws -> Self {
+        guard BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
+              BillingValidation.canonicalUUID(deviceVerificationID) != nil,
+              BillingValidation.appTransactionID(appTransactionID),
+              BillingValidation.compactJWS(signedAppTransactionInfo),
+              signedAppTransactionInfo.utf8.count
+                <= BillingProtocolV1.maximumSignedTransactionBytes,
+              BillingValidation.compactJWS(signedTransactionInfo),
+              signedTransactionInfo.utf8.count
+                <= BillingProtocolV1.maximumSignedTransactionBytes,
+              BillingValidation.transactionID(expectedTransactionID),
+              BillingValidation.transactionID(expectedOriginalTransactionID)
+        else { throw BillingClientError.billingAccountRecoveryUnavailable }
+        return self
+    }
+}
+
+/// Crash-resumable identity and exact wire evidence for one explicit recovery
+/// request. This value is stored only in a ThisDeviceOnly Keychain item, never
+/// in ordinary storage or logs, so a lost response can retry a byte-equivalent
+/// idempotent body after StoreKit refreshes or renews a transaction.
+struct BillingAccountRecoveryAttempt: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+
+    var schemaVersion: Int = Self.schemaVersion
+    var clientRequestID: String
+    var signingPrivateKey: Data
+    var billingAccountID: String
+    var deviceVerificationID: String
+    var appTransactionID: String
+    var signedAppTransactionInfo: String
+    var signedTransactionInfo: String
+    var expectedTransactionID: String
+    var expectedOriginalTransactionID: String
+
+    static func pending(evidence: BillingStoreKitRecoveryEvidence) throws -> Self {
+        let evidence = try evidence.validated()
+        return try Self(
+            clientRequestID: UUID().uuidString.lowercased(),
+            signingPrivateKey: Curve25519.Signing.PrivateKey().rawRepresentation,
+            billingAccountID: evidence.billingAccountID,
+            deviceVerificationID: evidence.deviceVerificationID,
+            appTransactionID: evidence.appTransactionID,
+            signedAppTransactionInfo: evidence.signedAppTransactionInfo,
+            signedTransactionInfo: evidence.signedTransactionInfo,
+            expectedTransactionID: evidence.expectedTransactionID,
+            expectedOriginalTransactionID: evidence.expectedOriginalTransactionID
+        ).validated()
+    }
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              signingPrivateKey.count == 32,
+              BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
+              BillingValidation.canonicalUUID(deviceVerificationID) != nil,
+              BillingValidation.appTransactionID(appTransactionID),
+              BillingValidation.compactJWS(signedAppTransactionInfo),
+              signedAppTransactionInfo.utf8.count
+                <= BillingProtocolV1.maximumSignedTransactionBytes,
+              BillingValidation.compactJWS(signedTransactionInfo),
+              signedTransactionInfo.utf8.count
+                <= BillingProtocolV1.maximumSignedTransactionBytes,
+              BillingValidation.transactionID(expectedTransactionID),
+              BillingValidation.transactionID(expectedOriginalTransactionID)
+        else { throw BillingClientError.malformedCredential }
+        do {
+            _ = try Curve25519.Signing.PrivateKey(
+                rawRepresentation: signingPrivateKey
+            )
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+        return self
+    }
+
+    func matchesCurrentAccount(
+        _ evidence: BillingStoreKitRecoveryEvidence
+    ) throws -> Bool {
+        let attempt = try validated()
+        let evidence = try evidence.validated()
+        return attempt.billingAccountID == evidence.billingAccountID
+            && attempt.deviceVerificationID == evidence.deviceVerificationID
+            && attempt.appTransactionID == evidence.appTransactionID
+    }
+
+    func matchesExactWireEvidence(
+        _ evidence: BillingStoreKitRecoveryEvidence
+    ) throws -> Bool {
+        let attempt = try validated()
+        let evidence = try evidence.validated()
+        return try attempt.matchesCurrentAccount(evidence)
+            && attempt.signedAppTransactionInfo
+                == evidence.signedAppTransactionInfo
+            && attempt.signedTransactionInfo == evidence.signedTransactionInfo
+            && attempt.expectedTransactionID == evidence.expectedTransactionID
+            && attempt.expectedOriginalTransactionID
+                == evidence.expectedOriginalTransactionID
+    }
+
+    var persistedEvidence: BillingStoreKitRecoveryEvidence {
+        BillingStoreKitRecoveryEvidence(
+            billingAccountID: billingAccountID,
+            deviceVerificationID: deviceVerificationID,
+            appTransactionID: appTransactionID,
+            signedAppTransactionInfo: signedAppTransactionInfo,
+            signedTransactionInfo: signedTransactionInfo,
+            expectedTransactionID: expectedTransactionID,
+            expectedOriginalTransactionID: expectedOriginalTransactionID
+        )
+    }
+
+    func registering(
+        _ result: BillingAccountRecoveryResult,
+        installationMarker: UUID
+    ) throws -> BillingCredential {
+        let attempt = try validated()
+        let result = try result.validated()
+        let marker = installationMarker.uuidString.lowercased()
+        guard result.clientRequestID == attempt.clientRequestID,
+              result.billingAccountID == attempt.billingAccountID,
+              BillingValidation.canonicalUUIDv4(marker) != nil
+        else { throw BillingClientError.identityMismatch }
+        return try BillingCredential(
+            phase: .registered,
+            installationMarker: marker,
+            clientRequestID: attempt.clientRequestID,
+            signingPrivateKey: attempt.signingPrivateKey,
+            billingAccountID: result.billingAccountID,
+            billingKeyID: result.billingKeyID
+        ).validated()
+    }
+}
+
+struct BillingAccountRecoveryResult: Equatable, Sendable {
+    let clientRequestID: String
+    let billingAccountID: String
+    let billingKeyID: String
+    let recoveredAt: Int
+
+    func validated() throws -> Self {
+        guard BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
+              BillingValidation.canonicalOpaqueID(billingKeyID, bytes: 16),
+              recoveredAt > 0
         else { throw BillingClientError.invalidServerResponse }
         return self
     }
@@ -393,6 +584,31 @@ enum BillingProtocolCodec {
         ])
     }
 
+    static func accountRecoveryTranscript(
+        attempt: BillingAccountRecoveryAttempt,
+        evidence: BillingStoreKitRecoveryEvidence,
+        signingPublicKey: String
+    ) throws -> Data {
+        let attempt = try attempt.validated()
+        let evidence = try evidence.validated()
+        guard try attempt.matchesExactWireEvidence(evidence),
+              BillingValidation.canonicalOpaqueID(signingPublicKey, bytes: 32)
+        else { throw BillingClientError.billingAccountRecoveryEvidenceChanged }
+        return try encodeCanonicalFields([
+            "NWB1.ACCOUNT.RECOVER",
+            String(BillingProtocolV1.version),
+            attempt.clientRequestID,
+            attempt.billingAccountID,
+            signingPublicKey,
+            evidence.deviceVerificationID,
+            attempt.appTransactionID,
+            attempt.expectedTransactionID,
+            attempt.expectedOriginalTransactionID,
+            sha256(Data(evidence.signedAppTransactionInfo.utf8)),
+            sha256(Data(evidence.signedTransactionInfo.utf8))
+        ])
+    }
+
     static func signedRequestTranscript(
         billingAccountID: String,
         billingKeyID: String,
@@ -433,10 +649,31 @@ enum BillingProtocolCodec {
         return base64URLEncode(key.publicKey.rawRepresentation)
     }
 
+    static func signingPublicKey(
+        for attempt: BillingAccountRecoveryAttempt
+    ) throws -> String {
+        let attempt = try attempt.validated()
+        let key = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: attempt.signingPrivateKey
+        )
+        return base64URLEncode(key.publicKey.rawRepresentation)
+    }
+
     static func sign(_ data: Data, credential: BillingCredential) throws -> String {
         let credential = try credential.validated()
         let key = try Curve25519.Signing.PrivateKey(
             rawRepresentation: credential.signingPrivateKey
+        )
+        return base64URLEncode(try key.signature(for: data))
+    }
+
+    static func sign(
+        _ data: Data,
+        recoveryAttempt: BillingAccountRecoveryAttempt
+    ) throws -> String {
+        let attempt = try recoveryAttempt.validated()
+        let key = try Curve25519.Signing.PrivateKey(
+            rawRepresentation: attempt.signingPrivateKey
         )
         return base64URLEncode(try key.signature(for: data))
     }
@@ -494,10 +731,15 @@ enum BillingProtocolCodec {
 }
 
 enum BillingValidation {
-    static func canonicalUUIDv4(_ value: String) -> UUID? {
+    static func canonicalUUID(_ value: String) -> UUID? {
         guard let uuid = UUID(uuidString: value),
               uuid.uuidString.lowercased() == value
         else { return nil }
+        return uuid
+    }
+
+    static func canonicalUUIDv4(_ value: String) -> UUID? {
+        guard let uuid = canonicalUUID(value) else { return nil }
         var tuple = uuid.uuid
         let bytes = withUnsafeBytes(of: &tuple) { Array($0) }
         guard bytes.count == 16,
@@ -517,6 +759,15 @@ enum BillingValidation {
             && bytes.allSatisfy { byte in byte >= 48 && byte <= 57 }
     }
 
+    static func appTransactionID(_ value: String) -> Bool {
+        let bytes = value.utf8
+        return (1 ... 256).contains(bytes.count)
+            && value.unicodeScalars.allSatisfy { scalar in
+                scalar.value >= 0x20
+                    && !(0x7f ... 0x9f).contains(scalar.value)
+            }
+    }
+
     static func productID(_ value: String) -> Bool {
         let bytes = value.utf8
         return (1 ... 100).contains(bytes.count)
@@ -528,5 +779,22 @@ enum BillingValidation {
                     || byte == 46
                     || byte == 95
             }
+    }
+
+    static func compactJWS(_ value: String) -> Bool {
+        let components = value.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        )
+        guard components.count == 3 else { return false }
+        return components.allSatisfy { component in
+            !component.isEmpty && component.utf8.allSatisfy { byte in
+                (byte >= 48 && byte <= 57)
+                    || (byte >= 65 && byte <= 90)
+                    || (byte >= 97 && byte <= 122)
+                    || byte == 45
+                    || byte == 95
+            }
+        }
     }
 }

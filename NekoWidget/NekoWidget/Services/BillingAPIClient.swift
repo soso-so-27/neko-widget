@@ -5,6 +5,11 @@ protocol BillingAPIClientProtocol: Sendable {
         credential: BillingCredential
     ) async throws -> BillingAccountBootstrapResult
 
+    func recoverAccount(
+        attempt: BillingAccountRecoveryAttempt,
+        evidence: BillingStoreKitRecoveryEvidence
+    ) async throws -> BillingAccountRecoveryResult
+
     func recordTransaction(
         signedTransactionInfo: String,
         expectedTransactionID: String,
@@ -19,12 +24,13 @@ protocol BillingAPIClientProtocol: Sendable {
 
 private enum BillingEndpoint {
     case accountCreation
+    case accountRecovery
     case transaction
     case authoritativeEntitlement
 
     var method: String {
         switch self {
-        case .accountCreation, .transaction: return "POST"
+        case .accountCreation, .accountRecovery, .transaction: return "POST"
         case .authoritativeEntitlement: return "GET"
         }
     }
@@ -32,6 +38,7 @@ private enum BillingEndpoint {
     var path: String {
         switch self {
         case .accountCreation: return BillingProtocolV1.accountCreationPath
+        case .accountRecovery: return BillingProtocolV1.accountRecoveryPath
         case .transaction: return BillingProtocolV1.transactionPath
         case .authoritativeEntitlement:
             return BillingProtocolV1.entitlementPath
@@ -41,20 +48,22 @@ private enum BillingEndpoint {
     var expectedStatus: Int {
         switch self {
         case .accountCreation: return 201
+        case .accountRecovery: return 200
         case .transaction, .authoritativeEntitlement: return 200
         }
     }
 
     var requiresAuthentication: Bool {
         switch self {
-        case .accountCreation: return false
+        case .accountCreation, .accountRecovery: return false
         case .transaction, .authoritativeEntitlement: return true
         }
     }
 
     func accepts(body: Data) -> Bool {
         switch self {
-        case .accountCreation, .transaction: return !body.isEmpty
+        case .accountCreation, .accountRecovery, .transaction:
+            return !body.isEmpty
         case .authoritativeEntitlement: return body.isEmpty
         }
     }
@@ -209,6 +218,155 @@ actor BillingAccountBootstrapCoordinator {
     }
 }
 
+/// Executes recovery only when a future UI calls the explicitly named entry
+/// point. Launch and foreground code have no reference to this coordinator.
+actor BillingAccountRecoveryCoordinator {
+    typealias CredentialLoader = @Sendable () throws -> BillingCredential?
+    typealias RecoveryAttemptInserter = @Sendable (
+        BillingAccountRecoveryAttempt
+    ) throws -> BillingAccountRecoveryAttempt
+    typealias RecoveredCredentialSaver = @Sendable (
+        BillingCredential,
+        BillingAccountRecoveryAttempt,
+        BillingCredential?
+    ) throws -> Void
+    typealias CommittedAttemptRemover = @Sendable (
+        BillingCredential
+    ) throws -> Void
+    typealias RecoveryAttemptDeleter = @Sendable (
+        BillingAccountRecoveryAttempt
+    ) throws -> Void
+    typealias InstallationMarkerLoader = @Sendable () throws -> UUID
+    typealias EvidenceCollector = @Sendable () async throws
+        -> BillingStoreKitRecoveryEvidence
+
+    private let apiClient: any BillingAPIClientProtocol
+    private let configuration: BillingRecoveryConfiguration
+    private let loadCredential: CredentialLoader
+    private let insertRecoveryAttempt: RecoveryAttemptInserter
+    private let saveRecoveredCredential: RecoveredCredentialSaver
+    private let removeCommittedAttempt: CommittedAttemptRemover
+    private let deleteRecoveryAttempt: RecoveryAttemptDeleter
+    private let loadInstallationMarker: InstallationMarkerLoader
+    private let collectEvidence: EvidenceCollector
+    private var inFlight: Task<BillingCredential, Error>?
+
+    init(
+        apiClient: any BillingAPIClientProtocol,
+        configuration: BillingRecoveryConfiguration = .current,
+        loadCredential: @escaping CredentialLoader = {
+            try BillingKeychainStore.load()
+        },
+        insertRecoveryAttempt: @escaping RecoveryAttemptInserter = {
+            try BillingKeychainStore.insertRecoveryAttemptIfAbsent($0)
+        },
+        saveRecoveredCredential: @escaping RecoveredCredentialSaver = {
+            try BillingKeychainStore.saveRecoveredCredential(
+                $0,
+                from: $1,
+                replacing: $2
+            )
+        },
+        removeCommittedAttempt: @escaping CommittedAttemptRemover = {
+            try BillingKeychainStore.removeRecoveryAttemptIfCommitted(to: $0)
+        },
+        deleteRecoveryAttempt: @escaping RecoveryAttemptDeleter = {
+            try BillingKeychainStore.deleteRecoveryAttempt(ifMatches: $0)
+        },
+        loadInstallationMarker: @escaping InstallationMarkerLoader = {
+            try BillingInstallationMarkerStore.loadOrCreate()
+        },
+        collectEvidence: @escaping EvidenceCollector = {
+            try await BillingStoreKitRecoveryEvidenceCollector()
+                .collectForExplicitRecovery()
+        }
+    ) {
+        self.apiClient = apiClient
+        self.configuration = configuration
+        self.loadCredential = loadCredential
+        self.insertRecoveryAttempt = insertRecoveryAttempt
+        self.saveRecoveredCredential = saveRecoveredCredential
+        self.removeCommittedAttempt = removeCommittedAttempt
+        self.deleteRecoveryAttempt = deleteRecoveryAttempt
+        self.loadInstallationMarker = loadInstallationMarker
+        self.collectEvidence = collectEvidence
+    }
+
+    /// Reserved for a future user-initiated "購入情報を引き継ぐ" action.
+    /// It never calls AppStore.sync and never recovers window/photo/E2E keys.
+    func recoverFromExplicitUserAction() async throws -> BillingCredential {
+        guard configuration.isEnabled else {
+            throw BillingClientError.configurationUnavailable
+        }
+        if let inFlight { return try await inFlight.value }
+        let task = Task { try await self.performExplicitRecovery() }
+        inFlight = task
+        do {
+            let credential = try await task.value
+            inFlight = nil
+            return credential
+        } catch {
+            inFlight = nil
+            throw error
+        }
+    }
+
+    private func performExplicitRecovery() async throws -> BillingCredential {
+        let installationMarker = try loadInstallationMarker()
+        let markerValue = installationMarker.uuidString.lowercased()
+        let previous = try loadCredential()
+        if let previous,
+           previous.phase == .registered,
+           previous.installationMarker == markerValue {
+            try removeCommittedAttempt(previous)
+            return previous
+        }
+        if let previous,
+           previous.phase == .pendingBootstrap,
+           previous.installationMarker == markerValue {
+            throw BillingClientError.credentialChanged
+        }
+
+        // Current device-bound StoreKit proof is required on every explicit
+        // retry. The exact first request remains in ThisDeviceOnly Keychain so
+        // a lost response can resend byte-equivalent evidence and signature.
+        let currentEvidence = try await collectEvidence().validated()
+        let candidate = try BillingAccountRecoveryAttempt.pending(
+            evidence: currentEvidence
+        )
+        let attempt = try insertRecoveryAttempt(candidate).validated()
+        guard try attempt.matchesCurrentAccount(currentEvidence) else {
+            throw BillingClientError.billingAccountRecoveryEvidenceChanged
+        }
+        let persistedEvidence = try attempt.persistedEvidence.validated()
+        let result: BillingAccountRecoveryResult
+        do {
+            result = try await apiClient.recoverAccount(
+                attempt: attempt,
+                evidence: persistedEvidence
+            )
+        } catch let error as BillingClientError {
+            if case let .requestRejected(status, _) = error,
+               [400, 401, 409].contains(status) {
+                // A replay of a server-committed request returns 200 before
+                // authority checks. These responses are therefore terminal
+                // for this exact body, while 503/transport remain retryable.
+                try deleteRecoveryAttempt(attempt)
+            }
+            throw error
+        }
+        let registered = try attempt.registering(
+            result,
+            installationMarker: installationMarker
+        )
+        try saveRecoveredCredential(registered, attempt, previous)
+        guard try loadCredential() == registered else {
+            throw BillingClientError.credentialChanged
+        }
+        return registered
+    }
+}
+
 /// Internal live wiring between StoreKit observation and the independent
 /// billing account. It never creates an account while resuming, and it never
 /// rebinds an old transaction to a new installation. A missing/mismatched
@@ -217,10 +375,12 @@ actor BillingAccountBootstrapCoordinator {
 actor PlusBillingSession {
     private let apiClient: any BillingAPIClientProtocol
     private let bootstrap: BillingAccountBootstrapCoordinator
+    private let recovery: BillingAccountRecoveryCoordinator
 
     init(apiClient: any BillingAPIClientProtocol) {
         self.apiClient = apiClient
         bootstrap = BillingAccountBootstrapCoordinator(apiClient: apiClient)
+        recovery = BillingAccountRecoveryCoordinator(apiClient: apiClient)
     }
 
     static func configured(
@@ -245,6 +405,13 @@ actor PlusBillingSession {
         let credential = try await bootstrap.createFreshCredential(
             authorizedBy: authorization
         )
+        return try billingAccountID(for: credential)
+    }
+
+    /// Future explicit UI entry point. This is intentionally not invoked from
+    /// `PlusPurchaseStore.start`, foreground refresh, or automatic restore.
+    func recoverBillingAccountExplicitly() async throws -> BillingAccountID {
+        let credential = try await recovery.recoverFromExplicitUserAction()
         return try billingAccountID(for: credential)
     }
 
@@ -371,6 +538,59 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
             billingKeyID: response.billingKeyId,
             createdAt: response.createdAt
         ).validated()
+    }
+
+    func recoverAccount(
+        attempt: BillingAccountRecoveryAttempt,
+        evidence: BillingStoreKitRecoveryEvidence
+    ) async throws -> BillingAccountRecoveryResult {
+        let attempt = try attempt.validated()
+        let evidence = try evidence.validated()
+        guard try attempt.matchesExactWireEvidence(evidence) else {
+            throw BillingClientError.billingAccountRecoveryEvidenceChanged
+        }
+        let signingPublicKey = try BillingProtocolCodec.signingPublicKey(
+            for: attempt
+        )
+        let transcript = try BillingProtocolCodec.accountRecoveryTranscript(
+            attempt: attempt,
+            evidence: evidence,
+            signingPublicKey: signingPublicKey
+        )
+        let body = BillingAccountRecoveryRequest(
+            protocolVersion: BillingProtocolV1.version,
+            clientRequestId: attempt.clientRequestID,
+            billingAccountId: attempt.billingAccountID,
+            signingPublicKey: signingPublicKey,
+            deviceVerificationId: evidence.deviceVerificationID,
+            expectedAppTransactionId: attempt.appTransactionID,
+            signedAppTransactionInfo: evidence.signedAppTransactionInfo,
+            signedTransactionInfo: evidence.signedTransactionInfo,
+            expectedTransactionId: attempt.expectedTransactionID,
+            expectedOriginalTransactionId: attempt.expectedOriginalTransactionID,
+            recoverySignature: try BillingProtocolCodec.sign(
+                transcript,
+                recoveryAttempt: attempt
+            )
+        )
+        let response: BillingAccountRecoveryResponse = try await send(
+            endpoint: .accountRecovery,
+            body: body,
+            authentication: nil
+        )
+        guard response.protocolVersion == BillingProtocolV1.version else {
+            throw BillingClientError.invalidServerResponse
+        }
+        let result = try BillingAccountRecoveryResult(
+            clientRequestID: response.clientRequestId,
+            billingAccountID: response.billingAccountId,
+            billingKeyID: response.billingKeyId,
+            recoveredAt: response.recoveredAt
+        ).validated()
+        guard result.clientRequestID == attempt.clientRequestID,
+              result.billingAccountID == attempt.billingAccountID
+        else { throw BillingClientError.identityMismatch }
+        return result
     }
 
     func recordTransaction(
@@ -624,6 +844,28 @@ private struct BillingAccountCreationResponse: Decodable {
     let createdAt: Int
 }
 
+private struct BillingAccountRecoveryRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let billingAccountId: String
+    let signingPublicKey: String
+    let deviceVerificationId: String
+    let expectedAppTransactionId: String
+    let signedAppTransactionInfo: String
+    let signedTransactionInfo: String
+    let expectedTransactionId: String
+    let expectedOriginalTransactionId: String
+    let recoverySignature: String
+}
+
+private struct BillingAccountRecoveryResponse: Decodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let billingAccountId: String
+    let billingKeyId: String
+    let recoveredAt: Int
+}
+
 private struct BillingTransactionRequest: Encodable {
     let protocolVersion: Int
     let signedTransactionInfo: String
@@ -651,23 +893,4 @@ private struct BillingAPIErrorResponse: Decodable {
     }
 
     let error: ErrorBody
-}
-
-private extension BillingValidation {
-    static func compactJWS(_ value: String) -> Bool {
-        let components = value.split(
-            separator: ".",
-            omittingEmptySubsequences: false
-        )
-        guard components.count == 3 else { return false }
-        return components.allSatisfy { component in
-            !component.isEmpty && component.utf8.allSatisfy { byte in
-                (byte >= 48 && byte <= 57)
-                    || (byte >= 65 && byte <= 90)
-                    || (byte >= 97 && byte <= 122)
-                    || byte == 45
-                    || byte == 95
-            }
-        }
-    }
 }

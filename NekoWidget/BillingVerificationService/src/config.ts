@@ -11,6 +11,7 @@ export interface VerificationServiceConfig {
   productIds: ReadonlySet<string>;
   notificationVerificationEnabled?: boolean;
   subscriptionStatusEnabled?: boolean;
+  accountRecoveryVerificationEnabled?: boolean;
   serverAPI?: {
     signingKey: string;
     keyId: string;
@@ -133,6 +134,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationSe
     subscriptionStatusEnabled: explicitSwitch(
       env,
       "BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED",
+    ),
+    accountRecoveryVerificationEnabled: explicitSwitch(
+      env,
+      "BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED",
     ),
   };
   if (appAppleId !== undefined) config.appAppleId = appAppleId;
