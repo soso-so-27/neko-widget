@@ -9,6 +9,9 @@ enum BillingProtocolV1 {
     static let accountRecoveryPath = "/v1/billing/accounts/recover"
     static let transactionPath = "/v1/billing/transactions"
     static let entitlementPath = "/v1/billing/entitlement"
+    static let windowSponsorshipGrantPath = "/v1/window-sponsorship"
+    static let windowSponsorshipChangePathPrefix =
+        "/v1/billing/window-sponsorships/"
     static let maximumSignedTransactionBytes = 48 * 1_024
 
     static func isSupportedSignedRequest(
@@ -17,6 +20,14 @@ enum BillingProtocolV1 {
     ) -> Bool {
         (method == "POST" && pathname == transactionPath)
             || (method == "GET" && pathname == entitlementPath)
+            || (["PUT", "DELETE"].contains(method)
+                && pathname.hasPrefix(windowSponsorshipChangePathPrefix)
+                && BillingValidation.canonicalOpaqueID(
+                    String(pathname.dropFirst(
+                        windowSponsorshipChangePathPrefix.count
+                    )),
+                    bytes: 16
+                ))
     }
 }
 
@@ -31,6 +42,7 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
     case billingAccountRecoveryRequired
     case billingAccountRecoveryUnavailable
     case billingAccountRecoveryEvidenceChanged
+    case windowSponsorshipAttemptPending
     case freshAccountAuthorizationExpired
     case credentialChanged
     case invalidServerResponse
@@ -56,6 +68,8 @@ enum BillingClientError: Error, Equatable, LocalizedError, Sendable {
             return "引き継げる購入情報を確認できませんでした。"
         case .billingAccountRecoveryEvidenceChanged:
             return "購入情報が変わりました。引き継ぎを最初からやり直してください。"
+        case .windowSponsorshipAttemptPending:
+            return "このまどのPlus設定を確認中です。もう一度お試しください。"
         case .freshAccountAuthorizationExpired:
             return "購入情報をもう一度確認してください。"
         case .credentialChanged:
@@ -138,6 +152,27 @@ struct BillingRecoveryConfiguration: Equatable, Sendable {
     static var current: Self {
         let value = (Bundle.main.infoDictionary ?? [:])[
             "PlusBillingRecoveryEnabled"
+        ]
+        let enabled: Bool
+        if let number = value as? NSNumber {
+            enabled = number.boolValue
+        } else if let string = value as? String {
+            enabled = ["1", "true", "yes"].contains(string.lowercased())
+        } else {
+            enabled = false
+        }
+        return Self(isEnabled: enabled)
+    }
+}
+
+/// Independent source-controlled gate for the private-window sponsorship
+/// client. Enabling billing transport or StoreKit must not expose this API.
+struct BillingWindowSponsorshipConfiguration: Equatable, Sendable {
+    let isEnabled: Bool
+
+    static var current: Self {
+        let value = (Bundle.main.infoDictionary ?? [:])[
+            "PlusWindowSponsorshipClientEnabled"
         ]
         let enabled: Bool
         if let number = value as? NSNumber {
@@ -404,6 +439,496 @@ struct BillingAccountRecoveryResult: Equatable, Sendable {
     }
 }
 
+enum BillingWindowSponsorshipOperation: String, Codable, Sendable {
+    case sponsor
+    case unsponsor
+
+    var method: String {
+        switch self {
+        case .sponsor: return "PUT"
+        case .unsponsor: return "DELETE"
+        }
+    }
+}
+
+enum BillingWindowSponsorshipServerState: String, Codable, Sendable {
+    case active
+    case unsponsored
+}
+
+/// A confirmed participant-scoped server snapshot. It deliberately preserves
+/// "sponsored but currently not granting" as distinct from "unsponsored".
+struct BillingWindowSponsorshipGrant: Codable, Equatable, Sendable {
+    private static let maximumClockSkewMs = 5 * 60 * 1_000
+    private static let offlineGraceDurationMs = 24 * 60 * 60 * 1_000
+    private static let maximumAuthorityFreshnessMs =
+        36 * 60 * 60 * 1_000 + maximumClockSkewMs
+
+    let windowLineageSponsored: Bool
+    let grantsPlus: Bool
+    let accessUntilMs: Int?
+    let evaluatedAtMs: Int
+    let generation: Int
+
+    func validated(now: Date = .now) throws -> Self {
+        let nowMs = Int(now.timeIntervalSince1970 * 1_000)
+        guard evaluatedAtMs > 0,
+              evaluatedAtMs <= nowMs + Self.maximumClockSkewMs,
+              (0 ... 1_000_000_000).contains(generation),
+              !windowLineageSponsored || generation > 0
+        else { throw BillingClientError.invalidServerResponse }
+        if grantsPlus {
+            guard windowLineageSponsored,
+                  let accessUntilMs,
+                  accessUntilMs > evaluatedAtMs,
+                  accessUntilMs - evaluatedAtMs
+                    <= Self.maximumAuthorityFreshnessMs
+            else { throw BillingClientError.invalidServerResponse }
+        } else {
+            guard accessUntilMs == nil else {
+                throw BillingClientError.invalidServerResponse
+            }
+        }
+        return self
+    }
+
+    func accessState(now: Date = .now) -> BillingWindowPlusAccessState {
+        let nowMs = Int(now.timeIntervalSince1970 * 1_000)
+        guard grantsPlus, let accessUntilMs else {
+            return windowLineageSponsored
+                ? .sponsoredWithoutCurrentAccess(
+                    generation: generation,
+                    evaluatedAtMs: evaluatedAtMs
+                )
+                : .unsponsored(
+                    generation: generation,
+                    evaluatedAtMs: evaluatedAtMs
+                )
+        }
+        if nowMs >= accessUntilMs {
+            return .expired(
+                accessUntilMs: accessUntilMs,
+                generation: generation,
+                evaluatedAtMs: evaluatedAtMs
+            )
+        }
+        return .active(
+            accessUntilMs: accessUntilMs,
+            generation: generation,
+            evaluatedAtMs: evaluatedAtMs
+        )
+    }
+
+    /// A previously confirmed grant may bridge a transport outage only for a
+    /// bounded interval. The server's access deadline remains authoritative,
+    /// and a stale cached snapshot never becomes an unbounded Boolean grant.
+    func offlineAccessState(now: Date = .now) -> BillingWindowPlusAccessState {
+        let nowMs = Int(now.timeIntervalSince1970 * 1_000)
+        guard grantsPlus, let accessUntilMs else {
+            return .unknown(reason: .offline, lastConfirmed: self)
+        }
+        if nowMs >= accessUntilMs {
+            return .expired(
+                accessUntilMs: accessUntilMs,
+                generation: generation,
+                evaluatedAtMs: evaluatedAtMs
+            )
+        }
+        let activeUntilMs = min(
+            accessUntilMs,
+            evaluatedAtMs + Self.offlineGraceDurationMs
+        )
+        guard nowMs < activeUntilMs else {
+            return .unknown(reason: .offline, lastConfirmed: self)
+        }
+        return .offlineGrace(
+            activeUntilMs: activeUntilMs,
+            accessUntilMs: accessUntilMs,
+            generation: generation,
+            evaluatedAtMs: evaluatedAtMs
+        )
+    }
+}
+
+enum BillingWindowPlusUnknownReason: String, Codable, Sendable {
+    case clientDisabled
+    case offline
+    case serverUnavailable
+    case requestRejected
+    case invalidResponse
+}
+
+/// UI may eventually render this state, but no current UI reads it. Unknown,
+/// expired, unsponsored, and sponsored-without-access are never collapsed to
+/// a single Boolean or treated as an access grant.
+enum BillingWindowPlusAccessState: Equatable, Sendable {
+    case unknown(
+        reason: BillingWindowPlusUnknownReason,
+        lastConfirmed: BillingWindowSponsorshipGrant?
+    )
+    case unsponsored(generation: Int, evaluatedAtMs: Int)
+    case sponsoredWithoutCurrentAccess(generation: Int, evaluatedAtMs: Int)
+    case active(accessUntilMs: Int, generation: Int, evaluatedAtMs: Int)
+    case offlineGrace(
+        activeUntilMs: Int,
+        accessUntilMs: Int,
+        generation: Int,
+        evaluatedAtMs: Int
+    )
+    case expired(accessUntilMs: Int, generation: Int, evaluatedAtMs: Int)
+}
+
+struct BillingWindowSponsorshipChangeResult: Equatable, Sendable {
+    let clientRequestID: String
+    let billingAccountID: String
+    let windowLineageID: String
+    let state: BillingWindowSponsorshipServerState
+    let generation: Int
+    let recordedAt: Int
+
+    func validated(
+        for attempt: BillingWindowSponsorshipAttempt
+    ) throws -> Self {
+        let attempt = try attempt.validated()
+        let expectedState: BillingWindowSponsorshipServerState =
+            attempt.operation == .sponsor ? .active : .unsponsored
+        guard BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
+              BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16),
+              clientRequestID == attempt.clientRequestID,
+              billingAccountID == attempt.billingAccountID,
+              windowLineageID == attempt.windowLineageID,
+              state == expectedState,
+              generation == attempt.expectedGeneration + 1,
+              generation > 0,
+              recordedAt > 0
+        else { throw BillingClientError.identityMismatch }
+        return self
+    }
+}
+
+/// Exact semantic request body retained only in a ThisDeviceOnly Keychain
+/// item. Billing authentication uses a fresh transport nonce on every retry,
+/// while this body, request ID, owner consent nonce, and signature remain
+/// byte-for-byte identical for server idempotency.
+struct BillingWindowSponsorshipAttempt: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+    static let maximumBodyBytes = 4_096
+
+    var schemaVersion: Int = Self.schemaVersion
+    var operation: BillingWindowSponsorshipOperation
+    var clientRequestID: String
+    var billingAccountID: String
+    var windowLineageID: String
+    var expectedGeneration: Int
+    var expectedCurrentBillingAccountID: String?
+    var exactRequestBody: Data
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
+              BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16),
+              (0 ... 1_000_000_000).contains(expectedGeneration),
+              expectedCurrentBillingAccountID.map({
+                  BillingValidation.canonicalUUIDv4($0) != nil
+              }) ?? true,
+              (1 ... Self.maximumBodyBytes).contains(exactRequestBody.count)
+        else { throw BillingClientError.malformedCredential }
+        try BillingWindowSponsorshipWireCodec.validate(
+            exactRequestBody,
+            for: self
+        )
+        return self
+    }
+
+    func matchesStableIntent(
+        _ candidate: BillingWindowSponsorshipAttempt
+    ) throws -> Bool {
+        let lhs = try validated()
+        let rhs = try candidate.validated()
+        guard lhs.operation == rhs.operation,
+              lhs.billingAccountID == rhs.billingAccountID,
+              lhs.windowLineageID == rhs.windowLineageID,
+              lhs.expectedGeneration == rhs.expectedGeneration,
+              lhs.expectedCurrentBillingAccountID
+                == rhs.expectedCurrentBillingAccountID
+        else { return false }
+        switch lhs.operation {
+        case .unsponsor:
+            return true
+        case .sponsor:
+            let left = try BillingWindowSponsorshipWireCodec.decodeSponsor(
+                lhs.exactRequestBody
+            )
+            let right = try BillingWindowSponsorshipWireCodec.decodeSponsor(
+                rhs.exactRequestBody
+            )
+            return left.consentSpaceId == right.consentSpaceId
+                && left.ownerParticipantId == right.ownerParticipantId
+                && left.ownerDeviceId == right.ownerDeviceId
+                && left.consentMembershipRevision
+                    == right.consentMembershipRevision
+        }
+    }
+}
+
+struct BillingWindowOwnerDetachResult: Equatable, Sendable {
+    let clientRequestID: String
+    let windowLineageSponsored: Bool
+    let generation: Int
+    let recordedAt: Int
+
+    func validated(for attempt: BillingWindowOwnerDetachAttempt) throws -> Self {
+        let attempt = try attempt.validated()
+        guard BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              clientRequestID == attempt.clientRequestID,
+              !windowLineageSponsored,
+              generation == attempt.expectedGeneration + 1,
+              recordedAt > 0
+        else { throw BillingClientError.identityMismatch }
+        return self
+    }
+}
+
+/// Exact owner-signed detach body. It is separate from payer sponsorship and
+/// contains no BillingAccountID, purchase, photo, room key, or E2E material.
+struct BillingWindowOwnerDetachAttempt: Codable, Equatable, Sendable {
+    static let schemaVersion = 1
+
+    var schemaVersion: Int = Self.schemaVersion
+    var clientRequestID: String
+    var memberID: String
+    var deviceID: String?
+    var expectedGeneration: Int
+    var exactRequestBody: Data
+
+    func validated() throws -> Self {
+        guard schemaVersion == Self.schemaVersion,
+              BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              BillingValidation.canonicalOpaqueID(memberID, bytes: 16),
+              deviceID.map({
+                  BillingValidation.canonicalOpaqueID($0, bytes: 16)
+              }) ?? true,
+              (1 ... 1_000_000_000).contains(expectedGeneration),
+              (1 ... 512).contains(exactRequestBody.count)
+        else { throw BillingClientError.malformedCredential }
+        let body = try BillingWindowSponsorshipWireCodec.decodeOwnerDetach(
+            exactRequestBody
+        )
+        guard body.protocolVersion == BillingProtocolV1.version,
+              body.clientRequestId == clientRequestID,
+              body.expectedGeneration == expectedGeneration,
+              try BillingWindowSponsorshipWireCodec.encode(body)
+                == exactRequestBody
+        else { throw BillingClientError.malformedCredential }
+        return self
+    }
+
+    func matchesStableIntent(
+        _ candidate: BillingWindowOwnerDetachAttempt
+    ) throws -> Bool {
+        let lhs = try validated()
+        let rhs = try candidate.validated()
+        return lhs.memberID == rhs.memberID
+            && lhs.deviceID == rhs.deviceID
+            && lhs.expectedGeneration == rhs.expectedGeneration
+    }
+}
+
+struct BillingWindowSponsorWireRequest: Codable, Equatable, Sendable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let expectedGeneration: Int
+    let expectedCurrentBillingAccountId: String?
+    let consentSpaceId: String
+    let ownerParticipantId: String
+    let ownerDeviceId: String
+    let consentMembershipRevision: Int
+    let consentIssuedAt: Int
+    let ownerConsentNonce: String
+    let ownerConsentSignature: String
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion, clientRequestId, expectedGeneration
+        case expectedCurrentBillingAccountId, consentSpaceId
+        case ownerParticipantId, ownerDeviceId, consentMembershipRevision
+        case consentIssuedAt, ownerConsentNonce, ownerConsentSignature
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(clientRequestId, forKey: .clientRequestId)
+        try container.encode(expectedGeneration, forKey: .expectedGeneration)
+        if let expectedCurrentBillingAccountId {
+            try container.encode(
+                expectedCurrentBillingAccountId,
+                forKey: .expectedCurrentBillingAccountId
+            )
+        } else {
+            try container.encodeNil(forKey: .expectedCurrentBillingAccountId)
+        }
+        try container.encode(consentSpaceId, forKey: .consentSpaceId)
+        try container.encode(ownerParticipantId, forKey: .ownerParticipantId)
+        try container.encode(ownerDeviceId, forKey: .ownerDeviceId)
+        try container.encode(
+            consentMembershipRevision,
+            forKey: .consentMembershipRevision
+        )
+        try container.encode(consentIssuedAt, forKey: .consentIssuedAt)
+        try container.encode(ownerConsentNonce, forKey: .ownerConsentNonce)
+        try container.encode(
+            ownerConsentSignature,
+            forKey: .ownerConsentSignature
+        )
+    }
+}
+
+struct BillingWindowUnsponsorWireRequest: Codable, Equatable, Sendable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let expectedGeneration: Int
+    let expectedCurrentBillingAccountId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case protocolVersion, clientRequestId, expectedGeneration
+        case expectedCurrentBillingAccountId
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(clientRequestId, forKey: .clientRequestId)
+        try container.encode(expectedGeneration, forKey: .expectedGeneration)
+        if let expectedCurrentBillingAccountId {
+            try container.encode(
+                expectedCurrentBillingAccountId,
+                forKey: .expectedCurrentBillingAccountId
+            )
+        } else {
+            try container.encodeNil(forKey: .expectedCurrentBillingAccountId)
+        }
+    }
+}
+
+struct BillingWindowOwnerDetachWireRequest: Codable, Equatable, Sendable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let expectedGeneration: Int
+}
+
+enum BillingWindowSponsorshipWireCodec {
+    private static let sponsorKeys: Set<String> = [
+        "protocolVersion", "clientRequestId", "expectedGeneration",
+        "expectedCurrentBillingAccountId", "consentSpaceId",
+        "ownerParticipantId", "ownerDeviceId", "consentMembershipRevision",
+        "consentIssuedAt", "ownerConsentNonce", "ownerConsentSignature"
+    ]
+    private static let unsponsorKeys: Set<String> = [
+        "protocolVersion", "clientRequestId", "expectedGeneration",
+        "expectedCurrentBillingAccountId"
+    ]
+    private static let ownerDetachKeys: Set<String> = [
+        "protocolVersion", "clientRequestId", "expectedGeneration"
+    ]
+
+    static func encode<T: Encodable>(_ value: T) throws -> Data {
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return try encoder.encode(value)
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+    }
+
+    static func decodeSponsor(_ data: Data) throws
+        -> BillingWindowSponsorWireRequest {
+        try requireExactKeys(data, expected: sponsorKeys)
+        do { return try JSONDecoder().decode(
+            BillingWindowSponsorWireRequest.self,
+            from: data
+        ) } catch { throw BillingClientError.malformedCredential }
+    }
+
+    static func decodeOwnerDetach(_ data: Data) throws
+        -> BillingWindowOwnerDetachWireRequest {
+        try requireExactKeys(data, expected: ownerDetachKeys)
+        do { return try JSONDecoder().decode(
+            BillingWindowOwnerDetachWireRequest.self,
+            from: data
+        ) } catch { throw BillingClientError.malformedCredential }
+    }
+
+    static func validate(
+        _ data: Data,
+        for attempt: BillingWindowSponsorshipAttempt
+    ) throws {
+        switch attempt.operation {
+        case .sponsor:
+            let body = try decodeSponsor(data)
+            guard body.protocolVersion == BillingProtocolV1.version,
+                  body.clientRequestId == attempt.clientRequestID,
+                  body.expectedGeneration == attempt.expectedGeneration,
+                  body.expectedCurrentBillingAccountId
+                    == attempt.expectedCurrentBillingAccountID,
+                  BillingValidation.canonicalOpaqueID(
+                    body.consentSpaceId,
+                    bytes: 16
+                  ),
+                  BillingValidation.canonicalOpaqueID(
+                    body.ownerParticipantId,
+                    bytes: 16
+                  ),
+                  BillingValidation.canonicalOpaqueID(
+                    body.ownerDeviceId,
+                    bytes: 16
+                  ),
+                  (1 ... 1_000_000_000).contains(
+                    body.consentMembershipRevision
+                  ),
+                  body.consentIssuedAt > 0,
+                  BillingValidation.canonicalOpaqueID(
+                    body.ownerConsentNonce,
+                    bytes: 16
+                  ),
+                  BillingValidation.canonicalOpaqueID(
+                    body.ownerConsentSignature,
+                    bytes: 64
+                  ),
+                  try encode(body) == data
+            else { throw BillingClientError.malformedCredential }
+        case .unsponsor:
+            try requireExactKeys(data, expected: unsponsorKeys)
+            let body: BillingWindowUnsponsorWireRequest
+            do { body = try JSONDecoder().decode(
+                BillingWindowUnsponsorWireRequest.self,
+                from: data
+            ) } catch { throw BillingClientError.malformedCredential }
+            guard body.protocolVersion == BillingProtocolV1.version,
+                  body.clientRequestId == attempt.clientRequestID,
+                  body.expectedGeneration == attempt.expectedGeneration,
+                  body.expectedCurrentBillingAccountId
+                    == attempt.expectedCurrentBillingAccountID,
+                  try encode(body) == data
+            else { throw BillingClientError.malformedCredential }
+        }
+    }
+
+    private static func requireExactKeys(
+        _ data: Data,
+        expected: Set<String>
+    ) throws {
+        let value: Any
+        do { value = try JSONSerialization.jsonObject(with: data) }
+        catch { throw BillingClientError.malformedCredential }
+        guard let object = value as? [String: Any],
+              Set(object.keys) == expected
+        else { throw BillingClientError.malformedCredential }
+    }
+}
+
 enum BillingTransactionDisposition: String, Codable, Sendable {
     /// The ledger event is eligible for later account/status reconciliation.
     /// It is not, by itself, an active Plus entitlement or window sponsorship.
@@ -606,6 +1131,57 @@ enum BillingProtocolCodec {
             attempt.expectedOriginalTransactionID,
             sha256(Data(evidence.signedAppTransactionInfo.utf8)),
             sha256(Data(evidence.signedTransactionInfo.utf8))
+        ])
+    }
+
+    static func windowSponsorshipOwnerConsentTranscript(
+        clientRequestID: String,
+        billingAccountID: String,
+        windowLineageID: String,
+        expectedGeneration: Int,
+        expectedCurrentBillingAccountID: String?,
+        consentSpaceID: String,
+        ownerParticipantID: String,
+        ownerDeviceID: String,
+        consentIssuedAt: Int,
+        consentMembershipRevision: Int,
+        ownerConsentNonce: String
+    ) throws -> Data {
+        guard BillingValidation.canonicalUUIDv4(clientRequestID) != nil,
+              BillingValidation.canonicalUUIDv4(billingAccountID) != nil,
+              BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16),
+              (0 ... 1_000_000_000).contains(expectedGeneration),
+              expectedCurrentBillingAccountID.map({
+                  BillingValidation.canonicalUUIDv4($0) != nil
+              }) ?? true,
+              BillingValidation.canonicalOpaqueID(consentSpaceID, bytes: 16),
+              BillingValidation.canonicalOpaqueID(
+                ownerParticipantID,
+                bytes: 16
+              ),
+              BillingValidation.canonicalOpaqueID(ownerDeviceID, bytes: 16),
+              consentIssuedAt > 0,
+              (1 ... 1_000_000_000).contains(consentMembershipRevision),
+              BillingValidation.canonicalOpaqueID(
+                ownerConsentNonce,
+                bytes: 16
+              )
+        else { throw BillingClientError.malformedCredential }
+        return try encodeCanonicalFields([
+            "NWB1.WINDOW.SPONSORSHIP",
+            String(BillingProtocolV1.version),
+            BillingWindowSponsorshipOperation.sponsor.rawValue,
+            clientRequestID,
+            billingAccountID,
+            windowLineageID,
+            String(expectedGeneration),
+            expectedCurrentBillingAccountID ?? "",
+            consentSpaceID,
+            ownerParticipantID,
+            ownerDeviceID,
+            String(consentIssuedAt),
+            String(consentMembershipRevision),
+            ownerConsentNonce
         ])
     }
 

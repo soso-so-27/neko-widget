@@ -31,6 +31,9 @@ PLUS_BILLING_API_BASE_URL =
 // Account recovery is a separate explicit-user-action gate. Keep it closed
 // even when exercising the billing transport or storefront internally.
 PLUS_BILLING_RECOVERY_ENABLED = NO
+// Window sponsorship remains a separate disabled client surface. It must not
+// become reachable merely because billing transport or StoreKit is enabled.
+PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED = NO
 
 // Empty by default. The manual, erased-Simulator App Store screenshot workflow
 // alone injects a compiler condition into the Widget extension's Debug target.

@@ -1,6 +1,6 @@
 # ADR-025: Plusによる非公開まどのsponsorship基盤
 
-Status: disabled foundation。既存β、UI、配布、写真保存には未接続。
+Status: disabled foundation。payer sponsorship、owner detach、iOS署名clientと有界offline状態を実装済み。既存β、通常UI、配布、写真保存には未接続。
 
 ## 境界
 
@@ -33,8 +33,14 @@ entitlement失効はsponsorship stateだけを変え、window、participant、de
 ## Participant read
 
 active window participantはmember署名GET `/v1/window-sponsorship` で、自分のcurrent spaceに
-限り `windowLineageSponsored`、`grantsPlus`、`accessUntilMs` を取得できる。payer ID、transaction、
-decision IDは返さない。他windowのlineageを指定する入力自体を持たない。
+限り `windowLineageSponsored`、`grantsPlus`、`generation`、`accessUntilMs` を取得できる。payer ID、
+transaction、decision IDは返さない。他windowのlineageを指定する入力自体を持たない。
+
+active ownerは同じmember署名境界の`DELETE /v1/window-sponsorship`で、payerの課金鍵や同意を
+必要とせず現在のsponsorshipをdetachできる。bodyはrequest IDと確認済みgenerationだけを持ち、
+owner participant、device、current space、lineage、membership revision、block、generationをD1の
+同じcommitで再確認する。owner detachもappend-only auditからcurrent stateへ反映し、payer IDは
+responseへ返さない。invitee、pending/revoked member、stale generationは拒否する。
 
 ## Gatesと残件
 
@@ -42,5 +48,9 @@ Worker `BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED` とD1
 `window_sponsorship_enabled` は既定OFF。新規sponsor/transferはeffective entitlementの
 既存上下gateも必須。production deploy・gate enableはこの変更に含めない。
 
-現在のownerは第三者sponsorshipへ同意しない限りclaimされないが、payerを介さずowner自身が
-既存sponsorshipをdetachするrouteは未実装である。一般公開前にowner-signed detachを追加する。
+iOSにはparticipant署名GET、payer署名PUT/DELETE、owner署名DELETE、ThisDeviceOnly Keychainでの
+exact retryを無効状態のfoundationとして実装した。確認済みgrantのoffline利用はServerの
+`accessUntilMs`と評価時刻から24時間の早い方までに限定し、確認不能・非加入・期限切れを同じ
+booleanへ潰さない。通常画面、起動、Widget、Share Extensionには未接続である。販売前には、
+owner detachの明示操作、解約・返金・請求猶予・失効表示をmacOS/Xcode、署名実機、隔離stagingで
+検証する。

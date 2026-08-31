@@ -20,6 +20,21 @@ protocol BillingAPIClientProtocol: Sendable {
     func fetchAuthoritativeEntitlement(
         credential: BillingCredential
     ) async throws -> BillingAuthoritativeEntitlement
+
+    func fetchWindowSponsorshipGrant(
+        memberID: String,
+        credential: PairingCredential
+    ) async throws -> BillingWindowSponsorshipGrant
+
+    func changeWindowSponsorship(
+        attempt: BillingWindowSponsorshipAttempt,
+        payerCredential: BillingCredential
+    ) async throws -> BillingWindowSponsorshipChangeResult
+
+    func detachWindowSponsorshipAsOwner(
+        attempt: BillingWindowOwnerDetachAttempt,
+        credential: PairingCredential
+    ) async throws -> BillingWindowOwnerDetachResult
 }
 
 private enum BillingEndpoint {
@@ -27,11 +42,20 @@ private enum BillingEndpoint {
     case accountRecovery
     case transaction
     case authoritativeEntitlement
+    case windowSponsorshipGrant
+    case windowSponsorshipOwnerDetach
+    case windowSponsorshipChange(
+        operation: BillingWindowSponsorshipOperation,
+        windowLineageID: String
+    )
 
     var method: String {
         switch self {
         case .accountCreation, .accountRecovery, .transaction: return "POST"
-        case .authoritativeEntitlement: return "GET"
+        case .authoritativeEntitlement, .windowSponsorshipGrant: return "GET"
+        case .windowSponsorshipOwnerDetach: return "DELETE"
+        case let .windowSponsorshipChange(operation, _):
+            return operation.method
         }
     }
 
@@ -42,6 +66,11 @@ private enum BillingEndpoint {
         case .transaction: return BillingProtocolV1.transactionPath
         case .authoritativeEntitlement:
             return BillingProtocolV1.entitlementPath
+        case .windowSponsorshipGrant, .windowSponsorshipOwnerDetach:
+            return BillingProtocolV1.windowSponsorshipGrantPath
+        case let .windowSponsorshipChange(_, windowLineageID):
+            return BillingProtocolV1.windowSponsorshipChangePathPrefix
+                + windowLineageID
         }
     }
 
@@ -49,14 +78,21 @@ private enum BillingEndpoint {
         switch self {
         case .accountCreation: return 201
         case .accountRecovery: return 200
-        case .transaction, .authoritativeEntitlement: return 200
+        case .transaction, .authoritativeEntitlement,
+             .windowSponsorshipGrant, .windowSponsorshipChange:
+            return 200
+        case .windowSponsorshipOwnerDetach: return 200
         }
     }
 
-    var requiresAuthentication: Bool {
+    var authenticationKind: BillingAuthenticationKind {
         switch self {
-        case .accountCreation, .accountRecovery: return false
-        case .transaction, .authoritativeEntitlement: return true
+        case .accountCreation, .accountRecovery: return .none
+        case .transaction, .authoritativeEntitlement,
+             .windowSponsorshipChange:
+            return .billing
+        case .windowSponsorshipGrant, .windowSponsorshipOwnerDetach:
+            return .participant
         }
     }
 
@@ -64,7 +100,32 @@ private enum BillingEndpoint {
         switch self {
         case .accountCreation, .accountRecovery, .transaction:
             return !body.isEmpty
-        case .authoritativeEntitlement: return body.isEmpty
+        case .authoritativeEntitlement, .windowSponsorshipGrant:
+            return body.isEmpty
+        case .windowSponsorshipOwnerDetach: return !body.isEmpty
+        case .windowSponsorshipChange: return !body.isEmpty
+        }
+    }
+}
+
+private enum BillingAuthenticationKind {
+    case none
+    case billing
+    case participant
+}
+
+private enum BillingRequestAuthentication {
+    case none
+    case billing(BillingCredential)
+    case participant(memberID: String, credential: PairingCredential)
+
+    func matches(_ kind: BillingAuthenticationKind) -> Bool {
+        switch (self, kind) {
+        case (.none, .none), (.billing, .billing),
+             (.participant, .participant):
+            return true
+        default:
+            return false
         }
     }
 }
@@ -367,6 +428,376 @@ actor BillingAccountRecoveryCoordinator {
     }
 }
 
+/// Server identifiers needed to bind one current owner-device approval. The
+/// signing credential remains a pairing credential; it is never copied into a
+/// billing record or sponsorship Keychain item.
+struct BillingWindowOwnerConsentContext: Sendable {
+    let consentSpaceID: String
+    let ownerParticipantID: String
+    let ownerDeviceID: String
+    let consentMembershipRevision: Int
+    let credential: PairingCredential
+}
+
+/// Disabled foundation for explicit future sponsorship controls. No launch,
+/// foreground, Widget, Share Extension, or existing window flow references
+/// this coordinator.
+actor BillingWindowSponsorshipCoordinator {
+    typealias AttemptInserter = @Sendable (
+        BillingWindowSponsorshipAttempt
+    ) throws -> BillingWindowSponsorshipAttempt
+    typealias AttemptDeleter = @Sendable (
+        BillingWindowSponsorshipAttempt
+    ) throws -> Void
+    typealias OwnerDetachAttemptInserter = @Sendable (
+        BillingWindowOwnerDetachAttempt
+    ) throws -> BillingWindowOwnerDetachAttempt
+    typealias OwnerDetachAttemptDeleter = @Sendable (
+        BillingWindowOwnerDetachAttempt
+    ) throws -> Void
+
+    private let apiClient: any BillingAPIClientProtocol
+    private let configuration: BillingWindowSponsorshipConfiguration
+    private let insertAttempt: AttemptInserter
+    private let deleteAttempt: AttemptDeleter
+    private let insertOwnerDetachAttempt: OwnerDetachAttemptInserter
+    private let deleteOwnerDetachAttempt: OwnerDetachAttemptDeleter
+
+    init(
+        apiClient: any BillingAPIClientProtocol,
+        configuration: BillingWindowSponsorshipConfiguration = .current,
+        insertAttempt: @escaping AttemptInserter = {
+            try BillingKeychainStore.insertWindowSponsorshipAttemptIfAbsent($0)
+        },
+        deleteAttempt: @escaping AttemptDeleter = {
+            try BillingKeychainStore.deleteWindowSponsorshipAttempt(
+                ifMatches: $0
+            )
+        },
+        insertOwnerDetachAttempt: @escaping OwnerDetachAttemptInserter = {
+            try BillingKeychainStore.insertWindowOwnerDetachAttemptIfAbsent($0)
+        },
+        deleteOwnerDetachAttempt: @escaping OwnerDetachAttemptDeleter = {
+            try BillingKeychainStore.deleteWindowOwnerDetachAttempt(
+                ifMatches: $0
+            )
+        }
+    ) {
+        self.apiClient = apiClient
+        self.configuration = configuration
+        self.insertAttempt = insertAttempt
+        self.deleteAttempt = deleteAttempt
+        self.insertOwnerDetachAttempt = insertOwnerDetachAttempt
+        self.deleteOwnerDetachAttempt = deleteOwnerDetachAttempt
+    }
+
+    /// Participant-scoped read. Failure returns an explicit unknown state and
+    /// may preserve a prior confirmed snapshot; it never grants from a cached
+    /// Boolean or silently treats offline as unsponsored.
+    func fetchGrantFromExplicitUserAction(
+        memberID: String,
+        credential: PairingCredential,
+        lastConfirmed: BillingWindowSponsorshipGrant? = nil,
+        now: Date = .now
+    ) async -> BillingWindowPlusAccessState {
+        let preserved: BillingWindowSponsorshipGrant?
+        if let lastConfirmed {
+            preserved = try? lastConfirmed.validated(now: now)
+        } else {
+            preserved = nil
+        }
+        guard configuration.isEnabled else {
+            return .unknown(
+                reason: .clientDisabled,
+                lastConfirmed: preserved
+            )
+        }
+        do {
+            return try await apiClient.fetchWindowSponsorshipGrant(
+                memberID: memberID,
+                credential: credential
+            ).validated(now: now).accessState(now: now)
+        } catch let error as BillingClientError {
+            let reason: BillingWindowPlusUnknownReason
+            switch error {
+            case .transportUnavailable:
+                if let preserved {
+                    return preserved.offlineAccessState(now: now)
+                }
+                reason = .offline
+            case let .requestRejected(status, _)
+                where status == 408 || status == 429 || status >= 500:
+                reason = .serverUnavailable
+            case .requestRejected:
+                reason = .requestRejected
+            default:
+                reason = .invalidResponse
+            }
+            return .unknown(reason: reason, lastConfirmed: preserved)
+        } catch {
+            return .unknown(
+                reason: .invalidResponse,
+                lastConfirmed: preserved
+            )
+        }
+    }
+
+    func sponsorFromExplicitUserAction(
+        windowLineageID: String,
+        expectedGeneration: Int,
+        expectedCurrentBillingAccountID: String?,
+        ownerConsent: BillingWindowOwnerConsentContext,
+        payerCredential: BillingCredential,
+        now: Date = .now
+    ) async throws -> BillingWindowSponsorshipChangeResult {
+        guard configuration.isEnabled else {
+            throw BillingClientError.configurationUnavailable
+        }
+        let candidate = try makeSponsorAttempt(
+            windowLineageID: windowLineageID,
+            expectedGeneration: expectedGeneration,
+            expectedCurrentBillingAccountID: expectedCurrentBillingAccountID,
+            ownerConsent: ownerConsent,
+            payerCredential: payerCredential,
+            now: now
+        )
+        return try await perform(
+            candidate: candidate,
+            payerCredential: payerCredential
+        )
+    }
+
+    /// Payer-authorized unsponsor only. This is not the owner-only detach
+    /// route and does not use or mutate a pairing credential.
+    func unsponsorAsPayerFromExplicitUserAction(
+        windowLineageID: String,
+        expectedGeneration: Int,
+        payerCredential: BillingCredential
+    ) async throws -> BillingWindowSponsorshipChangeResult {
+        guard configuration.isEnabled else {
+            throw BillingClientError.configurationUnavailable
+        }
+        let candidate = try makeUnsponsorAttempt(
+            windowLineageID: windowLineageID,
+            expectedGeneration: expectedGeneration,
+            payerCredential: payerCredential
+        )
+        return try await perform(
+            candidate: candidate,
+            payerCredential: payerCredential
+        )
+    }
+
+    /// Current owner escape hatch. This uses normal participant signing and
+    /// the server's owner-only DELETE route; it never impersonates the payer.
+    func detachAsOwnerFromExplicitUserAction(
+        expectedGeneration: Int,
+        memberID: String,
+        credential: PairingCredential
+    ) async throws -> BillingWindowOwnerDetachResult {
+        guard configuration.isEnabled else {
+            throw BillingClientError.configurationUnavailable
+        }
+        let credential = try credential.validated()
+        guard BillingValidation.canonicalOpaqueID(memberID, bytes: 16),
+              (1 ... 1_000_000_000).contains(expectedGeneration)
+        else { throw BillingClientError.malformedCredential }
+        let clientRequestID = UUID().uuidString.lowercased()
+        let body = try BillingWindowSponsorshipWireCodec.encode(
+            BillingWindowOwnerDetachWireRequest(
+                protocolVersion: BillingProtocolV1.version,
+                clientRequestId: clientRequestID,
+                expectedGeneration: expectedGeneration
+            )
+        )
+        let candidate = try BillingWindowOwnerDetachAttempt(
+            clientRequestID: clientRequestID,
+            memberID: memberID,
+            deviceID: credential.deviceID,
+            expectedGeneration: expectedGeneration,
+            exactRequestBody: body
+        ).validated()
+        let attempt = try insertOwnerDetachAttempt(candidate).validated()
+        guard try attempt.matchesStableIntent(candidate) else {
+            throw BillingClientError.windowSponsorshipAttemptPending
+        }
+        let result: BillingWindowOwnerDetachResult
+        do {
+            result = try await apiClient.detachWindowSponsorshipAsOwner(
+                attempt: attempt,
+                credential: credential
+            )
+        } catch let error as BillingClientError {
+            if Self.isTerminalAttemptRejection(error) {
+                try deleteOwnerDetachAttempt(attempt)
+            }
+            throw error
+        }
+        try deleteOwnerDetachAttempt(attempt)
+        return try result.validated(for: attempt)
+    }
+
+    private func perform(
+        candidate: BillingWindowSponsorshipAttempt,
+        payerCredential: BillingCredential
+    ) async throws -> BillingWindowSponsorshipChangeResult {
+        let candidate = try candidate.validated()
+        // SecItemAdd selects one exact body before the first network await.
+        let attempt = try insertAttempt(candidate).validated()
+        guard try attempt.matchesStableIntent(candidate) else {
+            throw BillingClientError.windowSponsorshipAttemptPending
+        }
+        let result: BillingWindowSponsorshipChangeResult
+        do {
+            result = try await apiClient.changeWindowSponsorship(
+                attempt: attempt,
+                payerCredential: payerCredential
+            )
+        } catch let error as BillingClientError {
+            if Self.isTerminalAttemptRejection(error) {
+                try deleteAttempt(attempt)
+            }
+            throw error
+        }
+        try deleteAttempt(attempt)
+        return try result.validated(for: attempt)
+    }
+
+    private func makeSponsorAttempt(
+        windowLineageID: String,
+        expectedGeneration: Int,
+        expectedCurrentBillingAccountID: String?,
+        ownerConsent: BillingWindowOwnerConsentContext,
+        payerCredential: BillingCredential,
+        now: Date
+    ) throws -> BillingWindowSponsorshipAttempt {
+        let payer = try payerCredential.validated()
+        let owner = try ownerConsent.credential.validated()
+        guard payer.phase == .registered,
+              let billingAccountID = payer.billingAccountID,
+              BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16),
+              (0 ... 1_000_000_000).contains(expectedGeneration),
+              expectedCurrentBillingAccountID.map({
+                  BillingValidation.canonicalUUIDv4($0) != nil
+              }) ?? true,
+              BillingValidation.canonicalOpaqueID(
+                ownerConsent.consentSpaceID,
+                bytes: 16
+              ),
+              BillingValidation.canonicalOpaqueID(
+                ownerConsent.ownerParticipantID,
+                bytes: 16
+              ),
+              BillingValidation.canonicalOpaqueID(
+                ownerConsent.ownerDeviceID,
+                bytes: 16
+              ),
+              let ownerDeviceID = owner.deviceID,
+              ownerConsent.ownerDeviceID == ownerDeviceID,
+              (1 ... 1_000_000_000).contains(
+                ownerConsent.consentMembershipRevision
+              )
+        else { throw BillingClientError.malformedCredential }
+        let clientRequestID = UUID().uuidString.lowercased()
+        let consentIssuedAt = Int(now.timeIntervalSince1970)
+        let ownerConsentNonce = BillingProtocolCodec.randomNonce()
+        let transcript = try BillingProtocolCodec
+            .windowSponsorshipOwnerConsentTranscript(
+                clientRequestID: clientRequestID,
+                billingAccountID: billingAccountID,
+                windowLineageID: windowLineageID,
+                expectedGeneration: expectedGeneration,
+                expectedCurrentBillingAccountID:
+                    expectedCurrentBillingAccountID,
+                consentSpaceID: ownerConsent.consentSpaceID,
+                ownerParticipantID: ownerConsent.ownerParticipantID,
+                ownerDeviceID: ownerConsent.ownerDeviceID,
+                consentIssuedAt: consentIssuedAt,
+                consentMembershipRevision:
+                    ownerConsent.consentMembershipRevision,
+                ownerConsentNonce: ownerConsentNonce
+            )
+        let signature = try PairingCrypto.sign(
+            transcript,
+            credential: owner
+        ).base64URLEncodedString()
+        let body = try BillingWindowSponsorshipWireCodec.encode(
+            BillingWindowSponsorWireRequest(
+                protocolVersion: BillingProtocolV1.version,
+                clientRequestId: clientRequestID,
+                expectedGeneration: expectedGeneration,
+                expectedCurrentBillingAccountId:
+                    expectedCurrentBillingAccountID,
+                consentSpaceId: ownerConsent.consentSpaceID,
+                ownerParticipantId: ownerConsent.ownerParticipantID,
+                ownerDeviceId: ownerConsent.ownerDeviceID,
+                consentMembershipRevision:
+                    ownerConsent.consentMembershipRevision,
+                consentIssuedAt: consentIssuedAt,
+                ownerConsentNonce: ownerConsentNonce,
+                ownerConsentSignature: signature
+            )
+        )
+        return try BillingWindowSponsorshipAttempt(
+            operation: .sponsor,
+            clientRequestID: clientRequestID,
+            billingAccountID: billingAccountID,
+            windowLineageID: windowLineageID,
+            expectedGeneration: expectedGeneration,
+            expectedCurrentBillingAccountID: expectedCurrentBillingAccountID,
+            exactRequestBody: body
+        ).validated()
+    }
+
+    private func makeUnsponsorAttempt(
+        windowLineageID: String,
+        expectedGeneration: Int,
+        payerCredential: BillingCredential
+    ) throws -> BillingWindowSponsorshipAttempt {
+        let payer = try payerCredential.validated()
+        guard payer.phase == .registered,
+              let billingAccountID = payer.billingAccountID,
+              BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16),
+              (1 ... 1_000_000_000).contains(expectedGeneration)
+        else { throw BillingClientError.malformedCredential }
+        let clientRequestID = UUID().uuidString.lowercased()
+        let body = try BillingWindowSponsorshipWireCodec.encode(
+            BillingWindowUnsponsorWireRequest(
+                protocolVersion: BillingProtocolV1.version,
+                clientRequestId: clientRequestID,
+                expectedGeneration: expectedGeneration,
+                expectedCurrentBillingAccountId: billingAccountID
+            )
+        )
+        return try BillingWindowSponsorshipAttempt(
+            operation: .unsponsor,
+            clientRequestID: clientRequestID,
+            billingAccountID: billingAccountID,
+            windowLineageID: windowLineageID,
+            expectedGeneration: expectedGeneration,
+            expectedCurrentBillingAccountID: billingAccountID,
+            exactRequestBody: body
+        ).validated()
+    }
+
+    private static func isTerminalAttemptRejection(
+        _ error: BillingClientError
+    ) -> Bool {
+        guard case let .requestRejected(status, code) = error else {
+            return false
+        }
+        let terminalCodes: Set<String> = [
+            "invalid_authentication", "invalid_body", "invalid_field",
+            "invalid_fields", "invalid_json", "active_member_required",
+            "owner_consent_required", "owner_required", "sharing_revoked",
+            "plus_entitlement_required", "sponsorship_conflict",
+            "sponsorship_request_conflict", "stale_owner_consent"
+        ]
+        return code.map(terminalCodes.contains) ?? [400, 401, 403, 409]
+            .contains(status)
+    }
+}
+
 /// Internal live wiring between StoreKit observation and the independent
 /// billing account. It never creates an account while resuming, and it never
 /// rebinds an old transaction to a new installation. A missing/mismatched
@@ -528,7 +959,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         let response: BillingAccountCreationResponse = try await send(
             endpoint: .accountCreation,
             body: body,
-            authentication: nil
+            authentication: .none
         )
         guard response.protocolVersion == BillingProtocolV1.version else {
             throw BillingClientError.invalidServerResponse
@@ -576,7 +1007,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         let response: BillingAccountRecoveryResponse = try await send(
             endpoint: .accountRecovery,
             body: body,
-            authentication: nil
+            authentication: .none
         )
         guard response.protocolVersion == BillingProtocolV1.version else {
             throw BillingClientError.invalidServerResponse
@@ -615,7 +1046,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         let response: BillingTransactionResponse = try await sendData(
             endpoint: .transaction,
             body: encodedBody,
-            authentication: credential
+            authentication: .billing(credential)
         )
         guard response.protocolVersion == BillingProtocolV1.version else {
             throw BillingClientError.invalidServerResponse
@@ -650,7 +1081,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         let response: BillingAuthoritativeEntitlementResponse = try await sendData(
             endpoint: .authoritativeEntitlement,
             body: Data(),
-            authentication: credential
+            authentication: .billing(credential)
         )
         guard response.protocolVersion == BillingProtocolV1.version,
               BillingValidation.canonicalUUIDv4(
@@ -663,10 +1094,95 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         return try response.entitlement.validated()
     }
 
+    func fetchWindowSponsorshipGrant(
+        memberID: String,
+        credential: PairingCredential
+    ) async throws -> BillingWindowSponsorshipGrant {
+        guard BillingValidation.canonicalOpaqueID(memberID, bytes: 16) else {
+            throw BillingClientError.malformedCredential
+        }
+        let response: BillingWindowSponsorshipGrantResponse = try await sendData(
+            endpoint: .windowSponsorshipGrant,
+            body: Data(),
+            authentication: .participant(
+                memberID: memberID,
+                credential: credential
+            )
+        )
+        guard response.protocolVersion == BillingProtocolV1.version else {
+            throw BillingClientError.invalidServerResponse
+        }
+        return try BillingWindowSponsorshipGrant(
+            windowLineageSponsored: response.windowLineageSponsored,
+            grantsPlus: response.grantsPlus,
+            accessUntilMs: response.accessUntilMs,
+            evaluatedAtMs: response.evaluatedAtMs,
+            generation: response.generation
+        ).validated()
+    }
+
+    func changeWindowSponsorship(
+        attempt: BillingWindowSponsorshipAttempt,
+        payerCredential: BillingCredential
+    ) async throws -> BillingWindowSponsorshipChangeResult {
+        let attempt = try attempt.validated()
+        let credential = try payerCredential.validated()
+        guard credential.phase == .registered,
+              credential.billingAccountID == attempt.billingAccountID
+        else { throw BillingClientError.identityMismatch }
+        let endpoint = BillingEndpoint.windowSponsorshipChange(
+            operation: attempt.operation,
+            windowLineageID: attempt.windowLineageID
+        )
+        let response: BillingWindowSponsorshipChangeResponse = try await sendData(
+            endpoint: endpoint,
+            body: attempt.exactRequestBody,
+            authentication: .billing(credential)
+        )
+        guard response.protocolVersion == BillingProtocolV1.version else {
+            throw BillingClientError.invalidServerResponse
+        }
+        return try BillingWindowSponsorshipChangeResult(
+            clientRequestID: response.clientRequestId,
+            billingAccountID: response.billingAccountId,
+            windowLineageID: response.windowLineageId,
+            state: response.state,
+            generation: response.generation,
+            recordedAt: response.recordedAt
+        ).validated(for: attempt)
+    }
+
+    func detachWindowSponsorshipAsOwner(
+        attempt: BillingWindowOwnerDetachAttempt,
+        credential: PairingCredential
+    ) async throws -> BillingWindowOwnerDetachResult {
+        let attempt = try attempt.validated()
+        let credential = try credential.validated()
+        guard credential.deviceID == attempt.deviceID
+        else { throw BillingClientError.identityMismatch }
+        let response: BillingWindowOwnerDetachResponse = try await sendData(
+            endpoint: .windowSponsorshipOwnerDetach,
+            body: attempt.exactRequestBody,
+            authentication: .participant(
+                memberID: attempt.memberID,
+                credential: credential
+            )
+        )
+        guard response.protocolVersion == BillingProtocolV1.version else {
+            throw BillingClientError.invalidServerResponse
+        }
+        return try BillingWindowOwnerDetachResult(
+            clientRequestID: response.clientRequestId,
+            windowLineageSponsored: response.windowLineageSponsored,
+            generation: response.generation,
+            recordedAt: response.recordedAt
+        ).validated(for: attempt)
+    }
+
     private func send<Request: Encodable, Response: Decodable>(
         endpoint: BillingEndpoint,
         body: Request,
-        authentication: BillingCredential?
+        authentication: BillingRequestAuthentication
     ) async throws -> Response {
         let data: Data
         do {
@@ -684,10 +1200,10 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
     private func sendData<Response: Decodable>(
         endpoint: BillingEndpoint,
         body: Data,
-        authentication: BillingCredential?
+        authentication: BillingRequestAuthentication
     ) async throws -> Response {
         guard endpoint.accepts(body: body),
-              (authentication != nil) == endpoint.requiresAuthentication,
+              authentication.matches(endpoint.authenticationKind),
               var components = URLComponents(
                   url: baseURL,
                   resolvingAgainstBaseURL: false
@@ -709,13 +1225,25 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
                 forHTTPHeaderField: "Content-Type"
             )
         }
-        if let authentication {
+        switch authentication {
+        case .none:
+            break
+        case let .billing(credential):
             try authenticate(
                 request: &request,
                 method: endpoint.method,
                 pathname: endpoint.path,
                 body: body,
-                credential: authentication
+                credential: credential
+            )
+        case let .participant(memberID, credential):
+            try authenticateParticipant(
+                request: &request,
+                method: endpoint.method,
+                pathname: endpoint.path,
+                body: body,
+                memberID: memberID,
+                credential: credential
             )
         }
 
@@ -815,6 +1343,55 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         request.setValue(nonce, forHTTPHeaderField: "Neko-Billing-Nonce")
         request.setValue(signature, forHTTPHeaderField: "Neko-Billing-Signature")
     }
+
+    private func authenticateParticipant(
+        request: inout URLRequest,
+        method: String,
+        pathname: String,
+        body: Data,
+        memberID: String,
+        credential: PairingCredential
+    ) throws {
+        let credential = try credential.validated()
+        let supportedRequest = (method == "GET" && body.isEmpty)
+            || (method == "DELETE" && !body.isEmpty)
+        guard BillingValidation.canonicalOpaqueID(memberID, bytes: 16),
+              supportedRequest,
+              pathname == BillingProtocolV1.windowSponsorshipGrantPath,
+              body.count <= BillingWindowSponsorshipAttempt.maximumBodyBytes
+        else { throw BillingClientError.malformedCredential }
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let nonce = PairingCrypto.randomData(count: 16)
+            .base64URLEncodedString()
+        let transcript = try PairingCanonicalEncoder.encode([
+            "NW1.REQUEST",
+            String(PairingProtocol.version),
+            memberID,
+            String(timestamp),
+            nonce,
+            method.uppercased(),
+            pathname,
+            PairingCrypto.sha256(body).base64URLEncodedString()
+        ])
+        let signature = try PairingCrypto.sign(
+            transcript,
+            credential: credential
+        ).base64URLEncodedString()
+        request.setValue(
+            String(PairingProtocol.version),
+            forHTTPHeaderField: "Neko-Protocol-Version"
+        )
+        request.setValue(memberID, forHTTPHeaderField: "Neko-Member-ID")
+        if let deviceID = credential.deviceID {
+            request.setValue(deviceID, forHTTPHeaderField: "Neko-Device-ID")
+        }
+        request.setValue(
+            String(timestamp),
+            forHTTPHeaderField: "Neko-Timestamp"
+        )
+        request.setValue(nonce, forHTTPHeaderField: "Neko-Nonce")
+        request.setValue(signature, forHTTPHeaderField: "Neko-Signature")
+    }
 }
 
 private final class BillingNoRedirectSessionDelegate: NSObject,
@@ -885,6 +1462,33 @@ private struct BillingAuthoritativeEntitlementResponse: Decodable {
     let protocolVersion: Int
     let billingAccountId: String
     let entitlement: BillingAuthoritativeEntitlement
+}
+
+private struct BillingWindowSponsorshipGrantResponse: Decodable {
+    let protocolVersion: Int
+    let windowLineageSponsored: Bool
+    let grantsPlus: Bool
+    let accessUntilMs: Int?
+    let evaluatedAtMs: Int
+    let generation: Int
+}
+
+private struct BillingWindowSponsorshipChangeResponse: Decodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let billingAccountId: String
+    let windowLineageId: String
+    let state: BillingWindowSponsorshipServerState
+    let generation: Int
+    let recordedAt: Int
+}
+
+private struct BillingWindowOwnerDetachResponse: Decodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let windowLineageSponsored: Bool
+    let generation: Int
+    let recordedAt: Int
 }
 
 private struct BillingAPIErrorResponse: Decodable {

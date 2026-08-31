@@ -7,6 +7,10 @@ import { runBillingSubscriptionReconciliation } from "../src/billing-authority";
 import type { VerifiedBillingTransaction } from "../src/billing-verifier-client";
 import { route } from "../src/index";
 import { signedRequestTranscript } from "../src/protocol";
+import {
+  billingSignedRequestTranscript,
+  windowSponsorshipConsentTranscript,
+} from "../src/billing-protocol";
 
 const testEnv = env as unknown as Env;
 function random(bytes: number) {
@@ -38,6 +42,17 @@ async function signingKeys(): Promise<SigningKeyPair> {
 async function publicKey(keys: SigningKeyPair): Promise<string> {
   return base64urlEncode(
     new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)),
+  );
+}
+async function signature(keys: SigningKeyPair, transcript: Uint8Array) {
+  return base64urlEncode(
+    new Uint8Array(
+      await crypto.subtle.sign(
+        { name: "Ed25519" },
+        keys.privateKey,
+        arrayBuffer(transcript),
+      ),
+    ),
   );
 }
 async function signedGrantRequest(member: SignedMember): Promise<Request> {
@@ -75,18 +90,142 @@ async function signedGrantRequest(member: SignedMember): Promise<Request> {
   });
 }
 
+async function signedMemberMutationRequest(input: {
+  member: SignedMember;
+  method: "DELETE";
+  pathname: string;
+  body: Record<string, unknown>;
+}) {
+  const body = JSON.stringify(input.body);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const nonce = random(16);
+  const memberSignature = await signature(
+    input.member.keys,
+    signedRequestTranscript({
+      memberId: input.member.id,
+      timestamp,
+      nonce,
+      method: input.method,
+      pathname: input.pathname,
+      bodySHA256: await sha256Base64url(new TextEncoder().encode(body)),
+    }),
+  );
+  return new Request(`https://sharing.invalid${input.pathname}`, {
+    method: input.method,
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "192.0.2.83",
+      "Neko-Protocol-Version": "1",
+      "Neko-Member-ID": input.member.id,
+      "Neko-Timestamp": String(timestamp),
+      "Neko-Nonce": nonce,
+      "Neko-Signature": memberSignature,
+    },
+    body,
+  });
+}
+
 async function account() {
   const id = crypto.randomUUID().toLowerCase();
   const key = random(16);
+  const keys = await signingKeys();
   await testEnv.DB.prepare("INSERT INTO billing_accounts(id) VALUES(?)")
     .bind(id)
     .run();
   await testEnv.DB.prepare(
     "INSERT INTO billing_account_keys(id,billing_account_id,signing_public_key,state) VALUES(?,?,?,'active')",
   )
-    .bind(key, id, random(32))
+    .bind(key, id, await publicKey(keys))
     .run();
-  return { id, key };
+  return { id, key, keys };
+}
+
+type BillingAccount = Awaited<ReturnType<typeof account>>;
+
+async function signedBillingRequest(input: {
+  account: BillingAccount;
+  method: "PUT" | "DELETE";
+  lineage: string;
+  body: Record<string, unknown>;
+  nonce?: string;
+}) {
+  const pathname = `/v1/billing/window-sponsorships/${input.lineage}`;
+  const body = JSON.stringify(input.body);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const nonce = input.nonce ?? random(16);
+  const payerSignature = await signature(
+    input.account.keys,
+    billingSignedRequestTranscript({
+      billingAccountId: input.account.id,
+      billingKeyId: input.account.key,
+      timestamp,
+      nonce,
+      method: input.method,
+      pathname,
+      bodySHA256: await sha256Base64url(new TextEncoder().encode(body)),
+    }),
+  );
+  return new Request(`https://sharing.invalid${pathname}`, {
+    method: input.method,
+    headers: {
+      "Content-Type": "application/json",
+      "CF-Connecting-IP": "192.0.2.82",
+      "Neko-Billing-Protocol-Version": "1",
+      "Neko-Billing-Account-ID": input.account.id,
+      "Neko-Billing-Key-ID": input.account.key,
+      "Neko-Billing-Timestamp": String(timestamp),
+      "Neko-Billing-Nonce": nonce,
+      "Neko-Billing-Signature": payerSignature,
+    },
+    body,
+  });
+}
+
+async function sponsorBody(input: {
+  account: BillingAccount;
+  signedWindow: Awaited<ReturnType<typeof signedSpace>>;
+  clientRequestId?: string;
+  expectedGeneration?: number;
+  expectedCurrentBillingAccountId?: string | null;
+}) {
+  const clientRequestId =
+    input.clientRequestId ?? crypto.randomUUID().toLowerCase();
+  const expectedGeneration = input.expectedGeneration ?? 0;
+  const expectedCurrentBillingAccountId =
+    input.expectedCurrentBillingAccountId ?? null;
+  const consentIssuedAt = Math.floor(Date.now() / 1000);
+  const ownerConsentNonce = random(16);
+  const consent = {
+    operation: "sponsor" as const,
+    clientRequestId,
+    billingAccountId: input.account.id,
+    windowLineageId: input.signedWindow.window.lineage,
+    expectedGeneration,
+    expectedCurrentBillingAccountId:
+      expectedCurrentBillingAccountId ?? undefined,
+    consentSpaceId: input.signedWindow.window.space,
+    ownerParticipantId: input.signedWindow.window.owner,
+    ownerDeviceId: input.signedWindow.window.device,
+    consentIssuedAt,
+    consentMembershipRevision: input.signedWindow.window.revision,
+    ownerConsentNonce,
+  };
+  return {
+    protocolVersion: 1,
+    clientRequestId,
+    expectedGeneration,
+    expectedCurrentBillingAccountId,
+    consentSpaceId: consent.consentSpaceId,
+    ownerParticipantId: consent.ownerParticipantId,
+    ownerDeviceId: consent.ownerDeviceId,
+    consentMembershipRevision: consent.consentMembershipRevision,
+    consentIssuedAt,
+    ownerConsentNonce,
+    ownerConsentSignature: await signature(
+      input.signedWindow.owner.keys,
+      windowSponsorshipConsentTranscript(consent),
+    ),
+  };
 }
 
 async function grantPlus(accountId: string) {
@@ -319,6 +458,15 @@ async function openD1SponsorshipGates() {
   ).run();
 }
 
+async function closeD1SponsorshipGate() {
+  await testEnv.DB.prepare(
+    `UPDATE billing_runtime_gate
+      SET generation=generation+1,window_sponsorship_enabled=0,
+          updated_at=unixepoch()
+    WHERE singleton=1`,
+  ).run();
+}
+
 async function enableSponsorshipGates() {
   await openD1SponsorshipGates();
   return {
@@ -329,7 +477,528 @@ async function enableSponsorshipGates() {
 }
 
 describe("Plus window sponsorship foundation", () => {
+  it("sponsors and unsponsors through the HTTP route with payer and owner proofs", async () => {
+    const defaultGate = await testEnv.DB.prepare(
+      "SELECT window_sponsorship_enabled FROM billing_runtime_gate WHERE singleton=1",
+    ).first<{ window_sponsorship_enabled: number }>();
+    expect(defaultGate?.window_sponsorship_enabled).toBe(0);
+    const payer = await account();
+    const signedWindow = await signedSpace();
+    await grantPlus(payer.id);
+    const enabledEnv = await enableSponsorshipGates();
+    const putBody = await sponsorBody({ account: payer, signedWindow });
+
+    const first = await route(
+      await signedBillingRequest({
+        account: payer,
+        method: "PUT",
+        lineage: signedWindow.window.lineage,
+        body: putBody,
+      }),
+      enabledEnv,
+    );
+    expect(first.status).toBe(200);
+    const firstBody = await first.json<Record<string, unknown>>();
+    expect(firstBody).toMatchObject({
+      clientRequestId: putBody.clientRequestId,
+      billingAccountId: payer.id,
+      windowLineageId: signedWindow.window.lineage,
+      state: "active",
+      generation: 1,
+    });
+
+    // A response-loss retry uses a fresh payer nonce while preserving the exact body.
+    const replay = await route(
+      await signedBillingRequest({
+        account: payer,
+        method: "PUT",
+        lineage: signedWindow.window.lineage,
+        body: putBody,
+      }),
+      enabledEnv,
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(firstBody);
+
+    const deleteBody = {
+      protocolVersion: 1,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      expectedGeneration: 1,
+      expectedCurrentBillingAccountId: payer.id,
+    };
+    const removed = await route(
+      await signedBillingRequest({
+        account: payer,
+        method: "DELETE",
+        lineage: signedWindow.window.lineage,
+        body: deleteBody,
+      }),
+      enabledEnv,
+    );
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toMatchObject({
+      clientRequestId: deleteBody.clientRequestId,
+      billingAccountId: payer.id,
+      windowLineageId: signedWindow.window.lineage,
+      state: "unsponsored",
+      generation: 2,
+    });
+  });
+
+  it("rejects reuse of one HTTP request ID for another lineage, operation, or body", async () => {
+    const payer = await account();
+    const firstWindow = await signedSpace();
+    const secondWindow = await signedSpace();
+    await grantPlus(payer.id);
+    const enabledEnv = await enableSponsorshipGates();
+    const clientRequestId = crypto.randomUUID().toLowerCase();
+    const original = await sponsorBody({
+      account: payer,
+      signedWindow: firstWindow,
+      clientRequestId,
+    });
+    expect(
+      (
+        await route(
+          await signedBillingRequest({
+            account: payer,
+            method: "PUT",
+            lineage: firstWindow.window.lineage,
+            body: original,
+          }),
+          enabledEnv,
+        )
+      ).status,
+    ).toBe(200);
+
+    const anotherLineage = await sponsorBody({
+      account: payer,
+      signedWindow: secondWindow,
+      clientRequestId,
+    });
+    await expect(
+      route(
+        await signedBillingRequest({
+          account: payer,
+          method: "PUT",
+          lineage: secondWindow.window.lineage,
+          body: anotherLineage,
+        }),
+        enabledEnv,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "sponsorship_request_conflict",
+    });
+
+    const changedBody = await sponsorBody({
+      account: payer,
+      signedWindow: firstWindow,
+      clientRequestId,
+      expectedGeneration: 1,
+      expectedCurrentBillingAccountId: payer.id,
+    });
+    await expect(
+      route(
+        await signedBillingRequest({
+          account: payer,
+          method: "PUT",
+          lineage: firstWindow.window.lineage,
+          body: changedBody,
+        }),
+        enabledEnv,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "sponsorship_request_conflict",
+    });
+
+    const changedOperation = {
+      protocolVersion: 1,
+      clientRequestId,
+      expectedGeneration: 1,
+      expectedCurrentBillingAccountId: payer.id,
+    };
+    await expect(
+      route(
+        await signedBillingRequest({
+          account: payer,
+          method: "DELETE",
+          lineage: firstWindow.window.lineage,
+          body: changedOperation,
+        }),
+        enabledEnv,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "sponsorship_request_conflict",
+    });
+  });
+
+  it("lets the active owner detach without the payer key and later consent to responsoring", async () => {
+    const payer = await account();
+    const signedWindow = await signedSpace();
+    await grantPlus(payer.id);
+    const enabledEnv = await enableSponsorshipGates();
+    const initialBody = await sponsorBody({ account: payer, signedWindow });
+    expect(
+      (
+        await route(
+          await signedBillingRequest({
+            account: payer,
+            method: "PUT",
+            lineage: signedWindow.window.lineage,
+            body: initialBody,
+          }),
+          enabledEnv,
+        )
+      ).status,
+    ).toBe(200);
+
+    const beforeDetach = await route(
+      await signedGrantRequest(signedWindow.owner),
+      enabledEnv,
+    );
+    expect(await beforeDetach.json()).toMatchObject({
+      windowLineageSponsored: true,
+      grantsPlus: true,
+      generation: 1,
+    });
+
+    const detachBody = {
+      protocolVersion: 1,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      expectedGeneration: 1,
+    };
+    const detachEnv = {
+      ...enabledEnv,
+      BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "NO",
+    } as Env;
+    const detached = await route(
+      await signedMemberMutationRequest({
+        member: signedWindow.owner,
+        method: "DELETE",
+        pathname: "/v1/window-sponsorship",
+        body: detachBody,
+      }),
+      detachEnv,
+    );
+    expect(detached.status).toBe(200);
+    const detachedBody = await detached.json<Record<string, unknown>>();
+    expect(detachedBody).toMatchObject({
+      clientRequestId: detachBody.clientRequestId,
+      windowLineageSponsored: false,
+      generation: 2,
+    });
+    expect(detachedBody.billingAccountId).toBeUndefined();
+
+    const replay = await route(
+      await signedMemberMutationRequest({
+        member: signedWindow.owner,
+        method: "DELETE",
+        pathname: "/v1/window-sponsorship",
+        body: detachBody,
+      }),
+      detachEnv,
+    );
+    expect(await replay.json()).toEqual(detachedBody);
+    await expect(
+      route(
+        await signedMemberMutationRequest({
+          member: signedWindow.owner,
+          method: "DELETE",
+          pathname: "/v1/window-sponsorship",
+          body: { ...detachBody, expectedGeneration: 2 },
+        }),
+        detachEnv,
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "sponsorship_request_conflict",
+    });
+    await expect(
+      testEnv.DB.prepare(
+        `UPDATE billing_window_sponsorship_owner_detach_requests
+            SET request_hash=request_hash
+          WHERE client_request_id=?`,
+      )
+        .bind(detachBody.clientRequestId)
+        .run(),
+    ).rejects.toThrow(/owner detach audit immutable/u);
+    await expect(
+      testEnv.DB.prepare(
+        `DELETE FROM billing_window_sponsorship_owner_detach_requests
+          WHERE client_request_id=?`,
+      )
+        .bind(detachBody.clientRequestId)
+        .run(),
+    ).rejects.toThrow(/owner detach audit cannot be deleted/u);
+
+    const afterDetach = await route(
+      await signedGrantRequest(signedWindow.invitee),
+      enabledEnv,
+    );
+    expect(await afterDetach.json()).toMatchObject({
+      windowLineageSponsored: false,
+      grantsPlus: false,
+      generation: 2,
+      accessUntilMs: null,
+    });
+
+    const responsorBody = await sponsorBody({
+      account: payer,
+      signedWindow,
+      expectedGeneration: 2,
+      expectedCurrentBillingAccountId: null,
+    });
+    const responsored = await route(
+      await signedBillingRequest({
+        account: payer,
+        method: "PUT",
+        lineage: signedWindow.window.lineage,
+        body: responsorBody,
+      }),
+      enabledEnv,
+    );
+    expect(await responsored.json()).toMatchObject({
+      state: "active",
+      generation: 3,
+    });
+  });
+
+  it("rejects owner detach by an invitee or with a stale generation", async () => {
+    const payer = await account();
+    const signedWindow = await signedSpace();
+    const entitlement = await grantPlus(payer.id);
+    await openD1SponsorshipGates();
+    await operation({
+      account: payer,
+      window: signedWindow.window,
+      operation: "sponsor",
+      generation: 0,
+      entitlement,
+    });
+    const enabledEnv = await enableSponsorshipGates();
+
+    await expect(
+      route(
+        await signedMemberMutationRequest({
+          member: signedWindow.invitee,
+          method: "DELETE",
+          pathname: "/v1/window-sponsorship",
+          body: {
+            protocolVersion: 1,
+            clientRequestId: crypto.randomUUID().toLowerCase(),
+            expectedGeneration: 1,
+          },
+        }),
+        enabledEnv,
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "owner_required" });
+
+    await expect(
+      route(
+        await signedMemberMutationRequest({
+          member: signedWindow.owner,
+          method: "DELETE",
+          pathname: "/v1/window-sponsorship",
+          body: {
+            protocolVersion: 1,
+            clientRequestId: crypto.randomUUID().toLowerCase(),
+            expectedGeneration: 2,
+          },
+        }),
+        enabledEnv,
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "sponsorship_conflict" });
+  });
+
+  it("fails owner detach closed at both sponsorship gates", async () => {
+    const payer = await account();
+    const signedWindow = await signedSpace();
+    const entitlement = await grantPlus(payer.id);
+    await openD1SponsorshipGates();
+    await operation({
+      account: payer,
+      window: signedWindow.window,
+      operation: "sponsor",
+      generation: 0,
+      entitlement,
+    });
+    const body = {
+      protocolVersion: 1,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      expectedGeneration: 1,
+    };
+    const upperOff = {
+      ...testEnv,
+      BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "NO",
+      BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
+    } as Env;
+    await expect(
+      route(
+        await signedMemberMutationRequest({
+          member: signedWindow.owner,
+          method: "DELETE",
+          pathname: "/v1/window-sponsorship",
+          body,
+        }),
+        upperOff,
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "billing_runtime_disabled" });
+
+    await closeD1SponsorshipGate();
+    const upperOn = {
+      ...testEnv,
+      BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "YES",
+      BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "NO",
+    } as Env;
+    await expect(
+      route(
+        await signedMemberMutationRequest({
+          member: signedWindow.owner,
+          method: "DELETE",
+          pathname: "/v1/window-sponsorship",
+          body,
+        }),
+        upperOn,
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "billing_runtime_disabled" });
+  });
+
+  it("serializes an owner detach racing the payer unsponsor", async () => {
+    const payer = await account();
+    const signedWindow = await signedSpace();
+    const entitlement = await grantPlus(payer.id);
+    await openD1SponsorshipGates();
+    await operation({
+      account: payer,
+      window: signedWindow.window,
+      operation: "sponsor",
+      generation: 0,
+      entitlement,
+    });
+    const enabledEnv = await enableSponsorshipGates();
+    const ownerBody = {
+      protocolVersion: 1,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      expectedGeneration: 1,
+    };
+    const payerBody = {
+      protocolVersion: 1,
+      clientRequestId: crypto.randomUUID().toLowerCase(),
+      expectedGeneration: 1,
+      expectedCurrentBillingAccountId: payer.id,
+    };
+    const results = await Promise.allSettled([
+      route(
+        await signedMemberMutationRequest({
+          member: signedWindow.owner,
+          method: "DELETE",
+          pathname: "/v1/window-sponsorship",
+          body: ownerBody,
+        }),
+        enabledEnv,
+      ),
+      route(
+        await signedBillingRequest({
+          account: payer,
+          method: "DELETE",
+          lineage: signedWindow.window.lineage,
+          body: payerBody,
+        }),
+        enabledEnv,
+      ),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "sponsorship_conflict" },
+    });
+    const current = await testEnv.DB.prepare(
+      `SELECT state,generation,billing_account_id
+         FROM billing_window_sponsorships
+        WHERE window_lineage_id=?`,
+    )
+      .bind(signedWindow.window.lineage)
+      .first<{
+        state: string;
+        generation: number;
+        billing_account_id: string | null;
+      }>();
+    expect(current).toEqual({
+      state: "unsponsored",
+      generation: 2,
+      billing_account_id: null,
+    });
+  });
+
+  it("rechecks owner membership revision at the detach commit", async () => {
+    const payer = await account();
+    const signedWindow = await signedSpace();
+    const entitlement = await grantPlus(payer.id);
+    await openD1SponsorshipGates();
+    await operation({
+      account: payer,
+      window: signedWindow.window,
+      operation: "sponsor",
+      generation: 0,
+      entitlement,
+    });
+    await testEnv.DB.prepare(
+      `UPDATE moment_spaces
+          SET membership_revision=membership_revision+1
+        WHERE space_id=?`,
+    )
+      .bind(signedWindow.window.space)
+      .run();
+    await expect(
+      testEnv.DB.prepare(
+        `INSERT INTO billing_window_sponsorship_owner_detach_requests(
+           client_request_id,request_hash,window_lineage_id,space_id,
+           owner_participant_id,owner_device_id,membership_revision,
+           expected_generation,expected_billing_account_id,resulting_generation
+         ) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      )
+        .bind(
+          crypto.randomUUID().toLowerCase(),
+          random(32),
+          signedWindow.window.lineage,
+          signedWindow.window.space,
+          signedWindow.window.owner,
+          signedWindow.window.device,
+          signedWindow.window.revision,
+          1,
+          payer.id,
+          2,
+        )
+        .run(),
+    ).rejects.toThrow(/current unblocked owner required/u);
+  });
+
+  it("fails closed at the upper sponsorship runtime gate", async () => {
+    await openD1SponsorshipGates();
+    const disabledEnv = {
+      ...testEnv,
+      BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "NO",
+      BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
+    } as Env;
+    await expect(
+      route(
+        new Request(
+          `https://sharing.invalid/v1/billing/window-sponsorships/${random(16)}`,
+          { method: "PUT" },
+        ),
+        disabledEnv,
+      ),
+    ).rejects.toMatchObject({ status: 503, code: "billing_runtime_disabled" });
+  });
+
   it("is disabled at the independent D1 lower gate", async () => {
+    await closeD1SponsorshipGate();
     const row = await testEnv.DB.prepare(
       "SELECT window_sponsorship_enabled FROM billing_runtime_gate WHERE singleton=1",
     ).first<{ window_sponsorship_enabled: number }>();
@@ -710,6 +1379,20 @@ describe("Plus window sponsorship foundation", () => {
       status: 403,
       code: "active_member_required",
     });
+  });
+
+  it("rate limits participant grant reads before authentication", async () => {
+    const active = await signedSpace();
+    const enabledEnv = await enableSponsorshipGates();
+    const limitedEnv = {
+      ...enabledEnv,
+      MEMBER_RATE_LIMITER: {
+        limit: async () => ({ success: false }),
+      },
+    } as Env;
+    await expect(
+      route(await signedGrantRequest(active.invitee), limitedEnv),
+    ).rejects.toMatchObject({ status: 429, code: "rate_limited" });
   });
 
   it("rejects INSERT OR REPLACE attempts that reuse an obsolete audit row", async () => {

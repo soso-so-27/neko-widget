@@ -8,6 +8,10 @@ enum BillingKeychainStore {
     private static let account = "primary"
     private static let recoveryService =
         "jp.nekowidget.billing.recovery-attempt.v1.host"
+    private static let sponsorshipService =
+        "jp.nekowidget.billing.window-sponsorship-attempt.v1.host"
+    private static let ownerDetachService =
+        "jp.nekowidget.billing.window-owner-detach-attempt.v1.host"
     private static let lock = NSLock()
 
     static func load() throws -> BillingCredential? {
@@ -230,6 +234,100 @@ enum BillingKeychainStore {
         }
     }
 
+    /// Stores at most one exact payer request per durable window lineage.
+    /// Different windows may progress independently; a duplicate lineage
+    /// returns its existing validated winner without overwriting consent.
+    static func insertWindowSponsorshipAttemptIfAbsent(
+        _ candidate: BillingWindowSponsorshipAttempt
+    ) throws -> BillingWindowSponsorshipAttempt {
+        try withLock {
+            let candidate = try candidate.validated()
+            let attributes = try encodedSponsorshipAttributes(for: candidate)
+            let query = sponsorshipItemQuery(
+                windowLineageID: candidate.windowLineageID
+            ).merging(attributes) { _, new in new }
+            let status = SecItemAdd(query as CFDictionary, nil)
+            switch status {
+            case errSecSuccess:
+                return candidate
+            case errSecDuplicateItem:
+                guard let winner = try loadWindowSponsorshipAttemptUnlocked(
+                    windowLineageID: candidate.windowLineageID
+                ) else { throw BillingClientError.credentialChanged }
+                return winner
+            default:
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
+    /// Compare-and-delete after a bound success or a terminal rejection. A
+    /// transport failure, 429, 5xx, or malformed response leaves the exact
+    /// body available for a future explicit retry.
+    static func deleteWindowSponsorshipAttempt(
+        ifMatches expected: BillingWindowSponsorshipAttempt
+    ) throws {
+        try withLock {
+            let expected = try expected.validated()
+            guard let current = try loadWindowSponsorshipAttemptUnlocked(
+                windowLineageID: expected.windowLineageID
+            ) else { return }
+            guard current == expected else {
+                throw BillingClientError.credentialChanged
+            }
+            let status = SecItemDelete(sponsorshipItemQuery(
+                windowLineageID: expected.windowLineageID
+            ) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
+    static func insertWindowOwnerDetachAttemptIfAbsent(
+        _ candidate: BillingWindowOwnerDetachAttempt
+    ) throws -> BillingWindowOwnerDetachAttempt {
+        try withLock {
+            let candidate = try candidate.validated()
+            let attributes = try encodedOwnerDetachAttributes(for: candidate)
+            let query = ownerDetachItemQuery(
+                memberID: candidate.memberID
+            ).merging(attributes) { _, new in new }
+            let status = SecItemAdd(query as CFDictionary, nil)
+            switch status {
+            case errSecSuccess:
+                return candidate
+            case errSecDuplicateItem:
+                guard let winner = try loadWindowOwnerDetachAttemptUnlocked(
+                    memberID: candidate.memberID
+                ) else { throw BillingClientError.credentialChanged }
+                return winner
+            default:
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
+    static func deleteWindowOwnerDetachAttempt(
+        ifMatches expected: BillingWindowOwnerDetachAttempt
+    ) throws {
+        try withLock {
+            let expected = try expected.validated()
+            guard let current = try loadWindowOwnerDetachAttemptUnlocked(
+                memberID: expected.memberID
+            ) else { return }
+            guard current == expected else {
+                throw BillingClientError.credentialChanged
+            }
+            let status = SecItemDelete(ownerDetachItemQuery(
+                memberID: expected.memberID
+            ) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw mappedWriteError(status)
+            }
+        }
+    }
+
     private static func loadRecoveryAttemptUnlocked() throws
         -> BillingAccountRecoveryAttempt? {
         var query = recoveryItemQuery()
@@ -263,6 +361,78 @@ enum BillingKeychainStore {
         }
     }
 
+    private static func loadWindowSponsorshipAttemptUnlocked(
+        windowLineageID: String
+    ) throws -> BillingWindowSponsorshipAttempt? {
+        guard BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16)
+        else { throw BillingClientError.malformedCredential }
+        var query = sponsorshipItemQuery(windowLineageID: windowLineageID)
+        query[kSecReturnData] = kCFBooleanTrue
+        query[kSecMatchLimit] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            break
+        case errSecItemNotFound:
+            return nil
+        case errSecInteractionNotAllowed, errSecNotAvailable:
+            throw BillingClientError.protectedDataUnavailable
+        default:
+            throw BillingClientError.keychainUnavailable
+        }
+        guard let data = result as? Data else {
+            throw BillingClientError.malformedCredential
+        }
+        do {
+            return try JSONDecoder().decode(
+                BillingWindowSponsorshipAttempt.self,
+                from: data
+            ).validated()
+        } catch let error as BillingClientError {
+            throw error
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+    }
+
+    private static func loadWindowOwnerDetachAttemptUnlocked(
+        memberID: String
+    ) throws -> BillingWindowOwnerDetachAttempt? {
+        guard BillingValidation.canonicalOpaqueID(memberID, bytes: 16)
+        else { throw BillingClientError.malformedCredential }
+        var query = ownerDetachItemQuery(memberID: memberID)
+        query[kSecReturnData] = kCFBooleanTrue
+        query[kSecMatchLimit] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            break
+        case errSecItemNotFound:
+            return nil
+        case errSecInteractionNotAllowed, errSecNotAvailable:
+            throw BillingClientError.protectedDataUnavailable
+        default:
+            throw BillingClientError.keychainUnavailable
+        }
+        guard let data = result as? Data else {
+            throw BillingClientError.malformedCredential
+        }
+        do {
+            return try JSONDecoder().decode(
+                BillingWindowOwnerDetachAttempt.self,
+                from: data
+            ).validated()
+        } catch let error as BillingClientError {
+            throw error
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+    }
+
     private static func itemQuery() -> [CFString: Any] {
         [
             kSecClass: kSecClassGenericPassword,
@@ -277,6 +447,28 @@ enum BillingKeychainStore {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: recoveryService,
             kSecAttrAccount: account,
+            kSecAttrSynchronizable: kCFBooleanFalse as Any
+        ]
+    }
+
+    private static func sponsorshipItemQuery(
+        windowLineageID: String
+    ) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: sponsorshipService,
+            kSecAttrAccount: windowLineageID,
+            kSecAttrSynchronizable: kCFBooleanFalse as Any
+        ]
+    }
+
+    private static func ownerDetachItemQuery(
+        memberID: String
+    ) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: ownerDetachService,
+            kSecAttrAccount: memberID,
             kSecAttrSynchronizable: kCFBooleanFalse as Any
         ]
     }
@@ -311,6 +503,44 @@ enum BillingKeychainStore {
 
     private static func encodedRecoveryAttributes(
         for attempt: BillingAccountRecoveryAttempt
+    ) throws -> [CFString: Any] {
+        let data: Data
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            data = try encoder.encode(try attempt.validated())
+        } catch let error as BillingClientError {
+            throw error
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+        return [
+            kSecValueData: data,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+    }
+
+    private static func encodedSponsorshipAttributes(
+        for attempt: BillingWindowSponsorshipAttempt
+    ) throws -> [CFString: Any] {
+        let data: Data
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            data = try encoder.encode(try attempt.validated())
+        } catch let error as BillingClientError {
+            throw error
+        } catch {
+            throw BillingClientError.malformedCredential
+        }
+        return [
+            kSecValueData: data,
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+    }
+
+    private static func encodedOwnerDetachAttributes(
+        for attempt: BillingWindowOwnerDetachAttempt
     ) throws -> [CFString: Any] {
         let data: Data
         do {

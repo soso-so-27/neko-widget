@@ -65,6 +65,8 @@
 	<string>$(PLUS_BILLING_API_BASE_URL)</string>
 	<key>PlusBillingRecoveryEnabled</key>
 	<string>$(PLUS_BILLING_RECOVERY_ENABLED)</string>
+	<key>PlusWindowSponsorshipClientEnabled</key>
+	<string>$(PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED)</string>
 	<key>SharingAPIBaseURL</key>
 	<string>$(SHARING_API_BASE_URL)</string>
 	<key>SharingReleaseMode</key>

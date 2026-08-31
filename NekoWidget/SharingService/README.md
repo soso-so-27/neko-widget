@@ -113,7 +113,7 @@ BootstrapのEd25519署名は`NWB1.ACCOUNT.CREATE / 1 / clientRequestId / signing
 
 課金取引requestは`Neko-Billing-Protocol-Version`、`Neko-Billing-Account-ID`、`Neko-Billing-Key-ID`、`Neko-Billing-Timestamp`、`Neko-Billing-Nonce`、`Neko-Billing-Signature`を使います。署名対象は`NWB1.REQUEST / 1 / account / key / timestamp / nonce / method / pathname / body SHA-256`です。WorkerとNode検証serviceのHMAC境界は[`billing-verifier-protocol-v1.json`](../ci/fixtures/billing-verifier-protocol-v1.json)を正本にします。
 
-`transactions` responseと`GET entitlement`の`entitlement`は、同じ`transactionId`の最新イベントだけを採用してaccount内を畳み込む暫定値です。`activeCandidate`でも必ず`provisional: true`、`grantsPlus: false`を返します。Notifications V2は再照合triggerと監査記録に限定し、現在状態はSubscription Status APIからappend-only observationへ保存します。契約中・請求再試行中・猶予中の系譜は24時間後にも再照合し、新通知時は即時へ前倒しします。失効・取消は成功時に定期jobを終了します。authority observationからproduction権限を導出する状態機械とsponsorshipは未実装なので、購入画面、Plus機能、まど権限の根拠にしてはいけません。通信失敗時にも既存写真、まど、思い出を削除・非表示にしません。生の通知・transaction・renewal JWSはD1へ保存しません。
+`transactions` responseの`entitlement`は、同じ`transactionId`の最新イベントだけを採用してaccount内を畳み込む暫定値です。`activeCandidate`でも必ず`provisional: true`、`grantsPlus: false`を返します。Notifications V2は再照合triggerと監査記録に限定し、現在状態はSubscription Status APIからappend-only observationへ保存します。契約中・請求再試行中・猶予中の系譜は24時間後にも再照合し、新通知時は即時へ前倒しします。失効・取消は成功時に定期jobを終了します。authority observationから実効権限を導出する状態機械、最大3まどのpayer sponsorship、owner-signed detachは全runtime OFFのfoundationとして実装済みです。購入画面や通常UIには未接続で、gateを有効化するまではPlus機能やまど権限の根拠にしてはいけません。通信失敗時にも既存写真、まど、思い出を削除・非表示にしません。生の通知・transaction・renewal JWSはD1へ保存しません。
 
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 

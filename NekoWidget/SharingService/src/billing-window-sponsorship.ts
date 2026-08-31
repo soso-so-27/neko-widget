@@ -2,6 +2,7 @@ import {
   authenticateSignedRequest,
   consumeNonce,
   requireLiveSpace,
+  requireOwner,
 } from "./auth";
 import {
   authenticateBillingSignedRequest,
@@ -49,6 +50,22 @@ interface Existing {
   resulting_generation: number;
   recorded_at: number;
 }
+interface OwnerDetachExisting {
+  request_hash: string;
+  window_lineage_id: string;
+  space_id: string;
+  owner_participant_id: string;
+  owner_device_id: string;
+  resulting_generation: number;
+  recorded_at: number;
+}
+interface OwnerDetachContext {
+  window_lineage_id: string;
+  membership_revision: number;
+  billing_account_id: string;
+  state: "active" | "unsponsored";
+  generation: number;
+}
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
@@ -66,6 +83,27 @@ function response(id: string, row: Existing) {
     billingAccountId: row.billing_account_id,
     windowLineageId: row.window_lineage_id,
     state: row.operation === "sponsor" ? "active" : "unsponsored",
+    generation: row.resulting_generation,
+    recordedAt: row.recorded_at,
+  });
+}
+
+async function existingOwnerDetach(env: Env, id: string) {
+  return env.DB.prepare(
+    `SELECT request_hash,window_lineage_id,space_id,owner_participant_id,
+            owner_device_id,resulting_generation,recorded_at
+       FROM billing_window_sponsorship_owner_detach_requests
+      WHERE client_request_id=?`,
+  )
+    .bind(id)
+    .first<OwnerDetachExisting>();
+}
+
+function ownerDetachResponse(id: string, row: OwnerDetachExisting) {
+  return jsonResponse({
+    protocolVersion: 1,
+    clientRequestId: id,
+    windowLineageSponsored: false,
     generation: row.resulting_generation,
     recordedAt: row.recorded_at,
   });
@@ -323,6 +361,137 @@ export async function changeWindowSponsorship(
   return response(clientRequestId, applied);
 }
 
+export async function detachWindowSponsorshipAsOwner(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const gate = await env.DB.prepare(
+    "SELECT window_sponsorship_enabled,effective_entitlement_enabled FROM billing_runtime_gate WHERE singleton=1",
+  )
+    .first<Gate>()
+    .catch(() => null);
+  if (gate?.window_sponsorship_enabled !== 1)
+    throw new ApiError(
+      503,
+      "billing_runtime_disabled",
+      "Billing is temporarily unavailable.",
+    );
+  await enforceRateLimit(
+    env,
+    env.MEMBER_RATE_LIMITER,
+    transientNetworkKey(request, "window-sponsorship-owner-detach"),
+  );
+  const body = await readBody(request, 512);
+  const value = parseJsonBody(request, body);
+  exactKeys(value, [
+    "protocolVersion",
+    "clientRequestId",
+    "expectedGeneration",
+  ]);
+  protocolVersion(value);
+  const clientRequestId = uuidField(value, "clientRequestId");
+  const expectedGeneration = integerField(
+    value,
+    "expectedGeneration",
+    1,
+    1_000_000_000,
+  );
+  const member = await authenticateSignedRequest(request, env, body);
+  try {
+    requireOwner(member);
+  } catch (error) {
+    await consumeNonce(env, member);
+    throw error;
+  }
+  await consumeNonce(env, member);
+  const requestHash = await sha256Base64url(body);
+  const replay = await existingOwnerDetach(env, clientRequestId);
+  if (replay !== null) {
+    if (
+      replay.request_hash !== requestHash ||
+      replay.space_id !== member.spaceId ||
+      replay.owner_participant_id !== member.momentParticipantId ||
+      replay.owner_device_id !== member.deviceId
+    )
+      throw new ApiError(
+        409,
+        "sponsorship_request_conflict",
+        "The sponsorship request ID was already used.",
+      );
+    return ownerDetachResponse(clientRequestId, replay);
+  }
+  const current = await env.DB.prepare(
+    `SELECT space.lineage_id AS window_lineage_id,
+            space.membership_revision,
+            sponsorship.billing_account_id,
+            sponsorship.state,
+            sponsorship.generation
+       FROM moment_spaces space
+       JOIN billing_window_sponsorships sponsorship
+         ON sponsorship.window_lineage_id=space.lineage_id
+      WHERE space.space_id=?
+        AND space.state='active'
+        AND sponsorship.state='active'
+        AND NOT EXISTS(
+          SELECT 1 FROM moment_blocks block
+           WHERE block.space_id=space.space_id AND block.state='active'
+        )`,
+  )
+    .bind(member.spaceId)
+    .first<OwnerDetachContext>();
+  if (current === null || current.generation !== expectedGeneration)
+    throw new ApiError(
+      409,
+      "sponsorship_conflict",
+      "Window sponsorship changed concurrently.",
+    );
+  try {
+    await env.DB.prepare(
+      `INSERT INTO billing_window_sponsorship_owner_detach_requests(
+         client_request_id,request_hash,window_lineage_id,space_id,
+         owner_participant_id,owner_device_id,membership_revision,
+         expected_generation,expected_billing_account_id,resulting_generation
+       ) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    )
+      .bind(
+        clientRequestId,
+        requestHash,
+        current.window_lineage_id,
+        member.spaceId,
+        member.momentParticipantId,
+        member.deviceId,
+        current.membership_revision,
+        expectedGeneration,
+        current.billing_account_id,
+        expectedGeneration + 1,
+      )
+      .run();
+  } catch {
+    const raced = await existingOwnerDetach(env, clientRequestId);
+    if (
+      raced !== null &&
+      raced.request_hash === requestHash &&
+      raced.space_id === member.spaceId &&
+      raced.owner_participant_id === member.momentParticipantId &&
+      raced.owner_device_id === member.deviceId
+    )
+      return ownerDetachResponse(clientRequestId, raced);
+    throw new ApiError(
+      409,
+      "sponsorship_conflict",
+      "Window sponsorship changed concurrently.",
+    );
+  }
+  const applied = await existingOwnerDetach(env, clientRequestId);
+  if (applied === null)
+    throw new ApiError(
+      503,
+      "sponsorship_unavailable",
+      "Sponsorship is temporarily unavailable.",
+    );
+  return ownerDetachResponse(clientRequestId, applied);
+}
+
 export async function getWindowSponsorshipGrant(
   request: Request,
   env: Env,
@@ -365,7 +534,7 @@ export async function getWindowSponsorshipGrant(
   await consumeNonce(env, member);
   const now = Date.now();
   const row = await env.DB.prepare(
-    `SELECT sponsorship.state,
+    `SELECT sponsorship.state,sponsorship.generation,
    MAX(CASE WHEN current.materialized_grants_plus=1 AND current.ownership_type='PURCHASED'
      AND current.materialized_status IN('active','gracePeriod') AND current.revocation_date_ms IS NULL
      AND current.revocation_reason IS NULL AND current.is_upgraded=0 AND current.access_until_ms>?
@@ -375,11 +544,12 @@ export async function getWindowSponsorshipGrant(
   LEFT JOIN billing_effective_entitlement_current current ON current.billing_account_id=sponsorship.billing_account_id
  WHERE space.space_id=? AND space.state='active'
    AND NOT EXISTS(SELECT 1 FROM moment_blocks block WHERE block.space_id=space.space_id AND block.state='active')
- GROUP BY sponsorship.state`,
+ GROUP BY sponsorship.state,sponsorship.generation`,
   )
     .bind(now, now, member.spaceId)
     .first<{
       state: "active" | "unsponsored" | null;
+      generation: number | null;
       access_until_ms: number | null;
     }>();
   const sponsored = row?.state === "active",
@@ -391,6 +561,7 @@ export async function getWindowSponsorshipGrant(
     protocolVersion: 1,
     windowLineageSponsored: sponsored,
     grantsPlus,
+    generation: row?.generation ?? 0,
     accessUntilMs: grantsPlus ? row!.access_until_ms : null,
     evaluatedAtMs: now,
   });

@@ -42,6 +42,10 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertRegex(config, r"(?m)^PLUS_BILLING_CLIENT_ENABLED = NO$")
         self.assertRegex(config, r"(?m)^PLUS_BILLING_API_BASE_URL =$")
         self.assertRegex(config, r"(?m)^PLUS_BILLING_RECOVERY_ENABLED = NO$")
+        self.assertRegex(
+            config,
+            r"(?m)^PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED = NO$",
+        )
 
         with (ROOT / "NekoWidget/Info.plist").open("rb") as handle:
             info = plistlib.load(handle)
@@ -56,6 +60,10 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertEqual(
             info["PlusBillingRecoveryEnabled"],
             "$(PLUS_BILLING_RECOVERY_ENABLED)",
+        )
+        self.assertEqual(
+            info["PlusWindowSponsorshipClientEnabled"],
+            "$(PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED)",
         )
         core = source("NekoWidget/Services/BillingClientCore.swift")
         self.assertIn('info["PlusBillingClientEnabled"]', core)
@@ -92,8 +100,17 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("isExcludedFromBackup = true", keychain)
         self.assertIn(".completeFileProtection", keychain)
 
+        # The sponsorship bridge must use the existing participant credential
+        # to sign its participant-scoped GET/owner consent. The independent
+        # billing identity, Keychain material, and StoreKit authorizer remain
+        # free of pairing/window secrets.
         combined = "\n".join(
-            source(f"NekoWidget/Services/{name}") for name in files
+            source(f"NekoWidget/Services/{name}")
+            for name in (
+                "BillingClientCore.swift",
+                "BillingKeychainStore.swift",
+                "BillingFreshAccountAuthorization.swift",
+            )
         )
         for forbidden in (
             "PairingCredential",
@@ -102,6 +119,14 @@ class BillingClientFoundationTests(unittest.TestCase):
             "@AppStorage",
         ):
             self.assertNotIn(forbidden, combined)
+        client = source("NekoWidget/Services/BillingAPIClient.swift")
+        sponsorship = client[
+            client.index("struct BillingWindowOwnerConsentContext"):
+            client.index("actor PlusBillingSession")
+        ]
+        self.assertIn("PairingCredential", sponsorship)
+        for forbidden in ("roomKey", "agreementPrivateKey", "Photo"):
+            self.assertNotIn(forbidden, sponsorship)
 
     def test_bootstrap_is_crash_resumable_and_not_wired_to_ui(self) -> None:
         client = source("NekoWidget/Services/BillingAPIClient.swift")
@@ -258,7 +283,10 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("expectedTransactionID", client)
         self.assertIn("expectedOriginalTransactionID", client)
         self.assertIn("func fetchAuthoritativeEntitlement(", client)
-        self.assertIn("case .authoritativeEntitlement: return \"GET\"", client)
+        self.assertIn(
+            "case .authoritativeEntitlement, .windowSponsorshipGrant: return \"GET\"",
+            client,
+        )
         self.assertIn("endpoint: .authoritativeEntitlement", client)
         self.assertIn("body: Data()", client)
         self.assertIn("response.billingAccountId == billingAccountID", client)
@@ -392,7 +420,7 @@ class BillingClientFoundationTests(unittest.TestCase):
 
         coordinator = client[
             client.index("actor BillingAccountRecoveryCoordinator"):
-            client.index("actor PlusBillingSession")
+            client.index("struct BillingWindowOwnerConsentContext")
         ]
         self.assertIn("configuration.isEnabled", coordinator)
         self.assertIn("recoverFromExplicitUserAction", coordinator)
@@ -456,7 +484,7 @@ class BillingClientFoundationTests(unittest.TestCase):
             "recoverySignature",
         ):
             self.assertIn(field, recovery_api)
-        self.assertIn("authentication: nil", recovery_api)
+        self.assertIn("authentication: .none", recovery_api)
         self.assertNotIn("timestamp", recovery_api)
         self.assertNotIn("nonce", recovery_api.lower())
         self.assertIn("response.clientRequestId", recovery_api)
@@ -465,6 +493,173 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertNotIn("recoverBillingAccountExplicitly", plus)
         self.assertNotIn("recoverBillingAccountExplicitly", app)
         self.assertNotIn("BillingAccountRecoveryCoordinator", app)
+
+    def test_disabled_window_sponsorship_client_matches_server_contract(self) -> None:
+        core = source("NekoWidget/Services/BillingClientCore.swift")
+        client = source("NekoWidget/Services/BillingAPIClient.swift")
+        keychain = source("NekoWidget/Services/BillingKeychainStore.swift")
+        plus = source("NekoWidget/Services/PlusPurchaseStore.swift")
+        app = source("NekoWidget/App/NekoWidgetApp.swift")
+
+        self.assertIn(
+            'static let windowSponsorshipGrantPath = "/v1/window-sponsorship"',
+            core,
+        )
+        self.assertIn(
+            '"/v1/billing/window-sponsorships/"',
+            core,
+        )
+        self.assertIn("case windowSponsorshipOwnerDetach", client)
+        self.assertIn("case .windowSponsorshipOwnerDetach: return \"DELETE\"", client)
+
+        transcript = core[
+            core.index("static func windowSponsorshipOwnerConsentTranscript("):
+            core.index("static func signedRequestTranscript(")
+        ]
+        transcript = transcript[
+            transcript.index("return try encodeCanonicalFields(["):
+        ]
+        ordered = (
+            '"NWB1.WINDOW.SPONSORSHIP"',
+            "BillingWindowSponsorshipOperation.sponsor.rawValue",
+            "clientRequestID",
+            "billingAccountID",
+            "windowLineageID",
+            "String(expectedGeneration)",
+            'expectedCurrentBillingAccountID ?? ""',
+            "consentSpaceID",
+            "ownerParticipantID",
+            "ownerDeviceID",
+            "String(consentIssuedAt)",
+            "String(consentMembershipRevision)",
+            "ownerConsentNonce",
+        )
+        positions = [transcript.index(field) for field in ordered]
+        self.assertEqual(positions, sorted(positions))
+
+        attempt = core[
+            core.index("struct BillingWindowSponsorshipAttempt:"):
+            core.index("struct BillingWindowOwnerDetachResult:")
+        ]
+        for field in (
+            "clientRequestID",
+            "billingAccountID",
+            "windowLineageID",
+            "expectedGeneration",
+            "expectedCurrentBillingAccountID",
+            "exactRequestBody",
+        ):
+            self.assertIn(f"var {field}:", attempt)
+        self.assertIn("func matchesStableIntent(", attempt)
+        self.assertIn("try encode(body) == data", core)
+        self.assertIn(
+            "try container.encodeNil(forKey: .expectedCurrentBillingAccountId)",
+            core,
+        )
+        for wire_field in (
+            "consentSpaceId",
+            "ownerParticipantId",
+            "ownerDeviceId",
+            "consentMembershipRevision",
+            "consentIssuedAt",
+            "ownerConsentNonce",
+            "ownerConsentSignature",
+        ):
+            self.assertIn(wire_field, core)
+
+        grant = core[
+            core.index("struct BillingWindowSponsorshipGrant:"):
+            core.index("struct BillingWindowSponsorshipChangeResult:")
+        ]
+        for state in (
+            "unknown",
+            "unsponsored",
+            "sponsoredWithoutCurrentAccess",
+            "active",
+            "offlineGrace",
+            "expired",
+        ):
+            self.assertIn(f"case {state}", grant)
+        self.assertIn("let generation: Int", grant)
+        self.assertIn("accessUntilMs - evaluatedAtMs", grant)
+        self.assertIn("offlineGraceDurationMs = 24 * 60 * 60 * 1_000", grant)
+        self.assertIn("let activeUntilMs = min(", grant)
+        self.assertIn("evaluatedAtMs + Self.offlineGraceDurationMs", grant)
+        self.assertIn("lastConfirmed: BillingWindowSponsorshipGrant?", grant)
+
+        owner_detach = core[
+            core.index("struct BillingWindowOwnerDetachAttempt:"):
+            core.index("struct BillingWindowSponsorWireRequest:")
+        ]
+        self.assertIn("var deviceID: String?", owner_detach)
+        self.assertNotIn("ownerParticipantID", owner_detach)
+        self.assertNotIn("ownerDeviceID", owner_detach)
+
+        coordinator = client[
+            client.index("actor BillingWindowSponsorshipCoordinator"):
+            client.index("actor PlusBillingSession")
+        ]
+        self.assertIn("configuration.isEnabled", coordinator)
+        self.assertIn("fetchGrantFromExplicitUserAction", coordinator)
+        self.assertIn("sponsorFromExplicitUserAction", coordinator)
+        self.assertIn("unsponsorAsPayerFromExplicitUserAction", coordinator)
+        self.assertIn("detachAsOwnerFromExplicitUserAction", coordinator)
+        self.assertIn("PairingCrypto.sign(", coordinator)
+        self.assertIn("insertAttempt(candidate)", coordinator)
+        self.assertLess(
+            coordinator.index("insertAttempt(candidate)"),
+            coordinator.index("apiClient.changeWindowSponsorship("),
+        )
+        self.assertIn("insertOwnerDetachAttempt(candidate)", coordinator)
+        self.assertLess(
+            coordinator.index("insertOwnerDetachAttempt(candidate)"),
+            coordinator.index("apiClient.detachWindowSponsorshipAsOwner("),
+        )
+        self.assertIn("case .transportUnavailable", coordinator)
+        self.assertIn("reason = .offline", coordinator)
+        self.assertIn("return preserved.offlineAccessState(now: now)", coordinator)
+        self.assertIn("lastConfirmed: preserved", coordinator)
+        self.assertIn("let ownerDeviceID = owner.deviceID", coordinator)
+        self.assertNotIn("credential.deviceID ??", coordinator)
+
+        api = client[client.index("actor URLSessionBillingAPIClient"):]
+        self.assertIn("authentication: .billing(credential)", api)
+        self.assertIn("authentication: .participant(", api)
+        for header in (
+            "Neko-Billing-Protocol-Version",
+            "Neko-Billing-Nonce",
+            "Neko-Billing-Signature",
+            "Neko-Protocol-Version",
+            "Neko-Member-ID",
+            "Neko-Nonce",
+            "Neko-Signature",
+        ):
+            self.assertIn(header, api)
+        self.assertIn("PairingCrypto.sha256(body)", api)
+
+        for service in (
+            "window-sponsorship-attempt.v1.host",
+            "window-owner-detach-attempt.v1.host",
+        ):
+            self.assertIn(service, keychain)
+        sponsorship_storage = keychain[
+            keychain.index("static func insertWindowSponsorshipAttemptIfAbsent("):
+            keychain.index("private static func loadRecoveryAttemptUnlocked(")
+        ]
+        self.assertIn("SecItemAdd", sponsorship_storage)
+        self.assertIn("case errSecDuplicateItem", sponsorship_storage)
+        self.assertIn("guard current == expected", sponsorship_storage)
+        self.assertIn("SecItemDelete", sponsorship_storage)
+        self.assertIn("kSecAttrAccessibleWhenUnlockedThisDeviceOnly", keychain)
+        self.assertIn("kSecAttrSynchronizable", keychain)
+
+        for disconnected in (plus, app):
+            self.assertNotIn("BillingWindowSponsorshipCoordinator", disconnected)
+            self.assertNotIn("fetchWindowSponsorshipGrant", disconnected)
+            self.assertNotIn("detachAsOwnerFromExplicitUserAction", disconnected)
+        self.assertNotIn("AppStore.sync", coordinator)
+        for forbidden in ("roomKey", "agreementPrivateKey", "Photo"):
+            self.assertNotIn(forbidden, coordinator)
 
 
 if __name__ == "__main__":

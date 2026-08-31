@@ -1,7 +1,7 @@
 # ADR-025：StoreKitと課金IDの境界
 
 作成：2026-08-31  
-状態：クライアント通信、Server記録、Notifications V2／Subscription Status監査、無効状態の実効権限状態機械、AppTransaction二重JWSによる課金鍵復旧foundation、購入者から最大3まどへのServer sponsorship foundationを採用。全runtime OFF。販売・iOS sponsorship接続・課金UIは未実装
+状態：クライアント通信、Server記録、Notifications V2／Subscription Status監査、無効状態の実効権限状態機械、AppTransaction二重JWSによる課金鍵復旧foundation、購入者から最大3まどへのsponsorship、所有者解除、iOS署名clientと有界offline状態を採用。全runtime OFF。販売・通常UI接続・課金UIは未実装
 
 関連：[ADR-024](ADR-024-無料体験とPlusと物販.md)、[ADR-018](ADR-018-名前付きの非公開なまど.md)、[Server sponsorship foundation](../SharingService/docs/ADR-025-plus-window-sponsorship-foundation.md)、[共有設計](共有設計.md)
 
@@ -54,6 +54,7 @@ PLUS_MONTHLY_PRODUCT_ID =
 PLUS_ANNUAL_PRODUCT_ID =
 PLUS_BILLING_CLIENT_ENABLED = NO
 PLUS_BILLING_RECOVERY_ENABLED = NO
+PLUS_WINDOW_SPONSORSHIP_CLIENT_ENABLED = NO
 PLUS_BILLING_API_BASE_URL =
 ```
 
@@ -125,7 +126,7 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 2. 無効状態で実装済みの課金bootstrap／Keychain／署名clientを、販売準備用の内部導線へ接続して実機検証する
 3. 実装済みの二重JWS復旧foundationをmacOS/Xcodeでcompileし、署名実機と隔離stagingで応答消失・同時実行・猶予境界・強制終了を訓練する
 4. 実装済みのNotifications V2、Subscription Status API、再照合jobを隔離stagingへ配備し、Notification History復旧・再送・順序逆転・障害backoffを運用検証する
-5. 実装済みのServer sponsorship foundationをiOSへ接続し、所有者による支援解除、オフライン猶予、解約・返金・請求猶予・失効時の画面状態を実装する
+5. 無効状態で実装済みのiOS sponsorship署名client、所有者解除、24時間以内かつServer期限以内のoffline猶予をmacOS/Xcodeでcompileし、内部導線・署名実機・隔離stagingへだけ接続する。解約・返金・請求猶予・失効時の画面状態はその後に実装する
 6. 既存β利用者のまどを失わない移行を実装する
 7. 検証サービスを隔離環境へdeployし、Apple root、secret、監視、rotation、共有nonce store、ingress rate limit、緊急OFFを運用検証する
 8. Xcode StoreKit、Sandbox、TestFlightの順で購入・保留・取消・復元・更新・失効・返金を検証する
