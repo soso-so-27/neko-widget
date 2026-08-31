@@ -36,6 +36,11 @@ active window participantはmember署名GET `/v1/window-sponsorship` で、自�
 限り `windowLineageSponsored`、`grantsPlus`、`generation`、`accessUntilMs` を取得できる。payer ID、
 transaction、decision IDは返さない。他windowのlineageを指定する入力自体を持たない。
 
+activeかつblockされていないowner本人に限り、同じ応答へ `ownerConsentContext` として
+`windowLineageId`、current `membershipRevision` を返す。これはpayer sponsorshipへのowner同意を
+current windowへ束縛するためだけの値であり、inviteeの応答ではfield自体を返さない。payer ID、
+transaction、decision ID、他windowのlineageはowner応答にも含めない。
+
 active ownerは同じmember署名境界の`DELETE /v1/window-sponsorship`で、payerの課金鍵や同意を
 必要とせず現在のsponsorshipをdetachできる。bodyはrequest IDと確認済みgenerationだけを持ち、
 owner participant、device、current space、lineage、membership revision、block、generationをD1の

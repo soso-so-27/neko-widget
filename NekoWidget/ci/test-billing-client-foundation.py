@@ -587,6 +587,67 @@ class BillingClientFoundationTests(unittest.TestCase):
         self.assertIn("evaluatedAtMs + Self.offlineGraceDurationMs", grant)
         self.assertIn("lastConfirmed: BillingWindowSponsorshipGrant?", grant)
 
+        consent_context = core[
+            core.index("struct BillingWindowOwnerConsentReadContext:"):
+            core.index("enum BillingWindowPlusUnknownReason:")
+        ]
+        self.assertIn(
+            "struct BillingWindowOwnerConsentReadContext: Equatable, Sendable",
+            consent_context,
+        )
+        self.assertIn(
+            "struct BillingWindowSponsorshipReadResult: Equatable, Sendable",
+            consent_context,
+        )
+        self.assertNotIn("Codable", consent_context)
+        self.assertIn(
+            "BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16)",
+            consent_context,
+        )
+        self.assertIn(
+            "(1 ... 1_000_000_000).contains(membershipRevision)",
+            consent_context,
+        )
+        self.assertIn(
+            "let ownerConsentContext: BillingWindowOwnerConsentReadContext?",
+            consent_context,
+        )
+        self.assertEqual(
+            (core + client).count(
+                "struct BillingWindowOwnerConsentReadContext:"
+            ),
+            1,
+        )
+        self.assertEqual(
+            (core + client).count("struct BillingWindowOwnerConsentContext:"),
+            1,
+        )
+
+        response_contract = client[
+            client.index("private struct BillingWindowSponsorshipGrantResponse:"):
+            client.index("private struct BillingWindowSponsorshipChangeResponse:")
+        ]
+        self.assertIn(
+            "let ownerConsentContext: BillingWindowOwnerConsentReadContextResponse?",
+            response_contract,
+        )
+        self.assertIn("let windowLineageId: String", response_contract)
+        self.assertIn("let membershipRevision: Int", response_contract)
+
+        read_api = client[
+            client.index("func fetchWindowSponsorshipGrant(", client.index(
+                "actor URLSessionBillingAPIClient"
+            )):
+            client.index("func changeWindowSponsorship(", client.index(
+                "actor URLSessionBillingAPIClient"
+            ))
+        ]
+        self.assertIn("BillingWindowSponsorshipReadResult(", read_api)
+        self.assertIn("response.ownerConsentContext.map", read_api)
+        self.assertIn("windowLineageID: $0.windowLineageId", read_api)
+        self.assertIn("membershipRevision: $0.membershipRevision", read_api)
+        self.assertIn(").validated()", read_api)
+
         owner_detach = core[
             core.index("struct BillingWindowOwnerDetachAttempt:"):
             core.index("struct BillingWindowSponsorWireRequest:")
@@ -601,6 +662,9 @@ class BillingClientFoundationTests(unittest.TestCase):
         ]
         self.assertIn("configuration.isEnabled", coordinator)
         self.assertIn("fetchGrantFromExplicitUserAction", coordinator)
+        self.assertIn("fetchReadResultFromExplicitUserAction", coordinator)
+        self.assertIn("credential: credential,\n                now: now", coordinator)
+        self.assertIn(").grant.accessState(now: now)", coordinator)
         self.assertIn("sponsorFromExplicitUserAction", coordinator)
         self.assertIn("unsponsorAsPayerFromExplicitUserAction", coordinator)
         self.assertIn("detachAsOwnerFromExplicitUserAction", coordinator)
@@ -658,6 +722,7 @@ class BillingClientFoundationTests(unittest.TestCase):
             self.assertNotIn("fetchWindowSponsorshipGrant", disconnected)
             self.assertNotIn("detachAsOwnerFromExplicitUserAction", disconnected)
         self.assertNotIn("AppStore.sync", coordinator)
+        self.assertNotIn("BillingWindowOwnerConsentReadContext", keychain)
         for forbidden in ("roomKey", "agreementPrivateKey", "Photo"):
             self.assertNotIn(forbidden, coordinator)
 

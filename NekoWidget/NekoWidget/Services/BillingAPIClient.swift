@@ -24,7 +24,7 @@ protocol BillingAPIClientProtocol: Sendable {
     func fetchWindowSponsorshipGrant(
         memberID: String,
         credential: PairingCredential
-    ) async throws -> BillingWindowSponsorshipGrant
+    ) async throws -> BillingWindowSponsorshipReadResult
 
     func changeWindowSponsorship(
         attempt: BillingWindowSponsorshipAttempt,
@@ -513,10 +513,11 @@ actor BillingWindowSponsorshipCoordinator {
             )
         }
         do {
-            return try await apiClient.fetchWindowSponsorshipGrant(
+            return try await fetchReadResultFromExplicitUserAction(
                 memberID: memberID,
-                credential: credential
-            ).validated(now: now).accessState(now: now)
+                credential: credential,
+                now: now
+            ).grant.accessState(now: now)
         } catch let error as BillingClientError {
             let reason: BillingWindowPlusUnknownReason
             switch error {
@@ -540,6 +541,22 @@ actor BillingWindowSponsorshipCoordinator {
                 lastConfirmed: preserved
             )
         }
+    }
+
+    /// Returns owner consent identifiers only to the immediate explicit
+    /// caller. The result is not retained by this coordinator or access state.
+    func fetchReadResultFromExplicitUserAction(
+        memberID: String,
+        credential: PairingCredential,
+        now: Date = .now
+    ) async throws -> BillingWindowSponsorshipReadResult {
+        guard configuration.isEnabled else {
+            throw BillingClientError.configurationUnavailable
+        }
+        return try await apiClient.fetchWindowSponsorshipGrant(
+            memberID: memberID,
+            credential: credential
+        ).validated(now: now)
     }
 
     func sponsorFromExplicitUserAction(
@@ -1097,7 +1114,7 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
     func fetchWindowSponsorshipGrant(
         memberID: String,
         credential: PairingCredential
-    ) async throws -> BillingWindowSponsorshipGrant {
+    ) async throws -> BillingWindowSponsorshipReadResult {
         guard BillingValidation.canonicalOpaqueID(memberID, bytes: 16) else {
             throw BillingClientError.malformedCredential
         }
@@ -1112,12 +1129,20 @@ actor URLSessionBillingAPIClient: BillingAPIClientProtocol {
         guard response.protocolVersion == BillingProtocolV1.version else {
             throw BillingClientError.invalidServerResponse
         }
-        return try BillingWindowSponsorshipGrant(
-            windowLineageSponsored: response.windowLineageSponsored,
-            grantsPlus: response.grantsPlus,
-            accessUntilMs: response.accessUntilMs,
-            evaluatedAtMs: response.evaluatedAtMs,
-            generation: response.generation
+        return try BillingWindowSponsorshipReadResult(
+            grant: BillingWindowSponsorshipGrant(
+                windowLineageSponsored: response.windowLineageSponsored,
+                grantsPlus: response.grantsPlus,
+                accessUntilMs: response.accessUntilMs,
+                evaluatedAtMs: response.evaluatedAtMs,
+                generation: response.generation
+            ),
+            ownerConsentContext: response.ownerConsentContext.map {
+                BillingWindowOwnerConsentReadContext(
+                    windowLineageID: $0.windowLineageId,
+                    membershipRevision: $0.membershipRevision
+                )
+            }
         ).validated()
     }
 
@@ -1471,6 +1496,12 @@ private struct BillingWindowSponsorshipGrantResponse: Decodable {
     let accessUntilMs: Int?
     let evaluatedAtMs: Int
     let generation: Int
+    let ownerConsentContext: BillingWindowOwnerConsentReadContextResponse?
+}
+
+private struct BillingWindowOwnerConsentReadContextResponse: Decodable {
+    let windowLineageId: String
+    let membershipRevision: Int
 }
 
 private struct BillingWindowSponsorshipChangeResponse: Decodable {

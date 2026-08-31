@@ -1311,6 +1311,38 @@ describe("Plus window sponsorship foundation", () => {
     ).rejects.toThrow();
   });
 
+  it("returns consent identifiers only to the active owner", async () => {
+    const signedWindow = await signedSpace();
+    const enabledEnv = await enableSponsorshipGates();
+
+    const ownerResponse = await route(
+      await signedGrantRequest(signedWindow.owner),
+      enabledEnv,
+    );
+    expect(ownerResponse.status).toBe(200);
+    const ownerBody = await ownerResponse.json<Record<string, unknown>>();
+    expect(ownerBody.ownerConsentContext).toEqual({
+      windowLineageId: signedWindow.window.lineage,
+      membershipRevision: signedWindow.window.revision,
+    });
+    expect(ownerBody.billingAccountId).toBeUndefined();
+    expect(ownerBody.transactionId).toBeUndefined();
+    expect(ownerBody.decisionId).toBeUndefined();
+
+    const inviteeResponse = await route(
+      await signedGrantRequest(signedWindow.invitee),
+      enabledEnv,
+    );
+    expect(inviteeResponse.status).toBe(200);
+    const inviteeBody = await inviteeResponse.json<Record<string, unknown>>();
+    expect(inviteeBody.ownerConsentContext).toBeUndefined();
+    expect(inviteeBody.windowLineageId).toBeUndefined();
+    expect(inviteeBody.membershipRevision).toBeUndefined();
+    expect(inviteeBody.billingAccountId).toBeUndefined();
+    expect(inviteeBody.transactionId).toBeUndefined();
+    expect(inviteeBody.decisionId).toBeUndefined();
+  });
+
   it("lets an active invitee read only the current unblocked window grant", async () => {
     const sponsor = await account(),
       first = await signedSpace(),
@@ -1336,6 +1368,7 @@ describe("Plus window sponsorship foundation", () => {
     expect(grantedBody.billingAccountId).toBeUndefined();
     expect(grantedBody.transactionId).toBeUndefined();
     expect(grantedBody.decisionId).toBeUndefined();
+    expect(grantedBody.ownerConsentContext).toBeUndefined();
 
     const other = await route(
       await signedGrantRequest(second.invitee),

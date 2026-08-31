@@ -550,6 +550,35 @@ struct BillingWindowSponsorshipGrant: Codable, Equatable, Sendable {
     }
 }
 
+/// Owner-only identifiers returned by the participant-scoped GET. This value
+/// is intentionally not Codable and is never part of the grant/access-state
+/// cache. It may be used only to construct an explicit owner-approved action.
+struct BillingWindowOwnerConsentReadContext: Equatable, Sendable {
+    let windowLineageID: String
+    let membershipRevision: Int
+
+    func validated() throws -> Self {
+        guard BillingValidation.canonicalOpaqueID(windowLineageID, bytes: 16),
+              (1 ... 1_000_000_000).contains(membershipRevision)
+        else { throw BillingClientError.invalidServerResponse }
+        return self
+    }
+}
+
+/// Ephemeral result of an explicit participant read. Only `grant` may feed the
+/// existing access-state path; `ownerConsentContext` is not persisted.
+struct BillingWindowSponsorshipReadResult: Equatable, Sendable {
+    let grant: BillingWindowSponsorshipGrant
+    let ownerConsentContext: BillingWindowOwnerConsentReadContext?
+
+    func validated(now: Date = .now) throws -> Self {
+        try Self(
+            grant: grant.validated(now: now),
+            ownerConsentContext: ownerConsentContext?.validated()
+        )
+    }
+}
+
 enum BillingWindowPlusUnknownReason: String, Codable, Sendable {
     case clientDisabled
     case offline

@@ -534,7 +534,9 @@ export async function getWindowSponsorshipGrant(
   await consumeNonce(env, member);
   const now = Date.now();
   const row = await env.DB.prepare(
-    `SELECT sponsorship.state,sponsorship.generation,
+    `SELECT space.lineage_id AS window_lineage_id,
+    space.membership_revision,
+    sponsorship.state,sponsorship.generation,
    MAX(CASE WHEN current.materialized_grants_plus=1 AND current.ownership_type='PURCHASED'
      AND current.materialized_status IN('active','gracePeriod') AND current.revocation_date_ms IS NULL
      AND current.revocation_reason IS NULL AND current.is_upgraded=0 AND current.access_until_ms>?
@@ -544,10 +546,12 @@ export async function getWindowSponsorshipGrant(
   LEFT JOIN billing_effective_entitlement_current current ON current.billing_account_id=sponsorship.billing_account_id
  WHERE space.space_id=? AND space.state='active'
    AND NOT EXISTS(SELECT 1 FROM moment_blocks block WHERE block.space_id=space.space_id AND block.state='active')
- GROUP BY sponsorship.state,sponsorship.generation`,
+ GROUP BY space.lineage_id,space.membership_revision,sponsorship.state,sponsorship.generation`,
   )
     .bind(now, now, member.spaceId)
     .first<{
+      window_lineage_id: string;
+      membership_revision: number;
       state: "active" | "unsponsored" | null;
       generation: number | null;
       access_until_ms: number | null;
@@ -557,6 +561,13 @@ export async function getWindowSponsorshipGrant(
       sponsored &&
       row?.access_until_ms !== null &&
       row?.access_until_ms !== undefined;
+  const ownerConsentContext =
+    member.role === "owner" && row !== null
+      ? {
+          windowLineageId: row.window_lineage_id,
+          membershipRevision: row.membership_revision,
+        }
+      : undefined;
   return jsonResponse({
     protocolVersion: 1,
     windowLineageSponsored: sponsored,
@@ -564,5 +575,6 @@ export async function getWindowSponsorshipGrant(
     generation: row?.generation ?? 0,
     accessUntilMs: grantsPlus ? row!.access_until_ms : null,
     evaluatedAtMs: now,
+    ...(ownerConsentContext === undefined ? {} : { ownerConsentContext }),
   });
 }
