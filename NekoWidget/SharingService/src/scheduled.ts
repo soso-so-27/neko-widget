@@ -489,6 +489,20 @@ async function cleanupEphemeralRows(env: Env, now: number): Promise<void> {
     ).bind(now, limit).run(),
   );
   await runOldestFirstChunks(
+    CLEANUP_NONCE_LIMIT,
+    CLEANUP_NONCE_CHUNK_SIZE,
+    (limit) => env.DB.prepare(
+      `DELETE FROM billing_request_nonces
+        WHERE rowid IN (
+          SELECT rowid
+            FROM billing_request_nonces
+           WHERE expires_at <= ?
+           ORDER BY expires_at ASC, billing_key_id ASC, nonce ASC
+           LIMIT ?
+        )`,
+    ).bind(now, limit).run(),
+  );
+  await runOldestFirstChunks(
     CLEANUP_IDEMPOTENCY_LIMIT,
     CLEANUP_IDEMPOTENCY_CHUNK_SIZE,
     (limit) => env.DB.prepare(

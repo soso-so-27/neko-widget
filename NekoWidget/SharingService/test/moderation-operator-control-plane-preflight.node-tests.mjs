@@ -38,6 +38,7 @@ const reviewed = {
     "CREATE_RATE_LIMITER",
     "INVITE_RATE_LIMITER",
     "MEMBER_RATE_LIMITER",
+    "BILLING_RATE_LIMITER",
   ],
 };
 
@@ -93,6 +94,7 @@ const snapshot = {
       { limiterId: "CREATE_RATE_LIMITER", namespaceId: "100001" },
       { limiterId: "INVITE_RATE_LIMITER", namespaceId: "100002" },
       { limiterId: "MEMBER_RATE_LIMITER", namespaceId: "100003" },
+      { limiterId: "BILLING_RATE_LIMITER", namespaceId: "100004" },
       { limiterId: "OPERATOR_AUTH_RATE_LIMITER", namespaceId: "200001" },
       { limiterId: "OPERATOR_ACTION_RATE_LIMITER", namespaceId: "200002" },
       { limiterId: "OTHER_ACCOUNT_LIMITER", namespaceId: "300001" },
@@ -214,7 +216,7 @@ test("rejects approximate rate-limit specs that cannot prove isolation", () => {
     (value) => { value.rateLimits.accountNamespaceInventoryComplete = false; },
     (value) => { value.rateLimits.operatorBindings[0].namespaceId = "0200001"; },
     (value) => { value.rateLimits.operatorBindings[1].namespaceId = "200001"; },
-    (value) => { value.rateLimits.accountNamespaceBindings[4].namespaceId = "200001"; },
+    (value) => { value.rateLimits.accountNamespaceBindings[5].namespaceId = "200001"; },
     (value) => { value.rateLimits.accountNamespaceBindings =
       value.rateLimits.accountNamespaceBindings.filter(
         (binding) => binding.limiterId !== "CREATE_RATE_LIMITER",

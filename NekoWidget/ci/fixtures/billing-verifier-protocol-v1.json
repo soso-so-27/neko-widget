@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "secret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "timestamp": 1788163200,
+  "nonce": "8PHy8_T19vf4-fr7_P3-_w",
+  "requestBody": "{\"protocolVersion\":1,\"signedTransactionInfo\":\"eyJhbGciOiJFUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.signature\"}",
+  "requestBodySHA256": "eIWyUwFDjWwHwBTxefYjl5w8BMaJAbF9yFPZdL1urY0",
+  "requestSignature": "YP86hYzzZAf6oc6oB5lwCoMEw7BOQhnq1_eFOwXS3GA",
+  "responseStatus": 200,
+  "responseBody": "{\"protocolVersion\":1,\"ok\":true}",
+  "responseBodySHA256": "aL7HcoRGovkVl647k0JIaqMF0RDwrxL8Z2ccK355Xe0",
+  "responseSignature": "EQJAX9pL3PWBWkzTSUnQJyuxOY2eQMxxeSW7i_ncsqw"
+}

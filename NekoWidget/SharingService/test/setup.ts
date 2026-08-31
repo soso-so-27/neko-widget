@@ -10,7 +10,7 @@ const testEnv = env as unknown as TestEnv;
 await applyD1Migrations(testEnv.DB, testEnv.TEST_MIGRATIONS);
 
 // Production migration state is closed. The integration-test baseline opens
-// all three lower gates so existing feature tests continue to exercise their
+// all three personal-staging lower gates so existing feature tests continue to exercise their
 // reviewed Wrangler-var upper bounds; gate-specific tests close them by CAS.
 const opened = await testEnv.DB.prepare(
   `UPDATE personal_staging_runtime_gate

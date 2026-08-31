@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "NekoWidget/SharingService/**"
+      - "NekoWidget/BillingVerificationService/**"
+      - "NekoWidget/ci/fixtures/billing-verifier-protocol-v1.json"
       - "NekoWidget/ci/fixtures/pairing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/pairing-api-v1-responses.json"
       - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
@@ -14,6 +16,8 @@ on:
   pull_request:
     paths:
       - "NekoWidget/SharingService/**"
+      - "NekoWidget/BillingVerificationService/**"
+      - "NekoWidget/ci/fixtures/billing-verifier-protocol-v1.json"
       - "NekoWidget/ci/fixtures/pairing-protocol-v1.json"
       - "NekoWidget/ci/fixtures/pairing-api-v1-responses.json"
       - "NekoWidget/ci/fixtures/sharing-protocol-v1.json"
@@ -31,6 +35,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  billing-verifier-check:
+    name: Typecheck, test, and build Apple transaction verifier
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: NekoWidget/BillingVerificationService/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: NekoWidget/BillingVerificationService
+        shell: bash
+        run: npm ci --ignore-scripts
+
+      - name: Verify Apple transaction service boundary
+        working-directory: NekoWidget/BillingVerificationService
+        shell: bash
+        run: npm run check
+
   moderation-keygen-windows-policy:
     name: Windows moderation key, drill, and report policy fixtures
     runs-on: windows-2022

@@ -1,6 +1,8 @@
 # ねこのまど SharingService
 
-Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）、旧Phase 2（日次canonical set）、Phase 3（追記型の「今の一枚」）を実装しています。Phase 2は互換用に残すだけで新製品UIからは呼びません。repositoryの既定値とproduction用templateではPhase 3、まど名同期、旧共有をすべてOFFにし、productionのD1/R2作成、deploy、secret設定は行っていません。
+Cloudflare Workers + D1 + private R2を前提にした、招待制共有のserver componentです。Phase 1（pairing）、旧Phase 2（日次canonical set）、Phase 3（追記型の「今の一枚」）を実装しています。Phase 2は互換用に残すだけで新製品UIからは呼びません。repositoryの既定値とproduction用templateではPhase 3、まど名同期、旧共有、課金bootstrap、課金取引受付をすべてOFFにし、productionのD1/R2作成、deploy、secret設定は行っていません。
+
+課金基盤は共有identityから分離しています。このWorkerはBillingAccountIDと正規化済み取引イベントを記録しますが、Apple JWSの証明書検証は実Node環境の[`BillingVerificationService`](../BillingVerificationService/README.md)が担当します。どちらも未deploy・runtime OFFで、購入UIやPlus権限はまだ有効になりません。
 
 これとは分離した本人所有2台だけのpersonal stagingはdeploy済みで、2026-08-24現在は通常momentと暗号化まど名同期をON、旧共有をOFFで維持しています。日次監視とOFF候補のlocal検証だけを適用する個人例外であり、外部実停止の未整備は継続利用のblockerです。外部testerや一般利用者へ配るproduction環境ではありません。現在の運用境界は[`PERSONAL_STAGING_OPERATIONS.md`](PERSONAL_STAGING_OPERATIONS.md)を正本とします。
 
@@ -96,6 +98,17 @@ Phase 3の追加APIは次のとおりです。署名headerはv1と同じです�
 | `PUT` | `/v3/push-subscriptions/current` | 同じ物理tokenの他のtargeted bindingを残し、現在の署名済みまどを通知対象へ加算する |
 | `DELETE` | `/v3/push-subscriptions/current` | runtime OFF中でも現在の署名済みまどのtargeted bindingだけを削除する |
 
+課金基盤のAPIは共有member署名を使わず、独立した課金用Ed25519鍵を使います。上限・下限runtime gateは既定OFFです。
+
+| Method | Path | 認証 | 用途 |
+|---|---|---|---|
+| `POST` | `/v1/billing/accounts` | 課金公開鍵による自己署名bootstrap | StoreKit `appAccountToken`に使うBillingAccountIDを初回発行する |
+| `POST` | `/v1/billing/transactions` | BillingAccountID + 課金鍵の署名 | Apple検証済み取引を冪等な監査ledgerへ記録する。まど権限は付与しない |
+
+BootstrapのEd25519署名は`NWB1.ACCOUNT.CREATE / 1 / clientRequestId / signingPublicKey`を、既存protocolと同じUInt16 big-endian length prefixで連結したbytesを対象にします。冪等性もこの意味内容のhashで判定し、JSONのfield順や空白へ依存しません。
+
+課金取引requestは`Neko-Billing-Protocol-Version`、`Neko-Billing-Account-ID`、`Neko-Billing-Key-ID`、`Neko-Billing-Timestamp`、`Neko-Billing-Nonce`、`Neko-Billing-Signature`を使います。署名対象は`NWB1.REQUEST / 1 / account / key / timestamp / nonce / method / pathname / body SHA-256`です。WorkerとNode検証serviceのHMAC境界は[`billing-verifier-protocol-v1.json`](../ci/fixtures/billing-verifier-protocol-v1.json)を正本にします。
+
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 
 ### Invite code
@@ -185,11 +198,12 @@ Phase 2 draftのaccess TTLは最大60分か当日境界の早い方、current co
 
 ## Rate limitとlogging
 
-Production exampleはCloudflare Rate Limiting bindingを三つ使います。
+Production exampleはCloudflare Rate Limiting bindingを四つ使います。
 
 - Space creation: source networkごとに5/min
 - Challenge/enrollment: source network + invitationごとに10/min
 - Signed member API: source networkごとに120/min
+- 課金bootstrap／取引受付: source networkごとに30/min
 
 Network addressはrate-limit bindingのtransient keyにだけ渡し、D1へ保存しません。Bindingはper-locationかつeventually consistentなので、正確なquotaやone-time enforcementには使わず、D1 constraint/triggerを正本にします。
 
@@ -224,6 +238,6 @@ offline toolの存在だけではProduction gateを満たしません。
 [`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)を参照してください。
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 
-[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0012`の12 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要なものを`YES`へ変更します。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
+[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0019`の19 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`、`BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED`、`BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED`は既定`NO`のままにし、migration・非公開bucket・moderation運用・rate limit・client release gateを全て確認した環境だけで必要なものを`YES`へ変更します。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
 
 両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、3本のCron、削除backlogの最古時刻をreviewします。

@@ -18,6 +18,7 @@ const fixtureEnvironment = {
   NEKO_STAGING_CREATE_RATE_LIMIT_NAMESPACE_ID: "700001",
   NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID: "700002",
   NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID: "700003",
+  NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID: "700004",
 };
 const template = JSON.stringify({
   $schema: "node_modules/wrangler/config-schema.json",
@@ -35,6 +36,8 @@ const template = JSON.stringify({
     WINDOW_NAME_RUNTIME_ENABLED: "NO",
     APNS_RUNTIME_ENABLED: "NO",
     LEGACY_SHARING_RUNTIME_ENABLED: "NO",
+    BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "NO",
+    BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "NO",
     INVITATION_TTL_SECONDS: "86400",
     CHALLENGE_TTL_SECONDS: "300",
     PENDING_TTL_SECONDS: "86400",
@@ -56,6 +59,7 @@ const template = JSON.stringify({
     { name: "CREATE_RATE_LIMITER", namespace_id: "__NEKO_STAGING_CREATE_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 5, period: 60 } },
     { name: "INVITE_RATE_LIMITER", namespace_id: "__NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 10, period: 60 } },
     { name: "MEMBER_RATE_LIMITER", namespace_id: "__NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 120, period: 60 } },
+    { name: "BILLING_RATE_LIMITER", namespace_id: "__NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 30, period: 60 } },
   ],
 });
 

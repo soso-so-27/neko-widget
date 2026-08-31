@@ -5,6 +5,7 @@ export interface Env {
   CREATE_RATE_LIMITER?: RateLimit;
   INVITE_RATE_LIMITER?: RateLimit;
   MEMBER_RATE_LIMITER?: RateLimit;
+  BILLING_RATE_LIMITER?: RateLimit;
   ENVIRONMENT: string;
   /// Exact, server-side operational switch for normal v2 moment traffic.
   /// Report ingestion is controlled separately; blocks and cleanup remain
@@ -29,6 +30,20 @@ export interface Env {
   /// Exact, server-side operational switch for the retired v1 daily-sharing
   /// transport. Pairing and revocation remain available when this is disabled.
   LEGACY_SHARING_RUNTIME_ENABLED?: string;
+  /// Exact, independent switch for BillingAccountID issuance and verified
+  /// transaction ingestion. Product configuration and verifier secrets never
+  /// enable billing by themselves.
+  BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED?: string;
+  BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED?: string;
+  /// HTTPS origin of the isolated, real-Node Apple JWS verifier.
+  BILLING_VERIFIER_ORIGIN?: string;
+  /// Secret base64url-encoded 32-byte HMAC key shared only with the verifier.
+  BILLING_VERIFIER_SHARED_SECRET?: string;
+  BILLING_BUNDLE_ID?: string;
+  BILLING_STORE_ENVIRONMENT?: string;
+  BILLING_SUBSCRIPTION_GROUP_ID?: string;
+  BILLING_MONTHLY_PRODUCT_ID?: string;
+  BILLING_ANNUAL_PRODUCT_ID?: string;
   INVITATION_TTL_SECONDS: string;
   CHALLENGE_TTL_SECONDS: string;
   PENDING_TTL_SECONDS: string;
@@ -70,6 +85,18 @@ export function legacySharingRuntimeEnabled(
   env: Pick<Env, "LEGACY_SHARING_RUNTIME_ENABLED">,
 ): boolean {
   return env.LEGACY_SHARING_RUNTIME_ENABLED === "YES";
+}
+
+export function billingAccountBootstrapRuntimeEnabled(
+  env: Pick<Env, "BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED">,
+): boolean {
+  return env.BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED === "YES";
+}
+
+export function billingTransactionIngestionRuntimeEnabled(
+  env: Pick<Env, "BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED">,
+): boolean {
+  return env.BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED === "YES";
 }
 
 export function positiveIntegerSetting(value: string, fallback: number): number {

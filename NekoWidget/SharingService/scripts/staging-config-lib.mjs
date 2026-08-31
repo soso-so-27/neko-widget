@@ -17,6 +17,10 @@ const replacements = new Map([
     "__NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID__",
     "NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID",
   ],
+  [
+    "__NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID__",
+    "NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID",
+  ],
 ]);
 
 function requireCondition(value, message) {
@@ -141,6 +145,8 @@ export function validateStagingConfig(config, options = {}) {
       WINDOW_NAME_RUNTIME_ENABLED: expectedMomentRuntime,
       APNS_RUNTIME_ENABLED: expectedAPNSRuntime,
       LEGACY_SHARING_RUNTIME_ENABLED: "NO",
+      BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "NO",
+      BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "NO",
       INVITATION_TTL_SECONDS: "86400",
       CHALLENGE_TTL_SECONDS: "300",
       PENDING_TTL_SECONDS: "86400",
@@ -199,10 +205,11 @@ export function validateStagingConfig(config, options = {}) {
     ["CREATE_RATE_LIMITER", { limit: 5, period: 60 }],
     ["INVITE_RATE_LIMITER", { limit: 10, period: 60 }],
     ["MEMBER_RATE_LIMITER", { limit: 120, period: 60 }],
+    ["BILLING_RATE_LIMITER", { limit: 30, period: 60 }],
   ]);
   requireCondition(
     Array.isArray(config.ratelimits) && config.ratelimits.length === expectedRateLimits.size,
-    "Staging must bind exactly three rate limiters.",
+    "Staging must bind exactly four rate limiters.",
   );
   const namespaceIDs = new Set();
   for (const rateLimit of config.ratelimits) {

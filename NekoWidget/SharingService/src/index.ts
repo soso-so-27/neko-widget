@@ -1,12 +1,15 @@
 import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {
   apnsRuntimeEnabled,
+  billingAccountBootstrapRuntimeEnabled,
+  billingTransactionIngestionRuntimeEnabled,
   legacySharingRuntimeEnabled,
   momentRuntimeEnabled,
   reactionRuntimeEnabled,
   windowNameRuntimeEnabled,
   type Env,
 } from "./env";
+import { createBillingAccount, recordBillingTransaction } from "./billing";
 import {
   apnsGateOpen,
   effectiveRuntimeGateHeaders,
@@ -102,6 +105,20 @@ export async function route(
       200,
       effectiveRuntimeGateHeaders(env, snapshot),
     );
+  }
+  if (
+    pathname === "/v1/billing/accounts"
+    && !billingAccountBootstrapRuntimeEnabled(env)
+  ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  if (
+    pathname === "/v1/billing/transactions"
+    && !billingTransactionIngestionRuntimeEnabled(env)
+  ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  if (request.method === "POST" && pathname === "/v1/billing/accounts") {
+    return createBillingAccount(request, env);
+  }
+  if (request.method === "POST" && pathname === "/v1/billing/transactions") {
+    return recordBillingTransaction(request, env);
   }
   if (pathname === "/v1/sharing" || pathname.startsWith("/v1/sharing/")) {
     if (!legacySharingRuntimeEnabled(env)) {
