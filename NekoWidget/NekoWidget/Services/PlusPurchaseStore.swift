@@ -104,7 +104,7 @@ struct PlusPurchaseConfiguration: Equatable, Sendable {
 
 struct PlusVerifiedEntitlement: Equatable, Sendable {
     let plan: PlusProductPlan
-    let expirationDate: Date?
+    let expirationDate: Date
 }
 
 /// The purchase entitlement state. Even a server-confirmed purchase is not a
@@ -151,12 +151,24 @@ enum PlusRestoreOutcome: Equatable, Sendable {
 }
 
 /// Records every verified event for an expected product, including renewal,
-/// revocation, upgrade and unsupported ownership. The server validates the
-/// signed transaction and applies or withdraws entitlement idempotently.
+/// revocation, upgrade and unsupported ownership. The server validates and
+/// records the signed transaction idempotently; recording alone never grants
+/// or withdraws the account entitlement.
+struct PlusVerifiedTransactionEvent: Sendable {
+    let transaction: Transaction
+    /// The compact Apple-signed JWS from VerificationResult. The unsigned
+    /// Transaction JSON representation is never an acceptable substitute.
+    let signedTransactionInfo: String
+}
+
 typealias PlusVerifiedTransactionEventRecorder = @Sendable (
-    _ transaction: Transaction,
+    _ event: PlusVerifiedTransactionEvent,
     _ billingAccountID: BillingAccountID
-) async throws -> Void
+) async throws -> BillingTransactionRecordAcknowledgement
+
+private enum PlusPurchaseRecordingFailure: Error {
+    case invalidAcknowledgement
+}
 
 @MainActor
 final class PlusPurchaseStore: ObservableObject {
@@ -168,7 +180,7 @@ final class PlusPurchaseStore: ObservableObject {
     @Published private(set) var pendingProductID: String?
 
     private struct EntitlementScan {
-        var transactions: [(Transaction, PlusVerifiedEntitlement)] = []
+        var events: [(PlusVerifiedTransactionEvent, PlusVerifiedEntitlement)] = []
         var encounteredUnverifiedOrUnsupported = false
     }
 
@@ -240,7 +252,7 @@ final class PlusPurchaseStore: ObservableObject {
         billingAccountID: BillingAccountID
     ) async -> PlusPurchaseOutcome {
         guard configuration.isConfigured,
-              let recordVerifiedTransactionEvent,
+              recordVerifiedTransactionEvent != nil,
               !isPurchasing,
               pendingProductID == nil,
               let productID = configuration.productID(for: plan),
@@ -268,13 +280,19 @@ final class PlusPurchaseStore: ObservableObject {
                     }
                     do {
                         try await recordVerifiedTransactionEvent(
-                            transaction,
+                            PlusVerifiedTransactionEvent(
+                                transaction: transaction,
+                                signedTransactionInfo: verification.jwsRepresentation
+                            ),
                             billingAccountID
                         )
                         await transaction.finish()
                         pendingProductID = nil
-                        await reconcileCurrentEntitlements()
-                        return .purchased
+                        // The ingestion endpoint only records an Apple-verified
+                        // candidate. A future status endpoint must confirm the
+                        // account entitlement before Plus can be granted.
+                        markServerConfirmationIndeterminate()
+                        return .awaitingServerConfirmation
                     } catch {
                         markServerConfirmationIndeterminate()
                         return .awaitingServerConfirmation
@@ -369,7 +387,7 @@ final class PlusPurchaseStore: ObservableObject {
         case let .verified(transaction):
             guard configuration.plan(for: transaction.productID) != nil else { return }
             guard let billingToken = transaction.appAccountToken,
-                  let recordVerifiedTransactionEvent
+                  recordVerifiedTransactionEvent != nil
             else {
                 entitlementState = .indeterminate(
                     lastServerConfirmed: entitlementState.lastServerConfirmed
@@ -380,7 +398,10 @@ final class PlusPurchaseStore: ObservableObject {
                 // Non-entitling verified events must also reach the server so
                 // refunds/upgrades withdraw access and family sharing is denied.
                 try await recordVerifiedTransactionEvent(
-                    transaction,
+                    PlusVerifiedTransactionEvent(
+                        transaction: transaction,
+                        signedTransactionInfo: result.jwsRepresentation
+                    ),
                     BillingAccountID(rawValue: billingToken)
                 )
                 await transaction.finish()
@@ -401,7 +422,7 @@ final class PlusPurchaseStore: ObservableObject {
 
     private func reconcileCurrentEntitlements() async {
         let scan = await scanCurrentEntitlements()
-        let preferred = preferredEntitlement(in: scan.transactions)
+        let preferred = preferredEntitlement(in: scan.events)
 
         guard !scan.encounteredUnverifiedOrUnsupported else {
             entitlementState = .indeterminate(
@@ -409,11 +430,11 @@ final class PlusPurchaseStore: ObservableObject {
             )
             return
         }
-        guard let preferred else {
+        guard preferred != nil else {
             entitlementState = .inactive
             return
         }
-        guard let recordVerifiedTransactionEvent else {
+        guard recordVerifiedTransactionEvent != nil else {
             entitlementState = .indeterminate(
                 lastServerConfirmed: entitlementState.lastServerConfirmed
             )
@@ -421,7 +442,8 @@ final class PlusPurchaseStore: ObservableObject {
         }
 
         do {
-            for (transaction, _) in scan.transactions {
+            for (event, _) in scan.events {
+                let transaction = event.transaction
                 guard let billingToken = transaction.appAccountToken else {
                     entitlementState = .indeterminate(
                         lastServerConfirmed: entitlementState.lastServerConfirmed
@@ -429,13 +451,18 @@ final class PlusPurchaseStore: ObservableObject {
                     return
                 }
                 try await recordVerifiedTransactionEvent(
-                    transaction,
+                    event,
                     BillingAccountID(rawValue: billingToken)
                 )
                 await transaction.finish()
             }
             pendingProductID = nil
-            entitlementState = .serverConfirmed(preferred.1)
+            // A recorded candidate is not an authoritative subscription
+            // status. Keep the last confirmed value only until a dedicated
+            // server status response is implemented and checked.
+            entitlementState = .indeterminate(
+                lastServerConfirmed: entitlementState.lastServerConfirmed
+            )
         } catch {
             entitlementState = .indeterminate(
                 lastServerConfirmed: entitlementState.lastServerConfirmed
@@ -455,7 +482,13 @@ final class PlusPurchaseStore: ObservableObject {
             switch result {
             case let .verified(transaction):
                 if let entitlement = eligibleEntitlement(for: transaction) {
-                    scan.transactions.append((transaction, entitlement))
+                    scan.events.append((
+                        PlusVerifiedTransactionEvent(
+                            transaction: transaction,
+                            signedTransactionInfo: result.jwsRepresentation
+                        ),
+                        entitlement
+                    ))
                 } else if configuration.plan(for: transaction.productID) != nil {
                     scan.encounteredUnverifiedOrUnsupported = true
                 }
@@ -475,20 +508,42 @@ final class PlusPurchaseStore: ObservableObject {
               transaction.productType == .autoRenewable,
               transaction.ownershipType == .purchased,
               transaction.revocationDate == nil,
-              !transaction.isUpgraded
+              !transaction.isUpgraded,
+              let expirationDate = transaction.expirationDate,
+              expirationDate > Date.now
         else { return nil }
         return PlusVerifiedEntitlement(
             plan: plan,
-            expirationDate: transaction.expirationDate
+            expirationDate: expirationDate
         )
     }
 
+    private func recordVerifiedTransactionEvent(
+        _ event: PlusVerifiedTransactionEvent,
+        _ billingAccountID: BillingAccountID
+    ) async throws {
+        guard let recordVerifiedTransactionEvent else {
+            throw PlusPurchaseRecordingFailure.invalidAcknowledgement
+        }
+        let acknowledgement = try await recordVerifiedTransactionEvent(
+            event,
+            billingAccountID
+        )
+        let transaction = event.transaction
+        guard acknowledgement.billingAccountID == billingAccountID,
+              acknowledgement.transactionID == String(transaction.id),
+              acknowledgement.originalTransactionID == String(transaction.originalID)
+        else {
+            throw PlusPurchaseRecordingFailure.invalidAcknowledgement
+        }
+    }
+
     private func preferredEntitlement(
-        in values: [(Transaction, PlusVerifiedEntitlement)]
-    ) -> (Transaction, PlusVerifiedEntitlement)? {
+        in values: [(PlusVerifiedTransactionEvent, PlusVerifiedEntitlement)]
+    ) -> (PlusVerifiedTransactionEvent, PlusVerifiedEntitlement)? {
         values.max { lhs, rhs in
-            let leftDate = lhs.1.expirationDate ?? .distantFuture
-            let rightDate = rhs.1.expirationDate ?? .distantFuture
+            let leftDate = lhs.1.expirationDate
+            let rightDate = rhs.1.expirationDate
             if leftDate != rightDate { return leftDate < rightDate }
             return lhs.1.plan.sortOrder > rhs.1.plan.sortOrder
         }

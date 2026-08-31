@@ -1,7 +1,7 @@
 # ADR-025：StoreKitと課金IDの境界
 
 作成：2026-08-31  
-状態：クライアントとServer記録基盤を採用。全runtime OFF。販売・sponsorship・課金UIは未実装
+状態：クライアント通信・Server記録／暫定status基盤を採用。全runtime OFF。販売・sponsorship・課金UIは未実装
 
 関連：[ADR-024](ADR-024-無料体験とPlusと物販.md)、[ADR-018](ADR-018-名前付きの非公開なまど.md)、[共有設計](共有設計.md)
 
@@ -16,7 +16,9 @@ StoreKitの購入権復元も、写真原本、届いた写真、まど、E2E暗
 - 課金には独立した仮名UUID `BillingAccountID` を用いる。
 - 購入時はこのUUIDをStoreKit 2の `appAccountToken` として渡す。
 - `PairingCredential`、participant ID、window owner、端末ID、Apple Accountのメールアドレスを課金IDにしない。
-- BillingAccountIDの初回発行は、共有IDと分離したServer bootstrapが所有する。現在のアプリはまだ接続・永続化しない。復旧は未実装である。
+- BillingAccountIDの初回発行は、共有IDと分離したServer bootstrapが所有する。App targetだけに置いた課金専用Keychainは、ネットワーク送信前に端末内鍵と同じrequest IDを保存し、応答消失時も同じbootstrapを再送する。通常画面と起動処理にはまだ接続しない。
+- 新規Keychainがない場合の初回発行だけは、設定済み商品に対する`Transaction.currentEntitlements`を最後まで走査し、検証済み・未検証のどちらの購入証拠もなかったときに限り、30秒有効で呼出側から生成できないauthorizationを発行して許可する。既存registered鍵の読取と既存pending requestの再送はこのauthorizationを要求しないが、Keychainなしのまま自動作成もしない。
+- 課金Keychainは`WhenUnlockedThisDeviceOnly`・iCloud同期なし・App Groupなしとし、通常コンテナのinstallation markerが一致しない残存鍵を新しいインストールの権限にしない。markerと最初のpending鍵はcreate-if-absentで競合の勝者を共有し、複数Coordinatorから別request・別BillingAccountIDを発行しない。読取不能・破損・marker不一致を理由に自動削除や別BillingAccountIDの再発行をしない。
 - ServerはAppleの取引系譜とBillingAccountIDを検証し、購入者とPlus対象まどの`sponsorship`を別レコードで結ぶ。
 
 ## 決定2：StoreKitの確認だけでServer権限を確定しない
@@ -31,7 +33,9 @@ StoreKitの購入権復元も、写真原本、届いた写真、まど、E2E暗
 - 復元の `AppStore.sync()` は、将来の明示的な「購入を復元」操作からだけ呼ぶ
 - アプリが前面へ戻るたびにcurrent entitlementを再照合する
 
-verified transactionはServerの冪等な記録が成功した後にだけ `finish()` する。通信失敗時はfinishせず、StoreKitから再配信できる状態を保つ。transaction ID単位の重複記録をServerが安全に受理できることを販売開始条件とする。
+verified transactionは、Apple署名付きJWSをServerへ渡し、BillingAccountID・transaction ID・original transaction IDが一致する記録ackを受け取った後にだけ `finish()` する。`candidate|nonEntitling`はServer時刻で評価する監査情報であり、端末時刻との境界差を理由に正常な記録ackを拒否しない。未署名の`Transaction.jsonRepresentation`は送信証明に使わない。通信失敗・ID不一致時はfinishせず、StoreKitから再配信できる状態を保つ。transaction ID単位の重複記録をServerが安全に受理できることを販売開始条件とする。
+
+記録ackと暫定statusは、検証済みイベント台帳から見た候補にすぎない。`provisional = true`かつ`grantsPlus = false`を固定し、App Store Server Notifications V2とSubscription Status APIによる再照合が完成するまで、クライアントは`.serverConfirmed`へ昇格せず確認不能を維持する。
 
 端末の状態は単純な有料booleanへ保存しない。少なくとも無効、確認中、非加入、StoreKit確認済み、確認不能を区別する。確認不能になっても既存の写真、まど、思い出、作品を削除または不可視化しない。
 
@@ -45,6 +49,8 @@ verified transactionはServerの冪等な記録が成功した後にだけ `fini
 PLUS_STOREFRONT_ENABLED = NO
 PLUS_MONTHLY_PRODUCT_ID =
 PLUS_ANNUAL_PRODUCT_ID =
+PLUS_BILLING_CLIENT_ENABLED = NO
+PLUS_BILLING_API_BASE_URL =
 ```
 
 Server側も、Wranglerの上限スイッチとD1の下限スイッチを独立して持つ。
@@ -74,7 +80,13 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 - Workerと検証サービス間は、固定origin、時刻、nonce、body hashを含むHMAC署名requestと、request nonce・status・body hashを含むHMAC署名responseで相互境界を固定する。
 - 検証サービスはApple root chain、オンライン失効確認、bundle ID、environment、App Apple ID、subscription group、商品allowlist、`appAccountToken`、transaction type、所有種別、日付を検証する。
 - 初期商品ではFamily Sharingを無効にする。`FAMILY_SHARED`は`appAccountToken`でBillingAccountIDへ安全に結べないため検証サービスで拒否し、Worker側でも防御的にPlus候補にしない。本人購入の返金済み・upgrade済みイベントは監査用に記録するが、Plus候補にしない。
-- D1は同じ正規化イベントを冪等に受け入れ、取引系譜を別BillingAccountIDへ付け替えない。現段階のresponseは`candidate`であり、まどの権利を直接付与しない。
+- D1は同じ正規化イベントを冪等に受け入れ、取引系譜を別BillingAccountIDへ付け替えない。現段階の取引responseは`candidate|nonEntitling`と、署名付きGETでも取得できる暫定statusを返す。どちらも`provisional = true`、`grantsPlus = false`であり、まどの権利を直接付与しない。
+
+## 課金鍵の機種変更を急いで実装しない理由
+
+新しいiPhoneではStoreKit購入権を取得できても、`ThisDeviceOnly`の課金秘密鍵は移らない。購入JWSだけをbearer tokenのように扱って鍵を交換すると、漏えいした取引情報による乗っ取り境界になるため採用しない。
+
+将来の鍵交換は、少なくとも検証済み`AppTransaction` JWSの安定した`appTransactionID`と、現在の購入JWSの`originalTransactionId`・`appAccountToken`を、既存Server対応へ照合した場合だけ許可する。新鍵の自己署名、冪等request、旧鍵失効を同じ原子的遷移に含める。この実装が終わるまでmarker不一致は「購入情報の引き継ぎが必要」としてfail closedにする。
 
 ## 復元という言葉の境界
 
@@ -89,8 +101,8 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 ## 販売前に残る必須作業
 
 1. App Store Connectで月額・年額を同じsubscription group・同じlevel、Family Sharing無効で作成する
-2. Clientを課金bootstrapへ接続し、BillingAccountIDと課金用秘密鍵をKeychainへ保存する
-3. BillingAccountIDの安全な復旧と端末鍵rotationを実装する
+2. 無効状態で実装済みの課金bootstrap／Keychain／署名clientを、販売準備用の内部導線へ接続して実機検証する
+3. `AppTransaction` JWSと購入JWSの二重照合によるBillingAccountID復旧・端末鍵rotationを実装する
 4. App Store Server Notifications V2、Subscription Status API、再照合jobを接続する
 5. 購入者からまどへのsponsorship、解約、返金、請求猶予、失効、オフラインの状態遷移を実装する
 6. 既存β利用者のまどを失わない移行を実装する
@@ -103,6 +115,7 @@ StoreKitのFamily Sharing購入は、ねこのまど内の「招待相手は無�
 - [Apple: Transaction](https://developer.apple.com/documentation/storekit/transaction)
 - [Apple: currentEntitlements](https://developer.apple.com/documentation/storekit/transaction/currententitlements)
 - [Apple: AppStore.sync](https://developer.apple.com/documentation/storekit/appstore/sync())
+- [Apple: AppTransaction](https://developer.apple.com/documentation/storekit/apptransaction)
 - [Apple: 自動更新サブスクリプションの設定](https://developer.apple.com/help/app-store-connect/manage-subscriptions/offer-auto-renewable-subscriptions/)
 - [Apple: App Store Server Library for Node](https://github.com/apple/app-store-server-library-node)
 - [Apple: App Store Server Notifications](https://developer.apple.com/documentation/appstoreservernotifications)

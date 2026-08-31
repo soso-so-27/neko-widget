@@ -104,10 +104,15 @@ Phase 3の追加APIは次のとおりです。署名headerはv1と同じです�
 |---|---|---|---|
 | `POST` | `/v1/billing/accounts` | 課金公開鍵による自己署名bootstrap | StoreKit `appAccountToken`に使うBillingAccountIDを初回発行する |
 | `POST` | `/v1/billing/transactions` | BillingAccountID + 課金鍵の署名 | Apple検証済み取引を冪等な監査ledgerへ記録する。まど権限は付与しない |
+| `GET` | `/v1/billing/entitlement` | BillingAccountID + 課金鍵の署名 | 取引ごとの最新ledger事実を畳み込んだ暫定状態を返す |
 
 BootstrapのEd25519署名は`NWB1.ACCOUNT.CREATE / 1 / clientRequestId / signingPublicKey`を、既存protocolと同じUInt16 big-endian length prefixで連結したbytesを対象にします。冪等性もこの意味内容のhashで判定し、JSONのfield順や空白へ依存しません。
 
+機種変更時の課金account recovery APIはまだありません。取引JWSだけを鍵置換の証明にするとbearer token化するため採用しません。追加前に、Apple検証済み`AppTransaction` JWSの安定した`appTransactionID`と現在の購入JWSを両方検証し、Serverに事前登録したaccount bindingへ一致させる設計・失効・冪等性を実装します。この復旧も写真、まど、共有鍵、作品の復元とは分離します。
+
 課金取引requestは`Neko-Billing-Protocol-Version`、`Neko-Billing-Account-ID`、`Neko-Billing-Key-ID`、`Neko-Billing-Timestamp`、`Neko-Billing-Nonce`、`Neko-Billing-Signature`を使います。署名対象は`NWB1.REQUEST / 1 / account / key / timestamp / nonce / method / pathname / body SHA-256`です。WorkerとNode検証serviceのHMAC境界は[`billing-verifier-protocol-v1.json`](../ci/fixtures/billing-verifier-protocol-v1.json)を正本にします。
+
+`transactions` responseと`GET entitlement`の`entitlement`は、同じ`transactionId`の最新イベントだけを採用してaccount内を畳み込む暫定値です。`activeCandidate`でも必ず`provisional: true`、`grantsPlus: false`を返します。App Store Server Notifications V2とSubscription Status APIの定期再照合が未接続であるため、購入画面、Plus機能、まどsponsorship、production権限の根拠にしてはいけません。通信失敗時にも既存写真、まど、思い出を削除・非表示にしません。
 
 Pending inviteeはspace全体をrevokeできません。`cancel`はpendingまたはapproved-before-completionのinvitee本人にだけ許可し、owner spaceはactiveのまま残します。同じrequestのretryは取消後も48時間のidempotency window内なら同じ`202`を返します。Completionが先に成立したraceは`409 invalid_pairing_state`です。
 
@@ -203,7 +208,7 @@ Production exampleはCloudflare Rate Limiting bindingを四つ使います。
 - Space creation: source networkごとに5/min
 - Challenge/enrollment: source network + invitationごとに10/min
 - Signed member API: source networkごとに120/min
-- 課金bootstrap／取引受付: source networkごとに30/min
+- 課金bootstrap／取引受付／暫定状態取得: source networkごとに30/min
 
 Network addressはrate-limit bindingのtransient keyにだけ渡し、D1へ保存しません。Bindingはper-locationかつeventually consistentなので、正確なquotaやone-time enforcementには使わず、D1 constraint/triggerを正本にします。
 

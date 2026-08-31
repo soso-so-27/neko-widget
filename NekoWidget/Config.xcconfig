@@ -26,6 +26,8 @@ APP_SUPPORT_URL =
 PLUS_STOREFRONT_ENABLED = NO
 PLUS_MONTHLY_PRODUCT_ID =
 PLUS_ANNUAL_PRODUCT_ID =
+PLUS_BILLING_CLIENT_ENABLED = NO
+PLUS_BILLING_API_BASE_URL =
 
 // Empty by default. The manual, erased-Simulator App Store screenshot workflow
 // alone injects a compiler condition into the Widget extension's Debug target.

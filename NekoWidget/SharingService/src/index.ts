@@ -9,7 +9,11 @@ import {
   windowNameRuntimeEnabled,
   type Env,
 } from "./env";
-import { createBillingAccount, recordBillingTransaction } from "./billing";
+import {
+  createBillingAccount,
+  getBillingEntitlement,
+  recordBillingTransaction,
+} from "./billing";
 import {
   apnsGateOpen,
   effectiveRuntimeGateHeaders,
@@ -111,7 +115,8 @@ export async function route(
     && !billingAccountBootstrapRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   if (
-    pathname === "/v1/billing/transactions"
+    (pathname === "/v1/billing/transactions"
+      || pathname === "/v1/billing/entitlement")
     && !billingTransactionIngestionRuntimeEnabled(env)
   ) throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   if (request.method === "POST" && pathname === "/v1/billing/accounts") {
@@ -119,6 +124,9 @@ export async function route(
   }
   if (request.method === "POST" && pathname === "/v1/billing/transactions") {
     return recordBillingTransaction(request, env);
+  }
+  if (request.method === "GET" && pathname === "/v1/billing/entitlement") {
+    return getBillingEntitlement(request, env);
   }
   if (pathname === "/v1/sharing" || pathname.startsWith("/v1/sharing/")) {
     if (!legacySharingRuntimeEnabled(env)) {

@@ -99,6 +99,10 @@
 		10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */; };
 		10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000261 /* SeasonalMovieExportService.swift */; };
 		100000000000000000000180 /* PlusPurchaseStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000262 /* PlusPurchaseStore.swift */; };
+		100000000000000000000181 /* BillingClientCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000263 /* BillingClientCore.swift */; };
+		100000000000000000000182 /* BillingKeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000264 /* BillingKeychainStore.swift */; };
+		100000000000000000000183 /* BillingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000265 /* BillingAPIClient.swift */; };
+		100000000000000000000184 /* BillingFreshAccountAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000266 /* BillingFreshAccountAuthorization.swift */; };
 		100000000000000000000131 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000231 /* HomeView.swift */; };
 		100000000000000000000132 /* LikedPhotosView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000232 /* LikedPhotosView.swift */; };
 		100000000000000000000133 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000233 /* MainTabView.swift */; };
@@ -273,6 +277,10 @@
 		F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieArchiveStore.swift; sourceTree = "<group>"; };
 		F00000000000000000000261 /* SeasonalMovieExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeasonalMovieExportService.swift; sourceTree = "<group>"; };
 		F00000000000000000000262 /* PlusPurchaseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusPurchaseStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000263 /* BillingClientCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingClientCore.swift; sourceTree = "<group>"; };
+		F00000000000000000000264 /* BillingKeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingKeychainStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000265 /* BillingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingAPIClient.swift; sourceTree = "<group>"; };
+		F00000000000000000000266 /* BillingFreshAccountAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingFreshAccountAuthorization.swift; sourceTree = "<group>"; };
 		F00000000000000000000231 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F00000000000000000000232 /* LikedPhotosView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LikedPhotosView.swift; sourceTree = "<group>"; };
 		F00000000000000000000233 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -597,6 +605,10 @@
 				F00000000000000000000260 /* SeasonalMovieArchiveStore.swift */,
 				F00000000000000000000261 /* SeasonalMovieExportService.swift */,
 				F00000000000000000000262 /* PlusPurchaseStore.swift */,
+				F00000000000000000000263 /* BillingClientCore.swift */,
+				F00000000000000000000264 /* BillingKeychainStore.swift */,
+				F00000000000000000000265 /* BillingAPIClient.swift */,
+				F00000000000000000000266 /* BillingFreshAccountAuthorization.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -923,6 +935,10 @@
 				10000000000000000000017E /* SeasonalMovieArchiveStore.swift in Sources */,
 				10000000000000000000017F /* SeasonalMovieExportService.swift in Sources */,
 				100000000000000000000180 /* PlusPurchaseStore.swift in Sources */,
+				100000000000000000000181 /* BillingClientCore.swift in Sources */,
+				100000000000000000000182 /* BillingKeychainStore.swift in Sources */,
+				100000000000000000000183 /* BillingAPIClient.swift in Sources */,
+				100000000000000000000184 /* BillingFreshAccountAuthorization.swift in Sources */,
 				10000000000000000000014F /* GrowthAlbumSelector.swift in Sources */,
 				100000000000000000000150 /* GrowthAlbumView.swift in Sources */,
 				100000000000000000000153 /* CatCandidateCurationView.swift in Sources */,

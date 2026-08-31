@@ -19,18 +19,24 @@ def section(value: str, start: str, end: str) -> str:
 class PlusPurchaseFoundationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.store = source("NekoWidget/Services/PlusPurchaseStore.swift")
+        self.billing_core = source("NekoWidget/Services/BillingClientCore.swift")
 
     def test_source_configuration_is_explicitly_disabled_and_unconfigured(self) -> None:
         config = source("Config.xcconfig")
         self.assertRegex(config, r"(?m)^PLUS_STOREFRONT_ENABLED = NO$")
         self.assertRegex(config, r"(?m)^PLUS_MONTHLY_PRODUCT_ID =$")
         self.assertRegex(config, r"(?m)^PLUS_ANNUAL_PRODUCT_ID =$")
+        self.assertRegex(config, r"(?m)^PLUS_BILLING_API_BASE_URL =$")
 
         with (ROOT / "NekoWidget/Info.plist").open("rb") as handle:
             info = plistlib.load(handle)
         self.assertEqual(info["PlusStorefrontEnabled"], "$(PLUS_STOREFRONT_ENABLED)")
         self.assertEqual(info["PlusMonthlyProductID"], "$(PLUS_MONTHLY_PRODUCT_ID)")
         self.assertEqual(info["PlusAnnualProductID"], "$(PLUS_ANNUAL_PRODUCT_ID)")
+        self.assertEqual(
+            info["PlusBillingAPIBaseURL"],
+            "$(PLUS_BILLING_API_BASE_URL)",
+        )
 
         self.assertIn("guard configuration.isEnabled else", self.store)
         self.assertIn("guard configuration.isConfigured else", self.store)
@@ -65,10 +71,11 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             "func restorePurchases() async",
         )
         self.assertIn("billingAccountID: BillingAccountID", purchase)
-        self.assertIn("let recordVerifiedTransactionEvent", purchase)
+        self.assertIn("recordVerifiedTransactionEvent != nil", purchase)
         self.assertIn(".appAccountToken(billingAccountID.rawValue)", purchase)
+        self.assertIn("verification.jwsRepresentation", purchase)
         self.assertLess(
-            purchase.index("let recordVerifiedTransactionEvent"),
+            purchase.index("recordVerifiedTransactionEvent != nil"),
             purchase.index("product.purchase(options:"),
         )
         self.assertLess(
@@ -82,6 +89,8 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         )
         self.assertIn("markServerConfirmationIndeterminate()", failure)
         self.assertNotIn("finish()", failure)
+        self.assertNotIn("return .purchased", purchase)
+        self.assertIn("return .awaitingServerConfirmation", purchase)
 
     def test_updates_record_all_configured_verified_changes_before_finish(self) -> None:
         updates = section(
@@ -90,7 +99,7 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
             "private func reconcileCurrentEntitlements() async",
         )
         self.assertIn("configuration.plan(for: transaction.productID)", updates)
-        self.assertNotIn("eligibleEntitlement(for:", updates)
+        self.assertIn("result.jwsRepresentation", updates)
         self.assertLess(
             updates.index("try await recordVerifiedTransactionEvent("),
             updates.index("await transaction.finish()"),
@@ -100,11 +109,27 @@ class PlusPurchaseFoundationTests(unittest.TestCase):
         self.assertIn("case serverConfirmed(PlusVerifiedEntitlement)", self.store)
         self.assertIn("case indeterminate(lastServerConfirmed:", self.store)
         self.assertNotIn("case active", self.store)
+        self.assertIn(
+            ") async throws -> BillingTransactionRecordAcknowledgement",
+            self.store,
+        )
+        self.assertIn("acknowledgement.billingAccountID == billingAccountID", self.store)
+        self.assertIn("acknowledgement.transactionID == String(transaction.id)", self.store)
+        self.assertIn(
+            "acknowledgement.originalTransactionID == String(transaction.originalID)",
+            self.store,
+        )
+        self.assertNotIn("expectedDisposition", self.store)
+        self.assertNotIn("entitlementState = .serverConfirmed(preferred.1)", self.store)
         self.assertIn("transaction.productType == .autoRenewable", self.store)
         self.assertIn("transaction.ownershipType == .purchased", self.store)
         self.assertIn("transaction.revocationDate == nil", self.store)
         self.assertIn("!transaction.isUpgraded", self.store)
+        self.assertIn("let expirationDate = transaction.expirationDate", self.store)
+        self.assertIn("expirationDate > Date.now", self.store)
         self.assertNotIn("expirationDate.map", self.store)
+        self.assertNotIn(".distantFuture", self.store)
+        self.assertNotIn("jsonRepresentation", self.store)
         self.assertNotIn("UserDefaults", self.store)
         self.assertNotIn("@AppStorage", self.store)
         self.assertNotIn("PairingCredential", self.store)

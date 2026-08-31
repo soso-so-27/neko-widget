@@ -349,6 +349,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 ci/test-plus-purchase-foundation.py
+          python3 ci/test-billing-client-foundation.py
 
       - name: Verify normalized bbox posture classification
         working-directory: NekoWidget

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import fixture from "../../ci/fixtures/billing-verifier-protocol-v1.json";
 import {
   createBillingAccount,
+  getBillingEntitlement,
   recordBillingTransaction,
   type BillingTransactionVerifier,
 } from "../src/billing";
@@ -164,6 +165,35 @@ async function transactionRequest(
   });
 }
 
+async function entitlementRequest(
+  account: BillingAccountFixture,
+  nonce = randomValue(16),
+): Promise<Request> {
+  const timestamp = Math.floor(Date.now() / 1_000);
+  const body = new Uint8Array();
+  const signature = await sign(account.keys, billingSignedRequestTranscript({
+    billingAccountId: account.billingAccountId,
+    billingKeyId: account.billingKeyId,
+    timestamp,
+    nonce,
+    method: "GET",
+    pathname: "/v1/billing/entitlement",
+    bodySHA256: await sha256Base64url(body),
+  }));
+  return new Request("https://sharing.invalid/v1/billing/entitlement", {
+    method: "GET",
+    headers: {
+      "CF-Connecting-IP": "192.0.2.72",
+      "Neko-Billing-Protocol-Version": "1",
+      "Neko-Billing-Account-ID": account.billingAccountId,
+      "Neko-Billing-Key-ID": account.billingKeyId,
+      "Neko-Billing-Timestamp": String(timestamp),
+      "Neko-Billing-Nonce": nonce,
+      "Neko-Billing-Signature": signature,
+    },
+  });
+}
+
 function verifiedTransaction(
   billingAccountId: string,
   overrides: Partial<VerifiedBillingTransaction> = {},
@@ -217,11 +247,22 @@ describe.sequential("disabled Plus billing foundation", () => {
       status: 503,
       code: "billing_runtime_disabled",
     });
+    await expect(route(new Request("https://sharing.invalid/v1/billing/entitlement"), inaccessible))
+      .rejects.toMatchObject({
+        status: 503,
+        code: "billing_runtime_disabled",
+      });
 
     await setLowerGate(false);
     await expect(createBillingAccount(new Request(
       "https://sharing.invalid/v1/billing/accounts",
       { method: "POST", body: "not-json" },
+    ), testEnv)).rejects.toMatchObject({
+      status: 503,
+      code: "billing_runtime_disabled",
+    });
+    await expect(getBillingEntitlement(new Request(
+      "https://sharing.invalid/v1/billing/entitlement",
     ), testEnv)).rejects.toMatchObject({
       status: 503,
       code: "billing_runtime_disabled",
@@ -414,6 +455,113 @@ describe.sequential("disabled Plus billing foundation", () => {
       replayVerifier,
     )).rejects.toMatchObject({ status: 409, code: "replayed_billing_request" });
     expect(verifierCalls).toBe(1);
+  });
+
+  it("folds only the latest fact per transaction into a provisional account status", async () => {
+    await setLowerGate(true);
+    const account = await createAccount();
+    const now = Date.now();
+    const originalTransactionId = "200000000000020";
+    const first = verifiedTransaction(account.billingAccountId, {
+      transactionId: originalTransactionId,
+      originalTransactionId,
+      signedDateMs: now - 4_000,
+      expiresDateMs: now + 1_000_000,
+    });
+    const firstResponse = await recordBillingTransaction(
+      await transactionRequest(account, "header.statusfirst.signature"),
+      testEnv,
+      verifier(first),
+    );
+    expect(await firstResponse.json()).toMatchObject({
+      disposition: "candidate",
+      entitlement: {
+        status: "activeCandidate",
+        productId: first.productId,
+        provisional: true,
+        grantsPlus: false,
+      },
+    });
+
+    await recordBillingTransaction(
+      await transactionRequest(account, "header.statusrevoked.signature"),
+      testEnv,
+      verifier({
+        ...first,
+        signedDateMs: now - 3_000,
+        revocationDateMs: now - 3_000,
+        revocationReason: 1,
+      }),
+    );
+    const renewal = verifiedTransaction(account.billingAccountId, {
+      transactionId: "200000000000021",
+      originalTransactionId,
+      productId: "jp.nekowidget.plus.annual",
+      transactionReason: "RENEWAL",
+      purchaseDateMs: now - 2_000,
+      expiresDateMs: now + 2_000_000,
+      signedDateMs: now - 2_000,
+    });
+    await recordBillingTransaction(
+      await transactionRequest(account, "header.statusrenewal.signature"),
+      testEnv,
+      verifier(renewal),
+    );
+
+    const activeStatus = await getBillingEntitlement(
+      await entitlementRequest(account),
+      testEnv,
+    );
+    expect(await activeStatus.json()).toMatchObject({
+      billingAccountId: account.billingAccountId,
+      entitlement: {
+        status: "activeCandidate",
+        productId: renewal.productId,
+        expiresDateMs: renewal.expiresDateMs,
+        lastEventSignedDateMs: renewal.signedDateMs,
+        provisional: true,
+        grantsPlus: false,
+      },
+    });
+    const otherAccount = await createAccount();
+    const isolatedStatus = await getBillingEntitlement(
+      await entitlementRequest(otherAccount),
+      testEnv,
+    );
+    expect(await isolatedStatus.json()).toMatchObject({
+      billingAccountId: otherAccount.billingAccountId,
+      entitlement: {
+        status: "noActiveCandidate",
+        productId: null,
+        provisional: true,
+        grantsPlus: false,
+      },
+    });
+
+    await recordBillingTransaction(
+      await transactionRequest(account, "header.statusrenewalrevoked.signature"),
+      testEnv,
+      verifier({
+        ...renewal,
+        signedDateMs: now - 1_000,
+        revocationDateMs: now - 1_000,
+        revocationReason: 0,
+      }),
+    );
+    const inactiveStatus = await getBillingEntitlement(
+      await entitlementRequest(account),
+      testEnv,
+    );
+    expect(await inactiveStatus.json()).toMatchObject({
+      entitlement: {
+        status: "noActiveCandidate",
+        productId: null,
+        expiresDateMs: null,
+        lastEventSignedDateMs: now - 1_000,
+        provisional: true,
+        grantsPlus: false,
+      },
+    });
   });
 
   it("matches the Node verifier HMAC protocol fixture in the Worker runtime", async () => {

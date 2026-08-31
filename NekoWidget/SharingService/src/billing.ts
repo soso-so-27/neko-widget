@@ -3,7 +3,9 @@ import {
   consumeBillingNonce,
   type AuthenticatedBillingAccount,
 } from "./billing-auth";
-import { billingAccountCreationTranscript } from "./billing-protocol";
+import {
+  billingAccountCreationTranscript,
+} from "./billing-protocol";
 import {
   type VerifiedBillingTransaction,
   verifyAppleTransactionViaService,
@@ -19,6 +21,7 @@ import {
   enforceRateLimit,
   parseJsonBody,
   readBody,
+  requireEmptyBody,
   transientNetworkKey,
 } from "./http";
 import {
@@ -58,6 +61,22 @@ interface TransactionEventRow {
   revocation_date_ms: number | null;
   revocation_reason: 0 | 1 | null;
   is_upgraded: 0 | 1;
+}
+interface LatestTransactionRow {
+  product_id: string | null;
+  expires_date_ms: number | null;
+  active_candidate: 0 | 1 | null;
+  last_event_signed_date_ms: number | null;
+}
+
+interface ProvisionalBillingEntitlement {
+  status: "activeCandidate" | "noActiveCandidate";
+  productId: string | null;
+  expiresDateMs: number | null;
+  lastEventSignedDateMs: number | null;
+  evaluatedAtMs: number;
+  provisional: true;
+  grantsPlus: false;
 }
 
 export type BillingTransactionVerifier = (
@@ -202,10 +221,67 @@ function eventDisposition(row: Pick<
     ? "candidate" : "nonEntitling";
 }
 
-function transactionResponse(
+async function provisionalEntitlement(
+  env: Env,
+  billingAccountId: string,
+): Promise<ProvisionalBillingEntitlement> {
+  const evaluatedAtMs = Date.now();
+  const latest = await env.DB.prepare(
+    `WITH ranked AS (
+       SELECT product_id, expires_date_ms, signed_date_ms, event_fingerprint,
+              ownership_type, revocation_date_ms, revocation_reason, is_upgraded,
+              ROW_NUMBER() OVER (
+                PARTITION BY transaction_id
+                ORDER BY signed_date_ms DESC, received_at DESC, event_fingerprint DESC
+              ) AS event_rank
+         FROM billing_transaction_events
+        WHERE billing_account_id = ?
+     ), latest_events AS (
+       SELECT product_id, expires_date_ms, signed_date_ms, event_fingerprint,
+              ownership_type, revocation_date_ms, revocation_reason, is_upgraded
+         FROM ranked WHERE event_rank = 1
+     ), selected AS (
+       SELECT product_id, expires_date_ms, signed_date_ms, event_fingerprint,
+              CASE WHEN ownership_type = 'PURCHASED'
+                         AND revocation_date_ms IS NULL
+                         AND revocation_reason IS NULL
+                         AND is_upgraded = 0
+                         AND expires_date_ms > ?
+                   THEN 1 ELSE 0 END AS active_candidate
+         FROM latest_events
+        ORDER BY active_candidate DESC,
+                 CASE WHEN active_candidate = 1 THEN expires_date_ms ELSE signed_date_ms END DESC,
+                 signed_date_ms DESC,
+                 event_fingerprint DESC
+        LIMIT 1
+     ), summary AS (
+       SELECT MAX(signed_date_ms) AS last_event_signed_date_ms
+         FROM latest_events
+     )
+     SELECT selected.product_id, selected.expires_date_ms,
+            selected.active_candidate, summary.last_event_signed_date_ms
+       FROM summary LEFT JOIN selected ON 1 = 1`,
+  ).bind(billingAccountId, evaluatedAtMs).first<LatestTransactionRow>();
+  const active = latest?.active_candidate === 1;
+  return {
+    status: active ? "activeCandidate" : "noActiveCandidate",
+    productId: active ? latest.product_id : null,
+    expiresDateMs: active ? latest.expires_date_ms : null,
+    lastEventSignedDateMs: latest?.last_event_signed_date_ms ?? null,
+    evaluatedAtMs,
+    // A verified transaction ledger is not a complete subscription authority:
+    // Notifications V2 and periodic Subscription Status reconciliation remain
+    // mandatory before this result can grant production Plus access.
+    provisional: true,
+    grantsPlus: false,
+  };
+}
+
+async function transactionResponse(
+  env: Env,
   value: VerifiedBillingTransaction,
   event: TransactionEventRow,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   return {
     protocolVersion: BILLING_PROTOCOL_VERSION,
     billingAccountId: value.billingAccountId,
@@ -213,6 +289,7 @@ function transactionResponse(
     transactionId: value.transactionId,
     recorded: true,
     disposition: eventDisposition(event),
+    entitlement: await provisionalEntitlement(env, value.billingAccountId),
   };
 }
 
@@ -294,6 +371,26 @@ async function storeVerifiedTransaction(
   };
 }
 
+export async function getBillingEntitlement(request: Request, env: Env): Promise<Response> {
+  if ((await loadBillingGate(env)).transaction_ingestion_enabled !== 1) {
+    throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
+  }
+  await enforceRateLimit(
+    env,
+    env.BILLING_RATE_LIMITER,
+    transientNetworkKey(request, "billing-entitlement"),
+  );
+  const body = await readBody(request, 0);
+  requireEmptyBody(body);
+  const account = await authenticateBillingSignedRequest(request, env, body);
+  await consumeBillingNonce(env, account);
+  return jsonResponse({
+    protocolVersion: BILLING_PROTOCOL_VERSION,
+    billingAccountId: account.billingAccountId,
+    entitlement: await provisionalEntitlement(env, account.billingAccountId),
+  });
+}
+
 export async function recordBillingTransaction(
   request: Request,
   env: Env,
@@ -321,5 +418,5 @@ export async function recordBillingTransaction(
 
   const verified = await verify(signedTransactionInfo, env);
   const event = await storeVerifiedTransaction(env, verified, account);
-  return jsonResponse(transactionResponse(verified, event));
+  return jsonResponse(await transactionResponse(env, verified, event));
 }
