@@ -245,7 +245,7 @@ deploy、migration、secret変更を行わない。OFF候補と実停止未実�
 
 生成config、migration対象、Worker名、bucket公開状態の一つでも不明な場合はdeployしません。D1/R2/Workerを削除する操作はこの手順に含めません。
 
-workers.devは公開originです。この段階でも招待・ペアリングAPIはインターネットから到達し、rate limitで保護されます。通常moment／暗号化まど名／旧共有のflag OFFだけでは、ペアリングと安全APIまで停止しません。現在のvalidatorは誤配備防止のため`workers_dev=true`のstaging候補だけを受け付け、`workers_dev=false`へ通常deployする全停止手順を実装済みとは扱いません。対象account／Workerとactive versionを原子的に束縛したreview済み全停止・再開手順と訓練が完成するまでは一般配布のrelease blockerです。緊急時にlocal dry-runや別originの応答を停止証拠にせず、別途承認されたCloudflare incident responseへescalateします。
+workers.devは公開originです。この段階でも招待・ペアリングAPIはインターネットから到達し、rate limitで保護されます。通常moment／暗号化まど名／旧共有のflag OFFだけでは、ペアリングと安全APIまで停止しません。現在のvalidatorは誤配備防止のため`workers_dev=true`のstaging候補だけを受け付け、`workers_dev=false`への通常deployを全停止手順として使いません。固定account／Worker／active deployment／versionと、account全zoneのWorkers Routesおよびcustom domain不在を前後照合し、script単位のworkers.dev公開入口だけをOFF/ONするcontrollerは`PERSONAL_STAGING_OPERATIONS.md`に定義しています。Cloudflare APIに原子的なexpected-current条件はないためdeploy凍結と二重照合が必須で、対象stagingで停止・到達不能・同一version復旧の実訓練が完了するまでは一般配布のrelease blockerです。local dry-runや別originの応答を停止証拠にしません。
 
 ## 公式資料
 

@@ -87,6 +87,61 @@ App Store一般公開には使いません。
 取り消す仕組みではありません。APNs drainはprovider送信直前にも同じgenerationを再確認します。
 実停止後に同じconfirmationを再実行するとCASが0件となり、安全に失敗します。
 
+## workers.dev公開入口の全停止と復旧
+
+D1の`broad-off`でも残る招待・pairing・機種変更を含め、固定staging originへの公開到達を止める場合は、
+script単位のworkers.dev制御を使います。Worker、D1、R2、active versionは削除・deploy・rollbackせず、
+`neko-window-sharing-staging.nakanishisoya.workers.dev`とpreview URLだけをOFFにします。
+
+この操作にCloudflareの原子的なexpected-current条件はありません。したがって操作中はdeployを凍結し、専用controllerが
+次をすべて満たさない限り変更を拒否します。
+
+- API tokenのaccountが固定account subdomainを所有し、固定Workerがexactに1件ある
+- account内の全zoneを完全に列挙し、各zoneの公式Workers Routes APIで固定Workerのcustom routeが0件である
+- 固定Workerにcustom domainがない
+- active deploymentが1 version・100%で、baselineのdeployment/versionから変わっていない
+- preview URLがOFFで、停止前は同一originの`/health`が正常
+- OFF後はCloudflare状態が`enabled=false / previews_enabled=false`で、同一originが3回連続でアプリを返さない
+
+token値はmanifest、receipt、標準出力へ保存しません。統合訓練用の一時`CLOUDFLARE_API_TOKEN`はaccount側の
+`Workers Scripts Read`、`Workers Scripts Write`、`D1 Edit`に加え、zone側の`Zone Read`と`Workers Routes Read`を付与し、
+zone resourceは固定staging account配下の**All zones**に限定します。一部zoneだけを含むtokenではroute不在を証明できないため
+訓練に使いません。Cloudflare Dashboardのtoken summaryでこのscopeを目視確認してから、非秘密の実行確認値
+`CLOUDFLARE_ALL_ZONES_SCOPE_ATTESTED=cloudflare-all-zones-v1`を設定します。controllerがAPIで確認できるのは
+credential-visible zoneまでなので、この目視確認を省略しません。`CLOUDFLARE_ACCOUNT_ID`は固定staging accountの値を、
+訓練時間だけprocess環境へ渡します。
+最初にread-only baselineをcaptureし、生成された2ファイルがGitでignoredのままであることを確認します。
+
+```powershell
+npm run staging:ingress:plan
+npm run staging:ingress:capture-baseline
+npm run staging:ingress:status
+```
+
+短時間訓練は、別terminalやDashboardからdeployしない状態で、先にD1 `broad-off`を完了してから
+公開入口を止めます。復旧は逆順にして、公開入口を同一versionで戻した後もD1をOFFのまま保ち、
+最後にmedia/APNsだけを再開します。各confirmは1回だけ実行します。
+
+```powershell
+# D1 manifestを現在generation/broad-offへ合わせ、gate→status後に実行する。
+npm run staging:runtime:emergency-off:confirm
+npm run staging:ingress:emergency-off:confirm
+npm run staging:ingress:recover:confirm
+npm run staging:ingress:status
+# D1 manifestをOFF後generation/build70-media-apns-onへ合わせ、status後に実行する。
+npm run staging:runtime:recover:confirm
+npm run staging:runtime:limited-external-beta:check
+```
+
+OFF前にrecovery receiptを排他的に作るため、途中でprocessが終了しても復旧対象のdeployment/versionを失いません。
+復旧は同じreceiptとlive stateが一致する場合だけ`enabled=true / previews_enabled=false`へ戻します。復旧POSTの応答だけが
+失われた場合はlive stateを再照合して完了できます。復旧後にdeployment drift、preview URLの有効化、health異常を検出した
+場合は再OFFを試み、receiptを残して失敗します。Cloudflare consoleの手動toggleや通常deployを代替手順にしません。
+
+この手順が証明するのは、固定accountの全zoneを列挙してcustom route/domainがないと確認した
+固定workers.dev originの公開停止・同一version復旧です。
+Cloudflare account全体、別Worker、production、D1/R2の削除、外部provider停止を意味しません。
+
 ## 独立OFF Worker候補のlocal検証（Workerは停止しない）
 
 review済みのignored OFF configが、通常moment、reaction、暗号化まど名、APNs、新規通報受付、旧共有を
@@ -133,8 +188,8 @@ pureな計画生成は、呼び出し側が渡したaccount／Worker／active ve
 query、mutation、HTTP確認を実行しない。repositoryには実providerがなく、Cloudflareのversion切替APIに
 expected-currentの原子的なpreconditionがないため、GET後の切替を安全なcompare-and-swapとは扱わない。
 
-現在のrepositoryで実行できる緊急停止は、上記D1 generation CASによる共有data-plane OFFです。
-この節のversion candidateは、active Worker code／binding自体を疑うincidentで使う独立した第二層ですが、
+現在のrepositoryで実行できる緊急停止は、上記D1 generation CASによる共有data-plane OFFと、
+固定workers.dev公開入口のOFFです。この節のversion candidateは、active Worker code／binding自体を疑うincidentで使う独立した第二層ですが、
 Cloudflare version切替にはexpected-currentの原子的preconditionがないため、repositoryからの実切替は
 まだ提供しません。local dry-runを独立Worker停止の証拠にせず、D1を先にOFFにしたうえで、別途承認された
 Cloudflare incident responseへescalateします。
