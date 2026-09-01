@@ -130,8 +130,7 @@ struct MainTabView: View {
                         opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
                         pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
                         pendingFamilyNotificationRoute:
-                            $pendingFamilyNotificationRoute,
-                        showSettings: { showsSettings = true }
+                            $pendingFamilyNotificationRoute
                     )
                 }
                 .tabItem {
@@ -149,8 +148,7 @@ struct MainTabView: View {
                     latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
                     seasonalMovies: seasonalMovieArchive.records,
                     automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos,
-                    exportPhotoBook: exportPhotoBook,
-                    showSettings: { showsSettings = true }
+                    exportPhotoBook: exportPhotoBook
                 )
                     .navigationDestination(
                         for: MemoriesRoute.self,
@@ -928,7 +926,6 @@ private struct WindowListView: View {
     @Binding var opensActiveWindow: Bool
     @Binding var pendingFamilyMomentSourceDigest: String?
     @Binding var pendingFamilyNotificationRoute: MomentNotificationRoute?
-    let showSettings: () -> Void
 
     @State private var windows: [PrivateWindowCatalogEntry] = []
     @State private var activeWindowID: String?
@@ -1008,15 +1005,6 @@ private struct WindowListView: View {
         }
         .navigationTitle("まど")
         .background(Color(.systemGroupedBackground))
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: showSettings) {
-                    Image(systemName: "gearshape")
-                }
-                .accessibilityLabel("設定")
-                .accessibilityIdentifier("window-list-settings-button")
-            }
-        }
         .confirmationDialog(
             "このiPhoneですることを選んでください",
             isPresented: $showsAddWindowConfirmation,

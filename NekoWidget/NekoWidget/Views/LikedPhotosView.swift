@@ -528,7 +528,6 @@ struct LikedPhotosView: View {
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let automaticAlbumPreviewPhotos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
-    let showSettings: () -> Void
 
     @State private var selectedSection: MemoriesSection = .photos
     @State private var hasExplicitlySelectedSection = false
@@ -549,15 +548,6 @@ struct LikedPhotosView: View {
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: showSettings) {
-                    Image(systemName: "gearshape")
-                }
-                .accessibilityLabel("設定")
-                .accessibilityIdentifier("memories-settings-button")
-            }
-        }
         .onChange(of: latestMonthlyWindowIsUnread, initial: true) { _, isUnread in
             guard isUnread, !hasExplicitlySelectedSection else { return }
             selectedSection = .summaries
