@@ -6,6 +6,7 @@ const expectedWorkerName = "neko-window-sharing-staging";
 const expectedAccountSubdomain = "nakanishisoya";
 const expectedOrigin =
   "https://neko-window-sharing-staging.nakanishisoya.workers.dev";
+const expectedDatabaseName = "neko-window-sharing-staging";
 const requiredZoneScopeAttestation = "cloudflare-all-zones-v1";
 const maximumResponseBytes = 512 * 1024;
 const defaultTimeoutMilliseconds = 15_000;
@@ -23,6 +24,10 @@ function fail(message = "personal staging workers.dev control failed") {
 
 function record(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function emptyCloudflareDiagnostics(value) {
+  return value === null || (Array.isArray(value) && value.length === 0);
 }
 
 function exactKeys(value, expected, label) {
@@ -54,16 +59,16 @@ function parseJSON(text, label) {
 export function validateWorkersDevManifest(value) {
   exactKeys(value, [
     "schemaVersion", "accountId", "workerName", "origin",
-    "expectedDeploymentId", "expectedVersionId", "zoneScopeAttestation",
+    "expectedDeploymentId", "expectedVersionId", "databaseId", "zoneScopeAttestation",
   ], "workers.dev control manifest");
-  if (value.schemaVersion !== 1
+  if (value.schemaVersion !== 2
       || value.workerName !== expectedWorkerName
       || value.origin !== expectedOrigin
       || value.zoneScopeAttestation !== requiredZoneScopeAttestation) {
     fail("workers.dev control manifest is invalid");
   }
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     accountId: exactString(value.accountId, accountPattern, "account ID"),
     workerName: expectedWorkerName,
     origin: expectedOrigin,
@@ -73,6 +78,7 @@ export function validateWorkersDevManifest(value) {
     expectedVersionId: exactString(
       value.expectedVersionId, uuidPattern, "expected version ID",
     ),
+    databaseId: exactString(value.databaseId, uuidPattern, "database ID"),
     zoneScopeAttestation: requiredZoneScopeAttestation,
   });
 }
@@ -84,7 +90,8 @@ export function parseWorkersDevManifest(text) {
 export function validateWorkersDevRecovery(value) {
   exactKeys(value, [
     "schemaVersion", "accountId", "workerName", "origin",
-    "expectedDeploymentId", "expectedVersionId", "zoneScopeAttestation", "disabledAt",
+    "expectedDeploymentId", "expectedVersionId", "databaseId",
+    "zoneScopeAttestation", "disabledAt",
   ], "workers.dev recovery receipt");
   const manifest = validateWorkersDevManifest({
     schemaVersion: value.schemaVersion,
@@ -93,6 +100,7 @@ export function validateWorkersDevRecovery(value) {
     origin: value.origin,
     expectedDeploymentId: value.expectedDeploymentId,
     expectedVersionId: value.expectedVersionId,
+    databaseId: value.databaseId,
     zoneScopeAttestation: value.zoneScopeAttestation,
   });
   if (typeof value.disabledAt !== "string"
@@ -124,8 +132,8 @@ function envelope(value, label) {
   if (!record(value)) fail(`${label} is invalid`);
   const allowed = new Set(["success", "errors", "messages", "result", "result_info"]);
   if (Object.keys(value).some((key) => !allowed.has(key))
-      || value.success !== true || !Array.isArray(value.errors)
-      || value.errors.length !== 0 || !Array.isArray(value.messages)
+      || value.success !== true || !emptyCloudflareDiagnostics(value.errors)
+      || !emptyCloudflareDiagnostics(value.messages)
       || !Object.hasOwn(value, "result")) {
     fail(`${label} is invalid`);
   }
@@ -141,8 +149,8 @@ function paginatedEnvelope(value, label, expectedPage, expectedPerPage) {
   if (!record(value)) fail(`${label} is invalid`);
   const allowed = new Set(["success", "errors", "messages", "result", "result_info"]);
   if (Object.keys(value).some((key) => !allowed.has(key))
-      || value.success !== true || !Array.isArray(value.errors)
-      || value.errors.length !== 0 || !Array.isArray(value.messages)
+      || value.success !== true || !emptyCloudflareDiagnostics(value.errors)
+      || !emptyCloudflareDiagnostics(value.messages)
       || !Array.isArray(value.result) || !record(value.result_info)) {
     fail(`${label} is invalid`);
   }
@@ -241,6 +249,46 @@ function deploymentFrom(value) {
   });
 }
 
+function databaseBindingFrom(value, expectedVersionId) {
+  const result = envelope(value, "active Worker version response");
+  if (!record(result) || result.id !== expectedVersionId
+      || !record(result.resources) || !Array.isArray(result.resources.bindings)) {
+    fail("active Worker version is invalid");
+  }
+  if (result.resources.bindings.some((binding) =>
+    !record(binding) || typeof binding.type !== "string")) {
+    fail("active Worker binding inventory is invalid");
+  }
+  const databases = result.resources.bindings.filter((binding) => binding.type === "d1");
+  if (databases.length !== 1) fail("active Worker D1 binding is invalid");
+  const database = databases[0];
+  exactKeys(
+    database,
+    ["type", "name", "id", "database_id"],
+    "active Worker D1 binding",
+  );
+  const id = exactString(database.id, uuidPattern, "active Worker D1 database ID");
+  const databaseId = exactString(
+    database.database_id,
+    uuidPattern,
+    "active Worker D1 database ID",
+  );
+  if (database.name !== "DB" || id !== databaseId) {
+    fail("active Worker D1 binding is invalid");
+  }
+  return id;
+}
+
+function databaseDetailFrom(value, expectedDatabaseId) {
+  const result = envelope(value, "D1 database detail response");
+  if (!record(result) || result.uuid !== expectedDatabaseId
+      || result.name !== expectedDatabaseName) {
+    fail("active Worker D1 database is not the reviewed staging database");
+  }
+  exactString(result.uuid, uuidPattern, "D1 database ID");
+  return Object.freeze({ databaseId: result.uuid });
+}
+
 function subdomainFrom(value) {
   const result = envelope(value, "Worker subdomain response");
   exactKeys(result, ["enabled", "previews_enabled"], "Worker subdomain state");
@@ -253,6 +301,11 @@ function subdomainFrom(value) {
 function sameDeployment(actual, expected) {
   return actual.deploymentId === expected.expectedDeploymentId
     && actual.versionId === expected.expectedVersionId;
+}
+
+function sameLiveTarget(snapshot, expected) {
+  return sameDeployment(snapshot.deployment, expected)
+    && snapshot.databaseId === expected.databaseId;
 }
 
 async function readAllAccountZoneIds({
@@ -327,7 +380,8 @@ async function readLiveSnapshot({ accountId, token, fetchImpl, timeoutMillisecon
   const accountBase = `/client/v4/accounts/${accountId}`;
   const worker = encodeURIComponent(expectedWorkerName);
   const scriptBase = `${accountBase}/workers/scripts/${worker}`;
-  const [accountSubdomainValue, searchValue, domainsValue, deploymentsValue, subdomainValue] =
+  const [accountSubdomainValue, searchValue, domainsValue,
+    deploymentBeforeValue, subdomainValue] =
     await Promise.all([
       apiRequest(`${accountBase}/workers/subdomain`, {
         token, fetchImpl, timeoutMilliseconds,
@@ -345,6 +399,24 @@ async function readLiveSnapshot({ accountId, token, fetchImpl, timeoutMillisecon
         token, fetchImpl, timeoutMilliseconds,
       }),
     ]);
+  const deploymentBefore = deploymentFrom(deploymentBeforeValue);
+  const versionValue = await apiRequest(
+    `${scriptBase}/versions/${deploymentBefore.versionId}`,
+    { token, fetchImpl, timeoutMilliseconds },
+  );
+  const databaseId = databaseBindingFrom(versionValue, deploymentBefore.versionId);
+  const databaseValue = await apiRequest(`${accountBase}/d1/database/${databaseId}`, {
+    token, fetchImpl, timeoutMilliseconds,
+  });
+  const database = databaseDetailFrom(databaseValue, databaseId);
+  const deploymentAfterValue = await apiRequest(`${scriptBase}/deployments`, {
+    token, fetchImpl, timeoutMilliseconds,
+  });
+  const deploymentAfter = deploymentFrom(deploymentAfterValue);
+  if (deploymentBefore.deploymentId !== deploymentAfter.deploymentId
+      || deploymentBefore.versionId !== deploymentAfter.versionId) {
+    fail("active deployment changed while the D1 binding was attested");
+  }
 
   const accountSubdomain = envelope(accountSubdomainValue, "account subdomain response");
   exactKeys(accountSubdomain, ["subdomain"], "account subdomain");
@@ -367,7 +439,8 @@ async function readLiveSnapshot({ accountId, token, fetchImpl, timeoutMillisecon
   if (domains.length !== 0) fail("reviewed staging Worker has a custom domain");
 
   return Object.freeze({
-    deployment: deploymentFrom(deploymentsValue),
+    deployment: deploymentAfter,
+    databaseId: database.databaseId,
     subdomain: subdomainFrom(subdomainValue),
   });
 }
@@ -470,12 +543,13 @@ async function archiveRecoveryReceipt(projectDirectory, recoveryPath, now, renam
 
 function manifestFor(accountId, snapshot) {
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     accountId,
     workerName: expectedWorkerName,
     origin: expectedOrigin,
     expectedDeploymentId: snapshot.deployment.deploymentId,
     expectedVersionId: snapshot.deployment.versionId,
+    databaseId: snapshot.databaseId,
     zoneScopeAttestation: requiredZoneScopeAttestation,
   });
 }
@@ -532,7 +606,7 @@ export async function runWorkersDevControl(argv, {
       `${JSON.stringify(manifestFor(accountId, snapshot), null, 2)}\n`,
       { encoding: "utf8", flag: "wx", mode: 0o600 },
     );
-    return "PASS workers.dev baseline captured for the fixed personal staging Worker; credential-visible routes are absent; no Cloudflare state was changed.";
+    return "PASS workers.dev baseline captured for the fixed personal staging Worker; exact D1 binding attested; credential-visible routes are absent; no Cloudflare state was changed.";
   }
 
   const manifest = parseWorkersDevManifest(await readFileImpl(manifestPath, "utf8"));
@@ -542,9 +616,9 @@ export async function runWorkersDevControl(argv, {
     const snapshot = await readLiveSnapshot({
       accountId, token, fetchImpl, timeoutMilliseconds,
     });
-    if (!sameDeployment(snapshot.deployment, manifest)
+    if (!sameLiveTarget(snapshot, manifest)
         || snapshot.subdomain.previewsEnabled) {
-      fail("active deployment changed after baseline capture");
+      fail("active deployment or D1 binding changed after baseline capture");
     }
     if (snapshot.subdomain.enabled) {
       if (!await originIsHealthy(fetchImpl, timeoutMilliseconds)) {
@@ -553,14 +627,14 @@ export async function runWorkersDevControl(argv, {
     } else {
       await verifyOriginUnavailable(fetchImpl, timeoutMilliseconds, waitImpl);
     }
-    return `PASS workers.dev status ${snapshot.subdomain.enabled ? "ON" : "OFF"}; preview URLs OFF; active deployment unchanged; credential-visible routes absent.`;
+    return `PASS workers.dev status ${snapshot.subdomain.enabled ? "ON" : "OFF"}; preview URLs OFF; active deployment and D1 binding unchanged; credential-visible routes absent.`;
   }
 
   if (action === "off") {
     const first = await readLiveSnapshot({ accountId, token, fetchImpl, timeoutMilliseconds });
     const second = await readLiveSnapshot({ accountId, token, fetchImpl, timeoutMilliseconds });
-    if (!sameDeployment(first.deployment, manifest)
-        || !sameDeployment(second.deployment, manifest)
+    if (!sameLiveTarget(first, manifest)
+        || !sameLiveTarget(second, manifest)
         || !first.subdomain.enabled || first.subdomain.previewsEnabled
         || !second.subdomain.enabled || second.subdomain.previewsEnabled
         || !await originIsHealthy(fetchImpl, timeoutMilliseconds)) {
@@ -576,12 +650,12 @@ export async function runWorkersDevControl(argv, {
       accountId, token, enabled: false, fetchImpl, timeoutMilliseconds,
     });
     const after = await readLiveSnapshot({ accountId, token, fetchImpl, timeoutMilliseconds });
-    if (!sameDeployment(after.deployment, manifest)
+    if (!sameLiveTarget(after, manifest)
         || after.subdomain.enabled || after.subdomain.previewsEnabled) {
       fail("workers.dev OFF verification failed; use the recovery command, not OFF again");
     }
     await verifyOriginUnavailable(fetchImpl, timeoutMilliseconds, waitImpl);
-    return "PASS fixed personal staging workers.dev origin is OFF; preview URLs are OFF; active deployment is unchanged; credential-visible routes remain absent.";
+    return "PASS fixed personal staging workers.dev origin is OFF; preview URLs are OFF; active deployment and D1 binding are unchanged; credential-visible routes remain absent.";
   }
 
   const recovery = validateWorkersDevRecovery(parseJSON(
@@ -590,14 +664,14 @@ export async function runWorkersDevControl(argv, {
   ));
   for (const key of [
     "accountId", "workerName", "origin", "expectedDeploymentId", "expectedVersionId",
-    "zoneScopeAttestation",
+    "databaseId", "zoneScopeAttestation",
   ]) {
     if (recovery[key] !== manifest[key]) fail("recovery receipt does not match the reviewed manifest");
   }
   const first = await readLiveSnapshot({ accountId, token, fetchImpl, timeoutMilliseconds });
   const second = await readLiveSnapshot({ accountId, token, fetchImpl, timeoutMilliseconds });
-  if (!sameDeployment(first.deployment, manifest)
-      || !sameDeployment(second.deployment, manifest)
+  if (!sameLiveTarget(first, manifest)
+      || !sameLiveTarget(second, manifest)
       || first.subdomain.previewsEnabled || second.subdomain.previewsEnabled) {
     if (first.subdomain.enabled || second.subdomain.enabled
         || first.subdomain.previewsEnabled || second.subdomain.previewsEnabled) {
@@ -617,13 +691,13 @@ export async function runWorkersDevControl(argv, {
       const finalSnapshot = await readLiveSnapshot({
         accountId, token, fetchImpl, timeoutMilliseconds,
       });
-      if (!sameDeployment(finalSnapshot.deployment, manifest)
+      if (!sameLiveTarget(finalSnapshot, manifest)
           || !finalSnapshot.subdomain.enabled
           || finalSnapshot.subdomain.previewsEnabled) {
         fail("workers.dev recovery verification failed");
       }
       await archiveRecoveryReceipt(projectDirectory, recoveryPath, now, renameImpl);
-      return "PASS fixed personal staging workers.dev origin was already recovered; preview URLs are OFF; the same deployment is healthy; credential-visible routes remain absent.";
+      return "PASS fixed personal staging workers.dev origin was already recovered; preview URLs are OFF; the same deployment and D1 binding are healthy; credential-visible routes remain absent.";
     } catch {
       await compensateRecoveryToOff({
         accountId, token, fetchImpl, timeoutMilliseconds, waitImpl,
@@ -643,19 +717,19 @@ export async function runWorkersDevControl(argv, {
     const healthy = after.subdomain.enabled
       && !after.subdomain.previewsEnabled
       && await originIsHealthy(fetchImpl, timeoutMilliseconds);
-    if (!sameDeployment(after.deployment, manifest) || !healthy) {
+    if (!sameLiveTarget(after, manifest) || !healthy) {
       fail("workers.dev recovery verification failed");
     }
     const finalSnapshot = await readLiveSnapshot({
       accountId, token, fetchImpl, timeoutMilliseconds,
     });
-    if (!sameDeployment(finalSnapshot.deployment, manifest)
+    if (!sameLiveTarget(finalSnapshot, manifest)
         || !finalSnapshot.subdomain.enabled
         || finalSnapshot.subdomain.previewsEnabled) {
       fail("workers.dev recovery verification failed");
     }
     await archiveRecoveryReceipt(projectDirectory, recoveryPath, now, renameImpl);
-    return "PASS fixed personal staging workers.dev origin recovered; preview URLs are OFF; the same deployment is healthy; credential-visible routes remain absent.";
+    return "PASS fixed personal staging workers.dev origin recovered; preview URLs are OFF; the same deployment and D1 binding are healthy; credential-visible routes remain absent.";
   } catch {
     await compensateRecoveryToOff({
       accountId, token, fetchImpl, timeoutMilliseconds, waitImpl,

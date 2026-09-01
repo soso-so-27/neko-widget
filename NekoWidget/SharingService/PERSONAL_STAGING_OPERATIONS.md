@@ -99,7 +99,11 @@ script単位のworkers.dev制御を使います。Worker、D1、R2、active vers
 - API tokenのaccountが固定account subdomainを所有し、固定Workerがexactに1件ある
 - account内の全zoneを完全に列挙し、各zoneの公式Workers Routes APIで固定Workerのcustom routeが0件である
 - 固定Workerにcustom domainがない
-- active deploymentが1 version・100%で、baselineのdeployment/versionから変わっていない
+- active deploymentが1 version・100%で、active version取得の前後でdeployment/versionが変わっていない
+- active versionのD1 bindingが`type=d1 / name=DB`のexact 1件で、`id`と`database_id`が
+  同じUUIDであり、account-scoped D1 detailのUUID／名前が`neko-window-sharing-staging`と一致する
+- 上記live D1 UUIDがschema 2のbaseline manifestへ固定され、以後のstatus／OFF／復旧で
+  deployment/versionと一緒に変わっていない
 - preview URLがOFFで、停止前は同一originの`/health`が正常
 - OFF後はCloudflare状態が`enabled=false / previews_enabled=false`で、同一originが3回連続でアプリを返さない
 
@@ -110,13 +114,24 @@ zone resourceは固定staging account配下の**All zones**に限定します。
 `CLOUDFLARE_ALL_ZONES_SCOPE_ATTESTED=cloudflare-all-zones-v1`を設定します。controllerがAPIで確認できるのは
 credential-visible zoneまでなので、この目視確認を省略しません。`CLOUDFLARE_ACCOUNT_ID`は固定staging accountの値を、
 訓練時間だけprocess環境へ渡します。
-最初にread-only baselineをcaptureし、生成された2ファイルがGitでignoredのままであることを確認します。
+最初にread-only baselineをcaptureします。これはactive deployment取得、active version detail、
+account-scoped D1 detail、active deployment再取得の順でdriftを拒否します。生成する
+`personal-staging-workers-dev-control-manifest.json`はschema 2でD1 UUIDも保持します。旧schema 1 manifestは
+再利用せず、進行中の`personal-staging-workers-dev-recovery.json`がないことを確認してからbaselineを
+取り直します。D1 CAS用の`wrangler.general-staging-on.jsonc`、
+`personal-staging-runtime-gate-manifest.json`、workers.dev manifest、停止前に排他的作成されるrecovery receiptが
+すべてGitでignoredのままであることを確認します。
 
 ```powershell
 npm run staging:ingress:plan
 npm run staging:ingress:capture-baseline
 npm run staging:ingress:status
 ```
+
+Cloudflareへ変更を送る前に、schema 2 workers.dev manifestの`databaseId`、
+`personal-staging-runtime-gate-manifest.json`の`databaseId`、
+`wrangler.general-staging-on.jsonc`の`d1_databases[0].database_id`が同じであることを確認します。
+1つでも不一致ならD1 CASもworkers.dev変更も実行しません。
 
 短時間訓練は、別terminalやDashboardからdeployしない状態で、先にD1 `broad-off`を完了してから
 公開入口を止めます。復旧は逆順にして、公開入口を同一versionで戻した後もD1をOFFのまま保ち、
@@ -138,8 +153,9 @@ OFF前にrecovery receiptを排他的に作るため、途中でprocessが終了
 失われた場合はlive stateを再照合して完了できます。復旧後にdeployment drift、preview URLの有効化、health異常を検出した
 場合は再OFFを試み、receiptを残して失敗します。Cloudflare consoleの手動toggleや通常deployを代替手順にしません。
 
-この手順が証明するのは、固定accountの全zoneを列挙してcustom route/domainがないと確認した
-固定workers.dev originの公開停止・同一version復旧です。
+この手順が証明するのは、固定accountの全zoneを列挙してcustom route/domainがないと確認し、
+active versionのexact `DB` bindingと同じaccountの固定名D1 detailを照合した固定workers.dev originの
+公開停止・同一version／同一D1 binding復旧です。
 Cloudflare account全体、別Worker、production、D1/R2の削除、外部provider停止を意味しません。
 
 ## 独立OFF Worker候補のlocal検証（Workerは停止しない）
