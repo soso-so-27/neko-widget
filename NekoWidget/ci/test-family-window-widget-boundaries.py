@@ -1076,7 +1076,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("PHAsset", model)
 
         self.assertIn("@AppStorage(MonthlyWindowReadReceipt.storageKey)", main)
-        self.assertIn(".badge(latestMonthlyWindowIsUnread ? 1 : 0)", main)
+        self.assertIn(".badge(hasUnreadMemoriesSummary ? 1 : 0)", main)
         self.assertIn("markMonthlyWindowReadIfLatest(snapshot)", main)
         self.assertIn("latestMonthlyWindowIsUnread: Bool", memories)
         self.assertNotIn('return "まとめ・未読"', memories)
