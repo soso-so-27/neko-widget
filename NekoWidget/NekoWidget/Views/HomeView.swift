@@ -78,6 +78,10 @@ struct HomeView: View {
                         LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                     }
 
+                    if shouldOfferWidgetPlacementGuide {
+                        widgetPlacementCard
+                    }
+
                     if !catPhotos.isEmpty {
                         detectedPhotosSection
                     }
@@ -86,10 +90,10 @@ struct HomeView: View {
                     photoLibraryActions
                 } else {
                     photoAccessCard
-                }
 
-                if shouldOfferWidgetPlacementGuide {
-                    widgetPlacementCard
+                    if shouldOfferWidgetPlacementGuide {
+                        widgetPlacementCard
+                    }
                 }
             }
             .padding(.horizontal, 16)

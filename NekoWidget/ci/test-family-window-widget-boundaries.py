@@ -2398,6 +2398,20 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('"window-settings-button"', home)
         self.assertNotIn('"window-list-settings-button"', main_tab)
         self.assertNotIn('"memories-settings-button"', liked)
+        home_body = section(
+            home,
+            "var body: some View",
+            "private var photoAccessCard: some View",
+        )
+        self.assertEqual(home_body.count("if shouldOfferWidgetPlacementGuide"), 2)
+        self.assertLess(
+            home_body.index("if shouldOfferWidgetPlacementGuide"),
+            home_body.index("detectedPhotosSection"),
+        )
+        self.assertLess(
+            home_body.index("photoAccessCard"),
+            home_body.rindex("if shouldOfferWidgetPlacementGuide"),
+        )
         self.assertIn('return "このiPhone・\\(year)年"', home)
         self.assertNotIn('.navigationTitle("まど")', home)
         self.assertNotIn("PhotosRoute.automaticAlbums", home)
