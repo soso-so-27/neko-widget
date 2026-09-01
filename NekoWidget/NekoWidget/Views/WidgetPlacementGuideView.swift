@@ -1,49 +1,72 @@
 import SwiftUI
-import UIKit
 
-/// The product-critical fourth onboarding page. The same view is also suitable
-/// for presentation from Settings after onboarding has been skipped.
+/// A compact handoff from the app to the user-controlled Home Screen flow.
+/// iOS doesn't expose an API for placing a Home Screen widget, so the guide
+/// shows only the three actions the user needs and lets the owner recheck the
+/// installed configuration when the app becomes active again.
 struct WidgetPlacementGuideView: View {
     let onComplete: () -> Void
     let onSkip: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selectedStep = 0
-
-    init(
-        onComplete: @escaping () -> Void,
-        onSkip: @escaping () -> Void
-    ) {
-        self.onComplete = onComplete
-        self.onSkip = onSkip
-    }
-
-    private var steps: [OnboardingWidgetGuideStepPresentation] {
-        OnboardingWidgetGuideStepPresentation.all
+    private var placementSteps: [String] {
+        if #available(iOS 18.0, *) {
+            OnboardingPresentationCopy.widgetModernPlacementSteps
+        } else {
+            OnboardingPresentationCopy.widgetLegacyPlacementSteps
+        }
     }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
-                Text(OnboardingPresentationCopy.widgetTitleLines.joined(separator: "\n"))
-                    .font(.largeTitle.bold())
+                VStack(spacing: 12) {
+                    Image(systemName: "rectangle.on.rectangle.angled")
+                        .font(.system(size: 38, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 68, height: 68)
+                        .background(
+                            Color.accentColor.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 20)
+                        )
+
+                    Text(
+                        OnboardingPresentationCopy.widgetTitleLines
+                            .joined(separator: "\n")
+                    )
+                    .font(.title.bold())
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.isHeader)
 
-                TabView(selection: $selectedStep) {
-                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                        WidgetPlacementStepPanel(step: step)
-                            .padding(.horizontal, 4)
-                            .tag(index)
+                    Text(OnboardingPresentationCopy.widgetBody)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                VStack(spacing: 0) {
+                    ForEach(Array(placementSteps.enumerated()), id: \.offset) { index, step in
+                        WidgetPlacementStepRow(number: index + 1, text: step)
+
+                        if index < placementSteps.count - 1 {
+                            Divider()
+                                .padding(.leading, 54)
+                        }
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .frame(height: pagerHeight)
-                .accessibilityValue("手順 \(selectedStep + 1) / \(steps.count)")
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 20)
+                )
+                .accessibilityIdentifier("widget-placement-steps")
 
-                pagePicker
+                Label(
+                    OnboardingPresentationCopy.widgetReturnHint,
+                    systemImage: "checkmark.circle"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(spacing: 12) {
                     Button(action: onComplete) {
@@ -59,7 +82,6 @@ struct WidgetPlacementGuideView: View {
                     Button(OnboardingPresentationCopy.widgetLaterAction, action: onSkip)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
                         .accessibilityIdentifier("widget-placement-skip")
                 }
             }
@@ -69,463 +91,26 @@ struct WidgetPlacementGuideView: View {
         }
         .background(Color(.systemBackground))
     }
-
-    private var pagerHeight: CGFloat {
-        dynamicTypeSize.isAccessibilitySize ? 570 : 460
-    }
-
-    private var pagePicker: some View {
-        HStack(spacing: 12) {
-            ForEach(steps.indices, id: \.self) { index in
-                Button {
-                    selectStep(index)
-                } label: {
-                    Circle()
-                        .fill(index == selectedStep ? Color.accentColor : Color.secondary.opacity(0.28))
-                        .frame(width: index == selectedStep ? 11 : 8, height: index == selectedStep ? 11 : 8)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("手順 \(index + 1)")
-                .accessibilityValue(index == selectedStep ? "選択中" : "")
-                .accessibilityAddTraits(index == selectedStep ? .isSelected : [])
-            }
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private func selectStep(_ index: Int) {
-        guard steps.indices.contains(index) else { return }
-        if reduceMotion {
-            selectedStep = index
-        } else {
-            withAnimation(.easeInOut(duration: 0.22)) {
-                selectedStep = index
-            }
-        }
-    }
 }
 
-private enum WidgetPlacementIllustration {
-    case holdHomeScreen
-    case addControl(isModern: Bool)
-    case search
-    case chooseSize
-}
-
-private struct WidgetPlacementStepPanel: View {
-    let step: OnboardingWidgetGuideStepPresentation
+private struct WidgetPlacementStepRow: View {
+    let number: Int
+    let text: String
 
     var body: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-
-                illustration
-
-                GuideArrow(start: arrowPoints.start, end: arrowPoints.end)
-                    .stroke(
-                        Color.orange,
-                        style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
-                    )
-                    .shadow(color: .black.opacity(0.24), radius: 2, y: 1)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-            .aspectRatio(1, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-            }
-            .accessibilityHidden(true)
-
-            Text(caption)
-                .font(.headline)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 48)
-        }
-        .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 32))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("手順 \(step.id)。\(caption)")
-    }
-
-    @ViewBuilder
-    private var illustration: some View {
-        if let image = screenshotAsset {
-            GeometryReader { proxy in
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(
-                        width: proxy.size.width * screenshotScale,
-                        height: proxy.size.height * screenshotScale,
-                        alignment: screenshotAlignment
-                    )
-                    .frame(
-                        width: proxy.size.width,
-                        height: proxy.size.height,
-                        alignment: screenshotAlignment
-                    )
-                    .clipped()
-            }
-        } else {
-            WidgetPlacementFallbackIllustration(kind: illustrationKind)
-        }
-    }
-
-    /// The original four-name asset contract represents the iOS 17 flow. On
-    /// iOS 18 and later, Apple moved Widget addition under 編集, so only the
-    /// explicit modern variant may replace the accurate SwiftUI fallback.
-    /// https://support.apple.com/ja-jp/guide/iphone/iphb8f1bf206/ios
-    private var screenshotAsset: UIImage? {
-        if step.id == 2 {
-            if #available(iOS 18.0, *) {
-                return UIImage(named: "onboarding-widget-step-2-ios18")
-            }
-        }
-        return UIImage(named: step.imageAssetName)
-    }
-
-    private var caption: String {
-        if step.id == 2 {
-            if #available(iOS 18.0, *) {
-                return "左上の「編集」→「ウィジェットを追加」"
-            }
-        }
-        return step.caption
-    }
-
-    private var illustrationKind: WidgetPlacementIllustration {
-        switch step.id {
-        case 1:
-            return .holdHomeScreen
-        case 2:
-            if #available(iOS 18.0, *) {
-                return .addControl(isModern: true)
-            }
-            return .addControl(isModern: false)
-        case 3:
-            return .search
-        default:
-            return .chooseSize
-        }
-    }
-
-    /// The source captures are full-height iPhone screenshots. Showing the
-    /// whole bitmap would make the controls illegible, so each step presents
-    /// the relevant real-UI region inside the same square used by its arrow.
-    private var screenshotAlignment: Alignment {
-        switch step.id {
-        case 1, 4:
-            return .bottom
-        case 2:
-            return .topLeading
-        default:
-            return .top
-        }
-    }
-
-    private var screenshotScale: CGFloat {
-        step.id == 2 ? 1.25 : 1
-    }
-
-    private var arrowPoints: (start: UnitPoint, end: UnitPoint) {
-        if screenshotAsset != nil {
-            switch step.id {
-            case 1:
-                return (UnitPoint(x: 0.80, y: 0.58), UnitPoint(x: 0.57, y: 0.34))
-            case 2:
-                return (UnitPoint(x: 0.81, y: 0.71), UnitPoint(x: 0.48, y: 0.29))
-            case 3:
-                return (UnitPoint(x: 0.78, y: 0.78), UnitPoint(x: 0.50, y: 0.43))
-            default:
-                return (UnitPoint(x: 0.76, y: 0.50), UnitPoint(x: 0.50, y: 0.79))
-            }
-        }
-
-        switch step.id {
-        case 1:
-            return (UnitPoint(x: 0.78, y: 0.24), UnitPoint(x: 0.57, y: 0.42))
-        case 2:
-            return (UnitPoint(x: 0.65, y: 0.26), UnitPoint(x: 0.22, y: 0.14))
-        case 3:
-            return (UnitPoint(x: 0.78, y: 0.36), UnitPoint(x: 0.50, y: 0.23))
-        default:
-            return (UnitPoint(x: 0.76, y: 0.64), UnitPoint(x: 0.50, y: 0.79))
-        }
-    }
-}
-
-private struct GuideArrow: Shape {
-    let start: UnitPoint
-    let end: UnitPoint
-
-    func path(in rect: CGRect) -> Path {
-        let startPoint = CGPoint(
-            x: rect.minX + (rect.width * start.x),
-            y: rect.minY + (rect.height * start.y)
-        )
-        let endPoint = CGPoint(
-            x: rect.minX + (rect.width * end.x),
-            y: rect.minY + (rect.height * end.y)
-        )
-        let angle = atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x)
-        let arrowLength = min(rect.width, rect.height) * 0.055
-        let wingAngle = CGFloat.pi / 5
-
-        var path = Path()
-        path.move(to: startPoint)
-        path.addLine(to: endPoint)
-        path.move(to: endPoint)
-        path.addLine(to: CGPoint(
-            x: endPoint.x - (arrowLength * cos(angle - wingAngle)),
-            y: endPoint.y - (arrowLength * sin(angle - wingAngle))
-        ))
-        path.move(to: endPoint)
-        path.addLine(to: CGPoint(
-            x: endPoint.x - (arrowLength * cos(angle + wingAngle)),
-            y: endPoint.y - (arrowLength * sin(angle + wingAngle))
-        ))
-        return path
-    }
-}
-
-private struct WidgetPlacementFallbackIllustration: View {
-    let kind: WidgetPlacementIllustration
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.indigo.opacity(0.72), Color.blue.opacity(0.40), Color.pink.opacity(0.42)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            switch kind {
-            case .holdHomeScreen:
-                mockHomeScreen
-                VStack {
-                    Spacer()
-                    Image(systemName: "hand.tap.fill")
-                        .font(.system(size: 42))
-                        .foregroundStyle(.white, Color.accentColor)
-                        .padding(.bottom, 66)
-                }
-            case let .addControl(isModern):
-                mockHomeScreen
-                if isModern {
-                    modernEditMenu
-                } else {
-                    legacyAddButton
-                }
-            case .search:
-                widgetSearch
-            case .chooseSize:
-                widgetSizePicker
-            }
-        }
-        .aspectRatio(0.76, contentMode: .fit)
-    }
-
-    private var mockHomeScreen: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text("9:41")
-                Spacer()
-                Image(systemName: "cellularbars")
-                Image(systemName: "wifi")
-                Image(systemName: "battery.100")
-            }
-            .font(.caption.bold())
-            .foregroundStyle(.white)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 18) {
-                ForEach(0..<12, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(iconColor(index))
-                        .frame(width: 42, height: 42)
-                        .overlay {
-                            Image(systemName: iconName(index))
-                                .foregroundStyle(.white)
-                        }
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: 18) {
-                ForEach(["phone.fill", "safari.fill", "message.fill", "music.note"], id: \.self) { icon in
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(.white.opacity(0.26))
-                        .frame(width: 43, height: 43)
-                        .overlay {
-                            Image(systemName: icon)
-                                .foregroundStyle(.white)
-                        }
-                }
-            }
-            .padding(10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        }
-        .padding(20)
-    }
-
-    private var legacyAddButton: some View {
-        VStack {
-            HStack {
-                Image(systemName: "plus")
-                    .font(.headline.bold())
-                    .frame(width: 38, height: 38)
-                    .background(.ultraThinMaterial, in: Circle())
-                Spacer()
-                Text("完了")
-                    .font(.subheadline.bold())
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 7)
-                    .background(.ultraThinMaterial, in: Capsule())
-            }
-            Spacer()
-        }
-        .foregroundStyle(.white)
-        .padding(14)
-    }
-
-    private var modernEditMenu: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("編集")
-                    .font(.subheadline.bold())
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 9)
-                    .background(.ultraThinMaterial, in: Capsule())
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 9) {
-                Label("ウィジェットを追加", systemImage: "plus.square")
-                Divider()
-                Label("カスタマイズ", systemImage: "circle.lefthalf.filled")
-            }
-            .font(.caption.weight(.semibold))
-            .padding(12)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .frame(maxWidth: 190, alignment: .leading)
-
-            Spacer()
-        }
-        .padding(14)
-    }
-
-    private var widgetSearch: some View {
-        VStack(spacing: 16) {
-            Capsule()
-                .fill(Color.secondary.opacity(0.32))
-                .frame(width: 38, height: 5)
-
-            Text("ウィジェットを追加")
-                .font(.headline)
-
-            HStack(spacing: 9) {
-                Image(systemName: "magnifyingglass")
-                Text("ねこのまど")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(12)
-            .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 13))
-
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 13)
-                    .fill(Color.accentColor.gradient)
-                    .frame(width: 52, height: 52)
-                    .overlay {
-                        Image(systemName: "cat.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                    }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("ねこのまど")
-                        .font(.headline)
-                    Text("時間とともに変わる猫写真")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(.secondary)
-            }
-            .padding(13)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-
-            Spacer()
-        }
-        .foregroundStyle(.primary)
-        .padding(20)
-        .background(.regularMaterial)
-    }
-
-    private var widgetSizePicker: some View {
-        VStack(spacing: 14) {
-            Text("ねこのまど")
-                .font(.headline)
-
-            HStack(alignment: .bottom, spacing: 10) {
-                widgetPreview(width: 58, height: 58)
-                widgetPreview(width: 112, height: 58)
-                widgetPreview(width: 82, height: 94)
-            }
-
-            HStack(spacing: 6) {
-                Circle().fill(Color.primary).frame(width: 6, height: 6)
-                Circle().fill(Color.secondary.opacity(0.3)).frame(width: 6, height: 6)
-                Circle().fill(Color.secondary.opacity(0.3)).frame(width: 6, height: 6)
-            }
-
-            Text("ウィジェットを追加")
-                .font(.headline)
+        HStack(alignment: .top, spacing: 12) {
+            Text(number.formatted())
+                .font(.subheadline.bold())
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
+                .frame(width: 30, height: 30)
+                .background(Color.accentColor, in: Circle())
 
-            Spacer()
+            Text(text)
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
         }
-        .foregroundStyle(.primary)
-        .padding(22)
-        .background(.regularMaterial)
-    }
-
-    private func widgetPreview(width: CGFloat, height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 13)
-            .fill(
-                LinearGradient(
-                    colors: [Color.orange.opacity(0.82), Color.brown.opacity(0.75)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .frame(width: width, height: height)
-            .overlay {
-                Image(systemName: "cat.fill")
-                    .foregroundStyle(.white)
-            }
-    }
-
-    private func iconColor(_ index: Int) -> Color {
-        [Color.blue, .orange, .pink, .green, .purple, .cyan][index % 6].opacity(0.82)
-    }
-
-    private func iconName(_ index: Int) -> String {
-        [
-            "photo.fill", "calendar", "camera.fill", "map.fill",
-            "envelope.fill", "clock.fill", "heart.fill", "cloud.sun.fill",
-            "book.fill", "cart.fill", "gearshape.fill", "pawprint.fill"
-        ][index % 12]
+        .padding(14)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("手順\(number)。\(text)")
     }
 }

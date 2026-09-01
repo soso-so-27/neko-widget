@@ -83,6 +83,15 @@ struct AppRootView: View {
                 viewModel.suspendScan()
             }
         }
+        .onChange(of: widgetInstallationChecker.isInstalled, initial: true) { _, isInstalled in
+            guard isInstalled else { return }
+            completeWidgetPlacementGuideIfNeeded()
+        }
+        .onChange(of: onboardingState.currentPage, initial: true) { _, page in
+            guard page == .widgetGuide,
+                  widgetInstallationChecker.isInstalled else { return }
+            completeWidgetPlacementGuideIfNeeded()
+        }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
         }
@@ -992,6 +1001,15 @@ struct AppRootView: View {
     private func dismissWidgetPlacementGuide() {
         showsWidgetPlacementGuide = false
         widgetInstallationChecker.refresh()
+    }
+
+    private func completeWidgetPlacementGuideIfNeeded() {
+        showsWidgetPlacementGuide = false
+
+        var state = onboardingState
+        guard state.currentPage == .widgetGuide else { return }
+        state.advance()
+        persistOnboardingState(state)
     }
 }
 

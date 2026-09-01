@@ -3448,6 +3448,40 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("LogView()", retry_section)
         self.assertNotIn("setupChoiceSection", retry_section)
 
+    def test_widget_placement_guide_is_compact_and_auto_closes_after_install(self) -> None:
+        guide = source("NekoWidget/Views/WidgetPlacementGuideView.swift")
+        presentation = source("NekoWidget/Views/OnboardingPresentation.swift")
+        app_root = source("NekoWidget/App/AppRootView.swift")
+        checker = source("NekoWidget/Services/WidgetInstallationChecker.swift")
+
+        self.assertNotIn("TabView(selection:", guide)
+        self.assertNotIn("selectedStep", guide)
+        self.assertIn("widgetModernPlacementSteps", guide)
+        self.assertIn("widgetLegacyPlacementSteps", guide)
+        self.assertIn("if #available(iOS 18.0, *)", guide)
+        self.assertIn('"widget-placement-steps"', guide)
+        self.assertIn('"手順を確認した"', presentation)
+        self.assertIn('"追加してアプリへ戻ると、自動で確認します。"', presentation)
+        self.assertIn(
+            ".onChange(of: widgetInstallationChecker.isInstalled, initial: true)",
+            app_root,
+        )
+        self.assertIn(
+            ".onChange(of: onboardingState.currentPage, initial: true)",
+            app_root,
+        )
+        self.assertIn("guard page == .widgetGuide,", app_root)
+        self.assertIn("widgetInstallationChecker.isInstalled else { return }", app_root)
+        completion = section(
+            app_root,
+            "private func completeWidgetPlacementGuideIfNeeded()",
+            "@MainActor\nprivate final class PhotoPresentationCache",
+        )
+        self.assertIn("showsWidgetPlacementGuide = false", completion)
+        self.assertIn("guard state.currentPage == .widgetGuide else { return }", completion)
+        self.assertIn("state.advance()", completion)
+        self.assertIn("WidgetCenter.shared.getCurrentConfigurations", checker)
+
     def test_paired_consent_renewal_and_dynamic_build_identity_are_explicit(self) -> None:
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         base = section(

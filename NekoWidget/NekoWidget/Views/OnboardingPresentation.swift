@@ -107,8 +107,20 @@ enum OnboardingPresentationCopy {
         "ホーム画面に、",
         "猫写真のウィジェットをひとつ。"
     ]
-    static let widgetAction = "わかった"
-    static let widgetLaterAction = "あとで見る（設定からいつでも開けます）"
+    static let widgetBody = "追加はホーム画面で行います。"
+    static let widgetModernPlacementSteps = [
+        "ホーム画面の何もないところを長押し",
+        "左上の「編集」→「ウィジェットを追加」",
+        "「ねこのまど」を探し、好きな大きさで追加"
+    ]
+    static let widgetLegacyPlacementSteps = [
+        "ホーム画面の何もないところを長押し",
+        "左上の「＋」をタップ",
+        "「ねこのまど」を探し、好きな大きさで追加"
+    ]
+    static let widgetReturnHint = "追加してアプリへ戻ると、自動で確認します。"
+    static let widgetAction = "手順を確認した"
+    static let widgetLaterAction = "あとで"
 
     static let pawTitleLines = [
         "気に入った1枚は、",
@@ -116,39 +128,6 @@ enum OnboardingPresentationCopy {
     ]
     static let pawBody = "残した写真は「思い出」で見返し、あとでまとめられます。"
     static let pawAction = "はじめる"
-}
-
-struct OnboardingWidgetGuideStepPresentation: Equatable, Identifiable, Sendable {
-    let id: Int
-    let imageAssetName: String
-    let caption: String
-}
-
-extension OnboardingWidgetGuideStepPresentation {
-    /// Four static screenshots with overlaid arrows. The asset names are the
-    /// stable contract used by the SwiftUI page and the asset catalogue.
-    static let all: [Self] = [
-        Self(
-            id: 1,
-            imageAssetName: "onboarding-widget-step-1",
-            caption: "ホーム画面の何もないところを長押し"
-        ),
-        Self(
-            id: 2,
-            imageAssetName: "onboarding-widget-step-2",
-            caption: "左上の「＋」をタップ"
-        ),
-        Self(
-            id: 3,
-            imageAssetName: "onboarding-widget-step-3",
-            caption: "「ねこのまど」を探す"
-        ),
-        Self(
-            id: 4,
-            imageAssetName: "onboarding-widget-step-4",
-            caption: "好きな大きさを選んで追加"
-        )
-    ]
 }
 
 /// Pure reducer for first-run navigation and Settings replay.

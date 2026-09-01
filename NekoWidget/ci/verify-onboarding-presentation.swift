@@ -27,10 +27,6 @@ enum OnboardingPresentationVerifier {
             ],
             "onboarding stopped being the approved five-page flow"
         )
-        try require(
-            OnboardingWidgetGuideStepPresentation.all.count == 4,
-            "Widget guide stopped using four static screenshots"
-        )
     }
 
     private static func verifiesApprovedJapaneseCopy() throws {
@@ -131,22 +127,39 @@ enum OnboardingPresentationVerifier {
             "Widget guide promise changed"
         )
         try require(
-            OnboardingPresentationCopy.widgetAction == "わかった",
+            OnboardingPresentationCopy.widgetBody
+                == "追加はホーム画面で行います。",
+            "Widget guide stopped explaining the Home Screen handoff"
+        )
+        try require(
+            OnboardingPresentationCopy.widgetModernPlacementSteps == [
+                "ホーム画面の何もないところを長押し",
+                "左上の「編集」→「ウィジェットを追加」",
+                "「ねこのまど」を探し、好きな大きさで追加"
+            ],
+            "modern Widget installation steps changed"
+        )
+        try require(
+            OnboardingPresentationCopy.widgetLegacyPlacementSteps == [
+                "ホーム画面の何もないところを長押し",
+                "左上の「＋」をタップ",
+                "「ねこのまど」を探し、好きな大きさで追加"
+            ],
+            "legacy Widget installation steps changed"
+        )
+        try require(
+            OnboardingPresentationCopy.widgetReturnHint
+                == "追加してアプリへ戻ると、自動で確認します。",
+            "Widget guide stopped explaining automatic confirmation"
+        )
+        try require(
+            OnboardingPresentationCopy.widgetAction == "手順を確認した",
             "Widget guide primary action changed"
         )
         try require(
             OnboardingPresentationCopy.widgetLaterAction
-                == "あとで見る（設定からいつでも開けます）",
-            "Widget guide no longer promises a Settings return path"
-        )
-        try require(
-            OnboardingWidgetGuideStepPresentation.all.map(\.caption) == [
-                "ホーム画面の何もないところを長押し",
-                "左上の「＋」をタップ",
-                "「ねこのまど」を探す",
-                "好きな大きさを選んで追加"
-            ],
-            "Widget installation steps changed"
+                == "あとで",
+            "Widget guide later action changed"
         )
         try require(
             OnboardingPresentationCopy.pawTitleLines == [
