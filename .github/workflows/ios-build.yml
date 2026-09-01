@@ -640,9 +640,9 @@ jobs:
             NekoWidget/Services/PhotoSelectors.swift
           badge_count="$(grep -Fc '.badge(' NekoWidget/Views/MainTabView.swift || true)"
           if [ "$badge_count" -ne 1 ] || ! grep -Fq \
-            '.badge(latestMonthlyWindowIsUnread ? 1 : 0)' \
+            '.badge(hasUnreadMemoriesSummary ? 1 : 0)' \
             NekoWidget/Views/MainTabView.swift; then
-            echo "Only the latest unread monthly letter may badge a top-level tab" >&2
+            echo "Only unread Memories summaries may badge a top-level tab" >&2
             exit 1
           fi
           if grep -Fq '.tag(AppTab.settings)' NekoWidget/Views/MainTabView.swift; then
