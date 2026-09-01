@@ -6,6 +6,7 @@ export interface Env {
   INVITE_RATE_LIMITER?: RateLimit;
   MEMBER_RATE_LIMITER?: RateLimit;
   BILLING_RATE_LIMITER?: RateLimit;
+  BILLING_APPLE_NOTIFICATION_RATE_LIMITER?: RateLimit;
   ENVIRONMENT: string;
   /// Exact, server-side operational switch for normal v2 moment traffic.
   /// Report ingestion is controlled separately; blocks and cleanup remain

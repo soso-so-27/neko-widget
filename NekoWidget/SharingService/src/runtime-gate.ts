@@ -189,7 +189,8 @@ export function effectiveBillingRuntimeGateHeaders(
     transactionIngestion: snapshot.transactionIngestionEnabled
       && billingTransactionIngestionRuntimeEnabled(env),
     appleNotification: snapshot.appleNotificationEnabled
-      && billingAppleNotificationRuntimeEnabled(env),
+      && billingAppleNotificationRuntimeEnabled(env)
+      && env.BILLING_APPLE_NOTIFICATION_RATE_LIMITER !== undefined,
     subscriptionReconciliation: snapshot.subscriptionReconciliationEnabled
       && billingSubscriptionReconciliationRuntimeEnabled(env),
     effectiveEntitlement: snapshot.effectiveEntitlementEnabled
@@ -207,6 +208,8 @@ export function effectiveBillingRuntimeGateHeaders(
       effective.transactionIngestion ? "ON" : "OFF",
     "Neko-Runtime-Billing-Apple-Notification-Ingestion":
       effective.appleNotification ? "ON" : "OFF",
+    "Neko-Runtime-Billing-Apple-Notification-Rate-Limiter":
+      env.BILLING_APPLE_NOTIFICATION_RATE_LIMITER === undefined ? "MISSING" : "READY",
     "Neko-Runtime-Billing-Subscription-Reconciliation":
       effective.subscriptionReconciliation ? "ON" : "OFF",
     "Neko-Runtime-Billing-Effective-Entitlement":

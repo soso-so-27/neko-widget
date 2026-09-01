@@ -76,5 +76,8 @@
       "namespace_id": "100004",
       "simple": { "limit": 30, "period": 60 }
     }
+    // BILLING_APPLE_NOTIFICATION_RATE_LIMITER is intentionally absent here.
+    // Keep its runtime gate OFF until a separate production namespace and an
+    // observed, reviewed threshold replace this fail-closed example.
   ]
 }

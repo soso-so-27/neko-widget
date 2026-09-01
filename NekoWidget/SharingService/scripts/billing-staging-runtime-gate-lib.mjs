@@ -327,6 +327,10 @@ async function verifyOriginState(
         !== String(expected.generation)) {
     throw new Error("billing same-origin runtime gate verification failed");
   }
+  if (response.headers.get("neko-runtime-billing-apple-notification-rate-limiter")
+      !== "READY") {
+    throw new Error("billing same-origin runtime gate verification failed");
+  }
   for (const key of activationOrder) {
     if (response.headers.get(healthHeaders[key])
         !== (expected[key] === 1 ? "ON" : "OFF")) {

@@ -79,6 +79,7 @@ $env:NEKO_STAGING_CREATE_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のcreate
 $env:NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のinvite rate namespace ID"
 $env:NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のmember rate namespace ID"
 $env:NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のbilling rate namespace ID"
+$env:NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID = Read-Host "未使用のApple notification rate namespace ID"
 npm run staging:config:render
 npm run staging:config:check
 git check-ignore -v wrangler.staging.jsonc
@@ -90,7 +91,7 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 - `workers_dev=true`かつpreview URLとcustom routeが無効である
 - `ENVIRONMENT=staging`であり、写真・反応・まど名・通知・旧共有・通報受付と7つの課金runtimeがすべて`NO`である
 - Workers Paid専用のcustom `limits`が存在しない
-- rate limit 4本が固有namespaceで、作成5/min・招待10/min・member 120/min・課金30/minである
+- rate limit 5本が固有namespaceで、作成5/min・招待10/min・member 120/min・課金30/min・Apple通知30/minである。Apple通知値は本人用stagingだけの暫定値で、productionへ流用しない
 - cleanup／通知配送を含むCron 3本がある
 - account固有のIDや未置換placeholderをtracked templateへ持ち込まない
 
@@ -155,8 +156,10 @@ npx --no-install wrangler deploy --dry-run --config wrangler.staging.jsonc --out
 - Worker名が`neko-window-sharing-staging`
 - D1が`neko-window-sharing-staging`
 - `MEDIA`と`MODERATION_MEDIA`が異なるstaging bucket
-- 4本のRate Limit binding
+- 5本のRate Limit binding
 - 写真・反応・まど名・通知・旧共有・通報受付と7つの課金runtimeがすべて`NO`
+
+`/health`のApple通知limiter `READY`はbinding objectの存在だけを示し、active namespace ID・limit・periodは示しません。release判定では、固定したactive deployment/versionのCloudflare control-planeからsanitized binding snapshotを取得し、review済みconfigとexact照合します。ローカルconfig検査と`READY`だけを実配備の証拠にはしません。
 
 現在のrepositoryは、account／Worker／固定origin／期待active version／事前承認済みOFF versionをexact manifestへ束縛し、呼び出し側のactive snapshotが不一致なら副作用のない切替planすら返さないpure契約まで実装しています。既定はdry-runで、実provider、Cloudflare query、version切替、origin確認はありません。Cloudflareの公開version切替APIにexpected-currentの原子的preconditionがないため、GET後のPOSTを条件付き切替やcompare-and-swapとは表現しません。この手順ではdry-runより先へ進まず、通常の`wrangler deploy`やDashboardの手動var編集でも代用しません。安全な切替方式、直後の同一origin exact OFF確認、rollback訓練が実装・承認された後にだけ別手順で実配備します。
 

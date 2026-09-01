@@ -17,6 +17,7 @@ const fixtureEnvironment = {
   NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID: "700002",
   NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID: "700003",
   NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID: "700004",
+  NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID: "700005",
 };
 
 test("renders an isolated staging config with the moment runtime off", () => {
@@ -42,7 +43,7 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(config.limits, undefined);
   assert.equal(config.d1_databases[0].database_name, "neko-window-sharing-staging");
   assert.notEqual(config.r2_buckets[0].bucket_name, config.r2_buckets[1].bucket_name);
-  assert.equal(new Set(config.ratelimits.map((value) => value.namespace_id)).size, 4);
+  assert.equal(new Set(config.ratelimits.map((value) => value.namespace_id)).size, 5);
 });
 
 test("derives the media test-window config by enabling all private media runtimes", () => {

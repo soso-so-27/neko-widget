@@ -214,9 +214,11 @@ Production exampleはCloudflare Rate Limiting bindingを四つ使います。
 - Signed member API: source networkごとに120/min
 - 課金bootstrap／取引受付／暫定状態取得: source networkごとに30/min
 
-Network addressはrate-limit bindingのtransient keyにだけ渡し、D1へ保存しません。Bindingはper-locationかつeventually consistentなので、正確なquotaやone-time enforcementには使わず、D1 constraint/triggerを正本にします。
+Network addressは通常のrate-limit bindingのtransient keyにだけ渡し、D1へ保存しません。Apple通知だけは別namespaceの固定route-class keyを使い、同一Cloudflare location内の通知をまとめる近似pre-filterにします。Bindingはper-locationかつeventually consistentで複数locationの合算を制限しないため、正確なquotaやglobal capacity boundaryには使いません。D1 constraint/triggerとVerifierのmax-inflight／fail-closedをhard boundaryにします。
 
 Workers Logs/Traceはexampleで無効です。Codeはrequest body、header、public key、signature、network addressを`console`へ出しません。Productionでrate-limit bindingが欠けた場合はfail closedで`503`にします。
+
+このProduction exampleはApple通知専用bindingを意図的に持たず、Apple通知のrelease-ready configではありません。別のreview済みproduction config、専用namespace、実測済みthreshold、固定active deployment/versionに対するCloudflare control-plane exact証拠が揃うまで、`BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED`を`YES`にしません。
 
 ## Local verification
 
@@ -247,6 +249,6 @@ offline toolの存在だけではProduction gateを満たしません。
 [`MODERATION_STAGING_DRILL_RUNBOOK.md`](MODERATION_STAGING_DRILL_RUNBOOK.md)を参照してください。
 GitHub登録、deploy、TestFlight uploadはsource変更やCIでは実行しません。
 
-[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。まず専用stagingへ`0001`〜`0024`の24 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`と、bootstrap・取引受付・Apple通知・再照合・実効権限・課金鍵復旧・まど支援の7つの課金runtimeは既定`NO`のままにします。migration、非公開bucket、moderation運用、rate limit、client release gateを全て確認した隔離環境だけで、必要なものを個別に`YES`へ変更します。D1側にも独立した7つの課金下限gateがあり、対応する上限・下限の両方がONでなければ処理しません。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
+[`wrangler.example.jsonc`](wrangler.example.jsonc)を環境ごとにcopyし、完全に分離したD1、通常写真用R2、moderation用R2、account固有rate-limit namespaceを設定します。ただし、このexampleだけではApple通知を有効化できません。まず専用stagingへ`0001`〜`0024`の24 migrationを適用し、productionとbindingやsecretを共有しません。`MOMENT_RUNTIME_ENABLED`、`WINDOW_NAME_RUNTIME_ENABLED`、`APNS_RUNTIME_ENABLED`、`REPORT_INGESTION_RUNTIME_ENABLED`と、bootstrap・取引受付・Apple通知・再照合・実効権限・課金鍵復旧・まど支援の7つの課金runtimeは既定`NO`のままにします。migration、非公開bucket、moderation運用、rate limit、client release gateを全て確認した隔離環境だけで、必要なものを個別に`YES`へ変更します。D1側にも独立した7つの課金下限gateがあり、対応する上限・下限の両方がONでなければ処理しません。APNs OFFでも署名済みDELETE、期限切れsubscription/event cleanup、通報・block・通常cleanupは維持します。新規通報受付をOFFにしてもblock、共有解除、通報TTL cleanup、既存暗号文削除は維持します。このrepositoryにはProduction credentialや`.dev.vars`をcommitしません。外部deploy scriptは意図的に提供せず、stagingのOFF候補はlocal config検証とbundle dry-runだけを行います。実停止の未整備はrelease blockerです。
 
 両R2 bucketはpublic access/custom domainを無効のままにし、Worker bindingからだけ到達させます。Ciphertext本文は通常Worker logやD1へ入れません。Production deploy前にはD1/R2 identifier、rate-limit namespace、両R2のpublic access無効、3本のCron、削除backlogの最古時刻をreviewします。

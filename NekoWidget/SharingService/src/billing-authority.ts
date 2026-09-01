@@ -22,7 +22,6 @@ import {
   enforceRateLimit,
   parseJsonBody,
   readBody,
-  transientNetworkKey,
 } from "./http";
 import { exactKeys, stringField } from "./validation";
 
@@ -137,16 +136,16 @@ export async function ingestAppleBillingNotification(
   env: Env,
   verify: AppleNotificationVerifier = verifyAppleNotificationViaService,
 ): Promise<Response> {
+  // The route has already passed the static upper gate. Apply the edge guard
+  // before the D1 lower-gate read, body parsing, or the isolated verifier.
+  await enforceRateLimit(
+    env,
+    env.BILLING_APPLE_NOTIFICATION_RATE_LIMITER,
+    "billing-apple-notification",
+  );
   if ((await loadGate(env))?.apple_notification_ingestion_enabled !== 1) {
     throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   }
-  // Stop malformed or abusive traffic before it can consume the isolated
-  // Apple verifier's deliberately small concurrency budget.
-  await enforceRateLimit(
-    env,
-    env.BILLING_RATE_LIMITER,
-    transientNetworkKey(request, "billing-apple-notification"),
-  );
   const body = await readBody(request, maximumSignedNotificationBytes + 1_024);
   const raw = parseJsonBody(request, body);
   // This is the public App Store endpoint. Apple sends exactly this one field;

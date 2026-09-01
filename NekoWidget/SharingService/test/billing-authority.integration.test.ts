@@ -169,7 +169,7 @@ describe.sequential("App Store billing authority", () => {
     const limitedEnv = new Proxy(testEnv, {
       get(target, property, receiver) {
         if (property === "ENVIRONMENT") return "staging";
-        if (property === "BILLING_RATE_LIMITER") {
+        if (property === "BILLING_APPLE_NOTIFICATION_RATE_LIMITER") {
           return {
             async limit({ key }: { key: string }) {
               keys.push(key);
@@ -177,17 +177,23 @@ describe.sequential("App Store billing authority", () => {
             },
           };
         }
+        if (property === "BILLING_RATE_LIMITER") {
+          throw new Error("the generic billing limiter must not serve Apple notifications");
+        }
+        if (property === "DB") {
+          throw new Error("the lower gate must not be read before the edge limiter");
+        }
         return Reflect.get(target, property, receiver);
       },
     }) as Env;
     let verifierCalls = 0;
-    const request = notificationRequest("header.rate_limited.signature");
-    request.headers.set("cf-connecting-ip", "203.0.113.9");
-    await expect(ingestAppleBillingNotification(request, limitedEnv, async () => {
+    await expect(ingestAppleBillingNotification(
+      notificationRequest("header.rate_limited.signature"), limitedEnv, async () => {
       verifierCalls += 1;
       return notification("1ab3d5f7-1234-4abc-8def-1234567890ac", null);
-    })).rejects.toMatchObject({ status: 429, code: "rate_limited" });
-    expect(keys).toEqual(["billing-apple-notification:203.0.113.9"]);
+      },
+    )).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+    expect(keys).toEqual(["billing-apple-notification"]);
     expect(verifierCalls).toBe(0);
   });
 
@@ -196,7 +202,7 @@ describe.sequential("App Store billing authority", () => {
     const unavailableEnv = new Proxy(testEnv, {
       get(target, property, receiver) {
         if (property === "ENVIRONMENT") return "staging";
-        if (property === "BILLING_RATE_LIMITER") return undefined;
+        if (property === "BILLING_APPLE_NOTIFICATION_RATE_LIMITER") return undefined;
         return Reflect.get(target, property, receiver);
       },
     }) as Env;

@@ -54,6 +54,8 @@ describe("billing runtime health attestation", () => {
     expect(closed.headers.get("neko-runtime-billing-gate-generation"))
       .toBe(String(prior.generation));
     for (const name of headerNames) expect(closed.headers.get(name)).toBe("OFF");
+    expect(closed.headers.get("neko-runtime-billing-apple-notification-rate-limiter"))
+      .toBe("MISSING");
 
     const changed = await testEnv.DB.prepare(
       `UPDATE billing_runtime_gate
@@ -70,22 +72,39 @@ describe("billing runtime health attestation", () => {
     ).bind(prior.generation).run();
     expect(changed.meta.changes).toBe(1);
     try {
+      const upperGates = {
+        ...testEnv,
+        BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "YES",
+        BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "YES",
+        BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED: "YES",
+        BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES",
+        BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
+        BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "YES",
+        BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED: "YES",
+      };
+      const missingLimiter = await route(
+        new Request("https://sharing.invalid/health"),
+        upperGates,
+      );
+      expect(missingLimiter.headers.get("neko-runtime-billing-apple-notification-ingestion"))
+        .toBe("OFF");
+      expect(missingLimiter.headers.get("neko-runtime-billing-apple-notification-rate-limiter"))
+        .toBe("MISSING");
+
       const enabled = await route(
         new Request("https://sharing.invalid/health"),
         {
-          ...testEnv,
-          BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "YES",
-          BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "YES",
-          BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED: "YES",
-          BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES",
-          BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
-          BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "YES",
-          BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED: "YES",
+          ...upperGates,
+          BILLING_APPLE_NOTIFICATION_RATE_LIMITER: {
+            async limit() { return { success: true }; },
+          },
         },
       );
       expect(enabled.headers.get("neko-runtime-billing-gate-generation"))
         .toBe(String(prior.generation + 1));
       for (const name of headerNames) expect(enabled.headers.get(name)).toBe("ON");
+      expect(enabled.headers.get("neko-runtime-billing-apple-notification-rate-limiter"))
+        .toBe("READY");
       let serialized = "";
       enabled.headers.forEach((value, name) => { serialized += `${name}:${value}\n`; });
       expect(serialized).not.toMatch(/account-id|database-id|token|secret|jws/iu);

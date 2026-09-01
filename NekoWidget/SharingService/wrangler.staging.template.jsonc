@@ -75,6 +75,11 @@
       "name": "BILLING_RATE_LIMITER",
       "namespace_id": "__NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID__",
       "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "BILLING_APPLE_NOTIFICATION_RATE_LIMITER",
+      "namespace_id": "__NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID__",
+      "simple": { "limit": 30, "period": 60 }
     }
   ]
 }

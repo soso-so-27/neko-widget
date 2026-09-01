@@ -31,6 +31,7 @@ const environment = Object.freeze({
   NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID: "700002",
   NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID: "700003",
   NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID: "700004",
+  NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID: "700005",
 });
 const config = renderStagingConfig(template, environment, {
   expectedMomentRuntime: "YES",
@@ -108,6 +109,7 @@ function healthResponse(state, generation) {
       billingRuntimeGateStates[state][key] === 1 ? "ON" : "OFF",
     );
   }
+  headers.set("Neko-Runtime-Billing-Apple-Notification-Rate-Limiter", "READY");
   return new Response(JSON.stringify({ status: "ok", protocolVersion: 1 }), {
     headers,
   });
@@ -261,7 +263,7 @@ test("parsers reject stale CAS, partial states, and unknown response fields", ()
   );
 });
 
-test("same-origin health requires generation and all seven effective headers", async () => {
+test("same-origin health requires generation, all seven gates, and the notification limiter", async () => {
   await verifyBillingRuntimeGateOrigin(
     manifest,
     async (url) => {
@@ -273,6 +275,15 @@ test("same-origin health requires generation and all seven effective headers", a
   missingHeader.headers.delete("Neko-Runtime-Billing-Account-Recovery");
   await assert.rejects(
     verifyBillingRuntimeGateOrigin(manifest, async () => missingHeader),
+    /same-origin runtime gate verification failed/u,
+  );
+  const missingLimiter = healthResponse("bootstrap-only", 1);
+  missingLimiter.headers.set(
+    "Neko-Runtime-Billing-Apple-Notification-Rate-Limiter",
+    "MISSING",
+  );
+  await assert.rejects(
+    verifyBillingRuntimeGateOrigin(manifest, async () => missingLimiter),
     /same-origin runtime gate verification failed/u,
   );
 });

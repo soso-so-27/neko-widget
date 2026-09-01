@@ -14,8 +14,8 @@
 - ON configとの差分は課金7 upper Gateの`NO`／`YES`だけである。
 - config生成、検査、`--plan`はdeploy、D1更新、購入、復旧を行わない。
 - D1 controllerは固定Worker、固定D1、固定origin、期待generation、期待stateが一致した場合だけ1回のCASを行う。
-- `/health`は課金7 Gateの実効値とbilling generationだけを返し、account、database、device、token、JWS、secretを返さない。
-- Apple通知の公開endpointは、本文解析や隔離Verifier呼出しより先に専用suffixの`BILLING_RATE_LIMITER`を通す。本人用stagingの30/min・送信元IP単位はVerifier保護用の暫定上限であり、正確な通知quotaやproduction容量とは扱わない。一般公開前に固有namespaceの`BILLING_APPLE_NOTIFICATION_RATE_LIMITER`へ分離し、Apple TEST通知と合成burstの実測から閾値を決める。Sandbox通知は失敗時に自動再送されないため、暫定上限をproductionへ流用しない。
+- `/health`は課金7 Gateの実効値、billing generation、Apple通知専用limiterの`READY`／`MISSING`だけを返し、account、database、device、token、JWS、secret、namespace IDを返さない。`READY`が証明するのはactive Workerにbinding objectがあることだけで、namespace ID・limit・periodの実値ではない。release判定には、固定したactive deployment/versionのCloudflare control-plane snapshotを取得し、review済みconfigとexact照合する別の証拠を必須とする。
+- Apple通知の公開endpointは、本文解析や隔離Verifier呼出しより先に専用の`BILLING_APPLE_NOTIFICATION_RATE_LIMITER`を通す。keyは送信元IPではなく固定route classとし、同一Cloudflare location内のApple通知をまとめる近似pre-filterとして使う。counterはper-locationかつeventually consistentであり、複数locationの合算を制限するglobal boundaryではない。Verifierのmax-inflightとfail-closedをhard boundaryとする。本人用stagingの30/minはVerifier保護用の暫定上限であり、正確な通知quotaやproduction容量とは扱わない。productionは固有namespaceと別のreview済み値を必須とし、Apple TEST通知と合成burstの実測から閾値を決める。Sandbox通知は失敗時に自動再送されないため、staging値をproductionへ流用しない。
 - Workerから隔離Verifierへの入口はCloudflare TunnelとAccessの`Service Auth` policyで非公開化し、service tokenの2 headerとアプリ層HMACの両方を必須にする。どちらか一方だけで配備しない。
 
 ## 固定state
@@ -52,6 +52,7 @@ $env:NEKO_STAGING_CREATE_RATE_LIMIT_NAMESPACE_ID = Read-Host "create rate-limit 
 $env:NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID = Read-Host "invite rate-limit namespace ID"
 $env:NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID = Read-Host "member rate-limit namespace ID"
 $env:NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID = Read-Host "billing rate-limit namespace ID"
+$env:NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID = Read-Host "Apple notification rate-limit namespace ID"
 npm run billing-control-staging:config:render
 npm run billing-control-staging:config:check
 ```

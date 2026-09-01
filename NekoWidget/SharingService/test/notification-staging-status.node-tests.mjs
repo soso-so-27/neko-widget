@@ -19,6 +19,7 @@ const fixtureEnvironment = {
   NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID: "700002",
   NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID: "700003",
   NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID: "700004",
+  NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID: "700005",
 };
 const template = JSON.stringify({
   $schema: "node_modules/wrangler/config-schema.json",
@@ -65,6 +66,7 @@ const template = JSON.stringify({
     { name: "INVITE_RATE_LIMITER", namespace_id: "__NEKO_STAGING_INVITE_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 10, period: 60 } },
     { name: "MEMBER_RATE_LIMITER", namespace_id: "__NEKO_STAGING_MEMBER_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 120, period: 60 } },
     { name: "BILLING_RATE_LIMITER", namespace_id: "__NEKO_STAGING_BILLING_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 30, period: 60 } },
+    { name: "BILLING_APPLE_NOTIFICATION_RATE_LIMITER", namespace_id: "__NEKO_STAGING_BILLING_APPLE_NOTIFICATION_RATE_LIMIT_NAMESPACE_ID__", simple: { limit: 30, period: 60 } },
   ],
 });
 
