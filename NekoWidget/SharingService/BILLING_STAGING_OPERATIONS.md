@@ -3,6 +3,10 @@
 この手順は、本人用stagingでPlus課金の上下2層Gateを段階的に確認するためのものです。
 一般公開、TestFlightへの診断画面追加、実購入、production変更を許可する手順ではありません。
 
+Apple通知履歴は通常の課金操作に含めません。read-only statusと緊急OFFは
+[`BILLING_NOTIFICATION_HISTORY_STAGING_DRILL.md`](BILLING_NOTIFICATION_HISTORY_STAGING_DRILL.md)
+の専用手順を使います。専用手順にもON操作はありません。
+
 ## 安全境界
 
 - 追跡対象の`wrangler.staging.template.jsonc`は、課金8 upper Gateを常に`NO`で保持する。
@@ -113,4 +117,4 @@ node scripts/billing-staging-runtime-gate.mjs --confirm-bootstrap-only
 node scripts/billing-staging-runtime-gate.mjs --confirm-billing-all-off
 ```
 
-同一originの7実効値がすべてOFFになったことを確認し、その後にOFF upper configへ戻す。schemaや監査データは場当たり的に削除しない。
+同一originの8実効値がすべてOFFになったことを確認し、その後にOFF upper configへ戻す。schemaや監査データは場当たり的に削除しない。

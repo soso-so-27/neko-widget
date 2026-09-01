@@ -20,5 +20,6 @@ wrangler.billing-control-staging-on.jsonc
 emergency-off-control-manifest.json
 personal-staging-runtime-gate-manifest.json
 billing-staging-runtime-gate-manifest.json
+billing-notification-history-staging-manifest.json
 active-worker-ratelimit-attestation-manifest.json
 .wrangler-build70-0011.jsonc
