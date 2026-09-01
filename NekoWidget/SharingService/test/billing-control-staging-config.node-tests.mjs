@@ -68,6 +68,8 @@ test("rejects partial gates, binding drift, and secret vars", () => {
     (on) => { on.vars.BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED = "NO"; },
     (on) => { on.r2_buckets[0].bucket_name = "another-bucket"; },
     (on) => { on.vars.BILLING_VERIFIER_SHARED_SECRET = "must-not-be-in-vars"; },
+    (on) => { on.vars.BILLING_VERIFIER_ACCESS_CLIENT_ID = "must-not-be-in-vars"; },
+    (on) => { on.vars.BILLING_VERIFIER_ACCESS_CLIENT_SECRET = "must-not-be-in-vars"; },
   ]) {
     const { off, on } = pair();
     mutate(on);

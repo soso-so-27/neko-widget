@@ -163,6 +163,55 @@ describe.sequential("App Store billing authority", () => {
     expect(calls).toBe(0);
   });
 
+  it("rate limits the public Apple endpoint before parsing or verifier work", async () => {
+    await setAuthorityGates(true, false);
+    const keys: string[] = [];
+    const limitedEnv = new Proxy(testEnv, {
+      get(target, property, receiver) {
+        if (property === "ENVIRONMENT") return "staging";
+        if (property === "BILLING_RATE_LIMITER") {
+          return {
+            async limit({ key }: { key: string }) {
+              keys.push(key);
+              return { success: false };
+            },
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as Env;
+    let verifierCalls = 0;
+    const request = notificationRequest("header.rate_limited.signature");
+    request.headers.set("cf-connecting-ip", "203.0.113.9");
+    await expect(ingestAppleBillingNotification(request, limitedEnv, async () => {
+      verifierCalls += 1;
+      return notification("1ab3d5f7-1234-4abc-8def-1234567890ac", null);
+    })).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+    expect(keys).toEqual(["billing-apple-notification:203.0.113.9"]);
+    expect(verifierCalls).toBe(0);
+  });
+
+  it("fails closed before verifier work when the Apple endpoint limiter is missing", async () => {
+    await setAuthorityGates(true, false);
+    const unavailableEnv = new Proxy(testEnv, {
+      get(target, property, receiver) {
+        if (property === "ENVIRONMENT") return "staging";
+        if (property === "BILLING_RATE_LIMITER") return undefined;
+        return Reflect.get(target, property, receiver);
+      },
+    }) as Env;
+    let verifierCalls = 0;
+    await expect(ingestAppleBillingNotification(
+      notificationRequest("header.missing_limiter.signature"),
+      unavailableEnv,
+      async () => {
+        verifierCalls += 1;
+        return notification("1ab3d5f7-1234-4abc-8def-1234567890ad", null);
+      },
+    )).rejects.toMatchObject({ status: 503, code: "rate_limiter_unavailable" });
+    expect(verifierCalls).toBe(0);
+  });
+
   it("deduplicates Apple retries, preserves order-independent facts, and never stores raw JWS", async () => {
     await setAuthorityGates(true, false);
     const billingAccountId = "5f30c0de-0000-4000-8000-000000000101";

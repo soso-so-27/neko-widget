@@ -15,6 +15,8 @@
 - config生成、検査、`--plan`はdeploy、D1更新、購入、復旧を行わない。
 - D1 controllerは固定Worker、固定D1、固定origin、期待generation、期待stateが一致した場合だけ1回のCASを行う。
 - `/health`は課金7 Gateの実効値とbilling generationだけを返し、account、database、device、token、JWS、secretを返さない。
+- Apple通知の公開endpointは、本文解析や隔離Verifier呼出しより先に専用suffixの`BILLING_RATE_LIMITER`を通す。本人用stagingの30/min・送信元IP単位はVerifier保護用の暫定上限であり、正確な通知quotaやproduction容量とは扱わない。一般公開前に固有namespaceの`BILLING_APPLE_NOTIFICATION_RATE_LIMITER`へ分離し、Apple TEST通知と合成burstの実測から閾値を決める。Sandbox通知は失敗時に自動再送されないため、暫定上限をproductionへ流用しない。
+- Workerから隔離Verifierへの入口はCloudflare TunnelとAccessの`Service Auth` policyで非公開化し、service tokenの2 headerとアプリ層HMACの両方を必須にする。どちらか一方だけで配備しない。
 
 ## 固定state
 
@@ -86,9 +88,11 @@ npm run billing-staging:runtime-gate:status
 2. remote D1を保護された保存先へexportし、migration ledgerが`0001`〜`0024`の連続prefixである。
 3. 未適用の課金migrationだけを順番どおり適用し、課金7 lower Gateがすべて0である。
 4. review済みWorkerを先にOFF configで配備し、既存の写真・APNs・通報境界が変わらない。
-5. 隔離Billing Verifier、private ingress、TLS Redis instance、secret rotation、Apple Sandbox商品、bundle／group／product IDを用意する。Verifierのloopback待受、timeout、同時処理上限、Redis atomic nonce adapterは実装済みだが、外部instanceとsecretは未作成である。
+5. 隔離Billing Verifier、Cloudflare Tunnel、Accessの`Service Auth` policy、TLS Redis instance、secret rotation、Apple Sandbox商品、bundle／group／product IDを用意する。Verifierのloopback待受、timeout、同時処理上限、Redis atomic nonce adapterと、WorkerがAccess service token headerを付ける処理は実装済みだが、外部instance、Access application／token、secretは未作成である。Verifier hostのfirewallはTunnel以外のingressを拒否する。
 6. ON config配備後もlower Gateが`all-off`であり、`/health`の課金7実効値がすべてOFFである。
 7. Mac、development署名、DEBUG起動引数`--billing-internal-diagnostics`を使える。診断画面はTestFlightには含めない。
+
+Worker側の`BILLING_VERIFIER_ACCESS_CLIENT_ID`、`BILLING_VERIFIER_ACCESS_CLIENT_SECRET`、`BILLING_VERIFIER_SHARED_SECRET`はWranglerのsecretとして投入し、追跡対象または生成済みconfigの`vars`へ書かない。staging／productionではAccess credentialsの片方だけ、欠落、空白、改行をすべて設定不備として503でfail closedにする。`ENVIRONMENT=local`、`http://127.0.0.1`、両Access値未設定の3条件が同時に成立する場合だけ、loopback開発のためAccessを省略できる。
 
 現在のrepositoryにはVerifierのprivate ingress配備、Redis／secret投入、Sandbox商品の作成経路がまだない。したがって、Gate導線とVerifier側のfail-closed境界が完成していても、実課金の完全な7操作訓練を開始できる状態とは扱わない。
 

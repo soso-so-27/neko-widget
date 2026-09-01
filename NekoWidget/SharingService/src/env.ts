@@ -42,6 +42,10 @@ export interface Env {
   BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED?: string;
   /// HTTPS origin of the isolated, real-Node Apple JWS verifier.
   BILLING_VERIFIER_ORIGIN?: string;
+  /// Cloudflare Access service-token credentials for the private verifier.
+  /// Both values are secrets and must never be placed in Wrangler vars.
+  BILLING_VERIFIER_ACCESS_CLIENT_ID?: string;
+  BILLING_VERIFIER_ACCESS_CLIENT_SECRET?: string;
   /// Secret base64url-encoded 32-byte HMAC key shared only with the verifier.
   BILLING_VERIFIER_SHARED_SECRET?: string;
   BILLING_BUNDLE_ID?: string;

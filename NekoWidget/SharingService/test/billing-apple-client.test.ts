@@ -18,7 +18,9 @@ import type { Env } from "../src/env";
 const secret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 const testEnv = {
   ENVIRONMENT: "local",
-  BILLING_VERIFIER_ORIGIN: "http://billing-verifier.invalid",
+  BILLING_VERIFIER_ORIGIN: "http://127.0.0.1:8080",
+  BILLING_VERIFIER_ACCESS_CLIENT_ID: "staging-verifier.access",
+  BILLING_VERIFIER_ACCESS_CLIENT_SECRET: "staging-access-secret",
   BILLING_VERIFIER_SHARED_SECRET: secret,
   BILLING_BUNDLE_ID: "jp.nekowidget.app",
   BILLING_STORE_ENVIRONMENT: "Sandbox",
@@ -72,8 +74,10 @@ function authenticatedFetch(
   responseValue: unknown,
 ): typeof fetch {
   return async (input, init) => {
-    expect(String(input)).toBe(`http://billing-verifier.invalid${expectedPath}`);
+    expect(String(input)).toBe(`http://127.0.0.1:8080${expectedPath}`);
     const headers = new Headers(init?.headers);
+    expect(headers.get("cf-access-client-id")).toBe("staging-verifier.access");
+    expect(headers.get("cf-access-client-secret")).toBe("staging-access-secret");
     const timestamp = Number(headers.get("neko-billing-timestamp"));
     const nonce = headers.get("neko-billing-nonce") ?? "";
     const body = init?.body as Uint8Array;

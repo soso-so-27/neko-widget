@@ -46,6 +46,10 @@ export interface VerifiedAccountRecoveryEvidence {
 
 export interface VerifierConfig {
   origin: string;
+  accessServiceToken: {
+    clientId: string;
+    clientSecret: string;
+  } | null;
   sharedSecret: string;
   bundleId: string;
   environment: "Sandbox" | "Production";
@@ -58,6 +62,7 @@ const subscriptionGroupPattern = /^[A-Za-z0-9._-]{1,100}$/u;
 const bundleIdPattern = /^[A-Za-z0-9.-]{3,255}$/u;
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const transactionIdPattern = /^\d{1,32}$/u;
+const accessCredentialPattern = /^[\x21-\x7e]{1,512}$/u;
 
 function requiredSetting(value: string | undefined): string {
   if (value === undefined || value === "" || value !== value.trim()) {
@@ -78,7 +83,10 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
   } catch {
     throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
   }
-  const permitsLocalHTTP = env.ENVIRONMENT === "local" && parsedOrigin.protocol === "http:";
+  const isLocalLoopback = env.ENVIRONMENT === "local"
+    && parsedOrigin.protocol === "http:"
+    && parsedOrigin.hostname === "127.0.0.1";
+  const permitsLocalHTTP = isLocalLoopback;
   if (
     (!permitsLocalHTTP && parsedOrigin.protocol !== "https:")
     || parsedOrigin.username !== ""
@@ -100,6 +108,32 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
     throw new ApiError(503, "billing_configuration_unavailable", "Billing is temporarily unavailable.");
   }
 
+  const rawAccessClientId = env.BILLING_VERIFIER_ACCESS_CLIENT_ID;
+  const rawAccessClientSecret = env.BILLING_VERIFIER_ACCESS_CLIENT_SECRET;
+  const permitsLocalAccessBypass = isLocalLoopback
+    && rawAccessClientId === undefined
+    && rawAccessClientSecret === undefined;
+  let accessServiceToken: VerifierConfig["accessServiceToken"] = null;
+  if (!permitsLocalAccessBypass) {
+    const accessClientId = requiredSetting(rawAccessClientId);
+    const accessClientSecret = requiredSetting(rawAccessClientSecret);
+    if (
+      accessClientId.length > 256
+      || !accessCredentialPattern.test(accessClientId)
+      || !accessCredentialPattern.test(accessClientSecret)
+    ) {
+      throw new ApiError(
+        503,
+        "billing_configuration_unavailable",
+        "Billing is temporarily unavailable.",
+      );
+    }
+    accessServiceToken = {
+      clientId: accessClientId,
+      clientSecret: accessClientSecret,
+    };
+  }
+
   const bundleId = requiredSetting(env.BILLING_BUNDLE_ID);
   const environment = requiredSetting(env.BILLING_STORE_ENVIRONMENT);
   const subscriptionGroupId = requiredSetting(env.BILLING_SUBSCRIPTION_GROUP_ID);
@@ -117,6 +151,7 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
   }
   return {
     origin: parsedOrigin.origin,
+    accessServiceToken,
     sharedSecret,
     bundleId,
     environment,
@@ -317,6 +352,10 @@ export async function callBillingVerifierService(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(config.accessServiceToken === null ? {} : {
+          "CF-Access-Client-Id": config.accessServiceToken.clientId,
+          "CF-Access-Client-Secret": config.accessServiceToken.clientSecret,
+        }),
         "Neko-Billing-Protocol-Version": String(BILLING_VERIFIER_PROTOCOL_VERSION),
         "Neko-Billing-Timestamp": String(timestamp),
         "Neko-Billing-Nonce": nonce,

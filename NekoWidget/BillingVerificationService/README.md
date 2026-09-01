@@ -7,6 +7,7 @@
 ## 境界
 
 - 入力はWorkerからの署名済みinternal requestだけです。
+- 外部入口はCloudflare TunnelとAccessの`Service Auth` policyで保護し、Workerだけがservice tokenを送ります。Access認証後も、アプリ層HMAC、時刻、共有Redis nonceを必須にします。
 - HMAC transcriptにはprotocol version、時刻、nonce、request body SHA-256を含めます。
 - responseもrequest nonce、HTTP status、response body SHA-256へHMAC署名します。
 - Apple JWSは検証中だけmemoryへ置き、log・D1・responseへ残しません。
@@ -50,7 +51,7 @@ npm run check
 
 ## Production前に必要なもの
 
-1. public internetへ直接公開しない隔離host、TLS、egress制御、secret manager、監視を決める
+1. public internetへ直接公開しない隔離host、Cloudflare Tunnel、Accessの`Service Auth` policy、TLS、egress制御、secret manager、監視を決める
 2. Apple公式rootの取得・検査・rotation runbookを作る
 3. WorkerとserviceのHMAC secret rotationを実装・訓練する
 4. Notifications V2／Subscription Statusの隔離staging URL、Notification History復旧、再送・順序逆転を運用検証する
@@ -59,6 +60,6 @@ npm run check
 
 internal requestの同一nonceは、全instanceで共有するRedisのatomic `SET NX`でApple検証前に予約します。時刻の±300秒許容全域を覆うため保持は601秒です。Redisが不通、応答不明、または同一nonceが予約済みなら署名付き503でfail closedし、Apple検証を呼びません。切断時は短い再接続を3回だけ行い、その間と失敗後のhealthは503です。単一processのmemory cacheへfallbackしません。
 
-現在のserverと実行entrypointは`127.0.0.1`だけへbindし、同一hostのprivate gateway経由だけを前提にします。header受信5秒、body受信10秒、Apple応答期限25秒、idle socket 30秒、同時Apple処理4件の上限をcodeで固定し、超過時は署名付き503にします。Apple libraryの未完了通信を安全に中断できないため、25秒超過時は503を返した直後にinstanceを異常終了し、隔離hostのsupervisorが再起動します。通常requestは64 KiB、二重JWSを持つ復旧requestだけ128 KiBです。containerで`0.0.0.0`が必要な構成はこのentrypointを流用せず、Worker以外を拒否するprivate ingressと独立したreviewを必須にします。
+現在のserverと実行entrypointは`127.0.0.1`だけへbindし、同一hostのTunnel connector／private gateway経由だけを前提にします。gatewayはAccess service tokenを検証し、host firewallはTunnel以外のingressを拒否します。Accessは外部到達制御、HMACはWorker requestとVerifier responseの相互認証であり、代替関係ではありません。header受信5秒、body受信10秒、Apple応答期限25秒、idle socket 30秒、同時Apple処理4件の上限をcodeで固定し、超過時は署名付き503にします。Apple libraryの未完了通信を安全に中断できないため、25秒超過時は503を返した直後にinstanceを異常終了し、隔離hostのsupervisorが再起動します。通常requestは64 KiB、二重JWSを持つ復旧requestだけ128 KiBです。containerで`0.0.0.0`が必要な構成はこのentrypointを流用せず、Worker以外を拒否するprivate ingressと独立したreviewを必須にします。
 
 Apple公式実装と仕様：[App Store Server Library for Node](https://github.com/apple/app-store-server-library-node)、[App Store Server API](https://developer.apple.com/documentation/appstoreserverapi)。

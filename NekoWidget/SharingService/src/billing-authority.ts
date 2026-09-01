@@ -18,7 +18,12 @@ import { requestBillingReconciliation } from "./billing-reconciliation-queue";
 import { randomBase64url, sha256Base64url } from "./encoding";
 import { ApiError } from "./errors";
 import type { Env } from "./env";
-import { parseJsonBody, readBody } from "./http";
+import {
+  enforceRateLimit,
+  parseJsonBody,
+  readBody,
+  transientNetworkKey,
+} from "./http";
 import { exactKeys, stringField } from "./validation";
 
 const maximumSignedNotificationBytes = 60 * 1024;
@@ -135,6 +140,13 @@ export async function ingestAppleBillingNotification(
   if ((await loadGate(env))?.apple_notification_ingestion_enabled !== 1) {
     throw new ApiError(503, "billing_runtime_disabled", "Billing is temporarily unavailable.");
   }
+  // Stop malformed or abusive traffic before it can consume the isolated
+  // Apple verifier's deliberately small concurrency budget.
+  await enforceRateLimit(
+    env,
+    env.BILLING_RATE_LIMITER,
+    transientNetworkKey(request, "billing-apple-notification"),
+  );
   const body = await readBody(request, maximumSignedNotificationBytes + 1_024);
   const raw = parseJsonBody(request, body);
   // This is the public App Store endpoint. Apple sends exactly this one field;
