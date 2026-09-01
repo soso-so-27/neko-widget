@@ -7,6 +7,7 @@ function environment(): NodeJS.ProcessEnv {
   return {
     BILLING_VERIFIER_RUNTIME_ENABLED: "YES",
     BILLING_VERIFIER_SHARED_SECRET: Buffer.alloc(32, 7).toString("base64url"),
+    BILLING_NONCE_REDIS_URL: "rediss://billing-nonce.invalid:6380/0",
     APPLE_ROOT_CERTIFICATES_BASE64_JSON: JSON.stringify([
       Buffer.alloc(300, 1).toString("base64"),
     ]),
@@ -27,6 +28,21 @@ test("loads only an explicit Sandbox verifier configuration", () => {
   assert.equal(result.subscriptionStatusEnabled, false);
   assert.equal(result.accountRecoveryVerificationEnabled, false);
   assert.equal(result.serverAPI, undefined);
+  assert.equal(result.nonceRedisURL, "rediss://billing-nonce.invalid:6380/0");
+});
+
+test("requires a TLS Redis nonce store without URL options", () => {
+  const missing = environment();
+  delete missing.BILLING_NONCE_REDIS_URL;
+  assert.throws(() => loadConfig(missing), /NONCE_REDIS_URL is required/u);
+
+  const plaintext = environment();
+  plaintext.BILLING_NONCE_REDIS_URL = "redis://billing-nonce.invalid:6379/0";
+  assert.throws(() => loadConfig(plaintext), /must use TLS/u);
+
+  const options = environment();
+  options.BILLING_NONCE_REDIS_URL = "rediss://billing-nonce.invalid:6380/0?secret=value";
+  assert.throws(() => loadConfig(options), /without query or fragment/u);
 });
 
 test("requires appAppleId in Production and rejects test bypass environments", () => {

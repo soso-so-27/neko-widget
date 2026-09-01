@@ -21,6 +21,7 @@
 |---|---|
 | `BILLING_VERIFIER_RUNTIME_ENABLED` | 正確に`YES`のときだけ起動 |
 | `BILLING_VERIFIER_SHARED_SECRET` | Workerと共有する32-byte canonical base64url secret |
+| `BILLING_NONCE_REDIS_URL` | 共有nonce予約専用のTLS Redis URL（`rediss://`）。secret managerからだけ注入 |
 | `APPLE_ROOT_CERTIFICATES_BASE64_JSON` | Apple公式root DERをbase64化したJSON配列 |
 | `BILLING_STORE_ENVIRONMENT` | `Sandbox`または`Production` |
 | `BILLING_BUNDLE_ID` | App bundle ID |
@@ -56,8 +57,8 @@ npm run check
 5. Sandboxの購入・更新・失効・返金fixtureを検証する
 6. 両runtime gateを段階的に開く手順と緊急OFFを訓練する
 
-internal requestの同一nonce再送は検証結果やD1を直接変更しませんが、Apple証明書確認の負荷を増幅し得ます。runtimeをONにする前に、隔離ingressでのrate limitと、全instanceで共有する5分TTL nonce storeを実装・負荷試験します。単一processのmemory cacheだけで完了扱いにはしません。
+internal requestの同一nonceは、全instanceで共有するRedisのatomic `SET NX`でApple検証前に予約します。時刻の±300秒許容全域を覆うため保持は601秒です。Redisが不通、応答不明、または同一nonceが予約済みなら署名付き503でfail closedし、Apple検証を呼びません。切断時は短い再接続を3回だけ行い、その間と失敗後のhealthは503です。単一processのmemory cacheへfallbackしません。
 
-現在のserverは`127.0.0.1`へbindし、同一hostのprivate gateway経由だけを前提にします。containerで`0.0.0.0`が必要な構成へ変更する場合も、Worker以外を拒否するprivate ingress、64 KiB以下のrequest、header受信5秒・body受信10秒・upstream応答29秒未満のtimeout、負荷試験から決めた同時実行上限と超過時の拒否を必須にします。これらが構成ファイルと自動確認で証明できるまで公開しません。
+現在のserverと実行entrypointは`127.0.0.1`だけへbindし、同一hostのprivate gateway経由だけを前提にします。header受信5秒、body受信10秒、Apple応答期限25秒、idle socket 30秒、同時Apple処理4件の上限をcodeで固定し、超過時は署名付き503にします。Apple libraryの未完了通信を安全に中断できないため、25秒超過時は503を返した直後にinstanceを異常終了し、隔離hostのsupervisorが再起動します。通常requestは64 KiB、二重JWSを持つ復旧requestだけ128 KiBです。containerで`0.0.0.0`が必要な構成はこのentrypointを流用せず、Worker以外を拒否するprivate ingressと独立したreviewを必須にします。
 
 Apple公式実装と仕様：[App Store Server Library for Node](https://github.com/apple/app-store-server-library-node)、[App Store Server API](https://developer.apple.com/documentation/appstoreserverapi)。

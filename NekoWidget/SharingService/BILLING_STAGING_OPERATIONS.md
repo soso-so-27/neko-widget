@@ -86,11 +86,11 @@ npm run billing-staging:runtime-gate:status
 2. remote D1を保護された保存先へexportし、migration ledgerが`0001`〜`0024`の連続prefixである。
 3. 未適用の課金migrationだけを順番どおり適用し、課金7 lower Gateがすべて0である。
 4. review済みWorkerを先にOFF configで配備し、既存の写真・APNs・通報境界が変わらない。
-5. 隔離Billing Verifier、TLS、共有nonce、secret rotation、Apple Sandbox商品、bundle／group／product IDを用意する。
+5. 隔離Billing Verifier、private ingress、TLS Redis instance、secret rotation、Apple Sandbox商品、bundle／group／product IDを用意する。Verifierのloopback待受、timeout、同時処理上限、Redis atomic nonce adapterは実装済みだが、外部instanceとsecretは未作成である。
 6. ON config配備後もlower Gateが`all-off`であり、`/health`の課金7実効値がすべてOFFである。
 7. Mac、development署名、DEBUG起動引数`--billing-internal-diagnostics`を使える。診断画面はTestFlightには含めない。
 
-現在のrepositoryにはVerifierの配備・secret投入・Sandbox商品の作成経路がまだない。したがって、Gate導線が完成していても、実課金の完全な7操作訓練を開始できる状態とは扱わない。
+現在のrepositoryにはVerifierのprivate ingress配備、Redis／secret投入、Sandbox商品の作成経路がまだない。したがって、Gate導線とVerifier側のfail-closed境界が完成していても、実課金の完全な7操作訓練を開始できる状態とは扱わない。
 
 ## 確認と緊急停止
 

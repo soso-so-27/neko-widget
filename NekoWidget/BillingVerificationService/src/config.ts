@@ -19,6 +19,10 @@ export interface VerificationServiceConfig {
   };
 }
 
+export interface VerificationRuntimeConfig extends VerificationServiceConfig {
+  nonceRedisURL: string;
+}
+
 const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 const productIdPattern = /^[A-Za-z0-9._-]{1,100}$/u;
 const bundleIdPattern = /^[A-Za-z0-9.-]{3,255}$/u;
@@ -74,7 +78,26 @@ function decodeRoots(value: string): Buffer[] {
   });
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationServiceConfig {
+function nonceRedisURL(env: NodeJS.ProcessEnv): string {
+  const value = required(env, "BILLING_NONCE_REDIS_URL");
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("BILLING_NONCE_REDIS_URL is invalid");
+  }
+  if (
+    parsed.protocol !== "rediss:"
+    || parsed.hostname === ""
+    || parsed.hash !== ""
+    || parsed.search !== ""
+  ) {
+    throw new Error("BILLING_NONCE_REDIS_URL must use TLS without query or fragment");
+  }
+  return value;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRuntimeConfig {
   if (required(env, "BILLING_VERIFIER_RUNTIME_ENABLED") !== "YES") {
     throw new Error("Billing verifier runtime is disabled");
   }
@@ -162,5 +185,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationSe
   ) {
     throw new Error("App Store Server API credentials require the exact runtime switch");
   }
-  return config;
+  return { ...config, nonceRedisURL: nonceRedisURL(env) };
 }

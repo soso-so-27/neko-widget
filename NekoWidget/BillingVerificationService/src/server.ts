@@ -37,6 +37,28 @@ import {
   signTranscript,
   verifyTranscript,
 } from "./internal-auth.js";
+import {
+  BILLING_VERIFIER_NONCE_RETENTION_SECONDS,
+  billingVerifierNonceScope,
+  type BillingVerifierNonceStore,
+} from "./nonce-store.js";
+
+export const BILLING_VERIFIER_LISTEN_HOST = "127.0.0.1";
+export const BILLING_VERIFIER_HEADERS_TIMEOUT_MS = 5_000;
+export const BILLING_VERIFIER_REQUEST_TIMEOUT_MS = 10_000;
+export const BILLING_VERIFIER_SOCKET_TIMEOUT_MS = 30_000;
+export const BILLING_VERIFIER_OPERATION_TIMEOUT_MS = 25_000;
+export const BILLING_VERIFIER_NONCE_STORE_TIMEOUT_MS = 2_000;
+export const BILLING_VERIFIER_MAX_INFLIGHT = 4;
+export const BILLING_VERIFIER_MAX_HEADERS = 32;
+export const BILLING_VERIFIER_MAX_CONNECTIONS = 32;
+export const BILLING_VERIFIER_MAX_REQUESTS_PER_SOCKET = 100;
+
+export interface BillingVerifierRuntimeDependencies {
+  nonceStore: BillingVerifierNonceStore;
+  onFatalDependencyTimeout: () => void;
+  operationTimeoutMs?: number;
+}
 
 interface TransactionVerifier {
   verify(signedTransactionInfo: string): Promise<NormalizedBillingTransaction>;
@@ -64,6 +86,39 @@ class RequestError extends Error {
   constructor(readonly status: number) {
     super();
   }
+}
+
+class RetryableServiceError extends Error {
+  constructor(readonly code: string) {
+    super();
+  }
+}
+
+function withDeadline<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  timeoutError: Error,
+  onTimeout?: () => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let responded = false;
+    const timeout = setTimeout(() => {
+      responded = true;
+      onTimeout?.();
+      reject(timeoutError);
+    }, timeoutMs);
+    timeout.unref();
+    operation.then(
+      (value) => {
+        clearTimeout(timeout);
+        if (!responded) resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        if (!responded) reject(error);
+      },
+    );
+  });
 }
 
 async function readBody(request: IncomingMessage, maximumBytes = 64 * 1024): Promise<Buffer> {
@@ -254,9 +309,34 @@ function sendSigned(
 
 export function createBillingVerificationServer(
   config: VerificationServiceConfig,
+  dependencies: BillingVerifierRuntimeDependencies,
   transactionVerifier: TransactionVerifier = new AppleTransactionVerifier(config),
   suppliedServices: BillingAppleServices = {},
 ) {
+  const nonceScope = billingVerifierNonceScope(config);
+  const operationTimeoutMs = dependencies.operationTimeoutMs
+    ?? BILLING_VERIFIER_OPERATION_TIMEOUT_MS;
+  if (!Number.isSafeInteger(operationTimeoutMs) || operationTimeoutMs < 1) {
+    throw new Error("Billing verifier operation timeout is invalid");
+  }
+  let inflight = 0;
+  const runAppleOperation = <T>(operation: () => Promise<T>): Promise<T> => {
+    if (inflight >= BILLING_VERIFIER_MAX_INFLIGHT) {
+      throw new RetryableServiceError("billing_verifier_busy");
+    }
+    inflight += 1;
+    const underlying = Promise.resolve().then(operation);
+    void underlying.then(
+      () => { inflight -= 1; },
+      () => { inflight -= 1; },
+    );
+    return withDeadline(
+      underlying,
+      operationTimeoutMs,
+      new RetryableServiceError("apple_verification_temporarily_unavailable"),
+      dependencies.onFatalDependencyTimeout,
+    );
+  };
   let signedDataVerifier: SignedDataVerifier | undefined;
   const sharedSignedDataVerifier = (): SignedDataVerifier => {
     signedDataVerifier ??= new SignedDataVerifier(
@@ -280,10 +360,20 @@ export function createBillingVerificationServer(
   const accountRecoveryVerifier = suppliedServices.accountRecoveryVerifier
     ?? (config.accountRecoveryVerificationEnabled === true
       ? new AppleAccountRecoveryVerifier(config, sharedSignedDataVerifier()) : null);
-  return createServer(async (request, response) => {
+  const server = createServer({
+    headersTimeout: BILLING_VERIFIER_HEADERS_TIMEOUT_MS,
+    requestTimeout: BILLING_VERIFIER_REQUEST_TIMEOUT_MS,
+    keepAliveTimeout: 1_000,
+    maxHeaderSize: 8 * 1024,
+    connectionsCheckingInterval: 1_000,
+  }, async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
-      const body = Buffer.from(JSON.stringify({ status: "ok", protocolVersion: 1 }));
-      response.writeHead(200, {
+      const ready = dependencies.nonceStore.ready();
+      const body = Buffer.from(JSON.stringify({
+        status: ready ? "ok" : "unavailable",
+        protocolVersion: 1,
+      }));
+      response.writeHead(ready ? 200 : 503, {
         "Cache-Control": "no-store, max-age=0",
         "Content-Type": "application/json; charset=utf-8",
         "Content-Length": body.length,
@@ -313,10 +403,44 @@ export function createBillingVerificationServer(
       return;
     }
 
+    let claim: "claimed" | "replayed";
+    try {
+      claim = await withDeadline(
+        dependencies.nonceStore.claim({
+          scope: nonceScope,
+          nonce,
+          retentionSeconds: BILLING_VERIFIER_NONCE_RETENTION_SECONDS,
+        }),
+        BILLING_VERIFIER_NONCE_STORE_TIMEOUT_MS,
+        new RetryableServiceError("billing_verifier_nonce_store_unavailable"),
+      );
+    } catch {
+      sendSigned(
+        response,
+        503,
+        { error: { code: "billing_verifier_nonce_store_unavailable" } },
+        nonce,
+        config.sharedSecret,
+      );
+      return;
+    }
+    if (claim !== "claimed") {
+      sendSigned(
+        response,
+        503,
+        { error: { code: "billing_verifier_replayed_request" } },
+        nonce,
+        config.sharedSecret,
+      );
+      return;
+    }
+
     try {
       if (request.url === VERIFY_PATH) {
         const signedTransactionInfo = parseTransactionBody(body);
-        const verified = await transactionVerifier.verify(signedTransactionInfo);
+        const verified = await runAppleOperation(
+          () => transactionVerifier.verify(signedTransactionInfo),
+        );
         sendSigned(response, 200, verified, nonce, config.sharedSecret);
       } else if (request.url === VERIFY_NOTIFICATION_PATH) {
         if (config.notificationVerificationEnabled !== true || notificationVerifier === null) {
@@ -333,7 +457,7 @@ export function createBillingVerificationServer(
         sendSigned(
           response,
           200,
-          await notificationVerifier.verify(signedPayload),
+          await runAppleOperation(() => notificationVerifier.verify(signedPayload)),
           nonce,
           config.sharedSecret,
         );
@@ -352,7 +476,7 @@ export function createBillingVerificationServer(
         sendSigned(
           response,
           200,
-          await subscriptionStatusService.get(originalTransactionId),
+          await runAppleOperation(() => subscriptionStatusService.get(originalTransactionId)),
           nonce,
           config.sharedSecret,
         );
@@ -361,10 +485,18 @@ export function createBillingVerificationServer(
           sendSigned(response, 503, { error: { code: "apple_account_recovery_verifier_disabled" } }, nonce, config.sharedSecret);
           return;
         }
-        sendSigned(response, 200, await accountRecoveryVerifier.verify(parseRecoveryBody(body)), nonce, config.sharedSecret);
+        sendSigned(
+          response,
+          200,
+          await runAppleOperation(() => accountRecoveryVerifier.verify(parseRecoveryBody(body))),
+          nonce,
+          config.sharedSecret,
+        );
       }
     } catch (error) {
       if (
+        error instanceof RetryableServiceError
+        ||
         error instanceof RetryableAppleVerificationError
         || error instanceof RetryableAppleNotificationError
         || error instanceof RetryableAppleSubscriptionStatusError
@@ -372,7 +504,8 @@ export function createBillingVerificationServer(
         sendSigned(
           response,
           503,
-          { error: { code: "apple_verification_temporarily_unavailable" } },
+          { error: { code: error instanceof RetryableServiceError
+            ? error.code : "apple_verification_temporarily_unavailable" } },
           nonce,
           config.sharedSecret,
         );
@@ -391,18 +524,32 @@ export function createBillingVerificationServer(
       }
     }
   });
+  server.maxHeadersCount = BILLING_VERIFIER_MAX_HEADERS;
+  server.maxConnections = BILLING_VERIFIER_MAX_CONNECTIONS;
+  server.maxRequestsPerSocket = BILLING_VERIFIER_MAX_REQUESTS_PER_SOCKET;
+  server.setTimeout(BILLING_VERIFIER_SOCKET_TIMEOUT_MS, (socket) => socket.destroy());
+  return server;
 }
 
 export async function listen(
   config: VerificationServiceConfig,
-): Promise<{ close: () => Promise<void>; port: number }> {
-  const server = createBillingVerificationServer(config);
+  dependencies: BillingVerifierRuntimeDependencies,
+  transactionVerifier: TransactionVerifier = new AppleTransactionVerifier(config),
+  suppliedServices: BillingAppleServices = {},
+): Promise<{ close: () => Promise<void>; host: string; port: number }> {
+  const server = createBillingVerificationServer(
+    config,
+    dependencies,
+    transactionVerifier,
+    suppliedServices,
+  );
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(config.port, "127.0.0.1", resolve);
+    server.listen(config.port, BILLING_VERIFIER_LISTEN_HOST, resolve);
   });
   const address = server.address() as AddressInfo;
   return {
+    host: BILLING_VERIFIER_LISTEN_HOST,
     port: address.port,
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => error === undefined ? resolve() : reject(error));
