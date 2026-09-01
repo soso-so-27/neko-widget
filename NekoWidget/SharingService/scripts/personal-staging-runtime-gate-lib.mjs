@@ -10,6 +10,8 @@ export const runtimeGateConfigName = "wrangler.general-staging-on.jsonc";
 export const runtimeGateManifestName = "personal-staging-runtime-gate-manifest.json";
 const databaseName = "neko-window-sharing-staging";
 const workerName = "neko-window-sharing-staging";
+const expectedOrigin =
+  "https://neko-window-sharing-staging.nakanishisoya.workers.dev";
 const wranglerVersion = "4.125.0";
 const exactManifestKeys = Object.freeze([
   "accountId", "databaseId", "desiredState", "expectedGeneration",
@@ -47,12 +49,16 @@ export function validateRuntimeGateManifest(input) {
       || input.expectedGeneration > 2_147_483_646) {
     throw new Error("personal staging runtime gate manifest is unavailable or invalid");
   }
+  const origin = normalizePublicHttpsOrigin(input.origin);
+  if (origin !== expectedOrigin) {
+    throw new Error("personal staging runtime gate manifest is unavailable or invalid");
+  }
   return Object.freeze({
     schemaVersion: 1,
     accountId: input.accountId,
     databaseId: input.databaseId,
     workerName,
-    origin: normalizePublicHttpsOrigin(input.origin),
+    origin,
     expectedGeneration: input.expectedGeneration,
     desiredState: input.desiredState,
   });

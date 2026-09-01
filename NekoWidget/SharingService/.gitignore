@@ -15,6 +15,9 @@ wrangler.notification-staging-on.jsonc
 wrangler.report-ingestion-staging-on.jsonc
 wrangler.general-staging-on.jsonc
 wrangler.general-staging-apns-off.jsonc
+wrangler.billing-control-staging-off.jsonc
+wrangler.billing-control-staging-on.jsonc
 emergency-off-control-manifest.json
 personal-staging-runtime-gate-manifest.json
+billing-staging-runtime-gate-manifest.json
 .wrangler-build70-0011.jsonc

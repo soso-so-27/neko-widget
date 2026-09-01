@@ -31,7 +31,9 @@ import {
 } from "./billing-authority";
 import {
   apnsGateOpen,
+  effectiveBillingRuntimeGateHeaders,
   effectiveRuntimeGateHeaders,
+  loadBillingRuntimeGate,
   loadRuntimeGate,
   mediaGateOpen,
 } from "./runtime-gate";
@@ -109,25 +111,33 @@ export async function route(
   rejectQuery(url);
   const { pathname } = url;
   let runtimeGatePromise: ReturnType<typeof loadRuntimeGate> | undefined;
+  let billingRuntimeGatePromise:
+    | ReturnType<typeof loadBillingRuntimeGate>
+    | undefined;
   const runtimeGate = (): ReturnType<typeof loadRuntimeGate> => {
     runtimeGatePromise ??= loadRuntimeGate(env);
     return runtimeGatePromise;
   };
+  const billingRuntimeGate = (): ReturnType<typeof loadBillingRuntimeGate> => {
+    billingRuntimeGatePromise ??= loadBillingRuntimeGate(env);
+    return billingRuntimeGatePromise;
+  };
 
   if (request.method === "GET" && pathname === "/health") {
     const snapshot = await runtimeGate();
-    if (snapshot === null) {
+    const billingSnapshot = await billingRuntimeGate();
+    if (snapshot === null || billingSnapshot === null) {
       throw new ApiError(
         503,
         "runtime_gate_unavailable",
         "Runtime control is unavailable.",
       );
     }
-    return jsonResponse(
-      { status: "ok", protocolVersion: 1 },
-      200,
-      effectiveRuntimeGateHeaders(env, snapshot),
+    const headers = effectiveRuntimeGateHeaders(env, snapshot);
+    effectiveBillingRuntimeGateHeaders(env, billingSnapshot).forEach(
+      (value, name) => headers.set(name, value),
     );
+    return jsonResponse({ status: "ok", protocolVersion: 1 }, 200, headers);
   }
   if (
     pathname.startsWith("/v1/billing/window-sponsorships/") &&

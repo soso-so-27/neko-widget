@@ -7,8 +7,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "npm run typecheck && npm run check:staging-config && npm run check:billing-sponsorship-local-drill && npm run check:build70-0011-migration-config && npm run check:notification-staging-status && npm run check:personal-staging-runtime-gate && npm run check:moderation-case-lifecycle && npm run check:moderation-operator-control-plane && npm run check:moderation-operator-control-plane-preflight && npm run check:moderation-evidence-ledger && npm run check:moderation-operator-routes && npm run check:moderation-operator-access-audit && npm run check:moderation-operator-enrollment-trust && npm run check:moderation-operator-case-reference-binding && npm run check:moderation-operator-config && npm run check:moderation-operator-webauthn-dependency && npm run check:moderation-staging-status && npm run check:selective-staging-off && npm run check:staging-runtime && npm run check:public-policy-site && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test",
+    "check": "npm run typecheck && npm run check:staging-config && npm run check:billing-control-staging-config && npm run check:billing-staging-runtime-gate && npm run check:billing-sponsorship-local-drill && npm run check:build70-0011-migration-config && npm run check:notification-staging-status && npm run check:personal-staging-runtime-gate && npm run check:moderation-case-lifecycle && npm run check:moderation-operator-control-plane && npm run check:moderation-operator-control-plane-preflight && npm run check:moderation-evidence-ledger && npm run check:moderation-operator-routes && npm run check:moderation-operator-access-audit && npm run check:moderation-operator-enrollment-trust && npm run check:moderation-operator-case-reference-binding && npm run check:moderation-operator-config && npm run check:moderation-operator-webauthn-dependency && npm run check:moderation-staging-status && npm run check:selective-staging-off && npm run check:staging-runtime && npm run check:public-policy-site && npm run check:moderation-tool && npm run check:moderation-keygen && npm run check:moderation-drill && npm test",
     "check:staging-config": "node --test scripts/staging-config.node-tests.mjs",
+    "check:billing-control-staging-config": "node --test test/billing-control-staging-config.node-tests.mjs",
+    "check:billing-staging-runtime-gate": "node --test test/billing-staging-runtime-gate.node-tests.mjs",
     "check:billing-sponsorship-local-drill": "node --no-warnings --test test/billing-sponsorship-local-drill.node-tests.mjs",
     "check:staging-runtime": "node --test test/staging-runtime-check.node-tests.mjs",
     "check:public-policy-site": "node --test test/public-policy-site-check.node-tests.mjs",
@@ -32,6 +34,10 @@
     "db:migrate:local": "wrangler d1 migrations apply neko-window-sharing-local --local --config wrangler.jsonc",
     "staging:config:render": "node scripts/render-staging-config.mjs",
     "staging:config:check": "node scripts/check-staging-config.mjs",
+    "billing-control-staging:config:render": "node scripts/render-billing-control-staging-config.mjs",
+    "billing-control-staging:config:check": "node scripts/check-billing-control-staging-config.mjs",
+    "billing-staging:runtime-gate:plan": "node scripts/billing-staging-runtime-gate.mjs --plan",
+    "billing-staging:runtime-gate:status": "node scripts/billing-staging-runtime-gate.mjs --status",
     "media-staging:config:render": "node scripts/render-media-staging-config.mjs",
     "media-staging:config:check": "node scripts/check-media-staging-config.mjs",
     "notification-staging:config:render": "node scripts/render-notification-staging-config.mjs",

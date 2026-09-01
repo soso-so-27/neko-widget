@@ -26,7 +26,7 @@ const manifest = Object.freeze({
   accountId: "0123456789abcdef0123456789abcdef",
   databaseId: "11111111-1111-4111-8111-111111111111",
   workerName: "neko-window-sharing-staging",
-  origin: "https://neko-window-sharing-staging.example.workers.dev",
+  origin: "https://neko-window-sharing-staging.nakanishisoya.workers.dev",
   expectedGeneration: 0,
   desiredState: "build70-media-apns-on",
 });
@@ -152,6 +152,7 @@ test("manifest is exact, secret-free, and supports only reviewed runtime states"
     assert.equal(validateRuntimeGateManifest({ ...manifest, desiredState }).desiredState, desiredState);
   }
   for (const invalid of [
+    { ...manifest, origin: "https://another-worker.example.workers.dev" },
     { ...manifest, desiredState: "report-on" },
     { ...manifest, desiredState: "external-beta-all-on" },
     { ...manifest, desiredState: "media-off-report-on" },

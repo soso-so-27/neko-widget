@@ -100,6 +100,8 @@ D1 migrationはbinding名ではなくstaging database名を明記します。最
 
 `0012`〜`0018`は通報・管理操作のappend-only監査と権限境界を追加し、既存記録を推測で補完しません。`0019`〜`0024`は共有identityと分離した課金account、Apple authority、実効権限、課金鍵復旧、最大3まどの購入者支援、まど所有者による支援解除を追加します。課金migrationはすべて下限gateを`0`で作り、HTTP上限もtracked configでは`NO`のままです。migration適用だけで購入、Plus権限、支援、復旧を開始しません。SQLiteの合成訓練は署名、Apple JWS、実際のStoreKit購入を検証したとは主張しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
 
+課金7 Gateの固定OFF／ON config、段階的generation CAS、同一originのhealth証明、緊急一括OFFは[Plus課金staging安全操作](BILLING_STAGING_OPERATIONS.md)を正本とします。Verifier、secret、Apple Sandbox商品、DEBUG実機経路が揃うまでは、設定生成とlocal検査だけに留めます。
+
 課金migrationをremoteへ適用する前に、次の完全ローカル訓練を通します。system temp配下に一時SQLiteを作り、全migration、上下gateの既定OFF、世代CAS、購入者による支援・解除、実効権限OFF中の所有者解除、全課金下限gateをOFFへ戻す終了状態を合成データだけで確認します。ネットワーク、Wrangler、Cloudflare、Apple、秘密情報は使用しません。
 
 ```powershell

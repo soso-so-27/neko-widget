@@ -3,6 +3,27 @@ const expectedDatabaseName = "neko-window-sharing-staging";
 const expectedMediaBucket = "neko-window-sharing-staging-media-private";
 const expectedModerationBucket = "neko-window-sharing-staging-moderation-private";
 
+const billingRuntimeProfiles = Object.freeze({
+  "all-off": Object.freeze({
+    BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "NO",
+    BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "NO",
+    BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED: "NO",
+    BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "NO",
+    BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "NO",
+    BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED: "NO",
+    BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "NO",
+  }),
+  "billing-control-on": Object.freeze({
+    BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "YES",
+    BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "YES",
+    BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED: "YES",
+    BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES",
+    BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
+    BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED: "YES",
+    BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "YES",
+  }),
+});
+
 const replacements = new Map([
   ["__NEKO_STAGING_D1_DATABASE_ID__", "NEKO_STAGING_D1_DATABASE_ID"],
   [
@@ -94,10 +115,23 @@ function reviewedReportIngestionRuntime(options) {
   return expectedReportIngestionRuntime;
 }
 
+function reviewedBillingRuntimeProfile(options) {
+  const profile = options?.expectedBillingRuntimeProfile ?? "all-off";
+  requireCondition(
+    Object.hasOwn(billingRuntimeProfiles, profile),
+    "The expected billing runtime profile is not reviewed.",
+  );
+  return profile;
+}
+
 export function validateStagingConfig(config, options = {}) {
   const expectedMomentRuntime = reviewedMomentRuntime(options);
   const expectedAPNSRuntime = reviewedAPNSRuntime(options);
   const expectedReportIngestionRuntime = reviewedReportIngestionRuntime(options);
+  const expectedBillingRuntimeProfile = reviewedBillingRuntimeProfile(options);
+  const expectedBillingRuntimes = billingRuntimeProfiles[
+    expectedBillingRuntimeProfile
+  ];
   requireCondition(
     expectedAPNSRuntime !== "YES" || expectedMomentRuntime === "YES",
     "The APNs runtime requires the reviewed private media runtimes to be ON.",
@@ -145,13 +179,7 @@ export function validateStagingConfig(config, options = {}) {
       WINDOW_NAME_RUNTIME_ENABLED: expectedMomentRuntime,
       APNS_RUNTIME_ENABLED: expectedAPNSRuntime,
       LEGACY_SHARING_RUNTIME_ENABLED: "NO",
-      BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "NO",
-      BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "NO",
-      BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED: "NO",
-      BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "NO",
-      BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "NO",
-      BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED: "NO",
-      BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "NO",
+      ...expectedBillingRuntimes,
       INVITATION_TTL_SECONDS: "86400",
       CHALLENGE_TTL_SECONDS: "300",
       PENDING_TTL_SECONDS: "86400",
@@ -243,6 +271,10 @@ export function renderStagingConfig(template, environment, options = {}) {
   const expectedMomentRuntime = reviewedMomentRuntime(options);
   const expectedAPNSRuntime = reviewedAPNSRuntime(options);
   const expectedReportIngestionRuntime = reviewedReportIngestionRuntime(options);
+  const expectedBillingRuntimeProfile = reviewedBillingRuntimeProfile(options);
+  const expectedBillingRuntimes = billingRuntimeProfiles[
+    expectedBillingRuntimeProfile
+  ];
   requireCondition(
     expectedAPNSRuntime !== "YES" || expectedMomentRuntime === "YES",
     "The APNs runtime requires the reviewed private media runtimes to be ON.",
@@ -279,15 +311,23 @@ export function renderStagingConfig(template, environment, options = {}) {
     config?.vars?.REPORT_INGESTION_RUNTIME_ENABLED === "NO",
     "The tracked staging template must keep report ingestion locked OFF.",
   );
+  for (const key of Object.keys(billingRuntimeProfiles["all-off"])) {
+    requireCondition(
+      config?.vars?.[key] === "NO",
+      `The tracked staging template must keep ${key} locked OFF.`,
+    );
+  }
   config.vars.MOMENT_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.REACTION_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.WINDOW_NAME_RUNTIME_ENABLED = expectedMomentRuntime;
   config.vars.APNS_RUNTIME_ENABLED = expectedAPNSRuntime;
   config.vars.REPORT_INGESTION_RUNTIME_ENABLED = expectedReportIngestionRuntime;
+  Object.assign(config.vars, expectedBillingRuntimes);
   validateStagingConfig(config, {
     expectedMomentRuntime,
     expectedAPNSRuntime,
     expectedReportIngestionRuntime,
+    expectedBillingRuntimeProfile,
   });
   return `${JSON.stringify(config, null, 2)}\n`;
 }

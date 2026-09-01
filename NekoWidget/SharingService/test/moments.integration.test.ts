@@ -56,7 +56,7 @@ describe("moment runtime kill switch", () => {
     let serializedHeaders = "";
     upperOff.headers.forEach((value, name) => { serializedHeaders += `${name}:${value}\n`; });
     expect(serializedHeaders).not.toMatch(
-      /account|database|token|secret|email/iu,
+      /account-id|database-id|member-id|device-id|credential|authorization|token|secret|email|jws/iu,
     );
 
     const unavailableGateEnv = {
