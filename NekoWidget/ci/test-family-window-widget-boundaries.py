@@ -926,6 +926,16 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('accessibilityIdentifier("memories-section-picker")', memory_view)
         self.assertIn("dynamicTypeSize.isAccessibilitySize", memory_view)
         self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
+        self.assertIn(
+            ".onChange(of: latestMonthlyWindowIsUnread, initial: true)",
+            memory_view,
+        )
+        self.assertIn(
+            "guard isUnread, !hasExplicitlySelectedSection else { return }",
+            memory_view,
+        )
+        self.assertIn("selectedSection = .summaries", memory_view)
+        self.assertIn("selection: selectedSectionBinding", memory_view)
         self.assertNotIn("showsCreationPreview", memory_view)
         self.assertIn("case monthlyWindow(MonthlyWindowPresentation)", main_tab)
         self.assertIn(

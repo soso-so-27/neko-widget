@@ -531,6 +531,7 @@ struct LikedPhotosView: View {
     let showSettings: () -> Void
 
     @State private var selectedSection: MemoriesSection = .photos
+    @State private var hasExplicitlySelectedSection = false
 
     var body: some View {
         ScrollView {
@@ -557,6 +558,10 @@ struct LikedPhotosView: View {
                 .accessibilityIdentifier("memories-settings-button")
             }
         }
+        .onChange(of: latestMonthlyWindowIsUnread, initial: true) { _, isUnread in
+            guard isUnread, !hasExplicitlySelectedSection else { return }
+            selectedSection = .summaries
+        }
     }
 
     @ViewBuilder
@@ -565,7 +570,7 @@ struct LikedPhotosView: View {
             Menu {
                 ForEach(MemoriesSection.allCases) { section in
                     Button {
-                        selectedSection = section
+                        selectSection(section)
                     } label: {
                         if selectedSection == section {
                             Label(section.title, systemImage: "checkmark")
@@ -586,7 +591,7 @@ struct LikedPhotosView: View {
             .padding(.horizontal, 16)
             .accessibilityIdentifier("memories-section-menu")
         } else {
-            Picker("表示する思い出", selection: $selectedSection) {
+            Picker("表示する思い出", selection: selectedSectionBinding) {
                 ForEach(MemoriesSection.allCases) { section in
                     Text(section.title).tag(section)
                 }
@@ -595,6 +600,18 @@ struct LikedPhotosView: View {
             .padding(.horizontal, 16)
             .accessibilityIdentifier("memories-section-picker")
         }
+    }
+
+    private var selectedSectionBinding: Binding<MemoriesSection> {
+        Binding(
+            get: { selectedSection },
+            set: { selectSection($0) }
+        )
+    }
+
+    private func selectSection(_ section: MemoriesSection) {
+        hasExplicitlySelectedSection = true
+        selectedSection = section
     }
 
     private var photoColumns: [GridItem] {
