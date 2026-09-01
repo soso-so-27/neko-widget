@@ -12,6 +12,7 @@
 - responseもrequest nonce、HTTP status、response body SHA-256へHMAC署名します。
 - Apple JWSは検証中だけmemoryへ置き、log・D1・responseへ残しません。
 - 出力はallowlistとidentityを検証した正規化済みtransaction fieldsだけです。
+- Notification Historyは1回最大20件を取得し、各JWSを既存通知検証器で検証したうえで、正規化済み通知とpayload hashだけを返します。raw JWSと送信試行情報は返しません。次ページcursorは元の期間・環境・bundle IDへHMACで束縛し、別条件への再利用を拒否します。
 - 通知は再照合を起動する事実として扱い、通知内statusから権利を直接変更しません。現在状態の正本はSubscription Status APIの署名済みtransaction／renewalです。
 - Family Sharingは初期商品で無効にします。`FAMILY_SHARED`取引には課金IDを安全に結ぶ`appAccountToken`がないため、このendpointでは明示拒否します。
 - 本人購入の返金・upgrade事実は返します。Worker ledgerは記録しますが、Plus候補にしません。Worker側も防御的に`FAMILY_SHARED`を候補にしません。
@@ -31,14 +32,15 @@
 | `BILLING_MONTHLY_PRODUCT_ID` | 月額商品ID |
 | `BILLING_ANNUAL_PRODUCT_ID` | 年額商品ID |
 | `BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED` | 通知検証endpointを正確に`YES`で有効化。既定`NO` |
+| `BILLING_NOTIFICATION_HISTORY_RUNTIME_ENABLED` | Notification History取得endpointを正確に`YES`で有効化。既定`NO` |
 | `BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED` | Subscription Status照合endpointを正確に`YES`で有効化。既定`NO` |
 | `BILLING_ACCOUNT_RECOVERY_VERIFIER_RUNTIME_ENABLED` | 端末移行用のAppTransaction/Transaction二重検証endpointを正確に`YES`で有効化。既定`NO` |
-| `APP_STORE_SERVER_API_PRIVATE_KEY` | Status照合ON時だけ必須の専用`.p8`秘密鍵 |
-| `APP_STORE_SERVER_API_KEY_ID` | Status照合ON時だけ必須の10文字Key ID |
-| `APP_STORE_SERVER_API_ISSUER_ID` | Status照合ON時だけ必須のIssuer ID |
+| `APP_STORE_SERVER_API_PRIVATE_KEY` | Status照合またはHistory取得ON時だけ必須の専用`.p8`秘密鍵 |
+| `APP_STORE_SERVER_API_KEY_ID` | Status照合またはHistory取得ON時だけ必須の10文字Key ID |
+| `APP_STORE_SERVER_API_ISSUER_ID` | Status照合またはHistory取得ON時だけ必須のIssuer ID |
 | `PORT` | 1〜65535。省略時8080 |
 
-秘密値、Apple root、実商品IDをrepositoryへcommitしません。root certificateはAppleのPKI公式配布元から取得し、DER bytesとrotation手順をdeploy前に別途reviewします。JWS transaction／通知検証だけならApp Store Connect APIの`.p8` keyは使いません。Status照合の`.p8`は専用switchがOFFなら存在自体を拒否し、用途を分離します。
+秘密値、Apple root、実商品IDをrepositoryへcommitしません。root certificateはAppleのPKI公式配布元から取得し、DER bytesとrotation手順をdeploy前に別途reviewします。JWS transaction／通知検証だけならApp Store Connect APIの`.p8` keyは使いません。Status照合とHistory取得の両switchがOFFなら`.p8`の存在自体を拒否し、用途を分離します。
 
 ## Local verification
 

@@ -10,6 +10,7 @@ export interface VerificationServiceConfig {
   subscriptionGroupId: string;
   productIds: ReadonlySet<string>;
   notificationVerificationEnabled?: boolean;
+  notificationHistoryEnabled?: boolean;
   subscriptionStatusEnabled?: boolean;
   accountRecoveryVerificationEnabled?: boolean;
   serverAPI?: {
@@ -154,6 +155,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRu
       env,
       "BILLING_NOTIFICATION_VERIFIER_RUNTIME_ENABLED",
     ),
+    notificationHistoryEnabled: explicitSwitch(
+      env,
+      "BILLING_NOTIFICATION_HISTORY_RUNTIME_ENABLED",
+    ),
     subscriptionStatusEnabled: explicitSwitch(
       env,
       "BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED",
@@ -164,7 +169,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRu
     ),
   };
   if (appAppleId !== undefined) config.appAppleId = appAppleId;
-  if (config.subscriptionStatusEnabled === true) {
+  if (
+    config.subscriptionStatusEnabled === true
+    || config.notificationHistoryEnabled === true
+  ) {
     const signingKey = required(env, "APP_STORE_SERVER_API_PRIVATE_KEY");
     const keyId = required(env, "APP_STORE_SERVER_API_KEY_ID");
     const issuerId = required(env, "APP_STORE_SERVER_API_ISSUER_ID").toLowerCase();
@@ -183,7 +191,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): VerificationRu
     || env.APP_STORE_SERVER_API_KEY_ID !== undefined
     || env.APP_STORE_SERVER_API_ISSUER_ID !== undefined
   ) {
-    throw new Error("App Store Server API credentials require the exact runtime switch");
+    throw new Error("App Store Server API credentials require an exact Server API runtime switch");
   }
   return { ...config, nonceRedisURL: nonceRedisURL(env) };
 }

@@ -19,6 +19,16 @@ import {
   RetryableAppleSubscriptionStatusError,
   type NormalizedSubscriptionStatus,
 } from "./apple-subscription-status.js";
+import {
+  AppleNotificationHistoryService,
+  AppleNotificationHistoryConfigurationError,
+  AppleNotificationHistoryCursorResetRequiredError,
+  InvalidAppleNotificationHistoryError,
+  RetryableAppleNotificationHistoryError,
+  parseAppleNotificationHistoryInput,
+  type AppleNotificationHistoryInput,
+  type NormalizedAppleNotificationHistoryPage,
+} from "./apple-notification-history.js";
 import type { VerificationServiceConfig } from "./config.js";
 import {
   AppleAccountRecoveryVerifier,
@@ -27,6 +37,7 @@ import {
 } from "./apple-account-recovery.js";
 import {
   PROTOCOL_VERSION,
+  NOTIFICATION_HISTORY_PATH,
   SUBSCRIPTION_STATUS_PATH,
   ACCOUNT_RECOVERY_VERIFY_PATH,
   VERIFY_PATH,
@@ -72,12 +83,17 @@ interface SubscriptionStatusService {
   get(transactionId: string): Promise<NormalizedSubscriptionStatus>;
 }
 
+interface NotificationHistoryService {
+  get(input: AppleNotificationHistoryInput): Promise<NormalizedAppleNotificationHistoryPage>;
+}
+
 interface AccountRecoveryVerifier {
   verify(input: AccountRecoveryVerificationInput): Promise<AccountRecoveryEvidence>;
 }
 
 export interface BillingAppleServices {
   notificationVerifier?: NotificationVerifier;
+  notificationHistoryService?: NotificationHistoryService;
   subscriptionStatusService?: SubscriptionStatusService;
   accountRecoveryVerifier?: AccountRecoveryVerifier;
 }
@@ -241,6 +257,24 @@ function parseStatusBody(body: Buffer): string {
   return record.originalTransactionId;
 }
 
+function parseNotificationHistoryBody(
+  body: Buffer,
+  config: Pick<VerificationServiceConfig, "environment">,
+): AppleNotificationHistoryInput {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+  } catch {
+    throw new RequestError(400);
+  }
+  try {
+    return parseAppleNotificationHistoryInput(value, config);
+  } catch (error) {
+    if (error instanceof InvalidAppleNotificationHistoryError) throw new RequestError(400);
+    throw error;
+  }
+}
+
 function parseRecoveryBody(body: Buffer): AccountRecoveryVerificationInput {
   let value: unknown;
   try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body)); }
@@ -354,6 +388,12 @@ export function createBillingVerificationServer(
   const notificationVerifier = suppliedServices.notificationVerifier
     ?? (config.notificationVerificationEnabled === true
       ? new AppleNotificationVerifier(config, sharedSignedDataVerifier()) : null);
+  const notificationHistoryService = suppliedServices.notificationHistoryService
+    ?? (config.notificationHistoryEnabled === true && config.serverAPI !== undefined
+      ? new AppleNotificationHistoryService(
+        config,
+        notificationVerifier ?? new AppleNotificationVerifier(config, sharedSignedDataVerifier()),
+      ) : null);
   const subscriptionStatusService = suppliedServices.subscriptionStatusService
     ?? (config.subscriptionStatusEnabled === true && config.serverAPI !== undefined
       ? new AppleSubscriptionStatusService(config, sharedSignedDataVerifier()) : null);
@@ -384,6 +424,7 @@ export function createBillingVerificationServer(
     }
     const supportedPath = request.url === VERIFY_PATH
       || request.url === VERIFY_NOTIFICATION_PATH
+      || request.url === NOTIFICATION_HISTORY_PATH
       || request.url === SUBSCRIPTION_STATUS_PATH
       || request.url === ACCOUNT_RECOVERY_VERIFY_PATH;
     if (request.method !== "POST" || !supportedPath) {
@@ -461,6 +502,25 @@ export function createBillingVerificationServer(
           nonce,
           config.sharedSecret,
         );
+      } else if (request.url === NOTIFICATION_HISTORY_PATH) {
+        if (config.notificationHistoryEnabled !== true || notificationHistoryService === null) {
+          sendSigned(
+            response,
+            503,
+            { error: { code: "apple_notification_history_disabled" } },
+            nonce,
+            config.sharedSecret,
+          );
+          return;
+        }
+        const input = parseNotificationHistoryBody(body, config);
+        sendSigned(
+          response,
+          200,
+          await runAppleOperation(() => notificationHistoryService.get(input)),
+          nonce,
+          config.sharedSecret,
+        );
       } else if (request.url === SUBSCRIPTION_STATUS_PATH) {
         if (config.subscriptionStatusEnabled !== true || subscriptionStatusService === null) {
           sendSigned(
@@ -494,11 +554,28 @@ export function createBillingVerificationServer(
         );
       }
     } catch (error) {
-      if (
+      if (error instanceof AppleNotificationHistoryCursorResetRequiredError) {
+        sendSigned(
+          response,
+          409,
+          { error: { code: "apple_notification_history_cursor_reset_required" } },
+          nonce,
+          config.sharedSecret,
+        );
+      } else if (error instanceof AppleNotificationHistoryConfigurationError) {
+        sendSigned(
+          response,
+          503,
+          { error: { code: "apple_notification_history_configuration_blocked" } },
+          nonce,
+          config.sharedSecret,
+        );
+      } else if (
         error instanceof RetryableServiceError
         ||
         error instanceof RetryableAppleVerificationError
         || error instanceof RetryableAppleNotificationError
+        || error instanceof RetryableAppleNotificationHistoryError
         || error instanceof RetryableAppleSubscriptionStatusError
       ) {
         sendSigned(
@@ -512,12 +589,15 @@ export function createBillingVerificationServer(
       } else {
         const status = error instanceof InvalidAppleTransactionError
           || error instanceof InvalidAppleNotificationError
+          || error instanceof InvalidAppleNotificationHistoryError
           || error instanceof InvalidAppleSubscriptionStatusError
           || error instanceof RequestError ? 400 : 500;
+        const invalidCode = request.url === NOTIFICATION_HISTORY_PATH
+          ? "invalid_apple_notification_history" : "invalid_apple_transaction";
         sendSigned(
           response,
           status,
-          { error: { code: status === 400 ? "invalid_apple_transaction" : "internal_error" } },
+          { error: { code: status === 400 ? invalidCode : "internal_error" } },
           nonce,
           config.sharedSecret,
         );

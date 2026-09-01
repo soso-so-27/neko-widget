@@ -6,8 +6,13 @@ import {
   RetryableAppleVerificationError,
   type NormalizedBillingTransaction,
 } from "../src/apple-transaction.js";
+import {
+  AppleNotificationHistoryConfigurationError,
+  AppleNotificationHistoryCursorResetRequiredError,
+} from "../src/apple-notification-history.js";
 import type { VerificationServiceConfig } from "../src/config.js";
 import {
+  NOTIFICATION_HISTORY_PATH,
   PROTOCOL_VERSION,
   SUBSCRIPTION_STATUS_PATH,
   VERIFY_NOTIFICATION_PATH,
@@ -559,4 +564,138 @@ test("keeps notification and subscription-status endpoints independently gated",
       "200000000000001");
   }, enabledConfig, services);
   assert.equal(statusCalls, 1);
+});
+
+test("keeps notification history private, exact, and independently gated", async () => {
+  const nowMs = Date.now();
+  let calls = 0;
+  const services: BillingAppleServices = {
+    notificationHistoryService: {
+      async get(input) {
+        calls += 1;
+        return {
+          protocolVersion: 1,
+          requestedStartDateMs: input.startDateMs,
+          requestedEndDateMs: input.endDateMs,
+          environment: "Sandbox",
+          bundleId: config.bundleId,
+          hasMore: true,
+          nextPaginationToken: `nh1.fixture.${"A".repeat(43)}`,
+          records: [{
+            payloadHash: "A".repeat(43),
+            notification: {
+              protocolVersion: 1,
+              notificationUUID: "b113ede5-4eba-4e06-8a9d-3b21243041a7",
+              notificationType: "TEST",
+              subtype: null,
+              signedDateMs: nowMs,
+              environment: "Sandbox",
+              bundleId: config.bundleId,
+              status: null,
+              relevant: false,
+              transaction: null,
+              renewal: null,
+            },
+          }],
+        };
+      },
+    },
+  };
+  const value = {
+    protocolVersion: 1,
+    startDateMs: nowMs - 60_000,
+    endDateMs: nowMs,
+    paginationToken: null,
+  };
+
+  await withServer(async () => transaction(), async (origin) => {
+    const disabled = await signedInternalRequest(origin, NOTIFICATION_HISTORY_PATH, value);
+    assert.equal(disabled.response.status, 503);
+    const body = await assertSignedResponse(disabled.response, disabled.nonce) as {
+      error: { code: string };
+    };
+    assert.equal(body.error.code, "apple_notification_history_disabled");
+  }, config, services);
+  assert.equal(calls, 0);
+
+  const enabledConfig: VerificationServiceConfig = {
+    ...config,
+    notificationHistoryEnabled: true,
+  };
+  await withServer(async () => transaction(), async (origin) => {
+    const unauthorized = await fetch(`${origin}${NOTIFICATION_HISTORY_PATH}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(value),
+    });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get("neko-billing-response-signature"), null);
+    assert.equal(calls, 0);
+
+    const malformed = await signedInternalRequest(origin, NOTIFICATION_HISTORY_PATH, {
+      ...value,
+      onlyFailures: true,
+    });
+    assert.equal(malformed.response.status, 400);
+    const malformedBody = await assertSignedResponse(malformed.response, malformed.nonce) as {
+      error: { code: string };
+    };
+    assert.equal(malformedBody.error.code, "invalid_apple_notification_history");
+    assert.equal(calls, 0);
+
+    const result = await signedInternalRequest(origin, NOTIFICATION_HISTORY_PATH, value);
+    assert.equal(result.response.status, 200);
+    const body = await assertSignedResponse(result.response, result.nonce) as {
+      nextPaginationToken: string;
+      records: { payloadHash: string; notification: { notificationUUID: string } }[];
+    };
+    assert.match(body.nextPaginationToken, /^nh1\./u);
+    assert.equal(body.nextPaginationToken.includes("next-page-token"), false);
+    assert.equal(body.records[0]?.payloadHash, "A".repeat(43));
+    assert.equal(body.records[0]?.notification.notificationUUID,
+      "b113ede5-4eba-4e06-8a9d-3b21243041a7");
+  }, enabledConfig, services);
+  assert.equal(calls, 1);
+});
+
+test("returns signed, actionable notification history recovery errors", async () => {
+  const nowMs = Date.now();
+  const value = {
+    protocolVersion: 1,
+    startDateMs: nowMs - 60_000,
+    endDateMs: nowMs,
+    paginationToken: "cursor",
+  };
+  const enabledConfig: VerificationServiceConfig = {
+    ...config,
+    notificationHistoryEnabled: true,
+  };
+  const cases = [
+    {
+      error: new AppleNotificationHistoryCursorResetRequiredError(),
+      status: 409,
+      code: "apple_notification_history_cursor_reset_required",
+    },
+    {
+      error: new AppleNotificationHistoryConfigurationError(),
+      status: 503,
+      code: "apple_notification_history_configuration_blocked",
+    },
+  ];
+
+  for (const item of cases) {
+    const services: BillingAppleServices = {
+      notificationHistoryService: {
+        async get() { throw item.error; },
+      },
+    };
+    await withServer(async () => transaction(), async (origin) => {
+      const result = await signedInternalRequest(origin, NOTIFICATION_HISTORY_PATH, value);
+      assert.equal(result.response.status, item.status);
+      const body = await assertSignedResponse(result.response, result.nonce) as {
+        error: { code: string };
+      };
+      assert.equal(body.error.code, item.code);
+    }, enabledConfig, services);
+  }
 });

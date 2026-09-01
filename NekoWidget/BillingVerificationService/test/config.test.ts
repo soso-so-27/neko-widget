@@ -25,6 +25,7 @@ test("loads only an explicit Sandbox verifier configuration", () => {
   assert.equal(result.rootCertificates.length, 1);
   assert.equal(result.appAppleId, undefined);
   assert.equal(result.notificationVerificationEnabled, false);
+  assert.equal(result.notificationHistoryEnabled, false);
   assert.equal(result.subscriptionStatusEnabled, false);
   assert.equal(result.accountRecoveryVerificationEnabled, false);
   assert.equal(result.serverAPI, undefined);
@@ -75,7 +76,7 @@ test("keeps notification verification independent from Server API credentials", 
   assert.throws(() => loadConfig(notification), /must be YES or NO/u);
 });
 
-test("requires isolated Server API credentials only behind the exact status switch", () => {
+test("requires isolated Server API credentials only behind an exact Server API switch", () => {
   const status = environment();
   status.BILLING_SUBSCRIPTION_STATUS_RUNTIME_ENABLED = "YES";
   assert.throws(() => loadConfig(status), /PRIVATE_KEY/u);
@@ -92,7 +93,27 @@ test("requires isolated Server API credentials only behind the exact status swit
 
   const disabled = environment();
   disabled.APP_STORE_SERVER_API_PRIVATE_KEY = status.APP_STORE_SERVER_API_PRIVATE_KEY;
-  assert.throws(() => loadConfig(disabled), /require the exact runtime switch/u);
+  assert.throws(() => loadConfig(disabled), /require an exact Server API runtime switch/u);
+});
+
+test("keeps notification history behind its own exact switch", () => {
+  const history = environment();
+  history.BILLING_NOTIFICATION_HISTORY_RUNTIME_ENABLED = "YES";
+  assert.throws(() => loadConfig(history), /PRIVATE_KEY/u);
+  history.APP_STORE_SERVER_API_PRIVATE_KEY = [
+    "-----BEGIN PRIVATE KEY-----",
+    "test-only-key",
+    "-----END PRIVATE KEY-----",
+  ].join("\n");
+  history.APP_STORE_SERVER_API_KEY_ID = "ABCDEFGHIJ";
+  history.APP_STORE_SERVER_API_ISSUER_ID = "c0938ad3-2941-4079-8248-0769666c8fd8";
+  const result = loadConfig(history);
+  assert.equal(result.notificationHistoryEnabled, true);
+  assert.equal(result.subscriptionStatusEnabled, false);
+  assert.equal(result.serverAPI?.keyId, "ABCDEFGHIJ");
+
+  history.BILLING_NOTIFICATION_HISTORY_RUNTIME_ENABLED = "yes";
+  assert.throws(() => loadConfig(history), /must be YES or NO/u);
 });
 
 test("keeps account recovery verification behind its own exact switch", () => {
