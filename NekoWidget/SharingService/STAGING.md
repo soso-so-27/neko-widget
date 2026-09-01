@@ -89,7 +89,7 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 
 - Worker、D1、通常R2、通報R2がstaging固有名である
 - `workers_dev=true`かつpreview URLとcustom routeが無効である
-- `ENVIRONMENT=staging`であり、写真・反応・まど名・通知・旧共有・通報受付と7つの課金runtimeがすべて`NO`である
+- `ENVIRONMENT=staging`であり、写真・反応・まど名・通知・旧共有・通報受付と8つの課金runtimeがすべて`NO`である
 - Workers Paid専用のcustom `limits`が存在しない
 - rate limit 5本が固有namespaceで、作成5/min・招待10/min・member 120/min・課金30/min・Apple通知30/minである。Apple通知値は本人用stagingだけの暫定値で、productionへ流用しない
 - cleanup／通知配送を含むCron 3本がある
@@ -97,11 +97,11 @@ Rendererは既存の`wrangler.staging.jsonc`を上書きしません。resource�
 
 ## 4. migrationの事前確認と適用
 
-D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0024_billing_window_owner_detach.sql`までの24件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ24件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。
+D1 migrationはbinding名ではなくstaging database名を明記します。最初に`d1 list --json`の同名database IDと生成configのIDがexact一致することを確認します。新規で空のstaging D1では、未適用一覧がrepositoryの`0001_pairing.sql`から`0025_billing_apple_notification_history_recovery.sql`までの25件と昇順でexact一致しなければ停止します。既存D1では、適用済みledgerが同じ25件の連続したprefix、未適用一覧が残りのsuffixであることを照合し、欠番、順序違い、未知fileがあれば停止します。
 
-`0012`〜`0018`は通報・管理操作のappend-only監査と権限境界を追加し、既存記録を推測で補完しません。`0019`〜`0024`は共有identityと分離した課金account、Apple authority、実効権限、課金鍵復旧、最大3まどの購入者支援、まど所有者による支援解除を追加します。課金migrationはすべて下限gateを`0`で作り、HTTP上限もtracked configでは`NO`のままです。migration適用だけで購入、Plus権限、支援、復旧を開始しません。SQLiteの合成訓練は署名、Apple JWS、実際のStoreKit購入を検証したとは主張しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
+`0012`〜`0018`は通報・管理操作のappend-only監査と権限境界を追加し、既存記録を推測で補完しません。`0019`〜`0024`は共有identityと分離した課金account、Apple authority、実効権限、課金鍵復旧、最大3まどの購入者支援、まど所有者による支援解除を追加します。`0025`はApple通知履歴の欠落回復を、独立した下限gate、固定期間、lease、cursor、冪等cause台帳とともに追加します。課金migrationはすべて下限gateを`0`で作り、HTTP上限もtracked configでは`NO`のままです。migration適用だけで購入、Plus権限、支援、復旧を開始しません。SQLiteの合成訓練は署名、Apple JWS、実際のStoreKit購入を検証したとは主張しません。生成済みconfigの実在D1 UUIDを使い、Wranglerにresourceを自動生成させません。
 
-課金7 Gateの固定OFF／ON config、段階的generation CAS、同一originのhealth証明、緊急一括OFFは[Plus課金staging安全操作](BILLING_STAGING_OPERATIONS.md)を正本とします。Verifierのloopback／Redis fail-closed実装はありますが、private ingress、TLS Redis instance、secret、Apple Sandbox商品、DEBUG実機経路が揃うまでは、設定生成とlocal検査だけに留めます。
+課金8 Gateの固定OFF、通常7 GateのON config、段階的generation CAS、同一originのhealth証明、緊急一括OFFは[Plus課金staging安全操作](BILLING_STAGING_OPERATIONS.md)を正本とします。Apple通知履歴復旧は通常ON configでもOFFを維持し、別のreview済み訓練を必要とします。Verifierのloopback／Redis fail-closed実装はありますが、private ingress、TLS Redis instance、secret、Apple Sandbox商品、DEBUG実機経路が揃うまでは、設定生成とlocal検査だけに留めます。
 
 課金migrationをremoteへ適用する前に、次の完全ローカル訓練を通します。system temp配下に一時SQLiteを作り、全migration、上下gateの既定OFF、世代CAS、購入者による支援・解除、実効権限OFF中の所有者解除、全課金下限gateをOFFへ戻す終了状態を合成データだけで確認します。ネットワーク、Wrangler、Cloudflare、Apple、秘密情報は使用しません。
 
@@ -157,7 +157,7 @@ npx --no-install wrangler deploy --dry-run --config wrangler.staging.jsonc --out
 - D1が`neko-window-sharing-staging`
 - `MEDIA`と`MODERATION_MEDIA`が異なるstaging bucket
 - 5本のRate Limit binding
-- 写真・反応・まど名・通知・旧共有・通報受付と7つの課金runtimeがすべて`NO`
+- 写真・反応・まど名・通知・旧共有・通報受付と8つの課金runtimeがすべて`NO`
 
 `/health`のApple通知limiter `READY`はbinding objectの存在だけを示し、active namespace ID・limit・periodは示しません。release判定では、固定したactive deployment/versionのCloudflare control-planeからsanitized binding snapshotを取得し、review済みconfigとexact照合します。ローカルconfig検査と`READY`だけを実配備の証拠にはしません。
 

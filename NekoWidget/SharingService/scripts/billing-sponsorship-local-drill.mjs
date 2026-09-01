@@ -44,12 +44,14 @@ const expectedMigrationNames = [
   "0022_billing_account_recovery.sql",
   "0023_billing_window_sponsorship.sql",
   "0024_billing_window_owner_detach.sql",
+  "0025_billing_apple_notification_history_recovery.sql",
 ];
 
 const databaseGateColumns = [
   "account_bootstrap_enabled",
   "transaction_ingestion_enabled",
   "apple_notification_ingestion_enabled",
+  "apple_notification_history_recovery_enabled",
   "subscription_reconciliation_enabled",
   "effective_entitlement_enabled",
   "account_recovery_enabled",
@@ -60,6 +62,7 @@ const workerGateNames = [
   "BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED",
   "BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED",
   "BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED",
+  "BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED",
   "BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED",
   "BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED",
   "BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED",

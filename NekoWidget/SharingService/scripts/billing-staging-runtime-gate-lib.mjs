@@ -35,6 +35,9 @@ const activationOrder = Object.freeze([
   "effective_entitlement_enabled",
   "window_sponsorship_enabled",
   "account_recovery_enabled",
+  // Observed and forced OFF by every ordinary billing-control state. A
+  // separate reviewed History drill is required before this bit may be ON.
+  "apple_notification_history_recovery_enabled",
 ]);
 const stateNames = Object.freeze([
   "all-off",
@@ -67,6 +70,8 @@ const healthHeaders = Object.freeze({
   effective_entitlement_enabled: "neko-runtime-billing-effective-entitlement",
   window_sponsorship_enabled: "neko-runtime-billing-window-sponsorship",
   account_recovery_enabled: "neko-runtime-billing-account-recovery",
+  apple_notification_history_recovery_enabled:
+    "neko-runtime-billing-apple-notification-history-recovery",
 });
 
 const statusSQL = `SELECT generation,

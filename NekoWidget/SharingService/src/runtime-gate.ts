@@ -2,6 +2,7 @@ import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
   billingAccountRecoveryRuntimeEnabled,
+  billingAppleNotificationHistoryRecoveryRuntimeEnabled,
   billingAppleNotificationRuntimeEnabled,
   billingEffectiveEntitlementRuntimeEnabled,
   billingSubscriptionReconciliationRuntimeEnabled,
@@ -33,6 +34,7 @@ interface BillingRuntimeGateRow {
   account_bootstrap_enabled: number;
   transaction_ingestion_enabled: number;
   apple_notification_ingestion_enabled: number;
+  apple_notification_history_recovery_enabled: number;
   subscription_reconciliation_enabled: number;
   effective_entitlement_enabled: number;
   account_recovery_enabled: number;
@@ -44,6 +46,7 @@ export interface BillingRuntimeGateSnapshot {
   readonly accountBootstrapEnabled: boolean;
   readonly transactionIngestionEnabled: boolean;
   readonly appleNotificationEnabled: boolean;
+  readonly appleNotificationHistoryRecoveryEnabled: boolean;
   readonly subscriptionReconciliationEnabled: boolean;
   readonly effectiveEntitlementEnabled: boolean;
   readonly accountRecoveryEnabled: boolean;
@@ -88,7 +91,7 @@ export async function loadRuntimeGate(
   }
 }
 
-/** The seven billing lower bounds are read as one generation-bound snapshot. */
+/** All billing lower bounds are read as one generation-bound snapshot. */
 export async function loadBillingRuntimeGate(
   env: Pick<Env, "DB">,
 ): Promise<BillingRuntimeGateSnapshot | null> {
@@ -97,6 +100,7 @@ export async function loadBillingRuntimeGate(
       `SELECT generation,
               account_bootstrap_enabled, transaction_ingestion_enabled,
               apple_notification_ingestion_enabled,
+              apple_notification_history_recovery_enabled,
               subscription_reconciliation_enabled,
               effective_entitlement_enabled, account_recovery_enabled,
               window_sponsorship_enabled
@@ -112,6 +116,9 @@ export async function loadBillingRuntimeGate(
     const appleNotificationEnabled = bit(
       row.apple_notification_ingestion_enabled,
     );
+    const appleNotificationHistoryRecoveryEnabled = bit(
+      row.apple_notification_history_recovery_enabled,
+    );
     const subscriptionReconciliationEnabled = bit(
       row.subscription_reconciliation_enabled,
     );
@@ -121,6 +128,7 @@ export async function loadBillingRuntimeGate(
     if (accountBootstrapEnabled === null
         || transactionIngestionEnabled === null
         || appleNotificationEnabled === null
+        || appleNotificationHistoryRecoveryEnabled === null
         || subscriptionReconciliationEnabled === null
         || effectiveEntitlementEnabled === null
         || accountRecoveryEnabled === null
@@ -132,6 +140,7 @@ export async function loadBillingRuntimeGate(
       accountBootstrapEnabled,
       transactionIngestionEnabled,
       appleNotificationEnabled,
+      appleNotificationHistoryRecoveryEnabled,
       subscriptionReconciliationEnabled,
       effectiveEntitlementEnabled,
       accountRecoveryEnabled,
@@ -191,6 +200,9 @@ export function effectiveBillingRuntimeGateHeaders(
     appleNotification: snapshot.appleNotificationEnabled
       && billingAppleNotificationRuntimeEnabled(env)
       && env.BILLING_APPLE_NOTIFICATION_RATE_LIMITER !== undefined,
+    appleNotificationHistoryRecovery:
+      snapshot.appleNotificationHistoryRecoveryEnabled
+      && billingAppleNotificationHistoryRecoveryRuntimeEnabled(env),
     subscriptionReconciliation: snapshot.subscriptionReconciliationEnabled
       && billingSubscriptionReconciliationRuntimeEnabled(env),
     effectiveEntitlement: snapshot.effectiveEntitlementEnabled
@@ -210,6 +222,8 @@ export function effectiveBillingRuntimeGateHeaders(
       effective.appleNotification ? "ON" : "OFF",
     "Neko-Runtime-Billing-Apple-Notification-Rate-Limiter":
       env.BILLING_APPLE_NOTIFICATION_RATE_LIMITER === undefined ? "MISSING" : "READY",
+    "Neko-Runtime-Billing-Apple-Notification-History-Recovery":
+      effective.appleNotificationHistoryRecovery ? "ON" : "OFF",
     "Neko-Runtime-Billing-Subscription-Reconciliation":
       effective.subscriptionReconciliation ? "ON" : "OFF",
     "Neko-Runtime-Billing-Effective-Entitlement":

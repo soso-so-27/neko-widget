@@ -34,7 +34,7 @@ try {
     onHandle.writeFile(rendered.on, { encoding: "utf8" }),
   ]);
   console.log("Created ignored billing-control staging OFF/ON configs.");
-  console.log("The ON config enables all seven billing upper gates; both configs preserve existing media, APNs, and report upper gates.");
+  console.log("The ON config enables the seven ordinary billing upper gates and keeps Notification History recovery OFF; both configs preserve existing media, APNs, and report upper gates.");
   console.log("No deployment, D1 update, purchase, recovery, or secret output occurred.");
 } catch (error) {
   await Promise.allSettled([offHandle?.close(), onHandle?.close()]);

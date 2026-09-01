@@ -1,4 +1,5 @@
 import {
+  BILLING_NOTIFICATION_HISTORY_PATH,
   BILLING_NOTIFICATION_VERIFIER_PATH,
   BILLING_SUBSCRIPTION_STATUS_PATH,
   BILLING_VERIFIER_PATH,
@@ -36,8 +37,57 @@ export interface VerifiedBillingTransaction {
 export type BillingVerifierServicePath =
   | typeof BILLING_VERIFIER_PATH
   | typeof BILLING_NOTIFICATION_VERIFIER_PATH
+  | typeof BILLING_NOTIFICATION_HISTORY_PATH
   | typeof BILLING_SUBSCRIPTION_STATUS_PATH
   | typeof BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH;
+
+export class AppleNotificationHistoryCursorResetRequiredError extends ApiError {
+  readonly recovery = "reset-cursor" as const;
+
+  constructor() {
+    super(
+      409,
+      "apple_notification_history_cursor_reset_required",
+      "Billing notification recovery must restart from the beginning.",
+    );
+  }
+}
+
+export class AppleNotificationHistoryConfigurationBlockedError extends ApiError {
+  readonly recovery = "operator-action-required" as const;
+
+  constructor() {
+    super(
+      503,
+      "apple_notification_history_configuration_blocked",
+      "Billing notification recovery is temporarily unavailable.",
+    );
+  }
+}
+
+export class AppleNotificationHistoryDisabledError extends ApiError {
+  readonly recovery = "runtime-enable-required" as const;
+
+  constructor() {
+    super(
+      503,
+      "apple_notification_history_disabled",
+      "Billing notification recovery is temporarily unavailable.",
+    );
+  }
+}
+
+export class InvalidAppleNotificationHistoryError extends ApiError {
+  readonly recovery = "reject-window" as const;
+
+  constructor() {
+    super(
+      400,
+      "invalid_apple_notification_history",
+      "The App Store notification history request is invalid.",
+    );
+  }
+}
 
 export interface VerifiedAccountRecoveryEvidence {
   appTransactionIdHash: string;
@@ -160,20 +210,34 @@ export function loadVerifierConfig(env: Env): VerifierConfig {
   };
 }
 
-async function boundedResponseBody(response: Response): Promise<Uint8Array> {
+async function boundedResponseBody(
+  response: Response,
+  maximumBytes: number,
+): Promise<Uint8Array> {
   if (response.body === null) return new Uint8Array();
-  const reader = response.body.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = response.body.getReader();
+  } catch {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    total += value.length;
-    if (total > 32 * 1024) {
-      await reader.cancel();
-      throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > maximumBytes) {
+        try { void reader.cancel().catch(() => undefined); } catch { /* fail closed below */ }
+        throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    try { void reader.cancel().catch(() => undefined); } catch { /* the response is already unusable */ }
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
   }
   const result = new Uint8Array(total);
   let offset = 0;
@@ -182,6 +246,177 @@ async function boundedResponseBody(response: Response): Promise<Uint8Array> {
     offset += chunk.length;
   }
   return result;
+}
+
+function assertNoDuplicateJSONKeys(source: string): void {
+  let index = 0;
+  const maximumDepth = 64;
+  const skipWhitespace = () => {
+    while (
+      source[index] === " "
+      || source[index] === "\t"
+      || source[index] === "\r"
+      || source[index] === "\n"
+    ) index += 1;
+  };
+  const parseString = (): string => {
+    if (source[index] !== "\"") throw new Error();
+    const start = index;
+    index += 1;
+    while (index < source.length) {
+      const character = source[index];
+      if (character === "\"") {
+        index += 1;
+        const decoded = JSON.parse(source.slice(start, index)) as unknown;
+        if (typeof decoded !== "string") throw new Error();
+        return decoded;
+      }
+      if (character === "\\") {
+        index += 1;
+        const escape = source[index];
+        if (escape === "u") {
+          const digits = source.slice(index + 1, index + 5);
+          if (!/^[0-9a-fA-F]{4}$/u.test(digits)) throw new Error();
+          index += 5;
+          continue;
+        }
+        if (
+          escape === undefined
+          || !["\"", "\\", "/", "b", "f", "n", "r", "t"].includes(escape)
+        ) throw new Error();
+        index += 1;
+        continue;
+      }
+      if (character === undefined || character.charCodeAt(0) < 0x20) throw new Error();
+      index += 1;
+    }
+    throw new Error();
+  };
+  const parseValue = (depth: number): void => {
+    if (depth > maximumDepth) throw new Error();
+    skipWhitespace();
+    const character = source[index];
+    if (character === "{") {
+      index += 1;
+      skipWhitespace();
+      const keys = new Set<string>();
+      if (source[index] === "}") {
+        index += 1;
+        return;
+      }
+      while (true) {
+        skipWhitespace();
+        const key = parseString();
+        if (keys.has(key)) throw new Error();
+        keys.add(key);
+        skipWhitespace();
+        if (source[index] !== ":") throw new Error();
+        index += 1;
+        parseValue(depth + 1);
+        skipWhitespace();
+        if (source[index] === "}") {
+          index += 1;
+          return;
+        }
+        if (source[index] !== ",") throw new Error();
+        index += 1;
+      }
+    }
+    if (character === "[") {
+      index += 1;
+      skipWhitespace();
+      if (source[index] === "]") {
+        index += 1;
+        return;
+      }
+      while (true) {
+        parseValue(depth + 1);
+        skipWhitespace();
+        if (source[index] === "]") {
+          index += 1;
+          return;
+        }
+        if (source[index] !== ",") throw new Error();
+        index += 1;
+      }
+    }
+    if (character === "\"") {
+      parseString();
+      return;
+    }
+    for (const literal of ["true", "false", "null"]) {
+      if (source.startsWith(literal, index)) {
+        index += literal.length;
+        return;
+      }
+    }
+    const number = source.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/u)?.[0];
+    if (number === undefined) throw new Error();
+    index += number.length;
+  };
+  parseValue(0);
+  skipWhitespace();
+  if (index !== source.length) throw new Error();
+}
+
+function decodedJSON(body: Uint8Array): unknown {
+  try {
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(body);
+    assertNoDuplicateJSONKeys(source);
+    return JSON.parse(source);
+  } catch {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  }
+}
+
+function exactVerifierErrorCode(body: Uint8Array): string {
+  const envelope = record(decodedJSON(body));
+  const envelopeFields = Object.keys(envelope);
+  if (envelopeFields.length !== 1 || envelopeFields[0] !== "error") {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  }
+  const error = record(envelope.error);
+  const errorFields = Object.keys(error);
+  if (
+    errorFields.length !== 1
+    || errorFields[0] !== "code"
+    || typeof error.code !== "string"
+  ) {
+    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
+  }
+  return error.code;
+}
+
+function throwAppleNotificationHistoryServiceError(
+  status: number,
+  body: Uint8Array,
+): never {
+  const code = exactVerifierErrorCode(body);
+  if (status === 409 && code === "apple_notification_history_cursor_reset_required") {
+    throw new AppleNotificationHistoryCursorResetRequiredError();
+  }
+  if (status === 503 && code === "apple_notification_history_configuration_blocked") {
+    throw new AppleNotificationHistoryConfigurationBlockedError();
+  }
+  if (status === 503 && code === "apple_notification_history_disabled") {
+    throw new AppleNotificationHistoryDisabledError();
+  }
+  if (status === 400 && code === "invalid_apple_notification_history") {
+    throw new InvalidAppleNotificationHistoryError();
+  }
+  const retryable = (
+    status === 503
+    && (
+      code === "apple_verification_temporarily_unavailable"
+      || code === "billing_verifier_busy"
+      || code === "billing_verifier_nonce_store_unavailable"
+      || code === "billing_verifier_replayed_request"
+    )
+  ) || (status === 500 && code === "internal_error");
+  if (retryable) {
+    throw new ApiError(503, "billing_verifier_unavailable", "Billing is temporarily unavailable.");
+  }
+  throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -369,7 +604,10 @@ export async function callBillingVerifierService(
     throw new ApiError(503, "billing_verifier_unavailable", "Billing is temporarily unavailable.");
   }
 
-  const responseBody = await boundedResponseBody(response);
+  const responseBody = await boundedResponseBody(
+    response,
+    path === BILLING_NOTIFICATION_HISTORY_PATH ? 64 * 1024 : 32 * 1024,
+  );
   const responseSignature = response.headers.get("neko-billing-response-signature") ?? "";
   let authentic = false;
   try {
@@ -389,6 +627,9 @@ export async function callBillingVerifierService(
     throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
   }
   if (!response.ok) {
+    if (path === BILLING_NOTIFICATION_HISTORY_PATH) {
+      throwAppleNotificationHistoryServiceError(response.status, responseBody);
+    }
     const status = response.status >= 500 ? 503 : 400;
     throw new ApiError(
       status,
@@ -396,11 +637,5 @@ export async function callBillingVerifierService(
       status === 503 ? "Billing is temporarily unavailable." : "The App Store transaction is invalid.",
     );
   }
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody));
-  } catch {
-    throw new ApiError(503, "billing_verifier_invalid_response", "Billing is temporarily unavailable.");
-  }
-  return decoded;
+  return decodedJSON(responseBody);
 }

@@ -2,6 +2,7 @@ import { ApiError, errorResponse, jsonResponse } from "./errors";
 import {
   apnsRuntimeEnabled,
   billingAccountBootstrapRuntimeEnabled,
+  billingAppleNotificationHistoryRecoveryRuntimeEnabled,
   billingAppleNotificationRuntimeEnabled,
   billingEffectiveEntitlementRuntimeEnabled,
   billingAccountRecoveryRuntimeEnabled,
@@ -29,6 +30,9 @@ import {
   ingestAppleBillingNotification,
   runBillingSubscriptionReconciliation,
 } from "./billing-authority";
+import {
+  runAppleNotificationHistoryRecovery,
+} from "./billing-notification-history-recovery";
 import {
   apnsGateOpen,
   effectiveBillingRuntimeGateHeaders,
@@ -583,6 +587,9 @@ export default {
       ctx.waitUntil(drainNotificationOutbox(env));
     } else if (controller.cron === LEGACY_CLEANUP_CRON) {
       ctx.waitUntil(runLegacyScheduledCleanup(env));
+      if (billingAppleNotificationHistoryRecoveryRuntimeEnabled(env)) {
+        ctx.waitUntil(runAppleNotificationHistoryRecovery(env));
+      }
       if (billingSubscriptionReconciliationRuntimeEnabled(env)) {
         ctx.waitUntil(runBillingSubscriptionReconciliation(env));
       }

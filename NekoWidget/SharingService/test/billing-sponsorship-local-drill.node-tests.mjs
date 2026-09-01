@@ -15,7 +15,7 @@ const scriptPath = join(
 
 test("applies every migration and completes the isolated gate drill", () => {
   assert.deepEqual(runBillingSponsorshipLocalDrill(), {
-    migrationsApplied: 24,
+    migrationsApplied: 25,
     checksPassed: 12,
     identifiersEmitted: 0,
   });
@@ -31,7 +31,7 @@ test("CLI emits aggregate PASS evidence without synthetic identifiers", () => {
   assert.equal(execution.stderr, "");
   assert.equal(
     execution.stdout,
-    "billing sponsorship local drill: PASS (migrations=24, checks=12, identifiers=0)\n",
+    "billing sponsorship local drill: PASS (migrations=25, checks=12, identifiers=0)\n",
   );
   assert.doesNotMatch(execution.stdout, /[0-9a-f]{8}-[0-9a-f-]{27}/iu);
   assert.doesNotMatch(

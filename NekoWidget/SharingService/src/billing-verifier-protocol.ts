@@ -3,6 +3,7 @@ import { base64urlDecode, base64urlEncode, sha256Base64url } from "./encoding";
 export const BILLING_VERIFIER_PROTOCOL_VERSION = 1 as const;
 export const BILLING_VERIFIER_PATH = "/internal/v1/apple-transactions/verify";
 export const BILLING_NOTIFICATION_VERIFIER_PATH = "/internal/v1/apple-notifications/verify";
+export const BILLING_NOTIFICATION_HISTORY_PATH = "/internal/v1/apple-notifications/history";
 export const BILLING_SUBSCRIPTION_STATUS_PATH = "/internal/v1/apple-subscriptions/status";
 export const BILLING_ACCOUNT_RECOVERY_VERIFIER_PATH = "/internal/v1/apple-billing-recoveries/verify";
 

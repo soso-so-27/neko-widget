@@ -241,7 +241,7 @@ describe.sequential("App Store billing authority", () => {
     ).bind(latest.transactionId).first()).toEqual({ source: "apple_notification" });
     expect(await testEnv.DB.prepare(
       "SELECT request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
-    ).bind(latest.originalTransactionId).first()).toEqual({ request_generation: 2 });
+    ).bind(latest.originalTransactionId).first()).toEqual({ request_generation: 1 });
 
     await expect(ingestAppleBillingNotification(
       notificationRequest("header.conflicting_marker.signature"), testEnv, verify,
@@ -284,28 +284,45 @@ describe.sequential("App Store billing authority", () => {
     ).bind(firstUUID).run()).rejects.toThrow();
   });
 
-  it("acknowledges verified but unregistered accounts without creating a lineage or queue", async () => {
+  it("relinks a previously unmatched notification exactly once after account registration", async () => {
     await setAuthorityGates(true, false);
     const unregistered = transaction("5f30c0de-0000-4000-8000-000000000102", {
       transactionId: "210000000000010",
       originalTransactionId: "210000000000010",
     });
+    const marker = "header.unmatched_marker.signature";
+    const notificationUUID = "1ab3d5f7-1234-4abc-8def-123456789110";
+    const verify = async () => notification(notificationUUID, unregistered);
     const response = await ingestAppleBillingNotification(
-      notificationRequest("header.unmatched_marker.signature"),
+      notificationRequest(marker),
       testEnv,
-      async () => notification(
-        "1ab3d5f7-1234-4abc-8def-123456789110",
-        unregistered,
-      ),
+      verify,
     );
     expect(response.status).toBe(204);
     expect(await testEnv.DB.prepare(
       "SELECT relevance FROM billing_apple_notification_events WHERE notification_uuid = ?",
-    ).bind("1ab3d5f7-1234-4abc-8def-123456789110").first())
+    ).bind(notificationUUID).first())
       .toEqual({ relevance: "unmatched" });
     expect(await testEnv.DB.prepare(
       "SELECT COUNT(*) AS count FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
     ).bind(unregistered.originalTransactionId).first()).toEqual({ count: 0 });
+
+    await registerAccount(unregistered.billingAccountId);
+    expect((await ingestAppleBillingNotification(
+      notificationRequest(marker), testEnv, verify,
+    )).status).toBe(204);
+    expect((await ingestAppleBillingNotification(
+      notificationRequest(marker), testEnv, verify,
+    )).status).toBe(204);
+    expect(await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM billing_transaction_lineages WHERE original_transaction_id = ?",
+    ).bind(unregistered.originalTransactionId).first()).toEqual({ count: 1 });
+    expect(await testEnv.DB.prepare(
+      "SELECT COUNT(*) AS count FROM billing_apple_notification_reconciliation_causes WHERE notification_uuid = ?",
+    ).bind(notificationUUID).first()).toEqual({ count: 1 });
+    expect(await testEnv.DB.prepare(
+      "SELECT request_generation FROM billing_reconciliation_jobs WHERE original_transaction_id = ?",
+    ).bind(unregistered.originalTransactionId).first()).toEqual({ request_generation: 1 });
   });
 
   it("records Subscription Status as authority even when notification status differs", async () => {

@@ -36,6 +36,10 @@ test("renders an isolated staging config with the moment runtime off", () => {
   assert.equal(config.vars.BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED, "NO");
+  assert.equal(
+    config.vars.BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED,
+    "NO",
+  );
   assert.equal(config.vars.BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED, "NO");
   assert.equal(config.vars.BILLING_ACCOUNT_RECOVERY_RUNTIME_ENABLED, "NO");
@@ -292,6 +296,7 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0022_billing_account_recovery.sql", 15],
     ["0023_billing_window_sponsorship.sql", 12],
     ["0024_billing_window_owner_detach.sql", 14],
+    ["0025_billing_apple_notification_history_recovery.sql", 26],
   ]);
   for (const [name, expectedStatementCount] of expectedStatementCounts) {
     const migration = await readFile(join(projectDirectory, "migrations", name));

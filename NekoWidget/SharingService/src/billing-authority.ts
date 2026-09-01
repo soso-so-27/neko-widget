@@ -14,7 +14,9 @@ import {
   evaluateAuthoritativeStatusItem,
   selectAuthoritativeStatusItem,
 } from "./billing-entitlement";
-import { requestBillingReconciliation } from "./billing-reconciliation-queue";
+import {
+  ensureAppleNotificationReconciliationCause,
+} from "./billing-notification-reconciliation-cause";
 import { randomBase64url, sha256Base64url } from "./encoding";
 import { ApiError } from "./errors";
 import type { Env } from "./env";
@@ -89,7 +91,8 @@ async function resumeNotificationReplay(
   env: Env,
   existing: NotificationReplayRow,
   payloadHash: string,
-): Promise<Response> {
+  value: VerifiedAppleNotification,
+): Promise<void> {
   if (existing.payload_hash !== payloadHash) {
     throw new ApiError(
       409,
@@ -98,9 +101,37 @@ async function resumeNotificationReplay(
     );
   }
   if (existing.relevance === "linked" && existing.original_transaction_id !== null) {
-    await requestBillingReconciliation(env, existing.original_transaction_id);
+    await ensureAppleNotificationReconciliationCause(
+      env,
+      value.notificationUUID,
+      existing.original_transaction_id,
+    );
+    return;
   }
-  return new Response(null, { status: 204 });
+  // An authentic notification can arrive before its pseudonymous billing
+  // account is registered. History replay carries the normalized transaction
+  // again, allowing that immutable "unmatched at receipt" event to link later
+  // without retaining any raw JWS.
+  if (
+    existing.relevance === "unmatched"
+    && existing.original_transaction_id !== null
+    && value.relevant
+    && value.transaction !== null
+    && value.transaction.originalTransactionId === existing.original_transaction_id
+  ) {
+    try {
+      await storeVerifiedTransaction(env, value.transaction, { kind: "apple_notification" });
+      await ensureAppleNotificationReconciliationCause(
+        env,
+        value.notificationUUID,
+        existing.original_transaction_id,
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError)
+        || (error.code !== "billing_account_not_registered"
+          && error.code !== "billing_lineage_conflict")) throw error;
+    }
+  }
 }
 
 async function storeNotification(
@@ -131,6 +162,58 @@ async function storeNotification(
   ).run();
 }
 
+/**
+ * Persist one already verified Apple notification using the same idempotent
+ * ledger and reconciliation path as the public Notifications V2 webhook.
+ * Notification History recovery deliberately calls this normalized boundary;
+ * raw JWS values never enter the Worker or D1.
+ */
+export async function ingestVerifiedAppleBillingNotification(
+  env: Env,
+  value: VerifiedAppleNotification,
+  payloadHash: string,
+): Promise<void> {
+  const existing = await notificationReplay(env, value.notificationUUID);
+  if (existing !== null) {
+    await resumeNotificationReplay(env, existing, payloadHash, value);
+    return;
+  }
+
+  let relevance: "ignored" | "unmatched" | "linked" = "ignored";
+  if (value.relevant && value.transaction !== null) {
+    try {
+      await storeVerifiedTransaction(env, value.transaction, { kind: "apple_notification" });
+      relevance = "linked";
+    } catch (error) {
+      if (!(error instanceof ApiError)
+        || (error.code !== "billing_account_not_registered"
+          && error.code !== "billing_lineage_conflict")) throw error;
+      relevance = "unmatched";
+    }
+  }
+  try {
+    await storeNotification(env, value, payloadHash, relevance);
+  } catch {
+    const raced = await notificationReplay(env, value.notificationUUID);
+    if (raced === null) {
+      throw new ApiError(
+        503,
+        "apple_notification_unavailable",
+        "Billing is temporarily unavailable.",
+      );
+    }
+    await resumeNotificationReplay(env, raced, payloadHash, value);
+    return;
+  }
+  if (relevance === "linked" && value.transaction !== null) {
+    await ensureAppleNotificationReconciliationCause(
+      env,
+      value.notificationUUID,
+      value.transaction.originalTransactionId,
+    );
+  }
+}
+
 export async function ingestAppleBillingNotification(
   request: Request,
   env: Env,
@@ -159,37 +242,7 @@ export async function ingestAppleBillingNotification(
 
   const payloadHash = await sha256Base64url(new TextEncoder().encode(signedPayload));
   const value = await verify(signedPayload, env);
-  const existing = await notificationReplay(env, value.notificationUUID);
-  if (existing !== null) return resumeNotificationReplay(env, existing, payloadHash);
-
-  let relevance: "ignored" | "unmatched" | "linked" = "ignored";
-  if (value.relevant && value.transaction !== null) {
-    try {
-      await storeVerifiedTransaction(env, value.transaction, { kind: "apple_notification" });
-      relevance = "linked";
-    } catch (error) {
-      if (!(error instanceof ApiError)
-        || (error.code !== "billing_account_not_registered"
-          && error.code !== "billing_lineage_conflict")) throw error;
-      relevance = "unmatched";
-    }
-  }
-  try {
-    await storeNotification(env, value, payloadHash, relevance);
-  } catch {
-    const raced = await notificationReplay(env, value.notificationUUID);
-    if (raced === null) {
-      throw new ApiError(
-        503,
-        "apple_notification_unavailable",
-        "Billing is temporarily unavailable.",
-      );
-    }
-    return resumeNotificationReplay(env, raced, payloadHash);
-  }
-  if (relevance === "linked" && value.transaction !== null) {
-    await requestBillingReconciliation(env, value.transaction.originalTransactionId);
-  }
+  await ingestVerifiedAppleBillingNotification(env, value, payloadHash);
   return new Response(null, { status: 204 });
 }
 

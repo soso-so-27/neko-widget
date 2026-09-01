@@ -56,9 +56,9 @@ async function database() {
   const value = new DatabaseSync(":memory:");
   const directory = join(projectDirectory, "migrations");
   const files = (await readdir(directory))
-    .filter((name) => /^00(?:0[1-9]|1[0-9]|2[0-4])_.*\.sql$/u.test(name))
+    .filter((name) => /^00(?:0[1-9]|1[0-9]|2[0-5])_.*\.sql$/u.test(name))
     .sort();
-  assert.equal(files.length, 24);
+  assert.equal(files.length, 25);
   for (const file of files) value.exec(await readFile(join(directory, file), "utf8"));
   return value;
 }
@@ -96,6 +96,8 @@ const healthHeader = Object.freeze({
   effective_entitlement_enabled: "Neko-Runtime-Billing-Effective-Entitlement",
   window_sponsorship_enabled: "Neko-Runtime-Billing-Window-Sponsorship",
   account_recovery_enabled: "Neko-Runtime-Billing-Account-Recovery",
+  apple_notification_history_recovery_enabled:
+    "Neko-Runtime-Billing-Apple-Notification-History-Recovery",
 });
 
 function healthResponse(state, generation) {
@@ -263,7 +265,7 @@ test("parsers reject stale CAS, partial states, and unknown response fields", ()
   );
 });
 
-test("same-origin health requires generation, all seven gates, and the notification limiter", async () => {
+test("same-origin health requires generation, all eight gates, and the notification limiter", async () => {
   await verifyBillingRuntimeGateOrigin(
     manifest,
     async (url) => {

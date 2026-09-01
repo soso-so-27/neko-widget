@@ -8,6 +8,7 @@ const headerNames = [
   "neko-runtime-billing-account-bootstrap",
   "neko-runtime-billing-transaction-ingestion",
   "neko-runtime-billing-apple-notification-ingestion",
+  "neko-runtime-billing-apple-notification-history-recovery",
   "neko-runtime-billing-subscription-reconciliation",
   "neko-runtime-billing-effective-entitlement",
   "neko-runtime-billing-window-sponsorship",
@@ -19,6 +20,7 @@ interface BillingGateRow {
   account_bootstrap_enabled: number;
   transaction_ingestion_enabled: number;
   apple_notification_ingestion_enabled: number;
+  apple_notification_history_recovery_enabled: number;
   subscription_reconciliation_enabled: number;
   effective_entitlement_enabled: number;
   window_sponsorship_enabled: number;
@@ -29,6 +31,7 @@ const gateColumns = [
   "account_bootstrap_enabled",
   "transaction_ingestion_enabled",
   "apple_notification_ingestion_enabled",
+  "apple_notification_history_recovery_enabled",
   "subscription_reconciliation_enabled",
   "effective_entitlement_enabled",
   "window_sponsorship_enabled",
@@ -36,7 +39,7 @@ const gateColumns = [
 ] as const;
 
 describe("billing runtime health attestation", () => {
-  it("reports effective seven-gate state without identifiers", async () => {
+  it("reports every effective billing gate without identifiers", async () => {
     const testEnv = env as unknown as Env;
     const prior = await testEnv.DB.prepare(
       `SELECT generation, ${gateColumns.join(", ")}
@@ -63,6 +66,7 @@ describe("billing runtime health attestation", () => {
               account_bootstrap_enabled=1,
               transaction_ingestion_enabled=1,
               apple_notification_ingestion_enabled=1,
+              apple_notification_history_recovery_enabled=1,
               subscription_reconciliation_enabled=1,
               effective_entitlement_enabled=1,
               window_sponsorship_enabled=1,
@@ -77,6 +81,7 @@ describe("billing runtime health attestation", () => {
         BILLING_ACCOUNT_BOOTSTRAP_RUNTIME_ENABLED: "YES",
         BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED: "YES",
         BILLING_APPLE_NOTIFICATION_RUNTIME_ENABLED: "YES",
+        BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED: "YES",
         BILLING_SUBSCRIPTION_RECONCILIATION_RUNTIME_ENABLED: "YES",
         BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED: "YES",
         BILLING_WINDOW_SPONSORSHIP_RUNTIME_ENABLED: "YES",
@@ -115,6 +120,7 @@ describe("billing runtime health attestation", () => {
                 account_bootstrap_enabled=0,
                 transaction_ingestion_enabled=0,
                 apple_notification_ingestion_enabled=0,
+                apple_notification_history_recovery_enabled=0,
                 subscription_reconciliation_enabled=0,
                 effective_entitlement_enabled=0,
                 window_sponsorship_enabled=0,

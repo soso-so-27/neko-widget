@@ -67,6 +67,9 @@ test("rejects partial gates, binding drift, and secret vars", () => {
   for (const mutate of [
     (on) => { on.vars.BILLING_EFFECTIVE_ENTITLEMENT_RUNTIME_ENABLED = "NO"; },
     (on) => { on.vars.BILLING_TRANSACTION_INGESTION_RUNTIME_ENABLED = "NO"; },
+    (on) => {
+      on.vars.BILLING_APPLE_NOTIFICATION_HISTORY_RECOVERY_RUNTIME_ENABLED = "YES";
+    },
     (on) => { on.r2_buckets[0].bucket_name = "another-bucket"; },
     (on) => { on.vars.BILLING_VERIFIER_SHARED_SECRET = "must-not-be-in-vars"; },
     (on) => { on.vars.BILLING_VERIFIER_ACCESS_CLIENT_ID = "must-not-be-in-vars"; },
