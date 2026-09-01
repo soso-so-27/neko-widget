@@ -146,6 +146,7 @@ struct MainTabView: View {
                     hasPhotoAccess: hasPhotoAccess,
                     monthlyWindowCollection: monthlyWindowCollection,
                     latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
+                    latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
                     seasonalMovies: seasonalMovieArchive.records,
                     automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos,
                     exportPhotoBook: exportPhotoBook
@@ -159,7 +160,7 @@ struct MainTabView: View {
                 Label("思い出", systemImage: "photo.stack.fill")
                     .accessibilityIdentifier("main-tab-memories")
             }
-            .badge(latestMonthlyWindowIsUnread ? 1 : 0)
+            .badge(hasUnreadMemoriesSummary ? 1 : 0)
             .tag(AppTab.memories)
         }
         .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
@@ -613,6 +614,14 @@ struct MainTabView: View {
             latestPeriodIdentifier: latestMonthlyWindowPeriodIdentifier,
             readPeriodIdentifier: readMonthlyWindowPeriodIdentifier
         )
+    }
+
+    private var latestSeasonalMovieIsNew: Bool {
+        seasonalMovieArchive.records.first.map { !$0.isFrozen } ?? false
+    }
+
+    private var hasUnreadMemoriesSummary: Bool {
+        latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew
     }
 
     private func markMonthlyWindowReadIfLatest(

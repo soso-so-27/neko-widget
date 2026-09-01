@@ -927,11 +927,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("dynamicTypeSize.isAccessibilitySize", memory_view)
         self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
         self.assertIn(
-            ".onChange(of: latestMonthlyWindowIsUnread, initial: true)",
+            ".onChange(of: hasUnreadSummary, initial: true)",
             memory_view,
         )
         self.assertIn(
-            "guard isUnread, !hasExplicitlySelectedSection else { return }",
+            "guard hasUnread, !hasExplicitlySelectedSection else { return }",
             memory_view,
         )
         self.assertIn("selectedSection = .summaries", memory_view)
@@ -1125,6 +1125,16 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("case seasonalMovie(SeasonalMoviePeriodID)", memory_routes)
         self.assertIn("SeasonalMovieView(", main)
         self.assertIn("seasonalMovies: seasonalMovieArchive.records", main)
+        self.assertIn("latestSeasonalMovieIsNew: latestSeasonalMovieIsNew", main)
+        self.assertIn(".badge(hasUnreadMemoriesSummary ? 1 : 0)", main)
+        self.assertIn(
+            "latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew",
+            main,
+        )
+        self.assertIn("seasonalMovieArchive.records.first.map { !$0.isFrozen }", main)
+        self.assertIn("let latestSeasonalMovieIsNew: Bool", memories)
+        self.assertIn(".onChange(of: hasUnreadSummary, initial: true)", memories)
+        self.assertIn("isNew: latestSeasonalMovieIsNew", memories)
         self.assertIn("let service = SeasonalMovieCandidateService()", main)
         self.assertIn("await service.photoCandidates", main)
         self.assertIn("await service.videoCandidateBatch", main)
@@ -1208,6 +1218,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("SeasonalMovieSoundtrackPlayer", view)
         self.assertIn('Text("この作品から外しました")', view)
         self.assertIn("SeasonalMovieArchiveCard", view)
+        self.assertIn('Text("新着")', view)
+        self.assertIn('+ (isNew ? "、新着" : "")', view)
         self.assertIn("currentSceneIsReady", view)
         self.assertIn("markSceneReady", view)
         self.assertIn("skipUnavailableScene", view)

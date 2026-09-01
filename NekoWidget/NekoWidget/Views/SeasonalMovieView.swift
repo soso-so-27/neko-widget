@@ -175,6 +175,7 @@ private struct SeasonalMovieAboutSheet: View {
 /// A compact card used by the device-only archive under 思い出.
 struct SeasonalMovieArchiveCard: View {
     let presentation: SeasonalMoviePresentation
+    let isNew: Bool
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -213,9 +214,22 @@ struct SeasonalMovieArchiveCard: View {
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .contentShape(RoundedRectangle(cornerRadius: 22))
+        .overlay(alignment: .topTrailing) {
+            if isNew {
+                Text("新着")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.accentColor.opacity(0.92), in: Capsule())
+                    .padding(12)
+                    .accessibilityIdentifier("seasonal-movie-new-badge")
+            }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(presentation.periodTitle)の季節のムービー、\(presentation.scenes.count)場面"
+                + (isNew ? "、新着" : "")
         )
         .accessibilityHint("開くと再生します")
     }

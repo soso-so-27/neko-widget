@@ -525,6 +525,7 @@ struct LikedPhotosView: View {
     let hasPhotoAccess: Bool
     let monthlyWindowCollection: MonthlyWindowCollectionPresentation?
     let latestMonthlyWindowIsUnread: Bool
+    let latestSeasonalMovieIsNew: Bool
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let automaticAlbumPreviewPhotos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
@@ -548,10 +549,14 @@ struct LikedPhotosView: View {
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
-        .onChange(of: latestMonthlyWindowIsUnread, initial: true) { _, isUnread in
-            guard isUnread, !hasExplicitlySelectedSection else { return }
+        .onChange(of: hasUnreadSummary, initial: true) { _, hasUnread in
+            guard hasUnread, !hasExplicitlySelectedSection else { return }
             selectedSection = .summaries
         }
+    }
+
+    private var hasUnreadSummary: Bool {
+        latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew
     }
 
     @ViewBuilder
@@ -971,7 +976,9 @@ struct LikedPhotosView: View {
                                 value: MemoriesRoute.seasonalMovie(record.periodID)
                             ) {
                                 SeasonalMovieArchiveCard(
-                                    presentation: record.effectivePresentation
+                                    presentation: record.effectivePresentation,
+                                    isNew: latestSeasonalMovieIsNew
+                                        && record.periodID == records.first?.periodID
                                 )
                             }
                             .buttonStyle(.plain)
