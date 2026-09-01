@@ -2614,8 +2614,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('Text("自分が届けた写真")', family)
         self.assertIn('Text("送信状況")', family)
         self.assertNotIn('Text("履歴")', family)
-        self.assertIn("到着は閲覧や既読ではありません", family)
-        self.assertIn("プレビュー画像は送信したiPhoneだけに最長30日残り", family)
+        self.assertIn("届いた写真の保存期間は最長90日です", family)
+        self.assertIn("残すときは「取り込んで残す」を選びます", family)
+        self.assertIn("「到着」は、相手が写真を開いたことを示しません", family)
+        self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
         self.assertIn("let thumbnail = sentRecordThumbnail(record)", family)
         target_record = section(
@@ -2625,6 +2627,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("LazyVGrid(columns: sentRecordColumns, spacing: 10)", target_record)
         self.assertIn("ForEach(visibleSentRecords)", target_record)
+        self.assertNotIn("プレビュー画像は送信したiPhoneだけに最長30日残り", target_record)
         sent_columns = section(
             family,
             "private var sentRecordColumns:",

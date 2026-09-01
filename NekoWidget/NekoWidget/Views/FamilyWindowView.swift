@@ -527,7 +527,7 @@ struct FamilyWindowView: View {
     private var receivedSectionContent: some View {
         if !model.receivedMoments.isEmpty {
             Label(
-                "このiPhoneに一時保存。取り込む前は最長90日（500枚・256MBまで）です。「取り込んで残す」で写真アプリと思い出へ入ります。",
+                "届いた写真の保存期間は最長90日です。残すときは「取り込んで残す」を選びます。",
                 systemImage: "info.circle"
             )
             .font(.caption)
@@ -1198,7 +1198,7 @@ struct FamilyWindowView: View {
                             outgoingManagementMenu
                         }
                     }
-                    Text("到着は閲覧や既読ではありません。プレビュー画像は送信したiPhoneだけに最長30日残り、別のiPhoneや再インストール後には表示されません。")
+                    Text("「到着」は、相手が写真を開いたことを示しません。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -2212,6 +2212,9 @@ struct FamilyWindowView: View {
                     .foregroundStyle(.secondary)
             }
             Text("写真は公開されません。サーバー上の暗号文は受領後7日、未受領は30日で削除対象です。届いた写真は、このiPhone内に最長90日・最大500枚・256MiBまで保持します。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text("思い出に残した受信写真は、位置情報を除いて写真アプリへ取り込みます。通常の思い出と写真まとめに入り、相手へは通知しません。")
