@@ -39,16 +39,9 @@ struct OnboardingView: View {
 
             case .widgetGuide:
                 WidgetPlacementGuideView(
-                    onComplete: {
-                        page = .pawLike
-                    },
-                    onSkip: {
-                        page = .pawLike
-                    }
+                    onComplete: finish,
+                    onSkip: finish
                 )
-
-            case .pawLike:
-                OnboardingPawLikePage(onFinish: finish)
             }
         }
         .background(Color(.systemBackground).ignoresSafeArea())
@@ -201,13 +194,13 @@ private struct OnboardingPurposePage: View {
 
                 VStack(spacing: 26) {
                     Text(
-                        OnboardingPresentationCopy.purposeBodyLines[0 ... 2]
+                        OnboardingPresentationCopy.purposeBodyLines[0 ... 1]
                             .joined(separator: "\n")
                     )
                     .font(.title2.weight(.bold))
 
                     Text(
-                        OnboardingPresentationCopy.purposeBodyLines[3 ... 6]
+                        OnboardingPresentationCopy.purposeBodyLines[2 ... 3]
                             .joined(separator: "\n")
                     )
                     .font(.title3.weight(.medium))
@@ -369,82 +362,5 @@ private struct OnboardingScanInProgressPage: View {
             .background(.bar)
             .accessibilityIdentifier("onboarding-scan-continue")
         }
-    }
-}
-
-private struct OnboardingPawLikePage: View {
-    let onFinish: () -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 30) {
-                Text(OnboardingPresentationCopy.pawTitleLines.joined(separator: "\n"))
-                    .font(.title2.bold())
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .padding(.top, 54)
-
-                PawLocationDiagram()
-
-                Text(OnboardingPresentationCopy.pawBody)
-                    .font(.body)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 28)
-            .padding(.bottom, 30)
-        }
-        .safeAreaInset(edge: .bottom) {
-            Button(action: onFinish) {
-                Text(OnboardingPresentationCopy.pawAction)
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 12)
-            .background(.bar)
-            .accessibilityIdentifier("onboarding-paw-finish")
-        }
-    }
-}
-
-private struct PawLocationDiagram: View {
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            LinearGradient(
-                colors: [Color.accentColor.opacity(0.22), Color.pink.opacity(0.16)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Image(systemName: "cat.fill")
-                .font(.system(size: 72, weight: .light))
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 7) {
-                Image(systemName: "bookmark")
-                    .font(.system(size: 18, weight: .semibold))
-                Text("思い出に残す")
-                    .font(.subheadline.bold())
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 48)
-            .background(.black.opacity(0.62), in: Capsule())
-            .padding(14)
-        }
-        .frame(height: 268)
-        .frame(maxWidth: 360)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.25), lineWidth: 2)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("写真の右下にあるブックマークの「思い出に残す」ボタン")
-        .accessibilityIdentifier("onboarding-paw-location-diagram")
     }
 }

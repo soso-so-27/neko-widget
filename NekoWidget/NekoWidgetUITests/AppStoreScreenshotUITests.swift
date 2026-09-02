@@ -58,8 +58,9 @@ final class AppStoreScreenshotUITests: XCTestCase {
         app.launchArguments.append("--app-store-screenshot-fixture")
         app.launch()
 
-        guard app.buttons["window-current-photo"].waitForExistence(timeout: 20) else {
-            fail("The deterministic Window fixture did not appear.", application: app)
+        guard app.descendants(matching: .any)["photo-hub-detected-grid"].waitForExistence(timeout: 20),
+              app.buttons["photos-open-automatic-albums"].waitForExistence(timeout: 10) else {
+            fail("The deterministic cat-photo library did not appear.", application: app)
             return
         }
         guard waitForFixturePhotos(in: app, requirements: [(18, 1)]) else {
@@ -118,24 +119,24 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         savedPhotosBackButton.tap()
 
-        let summariesSegment = memoriesSectionPicker.buttons["まとめ"]
-        guard memoriesSectionPicker.waitForExistence(timeout: 5),
-              summariesSegment.waitForExistence(timeout: 5) else {
-            fail("The Memories section picker was not reachable.", application: app)
+        guard tapTab(
+            application: app,
+            identifier: "main-tab-photos",
+            fallbackLabel: "写真"
+        ) else {
+            fail("The Photos tab was not available.", application: app)
             return
         }
-        summariesSegment.tap()
 
-        let memoriesAutomaticAlbums = app.buttons["memories-open-automatic-albums"]
-        guard scrollUpUntilHittable(memoriesAutomaticAlbums, application: app),
-              summariesSegment.isSelected else {
+        let photosAutomaticAlbums = app.buttons["photos-open-automatic-albums"]
+        guard scrollUpUntilHittable(photosAutomaticAlbums, application: app) else {
             fail(
-                "The automatic-albums entry could not be reached from Memories.",
+                "The automatic-albums entry could not be reached from Photos.",
                 application: app
             )
             return
         }
-        memoriesAutomaticAlbums.tap()
+        photosAutomaticAlbums.tap()
         let allCatPhotosAlbum = app.buttons["album-primary-all-cat-photos"]
         guard allCatPhotosAlbum.waitForExistence(timeout: 15) else {
             fail(
@@ -157,15 +158,15 @@ final class AppStoreScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "03-organized-memories")
 
-        let memoriesBackButton = app.navigationBars["自動アルバム"].buttons["思い出"]
-        guard memoriesBackButton.waitForExistence(timeout: 5) else {
+        let photosBackButton = app.navigationBars["自動アルバム"].buttons["写真"]
+        guard photosBackButton.waitForExistence(timeout: 5) else {
             fail(
-                "The automatic-albums screen could not return to Memories.",
+                "The automatic-albums screen could not return to Photos.",
                 application: app
             )
             return
         }
-        memoriesBackButton.tap()
+        photosBackButton.tap()
     }
 
     private var japaneseLaunchArguments: [String] {

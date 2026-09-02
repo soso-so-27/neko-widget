@@ -951,8 +951,7 @@ struct AppRootView: View {
                 switch (currentPage, page) {
                 case (.purpose, .photoPermission),
                      (.photoPermission, .scanResult),
-                     (.scanResult, .widgetGuide),
-                     (.widgetGuide, .pawLike):
+                     (.scanResult, .widgetGuide):
                     state.advance()
                 case (.photoPermission, .widgetGuide):
                     state.skipPhotoPermission()
@@ -975,7 +974,7 @@ struct AppRootView: View {
         state.advance()
         persistOnboardingState(state)
         // Keep the former first-run flag current so a rollback cannot show the
-        // legacy scan-result gate after the five-page flow has completed.
+        // legacy scan-result gate after the four-page flow has completed.
         hasSeenInitialScanResult = true
         widgetInstallationChecker.refresh()
     }
@@ -985,7 +984,7 @@ struct AppRootView: View {
         state.skipPhotoPermission()
         persistOnboardingState(state)
         // "あとで" means entering the app without Photos access. Do not send
-        // the user through Widget and save instructions that cannot work yet.
+        // the user through a Widget guide they cannot verify yet.
         // Home remains the recovery point and explains how to grant access.
         hasSeenInitialScanResult = true
         onboardingScanErrorMessage = nil

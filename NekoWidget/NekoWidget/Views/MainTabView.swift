@@ -3,11 +3,11 @@ import SwiftUI
 enum PhotosRoute: Hashable {
     case photo(String)
     case collectionPhoto(String)
+    case automaticAlbums
 }
 
 enum MemoriesRoute: Hashable {
     case photo(String)
-    case automaticAlbums
     case seasonalMovie(SeasonalMoviePeriodID)
     case monthlyWindow(MonthlyWindowPresentation)
 }
@@ -95,7 +95,6 @@ struct MainTabView: View {
         TabView(selection: $selectedTab) {
             NavigationStack(path: $photosPath) {
                 HomeView(
-                    currentPhoto: currentPhoto,
                     scan: scan,
                     hasPhotoAccess: hasPhotoAccess,
                     isLimitedAccess: isLimitedAccess,
@@ -104,7 +103,6 @@ struct MainTabView: View {
                     chooseMorePhotos: chooseMorePhotos,
                     showWidgetPlacementGuide: showWidgetPlacementGuide,
                     showSettings: { showsSettings = true },
-                    setMemorySaved: setMemorySaved,
                     rescan: { Task { await rescan() } },
                     catPhotos: catPhotos,
                     excludedCatPhotos: excludedCatPhotos,
@@ -124,6 +122,28 @@ struct MainTabView: View {
             }
             .tag(AppTab.photos)
 
+            NavigationStack(path: $memoriesPath) {
+                LikedPhotosView(
+                    photos: likedPhotos,
+                    hasPhotoAccess: hasPhotoAccess,
+                    monthlyWindowCollection: monthlyWindowCollection,
+                    latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
+                    latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
+                    seasonalMovies: seasonalMovieArchive.records,
+                    exportPhotoBook: exportPhotoBook
+                )
+                    .navigationDestination(
+                        for: MemoriesRoute.self,
+                        destination: memoriesDestination
+                    )
+            }
+            .tabItem {
+                Label("思い出", systemImage: "photo.stack.fill")
+                    .accessibilityIdentifier("main-tab-memories")
+            }
+            .badge(hasUnreadMemoriesSummary ? 1 : 0)
+            .tag(AppTab.memories)
+
             if SharingAPIConfiguration.current.isReviewVisible {
                 NavigationStack {
                     WindowListView(
@@ -139,29 +159,6 @@ struct MainTabView: View {
                 }
                 .tag(AppTab.windows)
             }
-
-            NavigationStack(path: $memoriesPath) {
-                LikedPhotosView(
-                    photos: likedPhotos,
-                    hasPhotoAccess: hasPhotoAccess,
-                    monthlyWindowCollection: monthlyWindowCollection,
-                    latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
-                    latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
-                    seasonalMovies: seasonalMovieArchive.records,
-                    automaticAlbumPreviewPhotos: automaticAlbumPreviewPhotos,
-                    exportPhotoBook: exportPhotoBook
-                )
-                    .navigationDestination(
-                        for: MemoriesRoute.self,
-                        destination: memoriesDestination
-                    )
-            }
-            .tabItem {
-                Label("思い出", systemImage: "photo.stack.fill")
-                    .accessibilityIdentifier("main-tab-memories")
-            }
-            .badge(hasUnreadMemoriesSummary ? 1 : 0)
-            .tag(AppTab.memories)
         }
         .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
             settingsSheet
@@ -279,6 +276,8 @@ struct MainTabView: View {
             detailView(for: localIdentifier)
         case let .collectionPhoto(localIdentifier):
             collectionDetailView(for: localIdentifier)
+        case .automaticAlbums:
+            automaticAlbumsView
         }
     }
 
@@ -364,8 +363,6 @@ struct MainTabView: View {
         switch route {
         case let .photo(localIdentifier):
             memoryDetailView(for: localIdentifier)
-        case .automaticAlbums:
-            automaticAlbumsView
         case let .seasonalMovie(periodID):
             seasonalMovieDestination(periodID)
         case let .monthlyWindow(snapshot):
@@ -535,41 +532,6 @@ struct MainTabView: View {
             )
         }
         return sections
-    }
-
-    private var automaticAlbumPreviewPhotos: [PhotoPresentation] {
-        let sections = CuratedAlbumBuilder().sections(
-            from: catPhotos,
-            lifeReference: nil,
-            includesGrowth: false
-        )
-        let themedCovers = [
-            CuratedAlbumGroup.time,
-            .cuteness,
-            .special,
-        ].compactMap { group -> PhotoPresentation? in
-            guard let section = sections.first(where: { $0.id == group }) else {
-                return nil
-            }
-            let album = group == .time ? section.albums.last : section.albums.first
-            return album?.coverPhoto
-        }
-        let allPhotos = sections
-            .first(where: { $0.id == .all })?
-            .albums
-            .first(where: { $0.id == .allCatPhotos })?
-            .photos ?? catPhotos
-
-        var seenIdentifiers = Set<String>()
-        var result: [PhotoPresentation] = []
-        for photo in themedCovers + allPhotos {
-            guard seenIdentifiers.insert(photo.localIdentifier).inserted else {
-                continue
-            }
-            result.append(photo)
-            if result.count == 4 { break }
-        }
-        return result
     }
 
     private var monthlyWindowCollectionKey: MonthlyWindowCollectionKey {

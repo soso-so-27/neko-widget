@@ -330,9 +330,9 @@ portrait accepted sizeには`1260 x 2736`、`1290 x 2796`、`1320 x 2868`があ�
 | 順 | ファイル | 実際に示す機能 | 注意 |
 | --- | --- | --- | --- |
 | 1 | `01-local-cat-widget.jpg` | Widget Galleryで実際のWidget Extensionが描くローカル猫写真Widget | 個人のホーム画面や通知を写さない |
-| 2 | `02-local-photo-window.jpg` | 端末内で選ばれた「思い出の一枚」と肉球 | 共有写真や内部diagnostic語を写さない |
-| 3 | `03-organized-memories.jpg` | 撮影年や端末内解析から作る「思い出」 | serverへ写真libraryを送ると誤認させない |
-| 4 | `04-liked-photos.jpg` | 利用者が肉球で残した「これ好き」 | 写真送信や「届いた写真」として表現しない |
+| 2 | `02-local-photo-window.jpg` | このiPhoneで見つけた猫写真の一覧と「自動アルバム」の入口 | 共有写真や内部diagnostic語を写さない |
+| 3 | `03-organized-memories.jpg` | 撮影年や端末内解析から作る自動アルバム | serverへ写真libraryを送ると誤認させない |
+| 4 | `04-liked-photos.jpg` | 利用者が「思い出に残す」で選んだ写真と書き出しの入口 | 写真送信や「届いた写真」として表現しない |
 | 5 | `05-on-device-photo-privacy.jpg` | 端末内解析と開発者serverへの自動送信なし | 許可前の説明と最終buildを一致させる |
 
 選択Bで限定外部betaへ提出する場合に限り、名前付きの非公開なまど、一枚送信、受信Widget、block・

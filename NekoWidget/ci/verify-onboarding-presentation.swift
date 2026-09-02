@@ -3,11 +3,11 @@ import Foundation
 @main
 enum OnboardingPresentationVerifier {
     static func main() throws {
-        try verifiesExactlyFivePagesInTheApprovedOrder()
+        try verifiesExactlyFourPagesInTheApprovedOrder()
         try verifiesApprovedJapaneseCopy()
         try verifiesOrdinaryFirstRunTransitions()
         try verifiesPermissionSkipEntersTheApp()
-        try verifiesWidgetGuideSkipStillReachesFinalPage()
+        try verifiesWidgetGuideSkipCompletesFirstRun()
         try verifiesRevokedPhotoAccessReturnsToPermission()
         try verifiesResumeProgressIsClamped()
         try verifiesCompletionVersionOne()
@@ -16,29 +16,25 @@ enum OnboardingPresentationVerifier {
         print("Onboarding presentation verifier passed")
     }
 
-    private static func verifiesExactlyFivePagesInTheApprovedOrder() throws {
+    private static func verifiesExactlyFourPagesInTheApprovedOrder() throws {
         try require(
             OnboardingPresentationPage.allCases == [
                 .purpose,
                 .photoPermission,
                 .scanResult,
-                .widgetGuide,
-                .pawLike
+                .widgetGuide
             ],
-            "onboarding stopped being the approved five-page flow"
+            "onboarding stopped being the approved four-page flow"
         )
     }
 
     private static func verifiesApprovedJapaneseCopy() throws {
         try require(
             OnboardingPresentationCopy.purposeBodyLines == [
-                "猫の写真は、",
-                "撮るだけ撮って",
-                "見ていないことが多い。",
-                "このアプリが猫だけを見つけ、",
-                "見つけた写真を並べます。",
-                "ウィジェットの写真は",
-                "時間とともに変わります。"
+                "撮りためた猫写真が、",
+                "毎日会える思い出に。",
+                "猫だけを端末内で見つけて、",
+                "自動アルバムとホーム画面へ。"
             ],
             "page-one product promise changed"
         )
@@ -161,22 +157,6 @@ enum OnboardingPresentationVerifier {
                 == "あとで",
             "Widget guide later action changed"
         )
-        try require(
-            OnboardingPresentationCopy.pawTitleLines == [
-                "気に入った1枚は、",
-                "「思い出に残す」で残せます。"
-            ],
-            "memory-page title changed"
-        )
-        try require(
-            OnboardingPresentationCopy.pawBody
-                == "残した写真は「思い出」で見返し、あとでまとめられます。",
-            "memory explanation changed"
-        )
-        try require(
-            OnboardingPresentationCopy.pawAction == "はじめる",
-            "paw-page action changed"
-        )
     }
 
     private static func verifiesOrdinaryFirstRunTransitions() throws {
@@ -190,11 +170,8 @@ enum OnboardingPresentationVerifier {
         state.advance()
         try require(state.currentPage == .widgetGuide, "scan/result did not lead to Widget guide")
         state.advance()
-        try require(state.currentPage == .pawLike, "Widget guide did not lead to paw explanation")
-
-        state.advance()
-        try require(!state.isPresented, "final action did not dismiss onboarding")
-        try require(state.isFirstRunComplete, "final action did not complete onboarding")
+        try require(!state.isPresented, "Widget guide action did not dismiss onboarding")
+        try require(state.isFirstRunComplete, "Widget guide action did not complete onboarding")
     }
 
     private static func verifiesPermissionSkipEntersTheApp() throws {
@@ -215,19 +192,17 @@ enum OnboardingPresentationVerifier {
         )
     }
 
-    private static func verifiesWidgetGuideSkipStillReachesFinalPage() throws {
+    private static func verifiesWidgetGuideSkipCompletesFirstRun() throws {
         var state = OnboardingPresentationState(persistedResumePageIndex: 3)
         state.skipWidgetGuide()
         try require(
-            state.currentPage == .pawLike,
-            "first-run Widget skip did not preserve the final product lesson"
+            !state.isPresented,
+            "first-run Widget skip did not enter the app"
         )
         try require(
-            state.completedVersion == 0,
-            "skipping the Widget guide prematurely completed onboarding"
+            state.isFirstRunComplete,
+            "first-run Widget skip did not complete onboarding"
         )
-        state.advance()
-        try require(state.isFirstRunComplete, "final action did not complete a skipped guide flow")
     }
 
     private static func verifiesRevokedPhotoAccessReturnsToPermission() throws {
@@ -253,8 +228,8 @@ enum OnboardingPresentationVerifier {
         try require(belowRange.resumePageIndex == 0, "negative persisted index survived")
 
         let aboveRange = OnboardingPresentationState(persistedResumePageIndex: 200)
-        try require(aboveRange.currentPage == .pawLike, "oversized progress was not clamped")
-        try require(aboveRange.resumePageIndex == 4, "oversized persisted index survived")
+        try require(aboveRange.currentPage == .widgetGuide, "oversized progress was not clamped")
+        try require(aboveRange.resumePageIndex == 3, "oversized persisted index survived")
 
         let middle = OnboardingPresentationState(persistedResumePageIndex: 3)
         try require(middle.currentPage == .widgetGuide, "valid resume progress was discarded")
@@ -294,7 +269,7 @@ enum OnboardingPresentationVerifier {
 
     private static func verifiesWidgetGuideReplayIsNonDestructive() throws {
         var completedReplay = OnboardingPresentationState.widgetGuideReplay(
-            persistedResumePageIndex: 4,
+            persistedResumePageIndex: 3,
             persistedCompletedVersion: 1
         )
         try require(completedReplay.mode == .widgetGuideReplay, "replay mode was lost")
@@ -302,7 +277,7 @@ enum OnboardingPresentationVerifier {
         completedReplay.advance()
         try require(!completedReplay.isPresented, "replay action did not dismiss the guide")
         try require(completedReplay.completedVersion == 1, "replay cleared completion")
-        try require(completedReplay.resumePageIndex == 4, "replay rewound progress")
+        try require(completedReplay.resumePageIndex == 3, "replay rewound progress")
 
         var interruptedReplay = OnboardingPresentationState.widgetGuideReplay(
             persistedResumePageIndex: 1,

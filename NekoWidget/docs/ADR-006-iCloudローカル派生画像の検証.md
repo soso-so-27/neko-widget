@@ -72,7 +72,7 @@ PhotoKitの画像download progressは割合であり、`requestImage`前に必�
 
 probe前に示せるのは感度表だけである。残り2,586件について、1件あたり実転送量を仮に0.5 / 1 / 2 / 4 / 8MBと置くと合計は約1.3 / 2.6 / 5.2 / 10.3 / 20.7GBになる。ただしPhotoKitが派生画像と原本のどちらを取得するかは公開契約から決まらないため、これは通信量予測ではない。512 fastで残った件数を確定し、必要な場合だけ少数assetの同意付きpilotで端末固有の実測レンジを作る。
 
-ここで禁止する「同意なしの自動download」は、scannerやWidget cacheがDeferredを一括取得する処理である。現在の本体画面では、ホームの「今日の1枚」、詳細、一覧、精度レビューなどの個別画像表示が`networkAccessAllowed=true`でiCloudへアクセスし得る。この本体UIの個別表示と、数千枚を自動取得するbatch処理を分けて扱う。個別表示にも事前同意を要求する方針へ広げる場合は、別のコード変更とUX判断が必要である。probeは個別表示を行わず、全requestを`networkAccessAllowed=false`に固定する。
+ここで禁止する「同意なしの自動download」は、scannerやWidget cacheがDeferredを一括取得する処理である。現在の本体画面では、写真一覧、詳細、精度レビューなどの個別画像表示が`networkAccessAllowed=true`でiCloudへアクセスし得る。この本体UIの個別表示と、数千枚を自動取得するbatch処理を分けて扱う。個別表示にも事前同意を要求する方針へ広げる場合は、別のコード変更とUX判断が必要である。probeは個別表示を行わず、全requestを`networkAccessAllowed=false`に固定する。
 
 512 fastでもDeferredが大きく残った場合にだけ、次を設計する。
 

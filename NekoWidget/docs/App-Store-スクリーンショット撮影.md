@@ -11,9 +11,9 @@ App Store Connectへのアップロードや提出は行わない。
 | 順 | ファイル | 実際に示す機能 |
 | --- | --- | --- |
 | 1 | `01-local-cat-widget.jpg` | Widget Galleryで実際のWidget Extensionが描いたローカル猫写真Widgetのサンプル |
-| 2 | `02-local-photo-window.jpg` | 端末内で選ばれた「思い出の一枚」と肉球 |
-| 3 | `03-organized-memories.jpg` | 撮影年や端末内の解析結果から作る「思い出」 |
-| 4 | `04-liked-photos.jpg` | 利用者が肉球で残した「これ好き」 |
+| 2 | `02-local-photo-window.jpg` | このiPhoneで見つけた猫写真の一覧と「自動アルバム」の入口 |
+| 3 | `03-organized-memories.jpg` | 撮影年や端末内の解析結果から作る自動アルバム |
+| 4 | `04-liked-photos.jpg` | 利用者が「思い出に残す」で選んだ写真と書き出しの入口 |
 | 5 | `05-on-device-photo-privacy.jpg` | 端末内解析と開発者サーバーへの自動送信なしを説明する許可前の画面 |
 
 境界Aに存在しない招待、送受信、受信Widget、通報、block、共有解除は撮らない。通知、push、

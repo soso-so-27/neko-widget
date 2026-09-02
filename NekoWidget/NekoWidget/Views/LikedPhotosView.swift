@@ -527,7 +527,6 @@ struct LikedPhotosView: View {
     let latestMonthlyWindowIsUnread: Bool
     let latestSeasonalMovieIsNew: Bool
     let seasonalMovies: [SeasonalMovieArchiveRecord]
-    let automaticAlbumPreviewPhotos: [PhotoPresentation]
     let exportPhotoBook: ([String]) async throws -> URL
 
     @State private var selectedSection: MemoriesSection = .photos
@@ -694,10 +693,6 @@ struct LikedPhotosView: View {
                 summarySectionDivider
 
                 seasonalMovieSection(seasonalMovies)
-
-                summarySectionDivider
-
-                automaticAlbumsSection
             } else {
                 HStack(spacing: 12) {
                     Image(systemName: "photo.badge.exclamationmark")
@@ -893,53 +888,6 @@ struct LikedPhotosView: View {
         }
     }
 
-    private var automaticAlbumsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            summarySectionTitle(
-                "テーマから見る",
-                subtitle: "成長や写り方から写真を探す",
-                systemImage: "square.grid.2x2",
-                identifier: "memories-automatic-albums-title"
-            )
-
-            NavigationLink(value: MemoriesRoute.automaticAlbums) {
-                HStack(spacing: 14) {
-                    AutomaticAlbumPreview(
-                        photos: automaticAlbumPreviewPhotos
-                    )
-                    .frame(width: 104, height: 104)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("アルバムを開く")
-                            .font(.headline)
-                        Text("写真は自動でまとまります")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.tertiary)
-                        .padding(.trailing, 14)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 18)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .accessibilityIdentifier("memories-open-automatic-albums")
-            .accessibilityLabel("テーマから見る。アルバムを開く")
-            .accessibilityHint("自動で整理された猫写真を開きます")
-        }
-    }
-
     private func seasonalMovieSection(
         _ records: [SeasonalMovieArchiveRecord]
     ) -> some View {
@@ -1099,69 +1047,6 @@ private struct MonthlyWindowArchiveCard: View {
 
     private var monthTitle: String {
         "\(presentation.yearNumber)年\(presentation.monthNumber)月"
-    }
-}
-
-private struct AutomaticAlbumPreview: View {
-    let photos: [PhotoPresentation]
-
-    private let columns = [
-        GridItem(.flexible(), spacing: 2),
-        GridItem(.flexible(), spacing: 2),
-    ]
-
-    var body: some View {
-        Group {
-            if photos.isEmpty {
-                Image(systemName: "rectangle.stack.fill")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.accentColor.opacity(0.10))
-            } else if photos.count == 1, let photo = photos.first {
-                previewPhoto(photo)
-                    .aspectRatio(1, contentMode: .fill)
-            } else if photos.count == 2 {
-                HStack(spacing: 2) {
-                    ForEach(photos) { photo in
-                        previewPhoto(photo)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-            } else if photos.count == 3 {
-                HStack(spacing: 2) {
-                    previewPhoto(photos[0])
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    VStack(spacing: 2) {
-                        previewPhoto(photos[1])
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        previewPhoto(photos[2])
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-            } else {
-                LazyVGrid(columns: columns, spacing: 2) {
-                    ForEach(Array(photos.prefix(4))) { photo in
-                        previewPhoto(photo)
-                            .aspectRatio(1, contentMode: .fill)
-                    }
-                }
-            }
-        }
-        .background(Color(.tertiarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .contentShape(RoundedRectangle(cornerRadius: 18))
-        .accessibilityHidden(true)
-    }
-
-    private func previewPhoto(_ photo: PhotoPresentation) -> some View {
-        PhotoAssetImageView(
-            localIdentifier: photo.localIdentifier,
-            catBoundingBox: photo.catBoundingBox,
-            targetPixelSize: CGSize(width: 320, height: 320),
-            targetAspectRatio: 1
-        )
-        .clipped()
     }
 }
 

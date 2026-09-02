@@ -563,6 +563,6 @@ enum AlbumPresentationState: Equatable {
 
 enum AppTab: Hashable {
     case photos
-    case windows
     case memories
+    case windows
 }

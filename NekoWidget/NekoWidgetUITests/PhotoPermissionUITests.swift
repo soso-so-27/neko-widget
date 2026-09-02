@@ -134,16 +134,6 @@ final class PhotoPermissionUITests: XCTestCase {
         }
         widgetSkip.tap()
 
-        let pawFinish = app.buttons["onboarding-paw-finish"]
-        guard pawFinish.waitForExistence(timeout: 15) else {
-            fail(
-                "Skipping the Widget guide did not continue to the paw tutorial.",
-                app: app
-            )
-            return
-        }
-        pawFinish.tap()
-
         let homeWidgetGuide = app.buttons["home-widget-placement-guide"]
         guard homeWidgetGuide.waitForExistence(timeout: 20) else {
             fail(

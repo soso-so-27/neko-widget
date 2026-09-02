@@ -2,7 +2,6 @@ import SwiftUI
 import UIKit
 
 struct HomeView: View {
-    let currentPhoto: PhotoPresentation?
     let catPhotos: [PhotoPresentation]
     let scan: ScanPresentation
     let hasPhotoAccess: Bool
@@ -12,7 +11,6 @@ struct HomeView: View {
     let chooseMorePhotos: () -> Void
     let showWidgetPlacementGuide: () -> Void
     let showSettings: () -> Void
-    let setMemorySaved: (String, Bool) -> Void
     let rescan: () -> Void
     let excludedCatPhotos: [ExcludedCatPhotoPresentation]
     let photoSourceAlbums: [PhotoSourceAlbumOption]
@@ -23,11 +21,9 @@ struct HomeView: View {
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
 
-    @State private var pendingMemoryRemovalIdentifier: String?
     @State private var visibleDetectedPhotoCount = 24
 
     init(
-        currentPhoto: PhotoPresentation?,
         scan: ScanPresentation,
         hasPhotoAccess: Bool,
         isLimitedAccess: Bool,
@@ -36,7 +32,6 @@ struct HomeView: View {
         chooseMorePhotos: @escaping () -> Void,
         showWidgetPlacementGuide: @escaping () -> Void,
         showSettings: @escaping () -> Void,
-        setMemorySaved: @escaping (String, Bool) -> Void,
         rescan: @escaping () -> Void,
         catPhotos: [PhotoPresentation] = [],
         excludedCatPhotos: [ExcludedCatPhotoPresentation] = [],
@@ -48,7 +43,6 @@ struct HomeView: View {
         catProfilesPresentation: CatProfilesPresentation = .init(),
         catProfilesActions: CatProfilesViewActions = .noOp
     ) {
-        self.currentPhoto = currentPhoto
         self.catPhotos = catPhotos
         self.scan = scan
         self.hasPhotoAccess = hasPhotoAccess
@@ -58,7 +52,6 @@ struct HomeView: View {
         self.chooseMorePhotos = chooseMorePhotos
         self.showWidgetPlacementGuide = showWidgetPlacementGuide
         self.showSettings = showSettings
-        self.setMemorySaved = setMemorySaved
         self.rescan = rescan
         self.excludedCatPhotos = excludedCatPhotos
         self.photoSourceAlbums = photoSourceAlbums
@@ -84,9 +77,10 @@ struct HomeView: View {
 
                     if !catPhotos.isEmpty {
                         detectedPhotosSection
+                    } else {
+                        emptyPhotoState
                     }
 
-                    todayPhoto
                     photoLibraryActions
                 } else {
                     photoAccessCard
@@ -109,27 +103,6 @@ struct HomeView: View {
                 .accessibilityLabel("設定")
                 .accessibilityIdentifier("window-settings-button")
             }
-        }
-        .confirmationDialog(
-            "思い出から外しますか？",
-            isPresented: Binding(
-                get: { pendingMemoryRemovalIdentifier != nil },
-                set: { isPresented in
-                    if !isPresented { pendingMemoryRemovalIdentifier = nil }
-                }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("思い出から外す", role: .destructive) {
-                guard let identifier = pendingMemoryRemovalIdentifier else { return }
-                pendingMemoryRemovalIdentifier = nil
-                setMemorySaved(identifier, false)
-            }
-            Button("キャンセル", role: .cancel) {
-                pendingMemoryRemovalIdentifier = nil
-            }
-        } message: {
-            Text("写真アプリの写真は削除されません。")
         }
     }
 
@@ -190,46 +163,6 @@ struct HomeView: View {
         .accessibilityHint("ホーム画面にウィジェットを追加する手順を開きます")
     }
 
-    @ViewBuilder
-    private var todayPhoto: some View {
-        if let currentPhoto {
-            HStack(spacing: 0) {
-                NavigationLink(value: PhotosRoute.photo(currentPhoto.localIdentifier)) {
-                    PhotoAssetImageView(
-                        localIdentifier: currentPhoto.localIdentifier,
-                        catBoundingBox: currentPhoto.catBoundingBox,
-                        targetPixelSize: CGSize(width: 520, height: 520),
-                        targetAspectRatio: 1
-                    )
-                    .frame(width: 132, height: 132)
-                    .clipped()
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("window-current-photo")
-                .accessibilityLabel("今日の一枚")
-                .accessibilityHint("写真を大きく表示します")
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("今日の1枚")
-                        .font(.headline)
-                    Text(todayPhotoContext(currentPhoto))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer(minLength: 2)
-                    todayMemoryControl(currentPhoto)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
-            }
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .accessibilityElement(children: .contain)
-        } else if catPhotos.isEmpty {
-            emptyPhotoState
-        }
-    }
-
     private var detectedPhotosSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -240,6 +173,41 @@ struct HomeView: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+
+            NavigationLink(value: PhotosRoute.automaticAlbums) {
+                HStack(spacing: 12) {
+                    Image(systemName: "rectangle.stack.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 42, height: 42)
+                        .background(
+                            Color.accentColor.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("自動アルバム")
+                            .font(.headline)
+                        Text("成長・年ごと・写り方から探す")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    Color(.secondarySystemBackground),
+                    in: RoundedRectangle(cornerRadius: 16)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("photos-open-automatic-albums")
+            .accessibilityHint("自動で整理された猫写真を開きます")
 
             LazyVGrid(
                 columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3),
@@ -370,48 +338,6 @@ struct HomeView: View {
     private func detectedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
         guard let creationDate = photo.creationDate else { return "撮影日不明の猫写真" }
         return "\(creationDate.formatted(.dateTime.year().month().day()))の猫写真"
-    }
-
-    private func todayPhotoContext(_ photo: PhotoPresentation) -> String {
-        guard let creationDate = photo.creationDate else {
-            return "このiPhoneの写真"
-        }
-        let year = Calendar.current.component(.year, from: creationDate)
-        return "このiPhone・\(year)年"
-    }
-
-    @ViewBuilder
-    private func todayMemoryControl(_ photo: PhotoPresentation) -> some View {
-        if photo.isLiked {
-            HStack(spacing: 8) {
-                Label("思い出に残した", systemImage: "bookmark.fill")
-                Menu {
-                    Button("思い出から外す", role: .destructive) {
-                        pendingMemoryRemovalIdentifier = photo.localIdentifier
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .accessibilityLabel("思い出の操作")
-                }
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .frame(minHeight: 38)
-            .background(Color(.tertiarySystemFill), in: Capsule())
-            .accessibilityIdentifier("today-memory-saved-state")
-        } else {
-            Button {
-                setMemorySaved(photo.localIdentifier, true)
-            } label: {
-                Label("思い出に残す", systemImage: "bookmark")
-                    .font(.caption.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .accessibilityHint("自分の思い出一覧に残します")
-        }
     }
 
     @ViewBuilder

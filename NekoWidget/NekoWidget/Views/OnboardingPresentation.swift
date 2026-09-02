@@ -1,6 +1,6 @@
 import Foundation
 
-/// The onboarding is deliberately limited to these five moments. Adding a
+/// The onboarding is deliberately limited to these four moments. Adding a
 /// case changes the product flow, so the standalone verifier locks the count
 /// and order.
 enum OnboardingPresentationPage: Int, CaseIterable, Identifiable, Sendable {
@@ -8,7 +8,6 @@ enum OnboardingPresentationPage: Int, CaseIterable, Identifiable, Sendable {
     case photoPermission
     case scanResult
     case widgetGuide
-    case pawLike
 
     var id: Int { rawValue }
 }
@@ -49,13 +48,10 @@ enum WidgetInstallationState: Equatable, Sendable {
 /// independently verifiable.
 enum OnboardingPresentationCopy {
     static let purposeBodyLines = [
-        "猫の写真は、",
-        "撮るだけ撮って",
-        "見ていないことが多い。",
-        "このアプリが猫だけを見つけ、",
-        "見つけた写真を並べます。",
-        "ウィジェットの写真は",
-        "時間とともに変わります。"
+        "撮りためた猫写真が、",
+        "毎日会える思い出に。",
+        "猫だけを端末内で見つけて、",
+        "自動アルバムとホーム画面へ。"
     ]
     static let purposeAction = "はじめる"
 
@@ -122,12 +118,6 @@ enum OnboardingPresentationCopy {
     static let widgetAction = "手順を確認した"
     static let widgetLaterAction = "あとで"
 
-    static let pawTitleLines = [
-        "気に入った1枚は、",
-        "「思い出に残す」で残せます。"
-    ]
-    static let pawBody = "残した写真は「思い出」で見返し、あとでまとめられます。"
-    static let pawAction = "はじめる"
 }
 
 /// Pure reducer for first-run navigation and Settings replay.
@@ -186,7 +176,7 @@ struct OnboardingPresentationState: Equatable, Sendable {
         completedVersion >= OnboardingPresentationPersistence.currentCompletedVersion
     }
 
-    /// Continues in the fixed five-page order. Permission and scan work is
+    /// Continues in the fixed four-page order. Permission and scan work is
     /// performed by the caller before it invokes this transition.
     mutating func advance() {
         guard let currentPage else { return }
@@ -204,17 +194,15 @@ struct OnboardingPresentationState: Equatable, Sendable {
         case .scanResult:
             routeFirstRun(to: .widgetGuide)
         case .widgetGuide:
-            routeFirstRun(to: .pawLike)
-        case .pawLike:
             completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
             self.currentPage = nil
         }
     }
 
-    /// "あとで" enters the app without Photos access. Widget placement and
-    /// memory instructions depend on an available photo, so presenting them
-    /// after this choice would teach actions the user cannot perform. Home is
-    /// the persistent recovery point for granting access later.
+    /// "あとで" enters the app without Photos access. Widget placement depends
+    /// on an available photo, so presenting it after this choice would teach an
+    /// action the user cannot verify. Home is the persistent recovery point for
+    /// granting access later.
     mutating func skipPhotoPermission() {
         guard mode == .firstRun, currentPage == .photoPermission else { return }
         completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
@@ -231,15 +219,15 @@ struct OnboardingPresentationState: Equatable, Sendable {
         routeFirstRun(to: .photoPermission)
     }
 
-    /// "あとで見る" still lets a first-time user see the final paw page. In a
-    /// Settings replay it simply dismisses the guide without touching saved
-    /// first-run progress.
+    /// "あとで" completes the first-run handoff. In a Settings replay it
+    /// simply dismisses the guide without touching saved first-run progress.
     mutating func skipWidgetGuide() {
         guard currentPage == .widgetGuide else { return }
         if mode == .widgetGuideReplay {
             currentPage = nil
         } else {
-            routeFirstRun(to: .pawLike)
+            completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+            currentPage = nil
         }
     }
 
