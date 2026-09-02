@@ -542,14 +542,16 @@ jobs:
             NekoWidget/Views/MainTabView.swift
           grep -Fq 'Label("まど", systemImage: "rectangle.split.2x2")' \
             NekoWidget/Views/MainTabView.swift
-          grep -Fq 'Text("アルバムを開く")' \
-            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'Text("自動アルバム")' \
+            NekoWidget/Views/HomeView.swift
+          grep -Fq 'accessibilityIdentifier("photos-open-automatic-albums")' \
+            NekoWidget/Views/HomeView.swift
           grep -Fq 'accessibilityIdentifier("memories-seasonal-movies-empty-state")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'private var summarySectionDivider: some View' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'NavigationLink(value: MemoriesRoute.automaticAlbums)' \
-            NekoWidget/Views/LikedPhotosView.swift
+          grep -Fq 'NavigationLink(value: PhotosRoute.automaticAlbums)' \
+            NekoWidget/Views/HomeView.swift
           if grep -Fq 'reflectionSection' NekoWidget/Views/HomeView.swift; then
             echo 'Photos must not duplicate the Memories summary collection.' >&2
             exit 1
