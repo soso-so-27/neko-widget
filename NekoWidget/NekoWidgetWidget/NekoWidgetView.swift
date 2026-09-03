@@ -300,40 +300,145 @@ struct NekoWidgetView: View {
         variant.maximumPixelDimension
     }
 
+    /// Missing permissions, an unfinished scan, sync latency, and an invalid
+    /// cache all fail closed to the same empty entry. Keep this copy neutral
+    /// instead of presenting an unverified diagnosis inside the Widget.
     private var emptyState: some View {
-        VStack(spacing: family == .systemSmall ? 8 : 12) {
-            CatPawMark(isFilled: true)
-                .frame(
-                    width: family == .systemLarge ? 42 : 30,
-                    height: family == .systemLarge ? 42 : 30
-                )
-                .foregroundStyle(.orange)
+        ZStack {
+            LinearGradient(
+                colors: [
+                    QuietWindowPalette.backgroundTop,
+                    QuietWindowPalette.backgroundBottom,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
 
-            Text(WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
-                ? "\(entry.windowDisplayName)にはまだ写真がありません"
-                : "猫の写真を追加")
-                .font(family == .systemSmall ? .headline : .title3.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
+            RadialGradient(
+                colors: [
+                    QuietWindowPalette.cream.opacity(0.09),
+                    .clear,
+                ],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: family == .systemLarge ? 280 : 170
+            )
 
-            if family == .systemSmall {
-                Text(WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
-                    ? "アプリで更新"
-                    : "アプリでスキャン")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
-            } else {
-                Text(WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
-                    ? "アプリで\(entry.windowDisplayName)を開いて更新してください"
-                    : "アプリで写真へのアクセスを確認し、スキャンしてください")
-                    .font(.caption)
+            VStack(spacing: family == .systemSmall ? 9 : 12) {
+                QuietWindowMark()
+                    .frame(
+                        width: emptyStateMarkSize,
+                        height: emptyStateMarkSize
+                    )
+
+                Text(emptyStateTitle)
+                    .font(
+                        family == .systemSmall
+                            ? .subheadline.weight(.semibold)
+                            : .headline.weight(.semibold)
+                    )
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(QuietWindowPalette.cream.opacity(0.96))
+
+                Text("アプリを開いて確認")
+                    .font(family == .systemSmall ? .caption2 : .caption)
+                    .foregroundStyle(QuietWindowPalette.cream.opacity(0.62))
             }
+            .padding(family == .systemSmall ? 14 : 20)
         }
-        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(emptyStateTitle)。アプリを開いて確認")
+    }
+
+    private var emptyStateTitle: String {
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+            return "\(entry.windowDisplayName)の一枚を待っています"
+        }
+        return "猫の一枚を待っています"
+    }
+
+    private var emptyStateMarkSize: CGFloat {
+        if family == .systemLarge {
+            return 58
+        }
+        if family == .systemMedium {
+            return 46
+        }
+        return 38
+    }
+}
+
+private enum QuietWindowPalette {
+    static let backgroundTop = Color(red: 0.12, green: 0.10, blue: 0.09)
+    static let backgroundBottom = Color(red: 0.075, green: 0.067, blue: 0.06)
+    static let cream = Color(red: 0.95, green: 0.91, blue: 0.84)
+}
+
+/// A quiet, reduced version of the app icon's window. The warm neutral frame
+/// keeps an empty Widget recognizable without turning it into a bright tile.
+private struct QuietWindowMark: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(QuietWindowPalette.cream.opacity(0.025))
+
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(QuietWindowPalette.cream.opacity(0.68), lineWidth: 1.25)
+
+            QuietWindowOpening()
+                .fill(QuietWindowPalette.cream.opacity(0.08))
+                .padding(6)
+
+            QuietWindowOpening()
+                .stroke(QuietWindowPalette.cream.opacity(0.32), lineWidth: 0.75)
+                .padding(6)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Mirrors the app icon's softly notched opening instead of using a generic
+/// four-pane window or a primary-color app tile.
+private struct QuietWindowOpening: Shape {
+    func path(in rect: CGRect) -> Path {
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(
+                x: rect.minX + (rect.width * x),
+                y: rect.minY + (rect.height * y)
+            )
+        }
+
+        var path = Path()
+        path.move(to: point(0, 0.08))
+        path.addCurve(
+            to: point(0.20, 0.08),
+            control1: point(0, 0.025),
+            control2: point(0.12, 0)
+        )
+        path.addLine(to: point(0.80, 0.08))
+        path.addCurve(
+            to: point(1, 0.08),
+            control1: point(0.88, 0),
+            control2: point(1, 0.025)
+        )
+        path.addLine(to: point(1, 0.84))
+        path.addCurve(
+            to: point(0.84, 1),
+            control1: point(1, 0.93),
+            control2: point(0.93, 1)
+        )
+        path.addLine(to: point(0.16, 1))
+        path.addCurve(
+            to: point(0, 0.84),
+            control1: point(0.07, 1),
+            control2: point(0, 0.93)
+        )
+        path.closeSubpath()
+        return path
     }
 }
 

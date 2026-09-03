@@ -339,6 +339,7 @@ jobs:
             ci/verify-private-window-display-name.swift \
             -o "$RUNNER_TEMP/verify-private-window-display-name"
           "$RUNNER_TEMP/verify-private-window-display-name"
+          python3 ci/test-inactive-window-name-sync.py
           python3 ci/test-family-window-widget-boundaries.py
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj

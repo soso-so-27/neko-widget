@@ -387,6 +387,41 @@ enum PairingStateStore {
         }
     }
 
+    /// Commits the successful create response together with the creator's
+    /// device-local draft name. Keeping this as a create-specific lifecycle
+    /// transaction prevents a cached view-model label from becoming a second
+    /// catalog authority during unrelated PairingState saves.
+    static func saveCreatedInvitationAndPromoteDraftName(
+        _ state: PairingState,
+        expected: PairingState,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> PairingState {
+        let state = try state.validated()
+        return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard expected.phase == .creatingInvitation,
+                  expected.role == .inviter,
+                  state.phase == .awaitingInvitee,
+                  state.role == .inviter,
+                  state.storageRevision == expected.storageRevision,
+                  state.credentialAccount == expected.credentialAccount,
+                  state.participantID == expected.participantID,
+                  try loadWhileLifecycleLockedMigratingDiagnostics() == expected
+            else { throw PairingError.stateUnavailable }
+
+            let presentation = try PrivateWindowPresentationStore
+                .promoteActiveDraftWhileLifecycleLocked(pairing: state)
+            // Publish the presentation and catalog binding before the CAS.
+            // If the final state write fails, the proposed-binding presentation
+            // remains unreadable and the idempotent create retry can replace it.
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: presentation.displayName,
+                spaceID: state.spaceID,
+                credentialAccount: state.credentialAccount
+            )
+            return try saveCASWhileLifecycleLocked(state, expected: expected)
+        }
+    }
+
     /// Renames only the active device-local draft. The exact persisted
     /// PairingState is revalidated inside the lifecycle lock so an invitee,
     /// a connected window, or a stale pre-await operation cannot reach the
@@ -524,13 +559,15 @@ enum PrivateWindowPresentationStore {
 
     static func load(
         pairing: PairingState,
-        validating lifecycleToken: SharingLifecycleGate.Token
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil
     ) throws -> PrivateWindowPresentationState? {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load(),
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID),
                   try binding(for: currentPairing) == binding(for: pairing)
             else { throw PairingError.stateUnavailable }
-            guard let value = try loadWhileLifecycleLocked() else { return nil }
+            guard let value = try loadWhileLifecycleLocked(localWindowID: localWindowID)
+            else { return nil }
             guard value.pairingBindingSHA256 == (try binding(for: currentPairing))
             else { return nil }
             return value
@@ -542,6 +579,7 @@ enum PrivateWindowPresentationStore {
         displayName rawValue: String,
         pairing: PairingState,
         validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil,
         now: Date = .now
     ) throws -> PrivateWindowPresentationState {
         // The person who creates the private window names it. An invited
@@ -558,7 +596,7 @@ enum PrivateWindowPresentationStore {
         else { throw PairingError.invalidWindowDisplayName }
 
         return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load() else {
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID) else {
                 throw PairingError.stateUnavailable
             }
             let expectedBinding = try binding(for: pairing)
@@ -567,30 +605,31 @@ enum PrivateWindowPresentationStore {
                   currentPairing.role == .inviter else {
                 throw PairingError.stateUnavailable
             }
-            try PrivateWindowCatalogStore
-                .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
-                    displayName
-                )
-            let current = try? loadWhileLifecycleLocked()
-            let revision: Int
-            if let current,
-               current.pairingBindingSHA256 == currentBinding {
-                let increment = current.storageRevision.addingReportingOverflow(1)
-                guard !increment.overflow else {
-                    throw PairingError.stateUnavailable
-                }
-                revision = increment.partialValue
+            if let localWindowID {
+                guard let catalog = try PrivateWindowCatalogStore.load(),
+                      !catalog.windows.contains(where: {
+                          $0.localWindowID != localWindowID
+                              && $0.displayName == displayName
+                      })
+                else { throw PrivateWindowCatalogStore.Error.duplicateWindowName }
             } else {
-                revision = 0
+                try PrivateWindowCatalogStore
+                    .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+                        displayName
+                    )
             }
+            let revision = try nextLocalOwnerRevisionWhileLifecycleLocked(
+                pairingBindingSHA256: currentBinding,
+                localWindowID: localWindowID
+            )
             let next = try PrivateWindowPresentationState(
                 storageRevision: revision,
                 pairingBindingSHA256: currentBinding,
                 displayName: displayName,
                 updatedAt: now
             ).validated()
-            try writeWhileLifecycleLocked(next)
-            guard let committed = try loadWhileLifecycleLocked(),
+            try writeWhileLifecycleLocked(next, localWindowID: localWindowID)
+            guard let committed = try loadWhileLifecycleLocked(localWindowID: localWindowID),
                   committed.schemaVersion == next.schemaVersion,
                   committed.storageRevision == next.storageRevision,
                   committed.pairingBindingSHA256 == next.pairingBindingSHA256,
@@ -598,6 +637,48 @@ enum PrivateWindowPresentationStore {
             else { throw PairingError.stateUnavailable }
             return committed
         }
+    }
+
+    /// Called only by PairingStateStore while it owns the lifecycle lock for a
+    /// successful create response. The catalog draft is the sole plaintext
+    /// input; no view-model cache participates in the promotion.
+    static func promoteActiveDraftWhileLifecycleLocked(
+        pairing: PairingState,
+        now: Date = .now
+    ) throws -> PrivateWindowPresentationState {
+        guard pairing.phase == .awaitingInvitee,
+              pairing.role == .inviter,
+              let catalog = try PrivateWindowCatalogStore.load(),
+              let active = catalog.windows.first(where: {
+                  $0.localWindowID == catalog.activeWindowID
+              }),
+              active.credentialAccount == pairing.credentialAccount,
+              active.spaceID == nil || active.spaceID == pairing.spaceID,
+              PrivateWindowDisplayName.isValid(active.displayName)
+        else { throw PairingError.stateUnavailable }
+        try PrivateWindowCatalogStore
+            .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+                active.displayName,
+                catalog: catalog
+            )
+        let currentBinding = try binding(for: pairing)
+        let revision = try nextLocalOwnerRevisionWhileLifecycleLocked(
+            pairingBindingSHA256: currentBinding
+        )
+        let next = try PrivateWindowPresentationState(
+            storageRevision: revision,
+            pairingBindingSHA256: currentBinding,
+            displayName: active.displayName,
+            updatedAt: now
+        ).validated()
+        try writeWhileLifecycleLocked(next)
+        guard let committed = try loadWhileLifecycleLocked(),
+              committed.schemaVersion == next.schemaVersion,
+              committed.storageRevision == next.storageRevision,
+              committed.pairingBindingSHA256 == next.pairingBindingSHA256,
+              committed.displayName == next.displayName
+        else { throw PairingError.stateUnavailable }
+        return committed
     }
 
     /// Applies a creator-authored value after its AEAD context and relay
@@ -610,6 +691,7 @@ enum PrivateWindowPresentationStore {
         ownerRevision: Int,
         pairing: PairingState,
         validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil,
         now: Date = .now
     ) throws -> PrivateWindowPresentationApplyResult {
         let displayName = PrivateWindowDisplayName.normalized(rawValue)
@@ -620,7 +702,7 @@ enum PrivateWindowPresentationStore {
         else { throw PairingError.stateUnavailable }
 
         return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load() else {
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID) else {
                 throw PairingError.stateUnavailable
             }
             let expectedBinding = try binding(for: pairing)
@@ -640,23 +722,43 @@ enum PrivateWindowPresentationStore {
                 _ presentation: PrivateWindowPresentationState,
                 presentationDisplayNameChanged: Bool
             ) throws -> PrivateWindowPresentationApplyResult {
-                guard let catalog = try PrivateWindowCatalogStore.load(),
-                      let active = catalog.windows.first(where: {
-                          $0.localWindowID == catalog.activeWindowID
-                      })
-                else { throw PairingError.stateUnavailable }
+                guard let catalog = try PrivateWindowCatalogStore.load() else {
+                    throw PairingError.stateUnavailable
+                }
+                let targetWindowID = localWindowID ?? catalog.activeWindowID
+                guard let target = catalog.windows.first(where: {
+                    $0.localWindowID == targetWindowID
+                }) else { throw PairingError.stateUnavailable }
+                if localWindowID != nil,
+                   (target.spaceID != currentPairing.spaceID
+                    || target.credentialAccount != currentPairing.credentialAccount) {
+                    throw PairingError.stateUnavailable
+                }
                 let catalogMetadataChanged =
-                    active.displayName != presentation.displayName
-                    || active.spaceID != currentPairing.spaceID
-                    || active.credentialAccount != currentPairing.credentialAccount
+                    target.displayName != presentation.displayName
+                    || (localWindowID == nil
+                        && (target.spaceID != currentPairing.spaceID
+                            || target.credentialAccount
+                                != currentPairing.credentialAccount))
                 if catalogMetadataChanged {
-                    try PrivateWindowCatalogStore
-                        .updateActiveMetadataWhileLifecycleLocked(
+                    if let localWindowID {
+                        try PrivateWindowCatalogStore
+                            .updateDisplayNameWhileLifecycleLocked(
+                                localWindowID: localWindowID,
+                                displayName: presentation.displayName,
+                                expectedSpaceID: currentPairing.spaceID,
+                                expectedCredentialAccount: currentPairing.credentialAccount,
+                                now: now
+                            )
+                    } else {
+                        try PrivateWindowCatalogStore
+                            .updateActiveMetadataWhileLifecycleLocked(
                             displayName: presentation.displayName,
                             spaceID: currentPairing.spaceID,
                             credentialAccount: currentPairing.credentialAccount,
                             now: now
                         )
+                    }
                 }
                 return PrivateWindowPresentationApplyResult(
                     presentation: presentation,
@@ -664,11 +766,20 @@ enum PrivateWindowPresentationStore {
                     catalogMetadataChanged: catalogMetadataChanged
                 )
             }
-            try PrivateWindowCatalogStore
-                .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
-                    displayName
-                )
-            let loaded = try? loadWhileLifecycleLocked()
+            if let localWindowID {
+                guard let catalog = try PrivateWindowCatalogStore.load(),
+                      !catalog.windows.contains(where: {
+                          $0.localWindowID != localWindowID
+                              && $0.displayName == displayName
+                      })
+                else { throw PrivateWindowCatalogStore.Error.duplicateWindowName }
+            } else {
+                try PrivateWindowCatalogStore
+                    .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
+                        displayName
+                    )
+            }
+            let loaded = try? loadWhileLifecycleLocked(localWindowID: localWindowID)
             let current = loaded?.pairingBindingSHA256 == currentBinding ? loaded : nil
             let displayNameBeforeApply = current?.displayName
                 ?? PrivateWindowDisplayName.fallback
@@ -711,8 +822,8 @@ enum PrivateWindowPresentationStore {
                 displayName: displayName,
                 updatedAt: now
             ).validated()
-            try writeWhileLifecycleLocked(next)
-            guard let committed = try loadWhileLifecycleLocked(),
+            try writeWhileLifecycleLocked(next, localWindowID: localWindowID)
+            guard let committed = try loadWhileLifecycleLocked(localWindowID: localWindowID),
                   committed.schemaVersion == next.schemaVersion,
                   committed.storageRevision == next.storageRevision,
                   committed.pairingBindingSHA256 == next.pairingBindingSHA256,
@@ -737,9 +848,38 @@ enum PrivateWindowPresentationStore {
         )
     }
 
-    private static func loadWhileLifecycleLocked() throws
+    private static func currentPairing(localWindowID: String?) throws -> PairingState? {
+        if let localWindowID {
+            return try PairingStateStore.load(localWindowID: localWindowID)
+        }
+        return try PairingStateStore.load()
+    }
+
+    private static func nextLocalOwnerRevisionWhileLifecycleLocked(
+        pairingBindingSHA256: Data,
+        localWindowID: String? = nil
+    ) throws -> Int {
+        let loaded = try? loadWhileLifecycleLocked(localWindowID: localWindowID)
+        let currentRevision = loaded?.pairingBindingSHA256 == pairingBindingSHA256
+            ? loaded?.storageRevision
+            : nil
+        let acceptedFloor = try PrivateWindowNameSyncStore
+            .acceptedOwnerRevisionWhileLifecycleLocked(
+                pairingBindingSHA256: pairingBindingSHA256,
+                localWindowID: localWindowID
+            )
+        let floor = max(currentRevision ?? -1, acceptedFloor ?? -1)
+        guard floor < PrivateWindowNameSyncProtocol.maximumClientRevision else {
+            throw PairingError.stateUnavailable
+        }
+        return floor + 1
+    }
+
+    private static func loadWhileLifecycleLocked(localWindowID: String? = nil) throws
         -> PrivateWindowPresentationState? {
-        guard let url = SharedContainer.privateWindowPresentationURL else {
+        guard let url = SharedContainer.privateWindowPresentationURL(
+            localWindowID: localWindowID
+        ) else {
             throw PairingError.stateUnavailable
         }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -752,9 +892,12 @@ enum PrivateWindowPresentationStore {
     }
 
     private static func writeWhileLifecycleLocked(
-        _ value: PrivateWindowPresentationState
+        _ value: PrivateWindowPresentationState,
+        localWindowID: String? = nil
     ) throws {
-        guard let url = SharedContainer.privateWindowPresentationURL else {
+        guard let url = SharedContainer.privateWindowPresentationURL(
+            localWindowID: localWindowID
+        ) else {
             throw PairingError.stateUnavailable
         }
         let encoder = JSONEncoder()
@@ -817,15 +960,30 @@ struct PrivateWindowNameSyncState: Codable, Equatable, Sendable {
 }
 
 enum PrivateWindowNameSyncStore {
+    /// The creator's next local rename must advance beyond every authenticated
+    /// revision already accepted for this exact pairing, including the crash
+    /// window where the floor committed before its presentation projection.
+    static func acceptedOwnerRevisionWhileLifecycleLocked(
+        pairingBindingSHA256: Data,
+        localWindowID: String? = nil
+    ) throws -> Int? {
+        guard let state = try loadWhileLifecycleLocked(localWindowID: localWindowID),
+              state.pairingBindingSHA256 == pairingBindingSHA256
+        else { return nil }
+        return state.acceptedOwnerRevision
+    }
+
     static func load(
         pairing: PairingState,
-        validating lifecycleToken: SharingLifecycleGate.Token
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil
     ) throws -> PrivateWindowNameSyncState? {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load(),
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID),
                   try binding(for: currentPairing) == binding(for: pairing)
             else { throw PairingError.stateUnavailable }
-            guard let value = try loadWhileLifecycleLocked() else { return nil }
+            guard let value = try loadWhileLifecycleLocked(localWindowID: localWindowID)
+            else { return nil }
             guard value.pairingBindingSHA256 == (try binding(for: currentPairing))
             else { return nil }
             return value
@@ -835,10 +993,15 @@ enum PrivateWindowNameSyncStore {
     static func pending(
         ownerRevision: Int,
         pairing: PairingState,
-        validating lifecycleToken: SharingLifecycleGate.Token
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil
     ) throws -> (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID)? {
         guard ownerRevision >= 0 else { throw PairingError.stateUnavailable }
-        guard let state = try load(pairing: pairing, validating: lifecycleToken),
+        guard let state = try load(
+            pairing: pairing,
+            validating: lifecycleToken,
+            localWindowID: localWindowID
+        ),
               let payload = state.pendingPayload,
               state.pendingTranscriptEncodingVersion
                 == PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion,
@@ -858,14 +1021,15 @@ enum PrivateWindowNameSyncStore {
     static func discardLegacyPendingAfterAuthoritativeRead(
         pairing: PairingState,
         validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil,
         now: Date = .now
     ) throws -> Bool {
         try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load(),
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID),
                   try binding(for: currentPairing) == binding(for: pairing)
             else { throw PairingError.stateUnavailable }
             let currentBinding = try binding(for: currentPairing)
-            guard var state = try loadWhileLifecycleLocked(),
+            guard var state = try loadWhileLifecycleLocked(localWindowID: localWindowID),
                   state.pairingBindingSHA256 == currentBinding,
                   state.pendingPayload != nil
             else { return false }
@@ -881,7 +1045,7 @@ enum PrivateWindowNameSyncStore {
             state.pendingClientRequestID = nil
             state.pendingTranscriptEncodingVersion = nil
             state.updatedAt = now
-            try writeWhileLifecycleLocked(state)
+            try writeWhileLifecycleLocked(state, localWindowID: localWindowID)
             return true
         }
     }
@@ -891,16 +1055,17 @@ enum PrivateWindowNameSyncStore {
         clientRequestID: UUID,
         pairing: PairingState,
         validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil,
         now: Date = .now
     ) throws -> (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID) {
         let payload = try payload.validated()
         try validate(payload: payload, pairing: pairing, ownerOnly: true)
         return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load(),
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID),
                   try binding(for: currentPairing) == binding(for: pairing)
             else { throw PairingError.stateUnavailable }
             let currentBinding = try binding(for: currentPairing)
-            var state = try loadWhileLifecycleLocked()
+            var state = try loadWhileLifecycleLocked(localWindowID: localWindowID)
                 ?? PrivateWindowNameSyncState(
                     pairingBindingSHA256: currentBinding,
                     updatedAt: now
@@ -925,7 +1090,7 @@ enum PrivateWindowNameSyncStore {
             state.pendingTranscriptEncodingVersion =
                 PrivateWindowNameSyncState.currentPendingTranscriptEncodingVersion
             state.updatedAt = now
-            try writeWhileLifecycleLocked(state)
+            try writeWhileLifecycleLocked(state, localWindowID: localWindowID)
             return (payload, clientRequestID)
         }
     }
@@ -937,16 +1102,17 @@ enum PrivateWindowNameSyncStore {
         _ payload: PrivateWindowNamePreparedPayload,
         pairing: PairingState,
         validating lifecycleToken: SharingLifecycleGate.Token,
+        localWindowID: String? = nil,
         now: Date = .now
     ) throws -> Bool {
         let payload = try payload.validated()
         try validate(payload: payload, pairing: pairing, ownerOnly: false)
         return try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
-            guard let currentPairing = try PairingStateStore.load(),
+            guard let currentPairing = try currentPairing(localWindowID: localWindowID),
                   try binding(for: currentPairing) == binding(for: pairing)
             else { throw PairingError.stateUnavailable }
             let currentBinding = try binding(for: currentPairing)
-            var state = try loadWhileLifecycleLocked()
+            var state = try loadWhileLifecycleLocked(localWindowID: localWindowID)
                 ?? PrivateWindowNameSyncState(
                     pairingBindingSHA256: currentBinding,
                     updatedAt: now
@@ -979,7 +1145,7 @@ enum PrivateWindowNameSyncStore {
                 state.pendingTranscriptEncodingVersion = nil
             }
             state.updatedAt = now
-            try writeWhileLifecycleLocked(state)
+            try writeWhileLifecycleLocked(state, localWindowID: localWindowID)
             return true
         }
     }
@@ -1011,8 +1177,19 @@ enum PrivateWindowNameSyncStore {
         )
     }
 
-    private static func loadWhileLifecycleLocked() throws -> PrivateWindowNameSyncState? {
-        guard let url = SharedContainer.privateWindowNameSyncStateURL else {
+    private static func currentPairing(localWindowID: String?) throws -> PairingState? {
+        if let localWindowID {
+            return try PairingStateStore.load(localWindowID: localWindowID)
+        }
+        return try PairingStateStore.load()
+    }
+
+    private static func loadWhileLifecycleLocked(
+        localWindowID: String? = nil
+    ) throws -> PrivateWindowNameSyncState? {
+        guard let url = SharedContainer.privateWindowNameSyncStateURL(
+            localWindowID: localWindowID
+        ) else {
             throw PairingError.stateUnavailable
         }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -1024,8 +1201,13 @@ enum PrivateWindowNameSyncStore {
         ).validated()
     }
 
-    private static func writeWhileLifecycleLocked(_ value: PrivateWindowNameSyncState) throws {
-        guard let url = SharedContainer.privateWindowNameSyncStateURL else {
+    private static func writeWhileLifecycleLocked(
+        _ value: PrivateWindowNameSyncState,
+        localWindowID: String? = nil
+    ) throws {
+        guard let url = SharedContainer.privateWindowNameSyncStateURL(
+            localWindowID: localWindowID
+        ) else {
             throw PairingError.stateUnavailable
         }
         let encoder = JSONEncoder()

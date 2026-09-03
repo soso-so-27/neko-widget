@@ -928,6 +928,7 @@ actor SharingRuntimeSelfTestRunner {
         creating.role = .inviter
         creating.credentialAccount = credential.account
         creating.participantID = credential.participantIDString
+        creating.dailyBoundaryMinuteUTC = 240
         creating.pendingClientRequestID = UUID().uuidString.lowercased()
         creating.pendingOperation = "create"
         creating.lastUpdatedAt = .now
@@ -937,11 +938,38 @@ actor SharingRuntimeSelfTestRunner {
             expected: unpaired,
             lifecycleToken: fixtureBootstrap.lifecycleToken
         )
-        var paired = creating
+        _ = try PairingStateStore.updateActiveDraftDisplayName(
+            "招待時のまど",
+            expected: creating,
+            lifecycleToken: fixtureBootstrap.lifecycleToken
+        )
+        var awaitingInvitee = creating
+        awaitingInvitee.phase = .awaitingInvitee
+        awaitingInvitee.spaceID = spaceID
+        awaitingInvitee.memberID = localMember.memberID
+        awaitingInvitee.invitationID = invitationID
+        awaitingInvitee.invitationExpiresAt = Date().addingTimeInterval(600)
+        awaitingInvitee.pendingClientRequestID = nil
+        awaitingInvitee.pendingOperation = nil
+        awaitingInvitee.lastUpdatedAt = .now
+        awaitingInvitee = try PairingStateStore
+            .saveCreatedInvitationAndPromoteDraftName(
+                awaitingInvitee,
+                expected: creating,
+                lifecycleToken: fixtureBootstrap.lifecycleToken
+            )
+        guard PrivateWindowPresentationStore.resolvedDisplayName(
+            pairing: awaitingInvitee,
+            validating: fixtureBootstrap.lifecycleToken
+        ) == "招待時のまど",
+              let promotedCatalog = try PrivateWindowCatalogStore.load(),
+              promotedCatalog.windows.first(where: {
+                  $0.localWindowID == promotedCatalog.activeWindowID
+              })?.displayName == "招待時のまど"
+        else { throw PairingError.stateUnavailable }
+
+        var paired = awaitingInvitee
         paired.phase = .paired
-        paired.spaceID = spaceID
-        paired.memberID = localMember.memberID
-        paired.invitationID = invitationID
         paired.enrollmentID = enrollmentID
         paired.peerMemberID = peerMember.memberID
         paired.peerParticipantID = peerMember.participantID
@@ -960,7 +988,7 @@ actor SharingRuntimeSelfTestRunner {
         paired.lastUpdatedAt = .now
         paired = try PairingStateStore.save(
             paired,
-            expected: creating,
+            expected: awaitingInvitee,
             lifecycleToken: fixtureBootstrap.lifecycleToken
         )
 
@@ -7259,6 +7287,30 @@ actor SharingRuntimeSelfTestRunner {
             // Same creator revision with different authenticated bytes is a
             // conflict, never a last-arrival-wins rename.
         }
+        let acceptedFloorRevision = secondWindowName.storageRevision + 5
+        let acceptedAheadOfPresentation = try PrivateWindowNameCrypto.prepare(
+            displayName: "相手に受理済みのまど",
+            context: PrivateWindowNameCiphertextContext(
+                spaceID: spaceID,
+                ownerMemberID: localMember.memberID,
+                ownerRevision: acceptedFloorRevision,
+                keyEpoch: 1
+            ),
+            roomKey: roomKey,
+            ownerSigningPrivateKey: keychainProbe.signingPrivateKey
+        )
+        guard try PrivateWindowNameSyncStore.recordAccepted(
+            acceptedAheadOfPresentation,
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        ) else { throw PairingError.stateUnavailable }
+        let renameAfterAcceptedFloor = try PrivateWindowPresentationStore.save(
+            displayName: "次のまど",
+            pairing: paired,
+            validating: snapshot.lifecycleToken
+        )
+        guard renameAfterAcceptedFloor.storageRevision == acceptedFloorRevision + 1
+        else { throw PairingError.stateUnavailable }
         guard (try PairingStateStore.load())?.storageRevision
                 == pairingRevisionBeforeRename
         else { throw PairingError.stateUnavailable }

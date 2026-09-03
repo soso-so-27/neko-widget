@@ -176,6 +176,13 @@ final class PairingViewModel: ObservableObject {
             }
             bootstrapRetryMessage = nil
             didBootstrap = true
+            if isConfigured {
+                await windowNameCoordinator
+                    .synchronizeInactiveWindowNamesForWindowList(
+                        trigger: "window-list-bootstrap"
+                    )
+                reloadPrivateWindowCatalog()
+            }
         } catch let error as PairingInstallationGuard.RetryableBootstrapError {
             // Data Protection/Keychain availability is not a completed
             // bootstrap. Keep this model eligible for the next foreground or
@@ -524,7 +531,10 @@ final class PairingViewModel: ObservableObject {
             current.pendingOperation = nil
             current.lastUpdatedAt = .now
             current.lastError = nil
-            current = try persist(current, operation: operation)
+            current = try persistCreatedInvitationPromotingDraftName(
+                current,
+                operation: operation
+            )
             try SharingLifecycleGate.validate(lifecycleToken)
             invitationCode = invitation.code
             SharedLog.app.info("pairing", "Invitation created")
@@ -2138,7 +2148,6 @@ final class PairingViewModel: ObservableObject {
         )
         try? SharingLifecycleGate.withValidatedToken(operation.lifecycleToken) {
             try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
-                displayName: windowDisplayName,
                 spaceID: committed.spaceID,
                 credentialAccount: committed.credentialAccount
             )
@@ -2182,13 +2191,30 @@ final class PairingViewModel: ObservableObject {
             for: committed,
             lifecycleToken: operation.lifecycleToken
         )
-        try? SharingLifecycleGate.withValidatedToken(operation.lifecycleToken) {
-            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
-                displayName: windowDisplayName,
-                spaceID: committed.spaceID,
-                credentialAccount: committed.credentialAccount
+        reloadPrivateWindowCatalog()
+        return committed
+    }
+
+    private func persistCreatedInvitationPromotingDraftName(
+        _ value: PairingState,
+        operation: PairingOperation
+    ) throws -> PairingState {
+        let committed = try PairingStateStore
+            .saveCreatedInvitationAndPromoteDraftName(
+                try value.validated(),
+                expected: operation.expectedState,
+                lifecycleToken: operation.lifecycleToken
             )
-        }
+        operation.expectedState = committed
+        state = committed
+        bestEffortBindCredentialDeviceID(
+            for: committed,
+            lifecycleToken: operation.lifecycleToken
+        )
+        windowDisplayName = resolvedWindowDisplayName(
+            pairing: committed,
+            validating: operation.lifecycleToken
+        )
         reloadPrivateWindowCatalog()
         return committed
     }

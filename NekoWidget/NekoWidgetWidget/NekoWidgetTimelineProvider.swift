@@ -31,7 +31,17 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let source = configuration.photoSource ?? .personalLibrary
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
-                return .empty(at: now, imageVariant: variant)
+                let localWindowID = WidgetPhotoSource.localWindowID(
+                    from: source.id
+                )
+                return .empty(
+                    at: now,
+                    imageVariant: variant,
+                    photoSourceIdentifier: source.id,
+                    windowDisplayName: WidgetManifestReader.familyWindowDisplayName(
+                        localWindowID: localWindowID
+                    )
+                )
             }
             return familySnapshot(
                 now: now,
@@ -110,8 +120,20 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         let source = configuration.photoSource ?? .personalLibrary
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
+                let localWindowID = WidgetPhotoSource.localWindowID(
+                    from: source.id
+                )
                 return Timeline(
-                    entries: [.empty(at: now, imageVariant: variant)],
+                    entries: [
+                        .empty(
+                            at: now,
+                            imageVariant: variant,
+                            photoSourceIdentifier: source.id,
+                            windowDisplayName: WidgetManifestReader.familyWindowDisplayName(
+                                localWindowID: localWindowID
+                            )
+                        )
+                    ],
                     policy: .never
                 )
             }

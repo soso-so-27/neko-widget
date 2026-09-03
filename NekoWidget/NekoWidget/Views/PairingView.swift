@@ -292,7 +292,6 @@ struct PairingView: View {
             progressSection("招待を作成しています…")
             retrySection("招待作成を再試行") {
                 await model.createInvitation(dailyBoundaryMinuteUTC: utcBoundaryMinute)
-                await saveWindowNameIfPossible()
             }
         case .awaitingInvitee:
             invitationSection(state)
@@ -534,7 +533,6 @@ struct PairingView: View {
                     await model.createInvitation(
                         dailyBoundaryMinuteUTC: utcBoundaryMinute
                     )
-                    await saveWindowNameIfPossible()
                 }
             } label: {
                 primaryActionLabel("この名前でまどを作る", systemImage: "person.badge.plus")

@@ -131,6 +131,7 @@ actor MomentSharingCoordinator {
         let state: PairingState
         let credential: PairingCredential
         let lifecycleToken: SharingLifecycleGate.Token
+        let localWindowID: String?
     }
 
     /// Closed, non-sensitive categories persisted in diagnostic log messages.
@@ -219,6 +220,43 @@ actor MomentSharingCoordinator {
             }
         } onCancel: {
             request.cancel()
+        }
+    }
+
+    /// Reconciles inactive names against their own stores without changing the
+    /// catalog's activeWindowID. Failures stay isolated to the target window.
+    func synchronizeInactiveWindowNamesForWindowList(trigger: String) async {
+        let request = MomentSynchronizationRequest()
+        _ = try? await runMomentProcessOperation(request: request) { [self] in
+            let authorizations = try loadInactiveWindowNameAuthorizations()
+            guard !authorizations.isEmpty else { return }
+            let api = try makeNetworkClient()
+            var changed = false
+            for authorization in authorizations {
+                do {
+                    changed = try await synchronizeWindowName(
+                        api: api,
+                        authorization: authorization
+                    ) || changed
+                } catch {
+                    // Never apply active-window terminal cleanup to an inactive
+                    // authorization. Selection and every other slot stay intact.
+                    Self.logNonterminalRequestRejection(error)
+                }
+            }
+            if changed {
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .momentSharingPresentationNeedsRefresh,
+                        object: nil
+                    )
+                }
+            }
+            SharedLog.app.info(
+                "window-name-sync",
+                "Inactive private window names reconciled",
+                metadata: ["trigger": String(trigger.prefix(32))]
+            )
         }
     }
 
@@ -564,6 +602,7 @@ actor MomentSharingCoordinator {
             if error is BackgroundSynchronizationTermination {
                 return true
             }
+            var shouldAttemptIndependentWindowNameSync = false
             if let authorization,
                let momentError = error as? MomentSharingError,
                case let .reportOnly(until) = momentError {
@@ -585,6 +624,21 @@ actor MomentSharingCoordinator {
                       let momentError = error as? MomentSharingError,
                       case .stateUnavailable = momentError {
                 await handleStateUnavailable(authorization: authorization)
+                shouldAttemptIndependentWindowNameSync = true
+            } else {
+                shouldAttemptIndependentWindowNameSync = true
+            }
+            if shouldAttemptIndependentWindowNameSync,
+               let authorization,
+               let api = try? makeNetworkClient() {
+                // A failed photo/handoff pass must not suppress the independent
+                // encrypted-name pull/push. Terminal and unavailable local
+                // authority still fails closed inside the name-specific guard.
+                _ = await synchronizeWindowNameBestEffort(
+                    api: api,
+                    authorization: authorization,
+                    trigger: "\(trigger)-after-media-failure"
+                )
             }
             Self.logSynchronizationDeferred(error: error, trigger: trigger)
             return false
@@ -1076,8 +1130,50 @@ actor MomentSharingCoordinator {
         return Authorization(
             state: state,
             credential: credential,
-            lifecycleToken: bootstrap.lifecycleToken
+            lifecycleToken: bootstrap.lifecycleToken,
+            localWindowID: nil
         )
+    }
+
+    private func loadInactiveWindowNameAuthorizations() throws -> [Authorization] {
+        guard configuration.isAvailable else { return [] }
+        let bootstrap = try PairingInstallationGuard.bootstrap()
+        let candidates = try SharingLifecycleGate.withValidatedToken(
+            bootstrap.lifecycleToken
+        ) { () -> [(localWindowID: String, pairing: PairingState)] in
+            guard let catalog = try PrivateWindowCatalogStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            return catalog.windows.compactMap { entry in
+                guard entry.localWindowID != catalog.activeWindowID,
+                      let pairing = try? PairingStateStore.load(
+                          localWindowID: entry.localWindowID
+                      ),
+                      pairing.phase == .paired,
+                      pairing.installationMarker == bootstrap.state.installationMarker,
+                      pairing.spaceID == entry.spaceID,
+                      pairing.credentialAccount == entry.credentialAccount
+                else { return nil }
+                return (entry.localWindowID, pairing)
+            }
+        }
+        let authorizations = candidates.compactMap { candidate in
+            guard let account = candidate.pairing.credentialAccount,
+                  let credential = try? PairingKeychainStore.load(
+                account: account,
+                installationMarker: candidate.pairing.installationMarker
+            ),
+                  credential.roomKey?.count == 32
+            else { return nil }
+            return Authorization(
+                state: candidate.pairing,
+                credential: credential,
+                lifecycleToken: bootstrap.lifecycleToken,
+                localWindowID: candidate.localWindowID
+            )
+        }
+        try SharingLifecycleGate.validate(bootstrap.lifecycleToken)
+        return authorizations
     }
 
     private func synchronizeWindowNameWithoutMedia(trigger: String) async {
@@ -1240,13 +1336,15 @@ actor MomentSharingCoordinator {
             if try PrivateWindowNameSyncStore.recordAccepted(
                 payload,
                 pairing: pairing,
-                validating: lifecycleToken
+                validating: lifecycleToken,
+                localWindowID: authorization.localWindowID
             ) {
                 let applied = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
                     displayName: displayName,
                     ownerRevision: payload.context.ownerRevision,
                     pairing: pairing,
-                    validating: lifecycleToken
+                    validating: lifecycleToken,
+                    localWindowID: authorization.localWindowID
                 )
                 changed = applied.requiresPresentationRefresh
                 if requiresOwnerResign {
@@ -1257,7 +1355,8 @@ actor MomentSharingCoordinator {
                     _ = try PrivateWindowPresentationStore.save(
                         displayName: displayName,
                         pairing: pairing,
-                        validating: lifecycleToken
+                        validating: lifecycleToken,
+                        localWindowID: authorization.localWindowID
                     )
                     changed = true
                 }
@@ -1267,15 +1366,35 @@ actor MomentSharingCoordinator {
         guard role == .inviter else { return changed }
         let local = try PrivateWindowPresentationStore.load(
             pairing: pairing,
-            validating: lifecycleToken
+            validating: lifecycleToken,
+            localWindowID: authorization.localWindowID
         )
         let localRevision = local?.storageRevision ?? 0
-        let localDisplayName = local?.displayName ?? PrivateWindowDisplayName.fallback
+        let localDisplayName: String
+        if let local {
+            localDisplayName = local.displayName
+        } else if let localWindowID = authorization.localWindowID {
+            localDisplayName = try SharingLifecycleGate.withValidatedToken(
+                lifecycleToken
+            ) {
+                guard let catalog = try PrivateWindowCatalogStore.load(),
+                      let entry = catalog.windows.first(where: {
+                          $0.localWindowID == localWindowID
+                      }),
+                      entry.spaceID == pairing.spaceID,
+                      entry.credentialAccount == pairing.credentialAccount
+                else { throw MomentSharingError.stateUnavailable }
+                return entry.displayName
+            }
+        } else {
+            localDisplayName = PrivateWindowDisplayName.fallback
+        }
         if let remote, remote.ownerRevision >= localRevision { return changed }
         if remote == nil,
            let floor = try PrivateWindowNameSyncStore.load(
             pairing: pairing,
-            validating: lifecycleToken
+            validating: lifecycleToken,
+            localWindowID: authorization.localWindowID
            )?.acceptedOwnerRevision,
            floor >= localRevision {
             // A previously accepted record disappearing is a rollback, not an
@@ -1290,14 +1409,16 @@ actor MomentSharingCoordinator {
         // rollback-floor checks above; accepted floor/hash state is preserved.
         try PrivateWindowNameSyncStore.discardLegacyPendingAfterAuthoritativeRead(
             pairing: pairing,
-            validating: lifecycleToken
+            validating: lifecycleToken,
+            localWindowID: authorization.localWindowID
         )
 
         let staged: (payload: PrivateWindowNamePreparedPayload, clientRequestID: UUID)
         if let existing = try PrivateWindowNameSyncStore.pending(
             ownerRevision: localRevision,
             pairing: pairing,
-            validating: lifecycleToken
+            validating: lifecycleToken,
+            localWindowID: authorization.localWindowID
         ) {
             staged = existing
         } else {
@@ -1316,7 +1437,8 @@ actor MomentSharingCoordinator {
                 prepared,
                 clientRequestID: UUID(),
                 pairing: pairing,
-                validating: lifecycleToken
+                validating: lifecycleToken,
+                localWindowID: authorization.localWindowID
             )
         }
         try SharingLifecycleGate.validate(lifecycleToken)
@@ -1336,13 +1458,15 @@ actor MomentSharingCoordinator {
         guard try PrivateWindowNameSyncStore.recordAccepted(
             committedPayload,
             pairing: pairing,
-            validating: lifecycleToken
+            validating: lifecycleToken,
+            localWindowID: authorization.localWindowID
         ) else { return changed }
         let applied = try PrivateWindowPresentationStore.applySynchronizedOwnerName(
             displayName: committedName,
             ownerRevision: committedPayload.context.ownerRevision,
             pairing: pairing,
-            validating: lifecycleToken
+            validating: lifecycleToken,
+            localWindowID: authorization.localWindowID
         )
         return changed || applied.requiresPresentationRefresh
     }
@@ -1356,6 +1480,36 @@ actor MomentSharingCoordinator {
         authorization: Authorization,
         now: Date = .now
     ) async throws {
+        if let localWindowID = authorization.localWindowID {
+            try SharingLifecycleGate.withValidatedToken(
+                authorization.lifecycleToken
+            ) {
+                guard let catalog = try PrivateWindowCatalogStore.load(),
+                      catalog.activeWindowID != localWindowID,
+                      let entry = catalog.windows.first(where: {
+                          $0.localWindowID == localWindowID
+                      }),
+                      entry.spaceID == authorization.state.spaceID,
+                      entry.credentialAccount == authorization.state.credentialAccount,
+                      let markerURL = SharedContainer
+                        .momentShareHandoffReportOnlyMarkerURL(
+                            localWindowID: localWindowID
+                        ),
+                      !FileManager.default.fileExists(atPath: markerURL.path)
+                else { throw MomentSharingError.stateUnavailable }
+            }
+            // A marker is checked before this read. Any unreadable/corrupt
+            // scoped state also fails closed before relay I/O.
+            let scopedState = try MomentSharingStateStore.load(
+                localWindowID: localWindowID
+            )
+            guard scopedState.reportOnlyUntil == nil else {
+                throw MomentSharingError.stateUnavailable
+            }
+            try SharingLifecycleGate.validate(authorization.lifecycleToken)
+            return
+        }
+
         let markerUntil: Date?
         do {
             markerUntil = try MomentShareHandoffStore.reportOnlyHandoffDeadline(

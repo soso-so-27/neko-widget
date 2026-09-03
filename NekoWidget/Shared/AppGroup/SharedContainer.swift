@@ -635,6 +635,33 @@ enum PrivateWindowCatalogStore {
         try saveWhileLifecycleLocked(state)
     }
 
+    /// Mirrors authenticated presentation metadata into one catalog row
+    /// without changing the user's selected window or either binding field.
+    static func updateDisplayNameWhileLifecycleLocked(
+        localWindowID: String,
+        displayName: String,
+        expectedSpaceID: String?,
+        expectedCredentialAccount: String?,
+        now: Date = .now
+    ) throws {
+        guard PrivateWindowDisplayName.isValid(displayName),
+              var state = try load(),
+              let index = state.windows.firstIndex(where: {
+                  $0.localWindowID == localWindowID
+              }),
+              state.windows[index].spaceID == expectedSpaceID,
+              state.windows[index].credentialAccount == expectedCredentialAccount
+        else { throw Error.invalidCatalog }
+        guard !state.windows.contains(where: {
+            $0.localWindowID != localWindowID && $0.displayName == displayName
+        }) else { throw Error.duplicateWindowName }
+        guard state.windows[index].displayName != displayName else { return }
+        state.windows[index].displayName = displayName
+        state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+    }
+
     /// Persists the device-local draft name before a relay space or encrypted
     /// presentation record exists. It does not publish or synchronize the
     /// value; invitation creation later promotes the same name into the
@@ -1173,15 +1200,21 @@ enum SharedContainer {
     }
 
     static func familyWidgetWindowDisplayName(localWindowID: String?) -> String {
+        // The catalog is the device-local name projection and is updated before
+        // the photo cache manifest. Prefer it for a concrete Widget source so a
+        // successful rename cannot keep showing the previous manifest name
+        // until the next photo synchronization. The manifest remains the
+        // compatibility fallback when the catalog entry is unavailable.
+        if let localWindowID,
+           let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
+               $0.localWindowID == localWindowID
+           }) {
+            return PrivateWindowDisplayName.resolved(entry.displayName)
+        }
+
         guard let url = familyWidgetManifestURL(localWindowID: localWindowID),
               let data = try? Data(contentsOf: url, options: .mappedIfSafe)
         else {
-            if let localWindowID,
-               let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
-                   $0.localWindowID == localWindowID
-               }) {
-                return PrivateWindowDisplayName.resolved(entry.displayName)
-            }
             return PrivateWindowCatalogStore.activeEntry()?.displayName
                 ?? PrivateWindowDisplayName.fallback
         }
@@ -1231,7 +1264,11 @@ enum SharedContainer {
     /// CAS, and it is deliberately below `sharing/` so unlink/reinstall cleanup
     /// removes it with every other artifact for the old private window.
     static var privateWindowPresentationURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
+        privateWindowPresentationURL(localWindowID: nil)
+    }
+
+    static func privateWindowPresentationURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
             "window-presentation.v1.json",
             isDirectory: false
         )
@@ -1241,7 +1278,11 @@ enum SharedContainer {
     /// Build 32 presentation file. An older writer can therefore replace its
     /// local label without erasing the rollback floor or an ambiguous PUT.
     static var privateWindowNameSyncStateURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
+        privateWindowNameSyncStateURL(localWindowID: nil)
+    }
+
+    static func privateWindowNameSyncStateURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
             "window-name-sync.v1.json",
             isDirectory: false
         )
@@ -1659,7 +1700,11 @@ enum SharedContainer {
     /// accidentally re-enable the Share Extension. Full pairing cleanup
     /// removes the enclosing `sharing/` subtree before a new pairing begins.
     static var momentShareHandoffReportOnlyMarkerURL: URL? {
-        sharingCacheDirectoryURL?.appendingPathComponent(
+        momentShareHandoffReportOnlyMarkerURL(localWindowID: nil)
+    }
+
+    static func momentShareHandoffReportOnlyMarkerURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?.appendingPathComponent(
             "moment-handoff-report-only.v1",
             isDirectory: false
         )

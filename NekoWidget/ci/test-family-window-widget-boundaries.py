@@ -310,6 +310,88 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("var memoryActionURL: URL?", entry)
 
+    def test_empty_widget_uses_quiet_window_without_guessing_failure_reason(self) -> None:
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        production_view = view.rsplit(
+            "#if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE", 1
+        )[0]
+        empty_state = section(
+            production_view,
+            "private var emptyState: some View",
+            "private var emptyStateTitle: String",
+        )
+        self.assertIn("QuietWindowMark()", empty_state)
+        self.assertIn("LinearGradient(", empty_state)
+        self.assertIn("RadialGradient(", empty_state)
+        self.assertIn('Text("アプリを開いて確認")', empty_state)
+        self.assertIn(".lineLimit(2)", empty_state)
+        self.assertIn(".minimumScaleFactor(0.75)", empty_state)
+        self.assertNotIn("CatPawMark", empty_state)
+        self.assertNotIn(".orange", empty_state)
+        self.assertNotIn("スキャン", empty_state)
+        self.assertNotIn("アクセス", empty_state)
+        self.assertNotIn("更新してください", empty_state)
+
+        empty_title = section(
+            production_view,
+            "private var emptyStateTitle: String",
+            "private var emptyStateMarkSize: CGFloat",
+        )
+        self.assertIn('return "\\(entry.windowDisplayName)の一枚を待っています"', empty_title)
+        self.assertIn('return "猫の一枚を待っています"', empty_title)
+
+        mark_size = section(
+            production_view,
+            "private var emptyStateMarkSize: CGFloat",
+            "private enum QuietWindowPalette",
+        )
+        self.assertIn("family == .systemLarge", mark_size)
+        self.assertIn("family == .systemMedium", mark_size)
+        self.assertIn("return 38", mark_size)
+
+        window_mark = section(
+            production_view,
+            "private struct QuietWindowMark: View",
+            "private enum WidgetStatusBadgeStyle",
+        )
+        self.assertIn("QuietWindowOpening()", window_mark)
+        self.assertIn("QuietWindowPalette.cream", window_mark)
+        self.assertNotIn("QuietWindowPalette.opening", window_mark)
+
+        provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
+        snapshot = section(provider, "func snapshot(", "func timeline(")
+        snapshot_family_gate = section(
+            snapshot,
+            "if WidgetPhotoSource.isFamilyWindowSourceID(source.id)",
+            "return familySnapshot(",
+        )
+        self.assertIn("photoSourceIdentifier: source.id", snapshot_family_gate)
+        self.assertIn("familyWindowDisplayName(", snapshot_family_gate)
+
+        timeline = section(provider, "func timeline(", "private func familySnapshot(")
+        timeline_family_gate = section(
+            timeline,
+            "if WidgetPhotoSource.isFamilyWindowSourceID(source.id)",
+            "return familyTimeline(",
+        )
+        self.assertIn("photoSourceIdentifier: source.id", timeline_family_gate)
+        self.assertIn("familyWindowDisplayName(", timeline_family_gate)
+
+    def test_concrete_family_widget_prefers_catalog_name_to_stale_manifest(self) -> None:
+        container = source("Shared/AppGroup/SharedContainer.swift")
+        display_name = section(
+            container,
+            "static func familyWidgetWindowDisplayName(localWindowID: String?)",
+            "static var familyWidgetCacheHistoryURL: URL?",
+        )
+        self.assertIn("if let localWindowID", display_name)
+        self.assertIn("PrivateWindowCatalogStore.widgetEntries()", display_name)
+        self.assertIn("PrivateWindowDisplayName.resolved(entry.displayName)", display_name)
+        self.assertLess(
+            display_name.index("PrivateWindowCatalogStore.widgetEntries()"),
+            display_name.index("familyWidgetManifestURL(localWindowID: localWindowID)"),
+        )
+
     def test_family_widget_memory_link_requires_exact_window_and_photo(self) -> None:
         entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
         photo_url = section(entry, "var photoURL: URL?", "var memoryActionURL: URL?")
@@ -1603,7 +1685,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         sync_state = section(
             store,
             "struct PrivateWindowNameSyncState",
-            "private static func writeWhileLifecycleLocked(_ value: PrivateWindowNameSyncState)",
+            "private static func writeWhileLifecycleLocked(\n        _ value: PrivateWindowNameSyncState",
         )
         self.assertIn("acceptedOwnerRevision", sync_state)
         self.assertIn("acceptedCiphertextSHA256", sync_state)
@@ -1766,18 +1848,18 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         mirror_catalog = section(
             apply_name,
             "func mirrorCatalog(",
-            "try PrivateWindowCatalogStore\n                .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(",
+            "let loaded = try? loadWhileLifecycleLocked",
         )
         self.assertIn(
-            "active.displayName != presentation.displayName",
+            "target.displayName != presentation.displayName",
             mirror_catalog,
         )
         self.assertIn(
-            "active.spaceID != currentPairing.spaceID",
+            "target.spaceID != currentPairing.spaceID",
             mirror_catalog,
         )
         self.assertIn(
-            "active.credentialAccount != currentPairing.credentialAccount",
+            "target.credentialAccount",
             mirror_catalog,
         )
         self.assertIn("if catalogMetadataChanged", mirror_catalog)
