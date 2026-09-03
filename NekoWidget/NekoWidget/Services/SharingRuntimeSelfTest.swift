@@ -4582,6 +4582,10 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
 
         let retainedReportID = UUID()
+        // The state store persists ISO-8601 dates at whole-second precision.
+        // Keep this fixture on that same boundary so its round-trip equality
+        // checks the retained report itself rather than Date precision loss.
+        let retainedReportDate = Date(timeIntervalSince1970: 1_700_000_000)
         let retainedReport = try MomentReportOutboxItem(
             id: retainedReportID,
             momentID: sensitiveFixture.0.momentID,
@@ -4591,11 +4595,11 @@ actor SharingRuntimeSelfTestRunner {
             ciphertextSize: 128,
             ciphertextSHA256: Data(repeating: 0x44, count: 32),
             moderationKeyID: "moderation-v1",
-            reporterConsentAcceptedAt: Date(),
+            reporterConsentAcceptedAt: retainedReportDate,
             commitRequestID: UUID(),
             phase: .prepared,
-            createdAt: Date(),
-            updatedAt: Date()
+            createdAt: retainedReportDate,
+            updatedAt: retainedReportDate
         ).validated()
         _ = try MomentSharingStateStore.mutate(
             validating: lifecycleToken
