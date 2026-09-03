@@ -595,7 +595,7 @@ jobs:
             NekoWidget/Views/FamilyWindowView.swift
           grep -Fq 'heart?.phase == .sent' \
             NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq 'systemImage: "bookmark"' \
+          grep -Fq 'Image(systemName: isSelected ? "bookmark.fill" : "bookmark")' \
             NekoWidgetWidget/NekoWidgetView.swift
           if grep -Eq 'foregroundStyle\(\.pink\)|systemImage:.*star' \
             NekoWidgetWidget/NekoWidgetView.swift \
