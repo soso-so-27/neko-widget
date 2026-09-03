@@ -62,7 +62,13 @@ final class MomentSharingViewModel: ObservableObject {
     }
     var safetyHiddenMoments: [MomentInboxItem] {
         sharingState.inbox
-            .filter { $0.state == .blocked || $0.state == .revoked }
+            // A fileless revoked row is a local tombstone, not content the
+            // person can review or act on. Keep it only to prevent an older
+            // relay change from recreating a deleted/withdrawn photo.
+            .filter {
+                ($0.state == .blocked || $0.state == .revoked)
+                    && $0.localJPEGFileName != nil
+            }
             .sorted {
                 if $0.receivedAt != $1.receivedAt { return $0.receivedAt > $1.receivedAt }
                 return $0.id < $1.id
@@ -342,6 +348,32 @@ final class MomentSharingViewModel: ObservableObject {
             try reload()
         } catch {
             errorMessage = Self.userFacingMessage(for: error)
+        }
+    }
+
+    /// Removes one safety-hidden receipt from this iPhone without changing
+    /// the relationship. The store retains a fileless terminal tombstone so
+    /// the same relay event cannot recreate the photo after deletion.
+    func deleteSafetyHiddenMoment(_ item: MomentInboxItem) async {
+        guard !isWorking,
+              !isShowingLastKnownState,
+              (item.state == .blocked || item.state == .revoked)
+        else { return }
+        isPerformingAction = true
+        defer { isPerformingAction = false }
+        do {
+            let bootstrap = try PairingInstallationGuard.bootstrap()
+            try MomentSharingStateStore.deleteSafetyHiddenInbox(
+                momentID: item.id,
+                validating: bootstrap.lifecycleToken
+            )
+            errorMessage = nil
+            try reload()
+        } catch {
+            // A failed byte removal or atomic state write leaves the original
+            // row available for an explicit retry.
+            try? reload()
+            errorMessage = "この受信を完全に削除できませんでした。時間をおいて、もう一度お試しください。"
         }
     }
 

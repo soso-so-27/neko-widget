@@ -166,9 +166,10 @@ struct NekoWidgetView: View {
             .accessibilityLabel("ハートを送りました")
             .accessibilityHint("相手が確認したことを示す表示ではありません")
         case .hidden:
-            Color.clear
-                .frame(width: 44, height: 44)
-                .accessibilityHidden(true)
+            // When a reaction is no longer available, keep no empty slot.
+            // The remaining bookmark should sit at the trailing edge instead
+            // of looking accidentally offset from the Widget corner.
+            EmptyView()
         }
     }
 
@@ -199,9 +200,9 @@ struct NekoWidgetView: View {
                 Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(.system(size: 14, weight: .semibold))
         .foregroundStyle(.white)
-        .frame(width: 32, height: 32)
+        .frame(width: 36, height: 36)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
             Circle()
@@ -218,15 +219,15 @@ struct NekoWidgetView: View {
 
             if status == .pending {
                 Image(systemName: "clock.fill")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .padding(1.5)
                     .background(Color.black.opacity(0.82), in: Circle())
                     .offset(x: 2, y: 2)
             }
         }
-        .font(.caption.weight(.semibold))
+        .font(.system(size: 14, weight: .semibold))
         .foregroundStyle(.white)
-        .frame(width: 32, height: 32)
+        .frame(width: 36, height: 36)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
             Circle()
@@ -259,21 +260,24 @@ struct NekoWidgetView: View {
                 .font(.caption2.bold())
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                // Keep the visible capsule as wide as the name itself. The
+                // outer frame below only caps long names; it must not make a
+                // short name look like a large empty status banner.
+                .background(.black.opacity(0.64), in: Capsule())
                 .frame(
                     maxWidth: family == .systemSmall ? 112 : 220,
                     alignment: .leading
                 )
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(.black.opacity(0.68), in: Capsule())
                 .padding(family == .systemSmall ? 8 : 10)
                 .accessibilityHidden(true)
         }
     }
 
     private var actionButtonSpacing: CGFloat {
-        family == .systemSmall ? 6 : 8
+        family == .systemSmall ? 2 : 4
     }
 
     private var actionButtonInset: CGFloat {

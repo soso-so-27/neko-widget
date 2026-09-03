@@ -282,8 +282,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         hidden = heart_control.split("case .hidden:", 1)[1]
         self.assertIn("heartMark(status: .pending)", pending)
         self.assertIn("heartMark(status: .serverAccepted)", accepted)
-        self.assertIn("Color.clear", hidden)
-        self.assertIn(".frame(width: 44, height: 44)", hidden)
+        self.assertIn("EmptyView()", hidden)
+        self.assertNotIn("Color.clear", hidden)
         for noninteractive_status in (pending, accepted):
             self.assertNotIn("Button(", noninteractive_status)
             self.assertNotIn("Link(", noninteractive_status)
@@ -431,7 +431,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('return "写真を表示できません"', view)
         self.assertIn('return "アプリを開いて更新"', view)
         self.assertIn("entry.cacheFilename != nil", view)
-        self.assertIn(".background(.black.opacity(0.68), in: Capsule())", view)
+        self.assertIn(".background(.black.opacity(0.64), in: Capsule())", view)
 
         configuration = source(
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
@@ -2989,6 +2989,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         for pending_mutation in (
             "reportTarget = nil",
             "blockTarget = nil",
+            "deleteHiddenTarget = nil",
             "showsPendingCancelConfirmation = false",
             "showsPreparationCancelConfirmation = false",
             "showsTerminalResultDismissConfirmation = false",
@@ -3007,7 +3008,24 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func safetyHiddenCard(",
             "private var privacyDisclosure",
         )
-        self.assertIn(".disabled(model.isShowingLastKnownState)", hidden_card)
+        self.assertIn(
+            ".disabled(model.isWorking || model.isShowingLastKnownState)",
+            hidden_card,
+        )
+        self.assertIn('Label("この受信を削除", systemImage: "trash")', hidden_card)
+        self.assertIn("deleteHiddenTarget = item", hidden_card)
+
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        delete_hidden = section(
+            store,
+            "static func deleteSafetyHiddenInbox(",
+            "/// Adds or removes a local, sharing-scoped bookmark",
+        )
+        self.assertLess(
+            delete_hidden.index("FileManager.default.removeItem"),
+            delete_hidden.index("try writeWhileLocked"),
+        )
+        self.assertNotIn("state.reportOutbox.remove", delete_hidden)
 
     def test_window_selection_refreshes_catalog_before_cached_guards(self) -> None:
         model = source("NekoWidget/ViewModels/PairingViewModel.swift")
@@ -3201,13 +3219,20 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("receivedPhotoSurface(", primary)
         self.assertIn("aspectRatio: 4.0 / 3.0", primary)
-        self.assertIn("contentMode: .fit", primary)
+        self.assertIn("fillsPhotoFrame ? .fill : .fit", primary)
         self.assertIn(
             "receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)",
             primary,
         )
         self.assertNotIn(".frame(height: 280)", primary)
         self.assertNotIn("maxHeight: 520", primary)
+
+        received_section = section(
+            family,
+            "@ViewBuilder\n    private var receivedSectionContent",
+            "@ViewBuilder\n    private var sentSectionContent",
+        )
+        self.assertIn("momentCard(latest, fillsPhotoFrame: true)", received_section)
 
         surface = section(
             family,

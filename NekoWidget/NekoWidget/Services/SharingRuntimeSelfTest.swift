@@ -4580,6 +4580,53 @@ actor SharingRuntimeSelfTestRunner {
               terminalSensitiveCounts.acknowledgements == 1,
               terminalSensitiveAnalysisCount == 1
         else { throw MomentSharingError.stateUnavailable }
+
+        let retainedReportID = UUID()
+        let retainedReport = try MomentReportOutboxItem(
+            id: retainedReportID,
+            momentID: sensitiveFixture.0.momentID,
+            reason: .privacy,
+            ciphertextFileName:
+                "report-\(retainedReportID.uuidString.lowercased()).ciphertext",
+            ciphertextSize: 128,
+            ciphertextSHA256: Data(repeating: 0x44, count: 32),
+            moderationKeyID: "moderation-v1",
+            reporterConsentAcceptedAt: Date(),
+            commitRequestID: UUID(),
+            phase: .prepared,
+            createdAt: Date(),
+            updatedAt: Date()
+        ).validated()
+        _ = try MomentSharingStateStore.mutate(
+            validating: lifecycleToken
+        ) { state in
+            state.reportOutbox.append(retainedReport)
+        }
+
+        // A person may remove one hidden receipt without blocking the peer.
+        // Keep a fileless terminal row so cursor recovery cannot recreate it,
+        // and preserve any separately encrypted report outbox evidence.
+        try MomentSharingStateStore.deleteSafetyHiddenInbox(
+            momentID: sensitiveFixture.0.momentID,
+            validating: lifecycleToken
+        )
+        let deletedSensitiveState = try MomentSharingStateStore.load()
+        guard deletedSensitiveState.inbox.count == 1,
+              deletedSensitiveState.inbox[0].state == .revoked,
+              deletedSensitiveState.inbox[0].localJPEGFileName == nil,
+              deletedSensitiveState.reportOutbox == [retainedReport],
+              !FileManager.default.fileExists(atPath: sensitiveFixture.2.path),
+              try await sensitiveCoordinator.runtimeTestReceiveChanges(
+                  api: sensitiveAPI,
+                  pairing: pairing,
+                  credential: credential,
+                  lifecycleToken: lifecycleToken
+              ) == 0
+        else { throw MomentSharingError.stateUnavailable }
+        let postDeleteCounts = await sensitiveAPI.runtimeCounts()
+        guard postDeleteCounts.downloads == 1,
+              postDeleteCounts.acknowledgements == 1
+        else { throw MomentSharingError.stateUnavailable }
     }
 
     private static func testMomentOutboxBoundsAndExpiry() throws {

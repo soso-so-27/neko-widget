@@ -55,6 +55,7 @@ struct FamilyWindowView: View {
     @StateObject private var model = MomentSharingViewModel()
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
+    @State private var deleteHiddenTarget: MomentInboxItem?
     @State private var showsPendingCancelConfirmation = false
     @State private var showsPreparationCancelConfirmation = false
     @State private var showsTerminalResultDismissConfirmation = false
@@ -188,6 +189,7 @@ struct FamilyWindowView: View {
             // fail-closed guards.
             reportTarget = nil
             blockTarget = nil
+            deleteHiddenTarget = nil
             showsPendingCancelConfirmation = false
             showsPreparationCancelConfirmation = false
             showsTerminalResultDismissConfirmation = false
@@ -299,6 +301,24 @@ struct FamilyWindowView: View {
             Button("キャンセル", role: .cancel) { reportTarget = nil }
         } message: {
             Text("確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。このまどの暗号鍵は送りません。")
+        }
+        .confirmationDialog(
+            "この受信を削除しますか？",
+            isPresented: Binding(
+                get: { deleteHiddenTarget != nil },
+                set: { if !$0 { deleteHiddenTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: deleteHiddenTarget
+        ) { item in
+            Button("このiPhoneから削除", role: .destructive) {
+                deleteHiddenTarget = nil
+                Task { await model.deleteSafetyHiddenMoment(item) }
+            }
+            .disabled(model.isWorking || model.isShowingLastKnownState)
+            Button("やめる", role: .cancel) { deleteHiddenTarget = nil }
+        } message: { _ in
+            Text("このiPhoneから削除します。相手とのまどと、写真アプリへ取り込んだ写真はそのままです。削除後、この受信から新たに通報することはできません。")
         }
         .alert(
             "この相手をブロックしますか？",
@@ -530,7 +550,8 @@ struct FamilyWindowView: View {
     private var receivedSectionContent: some View {
         if !model.receivedMoments.isEmpty {
             if let latest = orderedReceivedMoments.first {
-                momentCard(latest)
+                momentCard(latest, fillsPhotoFrame: true)
+                    .frame(maxWidth: .infinity)
             }
         } else {
             ContentUnavailableView(
@@ -1576,12 +1597,14 @@ struct FamilyWindowView: View {
 
     private func momentCard(
         _ item: MomentInboxItem,
-        receivesNotificationFocus: Bool = false
+        receivesNotificationFocus: Bool = false,
+        fillsPhotoFrame: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             receivedPhotoHeader(
                 item,
-                receivesNotificationFocus: receivesNotificationFocus
+                receivesNotificationFocus: receivesNotificationFocus,
+                contentMode: fillsPhotoFrame ? .fill : .fit
             )
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1675,19 +1698,21 @@ struct FamilyWindowView: View {
         }
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
     private func receivedPhotoHeader(
         _ item: MomentInboxItem,
-        receivesNotificationFocus: Bool
+        receivesNotificationFocus: Bool,
+        contentMode: ContentMode
     ) -> some View {
         let photo = Group {
             if let url = model.imageURL(for: item) {
                 receivedPhotoSurface(
                     url: url,
                     aspectRatio: 4.0 / 3.0,
-                    contentMode: .fit
+                    contentMode: contentMode
                 )
             } else {
                 receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)
@@ -2153,34 +2178,38 @@ struct FamilyWindowView: View {
                 }
             }
             Spacer()
-            if model.isEncryptedReportAvailable || !model.isReportOnly {
-                Menu {
-                    if model.isEncryptedReportAvailable,
-                       item.localJPEGFileName != nil {
-                        Button {
-                            reportTarget = item
-                        } label: {
-                            Label(
-                                model.reportActionTitle(item, hidden: true),
-                                systemImage: "exclamationmark.bubble"
-                            )
-                        }
-                        .disabled(!model.canSubmitReport(item))
+            Menu {
+                if model.isEncryptedReportAvailable,
+                   item.localJPEGFileName != nil {
+                    Button {
+                        reportTarget = item
+                    } label: {
+                        Label(
+                            model.reportActionTitle(item, hidden: true),
+                            systemImage: "exclamationmark.bubble"
+                        )
                     }
-                    if !model.isReportOnly {
-                        Button(role: .destructive) {
-                            blockTarget = item
-                        } label: {
-                            Label("この相手をブロック", systemImage: "hand.raised.fill")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
+                    .disabled(!model.canSubmitReport(item))
                 }
-                .disabled(model.isShowingLastKnownState)
-                .accessibilityLabel("非表示にした受信の安全メニュー")
+                Button(role: .destructive) {
+                    deleteHiddenTarget = item
+                } label: {
+                    Label("この受信を削除", systemImage: "trash")
+                }
+                Divider()
+                if !model.isReportOnly {
+                    Button(role: .destructive) {
+                        blockTarget = item
+                    } label: {
+                        Label("この相手をブロック", systemImage: "hand.raised.fill")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title3)
             }
+            .disabled(model.isWorking || model.isShowingLastKnownState)
+            .accessibilityLabel("非表示にした受信の安全メニュー")
         }
         .padding(14)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -2244,17 +2273,10 @@ struct FamilyWindowView: View {
     }
 
     private func safetyHiddenExplanation(_ item: MomentInboxItem) -> String {
-        if !model.isEncryptedReportAvailable {
-            return model.isReportOnly || item.state == .revoked
-                ? "共有が終了したため非表示にしています。安全上の問題は、写真を添付せずTestFlightのベータ版フィードバックから連絡してください。"
-                : "端末の安全確認を通せなかったため表示していません。必要なら相手をブロックして共有を終了できます。"
-        }
         if item.state == .revoked {
-            return "共有が終了したため非表示にしています。内容を再表示せず、安全のため通報できます。"
+            return "共有が終了した写真です。内容は表示しません。"
         }
-        return model.isReportOnly
-            ? "端末の安全確認を通せなかった受信です。内容を表示せずに通報できます。"
-            : "端末の安全確認を通せなかった受信です。内容を表示せずに通報またはブロックできます。"
+        return "端末の安全確認を通せなかったため、内容を表示していません。"
     }
 
     private func captureLabel(_ item: MomentInboxItem) -> String {

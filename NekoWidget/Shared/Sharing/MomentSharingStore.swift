@@ -1151,6 +1151,59 @@ enum MomentSharingStateStore {
         }
     }
 
+    /// Deletes the local JPEG for one moderation-hidden or revoked receipt,
+    /// while retaining a fileless terminal tombstone. The tombstone is
+    /// required: removing the ledger row outright would allow an older relay
+    /// page to materialize the same photo again after a cursor recovery.
+    /// Existing encrypted report outbox entries are intentionally preserved.
+    static func deleteSafetyHiddenInbox(
+        momentID: String,
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard !SharingLifecycleGate.isCleanupRequired
+            else { throw MomentSharingError.stateUnavailable }
+            var state = try loadWhileLocked()
+            guard let index = state.inbox.firstIndex(where: {
+                $0.id == momentID
+            }), (state.inbox[index].state == .blocked
+                || state.inbox[index].state == .revoked)
+            else { throw MomentSharingError.stateUnavailable }
+
+            let item = state.inbox[index]
+            var fileURL: URL?
+            if let fileName = item.localJPEGFileName {
+                guard fileName == "\(item.id).jpg",
+                      fileName == (fileName as NSString).lastPathComponent,
+                      let directory = SharedContainer
+                        .momentSharingReceivedDirectoryURL
+                else { throw MomentSharingError.stateUnavailable }
+                fileURL = directory.appendingPathComponent(
+                    fileName,
+                    isDirectory: false
+                )
+            }
+
+            // Remove bytes first while holding the lifecycle lock. If this
+            // fails, the original row remains and the person can retry. If a
+            // later atomic state write fails, the row also remains and a retry
+            // treats the already-missing file as success.
+            if let fileURL,
+               FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+
+            state.savedMemories.removeAll { $0.momentID == momentID }
+            state.importedMemories.removeAll { $0.momentID == momentID }
+            state.pendingMemoryImports.removeAll { $0.momentID == momentID }
+            state.pawOutbox.removeAll { $0.momentID == momentID }
+            state.inbox[index].state = .revoked
+            state.inbox[index].localJPEGFileName = nil
+            state.storageRevision += 1
+            try writeWhileLocked(try state.validated())
+        }
+    }
+
     /// Adds or removes a local, sharing-scoped bookmark without performing a
     /// network request or writing to Photos/iCloud. The lifecycle flock and
     /// state validation keep the mark atomic with revoke/unlink cleanup.
