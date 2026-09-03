@@ -740,6 +740,12 @@ enum PrivateWindowPresentationStore {
                         && (target.spaceID != currentPairing.spaceID
                             || target.credentialAccount
                                 != currentPairing.credentialAccount))
+                let conflictMetadataChanged = try PrivateWindowCatalogStore
+                    .makeDisplayNameAvailableForSynchronizedWindowWhileLifecycleLocked(
+                        localWindowID: targetWindowID,
+                        displayName: presentation.displayName,
+                        now: now
+                    )
                 if catalogMetadataChanged {
                     if let localWindowID {
                         try PrivateWindowCatalogStore
@@ -763,21 +769,9 @@ enum PrivateWindowPresentationStore {
                 return PrivateWindowPresentationApplyResult(
                     presentation: presentation,
                     presentationDisplayNameChanged: presentationDisplayNameChanged,
-                    catalogMetadataChanged: catalogMetadataChanged
+                    catalogMetadataChanged:
+                        catalogMetadataChanged || conflictMetadataChanged
                 )
-            }
-            if let localWindowID {
-                guard let catalog = try PrivateWindowCatalogStore.load(),
-                      !catalog.windows.contains(where: {
-                          $0.localWindowID != localWindowID
-                              && $0.displayName == displayName
-                      })
-                else { throw PrivateWindowCatalogStore.Error.duplicateWindowName }
-            } else {
-                try PrivateWindowCatalogStore
-                    .validateDisplayNameAvailableForActiveWindowWhileLifecycleLocked(
-                        displayName
-                    )
             }
             let loaded = try? loadWhileLifecycleLocked(localWindowID: localWindowID)
             let current = loaded?.pairingBindingSHA256 == currentBinding ? loaded : nil

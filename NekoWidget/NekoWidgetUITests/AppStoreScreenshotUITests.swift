@@ -87,6 +87,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             )
             return
         }
+        photosSegment.tap()
         guard waitForFixturePhotos(
             in: app,
             requirements: [(9, 1), (10, 1), (11, 1)]

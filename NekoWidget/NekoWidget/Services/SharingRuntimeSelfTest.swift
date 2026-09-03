@@ -1132,6 +1132,50 @@ actor SharingRuntimeSelfTestRunner {
               })?.displayName == "マイファミリー"
         else { throw PairingError.stateUnavailable }
 
+        // Reproduce the remaining old-iPhone failure: another device-local
+        // setup slot already owns the authenticated shared name. Older builds
+        // rejected the catalog mirror forever, so the paired row kept showing
+        // its stale label even though photo traffic and name GET both worked.
+        let synchronizedWindowID = catalogAfterStaleFallback.activeWindowID
+        try SharingLifecycleGate.withValidatedToken(recovered.lifecycleToken) {
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: "妻のまど",
+                spaceID: recovered.state.spaceID,
+                credentialAccount: recovered.state.credentialAccount
+            )
+            let conflictingDraft = try PrivateWindowCatalogStore
+                .createAndActivateWhileLifecycleLocked()
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                displayName: "マイファミリー",
+                spaceID: nil,
+                credentialAccount: nil
+            )
+            _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                localWindowID: synchronizedWindowID
+            )
+            guard conflictingDraft.localWindowID != synchronizedWindowID else {
+                throw PairingError.stateUnavailable
+            }
+        }
+        let repairedDuplicateName = try PrivateWindowPresentationStore
+            .applySynchronizedOwnerName(
+                displayName: "マイファミリー",
+                ownerRevision: 2,
+                pairing: recovered.state,
+                validating: recovered.lifecycleToken
+            )
+        guard repairedDuplicateName.catalogMetadataChanged,
+              let duplicateRepairedCatalog = try PrivateWindowCatalogStore.load(),
+              duplicateRepairedCatalog.activeWindowID == synchronizedWindowID,
+              duplicateRepairedCatalog.windows.first(where: {
+                  $0.localWindowID == synchronizedWindowID
+              })?.displayName == "マイファミリー",
+              duplicateRepairedCatalog.windows.contains(where: {
+                  $0.localWindowID != synchronizedWindowID
+                      && $0.displayName == "マイファミリー 2"
+              })
+        else { throw PairingError.stateUnavailable }
+
         _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
         let cleanBootstrap = try PairingInstallationGuard.bootstrap()
         guard cleanBootstrap.state.phase == .unpaired else {

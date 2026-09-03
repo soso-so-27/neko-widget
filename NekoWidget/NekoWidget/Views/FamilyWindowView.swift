@@ -39,7 +39,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .received: "届いた"
-        case .sent: "届けた"
+        case .sent: "届ける"
         }
     }
 }
@@ -471,10 +471,19 @@ struct FamilyWindowView: View {
             LazyVStack(alignment: .leading, spacing: 18) {
                 if model.isReportOnly {
                     reportOnlyCard
+                    if let message = model.errorMessage {
+                        sharingErrorCard(message)
+                    }
                 }
 
                 if !model.isReportOnly {
-                    sendPhotoAction
+                    if pendingNotificationRoute?.target != nil {
+                        notificationRouteResolutionCard
+                    } else if let message = model.errorMessage {
+                        sharingErrorCard(message)
+                    }
+
+                    manualRefreshResult
 
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
@@ -489,21 +498,15 @@ struct FamilyWindowView: View {
                         focusedSentMomentID = nil
                         notificationAccessibilityFocus = nil
                     }
-
-                    if pendingNotificationRoute?.target != nil {
-                        notificationRouteResolutionCard
-                    }
-
-                    manualRefreshResult
-                }
-
-                if let message = model.errorMessage {
-                    sharingErrorCard(message)
                 }
 
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
                 } else {
+                    if pendingNotificationRoute?.target == nil,
+                       model.errorMessage == nil {
+                        sendPhotoAction
+                    }
                     sentSectionContent
                 }
             }
@@ -526,13 +529,6 @@ struct FamilyWindowView: View {
     @ViewBuilder
     private var receivedSectionContent: some View {
         if !model.receivedMoments.isEmpty {
-            Label(
-                "届いた写真の保存期間は最長90日です。残すときは「取り込んで残す」を選びます。",
-                systemImage: "info.circle"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .accessibilityIdentifier("family-window-received-retention-summary")
             if let latest = orderedReceivedMoments.first {
                 momentCard(latest)
             }
@@ -565,6 +561,16 @@ struct FamilyWindowView: View {
             ForEach(model.safetyHiddenMoments) { item in
                 safetyHiddenCard(item)
             }
+        }
+
+        if !model.receivedMoments.isEmpty {
+            Label(
+                "届いた写真は最長90日です。残したい写真は「思い出に残す」を選びます。",
+                systemImage: "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("family-window-received-retention-summary")
         }
     }
 
@@ -639,7 +645,7 @@ struct FamilyWindowView: View {
                     }
                     Text(isPreparingSelectedPhoto
                         ? "写真を準備しています…"
-                        : "写真を選んで届ける")
+                        : "写真を届ける")
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
@@ -1164,7 +1170,7 @@ struct FamilyWindowView: View {
             if hasOutgoingActivityState {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("送信状況")
+                        Text("いまの送信")
                             .font(.headline)
                         Spacer()
                         if canManageOutgoingPresentation {
@@ -1190,7 +1196,7 @@ struct FamilyWindowView: View {
             if !model.outgoingPresentation.sentRecords.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("自分が届けた写真")
+                        Text("最近届けた写真")
                             .font(.headline)
                         Spacer()
                         if canManageOutgoingPresentation,
@@ -1304,7 +1310,7 @@ struct FamilyWindowView: View {
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
         } label: {
-            Label("整理", systemImage: "ellipsis.circle")
+            Label("送信を管理", systemImage: "ellipsis.circle")
                 .font(.subheadline)
         }
         .disabled(model.isShowingLastKnownState)
@@ -1839,7 +1845,7 @@ struct FamilyWindowView: View {
                     }
                     Text(model.hasImportedMemory(item)
                         ? "もう一度思い出に加える"
-                        : "取り込んで残す")
+                        : "思い出に残す")
                 }
                 .font(.caption.weight(.semibold))
                 .multilineTextAlignment(.center)

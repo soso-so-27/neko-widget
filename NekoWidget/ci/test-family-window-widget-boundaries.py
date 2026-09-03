@@ -1021,7 +1021,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             ".onChange(of: hasUnreadSummary, initial: true)",
             memory_view,
         )
-        self.assertNotIn("selectedSection = .summaries", memory_view)
+        self.assertIn("selectedSection: MemoriesSection = .summaries", memory_view)
         self.assertIn("selection: $selectedSection", memory_view)
         self.assertIn('Label("写真から選ぶ"', memory_view)
         self.assertIn("photosPath = NavigationPath()", main_tab)
@@ -1864,7 +1864,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("if catalogMetadataChanged", mirror_catalog)
         self.assertIn(
-            "catalogMetadataChanged: catalogMetadataChanged",
+            "catalogMetadataChanged || conflictMetadataChanged",
             mirror_catalog,
         )
 
@@ -2752,11 +2752,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
-        self.assertIn('Text("自分が届けた写真")', family)
-        self.assertIn('Text("送信状況")', family)
+        self.assertIn('Text("最近届けた写真")', family)
+        self.assertIn('Text("いまの送信")', family)
         self.assertNotIn('Text("履歴")', family)
-        self.assertIn("届いた写真の保存期間は最長90日です", family)
-        self.assertIn("残すときは「取り込んで残す」を選びます", family)
+        self.assertIn("届いた写真は最長90日です", family)
+        self.assertIn("残したい写真は「思い出に残す」を選びます", family)
         self.assertIn("「到着」は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
@@ -3039,10 +3039,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("sentSectionContent", paired)
         self.assertIn("sendPhotoAction", paired)
         self.assertEqual(paired.count("sendPhotoAction"), 1)
-        self.assertLess(
-            paired.index("sendPhotoAction"),
-            paired.index('Picker("まどに表示する内容"'),
-        )
+        self.assertIn('case .received: "届いた"', family)
+        self.assertIn('case .sent: "届ける"', family)
 
         received_start = paired.index(
             "if model.isReportOnly || selectedSection == .received {"
@@ -3054,7 +3052,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("receivedSectionContent", received_branch)
         self.assertNotIn("sendPhotoAction", received_branch)
         self.assertIn("sentSectionContent", sent_branch)
-        self.assertNotIn("sendPhotoAction", sent_branch)
+        self.assertIn("sendPhotoAction", sent_branch)
         self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
@@ -3226,7 +3224,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         project = source("NekoWidget.xcodeproj/project.pbxproj")
 
         self.assertIn("PhotosPicker(", family)
-        self.assertIn('"写真を選んで届ける"', family)
+        self.assertIn('"写真を届ける"', family)
         self.assertIn("deliveryConfirmation", family)
         self.assertIn("type: PickedMomentIngressPhoto.self", family)
         self.assertNotIn("loadTransferable(type: Data.self)", family)
@@ -3459,7 +3457,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
         self.assertIn('Button("思い出から外す", role: .destructive)', family)
-        self.assertIn('"取り込んで残す"', family)
+        self.assertIn('"思い出に残す"', family)
         self.assertIn('"写真アプリにコピーして残す"', family)
         self.assertIn("通常の思い出と写真まとめに入り", family)
         self.assertIn("相手へは通知しません", family)

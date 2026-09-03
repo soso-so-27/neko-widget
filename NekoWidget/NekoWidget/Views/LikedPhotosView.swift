@@ -515,9 +515,9 @@ private enum MemoriesSection: String, CaseIterable, Identifiable {
 }
 
 /// The entry point for photos the user deliberately kept as memories.
-/// The complete manual collection stays directly visible, while automatic
-/// reflections and thematic browsing live in a separate summary pane. PDF
-/// creation begins from the explicit photo-selection action in the photo pane.
+/// Automatic reflections are the default so the tab opens on new value; the
+/// complete manual collection remains one segment away and owns the explicit
+/// PDF/photo-selection action.
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -530,7 +530,7 @@ struct LikedPhotosView: View {
     let exportPhotoBook: ([String]) async throws -> URL
     let openPhotos: () -> Void
 
-    @State private var selectedSection: MemoriesSection = .photos
+    @State private var selectedSection: MemoriesSection = .summaries
 
     var body: some View {
         ScrollView {

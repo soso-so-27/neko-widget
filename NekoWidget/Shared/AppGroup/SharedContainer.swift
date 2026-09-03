@@ -662,6 +662,76 @@ enum PrivateWindowCatalogStore {
         try saveWhileLifecycleLocked(state)
     }
 
+    /// An authenticated creator name belongs to the shared window even when
+    /// this particular iPhone already uses the same label for another local
+    /// slot. Preserve a unique destination list by suffixing only conflicting
+    /// local setup drafts before applying the shared name. Never rewrite a
+    /// second paired window: two creators may legitimately choose the same
+    /// label, and changing either authenticated projection would cause churn.
+    /// Manual renames continue to reject duplicates instead of doing this.
+    @discardableResult
+    static func makeDisplayNameAvailableForSynchronizedWindowWhileLifecycleLocked(
+        localWindowID: String,
+        displayName: String,
+        now: Date = .now
+    ) throws -> Bool {
+        guard PrivateWindowDisplayName.isValid(displayName),
+              var state = try load(),
+              state.windows.contains(where: {
+                  $0.localWindowID == localWindowID
+              })
+        else { throw Error.invalidCatalog }
+
+        let conflicts = state.windows.indices.filter {
+            state.windows[$0].localWindowID != localWindowID
+                && state.windows[$0].spaceID == nil
+                && state.windows[$0].credentialAccount == nil
+                && state.windows[$0].displayName == displayName
+        }.sorted {
+            let lhs = state.windows[$0]
+            let rhs = state.windows[$1]
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.localWindowID < rhs.localWindowID
+        }
+        guard !conflicts.isEmpty else { return false }
+
+        var usedNames = Set(state.windows.map(\.displayName))
+        for index in conflicts {
+            usedNames.remove(state.windows[index].displayName)
+            let replacement = try disambiguatedDisplayName(
+                basedOn: displayName,
+                excluding: usedNames
+            )
+            state.windows[index].displayName = replacement
+            state.windows[index].updatedAt = max(state.windows[index].updatedAt, now)
+            usedNames.insert(replacement)
+        }
+        state.storageRevision += 1
+        try saveWhileLifecycleLocked(state)
+        return true
+    }
+
+    private static func disambiguatedDisplayName(
+        basedOn displayName: String,
+        excluding usedNames: Set<String>
+    ) throws -> String {
+        for ordinal in 2...(PrivateWindowCatalogState.maximumWindowCount + 1) {
+            let suffix = " \(ordinal)"
+            var stem = displayName
+            while !stem.isEmpty,
+                  (stem + suffix).utf8.count
+                    > PrivateWindowDisplayName.maximumUTF8ByteCount {
+                stem.removeLast()
+            }
+            let candidate = stem + suffix
+            if PrivateWindowDisplayName.isValid(candidate),
+               !usedNames.contains(candidate) {
+                return candidate
+            }
+        }
+        throw Error.duplicateWindowName
+    }
+
     /// Persists the device-local draft name before a relay space or encrypted
     /// presentation record exists. It does not publish or synchronize the
     /// value; invitation creation later promotes the same name into the

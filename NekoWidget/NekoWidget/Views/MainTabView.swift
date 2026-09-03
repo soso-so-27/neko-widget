@@ -1292,6 +1292,7 @@ private struct WindowListView: View {
     private func reload() async {
         isLoading = true
         await model.bootstrap()
+        await model.synchronizeWindowNamesForWindowList()
         await reloadCatalogPresentation()
         isLoading = false
     }

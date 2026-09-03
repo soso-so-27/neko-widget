@@ -11,6 +11,20 @@ def source(path: str) -> str:
 
 
 class InactiveWindowNameSyncContractTests(unittest.TestCase):
+    def test_window_list_reconciles_active_and_inactive_names_on_every_reload(self) -> None:
+        model = source("NekoWidget/ViewModels/PairingViewModel.swift")
+        window_list = source("NekoWidget/Views/MainTabView.swift")
+        refresh = model.split(
+            "func synchronizeWindowNamesForWindowList() async", 1
+        )[1].split("@discardableResult", 1)[0]
+        self.assertIn("synchronizeWindowNameForUser", refresh)
+        self.assertIn("synchronizeInactiveWindowNamesForWindowList", refresh)
+        self.assertIn("reloadPrivateWindowCatalog()", refresh)
+        reload_method = window_list.split(
+            "private func reload() async", 1
+        )[1].split("private struct CatalogPresentationSnapshot", 1)[0]
+        self.assertIn("await model.synchronizeWindowNamesForWindowList()", reload_method)
+
     def test_scoped_files_are_distinct_per_local_window(self) -> None:
         shared = source("Shared/AppGroup/SharedContainer.swift")
         for name in (
@@ -58,6 +72,29 @@ class InactiveWindowNameSyncContractTests(unittest.TestCase):
         self.assertGreaterEqual(
             coordinator.count("localWindowID: authorization.localWindowID"), 8
         )
+
+    def test_authenticated_remote_name_disambiguates_only_local_conflicts(self) -> None:
+        shared = source("Shared/AppGroup/SharedContainer.swift")
+        store = source("Shared/Sharing/PairingKeychainStore.swift")
+        helper = shared.split(
+            "makeDisplayNameAvailableForSynchronizedWindowWhileLifecycleLocked", 1
+        )[1].split("updateActiveDraftDisplayNameWhileLifecycleLocked", 1)[0]
+        self.assertIn("localWindowID != localWindowID", helper)
+        self.assertIn("spaceID == nil", helper)
+        self.assertIn("credentialAccount == nil", helper)
+        self.assertIn("disambiguatedDisplayName", helper)
+        self.assertIn("state.storageRevision += 1", helper)
+        self.assertIn(
+            "makeDisplayNameAvailableForSynchronizedWindowWhileLifecycleLocked",
+            store,
+        )
+        presentation_store = store.split(
+            "enum PrivateWindowPresentationStore", 1
+        )[1]
+        manual_save = presentation_store.split("static func save(", 1)[1].split(
+            "promoteActiveDraftWhileLifecycleLocked", 1
+        )[0]
+        self.assertIn("duplicateWindowName", manual_save)
 
     def test_report_only_and_catalog_binding_fail_closed_before_get(self) -> None:
         coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")

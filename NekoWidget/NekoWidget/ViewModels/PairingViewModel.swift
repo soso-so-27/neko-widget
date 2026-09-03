@@ -176,13 +176,6 @@ final class PairingViewModel: ObservableObject {
             }
             bootstrapRetryMessage = nil
             didBootstrap = true
-            if isConfigured {
-                await windowNameCoordinator
-                    .synchronizeInactiveWindowNamesForWindowList(
-                        trigger: "window-list-bootstrap"
-                    )
-                reloadPrivateWindowCatalog()
-            }
         } catch let error as PairingInstallationGuard.RetryableBootstrapError {
             // Data Protection/Keychain availability is not a completed
             // bootstrap. Keep this model eligible for the next foreground or
@@ -200,6 +193,33 @@ final class PairingViewModel: ObservableObject {
                 configurationMessage = Self.userFacingMessage(for: error)
             }
         }
+    }
+
+    /// Refreshes presentation names independently from one-time installation
+    /// bootstrap. The window list calls this on every foreground reload so an
+    /// active window and inactive windows both converge after the creator
+    /// renames a window, without requiring either person to open its detail.
+    func synchronizeWindowNamesForWindowList() async {
+        guard isConfigured, bootstrapRetryMessage == nil else { return }
+
+        let snapshot = try? PairingStateStore.beginOperation()
+        if snapshot?.state?.phase == .paired {
+            do {
+                try await windowNameCoordinator.synchronizeWindowNameForUser(
+                    trigger: "window-list-active-refresh"
+                )
+            } catch {
+                // The list keeps its last authenticated local presentation.
+                // Foreground reload is the bounded retry signal; detailed
+                // sharing errors remain on the selected window screen.
+            }
+        }
+
+        await windowNameCoordinator.synchronizeInactiveWindowNamesForWindowList(
+            trigger: "window-list-inactive-refresh"
+        )
+        reloadWindowDisplayName()
+        reloadPrivateWindowCatalog()
     }
 
     /// Updates presentation metadata only. PairingState and its exact-state
