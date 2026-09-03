@@ -1164,7 +1164,7 @@ actor MomentSharingCoordinator {
                 return (entry.localWindowID, pairing)
             }
         }
-        let authorizations = candidates.compactMap { candidate in
+        let authorizations = candidates.compactMap { candidate -> Authorization? in
             guard let account = candidate.pairing.credentialAccount,
                   let credential = try? PairingKeychainStore.load(
                 account: account,
