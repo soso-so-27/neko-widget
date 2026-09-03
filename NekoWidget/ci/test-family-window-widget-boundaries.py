@@ -1008,8 +1008,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('isSelectingForExport ? "写真を選ぶ"', gallery)
         self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", gallery)
         self.assertIn('accessibilityIdentifier("photo-book-export")', gallery)
+        self.assertIn('accessibilityIdentifier("book-demand-preview")', gallery)
+        self.assertIn('accessibilityIdentifier("book-demand-interest")', gallery)
+        self.assertIn("BookDemandValidationPolicy.canPreview", gallery)
+        self.assertIn("bookDemandPreview = BookDemandPreviewSelection", gallery)
+        self.assertIn("BookDemandValidationPolicy.proposedPriceLabel", gallery)
+        self.assertIn(
+            "まだ注文ではなく、決済も行いません。写真・氏名・住所は送信されません。",
+            gallery,
+        )
         self.assertIn("if isDedicatedPhotoBookFlow", gallery)
         self.assertIn("dismiss()", gallery)
+
+        preview_opening = section(
+            gallery,
+            "private func openBookDemandPreview()",
+            "private func toggleExportMode()",
+        )
+        self.assertIn("guard !isExportingPhotoBook else { return }", preview_opening)
+        self.assertIn("selectedPhotoCount: selectedPhotos.count", preview_opening)
+        self.assertIn("BookDemandPreviewSelection(photos: selectedPhotos)", preview_opening)
 
     def test_monthly_window_is_local_read_only_and_reachable_from_memories_only(self) -> None:
         home = source("NekoWidget/Views/HomeView.swift")

@@ -51,6 +51,33 @@ private func verifySelectionBoundary() throws {
     )
 }
 
+private func verifyBookDemandPreviewBoundary() throws {
+    try require(
+        BookDemandValidationPolicy.requiredPhotoCount == 20,
+        "book demand photo count changed"
+    )
+    try require(
+        BookDemandValidationPolicy.proposedPriceYen == 4_980,
+        "book demand price changed"
+    )
+    try require(
+        BookDemandValidationPolicy.proposedPriceLabel == "4,980円",
+        "book demand price label changed"
+    )
+    try require(
+        !BookDemandValidationPolicy.canPreview(selectedPhotoCount: 19),
+        "19 photos opened the book demand preview"
+    )
+    try require(
+        BookDemandValidationPolicy.canPreview(selectedPhotoCount: 20),
+        "20 photos did not open the book demand preview"
+    )
+    try require(
+        !BookDemandValidationPolicy.canPreview(selectedPhotoCount: 21),
+        "21 photos opened the book demand preview"
+    )
+}
+
 private func verifyLikedOnlyOldestFirstSelection() throws {
     let input = [
         candidate("nil-z", nil),
@@ -193,6 +220,7 @@ private func verifyLikedCollectionUsesPawOrder() throws {
 private enum PhotoBookPolicyVerifier {
     static func main() throws {
         try verifySelectionBoundary()
+        try verifyBookDemandPreviewBoundary()
         try verifyLikedOnlyOldestFirstSelection()
         try verifyExplicitSelectionCanUseAnyLikedPhoto()
         try verifyDuplicateIdentifiersFailClosed()

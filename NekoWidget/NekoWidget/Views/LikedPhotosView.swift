@@ -1121,6 +1121,7 @@ struct SavedMemoriesGalleryView: View {
     @State private var photoBookExportDirectory: URL?
     @State private var photoBookErrorMessage: String?
     @State private var photoBookExportTask: Task<Void, Never>?
+    @State private var bookDemandPreview: BookDemandPreviewSelection?
 
     init(
         photos: [PhotoPresentation],
@@ -1175,6 +1176,11 @@ struct SavedMemoriesGalleryView: View {
         .sheet(item: $photoBookExport, onDismiss: cleanupPhotoBookExport) { export in
             LikedPhotoBookActivityView(activityItems: [export.url])
         }
+        .sheet(item: $bookDemandPreview) { selection in
+            NavigationStack {
+                BookDemandPreviewView(photos: selection.photos)
+            }
+        }
         .alert(
             "PDFを作成できませんでした",
             isPresented: Binding(
@@ -1223,7 +1229,7 @@ struct SavedMemoriesGalleryView: View {
                             >= PhotoBookPolicy.maximumPhotosPerExport)
             )
             .accessibilityLabel(memoryPhotoAccessibilityLabel(photo))
-            .accessibilityValue(isSelected ? "PDFに選択中" : "未選択")
+            .accessibilityValue(isSelected ? "選択中" : "未選択")
         } else {
             NavigationLink(value: MemoriesRoute.photo(photo.localIdentifier)) {
                 MemoryPhotoThumbnail(photo: photo)
@@ -1246,6 +1252,28 @@ struct SavedMemoriesGalleryView: View {
             }
 
             Button {
+                openBookDemandPreview()
+            } label: {
+                Label("本のイメージを見る", systemImage: "book.closed")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(
+                isExportingPhotoBook
+                    || !BookDemandValidationPolicy.canPreview(
+                        selectedPhotoCount: selectedExportIdentifiers.count
+                    )
+            )
+            .accessibilityIdentifier("book-demand-preview")
+            .accessibilityHint(bookDemandSelectionGuide)
+
+            Text(bookDemandSelectionGuide)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
                 if isExportingPhotoBook {
                     photoBookExportTask?.cancel()
                 } else {
@@ -1263,7 +1291,7 @@ struct SavedMemoriesGalleryView: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .disabled(selectedExportIdentifiers.isEmpty && !isExportingPhotoBook)
             .accessibilityIdentifier("photo-book-export")
         }
@@ -1272,6 +1300,29 @@ struct SavedMemoriesGalleryView: View {
         .padding(.bottom, 8)
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    private var bookDemandSelectionGuide: String {
+        let selectedCount = selectedExportIdentifiers.count
+        let requiredCount = BookDemandValidationPolicy.requiredPhotoCount
+        if selectedCount < requiredCount {
+            return "あと\((requiredCount - selectedCount).formatted())枚で、本のイメージを確認できます"
+        }
+        if selectedCount > requiredCount {
+            return "\((selectedCount - requiredCount).formatted())枚減らして、20枚にしてください"
+        }
+        return "選んだ20枚は端末の外へ送りません"
+    }
+
+    private func openBookDemandPreview() {
+        guard !isExportingPhotoBook else { return }
+        let selectedPhotos = photos.filter {
+            selectedExportIdentifiers.contains($0.localIdentifier)
+        }
+        guard BookDemandValidationPolicy.canPreview(
+            selectedPhotoCount: selectedPhotos.count
+        ) else { return }
+        bookDemandPreview = BookDemandPreviewSelection(photos: selectedPhotos)
     }
 
     private func toggleExportMode() {
@@ -1341,6 +1392,197 @@ struct SavedMemoriesGalleryView: View {
         }
         photoBookExportDirectory = nil
         photoBookExport = nil
+    }
+}
+
+private struct BookDemandPreviewSelection: Identifiable {
+    let id = UUID()
+    let photos: [PhotoPresentation]
+}
+
+private struct BookDemandPreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("book-demand-interest-v1") private var hasExpressedInterest = false
+
+    let photos: [PhotoPresentation]
+
+    @State private var currentPage = 0
+    @State private var showsInterestConfirmation = false
+    @State private var copiedFeedbackText = false
+
+    private var feedbackText: String {
+        "『ねこの小さな本』を送料込み\(BookDemandValidationPolicy.proposedPriceLabel)なら購入したいです。"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                preview
+                pageControls
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("ねこの小さな本")
+                        .font(.title2.bold())
+                    Text("残した写真20枚からつくる、15cm角・24ページの試作です。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("1冊・送料込みの検証価格")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(BookDemandValidationPolicy.proposedPriceLabel)
+                            .font(.title2.bold())
+                    }
+                }
+                .padding(18)
+                .background(
+                    Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 20)
+                )
+
+                Button {
+                    hasExpressedInterest = true
+                    showsInterestConfirmation = true
+                } label: {
+                    Label(
+                        hasExpressedInterest
+                            ? "購入希望を確認する"
+                            : "この内容なら購入を希望する",
+                        systemImage: hasExpressedInterest ? "checkmark.circle.fill" : "hand.tap"
+                    )
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .accessibilityIdentifier("book-demand-interest")
+
+                Text("まだ注文ではなく、決済も行いません。写真・氏名・住所は送信されません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if hasExpressedInterest {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("このiPhoneにだけ購入希望を記録しました", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.green)
+                        Text("運営者へ伝えるには、TestFlightの「ベータ版フィードバックを送信」へ、次の一文だけを送ってください。写真や住所は添付しないでください。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            UIPasteboard.general.string = feedbackText
+                            copiedFeedbackText = true
+                        } label: {
+                            Label(
+                                copiedFeedbackText ? "コピーしました" : "フィードバック文をコピー",
+                                systemImage: copiedFeedbackText ? "checkmark" : "doc.on.doc"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("book-demand-feedback-copy")
+                    }
+                    .padding(16)
+                    .background(
+                        Color.accentColor.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 18)
+                    )
+                }
+            }
+            .padding(16)
+        }
+        .navigationTitle("本のイメージ")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("閉じる") { dismiss() }
+            }
+        }
+        .alert("購入希望を端末内に記録しました", isPresented: $showsInterestConfirmation) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text("注文や決済は行われていません。検証に協力する場合は、画面下の案内からTestFlight用の文をコピーしてください。")
+        }
+    }
+
+    private var preview: some View {
+        TabView(selection: $currentPage) {
+            ForEach(Array(photos.enumerated()), id: \.element.localIdentifier) { index, photo in
+                ZStack(alignment: .bottomLeading) {
+                    Color(.secondarySystemBackground)
+                    PhotoAssetImageView(
+                        localIdentifier: photo.localIdentifier,
+                        catBoundingBox: photo.catBoundingBox,
+                        targetPixelSize: CGSize(width: 1_200, height: 1_200),
+                        targetAspectRatio: 1
+                    )
+                    .aspectRatio(1, contentMode: .fit)
+
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(index == 0 ? 0.68 : 0.38)],
+                        startPoint: .center,
+                        endPoint: .bottom
+                    )
+
+                    if index == 0 {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("ねこの小さな本")
+                                .font(.title3.bold())
+                            Text("20枚の思い出から")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(18)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                }
+                .padding(.horizontal, 8)
+                .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityIdentifier("book-demand-page-preview")
+    }
+
+    private var pageControls: some View {
+        HStack(spacing: 16) {
+            Button {
+                currentPage = max(currentPage - 1, 0)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.bordered)
+            .disabled(currentPage == 0)
+            .accessibilityLabel("前の写真")
+
+            Spacer()
+
+            Text("\((currentPage + 1).formatted()) / \(photos.count.formatted())")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+
+            Spacer()
+
+            Button {
+                currentPage = min(currentPage + 1, max(photos.count - 1, 0))
+            } label: {
+                Image(systemName: "chevron.right")
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.bordered)
+            .disabled(currentPage >= photos.count - 1)
+            .accessibilityLabel("次の写真")
+        }
     }
 }
 
