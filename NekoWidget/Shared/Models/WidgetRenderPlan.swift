@@ -246,12 +246,25 @@ enum WidgetRenderPlanner {
         )
     }
 
-    /// Received-window photos deliberately carry no Vision/cat geometry. Use
-    /// a deterministic center aspect-fill crop so every Widget family is
-    /// edge-to-edge instead of falling back to the blurred fit composition.
-    /// This does not claim to preserve an off-center subject; the unmodified
-    /// received JPEG remains available in the app.
+    /// Center aspect-fill remains the deterministic fallback when no trusted
+    /// subject geometry is available.
     static func centeredFullBleedPlan(
+        sourcePixelSize: WidgetSourcePixelSize,
+        variant: WidgetImageVariant
+    ) -> WidgetFamilyRenderPlan {
+        focusedFullBleedPlan(
+            visionBoundingBox: nil,
+            sourcePixelSize: sourcePixelSize,
+            variant: variant
+        )
+    }
+
+    /// Keeps the canvas edge-to-edge while centering the crop on the detected
+    /// cat when geometry is available. Unlike `plan`, this intentionally never
+    /// switches to a fit composition: the received-photo Widget promises a
+    /// full-bleed image, while the focus point reduces accidental face/ear cuts.
+    static func focusedFullBleedPlan(
+        visionBoundingBox: CGRect?,
         sourcePixelSize: WidgetSourcePixelSize,
         variant: WidgetImageVariant
     ) -> WidgetFamilyRenderPlan {
@@ -271,10 +284,41 @@ enum WidgetRenderPlanner {
         } else {
             cropSize = CGSize(width: 1, height: imageAspectRatio / canvasAspectRatio)
         }
+        let focus: CGPoint
+        if let visionBoundingBox,
+           [
+               visionBoundingBox.minX,
+               visionBoundingBox.minY,
+               visionBoundingBox.width,
+               visionBoundingBox.height,
+           ].allSatisfy(\.isFinite) {
+            let unitRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            let photoBoundingBox = CGRect(
+                x: visionBoundingBox.minX,
+                y: 1 - visionBoundingBox.maxY,
+                width: visionBoundingBox.width,
+                height: visionBoundingBox.height
+            ).standardized.intersection(unitRect)
+            if !photoBoundingBox.isNull,
+               photoBoundingBox.width > 0,
+               photoBoundingBox.height > 0 {
+                focus = CGPoint(
+                    x: photoBoundingBox.midX,
+                    y: variant == .medium
+                        ? photoBoundingBox.minY
+                            + photoBoundingBox.height * mediumUpperFocusFraction
+                        : photoBoundingBox.midY
+                )
+            } else {
+                focus = CGPoint(x: 0.5, y: 0.5)
+            }
+        } else {
+            focus = CGPoint(x: 0.5, y: 0.5)
+        }
         return WidgetFamilyRenderPlan(
             sourceRect: WidgetRenderRect(
                 clampedCropRect(
-                    centeredAt: CGPoint(x: 0.5, y: 0.5),
+                    centeredAt: focus,
                     cropSize: cropSize
                 )
             ),

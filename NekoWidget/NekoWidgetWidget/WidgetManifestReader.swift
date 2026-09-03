@@ -50,8 +50,14 @@ enum WidgetManifestReader {
 
     static func familyItem(
         for variant: WidgetImageVariant,
-        localWindowID: String?
+        localWindowID: String?,
+        now: Date = .now
     ) -> FamilyWidgetManifestItem? {
+        if let localWindowID {
+            guard PrivateWindowCatalogStore.widgetEntries().contains(where: {
+                $0.localWindowID == localWindowID
+            }) else { return nil }
+        }
         guard let manifestURL = SharedContainer.familyWidgetManifestURL(
                   localWindowID: localWindowID
               ),
@@ -66,7 +72,8 @@ enum WidgetManifestReader {
                 ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
               }),
               item.freshUntil > item.receivedAt,
-              item.freshUntil.timeIntervalSince(item.receivedAt) <= 2 * 60 * 60 + 1
+              item.freshUntil.timeIntervalSince(item.receivedAt) <= 2 * 60 * 60 + 1,
+              now < item.displayUntil
         else { return nil }
         let filename = item.cacheFilenames.filename(for: variant)
         guard let fileURL = cacheURL(for: filename, in: cacheDirectory),
@@ -83,7 +90,13 @@ enum WidgetManifestReader {
     /// paired window has not received a photo yet. Invalid or pre-naming
     /// manifests fall back without hiding an otherwise valid image.
     static func familyWindowDisplayName(localWindowID: String?) -> String {
-        SharedContainer.familyWidgetWindowDisplayName(localWindowID: localWindowID)
+        if let localWindowID,
+           !PrivateWindowCatalogStore.widgetEntries().contains(where: {
+               $0.localWindowID == localWindowID
+           }) {
+            return "利用できないまど"
+        }
+        return SharedContainer.familyWidgetWindowDisplayName(localWindowID: localWindowID)
     }
 
     static func cacheURL(

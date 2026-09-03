@@ -13,7 +13,7 @@ struct NekoWidget: Widget {
             NekoWidgetView(entry: entry)
         }
         .configurationDisplayName("ねこのまど")
-        .description("選ばれた猫の写真をホーム画面に表示します。")
+        .description("このiPhoneの猫写真、またはまどに届いた一枚を表示します。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
     }

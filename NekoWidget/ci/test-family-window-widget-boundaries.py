@@ -196,6 +196,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("isBookmarked: interactionState?.isSavedMemory ?? false", family_entry)
         self.assertIn("isBookmarkInteractionEnabled: interactionState != nil", family_entry)
         self.assertIn("familyHeartStatus: heartStatus", family_entry)
+        self.assertIn("familyActionsRequireApp: familyWindowIsInactive", family_entry)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn(
@@ -211,13 +212,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('title: "残す"', view)
         self.assertNotIn('title: "取り込む"', view)
         self.assertNotIn('title: "残した"', view)
-        self.assertIn('if entry.isBookmarked {', view)
         self.assertIn('if entry.isLiked {', view)
         self.assertIn('fallbackIsLiked: false', view)
         self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
-        self.assertIn('directActionLabel(', view)
-        self.assertIn('statusBadge(', view)
-        self.assertIn('accessibilityLabel("写真アプリに取り込んで残す")', view)
+        self.assertNotIn('directActionLabel(', view)
+        self.assertNotIn('statusBadge(', view)
+        self.assertIn('"写真アプリに取り込んで残す"', view)
         self.assertIn("写真アプリへの取り込みを確認するため、アプリを開きます", view)
         self.assertIn("SendFamilyWidgetHeartIntent", view)
 
@@ -226,19 +226,17 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private var photoActionButtons: some View",
             "@ViewBuilder\n    private var familyMemoryControl",
         )
-        family_actions = photo_actions.split(
-            "if family == .systemSmall {", 1
-        )[1]
-        small_actions, larger_actions = family_actions.split("} else {", 1)
-        self.assertIn("familyHeartControl(sourceDigest: sourceDigest)", small_actions)
-        self.assertNotIn("familyMemoryControl", small_actions)
-        self.assertIn("familyMemoryControl", larger_actions)
-        self.assertIn("familyHeartControl(sourceDigest: sourceDigest)", larger_actions)
+        self.assertNotIn("if family == .systemSmall", photo_actions)
+        self.assertIn("familyMemoryControl", photo_actions)
+        self.assertIn("sourceDigest: sourceDigest", photo_actions)
+        self.assertIn("localWindowID: localWindowID", photo_actions)
+        self.assertIn("entry.familyActionsRequireApp", photo_actions)
+        self.assertIn("openInAppLabel", photo_actions)
 
         action_tray = section(
             view,
             "private func actionTray<Content: View>(",
-            "private func directActionLabel(",
+            "/// The private-memory control",
         )
         self.assertIn("Spacer(minLength: 0)", action_tray)
         self.assertNotIn("LinearGradient(", action_tray)
@@ -253,53 +251,47 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("SharedLikeStore.set(", personal_intent)
         self.assertIn("isLiked: true", personal_intent)
         self.assertNotIn("SharedLikeStore.toggle(", personal_intent)
-        self.assertIn('systemImage: "heart"', view)
-        self.assertIn('title: "ハート"', view)
-        self.assertIn('title: "待機中"', view)
-        self.assertIn('title: "受付済み"', view)
-        self.assertNotIn('title: "送る"', view)
-        self.assertNotIn('title: "送った"', view)
+        self.assertIn('status == .serverAccepted ? "heart.fill" : "heart"', view)
+        self.assertIn('systemName: "clock.fill"', view)
+        self.assertNotIn('Label("ハート"', view)
+        self.assertNotIn('Text("待機中")', view)
+        self.assertNotIn('Text("受付済み")', view)
         self.assertIn("このiPhoneで送信待ちにし、アプリの同期後に送ります", view)
         self.assertIn("相手が確認したことを示す表示ではありません", view)
         self.assertNotIn("foregroundStyle(.pink)", view)
         self.assertNotIn("Color.accentColor.opacity(0.92)", view)
-        self.assertIn("private enum WidgetStatusBadgeStyle", view)
-        self.assertIn("case pending", view)
-        self.assertIn("case completed", view)
+        self.assertNotIn("private enum WidgetStatusBadgeStyle", view)
         self.assertIn("actionButtonSpacing", view)
 
-        direct_action = section(
+        open_action = section(
             view,
-            "private func directActionLabel(",
-            "private func statusBadge(",
-        )
-        self.assertIn("Capsule()", direct_action)
-        self.assertIn(".frame(minHeight: 44)", direct_action)
-        self.assertIn(".contentShape(Rectangle())", direct_action)
-        self.assertNotIn("RoundedRectangle", direct_action)
-
-        status_badge = section(
-            view,
-            "private func statusBadge(",
+            "private var openInAppLabel: some View",
             "@ViewBuilder\n    private var familySourceLabel",
         )
-        self.assertIn("RoundedRectangle(cornerRadius: 7", status_badge)
-        self.assertIn(".fixedSize()", status_badge)
-        self.assertNotIn("Capsule()", status_badge)
-        self.assertNotIn(".contentShape", status_badge)
+        self.assertIn("Capsule()", open_action)
+        self.assertIn(".frame(minWidth: 44, minHeight: 44)", open_action)
+        self.assertIn(".contentShape(Rectangle())", open_action)
 
         heart_control = section(
             view,
-            "private func familyHeartControl(sourceDigest: String)",
+            "private func familyHeartControl(",
             "private func actionTray<Content: View>(",
         )
         pending = section(heart_control, "case .pending:", "case .serverAccepted:")
         accepted = section(heart_control, "case .serverAccepted:", "case .hidden:")
+        self.assertIn("heartMark(status: .pending)", pending)
+        self.assertIn("heartMark(status: .serverAccepted)", accepted)
         for noninteractive_status in (pending, accepted):
-            self.assertIn("statusBadge(", noninteractive_status)
             self.assertNotIn("Button(", noninteractive_status)
             self.assertNotIn("Link(", noninteractive_status)
         self.assertIn(".buttonStyle(.plain)", view)
+
+        heart_intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
+        self.assertIn("var localWindowID: String?", heart_intent)
+        self.assertIn("guard let localWindowID", heart_intent)
+        self.assertIn("localWindowID: localWindowID", heart_intent)
+        self.assertIn("PrivateWindowCatalogStore.activeEntry()", heart_intent)
+        self.assertIn("localWindowID: canonicalWindowID", heart_intent)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
         self.assertIn('components.host = "family-window"', deep_link)
@@ -323,7 +315,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("QuietWindowMark()", empty_state)
         self.assertIn("LinearGradient(", empty_state)
         self.assertIn("RadialGradient(", empty_state)
-        self.assertIn('Text("アプリを開いて確認")', empty_state)
+        self.assertIn("Text(emptyStateTitle)", empty_state)
+        self.assertIn("Text(emptyStateSubtitle)", empty_state)
         self.assertIn(".lineLimit(2)", empty_state)
         self.assertIn(".minimumScaleFactor(0.75)", empty_state)
         self.assertNotIn("CatPawMark", empty_state)
@@ -337,8 +330,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private var emptyStateTitle: String",
             "private var emptyStateMarkSize: CGFloat",
         )
-        self.assertIn('return "\\(entry.windowDisplayName)の一枚を待っています"', empty_title)
-        self.assertIn('return "猫の一枚を待っています"', empty_title)
+        self.assertIn('return "このまどは利用できません"', empty_title)
+        self.assertIn('return "まだ届いていません"', empty_title)
+        self.assertIn('return "写真を準備しています"', empty_title)
+        self.assertIn('return "ウィジェットを編集してください"', empty_title)
+        self.assertIn("return entry.windowDisplayName", empty_title)
 
         mark_size = section(
             production_view,
@@ -352,7 +348,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         window_mark = section(
             production_view,
             "private struct QuietWindowMark: View",
-            "private enum WidgetStatusBadgeStyle",
+            "private struct QuietWindowOpening: Shape",
         )
         self.assertIn("QuietWindowOpening()", window_mark)
         self.assertIn("QuietWindowPalette.cream", window_mark)
@@ -376,6 +372,45 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("photoSourceIdentifier: source.id", timeline_family_gate)
         self.assertIn("familyWindowDisplayName(", timeline_family_gate)
+
+    def test_family_widget_expires_and_removed_window_fails_closed(self) -> None:
+        manifest = source("Shared/Models/WidgetManifest.swift")
+        self.assertIn(
+            "static let maximumDisplayDuration: TimeInterval = 90 * 24 * 60 * 60",
+            manifest,
+        )
+        self.assertIn("var displayUntil: Date", manifest)
+
+        reader = source("NekoWidgetWidget/WidgetManifestReader.swift")
+        family_item = section(
+            reader,
+            "static func familyItem(",
+            "static func familyWindowDisplayName",
+        )
+        self.assertIn("PrivateWindowCatalogStore.widgetEntries()", family_item)
+        self.assertIn("now < item.displayUntil", family_item)
+
+        provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
+        self.assertIn("WidgetPhotoSource.familyWindowExists(for: source.id)", provider)
+        self.assertIn("at: item.displayUntil", provider)
+        self.assertIn("emptyStateReason: .sourceUnavailable", provider)
+
+        configuration = source(
+            "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
+        )
+        resolved = section(
+            configuration,
+            "static func resolvedSource(id: String)",
+            "static var availableSources",
+        )
+        self.assertIn('name: "利用できないまど"', resolved)
+        self.assertIn("static func familyWindowExists", resolved)
+
+        entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
+        self.assertIn(
+            "guard emptyStateReason != .sourceUnavailable else { return nil }",
+            entry,
+        )
 
     def test_concrete_family_widget_prefers_catalog_name_to_stale_manifest(self) -> None:
         container = source("Shared/AppGroup/SharedContainer.swift")
@@ -1374,21 +1409,26 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("猫が写る写真や動画から季節のムービー", config)
         self.assertIn("元の写真や動画を変更・削除しません", config)
 
-    def test_received_family_widget_uses_centered_full_bleed_canvases(self) -> None:
+    def test_received_family_widget_uses_cat_focused_full_bleed_canvases(self) -> None:
         plans = source("Shared/Models/WidgetRenderPlan.swift")
-        centered = section(
+        focused = section(
             plans,
             "static func centeredFullBleedPlan(",
             "private static func clampedCropRect",
         )
-        self.assertIn("centeredAt: CGPoint(x: 0.5, y: 0.5)", centered)
-        self.assertIn("compositionMode: .catFullBleed", centered)
+        self.assertIn("static func focusedFullBleedPlan(", focused)
+        self.assertIn("visionBoundingBox: CGRect?", focused)
+        self.assertIn("photoBoundingBox.midX", focused)
+        self.assertIn("focus = CGPoint(x: 0.5, y: 0.5)", focused)
+        self.assertIn("compositionMode: .catFullBleed", focused)
 
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
         publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
-        self.assertEqual(publication.count("centeredFullBleedPlan("), 3)
-        self.assertIn("family-widget-v2-full-bleed-bookmark", builder)
-        self.assertNotIn("family-widget-v3", builder)
+        self.assertEqual(publication.count("focusedFullBleedPlan("), 3)
+        self.assertIn("let catBoundingBox = Self.familyCatBoundingBox", publication)
+        self.assertIn("VNRecognizeAnimalsRequest()", builder)
+        self.assertIn("family-widget-v3-cat-focused-full-bleed", builder)
+        self.assertNotIn("family-widget-v2-full-bleed-bookmark", builder)
         self.assertIn("momentID: source.item.id", publication)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
@@ -1415,7 +1455,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         action_tray = section(
             view,
             "private func actionTray<Content: View>(",
-            "private func directActionLabel(",
+            "/// The private-memory control",
         )
         self.assertNotIn("LinearGradient(", action_tray)
 
@@ -2493,9 +2533,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
         )
         self.assertNotIn("privateWindowDisplayName", home)
-        self.assertIn('"\\(entry.windowDisplayName)に届いた一枚"', widget)
         self.assertIn('"\\(entry.windowDisplayName)に届いた写真"', widget)
         self.assertNotIn('"\\(entry.windowDisplayName)から届いた', widget)
+        self.assertIn("Text(entry.windowDisplayName)", widget)
         self.assertIn('detail: "このまどに届いた最新の一枚"', widget_configuration)
         self.assertIn('name: "このiPhoneの猫写真"', widget_configuration)
         self.assertIn('detail: "このiPhoneで見つけた猫写真"', widget_configuration)

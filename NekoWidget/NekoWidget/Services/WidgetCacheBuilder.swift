@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import UIKit
 import UniformTypeIdentifiers
+@preconcurrency import Vision
 
 struct WidgetCacheBuildResult: Sendable {
     var manifest: WidgetManifest
@@ -543,16 +544,20 @@ actor WidgetCacheBuilder {
                   sourcePixelSize.width <= MomentSharingProtocol.maximumCanonicalPixelDimension,
                   sourcePixelSize.height <= MomentSharingProtocol.maximumCanonicalPixelDimension
             else { throw MomentSharingError.invalidPayload }
+            let catBoundingBox = Self.familyCatBoundingBox(in: normalized)
             let renderPlans = WidgetRenderPlans(
-                small: WidgetRenderPlanner.centeredFullBleedPlan(
+                small: WidgetRenderPlanner.focusedFullBleedPlan(
+                    visionBoundingBox: catBoundingBox,
                     sourcePixelSize: sourcePixelSize,
                     variant: .small
                 ),
-                medium: WidgetRenderPlanner.centeredFullBleedPlan(
+                medium: WidgetRenderPlanner.focusedFullBleedPlan(
+                    visionBoundingBox: catBoundingBox,
                     sourcePixelSize: sourcePixelSize,
                     variant: .medium
                 ),
-                large: WidgetRenderPlanner.centeredFullBleedPlan(
+                large: WidgetRenderPlanner.focusedFullBleedPlan(
+                    visionBoundingBox: catBoundingBox,
                     sourcePixelSize: sourcePixelSize,
                     variant: .large
                 )
@@ -561,7 +566,7 @@ actor WidgetCacheBuilder {
                 guard let output = Self.widgetJPEG(
                     normalizedImage: normalized,
                     renderPlan: renderPlans.plan(for: spec.variant),
-                    catBoundingBox: nil,
+                    catBoundingBox: catBoundingBox,
                     spec: spec
                 ) else { throw MomentSharingError.invalidPayload }
                 return (variant: spec.variant, data: output.data)
@@ -791,7 +796,7 @@ actor WidgetCacheBuilder {
 
     private static func familySourceDigest(for item: MomentInboxItem) -> String {
         let identity = [
-            "family-widget-v2-full-bleed-bookmark",
+            "family-widget-v3-cat-focused-full-bleed",
             item.id,
             String(item.committedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
             String(item.receivedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16)
@@ -799,6 +804,32 @@ actor WidgetCacheBuilder {
         return SHA256.hash(data: Data(identity.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+
+    /// One best-effort, on-device pass for the single received photo being
+    /// published. Detection failure keeps the existing centered full-bleed
+    /// result; it never blocks receipt or sends geometry off the device.
+    private static func familyCatBoundingBox(in image: UIImage) -> CGRect? {
+        guard let cgImage = image.cgImage else { return nil }
+        let request = VNRecognizeAnimalsRequest()
+#if targetEnvironment(simulator)
+        request.usesCPUOnly = true
+#endif
+        do {
+            try VNImageRequestHandler(cgImage: cgImage, options: [:])
+                .perform([request])
+        } catch {
+            return nil
+        }
+        let boxes = (request.results ?? []).compactMap { observation -> CGRect? in
+            guard observation.labels.contains(where: {
+                $0.identifier.caseInsensitiveCompare("cat") == .orderedSame
+                    && $0.confidence >= 0.70
+            }) else { return nil }
+            return observation.boundingBox
+        }
+        guard !boxes.isEmpty else { return nil }
+        return boxes.reduce(CGRect.null) { $0.union($1) }
     }
 
     private static func isLowercaseFamilySourceDigest(_ value: String) -> Bool {

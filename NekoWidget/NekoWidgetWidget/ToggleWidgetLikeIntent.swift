@@ -105,18 +105,28 @@ struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
     @Parameter(title: "表示写真キー")
     var sourceDigest: String
 
+    /// Optional preserves decoding of a button archived by an older Widget.
+    /// An absent value fails closed instead of targeting the currently active
+    /// window, whose selection may have changed since that view was rendered.
+    @Parameter(title: "まどキー")
+    var localWindowID: String?
+
     init() {
         sourceDigest = ""
+        localWindowID = nil
     }
 
-    init(sourceDigest: String) {
+    init(sourceDigest: String, localWindowID: String) {
         self.sourceDigest = sourceDigest
+        self.localWindowID = localWindowID
     }
 
     func perform() async throws -> some IntentResult {
-        guard let momentID = FamilyWidgetActionTargetResolver.momentID(
-            forSourceDigest: sourceDigest
-        ) else {
+        guard let localWindowID,
+              let momentID = FamilyWidgetActionTargetResolver.momentID(
+                  forSourceDigest: sourceDigest,
+                  localWindowID: localWindowID
+              ) else {
             SharedLog.widget.warning(
                 "bookmark",
                 "Stale or invalid Family Widget bookmark action was ignored",
@@ -152,18 +162,30 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
     @Parameter(title: "表示写真キー")
     var sourceDigest: String
 
+    @Parameter(title: "まど")
+    var localWindowID: String?
+
     init() {
         sourceDigest = ""
+        localWindowID = nil
     }
 
     init(sourceDigest: String) {
         self.sourceDigest = sourceDigest
+        localWindowID = nil
+    }
+
+    init(sourceDigest: String, localWindowID: String) {
+        self.sourceDigest = sourceDigest
+        self.localWindowID = localWindowID
     }
 
     func perform() async throws -> some IntentResult {
-        guard let momentID = FamilyWidgetActionTargetResolver.momentID(
-            forSourceDigest: sourceDigest
-        ) else {
+        guard let localWindowID,
+              let momentID = FamilyWidgetActionTargetResolver.momentID(
+                  forSourceDigest: sourceDigest,
+                  localWindowID: localWindowID
+              ) else {
             SharedLog.widget.warning(
                 "reaction",
                 "Stale or invalid Family Widget heart action was ignored",
@@ -210,12 +232,22 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
 /// The opaque moment ID stays in App Group storage and is never an App Intent
 /// parameter.
 private enum FamilyWidgetActionTargetResolver {
-    static func momentID(forSourceDigest sourceDigest: String) -> String? {
-        guard sourceDigest.utf8.count == 64,
+    static func momentID(
+        forSourceDigest sourceDigest: String,
+        localWindowID: String
+    ) -> String? {
+        guard let uuid = UUID(uuidString: localWindowID) else { return nil }
+        let canonicalWindowID = uuid.uuidString.lowercased()
+        guard canonicalWindowID == localWindowID.lowercased(),
+              PrivateWindowCatalogStore.activeEntry()?.localWindowID.lowercased()
+                == canonicalWindowID,
+              sourceDigest.utf8.count == 64,
               sourceDigest.utf8.allSatisfy({
                   ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
               }),
-              let url = SharedContainer.familyWidgetManifestURL,
+              let url = SharedContainer.familyWidgetManifestURL(
+                  localWindowID: canonicalWindowID
+              ),
               let manifest = try? AtomicJSON.read(FamilyWidgetManifest.self, from: url),
               manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
               let item = manifest.item,

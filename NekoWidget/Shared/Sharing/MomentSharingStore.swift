@@ -926,7 +926,7 @@ struct MomentSharingState: Codable, Equatable, Sendable {
 }
 
 enum MomentSharingStateStore {
-    private static let localHistorySeconds: TimeInterval = 90 * 24 * 60 * 60
+    private static let localHistorySeconds = FamilyWidgetManifestItem.maximumDisplayDuration
     private static let maximumPendingOutboxSeconds: TimeInterval = 7 * 24 * 60 * 60
     private static let maximumCommitAmbiguitySeconds: TimeInterval =
         MomentSharingProtocol.commitReplayRetentionSeconds

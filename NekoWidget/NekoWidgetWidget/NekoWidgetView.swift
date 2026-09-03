@@ -70,17 +70,27 @@ struct NekoWidgetView: View {
     private var photoActionButtons: some View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
+           let localWindowID = WidgetPhotoSource.localWindowID(
+               from: entry.photoSourceIdentifier
+           ),
            entry.isBookmarkInteractionEnabled {
             actionTray {
-                if family == .systemSmall {
-                    // Keep the smallest received-photo widget focused on one
-                    // social response. The separate memory mark remains
-                    // available in larger families and never hijacks photo taps.
-                    familyHeartControl(sourceDigest: sourceDigest)
-                } else {
-                    familyMemoryControl
-                    familyHeartControl(sourceDigest: sourceDigest)
+                familyMemoryControl
+                familyHeartControl(
+                    sourceDigest: sourceDigest,
+                    localWindowID: localWindowID
+                )
+            }
+        } else if WidgetPhotoSource.isFamilyWindowSourceID(
+            entry.photoSourceIdentifier
+        ), entry.familyActionsRequireApp, let photoURL = entry.photoURL {
+            actionTray {
+                Link(destination: photoURL) {
+                    openInAppLabel
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("この写真をアプリで開く")
+                .accessibilityHint("このまどを選び、写真の操作を続けます")
             }
         } else if let localIdentifier = entry.localIdentifier,
                   entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
@@ -110,53 +120,50 @@ struct NekoWidgetView: View {
 
     @ViewBuilder
     private var familyMemoryControl: some View {
-        if entry.isBookmarked {
-            memoryMark(isSelected: true)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("思い出に残した写真")
-            .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
-        } else if let memoryActionURL = entry.memoryActionURL {
+        if let memoryActionURL = entry.memoryActionURL {
             Link(destination: memoryActionURL) {
-                memoryMark(isSelected: false)
+                memoryMark(isSelected: entry.isBookmarked)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("写真アプリに取り込んで残す")
-            .accessibilityHint("写真アプリへの取り込みを確認するため、アプリを開きます")
+            .accessibilityLabel(
+                entry.isBookmarked
+                    ? "思い出に残した写真"
+                    : "写真アプリに取り込んで残す"
+            )
+            .accessibilityHint(
+                entry.isBookmarked
+                    ? "アプリでこの写真を開きます"
+                    : "写真アプリへの取り込みを確認するため、アプリを開きます"
+            )
         }
     }
 
     @ViewBuilder
-    private func familyHeartControl(sourceDigest: String) -> some View {
+    private func familyHeartControl(
+        sourceDigest: String,
+        localWindowID: String
+    ) -> some View {
         switch entry.familyHeartStatus {
         case .ready:
-            Button(intent: SendFamilyWidgetHeartIntent(sourceDigest: sourceDigest)) {
-                directActionLabel(
-                    title: "ハート",
-                    systemImage: "heart",
-                    invalidatesContent: true
+            Button(
+                intent: SendFamilyWidgetHeartIntent(
+                    sourceDigest: sourceDigest,
+                    localWindowID: localWindowID
                 )
+            ) {
+                heartMark(status: .ready)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("ハートを送る")
             .accessibilityHint("このiPhoneで送信待ちにし、アプリの同期後に送ります")
         case .pending:
-            statusBadge(
-                title: "待機中",
-                systemImage: "clock",
-                style: .pending,
-                invalidatesContent: true
-            )
+            heartMark(status: .pending)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートは送信待ちです")
+            .accessibilityLabel("ハートを送っています")
         case .serverAccepted:
-            statusBadge(
-                title: "受付済み",
-                systemImage: "checkmark.circle.fill",
-                style: .completed,
-                invalidatesContent: true
-            )
+            heartMark(status: .serverAccepted)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートを送信しました")
+            .accessibilityLabel("ハートを送りました")
             .accessibilityHint("相手が確認したことを示す表示ではありません")
         case .hidden:
             EmptyView()
@@ -173,40 +180,6 @@ struct NekoWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.horizontal, actionButtonInset)
         .padding(.bottom, actionButtonInset)
-    }
-
-    private func directActionLabel(
-        title: String,
-        systemImage: String,
-        invalidatesContent: Bool = false
-    ) -> some View {
-        HStack(spacing: 4) {
-            if invalidatesContent {
-                Image(systemName: systemImage)
-                    .invalidatableContent()
-            } else {
-                Image(systemName: systemImage)
-            }
-            Text(title)
-                .lineLimit(1)
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .frame(height: family == .systemSmall ? 34 : 32)
-        .background(
-            Color.black.opacity(0.64),
-            in: Capsule()
-        )
-        .overlay {
-            Capsule()
-                .stroke(
-                    Color.white.opacity(0.30),
-                    lineWidth: 0.75
-                )
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
     }
 
     /// The private-memory control stays in exactly the same place before and
@@ -236,49 +209,58 @@ struct NekoWidgetView: View {
         .contentShape(Rectangle())
     }
 
-    /// Pending and completed values are compact, noninteractive status badges.
-    /// Their rounded rectangles deliberately differ from action capsules.
-    private func statusBadge(
-        title: String,
-        systemImage: String,
-        style: WidgetStatusBadgeStyle,
-        invalidatesContent: Bool = false
-    ) -> some View {
-        HStack(spacing: 4) {
-            if invalidatesContent {
-                Image(systemName: systemImage)
-                    .invalidatableContent()
-            } else {
-                Image(systemName: systemImage)
+    private func heartMark(status: FamilyWidgetHeartStatus) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: status == .serverAccepted ? "heart.fill" : "heart")
+                .invalidatableContent()
+
+            if status == .pending {
+                Image(systemName: "clock.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .padding(1.5)
+                    .background(Color.black.opacity(0.82), in: Circle())
+                    .offset(x: 2, y: 2)
             }
-            Text(title)
-                .lineLimit(1)
         }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(.white.opacity(style == .pending ? 0.82 : 0.94))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(
-            Color.black.opacity(style == .pending ? 0.58 : 0.50),
-            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-        )
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.white)
+        .frame(width: 32, height: 32)
+        .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.75)
+            Circle()
+                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
         }
-        .fixedSize()
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+
+    private var openInAppLabel: some View {
+        Label("開く", systemImage: "arrow.up.forward.app")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(Color.black.opacity(0.64), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
+            }
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
     }
 
     @ViewBuilder
     private var familySourceLabel: some View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            entry.cacheFilename != nil {
-            Text(entry.familyMomentIsFresh
-                ? "いま届いた・\(entry.windowDisplayName)"
-                : "\(entry.windowDisplayName)に届いた一枚")
+            Text(entry.windowDisplayName)
                 .font(.caption2.bold())
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .truncationMode(.tail)
+                .frame(
+                    maxWidth: family == .systemSmall ? 112 : 220,
+                    alignment: .leading
+                )
                 .foregroundStyle(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -342,7 +324,7 @@ struct NekoWidgetView: View {
                     .multilineTextAlignment(.center)
                     .foregroundStyle(QuietWindowPalette.cream.opacity(0.96))
 
-                Text("アプリを開いて確認")
+                Text(emptyStateSubtitle)
                     .font(family == .systemSmall ? .caption2 : .caption)
                     .foregroundStyle(QuietWindowPalette.cream.opacity(0.62))
             }
@@ -350,14 +332,27 @@ struct NekoWidgetView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(emptyStateTitle)。アプリを開いて確認")
+        .accessibilityLabel("\(emptyStateTitle)。\(emptyStateSubtitle)")
     }
 
     private var emptyStateTitle: String {
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
-            return "\(entry.windowDisplayName)の一枚を待っています"
+        if entry.emptyStateReason == .sourceUnavailable {
+            return "このまどは利用できません"
         }
-        return "猫の一枚を待っています"
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+            return "まだ届いていません"
+        }
+        return "写真を準備しています"
+    }
+
+    private var emptyStateSubtitle: String {
+        if entry.emptyStateReason == .sourceUnavailable {
+            return "ウィジェットを編集してください"
+        }
+        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+            return entry.windowDisplayName
+        }
+        return "タップしてアプリを開く"
     }
 
     private var emptyStateMarkSize: CGFloat {
@@ -442,11 +437,6 @@ private struct QuietWindowOpening: Shape {
     }
 }
 
-private enum WidgetStatusBadgeStyle {
-    case pending
-    case completed
-}
-
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
 /// A workflow-gated Widget Gallery preview. It is compiled only in Debug and
 /// only when the manual screenshot workflow injects its dedicated compiler
@@ -463,13 +453,14 @@ enum AppStoreWidgetPreviewFixture {
             photoSourceIdentifier: WidgetPhotoSource.personalLibraryID,
             familySourceDigest: nil,
             usesFamilySpecificImage: true,
-            familyMomentIsFresh: false,
             windowDisplayName: PrivateWindowDisplayName.fallback,
             isLiked: false,
             isLikeInteractionEnabled: false,
             isBookmarked: false,
             isBookmarkInteractionEnabled: false,
-            familyHeartStatus: .hidden
+            familyHeartStatus: .hidden,
+            familyActionsRequireApp: false,
+            emptyStateReason: .none
         )
     }
 

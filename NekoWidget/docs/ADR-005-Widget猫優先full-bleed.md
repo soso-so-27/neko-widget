@@ -6,7 +6,7 @@
 
 > **2026-08-17追記：** Build 7の表示判断は維持するが、1週間計測はLike表示不具合で中断し、再計測案も結果が製品判断を変えないため同日に撤回した。Build 8で実ピクセル相当へ高解像度化したところ、20件Timelineの累積描画負荷でMedium / Largeがplaceholder相当になった。画像仕様は維持し、Build 9でTimelineを最大2件へ制限する。[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)をresource設計の正本とする。
 
-> **2026-09-03追記：** 実機で例外fallbackと旧cacheに余白が残ることを再確認した。現行の製品判断は全familyの全面表示を優先し、猫全体を収められない場合も中央の鮮明なaspect-fillとする。旧単一画像もWidget側でaspect-fillし、黒帯・空白・ぼかし帯を表示しない。以下のぼかしfallback記述はBuild 8時点の履歴として残す。
+> **2026-09-03追記：** 実機で例外fallbackと旧cacheに余白が残ることを再確認した。現行の製品判断は全familyの全面表示を優先し、旧単一画像もWidget側でaspect-fillして黒帯・空白・ぼかし帯を表示しない。まどから届いた一枚はHost appで一度だけ猫の範囲を検出し、その範囲へ寄せた鮮明なaspect-fillをfamily別に作る。検出できない場合だけ中央を使う。以下のぼかしfallback記述はBuild 8時点の履歴として残す。
 
 ## 背景
 

@@ -30,7 +30,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
 #endif
         let source = configuration.photoSource ?? .personalLibrary
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
-            guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
+            guard WidgetPhotoSource.familyWindowSourceIsEnabled,
+                  WidgetPhotoSource.familyWindowExists(for: source.id) else {
                 let localWindowID = WidgetPhotoSource.localWindowID(
                     from: source.id
                 )
@@ -40,7 +41,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                     photoSourceIdentifier: source.id,
                     windowDisplayName: WidgetManifestReader.familyWindowDisplayName(
                         localWindowID: localWindowID
-                    )
+                    ),
+                    emptyStateReason: .sourceUnavailable
                 )
             }
             return familySnapshot(
@@ -95,13 +97,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             photoSourceIdentifier: source.id,
             familySourceDigest: nil,
             usesFamilySpecificImage: item.cacheFilenames != nil,
-            familyMomentIsFresh: false,
             windowDisplayName: PrivateWindowDisplayName.fallback,
             isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
             isLikeInteractionEnabled: likeState.isInteractionReady,
             isBookmarked: false,
             isBookmarkInteractionEnabled: false,
-            familyHeartStatus: .hidden
+            familyHeartStatus: .hidden,
+            familyActionsRequireApp: false,
+            emptyStateReason: .none
         )
     }
 
@@ -119,7 +122,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
 #endif
         let source = configuration.photoSource ?? .personalLibrary
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
-            guard WidgetPhotoSource.familyWindowSourceIsEnabled else {
+            guard WidgetPhotoSource.familyWindowSourceIsEnabled,
+                  WidgetPhotoSource.familyWindowExists(for: source.id) else {
                 let localWindowID = WidgetPhotoSource.localWindowID(
                     from: source.id
                 )
@@ -131,7 +135,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                             photoSourceIdentifier: source.id,
                             windowDisplayName: WidgetManifestReader.familyWindowDisplayName(
                                 localWindowID: localWindowID
-                            )
+                            ),
+                            emptyStateReason: .sourceUnavailable
                         )
                     ],
                     policy: .never
@@ -193,13 +198,14 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 photoSourceIdentifier: source.id,
                 familySourceDigest: nil,
                 usesFamilySpecificImage: item.cacheFilenames != nil,
-                familyMomentIsFresh: false,
                 windowDisplayName: PrivateWindowDisplayName.fallback,
                 isLiked: likeState.records[item.localIdentifier]?.isLiked ?? false,
                 isLikeInteractionEnabled: likeState.isInteractionReady,
                 isBookmarked: false,
                 isBookmarkInteractionEnabled: false,
-                familyHeartStatus: .hidden
+                familyHeartStatus: .hidden,
+                familyActionsRequireApp: false,
+                emptyStateReason: .none
             )
         }
 
@@ -301,26 +307,19 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             )
         }
 
-        var entries = [familyEntry(
+        let entries = [familyEntry(
             item: item,
             date: now,
             variant: variant,
             now: now,
             windowDisplayName: windowDisplayName,
             photoSourceIdentifier: photoSourceIdentifier
+        ), .empty(
+            at: item.displayUntil,
+            imageVariant: variant,
+            photoSourceIdentifier: photoSourceIdentifier,
+            windowDisplayName: windowDisplayName
         )]
-        if now >= item.receivedAt, now < item.freshUntil {
-            entries.append(
-                familyEntry(
-                    item: item,
-                    date: item.freshUntil,
-                    variant: variant,
-                    now: item.freshUntil,
-                    windowDisplayName: windowDisplayName,
-                    photoSourceIdentifier: photoSourceIdentifier
-                )
-            )
-        }
         SharedLog.widget.info(
             "timeline",
             "Family timeline prepared",
@@ -358,14 +357,29 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             photoSourceIdentifier: photoSourceIdentifier,
             familySourceDigest: item.sourceDigest,
             usesFamilySpecificImage: true,
-            familyMomentIsFresh: now >= item.receivedAt && now < item.freshUntil,
             windowDisplayName: windowDisplayName,
             isLiked: false,
             isLikeInteractionEnabled: false,
             isBookmarked: interactionState?.isSavedMemory ?? false,
             isBookmarkInteractionEnabled: interactionState != nil,
-            familyHeartStatus: heartStatus
+            familyHeartStatus: heartStatus,
+            familyActionsRequireApp: familyWindowIsInactive(
+                photoSourceIdentifier: photoSourceIdentifier
+            ),
+            emptyStateReason: .none
         )
+    }
+
+    private func familyWindowIsInactive(photoSourceIdentifier: String) -> Bool {
+        guard let boundWindowID = WidgetPhotoSource.localWindowID(
+            from: photoSourceIdentifier
+        ),
+        PrivateWindowCatalogStore.widgetEntries().contains(where: {
+            $0.localWindowID == boundWindowID
+        }) else {
+            return false
+        }
+        return PrivateWindowCatalogStore.activeEntry()?.localWindowID != boundWindowID
     }
 
     private func familyInteractionState(

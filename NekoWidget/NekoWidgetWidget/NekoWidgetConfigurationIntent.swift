@@ -8,7 +8,7 @@ import Foundation
 /// intent's parameter type. WidgetKit persists the entity ID independently for
 /// every widget instance placed on the Home Screen.
 struct WidgetPhotoSource: AppEntity {
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "写真源"
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "表示する写真"
     static let defaultQuery = WidgetPhotoSourceQuery()
 
     static let personalLibraryID = "personal-library"
@@ -61,12 +61,35 @@ struct WidgetPhotoSource: AppEntity {
     static func resolvedSource(id: String) -> WidgetPhotoSource? {
         if id == personalLibraryID { return .personalLibrary }
         if id == familyWindowID { return .familyWindow }
-        guard let localWindowID = localWindowID(from: id),
-              let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
-                  $0.localWindowID == localWindowID
-              })
-        else { return nil }
-        return familyWindow(entry)
+        guard let localWindowID = localWindowID(from: id) else { return nil }
+        if let entry = PrivateWindowCatalogStore.widgetEntries().first(where: {
+            $0.localWindowID == localWindowID
+        }) {
+            return familyWindow(entry)
+        }
+        // WidgetKit can ask for an entity after its window was removed. Keep a
+        // family-shaped tombstone instead of returning nil: nil is also the
+        // new-widget default and would otherwise retarget an existing Widget
+        // to this iPhone's personal photos.
+        return WidgetPhotoSource(
+            id: id,
+            name: "利用できないまど",
+            detail: "ウィジェットを編集してください"
+        )
+    }
+
+    static func familyWindowExists(for sourceID: String) -> Bool {
+        if sourceID == familyWindowID {
+            return legacyWidgetEntryExists
+        }
+        guard let localWindowID = localWindowID(from: sourceID) else { return false }
+        return PrivateWindowCatalogStore.widgetEntries().contains {
+            $0.localWindowID == localWindowID
+        }
+    }
+
+    private static var legacyWidgetEntryExists: Bool {
+        PrivateWindowCatalogStore.legacyWidgetEntry() != nil
     }
 
     /// Add future selectable sources here, or replace this with App Group data.
@@ -128,9 +151,9 @@ struct WidgetPhotoSourceQuery: EntityQuery {
 /// This intent selects what a widget instance displays; the toggle intent is a
 /// private action performed by the paw button on an already-resolved entry.
 struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "写真源を選ぶ"
+    static var title: LocalizedStringResource = "表示する写真を選ぶ"
     static var description = IntentDescription(
-        "ウィジェットに表示する猫の写真源を選びます。"
+        "このiPhoneの猫写真、またはまどに届いた一枚を選びます。"
     )
     // This intent belongs to WidgetKit's edit UI, not Siri or Shortcuts.
     static var isDiscoverable = false
@@ -138,7 +161,7 @@ struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
     // WidgetConfigurationIntent parameters must be optional. WidgetKit uses
     // the query's default result for a newly placed widget; the provider also
     // resolves nil to the one source available in Build 6.
-    @Parameter(title: "写真源")
+    @Parameter(title: "表示する写真")
     var photoSource: WidgetPhotoSource?
 
     init() {}

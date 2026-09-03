@@ -154,6 +154,11 @@ struct WidgetManifest: Codable, Equatable, Sendable {
 /// cryptographic identifier. `sourceDigest` keeps cache generations stable and
 /// is the only value serialized into the Widget's private App Intent.
 struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
+    /// Received photos are a device-local cache, not permanent storage. Keep
+    /// the Widget on the same absolute 90-day boundary as the inbox even when
+    /// the host app is not launched often enough to prune its files.
+    static let maximumDisplayDuration: TimeInterval = 90 * 24 * 60 * 60
+
     var sourceDigest: String
     /// Optional keeps manifests written before Widget actions decodable. A
     /// missing or malformed value hides both controls without hiding the photo.
@@ -161,6 +166,10 @@ struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
     var cacheFilenames: WidgetCacheFilenames
     var receivedAt: Date
     var freshUntil: Date
+
+    var displayUntil: Date {
+        receivedAt.addingTimeInterval(Self.maximumDisplayDuration)
+    }
 
     var hasValidBookmarkTarget: Bool {
         guard let momentID else { return false }

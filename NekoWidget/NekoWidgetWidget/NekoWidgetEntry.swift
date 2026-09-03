@@ -8,6 +8,12 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
     case serverAccepted
 }
 
+enum WidgetEmptyStateReason: Equatable, Sendable {
+    case none
+    case waiting
+    case sourceUnavailable
+}
+
 /// Timeline entries intentionally carry references only. WidgetKit may render
 /// every future entry while accepting a timeline, so the provider also bounds
 /// each timeline to two entries instead of relying on lazy view evaluation.
@@ -19,19 +25,21 @@ struct NekoWidgetEntry: TimelineEntry {
     let photoSourceIdentifier: String
     let familySourceDigest: String?
     let usesFamilySpecificImage: Bool
-    let familyMomentIsFresh: Bool
     let windowDisplayName: String
     let isLiked: Bool
     let isLikeInteractionEnabled: Bool
     let isBookmarked: Bool
     let isBookmarkInteractionEnabled: Bool
     let familyHeartStatus: FamilyWidgetHeartStatus
+    let familyActionsRequireApp: Bool
+    let emptyStateReason: WidgetEmptyStateReason
 
     static func empty(
         at date: Date,
         imageVariant: WidgetImageVariant? = nil,
         photoSourceIdentifier: String = WidgetPhotoSource.personalLibraryID,
-        windowDisplayName: String = PrivateWindowDisplayName.fallback
+        windowDisplayName: String = PrivateWindowDisplayName.fallback,
+        emptyStateReason: WidgetEmptyStateReason = .waiting
     ) -> NekoWidgetEntry {
         NekoWidgetEntry(
             date: date,
@@ -41,17 +49,19 @@ struct NekoWidgetEntry: TimelineEntry {
             photoSourceIdentifier: photoSourceIdentifier,
             familySourceDigest: nil,
             usesFamilySpecificImage: false,
-            familyMomentIsFresh: false,
             windowDisplayName: windowDisplayName,
             isLiked: false,
             isLikeInteractionEnabled: false,
             isBookmarked: false,
             isBookmarkInteractionEnabled: false,
-            familyHeartStatus: .hidden
+            familyHeartStatus: .hidden,
+            familyActionsRequireApp: false,
+            emptyStateReason: emptyStateReason
         )
     }
 
     var photoURL: URL? {
+        guard emptyStateReason != .sourceUnavailable else { return nil }
         if WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier) {
             guard let localWindowID = WidgetPhotoSource.localWindowID(
                 from: photoSourceIdentifier
@@ -78,7 +88,7 @@ struct NekoWidgetEntry: TimelineEntry {
 
     /// A received photo's explicit “思い出に残す” route. Keep this separate
     /// from `photoURL`: tapping the photo itself opens that photo without
-    /// starting an action, while the labeled control asks for memory-save
+    /// starting an action, while the bookmark control asks for memory-save
     /// confirmation for the same exact window/photo pair.
     var memoryActionURL: URL? {
         guard WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier),
