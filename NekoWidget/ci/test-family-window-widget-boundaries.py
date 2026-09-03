@@ -241,9 +241,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func directActionLabel(",
         )
         self.assertIn("Spacer(minLength: 0)", action_tray)
-        self.assertIn("if family != .systemSmall", action_tray)
-        self.assertIn("LinearGradient(", action_tray)
-        self.assertIn(".frame(height: 54)", action_tray)
+        self.assertNotIn("LinearGradient(", action_tray)
+        self.assertNotIn(".frame(height: 54)", action_tray)
 
         intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
         personal_intent = section(
@@ -1311,13 +1310,32 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("momentID: source.item.id", publication)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        family_image = section(
+        photo_image = section(
             view,
-            "if entry.usesFamilySpecificImage",
-            "} else {\n                            // During an app/extension update",
+            "// Every photo fills the Widget",
+            ".accessibilityElement(children: .ignore)",
         )
-        self.assertIn(".scaledToFill()", family_image)
-        self.assertIn(".clipped()", family_image)
+        self.assertIn(".scaledToFill()", photo_image)
+        self.assertIn(".clipped()", photo_image)
+        self.assertNotIn(".scaledToFit()", view)
+
+        rendered = section(
+            builder,
+            "private static func renderedWidgetImage(",
+            "private static func drawRect(",
+        )
+        self.assertIn("let rendered = aspectFillImage(image, size: size)", rendered)
+        self.assertIn("aspectFillScale(imageSize: image.size, canvasSize: size)", rendered)
+        self.assertNotIn("gaussianBlurredImage(", rendered)
+        self.assertNotIn("aspectFitRect(", rendered)
+        self.assertIn('cacheRenderingRevision = "edge-to-edge-v1"', builder)
+
+        action_tray = section(
+            view,
+            "private func actionTray<Content: View>(",
+            "private func directActionLabel(",
+        )
+        self.assertNotIn("LinearGradient(", action_tray)
 
     def test_unknown_source_does_not_fall_back_to_personal(self) -> None:
         reader = source("NekoWidgetWidget/WidgetManifestReader.swift")

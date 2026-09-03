@@ -1,5 +1,4 @@
 import CryptoKit
-import CoreImage
 import Foundation
 import ImageIO
 import UIKit
@@ -41,6 +40,10 @@ private struct FamilyWidgetSourceSnapshot: Sendable {
 
 actor WidgetCacheBuilder {
     private static let historyFilename = "widget-cache-history.json"
+    /// Local cache-only revision. Keep this separate from the encrypted sharing
+    /// geometry version: changing the visual fallback must rebuild existing
+    /// personal JPEGs without making otherwise compatible peers disagree.
+    private static let cacheRenderingRevision = "edge-to-edge-v1"
     /// The migration-safe maximum is 380 distinct files: new manifest 60,
     /// previous active manifest 60, grace generation 60, three pre-Build-8
     /// family leases of up to 60 each, and the Build-4 legacy lease of 20.
@@ -210,7 +213,6 @@ actor WidgetCacheBuilder {
                         visionBoundingBox: record.cat.boundingBox?.cgRect,
                         sourcePixelSize: sourcePixelSize
                     )
-                    let ciContext = Self.makeCIContext()
                     var files: [(
                         variant: WidgetImageVariant,
                         data: Data,
@@ -229,8 +231,7 @@ actor WidgetCacheBuilder {
                                 normalizedImage: normalized,
                                 renderPlan: renderPlans.plan(for: spec.variant),
                                 catBoundingBox: record.cat.boundingBox?.cgRect,
-                                spec: spec,
-                                ciContext: ciContext
+                                spec: spec
                             )
                         }
                         guard let output else {
@@ -556,14 +557,12 @@ actor WidgetCacheBuilder {
                     variant: .large
                 )
             )
-            let ciContext = Self.makeCIContext()
             return try Self.RenderSpec.all.map { spec in
                 guard let output = Self.widgetJPEG(
                     normalizedImage: normalized,
                     renderPlan: renderPlans.plan(for: spec.variant),
                     catBoundingBox: nil,
-                    spec: spec,
-                    ciContext: ciContext
+                    spec: spec
                 ) else { throw MomentSharingError.invalidPayload }
                 return (variant: spec.variant, data: output.data)
             }
@@ -1127,6 +1126,7 @@ actor WidgetCacheBuilder {
         } ?? "no-modification-date"
         let identity = [
             WidgetRenderPlanner.rendererVersion,
+            Self.cacheRenderingRevision,
             variant.rawValue,
             RenderSpec.spec(for: variant).pixelDescription,
             record.localIdentifier,
@@ -1175,16 +1175,15 @@ actor WidgetCacheBuilder {
 
     /// Produces a family-sized JPEG that fills the canvas with a sharp crop
     /// guided only by the existing cat union. Small and Large preserve the cat
-    /// plus margin, falling back to Build 5's blurred fit only when geometry
-    /// makes that impossible. Medium remains full-bleed and favors the upper
+    /// plus margin when possible and otherwise use a centered sharp fill.
+    /// Medium remains full-bleed and favors the upper
     /// part of an oversized cat union. No face detection, subject lifting, or
     /// semantic composition runs here or in the Widget extension.
     private static func widgetJPEG(
         normalizedImage image: UIImage,
         renderPlan: WidgetFamilyRenderPlan,
         catBoundingBox: CGRect?,
-        spec: RenderSpec,
-        ciContext: CIContext
+        spec: RenderSpec
     ) -> (
         data: Data,
         compositionMode: WidgetCompositionMode,
@@ -1194,8 +1193,7 @@ actor WidgetCacheBuilder {
         let rendered = renderedWidgetImage(
             image: image,
             renderPlan: renderPlan,
-            size: spec.size,
-            ciContext: ciContext
+            size: spec.size
         )
         guard let data = jpegData(
             rendered.image,
@@ -1228,8 +1226,7 @@ actor WidgetCacheBuilder {
     private static func renderedWidgetImage(
         image: UIImage,
         renderPlan: WidgetFamilyRenderPlan,
-        size: CGSize,
-        ciContext: CIContext
+        size: CGSize
     ) -> (image: UIImage, compositionMode: WidgetCompositionMode, renderScale: CGFloat) {
         if renderPlan.compositionMode != .blurredFitFallback {
             let normalizedRect = renderPlan.sourceRect.cgRect
@@ -1256,24 +1253,14 @@ actor WidgetCacheBuilder {
             )
         }
 
-        let background = aspectFillImage(image, size: size)
-        let blurredBackground = gaussianBlurredImage(
-            background,
-            radius: 18,
-            ciContext: ciContext
-        ) ?? background
-
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            blurredBackground.draw(in: CGRect(origin: .zero, size: size))
-            image.draw(in: aspectFitRect(imageSize: image.size, canvasSize: size))
-        }
+        // `blurredFitFallback` remains a wire-compatible plan value for older
+        // sharing records, but the product display no longer letterboxes a
+        // photo. A centered aspect-fill is deterministic and always edge-to-edge.
+        let rendered = aspectFillImage(image, size: size)
         return (
             rendered,
             .blurredFitFallback,
-            aspectFitScale(imageSize: image.size, canvasSize: size)
+            aspectFillScale(imageSize: image.size, canvasSize: size)
         )
     }
 
@@ -1316,58 +1303,11 @@ actor WidgetCacheBuilder {
         }
     }
 
-    private static func gaussianBlurredImage(
-        _ image: UIImage,
-        radius: CGFloat,
-        ciContext: CIContext
-    ) -> UIImage? {
-        guard let input = CIImage(image: image) else { return nil }
-        let extent = input.extent
-        let output = input
-            .clampedToExtent()
-            .applyingFilter(
-                "CIGaussianBlur",
-                parameters: [kCIInputRadiusKey: radius]
-            )
-            .cropped(to: extent)
-        guard let cgImage = ciContext.createCGImage(output, from: extent) else { return nil }
-        return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
-    }
-
-    private static func makeCIContext() -> CIContext {
-        var options: [CIContextOption: Any] = [.cacheIntermediates: false]
-        #if targetEnvironment(simulator)
-        // Hosted Simulators do not always expose a stable Metal device. The
-        // production device keeps Core Image's normal hardware renderer.
-        options[.useSoftwareRenderer] = true
-        #endif
-        return CIContext(options: options)
-    }
-
-    private static func aspectFitRect(imageSize: CGSize, canvasSize: CGSize) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else {
-            return CGRect(origin: .zero, size: canvasSize)
-        }
-        let scale = aspectFitScale(imageSize: imageSize, canvasSize: canvasSize)
-        let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        return CGRect(
-            x: (canvasSize.width - drawSize.width) / 2,
-            y: (canvasSize.height - drawSize.height) / 2,
-            width: drawSize.width,
-            height: drawSize.height
-        )
-    }
-
-    private static func aspectFitScale(imageSize: CGSize, canvasSize: CGSize) -> CGFloat {
-        guard imageSize.width > 0, imageSize.height > 0 else { return .infinity }
-        return min(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
-    }
-
     private static func aspectFillRect(imageSize: CGSize, canvasSize: CGSize) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGRect(origin: .zero, size: canvasSize)
         }
-        let scale = max(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
+        let scale = aspectFillScale(imageSize: imageSize, canvasSize: canvasSize)
         let drawSize = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
         return CGRect(
             x: (canvasSize.width - drawSize.width) / 2,
@@ -1375,6 +1315,11 @@ actor WidgetCacheBuilder {
             width: drawSize.width,
             height: drawSize.height
         )
+    }
+
+    private static func aspectFillScale(imageSize: CGSize, canvasSize: CGSize) -> CGFloat {
+        guard imageSize.width > 0, imageSize.height > 0 else { return .infinity }
+        return max(canvasSize.width / imageSize.width, canvasSize.height / imageSize.height)
     }
 
     private static func jpegData(_ image: UIImage, targetByteCount: Int) -> Data? {

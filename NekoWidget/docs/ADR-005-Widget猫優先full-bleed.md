@@ -6,6 +6,8 @@
 
 > **2026-08-17追記：** Build 7の表示判断は維持するが、1週間計測はLike表示不具合で中断し、再計測案も結果が製品判断を変えないため同日に撤回した。Build 8で実ピクセル相当へ高解像度化したところ、20件Timelineの累積描画負荷でMedium / Largeがplaceholder相当になった。画像仕様は維持し、Build 9でTimelineを最大2件へ制限する。[ADR-008](ADR-008-高解像度WidgetのTimeline負荷制限.md)をresource設計の正本とする。
 
+> **2026-09-03追記：** 実機で例外fallbackと旧cacheに余白が残ることを再確認した。現行の製品判断は全familyの全面表示を優先し、猫全体を収められない場合も中央の鮮明なaspect-fillとする。旧単一画像もWidget側でaspect-fillし、黒帯・空白・ぼかし帯を表示しない。以下のぼかしfallback記述はBuild 8時点の履歴として残す。
+
 ## 背景
 
 Build 5では、写真全体を鮮明なまま残し、family比率で余る領域を同じ写真のぼかしで埋めた。実機のLarge Widgetでは、横写真の上下に常設のぼかし帯が生じ、「カードの中にもう一枚カードがある」ように見えて没入感が不足した。
@@ -81,8 +83,9 @@ Build 8で画像構図と写真詳細体験の改善を打ち止めとする。B
 
 - 通常経路ではSmall / Medium / Largeの端まで鮮明な写真が入り、黒帯・空白・常設ぼかし帯がない
 - Small / Largeは猫union＋8%余白を収容可能な限り切らない
-- Small / Largeで収容不能な場合だけ、猫全体を残すぼかしfallbackになる
+- Small / Largeで収容不能な場合も、猫の一部が切れることを許容して鮮明なaspect-fillで全面を埋める
 - Mediumは収容不能でもfull-bleedを維持し、bboxの上側を焦点にする
+- 更新中に旧単一画像が残ってもWidget側のaspect-fillにより黒帯・空白を出さない
 - Vision座標の上下反転、写真の回転・伸長・縦横比破壊がない
 - 3 familyが500×500／1050×500／1050×1100で、JPEGが100／200／220KiB以下となり、最大20件のmanifest、App Group leaseと原子的publishを維持する
 - source requestが2048×2048で、Widgetは1枚を5MiB以下、最大2件のTimeline合計をfamilyごとに10MiB以下でデコードする

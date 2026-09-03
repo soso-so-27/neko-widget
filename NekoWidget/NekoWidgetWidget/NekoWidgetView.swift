@@ -29,25 +29,15 @@ struct NekoWidgetView: View {
                     ZStack {
                         Color(red: 0.12, green: 0.10, blue: 0.09)
 
-                        if entry.usesFamilySpecificImage {
-                            // The app precomposes the family canvas: normally a
-                            // sharp cat-aware full-bleed crop, with blurred fit
-                            // retained only for geometric fallback.
-                            Image(uiImage: image)
-                                .resizable()
-                                .interpolation(.high)
-                                .scaledToFill()
-                                .frame(width: proxy.size.width, height: proxy.size.height)
-                                .clipped()
-                        } else {
-                            // During an app/extension update, an old manifest can
-                            // still point at the legacy square. Avoid recropping it.
-                            Image(uiImage: image)
-                                .resizable()
-                                .interpolation(.high)
-                                .scaledToFit()
-                                .frame(width: proxy.size.width, height: proxy.size.height)
-                        }
+                        // Every photo fills the Widget, including a legacy cache
+                        // briefly retained while the app and extension update.
+                        // Keep the source ratio and crop only the overflow.
+                        Image(uiImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFill()
+                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .clipped()
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
@@ -183,17 +173,6 @@ struct NekoWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.horizontal, actionButtonInset)
         .padding(.bottom, actionButtonInset)
-        .background(alignment: .bottom) {
-            if family != .systemSmall {
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.42)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 54)
-                .allowsHitTesting(false)
-            }
-        }
     }
 
     private func directActionLabel(
