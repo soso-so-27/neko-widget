@@ -86,6 +86,28 @@ enum WidgetManifestReader {
         return item
     }
 
+    /// Returns only an actionable, coarse reason. A valid empty manifest and
+    /// an expired temporary photo are normal waiting states; absent or
+    /// unreadable metadata/cache requires the host app to rebuild safely.
+    static func familyEmptyStateReason(
+        localWindowID: String?,
+        now: Date = .now
+    ) -> WidgetEmptyStateReason {
+        guard let manifestURL = SharedContainer.familyWidgetManifestURL(
+                  localWindowID: localWindowID
+              )
+        else { return .needsApp }
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else {
+            return .needsApp
+        }
+        guard let manifest = readFamilyManifest(from: manifestURL),
+              manifest.schemaVersion == FamilyWidgetManifest.schemaVersion
+        else { return .needsApp }
+        guard let item = manifest.item else { return .waiting }
+        guard now < item.displayUntil else { return .waiting }
+        return .needsApp
+    }
+
     /// The name is presentation-only and remains available even when the
     /// paired window has not received a photo yet. Invalid or pre-naming
     /// manifests fall back without hiding an otherwise valid image.

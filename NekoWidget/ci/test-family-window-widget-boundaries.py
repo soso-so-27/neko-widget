@@ -256,7 +256,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn('Label("ハート"', view)
         self.assertNotIn('Text("待機中")', view)
         self.assertNotIn('Text("受付済み")', view)
-        self.assertIn("このiPhoneで送信待ちにし、アプリの同期後に送ります", view)
+        self.assertIn("アプリを開き、認証済みの同期で送ります", view)
         self.assertIn("相手が確認したことを示す表示ではありません", view)
         self.assertNotIn("foregroundStyle(.pink)", view)
         self.assertNotIn("Color.accentColor.opacity(0.92)", view)
@@ -279,8 +279,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         pending = section(heart_control, "case .pending:", "case .serverAccepted:")
         accepted = section(heart_control, "case .serverAccepted:", "case .hidden:")
+        hidden = heart_control.split("case .hidden:", 1)[1]
         self.assertIn("heartMark(status: .pending)", pending)
         self.assertIn("heartMark(status: .serverAccepted)", accepted)
+        self.assertIn("Color.clear", hidden)
+        self.assertIn(".frame(width: 44, height: 44)", hidden)
         for noninteractive_status in (pending, accepted):
             self.assertNotIn("Button(", noninteractive_status)
             self.assertNotIn("Link(", noninteractive_status)
@@ -288,6 +291,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
 
         heart_intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
         self.assertIn("var localWindowID: String?", heart_intent)
+        self.assertIn("static var openAppWhenRun = true", heart_intent)
         self.assertIn("guard let localWindowID", heart_intent)
         self.assertIn("localWindowID: localWindowID", heart_intent)
         self.assertIn("PrivateWindowCatalogStore.activeEntry()", heart_intent)
@@ -380,6 +384,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             manifest,
         )
         self.assertIn("var displayUntil: Date", manifest)
+        self.assertIn("var heartExpiresAt: Date?", manifest)
+        self.assertIn("var validHeartExpiry: Date?", manifest)
 
         reader = source("NekoWidgetWidget/WidgetManifestReader.swift")
         family_item = section(
@@ -389,11 +395,43 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("PrivateWindowCatalogStore.widgetEntries()", family_item)
         self.assertIn("now < item.displayUntil", family_item)
+        self.assertNotIn("item.validHeartExpiry", family_item)
+
+        empty_reason = section(
+            reader,
+            "static func familyEmptyStateReason(",
+            "static func familyWindowDisplayName",
+        )
+        self.assertIn("return .needsApp", empty_reason)
+        self.assertIn("guard let item = manifest.item else { return .waiting }", empty_reason)
+        self.assertIn("guard now < item.displayUntil else { return .waiting }", empty_reason)
 
         provider = source("NekoWidgetWidget/NekoWidgetTimelineProvider.swift")
         self.assertIn("WidgetPhotoSource.familyWindowExists(for: source.id)", provider)
         self.assertIn("at: item.displayUntil", provider)
+        self.assertIn("let heartExpiresAt = item.validHeartExpiry", provider)
+        self.assertIn("policy = .after(heartExpiresAt)", provider)
         self.assertIn("emptyStateReason: .sourceUnavailable", provider)
+
+        builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
+        reuse = section(
+            builder,
+            "if let active = try? AtomicJSON.read(FamilyWidgetManifest.self",
+            "let renderedFiles:",
+        )
+        self.assertIn("refreshedItem.heartExpiresAt != current.item.accessExpiresAt", reuse)
+        self.assertIn("refreshedItem.heartExpiresAt = current.item.accessExpiresAt", reuse)
+        self.assertIn("try Self.writeSharingJSON(refreshed, to: manifestURL)", reuse)
+        self.assertIn("heartExpiresAt: current.item.accessExpiresAt", builder)
+
+        entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
+        self.assertIn("case needsApp", entry)
+
+        view = source("NekoWidgetWidget/NekoWidgetView.swift")
+        self.assertIn('return "写真を表示できません"', view)
+        self.assertIn('return "アプリを開いて更新"', view)
+        self.assertIn("entry.cacheFilename != nil", view)
+        self.assertIn(".background(.black.opacity(0.68), in: Capsule())", view)
 
         configuration = source(
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
@@ -406,7 +444,6 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('name: "利用できないまど"', resolved)
         self.assertIn("static func familyWindowExists", resolved)
 
-        entry = source("NekoWidgetWidget/NekoWidgetEntry.swift")
         self.assertIn(
             "guard emptyStateReason != .sourceUnavailable else { return nil }",
             entry,
@@ -714,7 +751,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "struct SendFamilyWidgetHeartIntent",
             "private enum FamilyWidgetActionTargetResolver",
         )
-        self.assertIn("static var openAppWhenRun = false", heart_intent)
+        self.assertIn("static var openAppWhenRun = true", heart_intent)
         self.assertIn("MomentSharingStateStore.queuePaw", heart_intent)
         self.assertEqual(
             heart_intent.count('reloadTimelines(ofKind: "NekoWidget")'),
@@ -730,6 +767,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("MomentSharingCore.swift in Sources", widget_sources)
         self.assertIn("MomentSharingStore.swift in Sources", widget_sources)
+        self.assertNotIn("MomentSharingAPIClient.swift in Sources", widget_sources)
+        self.assertNotIn("PairingKeychainStore.swift in Sources", widget_sources)
 
     def test_heart_reaction_is_explicit_and_separate_from_private_memory(self) -> None:
         store = source("Shared/Sharing/MomentSharingStore.swift")
@@ -1429,7 +1468,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("VNRecognizeAnimalsRequest()", builder)
         self.assertIn("family-widget-v3-cat-focused-full-bleed", builder)
         self.assertNotIn("family-widget-v2-full-bleed-bookmark", builder)
-        self.assertIn("momentID: source.item.id", publication)
+        self.assertIn("momentID: current.item.id", publication)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         photo_image = section(
@@ -1828,9 +1867,9 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         builder = source("NekoWidget/Services/WidgetCacheBuilder.swift")
         publication = section(builder, "func buildFamilyWindow(", "func clear() throws")
         self.assertIn("windowDisplayName: resolvedWindowDisplayName", publication)
-        self.assertIn("renamed.windowDisplayName = resolvedWindowDisplayName", publication)
+        self.assertIn("refreshed.windowDisplayName = resolvedWindowDisplayName", publication)
         self.assertLess(
-            publication.index("renamed.windowDisplayName = resolvedWindowDisplayName"),
+            publication.index("refreshed.windowDisplayName = resolvedWindowDisplayName"),
             publication.index("let renderedFiles"),
         )
 

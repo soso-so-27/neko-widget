@@ -514,17 +514,23 @@ actor WidgetCacheBuilder {
             let reusable = try MomentSharingStateStore.withStateWhileLifecycleLocked(
                 validating: lifecycleToken
             ) { state in
-                guard (try? Self.familySourceSnapshot(for: item, in: state))?.sourceDigest
-                    == source.sourceDigest
+                guard let current = try? Self.familySourceSnapshot(for: item, in: state),
+                      current.sourceDigest == source.sourceDigest,
+                      var refreshedItem = active.item
                 else { return nil as FamilyWidgetManifest? }
-                guard active.windowDisplayName != resolvedWindowDisplayName else {
+                let requiresManifestRefresh = active.windowDisplayName
+                    != resolvedWindowDisplayName
+                    || refreshedItem.heartExpiresAt != current.item.accessExpiresAt
+                guard requiresManifestRefresh else {
                     return active
                 }
-                var renamed = active
-                renamed.windowDisplayName = resolvedWindowDisplayName
-                renamed.generatedAt = now
-                try Self.writeSharingJSON(renamed, to: manifestURL)
-                return renamed
+                refreshedItem.heartExpiresAt = current.item.accessExpiresAt
+                var refreshed = active
+                refreshed.item = refreshedItem
+                refreshed.windowDisplayName = resolvedWindowDisplayName
+                refreshed.generatedAt = now
+                try Self.writeSharingJSON(refreshed, to: manifestURL)
+                return refreshed
             }
             if let reusable { return reusable }
         }
@@ -604,11 +610,12 @@ actor WidgetCacheBuilder {
 
             let manifest = FamilyWidgetManifest(
                 item: FamilyWidgetManifestItem(
-                    sourceDigest: source.sourceDigest,
-                    momentID: source.item.id,
+                    sourceDigest: current.sourceDigest,
+                    momentID: current.item.id,
                     cacheFilenames: filenames,
-                    receivedAt: source.item.receivedAt,
-                    freshUntil: freshUntil
+                    receivedAt: current.item.receivedAt,
+                    freshUntil: freshUntil,
+                    heartExpiresAt: current.item.accessExpiresAt
                 ),
                 windowDisplayName: resolvedWindowDisplayName,
                 generatedAt: now

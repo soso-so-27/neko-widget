@@ -11,6 +11,7 @@ enum FamilyWidgetHeartStatus: Equatable, Sendable {
 enum WidgetEmptyStateReason: Equatable, Sendable {
     case none
     case waiting
+    case needsApp
     case sourceUnavailable
 }
 

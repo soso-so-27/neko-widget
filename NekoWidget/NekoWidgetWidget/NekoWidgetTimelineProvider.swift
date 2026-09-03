@@ -249,7 +249,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
         guard let item = WidgetManifestReader.familyItem(
             for: variant,
-            localWindowID: localWindowID
+            localWindowID: localWindowID,
+            now: now
         ) else {
             SharedLog.widget.warning(
                 "timeline",
@@ -260,7 +261,11 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                 at: now,
                 imageVariant: variant,
                 photoSourceIdentifier: photoSourceIdentifier,
-                windowDisplayName: windowDisplayName
+                windowDisplayName: windowDisplayName,
+                emptyStateReason: WidgetManifestReader.familyEmptyStateReason(
+                    localWindowID: localWindowID,
+                    now: now
+                )
             )
         }
         return familyEntry(
@@ -287,7 +292,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
         guard let item = WidgetManifestReader.familyItem(
             for: variant,
-            localWindowID: localWindowID
+            localWindowID: localWindowID,
+            now: now
         ) else {
             SharedLog.widget.warning(
                 "timeline",
@@ -300,32 +306,48 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
                         at: now,
                         imageVariant: variant,
                         photoSourceIdentifier: photoSourceIdentifier,
-                        windowDisplayName: windowDisplayName
+                        windowDisplayName: windowDisplayName,
+                        emptyStateReason: WidgetManifestReader.familyEmptyStateReason(
+                            localWindowID: localWindowID,
+                            now: now
+                        )
                     )
                 ],
                 policy: .never
             )
         }
 
-        let entries = [familyEntry(
+        let currentEntry = familyEntry(
             item: item,
             date: now,
             variant: variant,
             now: now,
             windowDisplayName: windowDisplayName,
             photoSourceIdentifier: photoSourceIdentifier
-        ), .empty(
+        )
+        let entries: [NekoWidgetEntry] = [currentEntry, .empty(
             at: item.displayUntil,
             imageVariant: variant,
             photoSourceIdentifier: photoSourceIdentifier,
             windowDisplayName: windowDisplayName
         )]
+        let policy: TimelineReloadPolicy
+        if currentEntry.familyHeartStatus == .ready,
+           let heartExpiresAt = item.validHeartExpiry,
+           heartExpiresAt > now,
+           heartExpiresAt < item.displayUntil {
+            // Keep the exact photo-expiry entry while asking WidgetKit to
+            // rebuild once the independent heart action expires.
+            policy = .after(heartExpiresAt)
+        } else {
+            policy = .never
+        }
         SharedLog.widget.info(
             "timeline",
             "Family timeline prepared",
             metadata: ["entries": "\(entries.count)", "preview": "\(preview)"]
         )
-        return Timeline(entries: entries, policy: .never)
+        return Timeline(entries: entries, policy: policy)
     }
 
     private func familyEntry(

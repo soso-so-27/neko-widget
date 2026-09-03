@@ -166,9 +166,20 @@ struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
     var cacheFilenames: WidgetCacheFilenames
     var receivedAt: Date
     var freshUntil: Date
+    /// Optional keeps manifests written before Widget heart-expiry scheduling
+    /// decodable. New manifests copy the relay access deadline exactly.
+    var heartExpiresAt: Date?
 
     var displayUntil: Date {
         receivedAt.addingTimeInterval(Self.maximumDisplayDuration)
+    }
+
+    var validHeartExpiry: Date? {
+        guard let heartExpiresAt,
+              heartExpiresAt > receivedAt,
+              heartExpiresAt <= displayUntil
+        else { return nil }
+        return heartExpiresAt
     }
 
     var hasValidBookmarkTarget: Bool {

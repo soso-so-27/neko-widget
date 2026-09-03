@@ -149,15 +149,16 @@ struct ToggleFamilyWidgetBookmarkIntent: AppIntent {
 /// Queues the same fixed, idempotent wire reaction used by the app. The
 /// compatibility name remains `paw` internally, while the Widget truthfully
 /// presents the user action as a heart. Relay I/O is still owned by the host
-/// app, so the Widget changes to a pending clock until a foreground/background
-/// synchronization commits it.
+/// app. The action therefore opens the host after it durably queues the heart;
+/// the ordinary authenticated foreground synchronization commits it without
+/// sharing room credentials with the Widget Extension.
 struct SendFamilyWidgetHeartIntent: AppIntent {
     static var title: LocalizedStringResource = "ハートを送信待ちに追加"
     static var description = IntentDescription(
         "表示中の届いた写真に、1回だけハートを送信待ちとして追加します。"
     )
     static var isDiscoverable = false
-    static var openAppWhenRun = false
+    static var openAppWhenRun = true
 
     @Parameter(title: "表示写真キー")
     var sourceDigest: String

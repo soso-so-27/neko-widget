@@ -155,7 +155,7 @@ struct NekoWidgetView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("ハートを送る")
-            .accessibilityHint("このiPhoneで送信待ちにし、アプリの同期後に送ります")
+            .accessibilityHint("アプリを開き、認証済みの同期で送ります")
         case .pending:
             heartMark(status: .pending)
             .accessibilityElement(children: .ignore)
@@ -166,7 +166,9 @@ struct NekoWidgetView: View {
             .accessibilityLabel("ハートを送りました")
             .accessibilityHint("相手が確認したことを示す表示ではありません")
         case .hidden:
-            EmptyView()
+            Color.clear
+                .frame(width: 44, height: 44)
+                .accessibilityHidden(true)
         }
     }
 
@@ -264,7 +266,7 @@ struct NekoWidgetView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(.black.opacity(0.50), in: Capsule())
+                .background(.black.opacity(0.68), in: Capsule())
                 .padding(family == .systemSmall ? 8 : 10)
                 .accessibilityHidden(true)
         }
@@ -327,6 +329,8 @@ struct NekoWidgetView: View {
                 Text(emptyStateSubtitle)
                     .font(family == .systemSmall ? .caption2 : .caption)
                     .foregroundStyle(QuietWindowPalette.cream.opacity(0.62))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .padding(family == .systemSmall ? 14 : 20)
         }
@@ -336,8 +340,11 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateTitle: String {
-        if entry.emptyStateReason == .sourceUnavailable {
+        if effectiveEmptyStateReason == .sourceUnavailable {
             return "このまどは利用できません"
+        }
+        if effectiveEmptyStateReason == .needsApp {
+            return "写真を表示できません"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
             return "まだ届いていません"
@@ -346,13 +353,25 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateSubtitle: String {
-        if entry.emptyStateReason == .sourceUnavailable {
+        if effectiveEmptyStateReason == .sourceUnavailable {
             return "ウィジェットを編集してください"
+        }
+        if effectiveEmptyStateReason == .needsApp {
+            return "アプリを開いて更新"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
             return entry.windowDisplayName
         }
         return "タップしてアプリを開く"
+    }
+
+    private var effectiveEmptyStateReason: WidgetEmptyStateReason {
+        if entry.emptyStateReason == .none, entry.cacheFilename != nil {
+            // The provider validated a file but image decoding failed while
+            // rendering. This is actionable and must not look like "not yet".
+            return .needsApp
+        }
+        return entry.emptyStateReason
     }
 
     private var emptyStateMarkSize: CGFloat {
