@@ -166,10 +166,13 @@ struct NekoWidgetView: View {
             .accessibilityLabel("ハートを送りました")
             .accessibilityHint("相手が確認したことを示す表示ではありません")
         case .hidden:
-            // When a reaction is no longer available, keep no empty slot.
-            // The remaining bookmark should sit at the trailing edge instead
-            // of looking accidentally offset from the Widget corner.
-            EmptyView()
+            // Keep the bookmark in the same position after the reaction
+            // expires. A transparent, noninteractive slot prevents the
+            // controls from jumping without suggesting another action.
+            Color.clear
+                .frame(width: 44, height: 44)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 

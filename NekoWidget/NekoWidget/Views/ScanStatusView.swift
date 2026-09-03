@@ -25,31 +25,39 @@ struct InitialScanView: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 24) {
+                    Spacer(minLength: 0)
 
-            if scan.hasPreliminaryResult {
-                result
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-            } else {
-                VStack(spacing: 18) {
-                    ProgressView()
-                        .controlSize(.large)
-                    Text(scan.isPreparingGroupedAlbums
-                        ? "新しいアルバムを準備しています"
-                        : "このiPhoneの猫写真を探しています")
-                        .font(.title3.weight(.semibold))
-                    Text(scan.isPreparingGroupedAlbums
-                        ? "いっしょ・おでかけなどに必要な情報を、端末内で確認しています。"
-                        : "まず新しい写真500枚を調べます。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    if scan.hasPreliminaryResult {
+                        result
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    } else {
+                        VStack(spacing: 18) {
+                            ProgressView()
+                                .controlSize(.large)
+                            Text(scan.isPreparingGroupedAlbums
+                                ? "新しいアルバムを準備しています"
+                                : "このiPhoneの猫写真を探しています")
+                                .font(.title3.weight(.semibold))
+                            Text(scan.isPreparingGroupedAlbums
+                                ? "いっしょ・おでかけなどに必要な情報を、端末内で確認しています。"
+                                : "まず新しい写真500枚を調べます。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+                .padding(28)
             }
-
-            Spacer()
-
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .safeAreaInset(edge: .bottom) {
             if scan.hasPreliminaryResult {
                 Button(action: continueToApp) {
                     Text(continueButtonTitle)
@@ -59,10 +67,12 @@ struct InitialScanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 12)
+                .background(.bar)
                 .accessibilityIdentifier("initial-scan-continue")
             }
         }
-        .padding(28)
         .animation(.easeOut(duration: 0.25), value: scan.hasPreliminaryResult)
     }
 

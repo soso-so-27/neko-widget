@@ -80,7 +80,8 @@ struct SeasonalMovieCard: View {
                         showsAboutSeasonalMovie = true
                     } label: {
                         Image(systemName: "info.circle")
-                            .frame(width: 32, height: 32)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("季節のムービーの選び方")
                     .accessibilityIdentifier("seasonal-movie-about-button")

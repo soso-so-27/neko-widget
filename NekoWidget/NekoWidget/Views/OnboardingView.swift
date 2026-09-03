@@ -21,6 +21,7 @@ struct OnboardingView: View {
     let openPhotoSettings: () -> Void
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
+    let finishWithoutWidgetPhoto: () -> Void
     let finish: () -> Void
 
     var body: some View {
@@ -106,23 +107,23 @@ struct OnboardingView: View {
                 rescan: rescan,
                 continueButtonTitleOverride: "次へ",
                 continueToApp: {
-                    page = .widgetGuide
+                    if scan.displayedCatCount > 0 {
+                        page = .widgetGuide
+                    } else {
+                        finishWithoutWidgetPhoto()
+                    }
                 }
             )
         } else if let scanErrorMessage, !scanErrorMessage.isEmpty {
             OnboardingScanErrorPage(
                 message: scanErrorMessage,
                 retry: rescan,
-                continueToWidgetGuide: {
-                    page = .widgetGuide
-                }
+                continueToApp: finishWithoutWidgetPhoto
             )
         } else {
             OnboardingScanInProgressPage(
                 scan: scan,
-                continueAction: {
-                    page = .widgetGuide
-                }
+                continueAction: finishWithoutWidgetPhoto
             )
         }
     }
@@ -146,40 +147,47 @@ struct OnboardingView: View {
 private struct OnboardingScanErrorPage: View {
     let message: String
     let retry: () -> Void
-    let continueToWidgetGuide: () -> Void
+    let continueToApp: () -> Void
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 24) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
 
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
+                Text("写真を確認できませんでした")
+                    .font(.title2.bold())
+                    .multilineTextAlignment(.center)
 
-            Text("写真を確認できませんでした")
-                .font(.title2.bold())
-                .multilineTextAlignment(.center)
-
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Spacer()
-
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 28)
+            .padding(.top, 64)
+            .padding(.bottom, 30)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom) {
             VStack(spacing: 12) {
                 Button("もう一度試す", systemImage: "arrow.clockwise", action: retry)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .accessibilityIdentifier("onboarding-scan-retry")
 
-                Button("ウィジェットの案内へ進む", action: continueToWidgetGuide)
+                Button("写真画面へ進む", action: continueToApp)
                     .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier("onboarding-scan-skip")
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 12)
+            .background(.bar)
         }
-        .padding(28)
     }
 }
 
@@ -323,31 +331,33 @@ private struct OnboardingScanInProgressPage: View {
     let continueAction: () -> Void
 
     var body: some View {
-        VStack(spacing: 26) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 26) {
+                ProgressView(value: scan.totalAssets > 0 ? scan.progress : nil)
+                    .controlSize(.large)
+                    .frame(maxWidth: 300)
 
-            ProgressView(value: scan.totalAssets > 0 ? scan.progress : nil)
-                .controlSize(.large)
-                .frame(maxWidth: 300)
+                Text(OnboardingPresentationCopy.scanTitle)
+                    .font(.title2.bold())
 
-            Text(OnboardingPresentationCopy.scanTitle)
-                .font(.title2.bold())
-
-            Text(OnboardingPresentationCopy.scanBodyLines.joined(separator: "\n"))
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
-
-            if scan.totalAssets > 0 {
-                Text("\(scan.scannedAssets.formatted()) / \(scan.totalAssets.formatted())枚")
-                    .font(.caption.monospacedDigit())
+                Text(OnboardingPresentationCopy.scanBodyLines.joined(separator: "\n"))
+                    .font(.body)
                     .foregroundStyle(.secondary)
-            }
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
 
-            Spacer()
+                if scan.totalAssets > 0 {
+                    Text("\(scan.scannedAssets.formatted()) / \(scan.totalAssets.formatted())枚")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 28)
+            .padding(.top, 64)
+            .padding(.bottom, 30)
         }
-        .padding(28)
+        .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom) {
             Button(action: continueAction) {
                 Text(OnboardingPresentationCopy.scanContinueAction)

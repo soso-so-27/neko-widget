@@ -2084,6 +2084,7 @@ final class AppViewModel: ObservableObject {
         generation: Int
     ) async {
         guard SharingAPIConfiguration.current.isMediaAvailable else {
+            errorMessage = "共有を現在利用できないため、通知の写真を開けませんでした。"
             SharedLog.app.info(
                 "moment-notification",
                 "Ignored notification route because sharing is unavailable"
@@ -2095,6 +2096,7 @@ final class AppViewModel: ObservableObject {
             do {
                 guard let catalog = try PrivateWindowCatalogStore.load()
                 else {
+                    errorMessage = "この通知のまどを開けませんでした。接続情報を確認してください。"
                     SharedLog.app.info(
                         "moment-notification",
                         "Ignored notification because its private window was unavailable",
@@ -2104,6 +2106,7 @@ final class AppViewModel: ObservableObject {
                 }
                 let matches = catalog.windows.filter { $0.spaceID == target.spaceID }
                 guard matches.count == 1, let targetWindow = matches.first else {
+                    errorMessage = "この通知のまどを特定できませんでした。まどの接続状態を確認してください。"
                     SharedLog.app.info(
                         "moment-notification",
                         "Ignored notification because its private window could not be resolved",
@@ -2149,6 +2152,7 @@ final class AppViewModel: ObservableObject {
                 )
                 return
             } catch {
+                errorMessage = "この通知のまどを開けませんでした。時間をおいて、まどからもう一度確認してください。"
                 Self.logError(
                     error,
                     category: "moment-notification",

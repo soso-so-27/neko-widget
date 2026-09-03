@@ -39,7 +39,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .received: "届いた"
-        case .sent: "届ける"
+        case .sent: "届けた"
         }
     }
 }
@@ -593,7 +593,7 @@ struct FamilyWindowView: View {
 
         if !model.receivedMoments.isEmpty {
             Label(
-                "届いた写真は最長90日です。残したい写真は「思い出に残す」を選びます。",
+                "届いた写真は最長90日です。残したい写真は「取り込んで残す」を選びます。",
                 systemImage: "info.circle"
             )
             .font(.caption)
@@ -1454,7 +1454,7 @@ struct FamilyWindowView: View {
                 VStack(spacing: 7) {
                     Image(systemName: "photo")
                         .font(.title2)
-                    Text("プレビューなし")
+                    Text("送信履歴のみ\n画像はありません")
                         .font(.caption2.weight(.semibold))
                         .multilineTextAlignment(.center)
                 }
@@ -1897,7 +1897,7 @@ struct FamilyWindowView: View {
                     }
                     Text(model.hasImportedMemory(item)
                         ? "もう一度思い出に加える"
-                        : "思い出に残す")
+                        : "取り込んで残す")
                 }
                 .font(.caption.weight(.semibold))
                 .multilineTextAlignment(.center)
@@ -2279,7 +2279,7 @@ struct FamilyWindowView: View {
             Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。別のiPhoneや再インストール後には表示されません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            Text("思い出に残した受信写真は、位置情報を除いて写真アプリへ取り込みます。通常の思い出と写真まとめに入り、相手へは通知しません。")
+            Text("取り込んで残した写真は、位置情報を除いて写真アプリへ保存します。通常の思い出と写真まとめに入り、相手へは通知しません。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Text("取り込んだ写真はiCloud写真の設定に従って同期される場合があり、思い出から外す、共有解除、ブロック、アプリ削除のあとも写真アプリに残ります。")

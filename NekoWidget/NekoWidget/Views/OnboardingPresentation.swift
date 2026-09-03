@@ -209,6 +209,15 @@ struct OnboardingPresentationState: Equatable, Sendable {
         self.currentPage = nil
     }
 
+    /// A Widget cannot demonstrate its value until at least one cat photo is
+    /// available. Finish the first run on the scan page and let Photos remain
+    /// the recovery point instead of teaching an empty Widget setup.
+    mutating func completeWithoutWidgetPhoto() {
+        guard mode == .firstRun, currentPage == .scanResult else { return }
+        completedVersion = OnboardingPresentationPersistence.currentCompletedVersion
+        self.currentPage = nil
+    }
+
     /// An interrupted first run may resume on the scan page after Photos
     /// access has been revoked in Settings. Route back to the permission page
     /// instead of leaving the user on a scan that can never start.

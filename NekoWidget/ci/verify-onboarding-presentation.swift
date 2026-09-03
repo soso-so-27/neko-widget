@@ -7,6 +7,7 @@ enum OnboardingPresentationVerifier {
         try verifiesApprovedJapaneseCopy()
         try verifiesOrdinaryFirstRunTransitions()
         try verifiesPermissionSkipEntersTheApp()
+        try verifiesScanWithoutPhotoEntersTheApp()
         try verifiesWidgetGuideSkipCompletesFirstRun()
         try verifiesRevokedPhotoAccessReturnsToPermission()
         try verifiesResumeProgressIsClamped()
@@ -189,6 +190,24 @@ enum OnboardingPresentationVerifier {
         try require(
             state.resumePageIndex == OnboardingPresentationPage.photoPermission.rawValue,
             "permission skip rewrote the last page the user actually saw"
+        )
+    }
+
+    private static func verifiesScanWithoutPhotoEntersTheApp() throws {
+        var state = OnboardingPresentationState(persistedResumePageIndex: 2)
+        try require(state.currentPage == .scanResult, "scan resume setup failed")
+        state.completeWithoutWidgetPhoto()
+        try require(
+            !state.isPresented,
+            "scan without a usable photo kept teaching Widget placement"
+        )
+        try require(
+            state.isFirstRunComplete,
+            "scan without a usable photo did not enter the app"
+        )
+        try require(
+            state.resumePageIndex == OnboardingPresentationPage.scanResult.rawValue,
+            "photo-less scan completion rewrote the last page the user saw"
         )
     }
 

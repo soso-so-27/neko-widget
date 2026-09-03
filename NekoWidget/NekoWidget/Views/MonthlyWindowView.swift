@@ -142,6 +142,7 @@ struct MonthlyWindowView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
+                .frame(minHeight: 44)
                 .background(.black.opacity(0.55), in: Capsule())
                 .accessibilityIdentifier("monthly-window-close")
             }
@@ -180,6 +181,7 @@ struct MonthlyWindowView: View {
             .font(.subheadline.bold())
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(minHeight: 44)
             .background(.black.opacity(0.52), in: Capsule())
         }
         .buttonStyle(.plain)

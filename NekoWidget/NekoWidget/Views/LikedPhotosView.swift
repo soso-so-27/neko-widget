@@ -3,6 +3,8 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct AlbumView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let sections: [CuratedAlbumSectionPresentation]
     let scan: ScanPresentation
     let profiles: [CatProfilePresentation]
@@ -112,7 +114,8 @@ struct AlbumView: View {
     }
 
     private var cardColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 12), count: 2)
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
     }
 
     private var selectedProfile: CatProfilePresentation? {
@@ -267,7 +270,7 @@ private struct CuratedAlbumCard: View {
             HStack(alignment: .center, spacing: 6) {
                 Text(album.cardTitle)
                     .font(.headline)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
                 Text(album.countLabel)
@@ -277,7 +280,8 @@ private struct CuratedAlbumCard: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             .padding(.horizontal, 11)
-            .frame(height: footerHeight)
+            .padding(.vertical, 8)
+            .frame(minHeight: footerHeight)
         }
         .frame(maxWidth: .infinity)
         .background(Color(.secondarySystemBackground))
@@ -508,7 +512,7 @@ private enum MemoriesSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .photos: "選んだ一枚"
+        case .photos: "残した写真"
         case .summaries: "ふりかえり"
         }
     }
@@ -650,7 +654,7 @@ struct LikedPhotosView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("選んだ一枚")
+        .accessibilityLabel("残した写真")
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("memories-saved-section")
     }
@@ -664,12 +668,17 @@ struct LikedPhotosView: View {
 
                 seasonalMovieSection(seasonalMovies)
             } else {
-                HStack(spacing: 12) {
-                    Image(systemName: "photo.badge.exclamationmark")
-                        .foregroundStyle(Color.accentColor)
-                    Text("写真へのアクセスを許可すると表示されます")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "photo.badge.exclamationmark")
+                            .foregroundStyle(Color.accentColor)
+                        Text("写真へのアクセスを許可すると表示されます")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("写真を確認する", systemImage: "arrow.right", action: openPhotos)
+                        .buttonStyle(.bordered)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1124,7 +1133,7 @@ struct SavedMemoriesGalleryView: View {
                 }
             }
         }
-        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "選んだ一枚")
+        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "残した写真")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {

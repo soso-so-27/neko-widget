@@ -514,6 +514,8 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("expectedSpaceID: target.spaceID", handler)
         self.assertIn("pendingFamilyNotificationRoute = route", handler)
         self.assertIn("isFamilyWindowPresented = true", handler)
+        self.assertIn("この通知のまどを開けませんでした", handler)
+        self.assertIn("この通知のまどを特定できませんでした", handler)
         self.assertNotIn("withoutTarget()", handler)
         self.assertLess(
             handler.index("PairingInstallationGuard.activatePrivateWindowAsync"),

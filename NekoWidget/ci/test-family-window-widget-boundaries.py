@@ -282,8 +282,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         hidden = heart_control.split("case .hidden:", 1)[1]
         self.assertIn("heartMark(status: .pending)", pending)
         self.assertIn("heartMark(status: .serverAccepted)", accepted)
-        self.assertIn("EmptyView()", hidden)
-        self.assertNotIn("Color.clear", hidden)
+        self.assertIn("Color.clear", hidden)
+        self.assertIn(".frame(width: 44, height: 44)", hidden)
+        self.assertIn(".allowsHitTesting(false)", hidden)
+        self.assertNotIn("EmptyView()", hidden)
         for noninteractive_status in (pending, accepted):
             self.assertNotIn("Button(", noninteractive_status)
             self.assertNotIn("Link(", noninteractive_status)
@@ -1057,7 +1059,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("summarySection", memory_view)
         self.assertNotIn("reflectionSection", memory_view)
         self.assertNotIn("creationSection", memory_view)
-        self.assertIn('case .photos: "選んだ一枚"', memories)
+        self.assertIn('case .photos: "残した写真"', memories)
         self.assertIn('case .summaries: "ふりかえり"', memories)
         self.assertLess(
             memories_section.index("case summaries"),
@@ -2601,14 +2603,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "var body: some View",
             "private var photoAccessCard: some View",
         )
-        self.assertEqual(home_body.count("if shouldOfferWidgetPlacementGuide"), 2)
+        self.assertEqual(home_body.count("if shouldOfferWidgetPlacementGuide"), 1)
+        self.assertIn("if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty", home_body)
         self.assertLess(
             home_body.index("if shouldOfferWidgetPlacementGuide"),
             home_body.index("detectedPhotosSection"),
-        )
-        self.assertLess(
-            home_body.index("photoAccessCard"),
-            home_body.rindex("if shouldOfferWidgetPlacementGuide"),
         )
         self.assertNotIn('Text("今日の1枚")', home)
         self.assertNotIn('.navigationTitle("まど")', home)
@@ -2836,7 +2835,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('Text("いまの送信")', family)
         self.assertNotIn('Text("履歴")', family)
         self.assertIn("届いた写真は最長90日です", family)
-        self.assertIn("残したい写真は「思い出に残す」を選びます", family)
+        self.assertIn("残したい写真は「取り込んで残す」を選びます", family)
         self.assertIn("「到着」は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
@@ -3138,7 +3137,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("sendPhotoAction", paired)
         self.assertEqual(paired.count("sendPhotoAction"), 1)
         self.assertIn('case .received: "届いた"', family)
-        self.assertIn('case .sent: "届ける"', family)
+        self.assertIn('case .sent: "届けた"', family)
 
         received_start = paired.index(
             "if model.isReportOnly || selectedSection == .received {"
@@ -3308,7 +3307,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("if let thumbnail = sentRecordThumbnail(record)", sent_photo)
         self.assertIn(".scaledToFill()", sent)
-        self.assertIn('Text("プレビューなし")', sent_photo)
+        self.assertIn('Text("送信履歴のみ\\n画像はありません")', sent_photo)
         self.assertIn(".aspectRatio(1, contentMode: .fit)", sent_photo)
         self.assertNotIn(".frame(width: 72, height: 72)", sent)
         self.assertNotIn("LazyVStack", sent)
@@ -3567,7 +3566,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         family = source("NekoWidget/Views/FamilyWindowView.swift")
         self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', family)
         self.assertIn('Button("思い出から外す", role: .destructive)', family)
-        self.assertIn('"思い出に残す"', family)
+        self.assertIn('"取り込んで残す"', family)
         self.assertIn('"写真アプリにコピーして残す"', family)
         self.assertIn("通常の思い出と写真まとめに入り", family)
         self.assertIn("相手へは通知しません", family)

@@ -151,6 +151,7 @@ struct AppRootView: View {
                 viewModel.clearError()
                 Task { await viewModel.rescan() }
             },
+            finishWithoutWidgetPhoto: completeOnboardingWithoutWidgetPhoto,
             finish: completeOnboarding
         )
     }
@@ -986,6 +987,16 @@ struct AppRootView: View {
         // "あとで" means entering the app without Photos access. Do not send
         // the user through a Widget guide they cannot verify yet.
         // Home remains the recovery point and explains how to grant access.
+        hasSeenInitialScanResult = true
+        onboardingScanErrorMessage = nil
+        viewModel.clearError()
+        widgetInstallationChecker.refresh()
+    }
+
+    private func completeOnboardingWithoutWidgetPhoto() {
+        var state = onboardingState
+        state.completeWithoutWidgetPhoto()
+        persistOnboardingState(state)
         hasSeenInitialScanResult = true
         onboardingScanErrorMessage = nil
         viewModel.clearError()
