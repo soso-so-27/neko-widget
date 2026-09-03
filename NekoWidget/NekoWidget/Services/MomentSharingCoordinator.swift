@@ -228,36 +228,42 @@ actor MomentSharingCoordinator {
     func synchronizeInactiveWindowNamesForWindowList(trigger: String) async {
         let request = MomentSynchronizationRequest()
         _ = try? await runMomentProcessOperation(request: request) { [self] in
-            let authorizations = try loadInactiveWindowNameAuthorizations()
-            guard !authorizations.isEmpty else { return }
-            let api = try makeNetworkClient()
-            var changed = false
-            for authorization in authorizations {
-                do {
-                    changed = try await synchronizeWindowName(
-                        api: api,
-                        authorization: authorization
-                    ) || changed
-                } catch {
-                    // Never apply active-window terminal cleanup to an inactive
-                    // authorization. Selection and every other slot stay intact.
-                    Self.logNonterminalRequestRejection(error)
-                }
-            }
-            if changed {
-                await MainActor.run {
-                    NotificationCenter.default.post(
-                        name: .momentSharingPresentationNeedsRefresh,
-                        object: nil
-                    )
-                }
-            }
-            SharedLog.app.info(
-                "window-name-sync",
-                "Inactive private window names reconciled",
-                metadata: ["trigger": String(trigger.prefix(32))]
-            )
+            try await performInactiveWindowNameSynchronization(trigger: trigger)
         }
+    }
+
+    private func performInactiveWindowNameSynchronization(
+        trigger: String
+    ) async throws {
+        let authorizations = try loadInactiveWindowNameAuthorizations()
+        guard !authorizations.isEmpty else { return }
+        let api = try makeNetworkClient()
+        var changed = false
+        for authorization in authorizations {
+            do {
+                changed = try await synchronizeWindowName(
+                    api: api,
+                    authorization: authorization
+                ) || changed
+            } catch {
+                // Never apply active-window terminal cleanup to an inactive
+                // authorization. Selection and every other slot stay intact.
+                Self.logNonterminalRequestRejection(error)
+            }
+        }
+        if changed {
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: .momentSharingPresentationNeedsRefresh,
+                    object: nil
+                )
+            }
+        }
+        SharedLog.app.info(
+            "window-name-sync",
+            "Inactive private window names reconciled",
+            metadata: ["trigger": String(trigger.prefix(32))]
+        )
     }
 
 #if DEBUG
@@ -1144,7 +1150,8 @@ actor MomentSharingCoordinator {
             guard let catalog = try PrivateWindowCatalogStore.load() else {
                 throw PairingError.stateUnavailable
             }
-            return catalog.windows.compactMap { entry in
+            return catalog.windows.compactMap { entry
+                -> (localWindowID: String, pairing: PairingState)? in
                 guard entry.localWindowID != catalog.activeWindowID,
                       let pairing = try? PairingStateStore.load(
                           localWindowID: entry.localWindowID
