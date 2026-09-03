@@ -7156,6 +7156,68 @@ actor SharingRuntimeSelfTestRunner {
         guard let roomKey = keychainProbe.roomKey,
               let windowNameSyncURL = SharedContainer.privateWindowNameSyncStateURL
         else { throw PairingError.stateUnavailable }
+
+        // A Build 40-41 recovery replaced the owner's device and signing key.
+        // Reproduce an approving invitee that retained the former peer key but
+        // also retained the phrase-verified replacement candidate. The current
+        // relay record is signed by the replacement/primary owner, so the
+        // candidate must repair verification without granting that fallback
+        // to the newly added device side of a modern ceremony.
+        let replacementOwnerCredential = PairingCrypto.makeCredential(
+            installationMarker: unpaired.installationMarker,
+            includesInvitationSecret: false,
+            includesRoomKey: false
+        )
+        let replacementOwnerSigningKey = try PairingCrypto.signingPublicKey(
+            for: replacementOwnerCredential
+        ).base64URLEncodedString()
+        let replacementOwnerAgreementKey = try PairingCrypto.agreementPublicKey(
+            for: replacementOwnerCredential
+        ).base64URLEncodedString()
+        var legacyReplacementApprover = paired
+        legacyReplacementApprover.role = .invitee
+        legacyReplacementApprover.recoveryPreviousTargetSigningPublicKey =
+            legacyReplacementApprover.peerSigningPublicKey
+        legacyReplacementApprover.recoveryCandidateSigningPublicKey =
+            replacementOwnerSigningKey
+        legacyReplacementApprover.recoveryCandidateAgreementPublicKey =
+            replacementOwnerAgreementKey
+        legacyReplacementApprover.recoveryCompletedAt = .now
+        legacyReplacementApprover.recoveryWasLocalDeviceReplacement = false
+        let replacementSignedName = try PrivateWindowNameCrypto.prepare(
+            displayName: "マイファミリー",
+            context: PrivateWindowNameCiphertextContext(
+                spaceID: spaceID,
+                ownerMemberID: peerMember.memberID,
+                ownerRevision: 32,
+                keyEpoch: 1
+            ),
+            roomKey: roomKey,
+            ownerSigningPrivateKey: replacementOwnerCredential.signingPrivateKey
+        )
+        let repairedName = try MomentSharingCoordinator.runtimeOpenWindowName(
+            replacementSignedName,
+            roomKey: roomKey,
+            pairing: legacyReplacementApprover,
+            credential: keychainProbe
+        )
+        guard repairedName.displayName == "マイファミリー",
+              !repairedName.requiresOwnerResign
+        else { throw PairingError.stateUnavailable }
+        legacyReplacementApprover.recoveryWasLocalDeviceReplacement = true
+        do {
+            _ = try MomentSharingCoordinator.runtimeOpenWindowName(
+                replacementSignedName,
+                roomKey: roomKey,
+                pairing: legacyReplacementApprover,
+                credential: keychainProbe
+            )
+            throw PairingError.stateUnavailable
+        } catch MomentSharingError.invalidPayload {
+            // The locally added/recovered device's own key is never an owner
+            // verification fallback when this participant is the invitee.
+        }
+
         let synchronizedName = try PrivateWindowNameCrypto.prepare(
             displayName: secondWindowName.displayName,
             context: PrivateWindowNameCiphertextContext(

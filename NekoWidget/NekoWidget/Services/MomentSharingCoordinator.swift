@@ -127,6 +127,12 @@ private func runMomentProcessOperation<Value: Sendable>(
 }
 
 actor MomentSharingCoordinator {
+    private struct WindowNameVerificationKeys {
+        let primary: Data
+        let legacyReplacementPeer: Data?
+        let predecessorOwner: Data?
+    }
+
     private struct Authorization: Sendable {
         let state: PairingState
         let credential: PairingCredential
@@ -1284,35 +1290,11 @@ actor MomentSharingCoordinator {
             authorization: authorization
         )
 
-        let ownerSigningPublicKey: Data
-        if role == .inviter,
-           pairing.localDeviceIsAdditional == true,
-           let encoded = pairing.canonicalParticipantSigningPublicKey,
-           let decoded = Data(base64URLString: encoded),
-           decoded.count == 32 {
-            // Additional owner devices may deliver photos but the original
-            // owner's key remains canonical for the shared window name.
-            ownerSigningPublicKey = decoded
-        } else if role == .inviter {
-            ownerSigningPublicKey = try PairingCrypto.signingPublicKey(for: credential)
-        } else {
-            guard let encoded = pairing.peerSigningPublicKey,
-                  let decoded = Data(base64URLString: encoded),
-                  decoded.count == 32
-            else { throw MomentSharingError.invalidPayload }
-            ownerSigningPublicKey = decoded
-        }
-        let predecessorOwnerSigningPublicKey: Data?
-        if role == .inviter,
-           pairing.localDeviceIsAdditional != true,
-           pairing.recoveryWasLocalDeviceReplacement == true,
-           let encoded = pairing.recoveryPreviousTargetSigningPublicKey,
-           let decoded = Data(base64URLString: encoded),
-           decoded.count == 32 {
-            predecessorOwnerSigningPublicKey = decoded
-        } else {
-            predecessorOwnerSigningPublicKey = nil
-        }
+        let verificationKeys = try Self.windowNameVerificationKeys(
+            pairing: pairing,
+            credential: credential,
+            role: role
+        )
 
         let remote = try await api.currentWindowName(
             pairingState: pairing,
@@ -1322,24 +1304,13 @@ actor MomentSharingCoordinator {
         var changed = false
         if let remote {
             let payload = try remote.preparedPayload(spaceID: spaceID)
-            let displayName: String
-            let requiresOwnerResign: Bool
-            do {
-                displayName = try PrivateWindowNameCrypto.open(
-                    payload,
-                    roomKey: roomKey,
-                    ownerSigningPublicKey: ownerSigningPublicKey
-                )
-                requiresOwnerResign = false
-            } catch {
-                guard let predecessorOwnerSigningPublicKey else { throw error }
-                displayName = try PrivateWindowNameCrypto.open(
-                    payload,
-                    roomKey: roomKey,
-                    ownerSigningPublicKey: predecessorOwnerSigningPublicKey
-                )
-                requiresOwnerResign = true
-            }
+            let opened = try Self.openWindowName(
+                payload,
+                roomKey: roomKey,
+                verificationKeys: verificationKeys
+            )
+            let displayName = opened.displayName
+            let requiresOwnerResign = opened.requiresOwnerResign
             if try PrivateWindowNameSyncStore.recordAccepted(
                 payload,
                 pairing: pairing,
@@ -1477,6 +1448,129 @@ actor MomentSharingCoordinator {
         )
         return changed || applied.requiresPresentationRefresh
     }
+
+    private static func windowNameVerificationKeys(
+        pairing: PairingState,
+        credential: PairingCredential,
+        role: PairingRole
+    ) throws -> WindowNameVerificationKeys {
+        let primary: Data
+        var legacyReplacementPeer: Data?
+        if role == .inviter,
+           pairing.localDeviceIsAdditional == true,
+           let encoded = pairing.canonicalParticipantSigningPublicKey,
+           let decoded = Data(base64URLString: encoded),
+           decoded.count == 32 {
+            // Additional owner devices may deliver photos but the original
+            // owner's key remains canonical for the shared window name.
+            primary = decoded
+        } else if role == .inviter {
+            primary = try PairingCrypto.signingPublicKey(for: credential)
+        } else {
+            guard let encoded = pairing.peerSigningPublicKey,
+                  let decoded = Data(base64URLString: encoded),
+                  decoded.count == 32
+            else { throw MomentSharingError.invalidPayload }
+            primary = decoded
+
+            // Builds 40-41 performed an actual device replacement. If the
+            // approving iPhone did not observe the final status before later
+            // builds changed this ceremony to "add a device", its durable
+            // peer key can still point at the now-revoked owner device. The
+            // phrase-verified recovery transcript already binds the proposed
+            // replacement key to that exact previous peer. Try it only for
+            // the approving side of a completed ceremony and only after the
+            // original peer key fails. Modern additional owner devices cannot
+            // publish a window name at the relay, so this fallback cannot turn
+            // an additional device into naming authority.
+            if pairing.recoveryCompletedAt != nil,
+               pairing.recoveryWasLocalDeviceReplacement == false,
+               pairing.recoveryPreviousTargetSigningPublicKey
+                    == pairing.peerSigningPublicKey,
+               let encoded = pairing.recoveryCandidateSigningPublicKey,
+               let decoded = Data(base64URLString: encoded),
+               decoded.count == 32,
+               decoded != primary {
+                legacyReplacementPeer = decoded
+            }
+        }
+
+        let predecessorOwner: Data?
+        if role == .inviter,
+           pairing.localDeviceIsAdditional != true,
+           pairing.recoveryWasLocalDeviceReplacement == true,
+           let encoded = pairing.recoveryPreviousTargetSigningPublicKey,
+           let decoded = Data(base64URLString: encoded),
+           decoded.count == 32 {
+            predecessorOwner = decoded
+        } else {
+            predecessorOwner = nil
+        }
+        return WindowNameVerificationKeys(
+            primary: primary,
+            legacyReplacementPeer: legacyReplacementPeer,
+            predecessorOwner: predecessorOwner
+        )
+    }
+
+    private static func openWindowName(
+        _ payload: PrivateWindowNamePreparedPayload,
+        roomKey: Data,
+        verificationKeys: WindowNameVerificationKeys
+    ) throws -> (displayName: String, requiresOwnerResign: Bool) {
+        do {
+            return (
+                try PrivateWindowNameCrypto.open(
+                    payload,
+                    roomKey: roomKey,
+                    ownerSigningPublicKey: verificationKeys.primary
+                ),
+                false
+            )
+        } catch let primaryError {
+            if let legacyReplacementPeer = verificationKeys.legacyReplacementPeer {
+                return (
+                    try PrivateWindowNameCrypto.open(
+                        payload,
+                        roomKey: roomKey,
+                        ownerSigningPublicKey: legacyReplacementPeer
+                    ),
+                    false
+                )
+            }
+            guard let predecessorOwner = verificationKeys.predecessorOwner else {
+                throw primaryError
+            }
+            return (
+                try PrivateWindowNameCrypto.open(
+                    payload,
+                    roomKey: roomKey,
+                    ownerSigningPublicKey: predecessorOwner
+                ),
+                true
+            )
+        }
+    }
+
+#if DEBUG
+    static func runtimeOpenWindowName(
+        _ payload: PrivateWindowNamePreparedPayload,
+        roomKey: Data,
+        pairing: PairingState,
+        credential: PairingCredential
+    ) throws -> (displayName: String, requiresOwnerResign: Bool) {
+        guard let role = pairing.role else { throw MomentSharingError.notPaired }
+        return try openWindowName(
+            payload,
+            roomKey: roomKey,
+            verificationKeys: windowNameVerificationKeys(
+                pairing: pairing,
+                credential: credential,
+                role: role
+            )
+        )
+    }
+#endif
 
     /// A terminal safety window permits report delivery only. This guard is
     /// shared by foreground, media-disabled and explicit rename paths so none
