@@ -886,6 +886,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         memories = source("NekoWidget/Views/LikedPhotosView.swift")
         home = source("NekoWidget/Views/HomeView.swift")
         main_tab = source("NekoWidget/Views/MainTabView.swift")
+        memories_section = section(
+            memories,
+            "private enum MemoriesSection:",
+            "/// The entry point for photos the user deliberately kept as memories.",
+        )
         memory_view = section(
             memories,
             "struct LikedPhotosView:",
@@ -898,6 +903,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertNotIn("creationSection", memory_view)
         self.assertIn('case .photos: "写真"', memories)
         self.assertIn('case .summaries: "まとめ"', memories)
+        self.assertLess(
+            memories_section.index("case summaries"),
+            memories_section.index("case photos"),
+        )
         self.assertNotIn('Text("残した写真")', memory_view)
         self.assertIn("MemoriesRoute.monthlyWindow(presentation)", memory_view)
         self.assertIn('"季節のムービー",', memory_view)

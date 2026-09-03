@@ -501,8 +501,8 @@ struct CuratedAlbumDetailView: View {
 }
 
 private enum MemoriesSection: String, CaseIterable, Identifiable {
-    case photos
     case summaries
+    case photos
 
     var id: String { rawValue }
 
