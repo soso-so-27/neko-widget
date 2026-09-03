@@ -11,19 +11,25 @@ def source(path: str) -> str:
 
 
 class InactiveWindowNameSyncContractTests(unittest.TestCase):
-    def test_window_list_reconciles_active_and_inactive_names_on_every_reload(self) -> None:
+    def test_window_list_renders_cache_then_reconciles_only_inactive_names(self) -> None:
         model = source("NekoWidget/ViewModels/PairingViewModel.swift")
         window_list = source("NekoWidget/Views/MainTabView.swift")
         refresh = model.split(
             "func synchronizeWindowNamesForWindowList() async", 1
         )[1].split("@discardableResult", 1)[0]
-        self.assertIn("synchronizeWindowNameForUser", refresh)
+        self.assertNotIn("synchronizeWindowNameForUser", refresh)
         self.assertIn("synchronizeInactiveWindowNamesForWindowList", refresh)
         self.assertIn("reloadPrivateWindowCatalog()", refresh)
         reload_method = window_list.split(
             "private func reload() async", 1
         )[1].split("private struct CatalogPresentationSnapshot", 1)[0]
         self.assertIn("await model.synchronizeWindowNamesForWindowList()", reload_method)
+        first_local_reload = reload_method.index("await reloadCatalogPresentation()")
+        network_refresh = reload_method.index(
+            "await model.synchronizeWindowNamesForWindowList()"
+        )
+        self.assertLess(first_local_reload, network_refresh)
+        self.assertLess(reload_method.index("isLoading = false"), network_refresh)
 
     def test_scoped_files_are_distinct_per_local_window(self) -> None:
         shared = source("Shared/AppGroup/SharedContainer.swift")
@@ -72,6 +78,29 @@ class InactiveWindowNameSyncContractTests(unittest.TestCase):
         self.assertGreaterEqual(
             coordinator.count("localWindowID: authorization.localWindowID"), 8
         )
+
+    def test_legacy_peer_normalization_cannot_delay_visible_name_repair(self) -> None:
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        sync = coordinator.split(
+            "private func synchronizeWindowName(", 1
+        )[1].split("guard role == .inviter", 1)[0]
+        apply_name = sync.index(
+            "PrivateWindowPresentationStore.applySynchronizedOwnerName"
+        )
+        schedule_normalization = sync.index(
+            "scheduleLegacyReplacementPeerNormalization"
+        )
+        self.assertLess(apply_name, schedule_normalization)
+        confirmation = coordinator.split(
+            "private static func confirmedLegacyReplacementPeer", 1
+        )[1].split("private func normalizeLegacyReplacementPeerBestEffort", 1)[0]
+        for field in (
+            "status.deviceID == pairing.recoveryDeviceID",
+            "status.transcriptData == recoveryTranscript",
+            "status.credential.agreementPublicKey == candidateAgreement",
+            "status.credential.signingPublicKey == candidateSigning",
+        ):
+            self.assertIn(field, confirmation)
 
     def test_authenticated_remote_name_disambiguates_only_local_conflicts(self) -> None:
         shared = source("Shared/AppGroup/SharedContainer.swift")

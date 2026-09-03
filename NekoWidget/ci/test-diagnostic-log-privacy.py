@@ -745,8 +745,11 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             "private static func loadWhileLifecycleLockedMigratingDiagnostics",
             "@discardableResult",
         )
-        self.assertIn("decodedStateWithNormalizedDiagnostics()", pairing_locked_migration)
-        self.assertIn("try saveWhileLifecycleLocked(state)", pairing_locked_migration)
+        self.assertIn("decodedStateWithNormalizedDiagnostics(at: url)", pairing_locked_migration)
+        self.assertIn(
+            "try saveWhileLifecycleLocked(state, localWindowID: localWindowID)",
+            pairing_locked_migration,
+        )
         pairing_begin = section(
             pairing_store,
             "static func beginOperation()",
@@ -759,7 +762,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             "private static func saveCASWhileLifecycleLocked",
             "/// Installation cleanup already owns",
         )
-        self.assertIn("loadWhileLifecycleLockedMigratingDiagnostics()", pairing_cas)
+        self.assertIn("loadWhileLifecycleLockedMigratingDiagnostics(", pairing_cas)
         pairing_write = section(
             pairing_store,
             "static func saveWhileLifecycleLocked",

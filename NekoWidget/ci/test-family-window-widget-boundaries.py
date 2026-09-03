@@ -2081,7 +2081,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "static func load(localWindowID: String)",
             "private static func decodedStateWithNormalizedDiagnostics()",
         )
-        self.assertIn("windowSharingDirectoryURL", scoped_load)
+        self.assertIn("pairingStateURL", scoped_load)
+        self.assertIn("localWindowID: localWindowID", scoped_load)
         self.assertNotIn("sharingCacheDirectoryURL", scoped_load)
 
         guard = source("NekoWidget/Services/PairingInstallationGuard.swift")

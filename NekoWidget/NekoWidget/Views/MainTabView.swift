@@ -1292,9 +1292,13 @@ private struct WindowListView: View {
     private func reload() async {
         isLoading = true
         await model.bootstrap()
-        await model.synchronizeWindowNamesForWindowList()
+        // Render the authenticated local catalog immediately. Network name
+        // reconciliation is freshness work and must not turn the whole picker
+        // into a loading screen when one inactive window is offline.
         await reloadCatalogPresentation()
         isLoading = false
+        await model.synchronizeWindowNamesForWindowList()
+        await reloadCatalogPresentation()
     }
 
     private struct CatalogPresentationSnapshot: Sendable {

@@ -7176,12 +7176,63 @@ actor SharingRuntimeSelfTestRunner {
         ).base64URLEncodedString()
         var legacyReplacementApprover = paired
         legacyReplacementApprover.role = .invitee
+        let recoveryID = opaque(47)
+        let recoveryDeviceID = opaque(48)
+        let recoveryExpiresAt = Date(timeIntervalSince1970: 2_000_000_000)
+        let recoveryMembershipRevision = 2
+        let recoveryKeyEpoch = 2
+        let recoveryTarget = PairingDeviceRecoveryIdentity(
+            memberID: peerMember.memberID,
+            participantID: peerMember.participantID,
+            role: "owner",
+            agreementPublicKey: peerMember.agreementPublicKey,
+            signingPublicKey: peerMember.signingPublicKey,
+            state: "active"
+        )
+        let recoverySponsor = PairingDeviceRecoveryIdentity(
+            memberID: localMember.memberID,
+            participantID: localMember.participantID,
+            role: "invitee",
+            agreementPublicKey: localMember.agreementPublicKey,
+            signingPublicKey: localMember.signingPublicKey,
+            state: "active"
+        )
+        let recoveryTranscript = PairingDeviceRecoveryTranscript(
+            recoveryID: recoveryID,
+            spaceID: spaceID,
+            dailyBoundaryMinuteUTC: 240,
+            expiresAtUnix: Int(recoveryExpiresAt.timeIntervalSince1970),
+            membershipRevision: recoveryMembershipRevision,
+            keyEpoch: recoveryKeyEpoch,
+            target: recoveryTarget,
+            peer: recoverySponsor,
+            clientRequestID: UUID().uuidString.lowercased(),
+            deviceID: recoveryDeviceID,
+            agreementPublicKey: replacementOwnerAgreementKey,
+            signingPublicKey: replacementOwnerSigningKey
+        )
+        let recoveryTranscriptData = try recoveryTranscript.canonicalData()
+        let recoveryTranscriptHash = PairingCrypto.sha256(recoveryTranscriptData)
+        legacyReplacementApprover.recoveryID = recoveryID
+        legacyReplacementApprover.recoveryExpiresAt = recoveryExpiresAt
+        legacyReplacementApprover.recoveryMembershipRevision = recoveryMembershipRevision
+        legacyReplacementApprover.recoveryKeyEpoch = recoveryKeyEpoch
+        legacyReplacementApprover.recoveryDeviceID = recoveryDeviceID
+        legacyReplacementApprover.recoveryPreviousTargetAgreementPublicKey =
+            legacyReplacementApprover.peerAgreementPublicKey
         legacyReplacementApprover.recoveryPreviousTargetSigningPublicKey =
             legacyReplacementApprover.peerSigningPublicKey
         legacyReplacementApprover.recoveryCandidateSigningPublicKey =
             replacementOwnerSigningKey
         legacyReplacementApprover.recoveryCandidateAgreementPublicKey =
             replacementOwnerAgreementKey
+        legacyReplacementApprover.recoveryTranscript =
+            recoveryTranscriptData.base64URLEncodedString()
+        legacyReplacementApprover.recoveryTranscriptHash =
+            recoveryTranscriptHash.base64URLEncodedString()
+        legacyReplacementApprover.recoveryVerificationPhrase =
+            PairingCrypto.verificationPhrase(for: recoveryTranscriptHash)
+        legacyReplacementApprover.recoveryApprovalSubmittedAt = .now
         legacyReplacementApprover.recoveryCompletedAt = .now
         legacyReplacementApprover.recoveryWasLocalDeviceReplacement = false
         let replacementSignedName = try PrivateWindowNameCrypto.prepare(
@@ -7217,6 +7268,145 @@ actor SharingRuntimeSelfTestRunner {
             // The locally added/recovered device's own key is never an owner
             // verification fallback when this participant is the invitee.
         }
+        legacyReplacementApprover.recoveryWasLocalDeviceReplacement = false
+
+        let activeRecoveryStatus = PairingDeviceRecoveryStatusResult(
+            recoveryID: recoveryID,
+            deviceID: recoveryDeviceID,
+            state: "active",
+            expiresAt: recoveryExpiresAt,
+            membershipRevision: recoveryMembershipRevision,
+            keyEpoch: recoveryKeyEpoch,
+            spaceID: spaceID,
+            dailyBoundaryMinuteUTC: 240,
+            transcriptData: recoveryTranscriptData,
+            transcriptHash: recoveryTranscriptHash.base64URLEncodedString(),
+            credential: PairingDeviceRecoveryIdentity(
+                memberID: peerMember.memberID,
+                participantID: peerMember.participantID,
+                role: "owner",
+                agreementPublicKey: replacementOwnerAgreementKey,
+                signingPublicKey: replacementOwnerSigningKey,
+                state: "active"
+            ),
+            peer: recoverySponsor,
+            envelopeAlgorithm: nil,
+            keyEnvelope: nil,
+            approvalSignature: nil,
+            recoveredAt: legacyReplacementApprover.recoveryCompletedAt,
+            previousTargetSigningPublicKey: peerMember.signingPublicKey
+        )
+        let confirmedReplacement = try MomentSharingCoordinator
+            .runtimeConfirmedLegacyReplacementPeer(
+                from: activeRecoveryStatus,
+                pairing: legacyReplacementApprover,
+                credential: keychainProbe
+            )
+        guard confirmedReplacement.agreementPublicKey == replacementOwnerAgreementKey,
+              confirmedReplacement.signingPublicKey == replacementOwnerSigningKey
+        else { throw PairingError.stateUnavailable }
+
+        let mismatchedRecoveryStatus = PairingDeviceRecoveryStatusResult(
+            recoveryID: recoveryID,
+            deviceID: recoveryDeviceID,
+            state: "active",
+            expiresAt: recoveryExpiresAt,
+            membershipRevision: recoveryMembershipRevision + 1,
+            keyEpoch: recoveryKeyEpoch,
+            spaceID: spaceID,
+            dailyBoundaryMinuteUTC: 240,
+            transcriptData: recoveryTranscriptData,
+            transcriptHash: recoveryTranscriptHash.base64URLEncodedString(),
+            credential: activeRecoveryStatus.credential,
+            peer: recoverySponsor,
+            envelopeAlgorithm: nil,
+            keyEnvelope: nil,
+            approvalSignature: nil,
+            recoveredAt: legacyReplacementApprover.recoveryCompletedAt,
+            previousTargetSigningPublicKey: peerMember.signingPublicKey
+        )
+        do {
+            _ = try MomentSharingCoordinator.runtimeConfirmedLegacyReplacementPeer(
+                from: mismatchedRecoveryStatus,
+                pairing: legacyReplacementApprover,
+                credential: keychainProbe
+            )
+            throw PairingError.stateUnavailable
+        } catch PairingError.invalidServerResponse {
+            // A status from another recovery revision can never rotate keys.
+        }
+
+        try SharingLifecycleGate.withValidatedToken(snapshot.lifecycleToken) {
+            try PrivateWindowCatalogStore.updateActiveMetadataWhileLifecycleLocked(
+                spaceID: spaceID,
+                credentialAccount: keychainProbe.account
+            )
+        }
+        legacyReplacementApprover = try PairingStateStore.save(
+            legacyReplacementApprover,
+            expected: paired,
+            lifecycleToken: snapshot.lifecycleToken
+        )
+        var staleLegacyReplacementApprover = legacyReplacementApprover
+        staleLegacyReplacementApprover.storageRevision = max(
+            0,
+            (legacyReplacementApprover.storageRevision ?? 0) - 1
+        )
+        do {
+            _ = try PairingStateStore.normalizeLegacyReplacementPeer(
+                confirmedAgreementPublicKey: replacementOwnerAgreementKey,
+                confirmedSigningPublicKey: replacementOwnerSigningKey,
+                expected: staleLegacyReplacementApprover,
+                localWindowID: nil,
+                lifecycleToken: snapshot.lifecycleToken
+            )
+            throw PairingError.stateUnavailable
+        } catch PairingError.stateUnavailable {
+            // A stale read can never rotate the durable peer key pair.
+        }
+        let activeWindowBeforeNormalization = try PrivateWindowCatalogStore
+            .load()?.activeWindowID
+        let normalizedReplacementApprover = try PairingStateStore
+            .normalizeLegacyReplacementPeer(
+                confirmedAgreementPublicKey: replacementOwnerAgreementKey,
+                confirmedSigningPublicKey: replacementOwnerSigningKey,
+                expected: legacyReplacementApprover,
+                localWindowID: nil,
+                lifecycleToken: snapshot.lifecycleToken
+            )
+        guard normalizedReplacementApprover.peerAgreementPublicKey
+                == replacementOwnerAgreementKey,
+              normalizedReplacementApprover.peerSigningPublicKey
+                == replacementOwnerSigningKey,
+              normalizedReplacementApprover.storageRevision
+                == (legacyReplacementApprover.storageRevision ?? 0) + 1
+        else { throw PairingError.stateUnavailable }
+        guard try PrivateWindowCatalogStore.load()?.activeWindowID
+                == activeWindowBeforeNormalization
+        else { throw PairingError.stateUnavailable }
+        let duplicateNormalization = try PairingStateStore
+            .normalizeLegacyReplacementPeer(
+                confirmedAgreementPublicKey: replacementOwnerAgreementKey,
+                confirmedSigningPublicKey: replacementOwnerSigningKey,
+                expected: normalizedReplacementApprover,
+                localWindowID: nil,
+                lifecycleToken: snapshot.lifecycleToken
+            )
+        guard duplicateNormalization.storageRevision
+                == normalizedReplacementApprover.storageRevision
+        else { throw PairingError.stateUnavailable }
+
+        // Restore the inviter fixture for the remaining independent checks.
+        // The CAS revision moves forward; no test-only direct file replacement
+        // masks behavior of the production state store.
+        paired.storageRevision = normalizedReplacementApprover.storageRevision
+        paired.lastUpdatedAt = .now
+        paired = try PairingStateStore.save(
+            paired,
+            expected: normalizedReplacementApprover,
+            lifecycleToken: snapshot.lifecycleToken
+        )
+        let pairingRevisionAfterLegacyNormalization = paired.storageRevision
 
         let synchronizedName = try PrivateWindowNameCrypto.prepare(
             displayName: secondWindowName.displayName,
@@ -7418,7 +7608,7 @@ actor SharingRuntimeSelfTestRunner {
         guard renameAfterAcceptedFloor.storageRevision == acceptedFloorRevision + 1
         else { throw PairingError.stateUnavailable }
         guard (try PairingStateStore.load())?.storageRevision
-                == pairingRevisionBeforeRename
+                == pairingRevisionAfterLegacyNormalization
         else { throw PairingError.stateUnavailable }
 
         let reportOnlyUntil = Date(

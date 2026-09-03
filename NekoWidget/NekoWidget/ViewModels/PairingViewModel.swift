@@ -197,24 +197,13 @@ final class PairingViewModel: ObservableObject {
 
     /// Refreshes presentation names independently from one-time installation
     /// bootstrap. The window list calls this on every foreground reload so an
-    /// active window and inactive windows both converge after the creator
-    /// renames a window, without requiring either person to open its detail.
+    /// inactive windows converge after the creator renames one without
+    /// requiring either person to open its detail. The active window already
+    /// synchronizes at launch/foreground entry (and, while media sharing is
+    /// active, on the bounded refresh loop); repeating that GET here delayed
+    /// cached list presentation and created a second path for the same event.
     func synchronizeWindowNamesForWindowList() async {
         guard isConfigured, bootstrapRetryMessage == nil else { return }
-
-        let snapshot = try? PairingStateStore.beginOperation()
-        if snapshot?.state?.phase == .paired {
-            do {
-                try await windowNameCoordinator.synchronizeWindowNameForUser(
-                    trigger: "window-list-active-refresh"
-                )
-            } catch {
-                // The list keeps its last authenticated local presentation.
-                // Foreground reload is the bounded retry signal; detailed
-                // sharing errors remain on the selected window screen.
-            }
-        }
-
         await windowNameCoordinator.synchronizeInactiveWindowNamesForWindowList(
             trigger: "window-list-inactive-refresh"
         )

@@ -231,14 +231,10 @@ enum PairingStateStore {
               catalog.windows.contains(where: {
                   $0.localWindowID == localWindowID
               }),
-              let directory = SharedContainer.windowSharingDirectoryURL(
+              let url = SharedContainer.pairingStateURL(
                   localWindowID: localWindowID
               )
         else { throw PairingError.stateUnavailable }
-        let url = directory.appendingPathComponent(
-            "pairing-state.json",
-            isDirectory: false
-        )
         return try decodedStateWithNormalizedDiagnostics(at: url).state
     }
 
@@ -297,9 +293,18 @@ enum PairingStateStore {
     /// lifecycle flock. Ordinary read APIs normalize in memory so they cannot
     /// overwrite a newer authorization state with a stale decoded snapshot.
     private static func loadWhileLifecycleLockedMigratingDiagnostics() throws -> PairingState? {
-        let result = try decodedStateWithNormalizedDiagnostics()
+        try loadWhileLifecycleLockedMigratingDiagnostics(localWindowID: nil)
+    }
+
+    private static func loadWhileLifecycleLockedMigratingDiagnostics(
+        localWindowID: String?
+    ) throws -> PairingState? {
+        guard let url = SharedContainer.pairingStateURL(localWindowID: localWindowID) else {
+            throw PairingError.stateUnavailable
+        }
+        let result = try decodedStateWithNormalizedDiagnostics(at: url)
         if result.didNormalize, let state = result.state {
-            try saveWhileLifecycleLocked(state)
+            try saveWhileLifecycleLocked(state, localWindowID: localWindowID)
         }
         return result.state
     }
@@ -449,19 +454,96 @@ enum PairingStateStore {
         }
     }
 
+    /// Permanently closes the Build 40-41 replacement gap on the approving
+    /// iPhone. The caller must first verify a replacement-owner signature and
+    /// obtain the matching active recovery record from the authenticated
+    /// sponsor-status endpoint. This method then performs a scoped, exact-state
+    /// CAS so another window, a newer recovery, or a changed installation can
+    /// never be overwritten by stale network evidence.
+    @discardableResult
+    static func normalizeLegacyReplacementPeer(
+        confirmedAgreementPublicKey: String,
+        confirmedSigningPublicKey: String,
+        expected: PairingState,
+        localWindowID: String?,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> PairingState {
+        try SharingLifecycleGate.withValidatedToken(lifecycleToken) {
+            guard let catalog = try PrivateWindowCatalogStore.load() else {
+                throw PairingError.stateUnavailable
+            }
+            let targetWindowID = localWindowID ?? catalog.activeWindowID
+            guard localWindowID == nil || targetWindowID != catalog.activeWindowID,
+                  let target = catalog.windows.first(where: {
+                      $0.localWindowID == targetWindowID
+                  }),
+                  target.spaceID == expected.spaceID,
+                  target.credentialAccount == expected.credentialAccount,
+                  let current = try loadWhileLifecycleLockedMigratingDiagnostics(
+                      localWindowID: localWindowID
+                  )
+            else { throw PairingError.stateUnavailable }
+
+            // An exact duplicate after a successful commit is a no-op. This
+            // makes a retry after an uncertain post-write read safe without
+            // incrementing the state revision a second time.
+            if current.peerAgreementPublicKey == confirmedAgreementPublicKey,
+               current.peerSigningPublicKey == confirmedSigningPublicKey {
+                return current
+            }
+
+            guard current == expected,
+                  expected.phase == .paired,
+                  expected.role == .invitee,
+                  expected.localDeviceIsAdditional != true,
+                  expected.recoveryCompletedAt != nil,
+                  expected.recoveryWasLocalDeviceReplacement == false,
+                  expected.recoveryPreviousTargetAgreementPublicKey
+                    == expected.peerAgreementPublicKey,
+                  expected.recoveryPreviousTargetSigningPublicKey
+                    == expected.peerSigningPublicKey,
+                  expected.recoveryCandidateAgreementPublicKey
+                    == confirmedAgreementPublicKey,
+                  expected.recoveryCandidateSigningPublicKey
+                    == confirmedSigningPublicKey,
+                  confirmedAgreementPublicKey != expected.peerAgreementPublicKey,
+                  confirmedSigningPublicKey != expected.peerSigningPublicKey
+            else { throw PairingError.stateUnavailable }
+
+            var next = expected
+            next.peerAgreementPublicKey = confirmedAgreementPublicKey
+            next.peerSigningPublicKey = confirmedSigningPublicKey
+            next.lastUpdatedAt = .now
+            return try saveCASWhileLifecycleLocked(
+                next,
+                expected: expected,
+                localWindowID: localWindowID
+            )
+        }
+    }
+
     private static func saveCASWhileLifecycleLocked(
         _ state: PairingState,
-        expected: PairingState
+        expected: PairingState,
+        localWindowID: String? = nil
     ) throws -> PairingState {
-        let current = try loadWhileLifecycleLockedMigratingDiagnostics()
+        let current = try loadWhileLifecycleLockedMigratingDiagnostics(
+            localWindowID: localWindowID
+        )
         guard current == expected,
               let expectedStorageRevision = expected.storageRevision,
               state.storageRevision == expectedStorageRevision
         else { throw PairingError.stateUnavailable }
         var next = state
         next.storageRevision = expectedStorageRevision + 1
-        try saveWhileLifecycleLocked(next)
-        guard let committed = try load(),
+        try saveWhileLifecycleLocked(next, localWindowID: localWindowID)
+        let committed: PairingState?
+        if let localWindowID {
+            committed = try load(localWindowID: localWindowID)
+        } else {
+            committed = try load()
+        }
+        guard let committed,
               committed.storageRevision == next.storageRevision
         else { throw PairingError.stateUnavailable }
         return committed
@@ -471,7 +553,14 @@ enum PairingStateStore {
     /// its epoch. This bypass is deliberately unavailable to ordinary pairing
     /// operations, which must present their pre-await token and CAS revision.
     static func saveWhileLifecycleLocked(_ state: PairingState) throws {
-        guard let url = SharedContainer.pairingStateURL else {
+        try saveWhileLifecycleLocked(state, localWindowID: nil)
+    }
+
+    private static func saveWhileLifecycleLocked(
+        _ state: PairingState,
+        localWindowID: String?
+    ) throws {
+        guard let url = SharedContainer.pairingStateURL(localWindowID: localWindowID) else {
             throw PairingError.stateUnavailable
         }
         var state = state

@@ -1325,7 +1325,14 @@ enum SharedContainer {
     /// Non-secret sharing state. Private keys and the room key live in the
     /// App Group-backed Keychain access group, never in this directory.
     static var pairingStateURL: URL? {
-        sharingCacheDirectoryURL?
+        pairingStateURL(localWindowID: nil)
+    }
+
+    /// Resolves one window's pairing state without changing the catalog's
+    /// active selection. Background reconciliation must keep the exact window
+    /// binding it authorized before awaiting network I/O.
+    static func pairingStateURL(localWindowID: String?) -> URL? {
+        sharingCacheDirectoryURL(localWindowID: localWindowID)?
             .appendingPathComponent("pairing-state.json", isDirectory: false)
     }
 

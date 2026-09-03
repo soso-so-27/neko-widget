@@ -127,6 +127,18 @@ private func runMomentProcessOperation<Value: Sendable>(
 }
 
 actor MomentSharingCoordinator {
+    private enum WindowNameVerificationSource: Equatable {
+        case primary
+        case legacyReplacementPeer
+        case predecessorOwner
+    }
+
+    private struct OpenedWindowName {
+        let displayName: String
+        let requiresOwnerResign: Bool
+        let verificationSource: WindowNameVerificationSource
+    }
+
     private struct WindowNameVerificationKeys {
         let primary: Data
         let legacyReplacementPeer: Data?
@@ -1325,6 +1337,16 @@ actor MomentSharingCoordinator {
                     localWindowID: authorization.localWindowID
                 )
                 changed = applied.requiresPresentationRefresh
+                if opened.verificationSource == .legacyReplacementPeer {
+                    // Apply the verified presentation before any additional
+                    // request. A slow or unavailable historical status endpoint
+                    // must never delay the visible repair. The unstructured
+                    // migration remains safe because it owns no UI state and
+                    // must still pass the lifecycle token plus exact-state CAS.
+                    scheduleLegacyReplacementPeerNormalization(
+                        authorization: authorization
+                    )
+                }
                 if requiresOwnerResign {
                     // The recovered owner proves continuity by accepting the
                     // predecessor-signed value once, then increments the local
@@ -1517,37 +1539,167 @@ actor MomentSharingCoordinator {
         _ payload: PrivateWindowNamePreparedPayload,
         roomKey: Data,
         verificationKeys: WindowNameVerificationKeys
-    ) throws -> (displayName: String, requiresOwnerResign: Bool) {
+    ) throws -> OpenedWindowName {
         do {
-            return (
-                try PrivateWindowNameCrypto.open(
+            return OpenedWindowName(
+                displayName: try PrivateWindowNameCrypto.open(
                     payload,
                     roomKey: roomKey,
                     ownerSigningPublicKey: verificationKeys.primary
                 ),
-                false
+                requiresOwnerResign: false,
+                verificationSource: .primary
             )
         } catch let primaryError {
             if let legacyReplacementPeer = verificationKeys.legacyReplacementPeer {
-                return (
-                    try PrivateWindowNameCrypto.open(
+                return OpenedWindowName(
+                    displayName: try PrivateWindowNameCrypto.open(
                         payload,
                         roomKey: roomKey,
                         ownerSigningPublicKey: legacyReplacementPeer
                     ),
-                    false
+                    requiresOwnerResign: false,
+                    verificationSource: .legacyReplacementPeer
                 )
             }
             guard let predecessorOwner = verificationKeys.predecessorOwner else {
                 throw primaryError
             }
-            return (
-                try PrivateWindowNameCrypto.open(
+            return OpenedWindowName(
+                displayName: try PrivateWindowNameCrypto.open(
                     payload,
                     roomKey: roomKey,
                     ownerSigningPublicKey: predecessorOwner
                 ),
-                true
+                requiresOwnerResign: true,
+                verificationSource: .predecessorOwner
+            )
+        }
+    }
+
+    /// Validates the whole recovery record, not just the key that happened to
+    /// verify a window-name signature. The saved canonical transcript binds
+    /// the previous target identity, replacement key pair, local sponsor and
+    /// exact ceremony revision; byte equality with the authenticated relay
+    /// record prevents a later recovery from being confused with this one.
+    private static func confirmedLegacyReplacementPeer(
+        from status: PairingDeviceRecoveryStatusResult,
+        pairing: PairingState,
+        credential: PairingCredential
+    ) throws -> (agreementPublicKey: String, signingPublicKey: String) {
+        guard pairing.phase == .paired,
+              pairing.role == .invitee,
+              pairing.localDeviceIsAdditional != true,
+              pairing.recoveryCompletedAt != nil,
+              pairing.recoveryWasLocalDeviceReplacement == false,
+              let recoveryID = pairing.recoveryID,
+              let recoveryExpiresAt = pairing.recoveryExpiresAt,
+              let recoveryMembershipRevision = pairing.recoveryMembershipRevision,
+              let recoveryKeyEpoch = pairing.recoveryKeyEpoch,
+              let recoveryTranscript = pairing.recoveryTranscript
+                .flatMap({ Data(base64URLString: $0) }),
+              let recoveryTranscriptHash = pairing.recoveryTranscriptHash,
+              let recoveryHashData = Data(base64URLString: recoveryTranscriptHash),
+              recoveryHashData.count == 32,
+              PairingCrypto.sha256(recoveryTranscript) == recoveryHashData,
+              pairing.recoveryVerificationPhrase
+                == PairingCrypto.verificationPhrase(for: recoveryHashData),
+              let previousAgreement = pairing.recoveryPreviousTargetAgreementPublicKey,
+              let previousSigning = pairing.recoveryPreviousTargetSigningPublicKey,
+              let candidateAgreement = pairing.recoveryCandidateAgreementPublicKey,
+              let candidateSigning = pairing.recoveryCandidateSigningPublicKey,
+              previousAgreement == pairing.peerAgreementPublicKey,
+              previousSigning == pairing.peerSigningPublicKey,
+              candidateAgreement != previousAgreement,
+              candidateSigning != previousSigning,
+              let spaceID = pairing.spaceID,
+              let memberID = pairing.memberID,
+              let participantID = pairing.participantID,
+              let peerMemberID = pairing.peerMemberID,
+              let peerParticipantID = pairing.peerParticipantID,
+              let dailyBoundaryMinuteUTC = pairing.dailyBoundaryMinuteUTC,
+              status.recoveryID == recoveryID,
+              status.deviceID == pairing.recoveryDeviceID,
+              status.state == "active",
+              Int(status.expiresAt.timeIntervalSince1970)
+                == Int(recoveryExpiresAt.timeIntervalSince1970),
+              status.membershipRevision == recoveryMembershipRevision,
+              status.keyEpoch == recoveryKeyEpoch,
+              status.spaceID == spaceID,
+              status.dailyBoundaryMinuteUTC == dailyBoundaryMinuteUTC,
+              status.transcriptData == recoveryTranscript,
+              status.transcriptHash == recoveryTranscriptHash,
+              status.previousTargetSigningPublicKey == previousSigning,
+              status.credential.memberID == peerMemberID,
+              status.credential.participantID == peerParticipantID,
+              status.credential.pairingRole == .inviter,
+              status.credential.state == "active",
+              status.credential.agreementPublicKey == candidateAgreement,
+              status.credential.signingPublicKey == candidateSigning,
+              status.peer.memberID == memberID,
+              status.peer.participantID == participantID,
+              status.peer.pairingRole == .invitee,
+              status.peer.state == "active",
+              status.peer.agreementPublicKey
+                == (try PairingCrypto.agreementPublicKey(for: credential)
+                    .base64URLEncodedString()),
+              status.peer.signingPublicKey
+                == (try PairingCrypto.signingPublicKey(for: credential)
+                    .base64URLEncodedString()),
+              status.envelopeAlgorithm == nil,
+              status.keyEnvelope == nil,
+              status.approvalSignature == nil,
+              status.recoveredAt != nil
+        else { throw PairingError.invalidServerResponse }
+        return (candidateAgreement, candidateSigning)
+    }
+
+    private func normalizeLegacyReplacementPeerBestEffort(
+        authorization: Authorization
+    ) async {
+        do {
+            let api = try URLSessionPairingAPIClient(configuration: configuration)
+            let status = try await api.sponsorDeviceRecoveryStatus(
+                state: authorization.state,
+                credential: authorization.credential
+            )
+            try SharingLifecycleGate.validate(authorization.lifecycleToken)
+            let confirmed = try Self.confirmedLegacyReplacementPeer(
+                from: status,
+                pairing: authorization.state,
+                credential: authorization.credential
+            )
+            _ = try PairingStateStore.normalizeLegacyReplacementPeer(
+                confirmedAgreementPublicKey: confirmed.agreementPublicKey,
+                confirmedSigningPublicKey: confirmed.signingPublicKey,
+                expected: authorization.state,
+                localWindowID: authorization.localWindowID,
+                lifecycleToken: authorization.lifecycleToken
+            )
+            SharedLog.app.info(
+                "window-name-sync",
+                "Legacy replacement peer identity normalized"
+            )
+        } catch {
+            // Keep the authenticated display repair even if the historical
+            // recovery status is temporarily unavailable. The next name GET
+            // retries this bounded migration; no unconfirmed key is persisted.
+            SharedLog.app.warning(
+                "window-name-sync",
+                "Legacy replacement peer normalization deferred",
+                metadata: [
+                    "sharingFailureReason": Self.localFailureReason(for: error).rawValue
+                ]
+            )
+        }
+    }
+
+    private func scheduleLegacyReplacementPeerNormalization(
+        authorization: Authorization
+    ) {
+        Task { [self] in
+            await self.normalizeLegacyReplacementPeerBestEffort(
+                authorization: authorization
             )
         }
     }
@@ -1560,7 +1712,7 @@ actor MomentSharingCoordinator {
         credential: PairingCredential
     ) throws -> (displayName: String, requiresOwnerResign: Bool) {
         guard let role = pairing.role else { throw MomentSharingError.notPaired }
-        return try openWindowName(
+        let opened = try openWindowName(
             payload,
             roomKey: roomKey,
             verificationKeys: windowNameVerificationKeys(
@@ -1568,6 +1720,19 @@ actor MomentSharingCoordinator {
                 credential: credential,
                 role: role
             )
+        )
+        return (opened.displayName, opened.requiresOwnerResign)
+    }
+
+    static func runtimeConfirmedLegacyReplacementPeer(
+        from status: PairingDeviceRecoveryStatusResult,
+        pairing: PairingState,
+        credential: PairingCredential
+    ) throws -> (agreementPublicKey: String, signingPublicKey: String) {
+        try confirmedLegacyReplacementPeer(
+            from: status,
+            pairing: pairing,
+            credential: credential
         )
     }
 #endif

@@ -60,6 +60,7 @@ struct PairingDeviceRecoveryClaimResult: Sendable {
 
 struct PairingDeviceRecoveryStatusResult: Sendable {
     let recoveryID: String
+    let deviceID: String
     let state: String
     let expiresAt: Date
     let membershipRevision: Int
@@ -904,6 +905,8 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
               response.recovery.expiresAt > Int(Date().timeIntervalSince1970),
               response.recovery.membershipRevision > 0,
               response.recovery.keyEpoch > 0,
+              let deviceID = response.recovery.deviceId,
+              PairingValidation.isOpaqueIdentifier(deviceID),
               PairingValidation.isOpaqueIdentifier(response.space.id),
               (0...1_439).contains(response.space.dailyBoundaryMinuteUTC),
               response.target.memberID != response.peer.memberID,
@@ -1036,6 +1039,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         }
         return PairingDeviceRecoveryStatusResult(
             recoveryID: recoveryID,
+            deviceID: deviceID,
             state: response.recovery.state,
             expiresAt: Date(timeIntervalSince1970: TimeInterval(response.recovery.expiresAt)),
             membershipRevision: response.recovery.membershipRevision,
