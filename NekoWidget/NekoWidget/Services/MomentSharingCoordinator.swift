@@ -1431,7 +1431,7 @@ actor MomentSharingCoordinator {
         let committedName = try PrivateWindowNameCrypto.open(
             committedPayload,
             roomKey: roomKey,
-            ownerSigningPublicKey: ownerSigningPublicKey
+            ownerSigningPublicKey: verificationKeys.primary
         )
         guard try PrivateWindowNameSyncStore.recordAccepted(
             committedPayload,
