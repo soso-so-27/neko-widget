@@ -84,8 +84,8 @@ struct NekoWidgetView: View {
             actionTray {
                 if family == .systemSmall {
                     // Keep the smallest received-photo widget focused on one
-                    // social response. Saving remains an explicit labeled
-                    // control in larger families and never hijacks photo taps.
+                    // social response. The separate memory mark remains
+                    // available in larger families and never hijacks photo taps.
                     familyHeartControl(sourceDigest: sourceDigest)
                 } else {
                     familyMemoryControl
@@ -97,11 +97,7 @@ struct NekoWidgetView: View {
                   entry.isLikeInteractionEnabled {
             actionTray {
                 if entry.isLiked {
-                    statusBadge(
-                        title: "残した",
-                        systemImage: "bookmark.fill",
-                        style: .completed
-                    )
+                    memoryMark(isSelected: true)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("思い出に残した写真")
                     .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
@@ -112,11 +108,7 @@ struct NekoWidgetView: View {
                             fallbackIsLiked: false
                         )
                     ) {
-                        directActionLabel(
-                            title: "残す",
-                            systemImage: "bookmark",
-                            invalidatesContent: true
-                        )
+                        memoryMark(isSelected: false, invalidatesContent: true)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("思い出に残す")
@@ -129,20 +121,13 @@ struct NekoWidgetView: View {
     @ViewBuilder
     private var familyMemoryControl: some View {
         if entry.isBookmarked {
-            statusBadge(
-                title: "残した",
-                systemImage: "bookmark.fill",
-                style: .completed
-            )
+            memoryMark(isSelected: true)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("思い出に残した写真")
             .accessibilityHint("解除はアプリの思い出画面から確認して行えます")
         } else if let memoryActionURL = entry.memoryActionURL {
             Link(destination: memoryActionURL) {
-                directActionLabel(
-                    title: "取り込む",
-                    systemImage: "bookmark"
-                )
+                memoryMark(isSelected: false)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("写真アプリに取り込んで残す")
@@ -242,6 +227,33 @@ struct NekoWidgetView: View {
                 )
         }
         .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    /// The private-memory control stays in exactly the same place before and
+    /// after selection. Its visible label is intentionally omitted so the cat
+    /// photo remains primary; VoiceOver continues to announce the full action.
+    private func memoryMark(
+        isSelected: Bool,
+        invalidatesContent: Bool = false
+    ) -> some View {
+        Group {
+            if invalidatesContent {
+                Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
+                    .invalidatableContent()
+            } else {
+                Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.white)
+        .frame(width: 32, height: 32)
+        .background(Color.black.opacity(0.64), in: Circle())
+        .overlay {
+            Circle()
+                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
+        }
+        .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
 

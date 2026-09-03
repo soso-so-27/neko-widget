@@ -130,7 +130,11 @@ struct MainTabView: View {
                     latestMonthlyWindowIsUnread: latestMonthlyWindowIsUnread,
                     latestSeasonalMovieIsNew: latestSeasonalMovieIsNew,
                     seasonalMovies: seasonalMovieArchive.records,
-                    exportPhotoBook: exportPhotoBook
+                    exportPhotoBook: exportPhotoBook,
+                    openPhotos: {
+                        photosPath = NavigationPath()
+                        selectedTab = .photos
+                    }
                 )
                     .navigationDestination(
                         for: MemoriesRoute.self,

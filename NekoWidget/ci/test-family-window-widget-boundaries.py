@@ -205,11 +205,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("Link(destination: memoryActionURL)", view)
         self.assertNotIn("ToggleFamilyWidgetBookmarkIntent", view)
         self.assertNotIn('entry.isBookmarked ? "残した" : "残す"', view)
-        self.assertIn('systemImage: "bookmark"', view)
-        self.assertIn('systemImage: "bookmark.fill"', view)
-        self.assertIn('title: "残す"', view)
-        self.assertIn('title: "取り込む"', view)
-        self.assertIn('title: "残した"', view)
+        self.assertIn('isSelected ? "bookmark.fill" : "bookmark"', view)
+        self.assertIn('private func memoryMark(', view)
+        self.assertIn('.frame(width: 44, height: 44)', view)
+        self.assertNotIn('title: "残す"', view)
+        self.assertNotIn('title: "取り込む"', view)
+        self.assertNotIn('title: "残した"', view)
         self.assertIn('if entry.isBookmarked {', view)
         self.assertIn('if entry.isLiked {', view)
         self.assertIn('fallbackIsLiked: false', view)
@@ -901,8 +902,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("summarySection", memory_view)
         self.assertNotIn("reflectionSection", memory_view)
         self.assertNotIn("creationSection", memory_view)
-        self.assertIn('case .photos: "写真"', memories)
-        self.assertIn('case .summaries: "まとめ"', memories)
+        self.assertIn('case .photos: "選んだ一枚"', memories)
+        self.assertIn('case .summaries: "ふりかえり"', memories)
         self.assertLess(
             memories_section.index("case summaries"),
             memories_section.index("case photos"),
@@ -935,16 +936,15 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn('accessibilityIdentifier("memories-section-picker")', memory_view)
         self.assertIn("dynamicTypeSize.isAccessibilitySize", memory_view)
         self.assertIn('accessibilityIdentifier("memories-section-menu")', memory_view)
-        self.assertIn(
+        self.assertNotIn(
             ".onChange(of: hasUnreadSummary, initial: true)",
             memory_view,
         )
-        self.assertIn(
-            "guard hasUnread, !hasExplicitlySelectedSection else { return }",
-            memory_view,
-        )
-        self.assertIn("selectedSection = .summaries", memory_view)
-        self.assertIn("selection: selectedSectionBinding", memory_view)
+        self.assertNotIn("selectedSection = .summaries", memory_view)
+        self.assertIn("selection: $selectedSection", memory_view)
+        self.assertIn('Label("写真から選ぶ"', memory_view)
+        self.assertIn("photosPath = NavigationPath()", main_tab)
+        self.assertIn("openPhotos: {", main_tab)
         self.assertNotIn("showsCreationPreview", memory_view)
         self.assertIn("case monthlyWindow(MonthlyWindowPresentation)", main_tab)
         self.assertIn(
@@ -1156,7 +1156,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("seasonalMovieArchive.records.first.map { !$0.isFrozen }", main)
         self.assertIn("let latestSeasonalMovieIsNew: Bool", memories)
-        self.assertIn(".onChange(of: hasUnreadSummary, initial: true)", memories)
+        self.assertNotIn(".onChange(of: hasUnreadSummary, initial: true)", memories)
         self.assertIn("isNew: latestSeasonalMovieIsNew", memories)
         self.assertIn("let service = SeasonalMovieCandidateService()", main)
         self.assertIn("await service.photoCandidates", main)

@@ -571,7 +571,7 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'Label("かたちにする", systemImage: "square.and.arrow.up")' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq '枚・残した順' \
+          grep -Fq 'Text("\(photos.count.formatted())枚")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'LikedPhotoOrderingPolicy.comesBefore(' \
             NekoWidget/App/AppRootView.swift

@@ -78,7 +78,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
-        let photosSegment = memoriesSectionPicker.buttons["写真"]
+        let photosSegment = memoriesSectionPicker.buttons["選んだ一枚"]
         guard memoriesSectionPicker.waitForExistence(timeout: 15),
               photosSegment.waitForExistence(timeout: 5) else {
             fail(

@@ -508,8 +508,8 @@ private enum MemoriesSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .photos: "写真"
-        case .summaries: "まとめ"
+        case .photos: "選んだ一枚"
+        case .summaries: "ふりかえり"
         }
     }
 }
@@ -528,9 +528,9 @@ struct LikedPhotosView: View {
     let latestSeasonalMovieIsNew: Bool
     let seasonalMovies: [SeasonalMovieArchiveRecord]
     let exportPhotoBook: ([String]) async throws -> URL
+    let openPhotos: () -> Void
 
     @State private var selectedSection: MemoriesSection = .photos
-    @State private var hasExplicitlySelectedSection = false
 
     var body: some View {
         ScrollView {
@@ -548,14 +548,6 @@ struct LikedPhotosView: View {
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
-        .onChange(of: hasUnreadSummary, initial: true) { _, hasUnread in
-            guard hasUnread, !hasExplicitlySelectedSection else { return }
-            selectedSection = .summaries
-        }
-    }
-
-    private var hasUnreadSummary: Bool {
-        latestMonthlyWindowIsUnread || latestSeasonalMovieIsNew
     }
 
     @ViewBuilder
@@ -564,7 +556,7 @@ struct LikedPhotosView: View {
             Menu {
                 ForEach(MemoriesSection.allCases) { section in
                     Button {
-                        selectSection(section)
+                        selectedSection = section
                     } label: {
                         if selectedSection == section {
                             Label(section.title, systemImage: "checkmark")
@@ -585,7 +577,7 @@ struct LikedPhotosView: View {
             .padding(.horizontal, 16)
             .accessibilityIdentifier("memories-section-menu")
         } else {
-            Picker("表示する思い出", selection: selectedSectionBinding) {
+            Picker("表示する思い出", selection: $selectedSection) {
                 ForEach(MemoriesSection.allCases) { section in
                     Text(section.title).tag(section)
                 }
@@ -596,18 +588,6 @@ struct LikedPhotosView: View {
         }
     }
 
-    private var selectedSectionBinding: Binding<MemoriesSection> {
-        Binding(
-            get: { selectedSection },
-            set: { selectSection($0) }
-        )
-    }
-
-    private func selectSection(_ section: MemoriesSection) {
-        hasExplicitlySelectedSection = true
-        selectedSection = section
-    }
-
     private var photoColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 3), count: 3)
     }
@@ -616,7 +596,7 @@ struct LikedPhotosView: View {
         VStack(alignment: .leading, spacing: 12) {
             if !photos.isEmpty {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("\(photos.count.formatted())枚・残した順")
+                    Text("\(photos.count.formatted())枚")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("photo-book-progress")
@@ -640,24 +620,13 @@ struct LikedPhotosView: View {
             }
 
             if photos.isEmpty {
-                HStack(spacing: 13) {
-                    Image(systemName: "bookmark")
-                        .font(.title3.weight(.semibold))
+                Button(action: openPhotos) {
+                    Label("写真から選ぶ", systemImage: "photo.on.rectangle.angled")
+                        .font(.headline)
                         .foregroundStyle(Color.accentColor)
-                        .frame(width: 42, height: 42)
-                        .background(
-                            Color.accentColor.opacity(0.10),
-                            in: RoundedRectangle(cornerRadius: 12)
-                        )
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("まだありません")
-                            .font(.headline)
-                        Text("写真で「思い出に残す」を押すと、ここに並びます")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
+                .buttonStyle(.plain)
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
@@ -665,6 +634,7 @@ struct LikedPhotosView: View {
                     in: RoundedRectangle(cornerRadius: 18)
                 )
                 .padding(.horizontal, 16)
+                .accessibilityHint("猫写真の一覧を開きます")
             } else {
                 LazyVGrid(columns: photoColumns, spacing: 3) {
                     ForEach(photos) { photo in
@@ -680,7 +650,7 @@ struct LikedPhotosView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("残した写真")
+        .accessibilityLabel("選んだ一枚")
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("memories-saved-section")
     }
@@ -711,7 +681,7 @@ struct LikedPhotosView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("まとめ")
+        .accessibilityLabel("ふりかえり")
         .accessibilityIdentifier("memories-summaries-section")
     }
 
@@ -1154,7 +1124,7 @@ struct SavedMemoriesGalleryView: View {
                 }
             }
         }
-        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "残した写真")
+        .navigationTitle(isSelectingForExport ? "写真を選ぶ" : "選んだ一枚")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
