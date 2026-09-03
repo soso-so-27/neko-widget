@@ -55,7 +55,7 @@ struct FamilyWindowView: View {
     @StateObject private var model = MomentSharingViewModel()
     @State private var reportTarget: MomentInboxItem?
     @State private var blockTarget: MomentInboxItem?
-    @State private var deleteHiddenTarget: MomentInboxItem?
+    @State private var deleteReceivedTarget: MomentInboxItem?
     @State private var showsPendingCancelConfirmation = false
     @State private var showsPreparationCancelConfirmation = false
     @State private var showsTerminalResultDismissConfirmation = false
@@ -189,7 +189,7 @@ struct FamilyWindowView: View {
             // fail-closed guards.
             reportTarget = nil
             blockTarget = nil
-            deleteHiddenTarget = nil
+            deleteReceivedTarget = nil
             showsPendingCancelConfirmation = false
             showsPreparationCancelConfirmation = false
             showsTerminalResultDismissConfirmation = false
@@ -303,22 +303,28 @@ struct FamilyWindowView: View {
             Text("確認用に、この写真の暗号化したコピーだけを運営へ送ります。サーバー受付後7日で利用期限を終えて削除対象となり、削除は完了まで再試行します。このまどの暗号鍵は送りません。")
         }
         .confirmationDialog(
-            "この受信を削除しますか？",
+            "この写真を削除しますか？",
             isPresented: Binding(
-                get: { deleteHiddenTarget != nil },
-                set: { if !$0 { deleteHiddenTarget = nil } }
+                get: { deleteReceivedTarget != nil },
+                set: { if !$0 { deleteReceivedTarget = nil } }
             ),
             titleVisibility: .visible,
-            presenting: deleteHiddenTarget
+            presenting: deleteReceivedTarget
         ) { item in
             Button("このiPhoneから削除", role: .destructive) {
-                deleteHiddenTarget = nil
-                Task { await model.deleteSafetyHiddenMoment(item) }
+                deleteReceivedTarget = nil
+                if selectedMomentForDetail?.id == item.id {
+                    selectedMomentForDetail = nil
+                }
+                if focusedMomentID == item.id {
+                    focusedMomentID = nil
+                }
+                Task { await model.deleteReceivedMoment(item) }
             }
             .disabled(model.isWorking || model.isShowingLastKnownState)
-            Button("やめる", role: .cancel) { deleteHiddenTarget = nil }
-        } message: { _ in
-            Text("このiPhoneから削除します。相手とのまどと、写真アプリへ取り込んだ写真はそのままです。削除後、この受信から新たに通報することはできません。")
+            Button("やめる", role: .cancel) { deleteReceivedTarget = nil }
+        } message: { item in
+            Text(receivedPhotoDeletionMessage(item))
         }
         .alert(
             "この相手をブロックしますか？",
@@ -505,6 +511,11 @@ struct FamilyWindowView: View {
 
                     manualRefreshResult
 
+                    if pendingNotificationRoute?.target == nil,
+                       model.errorMessage == nil {
+                        sendPhotoAction
+                    }
+
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
                             Text(section.title).tag(section)
@@ -523,10 +534,6 @@ struct FamilyWindowView: View {
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
                 } else {
-                    if pendingNotificationRoute?.target == nil,
-                       model.errorMessage == nil {
-                        sendPhotoAction
-                    }
                     sentSectionContent
                 }
             }
@@ -655,6 +662,7 @@ struct FamilyWindowView: View {
             PhotosPicker(
                 selection: $selectedPhotoItem,
                 matching: .images,
+                preferredItemEncoding: .compatible,
                 photoLibrary: .shared()
             ) {
                 HStack(spacing: 8) {
@@ -666,7 +674,7 @@ struct FamilyWindowView: View {
                     }
                     Text(isPreparingSelectedPhoto
                         ? "写真を準備しています…"
-                        : "写真を届ける")
+                        : "写真を選んで届ける")
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
@@ -782,8 +790,15 @@ struct FamilyWindowView: View {
                 guard let picked = try await item.loadTransferable(
                     type: PickedMomentIngressPhoto.self
                 ) else { throw MomentSharingError.invalidPayload }
-                let destination = try await model.deliveryDestinationSnapshot()
                 let preview = try picked.photo.previewImage()
+                let destination: MomentDeliveryDestination
+                do {
+                    destination = try await model.deliveryDestinationSnapshot()
+                } catch {
+                    photoSelectionMessage =
+                        "届け先を確認できませんでした。まどの状態を確認して、もう一度お試しください。"
+                    return
+                }
                 preparedDelivery = PreparedMomentDelivery(
                     photo: picked.photo,
                     preview: preview,
@@ -791,7 +806,7 @@ struct FamilyWindowView: View {
                 )
             } catch {
                 photoSelectionMessage =
-                    "写真または届け先を準備できませんでした。まどを確認して、もう一度お試しください。"
+                    "写真を読み込めませんでした。iCloudの通信状態を確認するか、別の写真をお試しください。"
             }
         }
     }
@@ -1229,6 +1244,14 @@ struct FamilyWindowView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    if visibleSentRecords.allSatisfy({
+                        sentRecordThumbnail($0) == nil
+                    }) {
+                        Text("以前の送信や、別のiPhoneの履歴にはプレビューがありません。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     LazyVGrid(columns: sentRecordColumns, spacing: 10) {
                         ForEach(visibleSentRecords) { record in
                             sentRecordCard(record)
@@ -1431,7 +1454,7 @@ struct FamilyWindowView: View {
                 VStack(spacing: 7) {
                     Image(systemName: "photo")
                         .font(.title2)
-                    Text("送信履歴のみ\n画像はありません")
+                    Text("プレビューなし")
                         .font(.caption2.weight(.semibold))
                         .multilineTextAlignment(.center)
                 }
@@ -1621,33 +1644,37 @@ struct FamilyWindowView: View {
                     }
                 }
                 Spacer()
-                if model.isEncryptedReportAvailable || !model.isReportOnly {
-                    Menu {
-                        if model.isEncryptedReportAvailable {
-                            Button {
-                                reportTarget = item
-                            } label: {
-                                Label(
-                                    model.reportActionTitle(item),
-                                    systemImage: "exclamationmark.bubble"
-                                )
-                            }
-                            .disabled(!model.canSubmitReport(item))
+                Menu {
+                    if model.isEncryptedReportAvailable {
+                        Button {
+                            reportTarget = item
+                        } label: {
+                            Label(
+                                model.reportActionTitle(item),
+                                systemImage: "exclamationmark.bubble"
+                            )
                         }
-                        if !model.isReportOnly {
-                            Button(role: .destructive) {
-                                blockTarget = item
-                            } label: {
-                                Label("この相手をブロック", systemImage: "hand.raised.fill")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.title3)
+                        .disabled(!model.canSubmitReport(item))
                     }
-                    .accessibilityLabel("写真の安全メニュー")
-                    .disabled(model.isShowingLastKnownState)
+                    Button(role: .destructive) {
+                        deleteReceivedTarget = item
+                    } label: {
+                        Label("この写真を削除", systemImage: "trash")
+                    }
+                    if !model.isReportOnly {
+                        Divider()
+                        Button(role: .destructive) {
+                            blockTarget = item
+                        } label: {
+                            Label("この相手をブロック", systemImage: "hand.raised.fill")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
                 }
+                .accessibilityLabel("写真の操作メニュー")
+                .disabled(model.isWorking || model.isShowingLastKnownState)
             }
             .padding(13)
             if !model.isReportOnly, !model.isShowingLastKnownState {
@@ -2192,7 +2219,7 @@ struct FamilyWindowView: View {
                     .disabled(!model.canSubmitReport(item))
                 }
                 Button(role: .destructive) {
-                    deleteHiddenTarget = item
+                    deleteReceivedTarget = item
                 } label: {
                     Label("この受信を削除", systemImage: "trash")
                 }
@@ -2270,6 +2297,16 @@ struct FamilyWindowView: View {
             Task { await model.report(target, reason: reason) }
         }
         .disabled(reportTarget.map { !model.canSubmitReport($0) } ?? true)
+    }
+
+    private func receivedPhotoDeletionMessage(_ item: MomentInboxItem) -> String {
+        if model.isSavedMemory(item) {
+            return "このiPhoneの「届いた」から削除します。「思い出」に残した写真と、相手とのまどはそのままです。取り消せません。"
+        }
+        if model.hasImportedMemory(item) {
+            return "このiPhoneの「届いた」から削除します。写真アプリへ取り込んだ写真と、相手とのまどはそのままです。取り消せません。"
+        }
+        return "このiPhoneの「届いた」から削除します。相手とのまどはそのままです。取り消せません。"
     }
 
     private func safetyHiddenExplanation(_ item: MomentInboxItem) -> String {

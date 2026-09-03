@@ -459,6 +459,9 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
     let captureDateIsMissing: Bool
     let committedAt: Date
     let receivedAt: Date
+    /// Monotonic relay change order for this participant. Optional keeps
+    /// receipts written by earlier clients decodable.
+    var changeSequence: Int? = nil
     var state: MomentInboxState
     var acknowledgedAt: Date? = nil
     var accessExpiresAt: Date
@@ -473,6 +476,7 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
                 || ((state == .available || state == .acknowledged)
                     == (localJPEGFileName != nil))),
               captureDateIsMissing == (capturedAt == nil),
+              changeSequence.map({ $0 > 0 }) ?? true,
               accessExpiresAt > committedAt,
               (state != .acknowledged || acknowledgedAt != nil)
         else { throw MomentSharingError.stateUnavailable }
@@ -1151,12 +1155,12 @@ enum MomentSharingStateStore {
         }
     }
 
-    /// Deletes the local JPEG for one moderation-hidden or revoked receipt,
+    /// Deletes the local JPEG for one received photo,
     /// while retaining a fileless terminal tombstone. The tombstone is
     /// required: removing the ledger row outright would allow an older relay
     /// page to materialize the same photo again after a cursor recovery.
     /// Existing encrypted report outbox entries are intentionally preserved.
-    static func deleteSafetyHiddenInbox(
+    static func deleteInbox(
         momentID: String,
         validating lifecycleToken: SharingLifecycleGate.Token
     ) throws {
@@ -1166,8 +1170,7 @@ enum MomentSharingStateStore {
             var state = try loadWhileLocked()
             guard let index = state.inbox.firstIndex(where: {
                 $0.id == momentID
-            }), (state.inbox[index].state == .blocked
-                || state.inbox[index].state == .revoked)
+            }), state.inbox[index].localJPEGFileName != nil
             else { throw MomentSharingError.stateUnavailable }
 
             let item = state.inbox[index]
@@ -1865,6 +1868,14 @@ enum MomentSharingStateStore {
                     // A sent-history preview is optional presentation state;
                     // storage pressure must not turn an otherwise valid send
                     // into a delivery failure.
+                    SharedLog.app.warning(
+                        "sent-history-preview",
+                        "A local sent-history preview could not be stored",
+                        metadata: SharedLog.errorMetadata(
+                            error,
+                            category: .momentSharing
+                        )
+                    )
                     try? removeLocalThumbnail(fileName: thumbnailFileName)
                     item.localThumbnailFileName = nil
                 }

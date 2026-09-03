@@ -1477,6 +1477,7 @@ export async function getMomentChanges(
     }
     return {
       cursor: row.cursor,
+      sequence: row.sequence,
       type: row.change_type === "moment_committed" ? "momentCommitted" : "deliveryRevoked",
       createdAt: row.created_at,
       moment: {

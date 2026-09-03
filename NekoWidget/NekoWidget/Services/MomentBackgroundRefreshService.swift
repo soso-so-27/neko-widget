@@ -282,8 +282,16 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
                 return
             }
         }
-        activeRefresh?.cancel()
+        // A second photo can produce another push while the first authenticated
+        // refresh is still running. Queue it behind that work instead of
+        // cancelling the earlier fetch and reporting a false failure to iOS.
+        let precedingRefresh = activeRefresh
         let operation = Task { @MainActor in
+            await precedingRefresh?.value
+            guard !Task.isCancelled else {
+                completionHandler(.failed)
+                return
+            }
             let result = await MomentBackgroundRefreshService.shared.refresh(
                 protectedDataAvailable: application.isProtectedDataAvailable,
                 trigger: "remote-notification",
@@ -349,8 +357,16 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
         // Submit the next request before doing network work. If iOS terminates
         // this attempt, a later best-effort opportunity remains scheduled.
         scheduleNextRefresh()
-        activeRefresh?.cancel()
+        // Do not cancel a remote-notification refresh that may already have
+        // authenticated and downloaded data. The scheduled task can safely run
+        // immediately after it through the process-wide serialized coordinator.
+        let precedingRefresh = activeRefresh
         let operation = Task { @MainActor in
+            await precedingRefresh?.value
+            guard !Task.isCancelled else {
+                backgroundTask.setTaskCompleted(success: false)
+                return
+            }
             let protectedDataAvailable = UIApplication.shared.isProtectedDataAvailable
             let result = await MomentBackgroundRefreshService.shared.refresh(
                 protectedDataAvailable: protectedDataAvailable
@@ -1159,7 +1175,9 @@ actor MomentBackgroundRefreshService {
             }
 
             if emitLocalNotifications && newVisibleCount > 0 {
-                await postPrivacyMinimizedNewMomentNotification()
+                await postPrivacyMinimizedNewMomentNotification(
+                    count: newVisibleCount
+                )
             }
             if emitLocalNotifications && newPawCount > 0 {
                 await postPrivacyMinimizedPawNotification()
@@ -1224,7 +1242,8 @@ actor MomentBackgroundRefreshService {
         await MomentPushSubscriptionService.shared.reconcileRegistration()
     }
 
-    private func postPrivacyMinimizedNewMomentNotification() async {
+    private func postPrivacyMinimizedNewMomentNotification(count: Int) async {
+        guard count > 0 else { return }
         let settings = await notificationCenter.notificationSettings()
         guard settings.authorizationStatus == .authorized
                 || settings.authorizationStatus == .provisional
@@ -1232,7 +1251,9 @@ actor MomentBackgroundRefreshService {
         else { return }
         let content = UNMutableNotificationContent()
         content.title = "ねこのまど"
-        content.body = "新しい一枚が届きました。アプリを開いて確認できます。"
+        content.body = count == 1
+            ? "新しい一枚が届きました。アプリを開いて確認できます。"
+            : "新しい写真が\(count)枚届きました。アプリを開いて確認できます。"
         content.userInfo = MomentNotificationRoutePayload.userInfo(for: .newMoment)
         // Keep the request text-only and generic. It carries no identifier-
         // bearing route, media, sender/window label, counter, or audible signal.
@@ -1288,7 +1309,8 @@ actor MomentBackgroundRefreshService {
                     state: presentationState,
                     imageURL: validatedReceivedMomentImageURL(for: item),
                     committedAt: item.committedAt,
-                    receivedAt: item.receivedAt
+                    receivedAt: item.receivedAt,
+                    changeSequence: item.changeSequence
                 )
             },
             now: now

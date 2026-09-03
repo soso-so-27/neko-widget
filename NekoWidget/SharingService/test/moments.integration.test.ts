@@ -1067,6 +1067,7 @@ describe("append-only encrypted moments", () => {
     const changes = await changesResponse.json<{
       changes: Array<{
         cursor: string;
+        sequence: number;
         type: string;
         moment: {
           id: string;
@@ -1078,6 +1079,7 @@ describe("append-only encrypted moments", () => {
       nextCursor: string;
     }>();
     expect(changes.changes).toHaveLength(1);
+    expect(changes.changes[0]?.sequence).toBeGreaterThan(0);
     expect(changes.changes[0]?.type).toBe("momentCommitted");
     expect(changes.changes[0]?.moment.clientMomentId)
       .toBe(published.reservation.moment.clientMomentId);

@@ -1911,7 +1911,8 @@ final class AppViewModel: ObservableObject {
                 state: presentationState,
                 imageURL: validatedReceivedMomentImageURL(for: item),
                 committedAt: item.committedAt,
-                receivedAt: item.receivedAt
+                receivedAt: item.receivedAt,
+                changeSequence: item.changeSequence
             )
         }
     }

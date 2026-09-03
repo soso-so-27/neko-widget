@@ -95,7 +95,7 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         )[0]
         publication = refresh.index("widgetCacheBuilder.buildFamilyWindow(")
         reload = refresh.index("WidgetCenter.shared.reloadTimelines")
-        notification = refresh.index("postPrivacyMinimizedNewMomentNotification()")
+        notification = refresh.index("postPrivacyMinimizedNewMomentNotification(")
         self.assertLess(publication, reload)
         self.assertLess(reload, notification)
         self.assertIn("visibleMomentIDs(in: afterState)", refresh)
@@ -134,17 +134,19 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("if let target = route.target", callback)
         self.assertLess(
             callback.index("if let target = route.target"),
-            callback.index("activeRefresh?.cancel()"),
+            callback.index("let precedingRefresh = activeRefresh"),
         )
         self.assertIn("notificationTargetMatchesActiveWindow(target)", callback)
         mismatch = callback.split(
             "notificationTargetMatchesActiveWindow(target)", 1
-        )[1].split("activeRefresh?.cancel()", 1)[0]
+        )[1].split("let precedingRefresh = activeRefresh", 1)[0]
         self.assertIn("reconcileRemoteNotificationRegistration()", mismatch)
         self.assertIn("completionHandler(.noData)", mismatch)
         self.assertIn("return", mismatch)
         self.assertNotIn("MomentBackgroundRefreshService.shared.refresh", mismatch)
         self.assertNotIn("coordinator.synchronize", mismatch)
+        self.assertIn("await precedingRefresh?.value", callback)
+        self.assertNotIn("activeRefresh?.cancel()", callback)
 
         matcher = self.service.split(
             "private static func notificationTargetMatchesActiveWindow", 1
@@ -378,10 +380,11 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
 
     def test_local_notification_contains_no_shared_identity_or_media(self) -> None:
         notification = self.service.split(
-            "private func postPrivacyMinimizedNewMomentNotification()", 1
+            "private func postPrivacyMinimizedNewMomentNotification(count: Int)", 1
         )[1].split("private static func familyWidgetManifest", 1)[0]
         self.assertIn("UNMutableNotificationContent", notification)
         self.assertIn("新しい一枚が届きました", notification)
+        self.assertIn("新しい写真が\\(count)枚届きました", notification)
         self.assertIn(
             "content.userInfo = MomentNotificationRoutePayload.userInfo(for: .newMoment)",
             notification,

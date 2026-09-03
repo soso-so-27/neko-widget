@@ -331,7 +331,7 @@ enum MomentSharingPresentationVerifier {
         try require(
             presentation.sentRecords.map(\.serverAcceptedAt)
                 == [date(400), date(400), date(399)]
-                && presentation.sentRecords.map(\.id) == [0, 1, 2],
+                && presentation.sentRecords.map(\.id) == ["a", "z", "older"],
             "sent records did not use deterministic acceptance ordering"
         )
         try require(
@@ -556,28 +556,30 @@ enum MomentSharingPresentationVerifier {
                     receivedAt: 9_997
                 ),
                 familyInput(
-                    id: "b-latest-safe",
+                    id: "b-second-arrival",
                     state: .acknowledged,
                     url: visibleURL,
                     committedAt: 9_996,
-                    receivedAt: 9_996
+                    receivedAt: 9_996,
+                    changeSequence: 42
                 ),
                 familyInput(
-                    id: "a-tie-wins",
+                    id: "a-first-arrival",
                     state: .available,
                     url: olderURL,
                     committedAt: 9_996,
-                    receivedAt: 9_990
+                    receivedAt: 9_996,
+                    changeSequence: 41
                 )
             ],
             now: now
         )
         try require(
-            presentation.latestStableID == "a-tie-wins",
-            "family latest ordering did not use stable ID as its tie-breaker"
+            presentation.latestStableID == "b-second-arrival",
+            "family latest ordering did not preserve relay sequence within one second"
         )
         try require(
-            presentation.latestImageURL == olderURL,
+            presentation.latestImageURL == visibleURL,
             "hidden or missing family media became the visible image"
         )
         try require(
@@ -702,14 +704,16 @@ enum MomentSharingPresentationVerifier {
         state: MomentFamilyWindowItemState,
         url: URL?,
         committedAt: TimeInterval,
-        receivedAt: TimeInterval
+        receivedAt: TimeInterval,
+        changeSequence: Int? = nil
     ) -> MomentFamilyWindowPresentationInput {
         MomentFamilyWindowPresentationInput(
             stableID: id,
             state: state,
             imageURL: url,
             committedAt: date(committedAt),
-            receivedAt: date(receivedAt)
+            receivedAt: date(receivedAt),
+            changeSequence: changeSequence
         )
     }
 

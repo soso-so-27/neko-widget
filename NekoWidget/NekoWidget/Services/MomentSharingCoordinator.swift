@@ -2382,6 +2382,7 @@ actor MomentSharingCoordinator {
             captureDateIsMissing: manifest.captureDateIsMissing,
             committedAt: change.committedAt,
             receivedAt: .now,
+            changeSequence: change.sequence,
             state: state,
             accessExpiresAt: change.accessExpiresAt
         ).validated()
@@ -2409,6 +2410,7 @@ actor MomentSharingCoordinator {
             captureDateIsMissing: true,
             committedAt: change.committedAt,
             receivedAt: .now,
+            changeSequence: change.sequence,
             state: .revoked,
             accessExpiresAt: change.accessExpiresAt
         ).validated()

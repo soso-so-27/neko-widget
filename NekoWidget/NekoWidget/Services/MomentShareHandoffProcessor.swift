@@ -531,13 +531,20 @@ struct MomentShareHandoffProcessor: Sendable {
                 return existing
             }
             guard let payload else { throw MomentSharingError.stateUnavailable }
+            let localThumbnailJPEG = Self.sentHistoryThumbnail(
+                from: current.canonicalJPEG
+            )
+            if localThumbnailJPEG == nil {
+                SharedLog.app.warning(
+                    "sent-history-preview",
+                    "A local sent-history preview could not be created"
+                )
+            }
             return try MomentSharingStateStore.enqueueWhileLifecycleLocked(
                 payload: payload,
                 senderPolicyVersion: current.senderPolicyVersion,
                 senderPolicyAcceptedAt: current.senderPolicyAcceptedAt,
-                localThumbnailJPEG: Self.sentHistoryThumbnail(
-                    from: current.canonicalJPEG
-                )
+                localThumbnailJPEG: localThumbnailJPEG
             )
         }
     }

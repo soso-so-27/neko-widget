@@ -1,4 +1,5 @@
 import AppIntents
+import CryptoKit
 import Foundation
 import WidgetKit
 
@@ -228,11 +229,23 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
     }
 }
 
-/// Resolves only the currently published received image. An intent from a
-/// stale Widget generation fails closed instead of changing another photo.
-/// The opaque moment ID stays in App Group storage and is never an App Intent
-/// parameter.
+/// Resolves the exact received image rendered by WidgetKit. The active manifest
+/// covers the newest generation; a short, bounded cache history covers an older
+/// timeline that can remain visible after a second photo arrives. Every match
+/// is revalidated against the active private window and inbox before mutation.
 private enum FamilyWidgetActionTargetResolver {
+    private struct RetainedGeneration: Codable {
+        let sourceDigest: String
+        let cacheFilenames: WidgetCacheFilenames
+        let generatedAt: Date
+    }
+
+    private struct RetainedHistory: Codable {
+        let generations: [RetainedGeneration]
+    }
+
+    private static let maximumGenerationCount = 4
+
     static func momentID(
         forSourceDigest sourceDigest: String,
         localWindowID: String
@@ -242,19 +255,100 @@ private enum FamilyWidgetActionTargetResolver {
         guard canonicalWindowID == localWindowID.lowercased(),
               PrivateWindowCatalogStore.activeEntry()?.localWindowID.lowercased()
                 == canonicalWindowID,
-              sourceDigest.utf8.count == 64,
-              sourceDigest.utf8.allSatisfy({
-                  ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
-              }),
+              isLowercaseSourceDigest(sourceDigest),
               let url = SharedContainer.familyWidgetManifestURL(
                   localWindowID: canonicalWindowID
               ),
-              let manifest = try? AtomicJSON.read(FamilyWidgetManifest.self, from: url),
-              manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
-              let item = manifest.item,
-              item.sourceDigest == sourceDigest,
-              item.hasValidBookmarkTarget
+              let historyURL = SharedContainer.familyWidgetCacheHistoryURL(
+                  localWindowID: canonicalWindowID
+              )
         else { return nil }
-        return item.momentID
+
+        let currentMomentID: String? = {
+            guard let manifest = try? AtomicJSON.read(
+                    FamilyWidgetManifest.self,
+                    from: url
+                  ),
+                  manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
+                  let item = manifest.item,
+                  item.sourceDigest == sourceDigest,
+                  item.hasValidBookmarkTarget
+            else { return nil }
+            return item.momentID
+        }()
+
+        let isRetainedGeneration: Bool = {
+            guard let history = try? AtomicJSON.read(
+                    RetainedHistory.self,
+                    from: historyURL
+                  ),
+                  history.generations.count <= maximumGenerationCount
+            else { return false }
+            let now = Date()
+            let cutoff = now.addingTimeInterval(-12 * 60 * 60)
+            let futureLimit = now.addingTimeInterval(5 * 60)
+            let digests = history.generations.map(\.sourceDigest)
+            guard Set(digests).count == digests.count,
+                  history.generations.allSatisfy({ generation in
+                      isLowercaseSourceDigest(generation.sourceDigest)
+                          && generation.cacheFilenames
+                            == expectedCacheFilenames(generation.sourceDigest)
+                          && generation.generatedAt >= cutoff
+                          && generation.generatedAt <= futureLimit
+                  })
+            else { return false }
+            return history.generations.contains { $0.sourceDigest == sourceDigest }
+        }()
+
+        guard currentMomentID != nil || isRetainedGeneration,
+              let lifecycleToken = try? SharingLifecycleGate.issueToken()
+        else { return nil }
+        return try? MomentSharingStateStore.withStateWhileLifecycleLocked(
+            validating: lifecycleToken
+        ) { state in
+            guard PrivateWindowCatalogStore.activeEntry()?.localWindowID.lowercased()
+                    == canonicalWindowID
+            else { return nil }
+            let matches = state.inbox.filter {
+                ($0.state == .available || $0.state == .acknowledged)
+                    && $0.localJPEGFileName != nil
+                    && familySourceDigest($0) == sourceDigest
+            }
+            guard matches.count == 1,
+                  let target = matches.first,
+                  currentMomentID == nil
+                    || currentMomentID == target.id
+                    || isRetainedGeneration
+            else { return nil }
+            return target.id
+        }
+    }
+
+    private static func isLowercaseSourceDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
+        }
+    }
+
+    private static func expectedCacheFilenames(
+        _ sourceDigest: String
+    ) -> WidgetCacheFilenames {
+        WidgetCacheFilenames(
+            small: "family-small-\(sourceDigest).jpg",
+            medium: "family-medium-\(sourceDigest).jpg",
+            large: "family-large-\(sourceDigest).jpg"
+        )
+    }
+
+    private static func familySourceDigest(_ item: MomentInboxItem) -> String {
+        let identity = [
+            "family-widget-v3-cat-focused-full-bleed",
+            item.id,
+            String(item.committedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
+            String(item.receivedAt.timeIntervalSinceReferenceDate.bitPattern, radix: 16),
+        ].joined(separator: "|")
+        return SHA256.hash(data: Data(identity.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }

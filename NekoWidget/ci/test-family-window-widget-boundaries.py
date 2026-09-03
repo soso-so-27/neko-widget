@@ -2989,7 +2989,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         for pending_mutation in (
             "reportTarget = nil",
             "blockTarget = nil",
-            "deleteHiddenTarget = nil",
+            "deleteReceivedTarget = nil",
             "showsPendingCancelConfirmation = false",
             "showsPreparationCancelConfirmation = false",
             "showsTerminalResultDismissConfirmation = false",
@@ -3013,12 +3013,12 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             hidden_card,
         )
         self.assertIn('Label("この受信を削除", systemImage: "trash")', hidden_card)
-        self.assertIn("deleteHiddenTarget = item", hidden_card)
+        self.assertIn("deleteReceivedTarget = item", hidden_card)
 
         store = source("Shared/Sharing/MomentSharingStore.swift")
         delete_hidden = section(
             store,
-            "static func deleteSafetyHiddenInbox(",
+            "static func deleteInbox(",
             "/// Adds or removes a local, sharing-scoped bookmark",
         )
         self.assertLess(
@@ -3150,7 +3150,11 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("receivedSectionContent", received_branch)
         self.assertNotIn("sendPhotoAction", received_branch)
         self.assertIn("sentSectionContent", sent_branch)
-        self.assertIn("sendPhotoAction", sent_branch)
+        self.assertNotIn("sendPhotoAction", sent_branch)
+        self.assertLess(
+            paired.index("sendPhotoAction"),
+            paired.index('Picker("まどに表示する内容"'),
+        )
         self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
         settings = section(
@@ -3304,7 +3308,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         )
         self.assertIn("if let thumbnail = sentRecordThumbnail(record)", sent_photo)
         self.assertIn(".scaledToFill()", sent)
-        self.assertIn('Text("送信履歴のみ\\n画像はありません")', sent_photo)
+        self.assertIn('Text("プレビューなし")', sent_photo)
         self.assertIn(".aspectRatio(1, contentMode: .fit)", sent_photo)
         self.assertNotIn(".frame(width: 72, height: 72)", sent)
         self.assertNotIn("LazyVStack", sent)
@@ -3329,7 +3333,8 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         project = source("NekoWidget.xcodeproj/project.pbxproj")
 
         self.assertIn("PhotosPicker(", family)
-        self.assertIn('"写真を届ける"', family)
+        self.assertIn('"写真を選んで届ける"', family)
+        self.assertIn("preferredItemEncoding: .compatible", family)
         self.assertIn("deliveryConfirmation", family)
         self.assertIn("type: PickedMomentIngressPhoto.self", family)
         self.assertNotIn("loadTransferable(type: Data.self)", family)

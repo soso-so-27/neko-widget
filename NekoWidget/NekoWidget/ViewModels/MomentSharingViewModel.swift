@@ -57,6 +57,12 @@ final class MomentSharingViewModel: ObservableObject {
             .filter { $0.state == .available || $0.state == .acknowledged }
             .sorted {
                 if $0.committedAt != $1.committedAt { return $0.committedAt > $1.committedAt }
+                if let lhsSequence = $0.changeSequence,
+                   let rhsSequence = $1.changeSequence,
+                   lhsSequence != rhsSequence {
+                    return lhsSequence > rhsSequence
+                }
+                if $0.receivedAt != $1.receivedAt { return $0.receivedAt > $1.receivedAt }
                 return $0.id < $1.id
             }
     }
@@ -351,19 +357,19 @@ final class MomentSharingViewModel: ObservableObject {
         }
     }
 
-    /// Removes one safety-hidden receipt from this iPhone without changing
-    /// the relationship. The store retains a fileless terminal tombstone so
-    /// the same relay event cannot recreate the photo after deletion.
-    func deleteSafetyHiddenMoment(_ item: MomentInboxItem) async {
+    /// Removes one received photo from this iPhone without changing the
+    /// relationship. The store retains a fileless terminal tombstone so the
+    /// same relay event cannot recreate the photo after deletion.
+    func deleteReceivedMoment(_ item: MomentInboxItem) async {
         guard !isWorking,
               !isShowingLastKnownState,
-              (item.state == .blocked || item.state == .revoked)
+              item.localJPEGFileName != nil
         else { return }
         isPerformingAction = true
         defer { isPerformingAction = false }
         do {
             let bootstrap = try PairingInstallationGuard.bootstrap()
-            try MomentSharingStateStore.deleteSafetyHiddenInbox(
+            try MomentSharingStateStore.deleteInbox(
                 momentID: item.id,
                 validating: bootstrap.lifecycleToken
             )
@@ -373,7 +379,7 @@ final class MomentSharingViewModel: ObservableObject {
             // A failed byte removal or atomic state write leaves the original
             // row available for an explicit retry.
             try? reload()
-            errorMessage = "この受信を完全に削除できませんでした。時間をおいて、もう一度お試しください。"
+            errorMessage = "この写真を削除できませんでした。時間をおいて、もう一度お試しください。"
         }
     }
 

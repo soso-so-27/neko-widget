@@ -32,6 +32,23 @@ struct MomentFamilyWindowPresentationInput: Equatable, Sendable {
     let imageURL: URL?
     let committedAt: Date
     let receivedAt: Date
+    let changeSequence: Int?
+
+    init(
+        stableID: String,
+        state: MomentFamilyWindowItemState,
+        imageURL: URL?,
+        committedAt: Date,
+        receivedAt: Date,
+        changeSequence: Int? = nil
+    ) {
+        self.stableID = stableID
+        self.state = state
+        self.imageURL = imageURL
+        self.committedAt = committedAt
+        self.receivedAt = receivedAt
+        self.changeSequence = changeSequence
+    }
 }
 
 struct MomentFamilyWindowPresentation: Equatable, Sendable {
@@ -68,6 +85,14 @@ enum MomentFamilyWindowPresentationPolicy {
         }.sorted {
             if $0.committedAt != $1.committedAt {
                 return $0.committedAt > $1.committedAt
+            }
+            if let lhsSequence = $0.changeSequence,
+               let rhsSequence = $1.changeSequence,
+               lhsSequence != rhsSequence {
+                return lhsSequence > rhsSequence
+            }
+            if $0.receivedAt != $1.receivedAt {
+                return $0.receivedAt > $1.receivedAt
             }
             return $0.stableID < $1.stableID
         }
@@ -348,7 +373,7 @@ enum MomentSentRecordDeliveryState: Equatable, Sendable {
 /// preview that originated on this device; it never contains a path, URL,
 /// filename, recipient identity, or image downloaded back from the relay.
 struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
-    let id: Int
+    let id: String
     /// Opaque relay identifier retained only for notification-target matching.
     /// It is never shown to the person using the app.
     let momentID: String?
@@ -358,7 +383,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let localThumbnailJPEG: Data?
 
     init(
-        id: Int,
+        id: String,
         momentID: String? = nil,
         serverAcceptedAt: Date,
         recipientDeliveryConfirmedAt: Date?,
@@ -594,14 +619,13 @@ enum MomentSharingPresentationPolicy {
         }
 
         let sentRecords = presentedDeliveries
-            .enumerated()
-            .map { index, delivery in
+            .map { delivery in
                 let serverAcceptedAt = delivery.committedAt ?? delivery.updatedAt
                 let confirmedAt = delivery.recipientDeliveryConfirmedAt.flatMap {
                     $0 >= serverAcceptedAt ? $0 : nil
                 }
                 return MomentSentRecordPresentation(
-                    id: index,
+                    id: delivery.stableID,
                     momentID: delivery.serverMomentID,
                     serverAcceptedAt: serverAcceptedAt,
                     recipientDeliveryConfirmedAt: confirmedAt,

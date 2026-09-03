@@ -21,6 +21,7 @@ struct MomentChange: Sendable {
     }
 
     let cursor: String
+    let sequence: Int?
     let type: ChangeType
     let createdAt: Date
     let momentID: String
@@ -686,12 +687,14 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
                   PairingValidation.isOpaqueIdentifier(value.moment.senderParticipantId),
                   ["pending", "acknowledged", "expired", "revoked"]
                     .contains(value.moment.deliveryState),
+                  value.sequence.map({ $0 > 0 }) ?? true,
                   value.createdAt > 0,
                   value.moment.committedAt > 0,
                   value.moment.accessExpiresAt >= value.moment.committedAt
             else { throw MomentSharingError.invalidPayload }
             return MomentChange(
                 cursor: value.cursor,
+                sequence: value.sequence,
                 type: type,
                 createdAt: Date(timeIntervalSince1970: TimeInterval(value.createdAt)),
                 momentID: value.moment.id,
@@ -1271,6 +1274,7 @@ private struct ChangesResponse: Decodable {
             let deliveryState: String
         }
         let cursor: String
+        let sequence: Int?
         let type: String
         let createdAt: Int
         let moment: Moment

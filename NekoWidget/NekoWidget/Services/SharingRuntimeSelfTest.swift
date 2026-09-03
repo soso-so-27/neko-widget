@@ -4398,6 +4398,7 @@ actor SharingRuntimeSelfTestRunner {
             let committedAt = Date().addingTimeInterval(-60)
             let change = MomentChange(
                 cursor: "cursor_inbound_\(suffix)",
+                sequence: nil,
                 type: .momentCommitted,
                 createdAt: committedAt,
                 momentID: momentID,
@@ -4494,6 +4495,38 @@ actor SharingRuntimeSelfTestRunner {
               )
         else { throw MomentSharingError.stateUnavailable }
         try requireNoModerationResidue()
+
+        // A normal visible receipt can be removed without blocking the peer.
+        // Its fileless tombstone prevents an older relay page from restoring
+        // the photo, and local memory/reaction state is removed atomically.
+        try MomentSharingStateStore.setSavedMemory(
+            momentID: disabledFixture.0.momentID,
+            isSaved: true,
+            validating: lifecycleToken
+        )
+        _ = try MomentSharingStateStore.queuePaw(
+            momentID: disabledFixture.0.momentID,
+            now: Date(),
+            validating: lifecycleToken
+        )
+        try MomentSharingStateStore.deleteInbox(
+            momentID: disabledFixture.0.momentID,
+            validating: lifecycleToken
+        )
+        let deletedVisibleState = try MomentSharingStateStore.load()
+        guard deletedVisibleState.inbox.count == 1,
+              deletedVisibleState.inbox[0].state == .revoked,
+              deletedVisibleState.inbox[0].localJPEGFileName == nil,
+              deletedVisibleState.savedMemories.isEmpty,
+              deletedVisibleState.pawOutbox.isEmpty,
+              !FileManager.default.fileExists(atPath: disabledFixture.2.path),
+              try await disabledCoordinator.runtimeTestReceiveChanges(
+                  api: disabledAPI,
+                  pairing: pairing,
+                  credential: credential,
+                  lifecycleToken: lifecycleToken
+              ) == 0
+        else { throw MomentSharingError.stateUnavailable }
 
         try clearMomentSharingFixture()
         let unavailableFixture = try fixture("unavailable")
@@ -4610,7 +4643,7 @@ actor SharingRuntimeSelfTestRunner {
         // A person may remove one hidden receipt without blocking the peer.
         // Keep a fileless terminal row so cursor recovery cannot recreate it,
         // and preserve any separately encrypted report outbox evidence.
-        try MomentSharingStateStore.deleteSafetyHiddenInbox(
+        try MomentSharingStateStore.deleteInbox(
             momentID: sensitiveFixture.0.momentID,
             validating: lifecycleToken
         )
