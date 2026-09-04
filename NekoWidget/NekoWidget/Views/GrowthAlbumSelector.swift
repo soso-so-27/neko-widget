@@ -135,7 +135,7 @@ struct GrowthAlbumSelector {
         let groups = candidateGroups(from: inputPhotos, lifeReference: lifeReference)
         guard let firstGroup = groups.first else { return [] }
 
-        let validPreferences = Dictionary(
+        let validPreferences: [GrowthAlbumPeriod: PhotoPresentation] = Dictionary(
             uniqueKeysWithValues: groups.compactMap { group in
                 guard let preferredIdentifier = preferredPhotoIdentifiers[group.period],
                       let preferredPhoto = group.photos.first(where: {
