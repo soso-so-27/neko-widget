@@ -2,6 +2,8 @@ import SwiftUI
 import UIKit
 
 struct HomeView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let catPhotos: [PhotoPresentation]
     let scan: ScanPresentation
     let hasPhotoAccess: Bool
@@ -20,6 +22,7 @@ struct HomeView: View {
     let refreshPhotoSourceAlbums: () async -> Void
     let catProfilesPresentation: CatProfilesPresentation
     let catProfilesActions: CatProfilesViewActions
+    let albumHighlights: [CuratedAlbumPresentation]
 
     @State private var visibleDetectedPhotoCount = 24
 
@@ -41,7 +44,8 @@ struct HomeView: View {
         selectPhotoSourceAlbum: @escaping (String?) async -> Void = { _ in },
         refreshPhotoSourceAlbums: @escaping () async -> Void = {},
         catProfilesPresentation: CatProfilesPresentation = .init(),
-        catProfilesActions: CatProfilesViewActions = .noOp
+        catProfilesActions: CatProfilesViewActions = .noOp,
+        albumHighlights: [CuratedAlbumPresentation] = []
     ) {
         self.catPhotos = catPhotos
         self.scan = scan
@@ -61,6 +65,7 @@ struct HomeView: View {
         self.refreshPhotoSourceAlbums = refreshPhotoSourceAlbums
         self.catProfilesPresentation = catProfilesPresentation
         self.catProfilesActions = catProfilesActions
+        self.albumHighlights = albumHighlights
     }
 
     var body: some View {
@@ -69,6 +74,10 @@ struct HomeView: View {
                 if hasPhotoAccess {
                     if isLimitedAccess {
                         LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
+                    }
+
+                    if !catPhotos.isEmpty {
+                        automaticAlbumsSection
                     }
 
                     if shouldOfferWidgetPlacementGuide, !catPhotos.isEmpty {
@@ -162,48 +171,13 @@ struct HomeView: View {
     private var detectedPhotosSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text("見つけた写真")
+                Text("すべての猫写真")
                     .font(.title3.bold())
                 Spacer()
                 Text("\(catPhotos.count.formatted())枚")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-
-            NavigationLink(value: PhotosRoute.automaticAlbums) {
-                HStack(spacing: 12) {
-                    Image(systemName: "rectangle.stack.fill")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 42, height: 42)
-                        .background(
-                            Color.accentColor.opacity(0.10),
-                            in: RoundedRectangle(cornerRadius: 12)
-                        )
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("自動アルバム")
-                            .font(.headline)
-                        Text("成長・年ごと・写り方から探す")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer(minLength: 6)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    Color(.secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 16)
-                )
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("photos-open-automatic-albums")
-            .accessibilityHint("自動で整理された猫写真を開きます")
 
             LazyVGrid(
                 columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 3),
@@ -240,6 +214,84 @@ struct HomeView: View {
         }
         .padding(.top, 2)
         .accessibilityIdentifier("photo-hub-detected-grid")
+    }
+
+    private var automaticAlbumsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("自動アルバム")
+                    .font(.title3.bold())
+
+                Spacer(minLength: 8)
+
+                NavigationLink(value: PhotosRoute.automaticAlbums) {
+                    HStack(spacing: 3) {
+                        Text("すべて見る")
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+                .accessibilityIdentifier("photos-open-automatic-albums")
+                .accessibilityHint("自動で整理されたすべてのアルバムを開きます")
+            }
+
+            if albumHighlights.isEmpty {
+                Text("写真がまとまると、ここにアルバムが表示されます")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+            } else if albumHighlights.count == 1, let album = albumHighlights.first {
+                albumHighlightLink(album, index: 0, aspectRatio: 16 / 9)
+            } else {
+                LazyVGrid(columns: albumHighlightColumns, spacing: 12) {
+                    ForEach(Array(albumHighlights.enumerated()), id: \.element.id) { index, album in
+                        albumHighlightLink(
+                            album,
+                            index: index,
+                            aspectRatio: dynamicTypeSize.isAccessibilitySize ? 16 / 9 : 1
+                        )
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("photo-hub-automatic-albums")
+    }
+
+    private var albumHighlightColumns: [GridItem] {
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 12), count: count)
+    }
+
+    private func albumHighlightLink(
+        _ album: CuratedAlbumPresentation,
+        index: Int,
+        aspectRatio: CGFloat
+    ) -> some View {
+        NavigationLink(value: AlbumRoute.album(album.id)) {
+            HomeAlbumHighlightCard(
+                album: album,
+                coverPhoto: highlightCoverPhoto(for: album, index: index),
+                aspectRatio: aspectRatio
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("photos-album-highlight-\(album.id.logKey)")
+        .accessibilityLabel("\(album.cardTitle)、\(album.countLabel)")
+        .accessibilityHint("アルバムを開きます")
+    }
+
+    private func highlightCoverPhoto(
+        for album: CuratedAlbumPresentation,
+        index: Int
+    ) -> PhotoPresentation {
+        let precedingCoverIdentifiers = Set(
+            albumHighlights.prefix(index).map { $0.coverPhoto.localIdentifier }
+        )
+        return album.photos.first {
+            !precedingCoverIdentifiers.contains($0.localIdentifier)
+        } ?? album.coverPhoto
     }
 
     private var photoLibraryActions: some View {
@@ -376,6 +428,45 @@ struct HomeView: View {
         }
     }
 
+}
+
+private struct HomeAlbumHighlightCard: View {
+    let album: CuratedAlbumPresentation
+    let coverPhoto: PhotoPresentation
+    let aspectRatio: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            PhotoAssetImageView(
+                localIdentifier: coverPhoto.localIdentifier,
+                catBoundingBox: coverPhoto.catBoundingBox,
+                targetPixelSize: CGSize(width: 720, height: 720),
+                targetAspectRatio: aspectRatio
+            )
+            .frame(maxWidth: .infinity)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .clipped()
+
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.72)],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(album.cardTitle)
+                    .font(.headline)
+                    .lineLimit(2)
+                Text(album.countLabel)
+                    .font(.caption.monospacedDigit().weight(.medium))
+            }
+            .foregroundStyle(.white)
+            .padding(12)
+        }
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+    }
 }
 
 struct PhotoShuffleGuideView: View {

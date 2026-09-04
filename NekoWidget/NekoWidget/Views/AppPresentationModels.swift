@@ -168,6 +168,68 @@ struct CuratedAlbumSectionPresentation: Identifiable, Hashable {
     var title: String { id.title }
 }
 
+/// Chooses a small, stable preview for the Photos root. Relationship albums
+/// carry more discovery value than a purely visual trait, while a time album
+/// explains that the library keeps becoming more useful as it grows.
+struct HomeAlbumHighlightSelector {
+    static let minimumPhotoCount = 4
+    static let maximumHighlights = 2
+
+    func select(
+        from sections: [CuratedAlbumSectionPresentation],
+        prefersMultipleCats: Bool
+    ) -> [CuratedAlbumPresentation] {
+        let candidates = sections
+            .flatMap(\.albums)
+            .filter { $0.id != .allCatPhotos && isEligible($0) }
+        var selected: [CuratedAlbumPresentation] = []
+
+        let relationshipIDs: [CuratedAlbumID] = prefersMultipleCats
+            ? [.multipleCats, .together]
+            : [.together, .multipleCats]
+        appendFirst(
+            relationshipIDs.compactMap { id in
+                candidates.first { $0.id == id }
+            }.first,
+            to: &selected
+        )
+
+        let timeCandidates = candidates.filter { $0.group == .time }
+        let growth = timeCandidates.first { $0.id.isGrowthComparison }
+        let latestTimeAlbum = timeCandidates.max { lhs, rhs in
+            (lhs.coverPhoto.creationDate ?? .distantPast)
+                < (rhs.coverPhoto.creationDate ?? .distantPast)
+        }
+        appendFirst(growth ?? latestTimeAlbum, to: &selected)
+
+        let fallbackIDs: [CuratedAlbumID] = [.outing, .closeUp, .catDay]
+        for id in fallbackIDs where selected.count < Self.maximumHighlights {
+            appendFirst(candidates.first { $0.id == id }, to: &selected)
+        }
+
+        for candidate in candidates where selected.count < Self.maximumHighlights {
+            appendFirst(candidate, to: &selected)
+        }
+
+        return Array(selected.prefix(Self.maximumHighlights))
+    }
+
+    private func isEligible(_ album: CuratedAlbumPresentation) -> Bool {
+        if album.id.isGrowthComparison {
+            return album.photos.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods
+        }
+        return album.photos.count >= Self.minimumPhotoCount
+    }
+
+    private func appendFirst(
+        _ album: CuratedAlbumPresentation?,
+        to selected: inout [CuratedAlbumPresentation]
+    ) {
+        guard let album, !selected.contains(where: { $0.id == album.id }) else { return }
+        selected.append(album)
+    }
+}
+
 struct ProfileGrowthAlbumSource {
     let profileIdentifier: String
     let displayName: String

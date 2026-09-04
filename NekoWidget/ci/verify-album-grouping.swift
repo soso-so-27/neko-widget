@@ -176,6 +176,37 @@ private func verifyAllCatPhotosIsFirstDeduplicatedAndUngated() throws {
     )
 }
 
+private func verifyHomeHighlightsPreferRelationshipsThenTime() throws {
+    let basePhotos = (1...4).map { index in
+        photo(
+            "shared-\(index)",
+            date(2025, index, index),
+            person: true,
+            catCount: 2
+        )
+    }
+    let currentPhotos = (1...4).map { index in
+        photo("current-\(index)", date(2026, index, index))
+    }
+    let sections = CuratedAlbumBuilder(timeZone: utc).sections(
+        from: basePhotos + currentPhotos,
+        lifeReference: nil,
+        includesGrowth: false
+    )
+    let selector = HomeAlbumHighlightSelector()
+
+    try require(
+        selector.select(from: sections, prefersMultipleCats: true).map(\.id)
+            == [.multipleCats, .calendarYear(2026)],
+        "multi-cat Home highlight did not prefer relationship then latest time"
+    )
+    try require(
+        selector.select(from: sections, prefersMultipleCats: false).map(\.id)
+            == [.together, .calendarYear(2026)],
+        "single-cat Home highlight did not prefer person-together then latest time"
+    )
+}
+
 private func verifyProfileGrowthNeverMixesCats() throws {
     let albums = ProfileGrowthAlbumBuilder(timeZone: utc).albums(from: [
         ProfileGrowthAlbumSource(
@@ -1012,6 +1043,7 @@ private struct AlbumGroupingVerifier {
     static func main() throws {
         try verifyValuableAlbumOrderAndLegacyPosturesStayHidden()
         try verifyAllCatPhotosIsFirstDeduplicatedAndUngated()
+        try verifyHomeHighlightsPreferRelationshipsThenTime()
         try verifyProfileGrowthNeverMixesCats()
         try verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears()
         try verifyKittenBoundaryAndAgeBuckets()

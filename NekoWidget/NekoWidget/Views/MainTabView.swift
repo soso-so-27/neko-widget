@@ -112,9 +112,11 @@ struct MainTabView: View {
                     selectPhotoSourceAlbum: selectPhotoSourceAlbum,
                     refreshPhotoSourceAlbums: refreshPhotoSourceAlbums,
                     catProfilesPresentation: catProfilesPresentation,
-                    catProfilesActions: catProfilesActions
+                    catProfilesActions: catProfilesActions,
+                    albumHighlights: homeAlbumHighlights
                 )
                 .navigationDestination(for: PhotosRoute.self, destination: photosDestination)
+                .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
             }
             .tabItem {
                 Label("写真", systemImage: "photo.on.rectangle.angled")
@@ -426,7 +428,6 @@ struct MainTabView: View {
             selectedScope: $selectedAlbumScope
         )
         .navigationTitle("自動アルバム")
-        .navigationDestination(for: AlbumRoute.self, destination: albumDestination)
     }
 
     @ViewBuilder
@@ -536,6 +537,13 @@ struct MainTabView: View {
             )
         }
         return sections
+    }
+
+    private var homeAlbumHighlights: [CuratedAlbumPresentation] {
+        HomeAlbumHighlightSelector().select(
+            from: curatedAlbumSections,
+            prefersMultipleCats: catProfilesPresentation.profiles.count > 1
+        )
     }
 
     private var monthlyWindowCollectionKey: MonthlyWindowCollectionKey {

@@ -1730,7 +1730,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("PhotosRoute.automaticAlbums", home)
         self.assertNotIn("MemoriesRoute.automaticAlbums", memories)
         self.assertIn('Text("自動アルバム")', home)
-        self.assertIn('Text("成長・年ごと・写り方から探す")', home)
+        self.assertIn('Text("すべての猫写真")', home)
+        self.assertIn("HomeAlbumHighlightCard(", home)
+        self.assertIn("AlbumRoute.album(album.id)", home)
+        self.assertNotIn('Text("成長・年ごと・写り方から探す")', home)
         self.assertIn('accessibilityIdentifier("photos-open-automatic-albums")', home)
         self.assertNotIn('accessibilityIdentifier("memories-open-automatic-albums")', memories)
 
