@@ -124,24 +124,9 @@ final class PhotoPermissionUITests: XCTestCase {
         }
         continueFromZero.tap()
 
-        let widgetSkip = app.buttons["widget-placement-skip"]
-        guard widgetSkip.waitForExistence(timeout: 15) else {
-            fail(
-                "The first-run flow did not continue to the Widget placement guide.",
-                app: app
-            )
-            return
-        }
-        widgetSkip.tap()
-
-        let homeWidgetGuide = app.buttons["home-widget-placement-guide"]
-        guard homeWidgetGuide.waitForExistence(timeout: 20) else {
-            fail(
-                "The completed first-run flow did not show the uninstalled-Widget Home recovery action.",
-                app: app
-            )
-            return
-        }
+        // An empty library cannot demonstrate a photo Widget, so completing
+        // the zero-result page now enters the app directly. The guide remains
+        // available from Settings and is verified below.
 
         guard firstExistingButton(
             in: app,
@@ -222,6 +207,7 @@ final class PhotoPermissionUITests: XCTestCase {
         }
         settingsWidgetGuide.tap()
 
+        let widgetSkip = app.buttons["widget-placement-skip"]
         guard widgetSkip.waitForExistence(timeout: 15) else {
             fail(
                 "The Widget placement guide did not reopen from Settings.",
