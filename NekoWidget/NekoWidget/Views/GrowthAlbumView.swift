@@ -22,11 +22,19 @@ struct GrowthAlbumDetailView: View {
     @State private var pendingAssignmentIdentifier: String?
     @State private var showsAssignmentSheet = false
     @State private var replacementPeriod: GrowthAlbumPeriod?
+    @State private var showsAboutSelection = false
 
     private var candidateGroups: [GrowthAlbumCandidateGroup] {
         GrowthAlbumSelector().candidateGroups(
             from: sourcePhotos,
             lifeReference: lifeReference
+        )
+    }
+
+    private var timelineColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(), spacing: 12),
+            count: dynamicTypeSize.isAccessibilitySize ? 1 : 2
         )
     }
 
@@ -38,39 +46,57 @@ struct GrowthAlbumDetailView: View {
         )
 
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: 28) {
                 if let first = resolvedItems.first,
                    let last = resolvedItems.last,
                    first.id != last.id {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("最初のころと、いま")
-                            .font(.title2.bold())
-                        Text(comparisonSpanLabel(from: first.period, to: last.period))
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(comparisonHeadline(from: first.period, to: last.period))
+                                .font(.largeTitle.bold())
+                                .fixedSize(horizontal: false, vertical: true)
 
-                        comparisonCards(first, last, groups: groups)
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text("写真から、時期ごとに一枚ずつ選びました。")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+
+                                Button {
+                                    showsAboutSelection = true
+                                } label: {
+                                    Image(systemName: "info.circle")
+                                        .frame(width: 32, height: 32)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("このまとめについて")
+                            }
+                        }
+
+                        comparisonCards(first, last)
+
+                        let replaceableItems = resolvedItems.filter {
+                            canReplacePhoto(for: $0.period, in: groups)
+                        }
+                        if !replaceableItems.isEmpty {
+                            replacementMenu(items: replaceableItems)
+                                .frame(maxWidth: .infinity)
+                        }
                     }
 
                     let middleItems = Array(resolvedItems.dropFirst().dropLast())
                     if !middleItems.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("その間の記録")
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("その間")
                                 .font(.headline)
-                            ForEach(middleItems) { item in
-                                timelineRow(
-                                    item,
-                                    canReplace: canReplacePhoto(for: item.period, in: groups)
-                                )
+
+                            LazyVGrid(columns: timelineColumns, spacing: 12) {
+                                ForEach(middleItems) { item in
+                                    timelineCard(item)
+                                }
                             }
                         }
                     }
-                }
-
-                if album.id == .householdGrowth {
-                    Text("猫を見分けず、撮影年ごとに並べています。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: 620)
@@ -82,6 +108,11 @@ struct GrowthAlbumDetailView: View {
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
+        .alert("このまとめについて", isPresented: $showsAboutSelection) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text(aboutSelectionMessage)
+        }
         .confirmationDialog(
             "表示候補から外しますか？",
             isPresented: $showsExclusionConfirmation,
@@ -142,18 +173,15 @@ struct GrowthAlbumDetailView: View {
     @ViewBuilder
     private func comparisonCards(
         _ first: GrowthAlbumItem,
-        _ last: GrowthAlbumItem,
-        groups: [GrowthAlbumCandidateGroup]
+        _ last: GrowthAlbumItem
     ) -> some View {
         let firstCard = comparisonCard(
             first,
-            roleLabel: "最初のころ",
-            canReplace: canReplacePhoto(for: first.period, in: groups)
+            roleLabel: "最初のころ"
         )
         let lastCard = comparisonCard(
             last,
-            roleLabel: "いま",
-            canReplace: canReplacePhoto(for: last.period, in: groups)
+            roleLabel: "いま"
         )
 
         if dynamicTypeSize.isAccessibilitySize {
@@ -171,57 +199,58 @@ struct GrowthAlbumDetailView: View {
 
     private func comparisonCard(
         _ item: GrowthAlbumItem,
-        roleLabel: String,
-        canReplace: Bool
+        roleLabel: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(roleLabel)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            photoLink(item, targetAspectRatio: 0.82)
-
-            Text(item.label)
-                .font(.headline)
-                .lineLimit(2)
-            if let date = item.photo.creationDate {
-                Text(date, format: .dateTime.year().month().day())
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+        photoLink(item, targetAspectRatio: 0.82)
+            .overlay(alignment: .bottomLeading) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if shouldShowRoleLabel(roleLabel, for: item.period) {
+                        Text(roleLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
+                    Text(item.label)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.top, 40)
+                .padding(.bottom, 12)
+                .background {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.74)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .allowsHitTesting(false)
             }
-            if canReplace {
-                replaceButton(for: item.period, labelStyle: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func timelineRow(
-        _ item: GrowthAlbumItem,
-        canReplace: Bool
-    ) -> some View {
-        HStack(spacing: 12) {
-            photoLink(item, targetAspectRatio: 1)
-                .frame(width: 88)
-
-            VStack(alignment: .leading, spacing: 4) {
+    private func timelineCard(_ item: GrowthAlbumItem) -> some View {
+        photoLink(item, targetAspectRatio: 1)
+            .overlay(alignment: .bottomLeading) {
                 Text(item.label)
                     .font(.headline)
-                if let date = item.photo.creationDate {
-                    Text(date, format: .dateTime.year().month().day())
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 32)
+                    .padding(.bottom, 12)
+                    .background {
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.68)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+                    .allowsHitTesting(false)
             }
-
-            Spacer(minLength: 8)
-            if canReplace {
-                replaceButton(for: item.period, labelStyle: false)
-            }
-        }
-        .padding(10)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private func photoLink(
@@ -269,26 +298,18 @@ struct GrowthAlbumDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func replaceButton(
-        for period: GrowthAlbumPeriod,
-        labelStyle: Bool
-    ) -> some View {
-        Button {
-            replacementPeriod = period
-        } label: {
-            if labelStyle {
-                Label("写真を替える", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption.weight(.semibold))
-            } else {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 44, height: 44)
+    private func replacementMenu(items: [GrowthAlbumItem]) -> some View {
+        Menu {
+            ForEach(items) { item in
+                Button(item.label) {
+                    replacementPeriod = item.period
+                }
             }
+        } label: {
+            Label("一枚を選び直す", systemImage: "photo.on.rectangle.angled")
+                .font(.subheadline.weight(.semibold))
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tint)
-        .accessibilityLabel("\(period.label)の写真を替える")
+        .buttonStyle(.bordered)
     }
 
     private func canReplacePhoto(
@@ -334,14 +355,40 @@ struct GrowthAlbumDetailView: View {
         return "\(item.label)、\(date)の猫の写真"
     }
 
-    private func comparisonSpanLabel(
+    private func comparisonHeadline(
         from firstPeriod: GrowthAlbumPeriod,
         to lastPeriod: GrowthAlbumPeriod
     ) -> String {
         guard let years = firstPeriod.years(until: lastPeriod) else {
-            return "\(firstPeriod.label) — \(lastPeriod.label)"
+            return "最初のころから、いままで。"
         }
-        return "\(years)年のあいだ"
+        switch album.id {
+        case .householdGrowth:
+            return "\(years)年、猫たちと。"
+        case let .profileGrowth(_, displayName) where !displayName.isEmpty:
+            return "\(years)年、\(displayName)と。"
+        default:
+            return "\(years)年、いっしょに。"
+        }
+    }
+
+    private func shouldShowRoleLabel(
+        _ roleLabel: String,
+        for period: GrowthAlbumPeriod
+    ) -> Bool {
+        if roleLabel == "最初のころ", case .yearsTogether(0) = period {
+            return false
+        }
+        return true
+    }
+
+    private var aboutSelectionMessage: String {
+        let source = "このiPhoneにある対象写真から、撮影時期ごとに一枚ずつ自動で選んでいます。"
+        let edit = "選び直しても、写真アプリの元の写真は変わりません。"
+        if album.id == .householdGrowth {
+            return "\(source) 猫を見分けて同じ猫だと判定しているわけではありません。\(edit)"
+        }
+        return "\(source) \(edit)"
     }
 }
 
@@ -395,14 +442,14 @@ private struct GrowthPhotoReplacementSheet: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel(
                             photo.localIdentifier == selectedIdentifier
-                                ? "選択中の写真"
-                                : "この写真に替える"
+                                ? "選択中の一枚"
+                                : "この一枚を選ぶ"
                         )
                     }
                 }
                 .padding(16)
             }
-            .navigationTitle("\(period.label)の写真")
+            .navigationTitle("\(period.label)の一枚を選ぶ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

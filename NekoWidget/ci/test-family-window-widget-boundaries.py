@@ -2691,6 +2691,18 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             settings.count('写真アプリの「うちの子」'),
         )
 
+    def test_growth_album_opens_as_a_photo_story_before_editing(self) -> None:
+        growth = source("NekoWidget/Views/GrowthAlbumView.swift")
+
+        self.assertIn('Text("写真から、時期ごとに一枚ずつ選びました。")', growth)
+        self.assertIn('Label("一枚を選び直す"', growth)
+        self.assertIn('.alert("このまとめについて"', growth)
+        self.assertIn('return "\\(years)年、猫たちと。"', growth)
+        self.assertNotIn('Text("最初のころと、いま")', growth)
+        self.assertNotIn('Text("その間の記録")', growth)
+        self.assertNotIn('Label("写真を替える"', growth)
+        self.assertNotIn('Text(date, format: .dateTime.year().month().day())', growth)
+
     def test_multi_window_scope_and_remaining_boundaries_are_documented(self) -> None:
         adr = source("docs/ADR-018-名前付きの非公開なまど.md")
         for required_boundary in [
