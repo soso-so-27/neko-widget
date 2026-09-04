@@ -3332,7 +3332,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         project = source("NekoWidget.xcodeproj/project.pbxproj")
 
         self.assertIn("PhotosPicker(", family)
-        self.assertIn('"写真を選んで届ける"', family)
+        self.assertIn('"写真を届ける"', family)
         self.assertIn("preferredItemEncoding: .compatible", family)
         self.assertIn("deliveryConfirmation", family)
         self.assertIn("type: PickedMomentIngressPhoto.self", family)

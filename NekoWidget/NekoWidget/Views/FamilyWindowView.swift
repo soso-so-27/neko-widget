@@ -665,22 +665,30 @@ struct FamilyWindowView: View {
                 preferredItemEncoding: .compatible,
                 photoLibrary: .shared()
             ) {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     if isPreparingSelectedPhoto {
                         ProgressView()
                             .tint(.white)
                     } else {
-                        Image(systemName: "photo.on.rectangle.angled")
+                        Image(systemName: "paperplane.fill")
                     }
                     Text(isPreparingSelectedPhoto
                         ? "写真を準備しています…"
-                        : "写真を選んで届ける")
-                        .font(.headline)
+                        : "写真を届ける")
+                        .font(.headline.weight(.semibold))
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.roundedRectangle(radius: 18))
             .controlSize(.large)
+            .shadow(
+                color: Color.accentColor.opacity(0.22),
+                radius: 8,
+                x: 0,
+                y: 4
+            )
             .disabled(
                 model.isWorking
                     || model.isShowingLastKnownState
@@ -688,6 +696,7 @@ struct FamilyWindowView: View {
                     || isDeliveringSelectedPhoto
             )
             .accessibilityIdentifier("family-window-photo-picker")
+            .accessibilityHint("写真を1枚選び、届け先を確認します")
             .onChange(of: selectedPhotoItem) { _, item in
                 prepareSelectedPhoto(item)
             }
