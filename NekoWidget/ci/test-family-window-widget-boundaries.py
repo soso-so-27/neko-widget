@@ -2695,11 +2695,13 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         growth = source("NekoWidget/Views/GrowthAlbumView.swift")
 
         self.assertIn('Text("写真から、時期ごとに一枚ずつ選びました。")', growth)
-        self.assertIn('Label("一枚を選び直す"', growth)
+        self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
+        self.assertIn('Label("選び直す"', growth)
         self.assertIn('.alert("このまとめについて"', growth)
-        self.assertIn('return "\\(years)年、猫たちと。"', growth)
-        self.assertNotIn('Text("最初のころと、いま")', growth)
-        self.assertNotIn('Text("その間の記録")', growth)
+        self.assertIn('"\\(firstPeriod.label) → \\(lastPeriod.label)"', growth)
+        self.assertNotIn('roleLabel:', growth)
+        self.assertNotIn('Text("その間")', growth)
+        self.assertNotIn('comparisonCards(', growth)
         self.assertNotIn('Label("写真を替える"', growth)
         self.assertNotIn('Text(date, format: .dateTime.year().month().day())', growth)
 
