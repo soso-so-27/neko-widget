@@ -38,15 +38,20 @@ private func photo(
     _ id: String,
     _ capturedAt: Date?,
     areas: [Double],
-    isGrowthEligible: Bool = true
+    isGrowthEligible: Bool = true,
+    isLiked: Bool = false,
+    isPhotoLibraryFavorite: Bool = false,
+    hasCurrentAlbumAnalysis: Bool = true
 ) -> PhotoPresentation {
     PhotoPresentation(
         localIdentifier: id,
         creationDate: capturedAt,
         catBoundingBox: CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5),
+        isLiked: isLiked,
+        isPhotoLibraryFavorite: isPhotoLibraryFavorite,
         largestCatAreaRatio: areas.max(),
         isGrowthEligible: isGrowthEligible,
-        hasCurrentAlbumAnalysis: true
+        hasCurrentAlbumAnalysis: hasCurrentAlbumAnalysis
     )
 }
 
@@ -72,8 +77,8 @@ private func verifyAgeSelectionPriorityAndBoundary() throws {
     try require(items.map(\.label) == ["0歳", "1歳", "3歳"],
                 "age labels were not chronological or a missing year was not skipped")
     try require(items.map { $0.photo.id } == [
-        "far-larger", "age-one-near", "age-three"
-    ], "area-first or anniversary tie-break selection changed")
+        "near-smaller", "age-one-near", "age-three"
+    ], "anniversary-aware selection changed")
     try require(!items.contains { $0.photo.id == "stray-2019" },
                 "a photo before the life reference entered growth")
     try require(!items.contains { $0.photo.id == "missing-date" },
@@ -96,8 +101,84 @@ private func verifyCalendarSelectionAndMultipleCats() throws {
 
     try require(items.map(\.label) == ["2021年", "2023年"],
                 "calendar years were not chronological or an empty year was inserted")
-    try require(items.map { $0.photo.id } == ["multiple-cats", "finite-area"],
-                "largest cat area or nil-area ordering changed")
+    try require(items.map { $0.photo.id } == ["single-cat", "finite-area"],
+                "balanced framing or nil-area ordering changed")
+}
+
+private func verifyExplicitSignalsAndReplacementOverride() throws {
+    let photos = [
+        photo("balanced", date(2024, 4, 1), areas: [0.34]),
+        photo(
+            "photos-favorite",
+            date(2024, 5, 1),
+            areas: [0.95],
+            isPhotoLibraryFavorite: true
+        ),
+        photo(
+            "memory",
+            date(2024, 6, 1),
+            areas: [0.98],
+            isLiked: true
+        ),
+        photo("next-year", date(2025, 4, 1), areas: [0.34])
+    ]
+    let selector = GrowthAlbumSelector(timeZone: utc)
+    let automatic = selector.select(from: photos, lifeReference: nil)
+    try require(
+        automatic.first?.photo.id == "memory",
+        "an explicit memory did not outrank an automatic framing choice"
+    )
+
+    let overridden = selector.select(
+        from: photos,
+        lifeReference: nil,
+        preferredPhotoIdentifiers: [.calendarYear(2024): "balanced"]
+    )
+    try require(
+        overridden.first?.photo.id == "balanced",
+        "a valid user replacement was not retained"
+    )
+
+    let staleOverride = selector.select(
+        from: photos,
+        lifeReference: nil,
+        preferredPhotoIdentifiers: [.calendarYear(2024): "missing"]
+    )
+    try require(
+        staleOverride.first?.photo.id == "memory",
+        "an unavailable replacement did not fall back to the automatic choice"
+    )
+}
+
+private func verifyOverrideDocumentRoundTrip() throws {
+    var document = GrowthAlbumPhotoOverrides()
+    document.setPhotoIdentifier(
+        "chosen-photo",
+        albumNamespace: "profile:cat-1",
+        period: .age(2)
+    )
+    let restored = GrowthAlbumPhotoOverrides.decode(document.encoded())
+    try require(
+        restored.photoIdentifier(
+            albumNamespace: "profile:cat-1",
+            period: .age(2)
+        ) == "chosen-photo",
+        "growth replacement preference did not survive encoding"
+    )
+
+    var removed = restored
+    removed.setPhotoIdentifier(
+        nil,
+        albumNamespace: "profile:cat-1",
+        period: .age(2)
+    )
+    try require(
+        removed.photoIdentifier(
+            albumNamespace: "profile:cat-1",
+            period: .age(2)
+        ) == nil,
+        "returning to the automatic choice did not remove the preference"
+    )
 }
 
 private func verifyDeterministicTiesAndAdoptionReference() throws {
@@ -149,6 +230,8 @@ private struct GrowthAlbumVerifier {
     static func main() throws {
         try verifyAgeSelectionPriorityAndBoundary()
         try verifyCalendarSelectionAndMultipleCats()
+        try verifyExplicitSignalsAndReplacementOverride()
+        try verifyOverrideDocumentRoundTrip()
         try verifyDeterministicTiesAndAdoptionReference()
         try verifyUnresolvedMultiCatPhotoIsSkipped()
         print("Growth album selection: PASS")

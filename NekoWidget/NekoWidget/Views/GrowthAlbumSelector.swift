@@ -1,11 +1,14 @@
+import CoreGraphics
 import Foundation
 
 /// One comparable point in the cat's history. Age periods are used when a
 /// birthday/adoption day is known; otherwise the calendar year is retained.
-enum GrowthAlbumPeriod: Hashable {
+enum GrowthAlbumPeriod: Hashable, Identifiable, Sendable {
     case age(Int)
     case yearsTogether(Int)
     case calendarYear(Int)
+
+    var id: Self { self }
 
     var label: String {
         switch self {
@@ -22,6 +25,14 @@ enum GrowthAlbumPeriod: Hashable {
         case let .calendarYear(year): year
         }
     }
+
+    var persistenceKey: String {
+        switch self {
+        case let .age(years): "age:\(years)"
+        case let .yearsTogether(years): "together:\(years)"
+        case let .calendarYear(year): "year:\(year)"
+        }
+    }
 }
 
 struct GrowthAlbumItem: Identifiable, Hashable {
@@ -32,9 +43,62 @@ struct GrowthAlbumItem: Identifiable, Hashable {
     var label: String { period.label }
 }
 
-/// Selects exactly one photo per comparable period. Composition is deliberately
-/// lexicographic rather than blended into a score: the largest detected cat is
-/// always preferred, and reference-day proximity only breaks an exact area tie.
+struct GrowthAlbumCandidateGroup: Identifiable, Hashable {
+    let period: GrowthAlbumPeriod
+    let photos: [PhotoPresentation]
+
+    var id: GrowthAlbumPeriod { period }
+}
+
+/// A tiny local preference document. It never copies photos and an entry is
+/// ignored automatically when its photo no longer belongs to that period.
+struct GrowthAlbumPhotoOverrides: Codable, Equatable {
+    static let storageKey = "growthAlbum.photoOverrides.v1"
+
+    private(set) var albums: [String: [String: String]] = [:]
+
+    static func decode(_ rawValue: String) -> Self {
+        guard let data = rawValue.data(using: .utf8),
+              let value = try? JSONDecoder().decode(Self.self, from: data) else {
+            return Self()
+        }
+        return value
+    }
+
+    func photoIdentifier(
+        albumNamespace: String,
+        period: GrowthAlbumPeriod
+    ) -> String? {
+        albums[albumNamespace]?[period.persistenceKey]
+    }
+
+    mutating func setPhotoIdentifier(
+        _ photoIdentifier: String?,
+        albumNamespace: String,
+        period: GrowthAlbumPeriod
+    ) {
+        var album = albums[albumNamespace] ?? [:]
+        album[period.persistenceKey] = photoIdentifier
+        if album.isEmpty {
+            albums[albumNamespace] = nil
+        } else {
+            albums[albumNamespace] = album
+        }
+    }
+
+    func encoded() -> String {
+        guard let data = try? JSONEncoder().encode(self),
+              let value = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return value
+    }
+}
+
+/// Selects exactly one photo per comparable period. An explicit memory or
+/// Photos favorite wins first. Automatic choices then favor analyzed photos,
+/// the intended age/date, and balanced cat framing rather than whichever cat
+/// occupies the largest area.
 struct GrowthAlbumSelector {
     private let calendar: Calendar
 
@@ -47,8 +111,22 @@ struct GrowthAlbumSelector {
 
     func select(
         from inputPhotos: [PhotoPresentation],
-        lifeReference: CatLifeReference?
+        lifeReference: CatLifeReference?,
+        preferredPhotoIdentifiers: [GrowthAlbumPeriod: String] = [:]
     ) -> [GrowthAlbumItem] {
+        candidateGroups(from: inputPhotos, lifeReference: lifeReference).compactMap { group in
+            guard let automaticPhoto = group.photos.first else { return nil }
+            let photo = preferredPhotoIdentifiers[group.period].flatMap { preferredIdentifier in
+                group.photos.first { $0.localIdentifier == preferredIdentifier }
+            } ?? automaticPhoto
+            return GrowthAlbumItem(period: group.period, photo: photo)
+        }
+    }
+
+    func candidateGroups(
+        from inputPhotos: [PhotoPresentation],
+        lifeReference: CatLifeReference?
+    ) -> [GrowthAlbumCandidateGroup] {
         let photos = uniquePhotos(inputPhotos).filter(\.isGrowthEligible)
         let candidates: [(period: GrowthAlbumPeriod, photo: PhotoPresentation, anniversary: Date?)]
 
@@ -84,23 +162,25 @@ struct GrowthAlbumSelector {
             }
         }
 
-        var selected: [GrowthAlbumPeriod: (photo: PhotoPresentation, anniversary: Date?)] = [:]
+        var photosByPeriod: [GrowthAlbumPeriod: [PhotoPresentation]] = [:]
+        var anniversaryByPeriod: [GrowthAlbumPeriod: Date] = [:]
         for candidate in candidates {
-            guard let current = selected[candidate.period] else {
-                selected[candidate.period] = (candidate.photo, candidate.anniversary)
-                continue
-            }
-            if isPreferred(
-                candidate.photo,
-                over: current.photo,
-                anniversary: candidate.anniversary
-            ) {
-                selected[candidate.period] = (candidate.photo, candidate.anniversary)
+            photosByPeriod[candidate.period, default: []].append(candidate.photo)
+            if let anniversary = candidate.anniversary {
+                anniversaryByPeriod[candidate.period] = anniversary
             }
         }
 
-        return selected
-            .map { GrowthAlbumItem(period: $0.key, photo: $0.value.photo) }
+        return photosByPeriod
+            .map { period, photos in
+                let anniversary = anniversaryByPeriod[period]
+                return GrowthAlbumCandidateGroup(
+                    period: period,
+                    photos: photos.sorted { lhs, rhs in
+                        isPreferred(lhs, over: rhs, anniversary: anniversary)
+                    }
+                )
+            }
             .sorted { lhs, rhs in
                 lhs.period.chronologicalValue < rhs.period.chronologicalValue
             }
@@ -144,9 +224,13 @@ struct GrowthAlbumSelector {
         over current: PhotoPresentation,
         anniversary: Date?
     ) -> Bool {
-        let candidateArea = comparableArea(candidate.largestCatAreaRatio)
-        let currentArea = comparableArea(current.largestCatAreaRatio)
-        if candidateArea != currentArea { return candidateArea > currentArea }
+        if candidate.isLiked != current.isLiked { return candidate.isLiked }
+        if candidate.isPhotoLibraryFavorite != current.isPhotoLibraryFavorite {
+            return candidate.isPhotoLibraryFavorite
+        }
+        if candidate.hasCurrentAlbumAnalysis != current.hasCurrentAlbumAnalysis {
+            return candidate.hasCurrentAlbumAnalysis
+        }
 
         if let anniversary,
            let candidateDate = candidate.creationDate.flatMap(calendarDay),
@@ -156,6 +240,12 @@ struct GrowthAlbumSelector {
             if candidateDistance != currentDistance {
                 return candidateDistance < currentDistance
             }
+        }
+
+        let candidateFramingPenalty = framingPenalty(candidate)
+        let currentFramingPenalty = framingPenalty(current)
+        if candidateFramingPenalty != currentFramingPenalty {
+            return candidateFramingPenalty < currentFramingPenalty
         }
 
         switch (candidate.creationDate, current.creationDate) {
@@ -173,6 +263,36 @@ struct GrowthAlbumSelector {
     private func comparableArea(_ value: Double?) -> Double {
         guard let value, value.isFinite else { return -Double.infinity }
         return value
+    }
+
+    /// A centered cat occupying roughly one third of the frame leaves enough
+    /// context to compare body size and posture without favoring an accidental
+    /// extreme close-up. This is only a tie-break after explicit user signals.
+    private func framingPenalty(_ photo: PhotoPresentation) -> Double {
+        guard let box = photo.catBoundingBox,
+              box.origin.x.isFinite,
+              box.origin.y.isFinite,
+              box.width.isFinite,
+              box.height.isFinite,
+              box.width > 0,
+              box.height > 0 else {
+            return .greatestFiniteMagnitude
+        }
+        let area = comparableArea(photo.largestCatAreaRatio)
+        guard area >= 0 else { return .greatestFiniteMagnitude }
+
+        let targetArea = 0.34
+        let sizePenalty = abs(area - targetArea)
+        let centerX = Double(box.midX)
+        let centerY = Double(box.midY)
+        let centerPenalty = hypot(centerX - 0.5, centerY - 0.5) * 0.20
+        let edgePenalty = box.minX < 0.01
+            || box.minY < 0.01
+            || box.maxX > 0.99
+            || box.maxY > 0.99
+            ? 0.18
+            : 0
+        return sizePenalty + centerPenalty + edgePenalty
     }
 
     private func calendarDay(_ date: Date) -> Date? {

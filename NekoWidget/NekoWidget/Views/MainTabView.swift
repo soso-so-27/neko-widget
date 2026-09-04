@@ -90,6 +90,8 @@ struct MainTabView: View {
     @StateObject private var seasonalMovieArchive = SeasonalMovieArchiveLibrary()
     @AppStorage(MonthlyWindowReadReceipt.storageKey)
     private var readMonthlyWindowPeriodIdentifier = ""
+    @AppStorage(GrowthAlbumPhotoOverrides.storageKey)
+    private var growthPhotoOverridesJSON = ""
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -438,7 +440,15 @@ struct MainTabView: View {
                 if albumID.isGrowthComparison {
                     GrowthAlbumDetailView(
                         album: album,
+                        sourcePhotos: growthCandidatePhotos(for: albumID),
                         lifeReference: growthLifeReference(for: albumID),
+                        setPhotoOverride: { period, photoIdentifier in
+                            setGrowthPhotoOverride(
+                                photoIdentifier,
+                                albumID: albumID,
+                                period: period
+                            )
+                        },
                         albumOpened: albumOpened,
                         excludeFromCatCandidates: { identifiers in
                             Task { await excludeFromCatCandidates(identifiers) }
@@ -468,30 +478,33 @@ struct MainTabView: View {
             }
 
         case let .photo(albumID, localIdentifier):
-            if let album = curatedAlbum(for: albumID),
-               let initialPhoto = album.photos.first(where: {
-                   $0.localIdentifier == localIdentifier
-               }) {
-                PhotoBrowserView(
-                    photos: album.photos,
-                    libraryPhotos: libraryPhotos,
-                    initialPhoto: initialPhoto,
-                    widgetShownAt: nil,
-                    showsWidgetTiming: false,
-                    setMemorySaved: setMemorySaved,
-                    excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
-                    excludeFromCatCandidates: { identifiers in
-                        Task { await excludeFromCatCandidates(identifiers) }
-                    },
-                    restoreCatCandidates: { identifiers in
-                        Task { await restoreCatCandidates(identifiers) }
-                    },
-                    profiles: catProfilesPresentation.profiles,
-                    assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
-                    replaceProfileAssignments: { values in
-                        Task { await catProfilesActions.replacePhotoAssignments(values) }
-                    }
-                )
+            if let album = curatedAlbum(for: albumID) {
+                if let initialPhoto = album.photos.first(where: {
+                    $0.localIdentifier == localIdentifier
+                }) {
+                    PhotoBrowserView(
+                        photos: album.photos,
+                        libraryPhotos: libraryPhotos,
+                        initialPhoto: initialPhoto,
+                        widgetShownAt: nil,
+                        showsWidgetTiming: false,
+                        setMemorySaved: setMemorySaved,
+                        excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                        excludeFromCatCandidates: { identifiers in
+                            Task { await excludeFromCatCandidates(identifiers) }
+                        },
+                        restoreCatCandidates: { identifiers in
+                            Task { await restoreCatCandidates(identifiers) }
+                        },
+                        profiles: catProfilesPresentation.profiles,
+                        assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                        replaceProfileAssignments: { values in
+                            Task { await catProfilesActions.replacePhotoAssignments(values) }
+                        }
+                    )
+                } else {
+                    missingAlbumView
+                }
             } else {
                 missingAlbumView
             }
@@ -514,29 +527,27 @@ struct MainTabView: View {
             includesGrowth: includesScopedGrowth
         )
 
-        guard selectedAlbumScope == .everyone,
-              let householdGrowth = HouseholdGrowthAlbumBuilder().album(
-                from: catPhotos
-              ) else {
-            return baseSections
-        }
-
         var sections = baseSections
-        if let timeIndex = sections.firstIndex(where: { $0.id == .time }) {
-            sections[timeIndex] = CuratedAlbumSectionPresentation(
-                id: .time,
-                albums: [householdGrowth] + sections[timeIndex].albums
-            )
-        } else {
-            sections.insert(
-                CuratedAlbumSectionPresentation(
+        if selectedAlbumScope == .everyone,
+           let householdGrowth = HouseholdGrowthAlbumBuilder().album(
+               from: catPhotos
+           ) {
+            if let timeIndex = sections.firstIndex(where: { $0.id == .time }) {
+                sections[timeIndex] = CuratedAlbumSectionPresentation(
                     id: .time,
-                    albums: [householdGrowth]
-                ),
-                at: 0
-            )
+                    albums: [householdGrowth] + sections[timeIndex].albums
+                )
+            } else {
+                sections.insert(
+                    CuratedAlbumSectionPresentation(
+                        id: .time,
+                        albums: [householdGrowth]
+                    ),
+                    at: 0
+                )
+            }
         }
-        return sections
+        return applyingGrowthPhotoOverrides(to: sections)
     }
 
     private var homeAlbumHighlights: [CuratedAlbumPresentation] {
@@ -837,6 +848,103 @@ struct MainTabView: View {
         default:
             return nil
         }
+    }
+
+    private func growthCandidatePhotos(for albumID: CuratedAlbumID) -> [PhotoPresentation] {
+        switch albumID {
+        case .householdGrowth:
+            return catPhotos.map(\.householdGrowthCandidate)
+        case .growth:
+            return scopedCatPhotos
+        case let .profileGrowth(profileIdentifier, _):
+            return profileAlbumPhotos[profileIdentifier] ?? []
+        default:
+            return []
+        }
+    }
+
+    private func growthOverrideNamespace(
+        for albumID: CuratedAlbumID
+    ) -> String? {
+        let selectedProfileIdentifier: String?
+        if case let .profile(identifier) = selectedAlbumScope {
+            selectedProfileIdentifier = identifier
+        } else {
+            selectedProfileIdentifier = nil
+        }
+        return albumID.growthOverrideNamespace(
+            selectedProfileIdentifier: selectedProfileIdentifier
+        )
+    }
+
+    private func applyingGrowthPhotoOverrides(
+        to sections: [CuratedAlbumSectionPresentation]
+    ) -> [CuratedAlbumSectionPresentation] {
+        let overrideDocument = GrowthAlbumPhotoOverrides.decode(
+            growthPhotoOverridesJSON
+        )
+        let selector = GrowthAlbumSelector()
+
+        return sections.map { section in
+            let albums = section.albums.map { album in
+                guard album.id.isGrowthComparison,
+                      let namespace = growthOverrideNamespace(for: album.id) else {
+                    return album
+                }
+
+                let sourcePhotos = growthCandidatePhotos(for: album.id)
+                let lifeReference = growthLifeReference(for: album.id)
+                let groups = selector.candidateGroups(
+                    from: sourcePhotos,
+                    lifeReference: lifeReference
+                )
+                var preferredPhotoIdentifiers: [GrowthAlbumPeriod: String] = [:]
+                for group in groups {
+                    if let identifier = overrideDocument.photoIdentifier(
+                        albumNamespace: namespace,
+                        period: group.period
+                    ) {
+                        preferredPhotoIdentifiers[group.period] = identifier
+                    }
+                }
+                let photos = selector.select(
+                    from: sourcePhotos,
+                    lifeReference: lifeReference,
+                    preferredPhotoIdentifiers: preferredPhotoIdentifiers
+                ).map(\.photo)
+                guard photos.count >= GrowthAlbumVisibilityPolicy.minimumComparablePeriods else {
+                    return album
+                }
+                return CuratedAlbumPresentation(
+                    id: album.id,
+                    group: album.group,
+                    photos: photos
+                )
+            }
+            return CuratedAlbumSectionPresentation(
+                id: section.id,
+                albums: albums
+            )
+        }
+    }
+
+    private func setGrowthPhotoOverride(
+        _ photoIdentifier: String?,
+        albumID: CuratedAlbumID,
+        period: GrowthAlbumPeriod
+    ) {
+        guard let namespace = growthOverrideNamespace(for: albumID) else {
+            return
+        }
+        var overrideDocument = GrowthAlbumPhotoOverrides.decode(
+            growthPhotoOverridesJSON
+        )
+        overrideDocument.setPhotoIdentifier(
+            photoIdentifier,
+            albumNamespace: namespace,
+            period: period
+        )
+        growthPhotoOverridesJSON = overrideDocument.encoded()
     }
 
     private var excludedCatCandidateIdentifiers: Set<String> {

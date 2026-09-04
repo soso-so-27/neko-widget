@@ -104,8 +104,8 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "person-and-cat album title changed")
     try require(CuratedAlbumID.multipleCats.title == "猫たち",
                 "multiple-cat album made an exact-count claim")
-    try require(CuratedAlbumID.householdGrowth.title == "この家の猫たちの成長",
-                "household growth title changed")
+    try require(CuratedAlbumID.householdGrowth.title == "猫たちと過ごした時間",
+                "household timeline title changed")
     try require(CuratedAlbumID.householdGrowth.logKey == "household_growth",
                 "household growth log key changed")
     try require(CuratedAlbumID.householdGrowth.isGrowthComparison,
@@ -133,6 +133,26 @@ private func verifyValuableAlbumOrderAndLegacyPosturesStayHidden() throws {
                 "profile identifiers and names must not enter album logs")
     try require(profileGrowth.isGrowthComparison,
                 "profile growth must use the comparison presentation")
+    try require(
+        CuratedAlbumID.growth.growthOverrideNamespace(
+            selectedProfileIdentifier: "mugi"
+        ) == "profile:mugi",
+        "legacy profile growth did not isolate replacements by selected cat"
+    )
+    try require(
+        CuratedAlbumID.growth.growthOverrideNamespace(
+            selectedProfileIdentifier: "mugi"
+        ) != CuratedAlbumID.growth.growthOverrideNamespace(
+            selectedProfileIdentifier: "ame"
+        ),
+        "two cats shared the same growth replacement namespace"
+    )
+    try require(
+        CuratedAlbumID.householdGrowth.growthOverrideNamespace(
+            selectedProfileIdentifier: "mugi"
+        ) == "household",
+        "household replacements unexpectedly depended on the selected cat"
+    )
     try require(
         allAlbums(sections).first { $0.id == .multipleCats }?.photos.map(\.id)
             == ["newest"],
@@ -240,10 +260,10 @@ private func verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears() throws {
             "unresolved-multi-cat",
             date(2023, 6, 1),
             catCount: 2,
-            area: 0.80,
+            area: 0.34,
             isGrowthEligible: false
         ),
-        photo("same-year-smaller", date(2023, 7, 1), area: 0.20),
+        photo("same-year-close-up", date(2023, 7, 1), area: 0.80),
         photo("next-year", date(2024, 6, 1), area: 0.40),
         photo("missing-date", nil, area: 1.0)
     ])
@@ -256,8 +276,8 @@ private func verifyHouseholdGrowthUsesAllDetectedCatsAndNeedsTwoYears() throws {
     )
     try require(album?.countLabel == "2年分",
                 "household growth count was presented as a photo count")
-    try require(album?.cardTitle == "猫たちの成長",
-                "household growth card title no longer fits the shared card")
+    try require(album?.cardTitle == "猫たちと過ごした時間",
+                "household timeline card title no longer fits the shared card")
     try require(
         builder.album(from: [
             photo("only-year-a", date(2024, 1, 1)),

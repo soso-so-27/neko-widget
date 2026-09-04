@@ -99,7 +99,7 @@ enum CuratedAlbumID: Hashable, Identifiable {
     var title: String {
         switch self {
         case .allCatPhotos: "すべての猫写真"
-        case .householdGrowth: "この家の猫たちの成長"
+        case .householdGrowth: "猫たちと過ごした時間"
         case .growth: "成長"
         case let .profileGrowth(_, displayName): "\(displayName)の成長"
         case .kitten: "子猫のころ"
@@ -142,6 +142,21 @@ enum CuratedAlbumID: Hashable, Identifiable {
             false
         }
     }
+
+    func growthOverrideNamespace(
+        selectedProfileIdentifier: String?
+    ) -> String? {
+        switch self {
+        case .householdGrowth:
+            "household"
+        case .growth:
+            selectedProfileIdentifier.map { "profile:\($0)" } ?? "legacy-profile"
+        case let .profileGrowth(identifier, _):
+            "profile:\(identifier)"
+        default:
+            nil
+        }
+    }
 }
 
 struct CuratedAlbumPresentation: Identifiable, Hashable {
@@ -150,9 +165,7 @@ struct CuratedAlbumPresentation: Identifiable, Hashable {
     let photos: [PhotoPresentation]
 
     var title: String { id.title }
-    var cardTitle: String {
-        id == .householdGrowth ? "猫たちの成長" : title
-    }
+    var cardTitle: String { title }
     var coverPhoto: PhotoPresentation { photos[0] }
     var countLabel: String {
         id.isGrowthComparison
@@ -519,7 +532,7 @@ struct CuratedAlbumBuilder {
     }
 }
 
-private extension PhotoPresentation {
+extension PhotoPresentation {
     /// Individual eligibility protects a profile from an unresolved subject.
     /// A household timeline makes no individual-subject claim, so it can use
     /// every visible detected-cat photo, including multi-cat photos.
