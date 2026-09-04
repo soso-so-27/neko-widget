@@ -45,7 +45,7 @@ struct GrowthAlbumDetailView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("最初のころと、いま")
                             .font(.title2.bold())
-                        Text("\(first.label) — \(last.label)")
+                        Text(comparisonSpanLabel(from: first.period, to: last.period))
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
 
@@ -128,7 +128,7 @@ struct GrowthAlbumDetailView: View {
                 selectedIdentifier: resolvedItems.first(where: { $0.period == period })?
                     .photo.localIdentifier,
                 select: { photo in
-                    selectReplacement(photo, for: period, in: groups)
+                    selectReplacement(photo, for: period)
                 }
             )
         }
@@ -316,13 +316,12 @@ struct GrowthAlbumDetailView: View {
 
     private func selectReplacement(
         _ photo: PhotoPresentation,
-        for period: GrowthAlbumPeriod,
-        in groups: [GrowthAlbumCandidateGroup]
+        for period: GrowthAlbumPeriod
     ) {
-        let automaticIdentifier = groups
+        let automaticIdentifier = GrowthAlbumSelector()
+            .select(from: sourcePhotos, lifeReference: lifeReference)
             .first(where: { $0.period == period })?
-            .photos.first?
-            .localIdentifier
+            .photo.localIdentifier
         setPhotoOverride(
             period,
             photo.localIdentifier == automaticIdentifier ? nil : photo.localIdentifier
@@ -333,6 +332,16 @@ struct GrowthAlbumDetailView: View {
         let date = item.photo.creationDate?.formatted(.dateTime.year().month().day())
             ?? "撮影日不明"
         return "\(item.label)、\(date)の猫の写真"
+    }
+
+    private func comparisonSpanLabel(
+        from firstPeriod: GrowthAlbumPeriod,
+        to lastPeriod: GrowthAlbumPeriod
+    ) -> String {
+        guard let years = firstPeriod.years(until: lastPeriod) else {
+            return "\(firstPeriod.label) — \(lastPeriod.label)"
+        }
+        return "\(years)年のあいだ"
     }
 }
 

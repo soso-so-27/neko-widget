@@ -33,6 +33,20 @@ enum GrowthAlbumPeriod: Hashable, Identifiable, Sendable {
         case let .calendarYear(year): "year:\(year)"
         }
     }
+
+    func years(until laterPeriod: Self) -> Int? {
+        let distance: Int?
+        switch (self, laterPeriod) {
+        case let (.age(first), .age(last)),
+             let (.yearsTogether(first), .yearsTogether(last)),
+             let (.calendarYear(first), .calendarYear(last)):
+            distance = last - first
+        default:
+            distance = nil
+        }
+        guard let distance, distance > 0 else { return nil }
+        return distance
+    }
 }
 
 struct GrowthAlbumItem: Identifiable, Hashable {
@@ -96,10 +110,14 @@ struct GrowthAlbumPhotoOverrides: Codable, Equatable {
 }
 
 /// Selects exactly one photo per comparable period. An explicit memory or
-/// Photos favorite wins first. Automatic choices then favor analyzed photos,
-/// the intended age/date, and balanced cat framing rather than whichever cat
-/// occupies the largest area.
+/// Photos favorite wins first. Automatic choices then form one visual thread:
+/// the first and latest periods are selected together, and intermediate years
+/// favor the same person/cat-count/composition pattern. This creates a clearer
+/// sense of elapsed time without claiming cat identity or a shared location.
 struct GrowthAlbumSelector {
+    private static let coherenceCandidateLimit = 12
+    private static let rankPenalty = 0.08
+
     private let calendar: Calendar
 
     init(timeZone: TimeZone = .current) {
@@ -114,12 +132,51 @@ struct GrowthAlbumSelector {
         lifeReference: CatLifeReference?,
         preferredPhotoIdentifiers: [GrowthAlbumPeriod: String] = [:]
     ) -> [GrowthAlbumItem] {
-        candidateGroups(from: inputPhotos, lifeReference: lifeReference).compactMap { group in
-            guard let automaticPhoto = group.photos.first else { return nil }
-            let photo = preferredPhotoIdentifiers[group.period].flatMap { preferredIdentifier in
-                group.photos.first { $0.localIdentifier == preferredIdentifier }
-            } ?? automaticPhoto
-            return GrowthAlbumItem(period: group.period, photo: photo)
+        let groups = candidateGroups(from: inputPhotos, lifeReference: lifeReference)
+        guard let firstGroup = groups.first else { return [] }
+
+        let validPreferences = Dictionary(
+            uniqueKeysWithValues: groups.compactMap { group in
+                guard let preferredIdentifier = preferredPhotoIdentifiers[group.period],
+                      let preferredPhoto = group.photos.first(where: {
+                          $0.localIdentifier == preferredIdentifier
+                      }) else {
+                    return nil
+                }
+                return (group.period, preferredPhoto)
+            }
+        )
+
+        guard let lastGroup = groups.last,
+              firstGroup.period != lastGroup.period else {
+            guard let photo = validPreferences[firstGroup.period] ?? firstGroup.photos.first else {
+                return []
+            }
+            return [GrowthAlbumItem(period: firstGroup.period, photo: photo)]
+        }
+
+        let boundaryPhotos = coherentBoundaryPhotos(
+            firstGroup: firstGroup,
+            lastGroup: lastGroup,
+            validPreferences: validPreferences
+        )
+
+        return groups.compactMap { group in
+            let photo: PhotoPresentation?
+            if let preferredPhoto = validPreferences[group.period] {
+                photo = preferredPhoto
+            } else if group.period == firstGroup.period {
+                photo = boundaryPhotos.first
+            } else if group.period == lastGroup.period {
+                photo = boundaryPhotos.last
+            } else {
+                photo = coherentPhoto(
+                    in: group,
+                    firstBoundary: boundaryPhotos.first,
+                    lastBoundary: boundaryPhotos.last
+                )
+            }
+            return photo.map { GrowthAlbumItem(period: group.period, photo: $0) }
         }
     }
 
@@ -198,6 +255,174 @@ struct GrowthAlbumSelector {
             }
         }
         return Array(selected.values)
+    }
+
+    private func coherentBoundaryPhotos(
+        firstGroup: GrowthAlbumCandidateGroup,
+        lastGroup: GrowthAlbumCandidateGroup,
+        validPreferences: [GrowthAlbumPeriod: PhotoPresentation]
+    ) -> (first: PhotoPresentation, last: PhotoPresentation) {
+        let firstCandidates = comparisonCandidates(
+            in: firstGroup,
+            preferredPhoto: validPreferences[firstGroup.period]
+        )
+        let lastCandidates = comparisonCandidates(
+            in: lastGroup,
+            preferredPhoto: validPreferences[lastGroup.period]
+        )
+
+        var best: BoundaryPair?
+        for (firstRank, firstPhoto) in firstCandidates.enumerated() {
+            for (lastRank, lastPhoto) in lastCandidates.enumerated() {
+                let candidate = BoundaryPair(
+                    first: firstPhoto,
+                    last: lastPhoto,
+                    likedCount: (firstPhoto.isLiked ? 1 : 0)
+                        + (lastPhoto.isLiked ? 1 : 0),
+                    favoriteCount: (firstPhoto.isPhotoLibraryFavorite ? 1 : 0)
+                        + (lastPhoto.isPhotoLibraryFavorite ? 1 : 0),
+                    score: relationshipPenalty(firstPhoto, lastPhoto)
+                        + presentationPenalty(firstPhoto)
+                        + presentationPenalty(lastPhoto)
+                        + Double(firstRank + lastRank) * Self.rankPenalty,
+                    rankSum: firstRank + lastRank
+                )
+                if best.map({ boundaryPair(candidate, isPreferredOver: $0) }) ?? true {
+                    best = candidate
+                }
+            }
+        }
+
+        if let best {
+            return (best.first, best.last)
+        }
+        return (
+            validPreferences[firstGroup.period] ?? firstGroup.photos[0],
+            validPreferences[lastGroup.period] ?? lastGroup.photos[0]
+        )
+    }
+
+    private func comparisonCandidates(
+        in group: GrowthAlbumCandidateGroup,
+        preferredPhoto: PhotoPresentation?
+    ) -> [PhotoPresentation] {
+        if let preferredPhoto { return [preferredPhoto] }
+        return Array(group.photos.prefix(Self.coherenceCandidateLimit))
+    }
+
+    private func coherentPhoto(
+        in group: GrowthAlbumCandidateGroup,
+        firstBoundary: PhotoPresentation,
+        lastBoundary: PhotoPresentation
+    ) -> PhotoPresentation? {
+        var best: RankedPhoto?
+        for (rank, photo) in group.photos
+            .prefix(Self.coherenceCandidateLimit)
+            .enumerated() {
+            let candidate = RankedPhoto(
+                photo: photo,
+                liked: photo.isLiked,
+                favorite: photo.isPhotoLibraryFavorite,
+                score: relationshipPenalty(photo, firstBoundary)
+                    + relationshipPenalty(photo, lastBoundary)
+                    + presentationPenalty(photo)
+                    + Double(rank) * Self.rankPenalty,
+                rank: rank
+            )
+            if best.map({ rankedPhoto(candidate, isPreferredOver: $0) }) ?? true {
+                best = candidate
+            }
+        }
+        return best?.photo ?? group.photos.first
+    }
+
+    private func boundaryPair(
+        _ candidate: BoundaryPair,
+        isPreferredOver current: BoundaryPair
+    ) -> Bool {
+        if candidate.likedCount != current.likedCount {
+            return candidate.likedCount > current.likedCount
+        }
+        if candidate.favoriteCount != current.favoriteCount {
+            return candidate.favoriteCount > current.favoriteCount
+        }
+        if candidate.score != current.score { return candidate.score < current.score }
+        if candidate.rankSum != current.rankSum { return candidate.rankSum < current.rankSum }
+        let candidateKey = "\(candidate.first.localIdentifier)|\(candidate.last.localIdentifier)"
+        let currentKey = "\(current.first.localIdentifier)|\(current.last.localIdentifier)"
+        return candidateKey < currentKey
+    }
+
+    private func rankedPhoto(
+        _ candidate: RankedPhoto,
+        isPreferredOver current: RankedPhoto
+    ) -> Bool {
+        if candidate.liked != current.liked { return candidate.liked }
+        if candidate.favorite != current.favorite { return candidate.favorite }
+        if candidate.score != current.score { return candidate.score < current.score }
+        if candidate.rank != current.rank { return candidate.rank < current.rank }
+        return candidate.photo.localIdentifier < current.photo.localIdentifier
+    }
+
+    private func relationshipPenalty(
+        _ first: PhotoPresentation,
+        _ second: PhotoPresentation
+    ) -> Double {
+        var penalty = 0.0
+
+        if let firstContainsPerson = first.albumContainsPerson,
+           let secondContainsPerson = second.albumContainsPerson {
+            if firstContainsPerson != secondContainsPerson {
+                penalty += 0.75
+            } else if firstContainsPerson {
+                penalty -= 0.08
+            }
+        }
+
+        penalty += Double(abs(first.detectedCatCount - second.detectedCatCount)) * 0.40
+        if first.detectedCatCount > 1, first.detectedCatCount == second.detectedCatCount {
+            penalty -= 0.06
+        }
+
+        if let firstIsOuting = first.albumIsOuting,
+           let secondIsOuting = second.albumIsOuting,
+           firstIsOuting != secondIsOuting {
+            penalty += 0.24
+        }
+
+        guard let firstBox = normalizedBox(first.catBoundingBox),
+              let secondBox = normalizedBox(second.catBoundingBox) else {
+            return penalty + 0.30
+        }
+
+        penalty += hypot(
+            Double(firstBox.midX - secondBox.midX),
+            Double(firstBox.midY - secondBox.midY)
+        ) * 0.60
+        penalty += abs(Double(firstBox.width * firstBox.height - secondBox.width * secondBox.height))
+            * 1.50
+
+        let firstAspect = Double(firstBox.width / firstBox.height)
+        let secondAspect = Double(secondBox.width / secondBox.height)
+        penalty += abs(log(firstAspect / secondAspect)) * 0.12
+        return penalty
+    }
+
+    private func normalizedBox(_ box: CGRect?) -> CGRect? {
+        guard let box,
+              box.origin.x.isFinite,
+              box.origin.y.isFinite,
+              box.width.isFinite,
+              box.height.isFinite,
+              box.width > 0,
+              box.height > 0 else {
+            return nil
+        }
+        return box
+    }
+
+    private func presentationPenalty(_ photo: PhotoPresentation) -> Double {
+        min(framingPenalty(photo), 1.0)
     }
 
     private func canonicalDuplicatePreference(
@@ -309,4 +534,21 @@ struct GrowthAlbumSelector {
             hour: 12
         ))
     }
+}
+
+private struct BoundaryPair {
+    let first: PhotoPresentation
+    let last: PhotoPresentation
+    let likedCount: Int
+    let favoriteCount: Int
+    let score: Double
+    let rankSum: Int
+}
+
+private struct RankedPhoto {
+    let photo: PhotoPresentation
+    let liked: Bool
+    let favorite: Bool
+    let score: Double
+    let rank: Int
 }

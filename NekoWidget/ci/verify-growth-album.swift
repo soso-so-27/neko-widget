@@ -38,20 +38,92 @@ private func photo(
     _ id: String,
     _ capturedAt: Date?,
     areas: [Double],
+    catBoundingBox: CGRect = CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5),
     isGrowthEligible: Bool = true,
     isLiked: Bool = false,
     isPhotoLibraryFavorite: Bool = false,
+    containsPerson: Bool? = nil,
+    isOuting: Bool? = nil,
+    detectedCatCount: Int = 1,
     hasCurrentAlbumAnalysis: Bool = true
 ) -> PhotoPresentation {
     PhotoPresentation(
         localIdentifier: id,
         creationDate: capturedAt,
-        catBoundingBox: CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5),
+        catBoundingBox: catBoundingBox,
         isLiked: isLiked,
         isPhotoLibraryFavorite: isPhotoLibraryFavorite,
+        albumContainsPerson: containsPerson,
+        albumIsOuting: isOuting,
+        detectedCatCount: detectedCatCount,
         largestCatAreaRatio: areas.max(),
         isGrowthEligible: isGrowthEligible,
         hasCurrentAlbumAnalysis: hasCurrentAlbumAnalysis
+    )
+}
+
+private func verifyTimelineFormsAVisualThread() throws {
+    let relatedBox = CGRect(x: 0.22, y: 0.18, width: 0.54, height: 0.56)
+    let photos = [
+        photo(
+            "first-independent-best",
+            date(2019, 2, 1),
+            areas: [0.34],
+            containsPerson: false,
+            detectedCatCount: 1
+        ),
+        photo(
+            "first-thread",
+            date(2019, 8, 1),
+            areas: [0.43],
+            catBoundingBox: relatedBox,
+            containsPerson: true,
+            detectedCatCount: 2
+        ),
+        photo(
+            "middle-independent-best",
+            date(2022, 2, 1),
+            areas: [0.34],
+            containsPerson: false,
+            detectedCatCount: 1
+        ),
+        photo(
+            "middle-thread",
+            date(2022, 8, 1),
+            areas: [0.43],
+            catBoundingBox: relatedBox,
+            containsPerson: true,
+            detectedCatCount: 2
+        ),
+        photo(
+            "latest-thread",
+            date(2026, 8, 1),
+            areas: [0.43],
+            catBoundingBox: relatedBox,
+            containsPerson: true,
+            detectedCatCount: 2
+        )
+    ]
+    let selector = GrowthAlbumSelector(timeZone: utc)
+    let automatic = selector.select(from: photos, lifeReference: nil)
+
+    try require(
+        automatic.map { $0.photo.id } == [
+            "first-thread", "middle-thread", "latest-thread"
+        ],
+        "growth periods were still selected as unrelated independent best photos"
+    )
+
+    let overridden = selector.select(
+        from: photos,
+        lifeReference: nil,
+        preferredPhotoIdentifiers: [
+            .calendarYear(2019): "first-independent-best"
+        ]
+    )
+    try require(
+        overridden.first?.photo.id == "first-independent-best",
+        "an explicit boundary replacement was not locked into the visual thread"
     )
 }
 
@@ -231,6 +303,7 @@ private struct GrowthAlbumVerifier {
         try verifyAgeSelectionPriorityAndBoundary()
         try verifyCalendarSelectionAndMultipleCats()
         try verifyExplicitSignalsAndReplacementOverride()
+        try verifyTimelineFormsAVisualThread()
         try verifyOverrideDocumentRoundTrip()
         try verifyDeterministicTiesAndAdoptionReference()
         try verifyUnresolvedMultiCatPhotoIsSkipped()
