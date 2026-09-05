@@ -7,6 +7,10 @@ import sys
 def summarize(log):
     results = {}
     coreml_error = None
+    compiler_errors = sum(
+        1 for line in log.splitlines()
+        if "[coreml]" in line and ("E5RT:" in line or "failed" in line.lower())
+    )
     for line in log.splitlines():
         for mode, prefix in (("cpu", "PROBE_CPU_JSON="), ("coreML", "PROBE_COREML_JSON=")):
             if prefix in line:
@@ -24,7 +28,14 @@ def summarize(log):
         "scope": "synthetic_simulator_smoke_only",
         "device_performance_measured": False,
         "cat_accuracy_measured": False,
-        "coreml_verified": "coreML" in results,
+        "coreml_ep_run_completed": "coreML" in results,
+        "coreml_acceleration_verified": False,
+        "coreml_compiler_error_lines": compiler_errors,
+        "coreml_result_status": (
+            "completed_with_compiler_errors" if "coreML" in results and compiler_errors
+            else "output_checked_acceleration_unverified" if "coreML" in results
+            else "unverified"
+        ),
         "coreml_error": coreml_error,
         "results": results,
     }

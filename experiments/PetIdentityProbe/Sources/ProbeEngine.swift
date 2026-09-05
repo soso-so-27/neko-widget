@@ -25,8 +25,8 @@ enum ProbeEngine {
         }
 
         private func measure(mode: ProbeMode) throws -> ProbeReport {
-            let modelHash = "6a5e2373ab348bed588cef4072f3914ca9c8bacde3e8d0651019e8dad86b24ba"
-            guard let modelURL = Bundle.main.url(forResource: "model", withExtension: "onnx") else {
+            let modelHash = "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b"
+            guard let modelURL = Bundle.main.url(forResource: "model-fixed", withExtension: "onnx") else {
                 throw Failure("確認用モデルがありません。prepare.pyを実行してビルドしてください。")
             }
             // Stream verification, without keeping another 85 MiB copy in memory.
@@ -43,7 +43,7 @@ enum ProbeEngine {
                 try? handle.close()
                 throw error
             }
-            guard bytes == 89_227_604,
+            guard bytes == 89_227_594,
                   hash.finalize().map({ String(format: "%02x", $0) }).joined() == modelHash else {
                 throw Failure("モデルの検証に失敗しました。測定を中止しました。")
             }
@@ -63,8 +63,9 @@ enum ProbeEngine {
                 }
                 let coreML = ORTCoreMLExecutionProviderOptions()
                 coreML.createMLProgram = true
-                // Dynamic batch stays supported. EP selection does not prove ANE use.
-                coreML.onlyAllowStaticInputShapes = false
+                // Build-time batch=1 conversion is checked against the original.
+                // EP selection still does not prove ANE use or full delegation.
+                coreML.onlyAllowStaticInputShapes = true
                 try options.appendCoreMLExecutionProvider(with: coreML)
             }
             let sessionStart = ProcessInfo.processInfo.systemUptime

@@ -15,14 +15,14 @@ targets:
     platform: iOS
     sources:
       - Sources
-      - path: Resources
+      - path: Resources/model-fixed.onnx
         buildPhase: resources
     dependencies:
       - package: onnxruntime
         product: onnxruntime
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: local.nekomado.PetIdentityProbe
-      TARGETED_DEVICE_FAMILY: "1,2"
+      TARGETED_DEVICE_FAMILY: "1"
       MARKETING_VERSION: "0.1"
       CURRENT_PROJECT_VERSION: "1"
     info:

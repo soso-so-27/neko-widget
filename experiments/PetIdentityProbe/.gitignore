@@ -1,5 +1,7 @@
 Resources/model.onnx
+Resources/model-fixed.onnx
 Resources/*.download
 Generated/
 PetIdentityProbe.xcodeproj/
 __pycache__/
+.venv/

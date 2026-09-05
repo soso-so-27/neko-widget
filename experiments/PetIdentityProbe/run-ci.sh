@@ -5,6 +5,8 @@ evidence="${RUNNER_TEMP:?}/pet-identity-evidence"
 derived="$RUNNER_TEMP/PetIdentityProbeDerived"
 mkdir -p "$evidence"
 python3 prepare.py
+python3 -m pip install --disable-pip-version-check --no-cache-dir -r requirements.txt > "$evidence/python-setup.log" 2>&1
+python3 fix-model.py Resources/model.onnx Resources/model-fixed.onnx > "$evidence/static-equivalence.json"
 if ! command -v xcodegen >/dev/null; then
   brew install xcodegen
 fi
@@ -34,5 +36,5 @@ xcrun simctl launch "$simulator" local.nekomado.PetIdentityProbe
 sleep 3
 xcrun simctl io "$simulator" screenshot "$evidence/probe-screen.png"
 du -sk "$derived-device/Build/Products/Debug-iphoneos/PetIdentityProbe.app" > "$evidence/unsigned-app-size-kib.txt"
-shasum -a 256 Resources/model.onnx > "$evidence/model-sha256.txt"
+shasum -a 256 Resources/model-fixed.onnx > "$evidence/model-sha256.txt"
 # No IPA, model, xcframework, feature vectors or full xcresult is uploaded.
