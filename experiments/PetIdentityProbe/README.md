@@ -65,11 +65,13 @@ Macを使う場合は独立bundleの開発署名と接続したiPhoneを選ぶ�
 
 ### 配布準備の到達点（2026-09-05）
 
-- コード候補`2475104885790c8acb7d42ef42625d37a23c53b4`の[CI 33941248554](https://github.com/soso-so-27/neko-widget/actions/runs/33941248554)は完了・成功。iPhone向け無署名ビルド、Simulatorの合成入力検査、CPUを主操作にした初期画面を確認済み。実機性能・実写精度・署名済み配布の確認ではない。
+- コード候補`2475104885790c8acb7d42ef42625d37a23c53b4`の[CI 33941248554](https://github.com/soso-so-27/neko-widget/actions/runs/33941248554)、統合後の[main CI 33942111316](https://github.com/soso-so-27/neko-widget/actions/runs/33942111316)が成功。iPhone向け無署名ビルド、Simulatorの合成入力検査、CPUを主操作にした初期画面を確認済み。実機性能・実写精度の確認ではない。
 - 本人用内部グループ「自分用（猫識別検証）」を作成し、既存の本人テスター1人だけを追加済み。自動配布は有効、登録ビルドはまだ0。
-- 専用profileは発行済みだが、ブラウザのDownloadが`ERR_BLOCKED_BY_CLIENT`で停止。ユーザーへ[専用profile画面](https://developer.apple.com/account/resources/profiles/review/72JM846MGP)からの手動保存を依頼済み。ブラウザの保護を迂回しない。
-- `PET_IDENTITY_PROVISIONING_PROFILE_BASE64`は未設定。main統合、署名archive/export、Apple検証・アップロードは未実行。本体と本体用署名設定は変更していない。
-- 再開時は保存されたprofileの専用bundle・Team・有効期限・証明書一致を検査し、新しい専用secretだけを設定する。その後main CI→専用workflow→Apple処理完了と本人のインストール可否を確認する。同じコード候補の成功CIは理由なく再実行しない。
+- ユーザーが専用profileを手動保存。CMS署名・専用bundle・Team・有効期限・既存配布証明書一致を検査し、`PET_IDENTITY_PROVISIONING_PROFILE_BASE64`だけを新規設定済み。本体と本体用署名設定は変更していない。
+- 初回配布準備で3点を修正：Appleのprofileに標準で含まれる`com.apple.token`の許容漏れ、XcodeGenがInfo.plistへ書く既定バージョン、`codesign --extract-certificates`の省略可能引数を別argvにした不備。profileの許容リストとアプリ自身の権限は区別し、アプリのtoken・別bundle・別Teamアクセスは引き続き拒否する。署名検証の失敗箇所は秘密を出さず固定文言で識別する。
+- 根拠：[Apple TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)、[XcodeGenのInfo.plist初期値](https://github.com/yonaskolb/XcodeGen/blob/master/Sources/XcodeGenKit/InfoPlistGenerator.swift)、[Apple codesign引数定義](https://github.com/apple-oss-distributions/security_systemkeychain/blob/security_systemkeychain-55105/src/codesign.cpp#L163)。旧ログが汎用エラーだった最後のrunについて、実際に証明書抽出まで到達したかは確定していない。
+- `33942426779`は署名前、`33942624240`と`33942819684`は署名archive後の検証で停止し、いずれもAppleアップロード前。修正後の[配布run 33943089253](https://github.com/soso-so-27/neko-widget/actions/runs/33943089253)（コード`eccb6b9cb177e2337c6654a8bf2e0b4775530bfc`）、Build `0.1 (1)`は成功。archive・IPAの署名/内容検証、Apple validate、Apple uploadをすべて通過し、2026-09-05 12:56 JSTにアップロード完了。同じアプリコードの成功CIは理由なく再実行しない。
+- アップロード直後のASC画面ではまだビルド未表示。Appleの処理完了と内部グループへの反映は別途確認し、インストール可能と確認するまでは「配布完了」としない。
 
 ## 読み違えてはいけない値
 
