@@ -55,6 +55,48 @@ struct CatProfilePhotoAlbumLink: Codable, Equatable, Sendable {
     }
 }
 
+/// Optional calendar metadata for each milestone. An explicit empty value is
+/// distinct from an older profile that has not yet stored both date fields.
+struct CatProfileLifeDates: Codable, Equatable, Sendable {
+    var birthday: CatLifeDate?
+    var birthdayIsApproximate: Bool
+    var adoptionDay: CatLifeDate?
+    var adoptionDayIsApproximate: Bool
+
+    init(
+        birthday: CatLifeDate? = nil,
+        birthdayIsApproximate: Bool = false,
+        adoptionDay: CatLifeDate? = nil,
+        adoptionDayIsApproximate: Bool = false
+    ) {
+        self.birthday = birthday
+        self.birthdayIsApproximate = birthday != nil && birthdayIsApproximate
+        self.adoptionDay = adoptionDay
+        self.adoptionDayIsApproximate = adoptionDay != nil && adoptionDayIsApproximate
+    }
+
+    func reference(for kind: CatLifeReferenceKind) -> CatLifeReference? {
+        let date = kind == .birthday ? birthday : adoptionDay
+        return date.map { CatLifeReference(kind: kind, date: $0) }
+    }
+
+    func isApproximate(for kind: CatLifeReferenceKind) -> Bool {
+        switch kind {
+        case .birthday: birthday != nil && birthdayIsApproximate
+        case .adoptionDay: adoptionDay != nil && adoptionDayIsApproximate
+        }
+    }
+
+    func normalized() -> Self {
+        Self(
+            birthday: birthday,
+            birthdayIsApproximate: birthdayIsApproximate,
+            adoptionDay: adoptionDay,
+            adoptionDayIsApproximate: adoptionDayIsApproximate
+        )
+    }
+}
+
 /// A user-owned cat identity. Vision detections never create profiles or move
 /// a life reference between profiles.
 struct CatProfile: Codable, Equatable, Identifiable, Sendable {
@@ -64,6 +106,12 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
     /// Rescue cats often have an estimated birthday. This flag is display
     /// metadata only and must not affect Vision analysis.
     var lifeReferenceIsApproximate: Bool
+    /// Nil preserves older JSON's single life reference. Once edited, this
+    /// value is authoritative even when both dates are explicitly cleared.
+    var lifeDates: CatProfileLifeDates?
+    /// A user-picked photo, kept stable when newer photos arrive. Its PhotoKit
+    /// identifier is local-only and household normalization checks membership.
+    var keyPhotoLocalIdentifier: String?
     /// Optional explicit input from a user-created Photos album. This is not
     /// the household scan-source album and not the app-managed `うちの子`
     /// output album.
@@ -76,6 +124,8 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
         displayName: String,
         lifeReference: CatLifeReference? = nil,
         lifeReferenceIsApproximate: Bool = false,
+        lifeDates: CatProfileLifeDates? = nil,
+        keyPhotoLocalIdentifier: String? = nil,
         photoAlbumLink: CatProfilePhotoAlbumLink? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
@@ -85,9 +135,58 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
         self.lifeReference = lifeReference
         self.lifeReferenceIsApproximate = lifeReference != nil
             && lifeReferenceIsApproximate
+        self.lifeDates = lifeDates
+        self.keyPhotoLocalIdentifier = keyPhotoLocalIdentifier
         self.photoAlbumLink = photoAlbumLink
         self.createdAt = catIdentityTimestamp(createdAt)
         self.updatedAt = catIdentityTimestamp(max(createdAt, updatedAt))
+        if let lifeDates {
+            setLifeDates(lifeDates)
+        }
+    }
+
+    var resolvedLifeDates: CatProfileLifeDates {
+        if let lifeDates { return lifeDates.normalized() }
+        guard let lifeReference else { return CatProfileLifeDates() }
+        switch lifeReference.kind {
+        case .birthday:
+            return CatProfileLifeDates(
+                birthday: lifeReference.date,
+                birthdayIsApproximate: lifeReferenceIsApproximate
+            )
+        case .adoptionDay:
+            return CatProfileLifeDates(
+                adoptionDay: lifeReference.date,
+                adoptionDayIsApproximate: lifeReferenceIsApproximate
+            )
+        }
+    }
+
+    func lifeReference(for kind: CatLifeReferenceKind) -> CatLifeReference? {
+        resolvedLifeDates.reference(for: kind)
+    }
+
+    func isLifeReferenceApproximate(for kind: CatLifeReferenceKind) -> Bool {
+        resolvedLifeDates.isApproximate(for: kind)
+    }
+
+    /// Keeps the legacy fields as the explicit basis for growth grouping.
+    /// Adding a second milestone does not silently change an existing basis.
+    mutating func setLifeDates(
+        _ dates: CatProfileLifeDates,
+        preferredPrimaryKind: CatLifeReferenceKind? = nil
+    ) {
+        let dates = dates.normalized()
+        let candidateKinds: [CatLifeReferenceKind?] = [
+            preferredPrimaryKind, lifeReference?.kind, .birthday, .adoptionDay
+        ]
+        let selectedKind = candidateKinds
+            .compactMap { $0 }
+            .first { dates.reference(for: $0) != nil }
+        lifeDates = dates
+        lifeReference = selectedKind.flatMap { dates.reference(for: $0) }
+        lifeReferenceIsApproximate = selectedKind.map { dates.isApproximate(for: $0) }
+            ?? false
     }
 
     func normalized() -> Self {
@@ -97,7 +196,9 @@ struct CatProfile: Codable, Equatable, Identifiable, Sendable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .prefix(80)
         )
-        if value.lifeReference == nil {
+        if let lifeDates = value.lifeDates {
+            value.setLifeDates(lifeDates)
+        } else if value.lifeReference == nil {
             value.lifeReferenceIsApproximate = false
         }
         value.photoAlbumLink = value.photoAlbumLink?.normalized()
@@ -500,6 +601,25 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
         self = normalized()
     }
 
+    /// Selecting a cover never creates identity membership. Temporary Photos
+    /// unavailability does not clear the persisted, confirmed choice.
+    mutating func setProfileKeyPhoto(
+        profileID: UUID,
+        assetLocalIdentifier: String?,
+        at date: Date = .now
+    ) {
+        guard var profile = profiles.first(where: { $0.id == profileID }) else {
+            return
+        }
+        if let assetLocalIdentifier {
+            guard Self.isValidLocalIdentifier(assetLocalIdentifier),
+                  confirmsAsset(assetLocalIdentifier, for: profileID) else { return }
+        }
+        guard profile.keyPhotoLocalIdentifier != assetLocalIdentifier else { return }
+        profile.keyPhotoLocalIdentifier = assetLocalIdentifier
+        upsertProfile(profile, at: date)
+    }
+
     mutating func setProfilePhotoAlbumLink(
         profileID: UUID,
         localIdentifier: String?,
@@ -700,6 +820,15 @@ struct CatHouseholdIdentityState: Codable, Equatable, Sendable {
                 return $0.profileID.uuidString < $1.profileID.uuidString
             }
             return $0.assetLocalIdentifier < $1.assetLocalIdentifier
+        }
+
+        for index in value.profiles.indices {
+            let profile = value.profiles[index]
+            if let identifier = profile.keyPhotoLocalIdentifier,
+               !Self.isValidLocalIdentifier(identifier)
+                || !value.confirmsAsset(identifier, for: profile.id) {
+                value.profiles[index].keyPhotoLocalIdentifier = nil
+            }
         }
 
         // Build 14 created a profile and its explicitly selected first photo

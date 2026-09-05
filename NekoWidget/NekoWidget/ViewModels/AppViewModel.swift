@@ -1264,21 +1264,27 @@ final class AppViewModel: ObservableObject {
         await saveSnapshot(reportErrors: true)
     }
 
+    @discardableResult
     func createCatProfile(
         displayName: String,
         lifeReference: CatLifeReference?,
         lifeReferenceIsApproximate: Bool,
         referenceAssetIdentifier: String?
-    ) async {
-        guard candidateAuthorityIsReady(operation: "create_cat_profile") else { return }
+    ) async -> UUID? {
+        guard candidateAuthorityIsReady(operation: "create_cat_profile"),
+              !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        var createdID: UUID?
         await serializeCatIdentityTransition {
-            await self.performCreateCatProfile(
+            createdID = await self.performCreateCatProfile(
                 displayName: displayName,
                 lifeReference: lifeReference,
                 lifeReferenceIsApproximate: lifeReferenceIsApproximate,
                 referenceAssetIdentifier: referenceAssetIdentifier
             )
         }
+        return createdID
     }
 
     private func performCreateCatProfile(
@@ -1286,7 +1292,7 @@ final class AppViewModel: ObservableObject {
         lifeReference: CatLifeReference?,
         lifeReferenceIsApproximate: Bool,
         referenceAssetIdentifier: String?
-    ) async {
+    ) async -> UUID? {
         let legacyLifeReference = settings.catLifeReference
         let latestLegacyCuration = catCandidateCuration
         let profile = CatProfile(
@@ -1295,7 +1301,7 @@ final class AppViewModel: ObservableObject {
             lifeReferenceIsApproximate: lifeReferenceIsApproximate
         )
         do {
-            _ = try await mutateCatHouseholdIdentity { state in
+            let committed = try await mutateCatHouseholdIdentity { state in
                 // Profile creation is the one-way boundary where identity
                 // becomes canonical. Fold in the last committed Build 13
                 // curation revision first, including a revision whose prior
@@ -1319,7 +1325,14 @@ final class AppViewModel: ObservableObject {
                         // this flag, but an explicit seed must remain usable.
                         isSimilarityReference: true
                     )
+                    state.setProfileKeyPhoto(
+                        profileID: profile.id,
+                        assetLocalIdentifier: referenceAssetIdentifier
+                    )
                 }
+            }
+            guard committed.profiles.contains(where: { $0.id == profile.id }) else {
+                return nil
             }
             // Once a profile exists, the old household-wide date is retained
             // only in legacy metadata. It must not regroup every cat as one.
@@ -1332,48 +1345,77 @@ final class AppViewModel: ObservableObject {
                     "hasLifeReference": "\(lifeReference != nil)"
                 ]
             )
+            return profile.id
         } catch {
             Self.logError(error, category: "cat-identity", operation: "create_profile")
             setError(error)
+            return nil
         }
     }
 
-    func updateCatProfileLifeReference(
+    func updateCatProfileLifeDates(
         profileID: UUID,
-        reference: CatLifeReference?,
-        isApproximate: Bool
-    ) async {
-        guard candidateAuthorityIsReady(operation: "update_profile_life_reference") else {
-            return
+        dates: CatProfileLifeDates,
+        preferredPrimaryKind: CatLifeReferenceKind?
+    ) async -> Bool {
+        guard candidateAuthorityIsReady(operation: "update_profile_life_dates") else {
+            return false
         }
         do {
-            _ = try await mutateCatHouseholdIdentity { state in
+            let committed = try await mutateCatHouseholdIdentity { state in
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
                     return
                 }
-                profile.lifeReference = reference
-                profile.lifeReferenceIsApproximate = reference != nil && isApproximate
+                profile.setLifeDates(dates, preferredPrimaryKind: preferredPrimaryKind)
                 state.upsertProfile(profile)
             }
+            return committed.profiles.first(where: { $0.id == profileID })?
+                .resolvedLifeDates == dates.normalized()
         } catch {
             Self.logError(error, category: "cat-identity", operation: "update_profile_date")
             setError(error)
+            return false
         }
     }
 
-    func updateCatProfileName(profileID: UUID, displayName: String) async {
-        guard candidateAuthorityIsReady(operation: "update_profile_name") else { return }
+    func updateCatProfileName(profileID: UUID, displayName: String) async -> Bool {
+        let name = String(displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        guard candidateAuthorityIsReady(operation: "update_profile_name"), !name.isEmpty else {
+            return false
+        }
         do {
-            _ = try await mutateCatHouseholdIdentity { state in
+            let committed = try await mutateCatHouseholdIdentity { state in
                 guard var profile = state.profiles.first(where: { $0.id == profileID }) else {
                     return
                 }
-                profile.displayName = displayName
+                profile.displayName = name
                 state.upsertProfile(profile)
             }
+            return committed.profiles.first(where: { $0.id == profileID })?.displayName == name
         } catch {
             Self.logError(error, category: "cat-identity", operation: "update_profile_name")
             setError(error)
+            return false
+        }
+    }
+
+    func setCatProfileKeyPhoto(profileID: UUID, localIdentifier: String) async -> Bool {
+        guard candidateAuthorityIsReady(operation: "set_profile_key_photo") else {
+            return false
+        }
+        do {
+            let committed = try await mutateCatHouseholdIdentity { state in
+                state.setProfileKeyPhoto(
+                    profileID: profileID,
+                    assetLocalIdentifier: localIdentifier
+                )
+            }
+            return committed.profiles.first(where: { $0.id == profileID })?
+                .keyPhotoLocalIdentifier == localIdentifier
+        } catch {
+            Self.logError(error, category: "cat-identity", operation: "set_profile_key_photo")
+            setError(error)
+            return false
         }
     }
 
@@ -1452,15 +1494,17 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func deleteCatProfile(profileID: UUID) async {
-        guard candidateAuthorityIsReady(operation: "delete_profile") else { return }
+    func deleteCatProfile(profileID: UUID) async -> Bool {
+        guard candidateAuthorityIsReady(operation: "delete_profile") else { return false }
         do {
-            _ = try await mutateCatHouseholdIdentity { state in
+            let committed = try await mutateCatHouseholdIdentity { state in
                 state.removeProfile(id: profileID)
             }
+            return !committed.profiles.contains(where: { $0.id == profileID })
         } catch {
             Self.logError(error, category: "cat-identity", operation: "delete_profile")
             setError(error)
+            return false
         }
     }
 
@@ -1468,17 +1512,23 @@ final class AppViewModel: ObservableObject {
     /// several profiles. When more than one cat box exists and no explicit box
     /// has been chosen, the membership remains valid for time/special albums,
     /// while profile-specific posture/growth deliberately stays unassigned.
+    @discardableResult
     func replaceCatProfileAssignments(
         profileIDsByLocalIdentifier: [String: Set<UUID>]
-    ) async {
+    ) async -> Bool {
         guard candidateAuthorityIsReady(operation: "replace_profile_assignments") else {
-            return
+            return false
         }
         let requested = profileIDsByLocalIdentifier.filter { !$0.key.isEmpty }
-        guard !requested.isEmpty else { return }
+        guard !requested.isEmpty else { return false }
         do {
-            _ = try await mutateCatHouseholdIdentity { state in
+            let committed = try await mutateCatHouseholdIdentity { state in
                 let validProfiles = Set(state.profiles.map(\.id))
+                // If a selected profile disappeared while this sheet was
+                // open, preserve the entire batch for the user to retry.
+                guard requested.values.allSatisfy({ $0.isSubset(of: validProfiles) }) else {
+                    return
+                }
                 for (identifier, requestedProfiles) in requested {
                     let selected = requestedProfiles.intersection(validProfiles)
                     for profileID in validProfiles {
@@ -1514,24 +1564,29 @@ final class AppViewModel: ObservableObject {
                     }
                 }
             }
+            return requested.allSatisfy { identifier, selected in
+                committed.confirmedProfileIDs(for: identifier) == selected
+            }
         } catch {
             Self.logError(error, category: "cat-identity", operation: "replace_assignments")
             setError(error)
+            return false
         }
     }
 
+    @discardableResult
     func setCatProfileMembership(
         profileID: UUID,
         localIdentifiers: [String],
         decision: CatAssetMembershipDecision
-    ) async {
+    ) async -> Bool {
         guard candidateAuthorityIsReady(operation: "set_profile_membership") else {
-            return
+            return false
         }
         let identifiers = Array(Set(localIdentifiers)).filter { !$0.isEmpty }
-        guard !identifiers.isEmpty else { return }
+        guard !identifiers.isEmpty else { return false }
         do {
-            _ = try await mutateCatHouseholdIdentity { state in
+            let committed = try await mutateCatHouseholdIdentity { state in
                 for identifier in identifiers {
                     let previous = state.membership(for: identifier, profileID: profileID)
                     state.setManualMembership(
@@ -1549,9 +1604,13 @@ final class AppViewModel: ObservableObject {
                     )
                 }
             }
+            return identifiers.allSatisfy {
+                committed.membership(for: $0, profileID: profileID)?.decision == decision
+            }
         } catch {
             Self.logError(error, category: "cat-identity", operation: "set_membership")
             setError(error)
+            return false
         }
     }
 

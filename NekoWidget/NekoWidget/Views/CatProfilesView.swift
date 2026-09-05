@@ -5,15 +5,16 @@ import SwiftUI
 /// automatic individual-cat identification.
 struct CatProfilesViewActions {
     var currentSimilarityCandidates: @MainActor () -> [CatSimilarityCandidateInstance]
-    var createProfile: (CatProfileDraftPresentation) async -> Void
+    var createProfile: (CatProfileDraftPresentation) async -> String?
     var updateName: (
         _ profileIdentifier: String,
         _ name: String
-    ) async -> Void
-    var updateLifeReference: (
+    ) async -> Bool
+    var updateLifeDates: (
         _ profileIdentifier: String,
-        _ reference: CatProfileLifeReferencePresentation?
-    ) async -> Void
+        _ dates: CatProfileLifeDatesPresentation
+    ) async -> Bool
+    var setKeyPhoto: (_ profileIdentifier: String, _ photoIdentifier: String) async -> Bool
     /// Links or unlinks one read-only, user-created Photos album. The result is
     /// false when PhotoKit or persistence rejects the selection.
     var setProfilePhotoAlbum: (
@@ -24,18 +25,18 @@ struct CatProfilesViewActions {
     var confirmProfileMembership: (
         _ profileIdentifier: String,
         _ photoIdentifiers: [String]
-    ) async -> Void
+    ) async -> Bool
     /// Marks only this profile as excluded. It must not alter another
     /// profile's membership or the household-wide exclusion state.
     var removeProfileMembership: (
         _ profileIdentifier: String,
         _ photoIdentifiers: [String]
-    ) async -> Void
+    ) async -> Bool
     /// Replaces profile membership per photo. The per-photo map preserves
     /// mixed assignments when a batch selection contains different cats.
     var replacePhotoAssignments: (
         _ profileIdentifiersByPhotoIdentifier: [String: Set<String>]
-    ) async -> Void
+    ) async -> Bool
     var excludeFromHousehold: (_ photoIdentifiers: [String]) async -> Void
     var restoreLegacyExclusions: (_ photoIdentifiers: [String]) async -> Void
     /// The only similarity-review action that writes identity membership.
@@ -44,24 +45,25 @@ struct CatProfilesViewActions {
         _ profileIdentifier: String,
         _ candidates: [CatSimilarityCandidateInstance]
     ) async -> CatSimilarityGroupConfirmationOutcome
-    var deleteProfile: (_ profileIdentifier: String) async -> Void
+    var deleteProfile: (_ profileIdentifier: String) async -> Bool
 
     static let noOp = CatProfilesViewActions(
         currentSimilarityCandidates: { [] },
-        createProfile: { _ in },
-        updateName: { _, _ in },
-        updateLifeReference: { _, _ in },
+        createProfile: { _ in nil },
+        updateName: { _, _ in false },
+        updateLifeDates: { _, _ in false },
+        setKeyPhoto: { _, _ in false },
         setProfilePhotoAlbum: { _, _ in false },
         refreshPhotoAlbums: {},
-        confirmProfileMembership: { _, _ in },
-        removeProfileMembership: { _, _ in },
-        replacePhotoAssignments: { _ in },
+        confirmProfileMembership: { _, _ in false },
+        removeProfileMembership: { _, _ in false },
+        replacePhotoAssignments: { _ in false },
         excludeFromHousehold: { _ in },
         restoreLegacyExclusions: { _ in },
         confirmSimilarityGroup: { _, _ in
             .conflict(reason: .invalidGroup)
         },
-        deleteProfile: { _ in }
+        deleteProfile: { _ in false }
     )
 }
 
@@ -70,6 +72,8 @@ struct CatProfilesView: View {
     let actions: CatProfilesViewActions
 
     @State private var showsAddProfile = false
+    @State private var createdProfileIdentifier: String?
+    @State private var openedProfileIdentifier: String?
 
     var body: some View {
         Form {
@@ -81,14 +85,21 @@ struct CatProfilesView: View {
             legacyExclusionSection
         }
         .navigationTitle("ねこのプロフィール")
-        .sheet(isPresented: $showsAddProfile) {
+        .sheet(isPresented: $showsAddProfile, onDismiss: {
+            openedProfileIdentifier = createdProfileIdentifier
+            createdProfileIdentifier = nil
+        }) {
             AddCatProfileView(
-                referenceCandidates: presentation.unassignedPhotos.filter {
-                    $0.detectedCatCount == 1
-                },
+                referenceCandidates: presentation.profileCreationPhotos,
                 initialLifeReference: presentation.legacyLifeReference,
-                createProfile: actions.createProfile
+                createProfile: actions.createProfile,
+                onCreated: { createdProfileIdentifier = $0 }
             )
+        }
+        .navigationDestination(item: $openedProfileIdentifier) { identifier in
+            if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
+                profileDetail(profile)
+            }
         }
     }
 
@@ -96,9 +107,9 @@ struct CatProfilesView: View {
         Section {
             Label {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("最初は「みんな」のままで使えます")
+                    Text("猫ごとに写真を見返す")
                         .font(.headline)
-                    Text("名前や写真を選ばなくても、これまで通りアルバムとウィジェットを使えます。")
+                    Text("登録は任意です。今までの写真やアルバムは、そのまま使えます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -112,20 +123,9 @@ struct CatProfilesView: View {
 
     private var profilesSection: some View {
         Section {
-            EveryoneProfileRow(
-                catCount: presentation.profiles.count,
-                unassignedPhotoCount: presentation.unassignedPhotos.count
-            )
-
             ForEach(presentation.profiles) { profile in
                 NavigationLink {
-                    CatProfileDetailView(
-                        profile: profile,
-                        allProfiles: presentation.profiles,
-                        manualCandidatePhotos: profile.manualCandidatePhotos,
-                        photoAlbumOptions: presentation.photoAlbumOptions,
-                        actions: actions
-                    )
+                    profileDetail(profile)
                 } label: {
                     CatProfileRow(profile: profile)
                 }
@@ -134,21 +134,22 @@ struct CatProfilesView: View {
             Button {
                 showsAddProfile = true
             } label: {
-                Label("この子を追加", systemImage: "plus.circle")
+                Label("猫を追加", systemImage: "plus.circle")
             }
+            .accessibilityIdentifier("cat-profile-add")
         } header: {
             Text("プロフィール")
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(CatIndividualRecognitionCopy.unavailable)
-                Text("猫ごとに分けるかどうかは任意です。")
+                Text("写っている猫は自分で選べます。プロフィールと猫別の写真設定は、このiPhone内で管理します。")
             }
         }
     }
 
     @ViewBuilder
     private var unassignedSection: some View {
-        if !presentation.unassignedPhotos.isEmpty {
+        if !presentation.profiles.isEmpty && !presentation.unassignedPhotos.isEmpty {
             Section {
                 NavigationLink {
                     UnassignedCatPhotosView(
@@ -159,7 +160,7 @@ struct CatProfilesView: View {
                 } label: {
                     Label {
                         LabeledContent(
-                            "どの子かまだわからない",
+                            "猫を選んでいない写真",
                             value: "\(presentation.unassignedPhotos.count.formatted())枚"
                         )
                     } icon: {
@@ -167,7 +168,7 @@ struct CatProfilesView: View {
                     }
                 }
             } footer: {
-                Text("未判定の写真も「みんな」には表示されます。仕分ける必要はありません。")
+                Text("選んでいない写真も「みんな」に表示されます。すべてを分ける必要はありません。")
             }
         }
     }
@@ -200,43 +201,18 @@ struct CatProfilesView: View {
         }
     }
 
-}
-
-private struct EveryoneProfileRow: View {
-    let catCount: Int
-    let unassignedPhotoCount: Int
-
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("みんな")
-                    Spacer()
-                    Text("既定")
-                        .font(.caption.bold())
-                        .foregroundStyle(.tint)
-                }
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } icon: {
-            Image(systemName: "square.stack.3d.up.fill")
-                .foregroundStyle(.tint)
-        }
-        .accessibilityElement(children: .combine)
+    private func profileDetail(_ profile: CatProfilePresentation) -> some View {
+        CatProfileDetailView(
+            profile: profile,
+            allProfiles: presentation.profiles,
+            manualCandidatePhotos: profile.manualCandidatePhotos,
+            photoAlbumOptions: presentation.photoAlbumOptions,
+            actions: actions
+        )
     }
 
-    private var detail: String {
-        if catCount == 0 {
-            return "プロフィールを作らなくても、猫候補をまとめて表示します"
-        }
-        if unassignedPhotoCount == 0 {
-            return "\(catCount.formatted())匹の写真をまとめて表示"
-        }
-        return "\(catCount.formatted())匹と未判定 \(unassignedPhotoCount.formatted())枚をまとめて表示"
-    }
 }
+
 
 private struct CatProfileRow: View {
     let profile: CatProfilePresentation
@@ -370,21 +346,24 @@ struct CatProfileScopePicker: View {
 
 private struct AddCatProfileView: View {
     let referenceCandidates: [CatProfilePhotoPresentation]
-    let initialLifeReference: CatProfileLifeReferencePresentation?
-    let createProfile: (CatProfileDraftPresentation) async -> Void
+    let createProfile: (CatProfileDraftPresentation) async -> String?
+    let onCreated: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var draft: CatProfileDraftPresentation
     @State private var isSaving = false
+    @State private var showsPhotoPicker = false
+    @State private var saveFailed = false
 
     init(
         referenceCandidates: [CatProfilePhotoPresentation],
         initialLifeReference: CatProfileLifeReferencePresentation?,
-        createProfile: @escaping (CatProfileDraftPresentation) async -> Void
+        createProfile: @escaping (CatProfileDraftPresentation) async -> String?,
+        onCreated: @escaping (String) -> Void
     ) {
         self.referenceCandidates = referenceCandidates
-        self.initialLifeReference = initialLifeReference
         self.createProfile = createProfile
+        self.onCreated = onCreated
         _draft = State(initialValue: CatProfileDraftPresentation(
             lifeReference: initialLifeReference
         ))
@@ -394,143 +373,97 @@ private struct AddCatProfileView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("名前（あとでも設定できます）", text: $draft.name)
-                } header: {
-                    Text("名前")
-                }
-
-                Section {
-                    if initialLifeReference != nil {
-                        Label(
-                            "以前設定した日付を、この子の初期値にしています",
-                            systemImage: "arrow.triangle.branch"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    }
-                    Picker("日付の基準", selection: lifeReferenceKind) {
-                        Text("設定しない").tag(nil as CatProfileLifeReferenceKindPresentation?)
-                        ForEach(CatProfileLifeReferenceKindPresentation.allCases) { kind in
-                            Text(kind.title).tag(Optional(kind))
-                        }
-                    }
-
-                    if draft.lifeReference != nil {
-                        DatePicker(
-                            draft.lifeReference?.kind.title ?? "日付",
-                            selection: lifeReferenceDate,
-                            in: ...Date.now,
-                            displayedComponents: .date
-                        )
-                        Toggle("推定の日付", isOn: approximateDate)
-                    }
-                } header: {
-                    Text("この子の時間")
-                } footer: {
-                    Text("年齢アルバムは誕生日（推定を含む）だけを基準にします。迎えた日もプロフィール情報として保存できます。")
-                }
-
-                Section {
-                    if referenceCandidates.isEmpty {
-                        Text("参照写真はあとから追加できます。")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 10) {
-                                ForEach(referenceCandidates.prefix(12)) { photo in
-                                    Button {
-                                        draft.referencePhotoIdentifier =
-                                            draft.referencePhotoIdentifier == photo.localIdentifier
-                                                ? nil
-                                                : photo.localIdentifier
-                                    } label: {
-                                        CatProfileThumbnail(photo: photo)
-                                            .frame(width: 86, height: 86)
-                                            .overlay(alignment: .topTrailing) {
-                                                if draft.referencePhotoIdentifier == photo.localIdentifier {
-                                                    Image(systemName: "checkmark.circle.fill")
-                                                        .symbolRenderingMode(.palette)
-                                                        .foregroundStyle(.white, Color.accentColor)
-                                                        .padding(5)
-                                                }
-                                            }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("参照写真")
-                                    .accessibilityAddTraits(
-                                        draft.referencePhotoIdentifier == photo.localIdentifier
-                                            ? .isSelected
-                                            : []
-                                    )
-                                }
+                    TextField("猫の名前", text: $draft.name)
+                        .accessibilityIdentifier("cat-profile-name")
+                    if !referenceCandidates.isEmpty {
+                        Button {
+                            showsPhotoPicker = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                CatProfileThumbnail(photo: selectedPhoto)
+                                    .frame(width: 58, height: 58)
+                                Text(selectedPhoto == nil ? "プロフィール写真を選ぶ" : "写真を変更")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
                             }
-                            .padding(.vertical, 2)
                         }
-                        .scrollIndicators(.hidden)
+                        .accessibilityIdentifier("cat-profile-key-photo")
+                        if selectedPhoto != nil {
+                            Button("写真はあとで選ぶ") {
+                                draft.referencePhotoIdentifier = nil
+                            }
+                            .font(.footnote)
+                        }
                     }
-                } header: {
-                    Text("参照写真・任意")
                 } footer: {
-                    Text("この子だと分かる写真を1枚選ぶと、最初の所属写真になります。あとから変更できます。")
+                    Text("写真や誕生日は、追加したあとでも設定できます。")
+                }
+
+                if let reference = draft.lifeReference {
+                    Section {
+                        LabeledContent(reference.kind.title) {
+                            Text(reference.date, format: .dateTime.year().month().day())
+                        }
+                        Button("この日付を引き継がない") { draft.lifeReference = nil }
+                    } footer: {
+                        Text("以前設定した日付です。この猫のプロフィールに引き継ぎます。")
+                    }
+                }
+
+                if saveFailed {
+                    Section {
+                        Text("追加できませんでした。入力は残っています。もう一度お試しください。")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
                 }
             }
-            .navigationTitle("この子を追加")
+            .disabled(isSaving)
+            .navigationTitle("猫を追加")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("キャンセル") { dismiss() }
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "追加中…" : "追加") {
                         Task {
                             isSaving = true
-                            await createProfile(draft)
+                            saveFailed = false
+                            let identifier = await createProfile(draft)
                             isSaving = false
-                            dismiss()
+                            if let identifier {
+                                onCreated(identifier)
+                                dismiss()
+                            } else {
+                                saveFailed = true
+                            }
                         }
                     }
-                    .disabled(isSaving)
+                    .disabled(isSaving || draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("cat-profile-create")
+                }
+            }
+            .sheet(isPresented: $showsPhotoPicker) {
+                NavigationStack {
+                    CatProfilePhotoPicker(
+                        photos: referenceCandidates,
+                        selectedIdentifier: draft.referencePhotoIdentifier,
+                        choose: { identifier in
+                            draft.referencePhotoIdentifier = identifier
+                            return true
+                        }
+                    )
                 }
             }
         }
+        .interactiveDismissDisabled(isSaving)
     }
 
-    private var lifeReferenceKind: Binding<CatProfileLifeReferenceKindPresentation?> {
-        Binding(
-            get: { draft.lifeReference?.kind },
-            set: { kind in
-                guard let kind else {
-                    draft.lifeReference = nil
-                    return
-                }
-                draft.lifeReference = CatProfileLifeReferencePresentation(
-                    kind: kind,
-                    date: draft.lifeReference?.date ?? .now,
-                    isApproximate: draft.lifeReference?.isApproximate ?? false
-                )
-            }
-        )
-    }
-
-    private var lifeReferenceDate: Binding<Date> {
-        Binding(
-            get: { draft.lifeReference?.date ?? .now },
-            set: { date in
-                guard var reference = draft.lifeReference else { return }
-                reference.date = date
-                draft.lifeReference = reference
-            }
-        )
-    }
-
-    private var approximateDate: Binding<Bool> {
-        Binding(
-            get: { draft.lifeReference?.isApproximate ?? false },
-            set: { isApproximate in
-                guard var reference = draft.lifeReference else { return }
-                reference.isApproximate = isApproximate
-                draft.lifeReference = reference
-            }
-        )
+    private var selectedPhoto: CatProfilePhotoPresentation? {
+        referenceCandidates.first { $0.localIdentifier == draft.referencePhotoIdentifier }
     }
 }

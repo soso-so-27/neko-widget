@@ -21,6 +21,9 @@ enum CatHouseholdIdentityVerifier {
         try verifiesBuild14ReferenceMigrationIsConservative()
         try verifiesGlobalExclusionIsSeparate()
         try verifiesNormalizationSafety()
+        try verifiesOptionalProfileMetadataCompatibility()
+        try verifiesBothProfileDatesAndPrimaryBasis()
+        try verifiesStableConfirmedKeyPhoto()
         try verifiesRevisionPolicyRejectsStaleState()
         try verifiesCodableRoundTrip()
         try await verifiesProtectedAtomicStore()
@@ -521,6 +524,189 @@ enum CatHouseholdIdentityVerifier {
         )
     }
 
+    private static func verifiesOptionalProfileMetadataCompatibility() throws {
+        // A schema-3 file from before dual dates/key photos existed. Keeping a
+        // literal fixture ensures missing new keys are actually exercised.
+        let oldJSON = """
+        {
+          "schemaVersion": 3, "mutationRevision": 7, "mode": "profiled",
+          "profiles": [{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "displayName": "むぎ",
+            "lifeReference": {
+              "kind": "adoptionDay", "date": {"year": 2020, "month": 4, "day": 5}
+            },
+            "lifeReferenceIsApproximate": true,
+            "createdAt": "2020-01-01T00:00:00Z", "updatedAt": "2020-01-01T00:00:00Z"
+          }],
+          "memberships": [{
+            "assetLocalIdentifier": "old-confirmed-photo",
+            "profileID": "00000000-0000-0000-0000-000000000001",
+            "decision": "included", "isSimilarityReference": false,
+            "decidedAt": "2020-01-01T00:00:00Z"
+          }],
+          "globalExcludedAssets": [{
+            "localIdentifier": "old-excluded-photo", "excludedAt": "2020-01-01T00:00:00Z"
+          }],
+          "createdAt": "2020-01-01T00:00:00Z", "updatedAt": "2020-01-01T00:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(
+            CatHouseholdIdentityState.self,
+            from: Data(oldJSON.utf8)
+        )
+        let normalized = decoded.normalized()
+        try require(normalized == decoded, "old schema-3 identity changed during normalization")
+        try require(
+            normalized.profiles[0].lifeDates == nil
+                && normalized.profiles[0].keyPhotoLocalIdentifier == nil
+                && normalized.profiles[0].lifeReference(for: .birthday) == nil
+                && normalized.profiles[0].lifeReference(for: .adoptionDay)
+                    == normalized.profiles[0].lifeReference
+                && normalized.profiles[0].isLifeReferenceApproximate(for: .adoptionDay),
+            "missing optional profile fields lost or reassigned an older milestone"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let restored = try decoder.decode(
+            CatHouseholdIdentityState.self,
+            from: encoder.encode(normalized)
+        ).normalized()
+        try require(
+            restored == decoded,
+            "old UUID, membership, exclusion, date, or revision changed after round-trip"
+        )
+    }
+
+    private static func verifiesBothProfileDatesAndPrimaryBasis() throws {
+        let birthday = lifeReference(year: 2020, month: 4, day: 5)
+        let adoption = CatLifeReference(
+            kind: .adoptionDay,
+            date: lifeReference(year: 2020, month: 7, day: 6).date
+        )
+        var profile = CatProfile(displayName: "むぎ", lifeReference: adoption)
+        let bothDates = CatProfileLifeDates(
+            birthday: birthday.date,
+            birthdayIsApproximate: true,
+            adoptionDay: adoption.date
+        )
+        profile.setLifeDates(bothDates)
+        try require(
+            profile.lifeReference == adoption && !profile.lifeReferenceIsApproximate
+                && profile.lifeReference(for: .birthday) == birthday
+                && profile.isLifeReferenceApproximate(for: .birthday),
+            "adding a birthday replaced the established adoption basis or lost approximation"
+        )
+        profile.setLifeDates(bothDates, preferredPrimaryKind: .birthday)
+        try require(
+            profile.lifeReference == birthday && profile.lifeReferenceIsApproximate,
+            "the explicitly selected growth basis was not applied"
+        )
+        profile.setLifeDates(CatProfileLifeDates(adoptionDay: adoption.date))
+        try require(
+            profile.lifeReference == adoption && !profile.lifeReferenceIsApproximate,
+            "clearing the primary date did not fall back to the remaining milestone"
+        )
+        profile.setLifeDates(CatProfileLifeDates())
+        // Explicit empty new metadata must remain authoritative even if a
+        // stale caller supplies an old legacy field alongside it.
+        profile.lifeReference = birthday
+        profile.lifeReferenceIsApproximate = true
+        profile = profile.normalized()
+        try require(
+            profile.lifeReference == nil && !profile.lifeReferenceIsApproximate
+                && profile.lifeDates == CatProfileLifeDates()
+                && profile.lifeReference(for: .birthday) == nil
+                && profile.lifeReference(for: .adoptionDay) == nil,
+            "cleared profile dates were resurrected from legacy fields"
+        )
+        let restored = try JSONDecoder().decode(
+            CatProfile.self,
+            from: JSONEncoder().encode(profile)
+        ).normalized()
+        try require(restored == profile, "cleared profile dates did not survive round-trip")
+        profile.setLifeDates(bothDates)
+        try require(
+            profile.lifeReference == birthday && profile.lifeReferenceIsApproximate,
+            "a profile without a previous basis did not default to birthday"
+        )
+    }
+
+    private static func verifiesStableConfirmedKeyPhoto() throws {
+        let firstID = fixedUUID("00000000-0000-0000-0000-000000000001")
+        let secondID = fixedUUID("00000000-0000-0000-0000-000000000002")
+        var state = emptyProfiledState()
+        state.upsertProfile(CatProfile(id: firstID, displayName: "むぎ"))
+        state.upsertProfile(CatProfile(id: secondID, displayName: "あめ"))
+        for profileID in [firstID, secondID] {
+            state.setManualMembership(
+                assetLocalIdentifier: "chosen-photo", profileID: profileID, decision: .included
+            )
+            state.setProfileKeyPhoto(profileID: profileID, assetLocalIdentifier: "chosen-photo")
+        }
+        state.setManualMembership(
+            assetLocalIdentifier: "newer-photo", profileID: firstID, decision: .included
+        )
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: "unconfirmed")
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: "  ")
+        try require(
+            state.profiles.allSatisfy { $0.keyPhotoLocalIdentifier == "chosen-photo" }
+                && state.confirmedProfileIDs(for: "chosen-photo") == [firstID, secondID],
+            "a new or invalid cover changed a stable selection or many-to-many membership"
+        )
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: nil)
+        try require(
+            state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == nil
+                && state.confirmsAsset("chosen-photo", for: firstID),
+            "clearing a key photo also removed its confirmed membership"
+        )
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: "chosen-photo")
+        state.setManualMembership(
+            assetLocalIdentifier: "chosen-photo", profileID: firstID, decision: .unknown
+        )
+        try require(
+            state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == nil
+                && state.profiles.first { $0.id == secondID }?.keyPhotoLocalIdentifier
+                    == "chosen-photo",
+            "removing membership retained an invalid cover or altered another profile"
+        )
+        state.setProfilePhotoAlbumLink(
+            profileID: firstID, localIdentifier: "mugi-album",
+            assetLocalIdentifiers: ["linked-cover"]
+        )
+        state.setProfileKeyPhoto(profileID: firstID, assetLocalIdentifier: "linked-cover")
+        let limitedRefresh = CatProfilePhotoAlbumRefreshPolicy.resolve(
+            lastKnownAssetLocalIdentifiers: ["linked-cover"],
+            accessibleAssetLocalIdentifiers: [], hasLimitedPhotosAccess: true
+        )
+        state.refreshProfilePhotoAlbumLink(
+            profileID: firstID, localIdentifier: "mugi-album",
+            assetLocalIdentifiers: limitedRefresh.assetLocalIdentifiers
+        )
+        try require(
+            state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == "linked-cover",
+            "temporary Limited Photos unavailability cleared a confirmed key photo"
+        )
+        state.setProfilePhotoAlbumLink(profileID: firstID, localIdentifier: nil)
+        try require(
+            state.profiles.first { $0.id == firstID }?.keyPhotoLocalIdentifier == nil,
+            "unlinking the only confirming source retained its key photo"
+        )
+        state.setGloballyExcluded(true, assetLocalIdentifiers: ["chosen-photo"])
+        state.setGloballyExcluded(false, assetLocalIdentifiers: ["chosen-photo"])
+        try require(
+            state.profiles.allSatisfy { $0.keyPhotoLocalIdentifier == nil },
+            "global exclusion/restore retained or resurrected an unconfirmed key photo"
+        )
+        state.profiles[0].keyPhotoLocalIdentifier = "unconfirmed"
+        try require(
+            state.normalized().profiles.allSatisfy { $0.keyPhotoLocalIdentifier == nil },
+            "decoded unconfirmed key photo bypassed membership validation"
+        )
+    }
+
     private static func verifiesRevisionPolicyRejectsStaleState() throws {
         var current = emptyProfiledState()
         current.mutationRevision = 4
@@ -557,7 +743,12 @@ enum CatHouseholdIdentityVerifier {
             id: profileID,
             displayName: "むぎ",
             lifeReference: lifeReference(year: 2020, month: 4, day: 5),
-            lifeReferenceIsApproximate: true
+            lifeReferenceIsApproximate: true,
+            lifeDates: CatProfileLifeDates(
+                birthday: lifeReference(year: 2020, month: 4, day: 5).date,
+                birthdayIsApproximate: true,
+                adoptionDay: lifeReference(year: 2020, month: 7, day: 6).date
+            )
         ))
         state.setManualMembership(
             assetLocalIdentifier: "cat-photo",
@@ -571,6 +762,7 @@ enum CatHouseholdIdentityVerifier {
             localIdentifier: "mugi-album",
             assetLocalIdentifiers: ["linked-b", "linked-a", "linked-b"]
         )
+        state.setProfileKeyPhoto(profileID: profileID, assetLocalIdentifier: "cat-photo")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let decoder = JSONDecoder()
@@ -580,6 +772,14 @@ enum CatHouseholdIdentityVerifier {
             from: encoder.encode(state)
         ).normalized()
         try require(decoded == state.normalized(), "identity round-trip lost data")
+        try require(
+            decoded.profiles.first?.keyPhotoLocalIdentifier == "cat-photo"
+                && decoded.profiles.first?.lifeReference(for: .birthday)?.date
+                    == lifeReference(year: 2020, month: 4, day: 5).date
+                && decoded.profiles.first?.lifeReference(for: .adoptionDay)?.date
+                    == lifeReference(year: 2020, month: 7, day: 6).date,
+            "dual milestones or stable key photo were not persisted"
+        )
         try require(
             decoded.profiles.first?.photoAlbumLink?.lastKnownAssetLocalIdentifiers
                 == ["linked-a", "linked-b"],
@@ -600,6 +800,8 @@ enum CatHouseholdIdentityVerifier {
         }
         for index in schemaTwoProfiles.indices {
             schemaTwoProfiles[index].removeValue(forKey: "photoAlbumLink")
+            schemaTwoProfiles[index].removeValue(forKey: "lifeDates")
+            schemaTwoProfiles[index].removeValue(forKey: "keyPhotoLocalIdentifier")
         }
         schemaTwoObject["profiles"] = schemaTwoProfiles
         let schemaTwoData = try JSONSerialization.data(

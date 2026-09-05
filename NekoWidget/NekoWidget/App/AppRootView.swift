@@ -516,13 +516,21 @@ struct AppRootView: View {
             return CatProfilePresentation(
                 identifier: profile.id.uuidString,
                 name: profile.displayName,
-                coverPhoto: confirmed.first,
+                coverPhoto: confirmed.first(where: {
+                    $0.localIdentifier == profile.keyPhotoLocalIdentifier
+                }) ?? confirmed.first,
                 confirmedPhotos: confirmed,
                 manualCandidatePhotos: allCandidatePhotos.filter {
                     !confirmedIdentifiers.contains($0.localIdentifier)
                 },
                 lifeReference: lifeReference,
                 photoAlbumLink: albumLink,
+                lifeDates: CatProfileLifeDatesPresentation(
+                    birthday: Self.profileLifeDate(profile, kind: .birthday),
+                    adoptionDay: Self.profileLifeDate(profile, kind: .adoptionDay),
+                    primaryKind: lifeReference?.kind
+                ),
+                keyPhotoIdentifier: profile.keyPhotoLocalIdentifier,
                 similarityReferencePhotoCount: memberships.lazy.filter {
                     $0.isSimilarityReference
                 }.count
@@ -594,26 +602,41 @@ struct AppRootView: View {
             },
             createProfile: { draft in
                 let reference = Self.lifeReference(from: draft.lifeReference)
-                await viewModel.createCatProfile(
+                let identifier = await viewModel.createCatProfile(
                     displayName: draft.name,
                     lifeReference: reference,
                     lifeReferenceIsApproximate: draft.lifeReference?.isApproximate == true,
                     referenceAssetIdentifier: draft.referencePhotoIdentifier
                 )
+                return identifier?.uuidString
             },
             updateName: { identifier, name in
-                guard let profileID = UUID(uuidString: identifier) else { return }
-                await viewModel.updateCatProfileName(
+                guard let profileID = UUID(uuidString: identifier) else { return false }
+                return await viewModel.updateCatProfileName(
                     profileID: profileID,
                     displayName: name
                 )
             },
-            updateLifeReference: { identifier, reference in
-                guard let profileID = UUID(uuidString: identifier) else { return }
-                await viewModel.updateCatProfileLifeReference(
+            updateLifeDates: { identifier, dates in
+                guard let profileID = UUID(uuidString: identifier) else { return false }
+                return await viewModel.updateCatProfileLifeDates(
                     profileID: profileID,
-                    reference: Self.lifeReference(from: reference),
-                    isApproximate: reference?.isApproximate == true
+                    dates: CatProfileLifeDates(
+                        birthday: Self.lifeReference(from: dates.birthday)?.date,
+                        birthdayIsApproximate: dates.birthday?.isApproximate == true,
+                        adoptionDay: Self.lifeReference(from: dates.adoptionDay)?.date,
+                        adoptionDayIsApproximate: dates.adoptionDay?.isApproximate == true
+                    ),
+                    preferredPrimaryKind: dates.primaryKind.map {
+                        $0 == .birthday ? .birthday : .adoptionDay
+                    }
+                )
+            },
+            setKeyPhoto: { identifier, photoIdentifier in
+                guard let profileID = UUID(uuidString: identifier) else { return false }
+                return await viewModel.setCatProfileKeyPhoto(
+                    profileID: profileID,
+                    localIdentifier: photoIdentifier
                 )
             },
             setProfilePhotoAlbum: { profileIdentifier, albumIdentifier in
@@ -629,26 +652,29 @@ struct AppRootView: View {
                 await viewModel.refreshPhotoSourceAlbums()
             },
             confirmProfileMembership: { identifier, photoIdentifiers in
-                guard let profileID = UUID(uuidString: identifier) else { return }
-                await viewModel.setCatProfileMembership(
+                guard let profileID = UUID(uuidString: identifier) else { return false }
+                return await viewModel.setCatProfileMembership(
                     profileID: profileID,
                     localIdentifiers: photoIdentifiers,
                     decision: .included
                 )
             },
             removeProfileMembership: { identifier, photoIdentifiers in
-                guard let profileID = UUID(uuidString: identifier) else { return }
-                await viewModel.setCatProfileMembership(
+                guard let profileID = UUID(uuidString: identifier) else { return false }
+                return await viewModel.setCatProfileMembership(
                     profileID: profileID,
                     localIdentifiers: photoIdentifiers,
                     decision: .excluded
                 )
             },
             replacePhotoAssignments: { input in
+                guard input.values.allSatisfy({ identifiers in
+                    identifiers.allSatisfy { UUID(uuidString: $0) != nil }
+                }) else { return false }
                 let converted = input.mapValues { identifiers in
                     Set(identifiers.compactMap(UUID.init(uuidString:)))
                 }
-                await viewModel.replaceCatProfileAssignments(
+                return await viewModel.replaceCatProfileAssignments(
                     profileIDsByLocalIdentifier: converted
                 )
             },
@@ -668,9 +694,22 @@ struct AppRootView: View {
                 )
             },
             deleteProfile: { identifier in
-                guard let profileID = UUID(uuidString: identifier) else { return }
-                await viewModel.deleteCatProfile(profileID: profileID)
+                guard let profileID = UUID(uuidString: identifier) else { return false }
+                return await viewModel.deleteCatProfile(profileID: profileID)
             }
+        )
+    }
+
+    private static func profileLifeDate(
+        _ profile: CatProfile,
+        kind: CatLifeReferenceKind
+    ) -> CatProfileLifeReferencePresentation? {
+        guard let reference = profile.lifeReference(for: kind),
+              let date = reference.date.date() else { return nil }
+        return CatProfileLifeReferencePresentation(
+            kind: kind == .birthday ? .birthday : .adoptionDay,
+            date: date,
+            isApproximate: profile.isLifeReferenceApproximate(for: kind)
         )
     }
 

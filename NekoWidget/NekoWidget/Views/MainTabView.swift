@@ -312,7 +312,7 @@ struct MainTabView: View {
             profiles: catProfilesPresentation.profiles,
             assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
             replaceProfileAssignments: { values in
-                Task { await catProfilesActions.replacePhotoAssignments(values) }
+                await catProfilesActions.replacePhotoAssignments(values)
             }
         )
     }
@@ -336,7 +336,7 @@ struct MainTabView: View {
             profiles: catProfilesPresentation.profiles,
             assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
             replaceProfileAssignments: { values in
-                Task { await catProfilesActions.replacePhotoAssignments(values) }
+                await catProfilesActions.replacePhotoAssignments(values)
             }
         )
     }
@@ -361,7 +361,7 @@ struct MainTabView: View {
             profiles: catProfilesPresentation.profiles,
             assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
             replaceProfileAssignments: { values in
-                Task { await catProfilesActions.replacePhotoAssignments(values) }
+                await catProfilesActions.replacePhotoAssignments(values)
             }
         )
     }
@@ -456,7 +456,7 @@ struct MainTabView: View {
                         profiles: catProfilesPresentation.profiles,
                         assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                         replaceProfileAssignments: { values in
-                            Task { await catProfilesActions.replacePhotoAssignments(values) }
+                            await catProfilesActions.replacePhotoAssignments(values)
                         }
                     )
                 } else {
@@ -469,7 +469,7 @@ struct MainTabView: View {
                         profiles: catProfilesPresentation.profiles,
                         assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                         replaceProfileAssignments: { values in
-                            Task { await catProfilesActions.replacePhotoAssignments(values) }
+                            await catProfilesActions.replacePhotoAssignments(values)
                         }
                     )
                 }
@@ -499,7 +499,7 @@ struct MainTabView: View {
                         profiles: catProfilesPresentation.profiles,
                         assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                         replaceProfileAssignments: { values in
-                            Task { await catProfilesActions.replacePhotoAssignments(values) }
+                            await catProfilesActions.replacePhotoAssignments(values)
                         }
                     )
                 } else {

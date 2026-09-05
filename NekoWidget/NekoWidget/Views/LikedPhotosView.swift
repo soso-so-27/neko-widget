@@ -295,7 +295,7 @@ struct CuratedAlbumDetailView: View {
     let excludeFromCatCandidates: ([String]) -> Void
     let profiles: [CatProfilePresentation]
     let assignmentsByPhotoIdentifier: [String: Set<String>]
-    let replaceProfileAssignments: ([String: Set<String>]) -> Void
+    let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
 
     @State private var didRecordOpen = false
     @State private var isSelecting = false
@@ -392,12 +392,9 @@ struct CuratedAlbumDetailView: View {
                     }
                 ),
                 save: { values in
-                    replaceProfileAssignments(values)
-                    pendingAssignmentIdentifiers.removeAll()
-                },
-                excludeFromHousehold: { identifiers in
-                    excludeFromCatCandidates(identifiers)
-                    pendingAssignmentIdentifiers.removeAll()
+                    let saved = await replaceProfileAssignments(values)
+                    if saved { pendingAssignmentIdentifiers.removeAll() }
+                    return saved
                 }
             )
         }
@@ -438,7 +435,7 @@ struct CuratedAlbumDetailView: View {
                         pendingAssignmentIdentifiers = [photo.localIdentifier]
                         showsAssignmentSheet = true
                     } label: {
-                        Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                        Label("写っている猫を選ぶ", systemImage: "cat")
                     }
                 }
                 Button {
@@ -1634,7 +1631,7 @@ struct PhotoBrowserView: View {
     let restoreCatCandidates: ([String]) -> Void
     let profiles: [CatProfilePresentation]
     let assignmentsByPhotoIdentifier: [String: Set<String>]
-    let replaceProfileAssignments: ([String: Set<String>]) -> Void
+    let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
     private let browserPhotos: [PhotoPresentation]
     private let browserPhotoIdentifiers: [String]
     private let browserPhotoByIdentifier: [String: PhotoPresentation]
@@ -1665,7 +1662,7 @@ struct PhotoBrowserView: View {
         restoreCatCandidates: @escaping ([String]) -> Void,
         profiles: [CatProfilePresentation],
         assignmentsByPhotoIdentifier: [String: Set<String>],
-        replaceProfileAssignments: @escaping ([String: Set<String>]) -> Void
+        replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -1857,7 +1854,7 @@ struct PhotoBrowserView: View {
                         Button {
                             showsAssignmentSheet = true
                         } label: {
-                            Label("写っている子を修正", systemImage: "person.crop.circle.badge.checkmark")
+                            Label("写っている猫を選ぶ", systemImage: "cat")
                         }
                     }
                     if excludedCatCandidateIdentifiers.contains(selectedPhotoIdentifier) {
@@ -1924,8 +1921,7 @@ struct PhotoBrowserView: View {
                     selectedPhotoIdentifier:
                         assignmentsByPhotoIdentifier[selectedPhotoIdentifier] ?? []
                 ],
-                save: replaceProfileAssignments,
-                excludeFromHousehold: excludeFromCatCandidates
+                save: replaceProfileAssignments
             )
         }
         .sheet(item: $memoryPhotoSharePayload, onDismiss: clearMemoryPhotoSharePayload) {

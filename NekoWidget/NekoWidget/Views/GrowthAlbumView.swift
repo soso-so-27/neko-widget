@@ -14,7 +14,7 @@ struct GrowthAlbumDetailView: View {
     let excludeFromCatCandidates: ([String]) -> Void
     let profiles: [CatProfilePresentation]
     let assignmentsByPhotoIdentifier: [String: Set<String>]
-    let replaceProfileAssignments: ([String: Set<String>]) -> Void
+    let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
 
     @State private var didRecordOpen = false
     @State private var pendingExclusionIdentifier: String?
@@ -98,12 +98,9 @@ struct GrowthAlbumDetailView: View {
                         identifier: assignmentsByPhotoIdentifier[identifier] ?? []
                     ],
                     save: { values in
-                        replaceProfileAssignments(values)
-                        pendingAssignmentIdentifier = nil
-                    },
-                    excludeFromHousehold: { identifiers in
-                        excludeFromCatCandidates(identifiers)
-                        pendingAssignmentIdentifier = nil
+                        let saved = await replaceProfileAssignments(values)
+                        if saved { pendingAssignmentIdentifier = nil }
+                        return saved
                     }
                 )
             }

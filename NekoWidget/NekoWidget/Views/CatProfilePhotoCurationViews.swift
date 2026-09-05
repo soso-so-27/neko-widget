@@ -7,55 +7,90 @@ struct CatProfileDetailView: View {
     let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
     let actions: CatProfilesViewActions
 
+    @Environment(\.dismiss) private var dismiss
     @State private var showsLifeReferenceEditor = false
+    @State private var showsKeyPhotoPicker = false
     @State private var showsDeleteConfirmation = false
     @State private var showsNameEditor = false
     @State private var draftName = ""
+    @State private var isSavingName = false
+    @State private var isDeleting = false
+    @State private var nameSaveFailed = false
+    @State private var deleteFailed = false
 
     var body: some View {
         Form {
             Section {
-                Button {
-                    draftName = profile.name ?? ""
-                    showsNameEditor = true
-                } label: {
-                    HStack(spacing: 14) {
+                HStack(spacing: 14) {
+                    Button {
+                        showsKeyPhotoPicker = true
+                    } label: {
                         CatProfileThumbnail(photo: profile.coverPhoto)
                             .frame(width: 82, height: 82)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(profile.displayName)
-                                .font(.title2.bold())
-                                .foregroundStyle(.primary)
-                            Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 8)
-                        Image(systemName: "pencil")
-                            .foregroundStyle(.tint)
+                            .overlay(alignment: .bottomTrailing) {
+                                Image(systemName: "photo.badge.checkmark")
+                                    .padding(5)
+                                    .background(.regularMaterial, in: Circle())
+                            }
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .disabled(profile.confirmedPhotos.isEmpty)
+                    .accessibilityLabel("\(profile.displayName)の代表写真を変更")
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(profile.displayName)
+                            .font(.title2.bold())
+                        Text("この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(profile.displayName)。この子の写真 \(profile.confirmedPhotoCount.formatted())枚")
-                .accessibilityHint("名前を変更します")
+
+                if showsNameEditor {
+                    TextField("名前", text: $draftName)
+                        .disabled(isSavingName)
+                    if nameSaveFailed {
+                        Text("名前を保存できませんでした。もう一度お試しください。")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    HStack {
+                        Button("キャンセル") { showsNameEditor = false }
+                        Spacer()
+                        Button(isSavingName ? "保存中…" : "保存") {
+                            isSavingName = true
+                            nameSaveFailed = false
+                            Task {
+                                let saved = await actions.updateName(profile.identifier, draftName)
+                                isSavingName = false
+                                if saved { showsNameEditor = false } else { nameSaveFailed = true }
+                            }
+                        }
+                        .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .disabled(isSavingName)
+                } else {
+                    Button("名前を変更", systemImage: "pencil") {
+                        draftName = profile.name ?? ""
+                        nameSaveFailed = false
+                        showsNameEditor = true
+                    }
+                }
             }
 
             Section {
                 NavigationLink {
-                    CatProfilePhotoSourcesView(
-                        profile: profile,
-                        allProfiles: allProfiles,
-                        manualCandidatePhotos: manualCandidatePhotos,
-                        photoAlbumOptions: photoAlbumOptions,
-                        actions: actions
+                    UnassignedCatPhotosView(
+                        photos: manualCandidatePhotos,
+                        profiles: allProfiles,
+                        actions: actions,
+                        navigationTitle: "\(profile.displayName)の写真を選ぶ",
+                        preselectedProfileIdentifier: profile.identifier
                     )
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("写真を追加")
+                            Text("写真を選ぶ")
                                 .foregroundStyle(.primary)
-                            Text(photoSourceSummary)
+                            Text("候補 \(manualCandidatePhotos.count.formatted())枚")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -63,6 +98,7 @@ struct CatProfileDetailView: View {
                         Image(systemName: "photo.badge.plus")
                     }
                 }
+                .disabled(manualCandidatePhotos.isEmpty)
 
                 NavigationLink {
                     CatProfileConfirmedPhotosView(
@@ -81,10 +117,23 @@ struct CatProfileDetailView: View {
                     }
                 }
                 .disabled(profile.confirmedPhotos.isEmpty)
+
+                NavigationLink {
+                    CatProfilePhotoAlbumSelectionView(
+                        profile: profile,
+                        albums: photoAlbumOptions,
+                        actions: actions
+                    )
+                } label: {
+                    LabeledContent(
+                        "写真アプリのアルバムをつなぐ",
+                        value: profile.photoAlbumLink?.displayTitle ?? "未連携"
+                    )
+                }
             } header: {
                 Text("写真")
             } footer: {
-                Text("アプリで選ぶか、写真アプリのアルバムをつないで追加できます。写真を移動・削除することはありません。")
+                Text("2匹が一緒なら両方のプロフィールへ追加できます。写真は移動・削除されません。")
             }
 
             Section {
@@ -101,8 +150,28 @@ struct CatProfileDetailView: View {
             }
 
             Section {
-                Button("プロフィールを削除", role: .destructive) {
-                    showsDeleteConfirmation = true
+                if showsDeleteConfirmation {
+                    Text("\(profile.displayName)のプロフィールを削除しますか？")
+                    if deleteFailed {
+                        Text("削除できませんでした。もう一度お試しください。")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    Button(isDeleting ? "削除中…" : "プロフィールを削除", role: .destructive) {
+                        isDeleting = true
+                        deleteFailed = false
+                        Task {
+                            let deleted = await actions.deleteProfile(profile.identifier)
+                            isDeleting = false
+                            if deleted { dismiss() } else { deleteFailed = true }
+                        }
+                    }
+                    Button("キャンセル") { showsDeleteConfirmation = false }
+                } else {
+                    Button("プロフィールを削除", role: .destructive) {
+                        deleteFailed = false
+                        showsDeleteConfirmation = true
+                    }
                 }
             } header: {
                 Text("その他")
@@ -110,40 +179,30 @@ struct CatProfileDetailView: View {
                 Text("プロフィールを削除しても写真は削除されません。この子への手動所属とアルバム連携だけを外し、他の子の所属は保ちます。")
             }
         }
+        .disabled(isDeleting || isSavingName)
+        .navigationBarBackButtonHidden(isDeleting || isSavingName)
         .navigationTitle(profile.displayName)
         .sheet(isPresented: $showsLifeReferenceEditor) {
             CatProfileLifeReferenceEditor(
                 profile: profile,
-                save: actions.updateLifeReference
+                save: actions.updateLifeDates
             )
         }
-        .alert("名前を変更", isPresented: $showsNameEditor) {
-            TextField("名前", text: $draftName)
-            Button("保存") {
-                Task {
-                    await actions.updateName(profile.identifier, draftName)
-                }
+        .sheet(isPresented: $showsKeyPhotoPicker) {
+            NavigationStack {
+                CatProfilePhotoPicker(
+                    photos: profile.confirmedPhotos,
+                    selectedIdentifier: profile.keyPhotoIdentifier,
+                    choose: { await actions.setKeyPhoto(profile.identifier, $0) }
+                )
             }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("名前はあとから何度でも変更できます。")
-        }
-        .confirmationDialog(
-            "\(profile.displayName)のプロフィールを削除しますか？",
-            isPresented: $showsDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("プロフィールを削除", role: .destructive) {
-                Task { await actions.deleteProfile(profile.identifier) }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("写真ライブラリの写真や「みんな」の写真は削除されません。")
         }
     }
 
     private var lifeReferenceSummary: String {
-        guard let reference = profile.lifeReference else { return "未設定" }
+        if profile.lifeDates.hasBothDates { return "両方設定済み" }
+        guard let reference = profile.lifeDates.birthday ?? profile.lifeDates.adoptionDay
+            ?? profile.lifeReference else { return "未設定" }
         let prefix = reference.isApproximate ? "推定の" : ""
         return "\(prefix)\(reference.kind.title) \(reference.date.formatted(date: .numeric, time: .omitted))"
     }
@@ -160,88 +219,6 @@ struct CatProfileDetailView: View {
         }
     }
 
-    private var photoSourceSummary: String {
-        if let link = profile.photoAlbumLink {
-            return link.isAvailable
-                ? "アプリで選ぶ・「\(link.displayTitle)」と連携中"
-                : "アプリで選ぶ・アルバム連携を確認"
-        }
-        return "アプリで選ぶ・写真アプリのアルバム"
-    }
-}
-
-private struct CatProfilePhotoSourcesView: View {
-    let profile: CatProfilePresentation
-    let allProfiles: [CatProfilePresentation]
-    let manualCandidatePhotos: [CatProfilePhotoPresentation]
-    let photoAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]
-    let actions: CatProfilesViewActions
-
-    var body: some View {
-        List {
-            Section {
-                NavigationLink {
-                    UnassignedCatPhotosView(
-                        photos: manualCandidatePhotos,
-                        profiles: allProfiles,
-                        actions: actions,
-                        navigationTitle: "\(profile.displayName)の写真を選ぶ",
-                        preselectedProfileIdentifier: profile.identifier
-                    )
-                } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("アプリで写真を選ぶ")
-                            Text(manualCandidatePhotos.isEmpty
-                                ? "追加できる候補はありません"
-                                : "候補 \(manualCandidatePhotos.count.formatted())枚")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "photo.badge.plus")
-                    }
-                }
-                .disabled(manualCandidatePhotos.isEmpty)
-
-                NavigationLink {
-                    CatProfilePhotoAlbumSelectionView(
-                        profile: profile,
-                        albums: photoAlbumOptions,
-                        actions: actions
-                    )
-                } label: {
-                    Label {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("写真アプリのアルバムをつなぐ")
-                            Text(profile.photoAlbumLink?.displayTitle ?? "未連携")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "rectangle.stack.badge.plus")
-                    }
-                }
-            } header: {
-                Text("追加方法")
-            } footer: {
-                Text("この子を写真だけで自動判定しません。2匹が一緒なら、両方のプロフィールへ追加できます。")
-            }
-
-            if let link = profile.photoAlbumLink, !link.isAvailable {
-                Section {
-                    Label(
-                        "つないだアルバムを利用できません。以前確認した写真は保持しています。写真へのアクセス範囲を確認するか、別のアルバムを選んでください。",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                }
-            }
-        }
-        .navigationTitle("写真を追加")
-        .navigationBarTitleDisplayMode(.inline)
-    }
 }
 
 private struct CatProfilePhotoAlbumSelectionView: View {
@@ -251,6 +228,7 @@ private struct CatProfilePhotoAlbumSelectionView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var savingIdentifier: String?
+    @State private var saveFailed = false
 
     var body: some View {
         List {
@@ -293,9 +271,17 @@ private struct CatProfilePhotoAlbumSelectionView: View {
             } footer: {
                 Text("写真アプリで自分が作った通常アルバムを、\(profile.displayName)の明示的な所属として読み取ります。アルバムの写真は変更しません。連携を外しても、アプリで手動追加した写真は残ります。")
             }
+            if saveFailed {
+                Section {
+                    Text("アルバムの連携を保存できませんでした。もう一度お試しください。")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .navigationTitle("アルバムをつなぐ")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(savingIdentifier != nil)
         .task { await actions.refreshPhotoAlbums() }
         .accessibilityIdentifier("profile-photo-album-selection")
     }
@@ -307,15 +293,15 @@ private struct CatProfilePhotoAlbumSelectionView: View {
         isSelected: Bool
     ) -> some View {
         Button {
+            savingIdentifier = identifier ?? "__none__"
+            saveFailed = false
             Task {
-                let token = identifier ?? "__none__"
-                savingIdentifier = token
                 let saved = await actions.setProfilePhotoAlbum(
                     profile.identifier,
                     identifier
                 )
                 savingIdentifier = nil
-                if saved { dismiss() }
+                if saved { dismiss() } else { saveFailed = true }
             }
         } label: {
             HStack(spacing: 12) {
@@ -342,118 +328,147 @@ private struct CatProfilePhotoAlbumSelectionView: View {
 
 private struct CatProfileLifeReferenceEditor: View {
     let profile: CatProfilePresentation
-    let save: (String, CatProfileLifeReferencePresentation?) async -> Void
+    let save: (String, CatProfileLifeDatesPresentation) async -> Bool
 
     @Environment(\.dismiss) private var dismiss
-    @State private var reference: CatProfileLifeReferencePresentation?
+    @State private var dates: CatProfileLifeDatesPresentation
     @State private var isSaving = false
-    @State private var saveTask: Task<Void, Never>?
+    @State private var saveFailed = false
 
     init(
         profile: CatProfilePresentation,
-        save: @escaping (String, CatProfileLifeReferencePresentation?) async -> Void
+        save: @escaping (String, CatProfileLifeDatesPresentation) async -> Bool
     ) {
         self.profile = profile
         self.save = save
-        _reference = State(initialValue: profile.lifeReference)
+        _dates = State(initialValue: profile.lifeDates)
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("日付の基準", selection: referenceKind) {
-                        Text("設定しない").tag(nil as CatProfileLifeReferenceKindPresentation?)
-                        ForEach(CatProfileLifeReferenceKindPresentation.allCases) { kind in
-                            Text(kind.title).tag(Optional(kind))
+                dateSection(.birthday)
+                dateSection(.adoptionDay)
+                if dates.hasBothDates {
+                    Section {
+                        Picker("成長の基準", selection: primaryKind) {
+                            ForEach(CatProfileLifeReferenceKindPresentation.allCases) { kind in
+                                Text(kind.title).tag(kind)
+                            }
                         }
+                    } footer: {
+                        Text("この子の成長アルバムをまとめる基準です。")
                     }
-                    if reference != nil {
-                        DatePicker(
-                            reference?.kind.title ?? "日付",
-                            selection: referenceDate,
-                            in: ...Date.now,
-                            displayedComponents: .date
-                        )
-                        Toggle("推定の日付", isOn: approximateDate)
+                }
+                if saveFailed {
+                    Section {
+                        Text("日付を保存できませんでした。入力を確認して、もう一度お試しください。")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
-                } footer: {
-                    Text(isSaving
-                        ? "変更を保存しています…"
-                        : "変更は自動保存されます。年齢アルバムは誕生日（推定を含む）だけを基準にします。")
                 }
             }
+            .disabled(isSaving)
             .navigationTitle("\(profile.displayName)の日付")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                        .disabled(isSaving)
+                }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完了") { dismiss() }
+                    Button(isSaving ? "保存中…" : "保存") {
+                        isSaving = true
+                        saveFailed = false
+                        Task {
+                            let saved = await save(profile.identifier, dates)
+                            isSaving = false
+                            if saved { dismiss() } else { saveFailed = true }
+                        }
+                    }
+                    .disabled(isSaving)
                 }
-            }
-            .onChange(of: reference) { _, newReference in
-                scheduleAutoSave(newReference)
             }
         }
+        .interactiveDismissDisabled(isSaving)
     }
 
-    private var referenceKind: Binding<CatProfileLifeReferenceKindPresentation?> {
-        Binding(
-            get: { reference?.kind },
-            set: { kind in
-                guard let kind else {
-                    reference = nil
-                    return
-                }
-                reference = CatProfileLifeReferencePresentation(
-                    kind: kind,
-                    date: reference?.date ?? .now,
-                    isApproximate: reference?.isApproximate ?? false
+    private func dateSection(_ kind: CatProfileLifeReferenceKindPresentation) -> some View {
+        Section {
+            Toggle("設定する", isOn: dateEnabled(kind))
+            if reference(for: kind) != nil {
+                DatePicker(
+                    kind.title,
+                    selection: referenceDate(kind),
+                    in: ...Date.now,
+                    displayedComponents: .date
                 )
+                Toggle("推定の日付", isOn: approximateDate(kind))
             }
-        )
-    }
-
-    private var referenceDate: Binding<Date> {
-        Binding(
-            get: { reference?.date ?? .now },
-            set: { date in
-                guard var value = reference else { return }
-                value.date = date
-                reference = value
-            }
-        )
-    }
-
-    private var approximateDate: Binding<Bool> {
-        Binding(
-            get: { reference?.isApproximate ?? false },
-            set: { isApproximate in
-                guard var value = reference else { return }
-                value.isApproximate = isApproximate
-                reference = value
-            }
-        )
-    }
-
-    private func scheduleAutoSave(
-        _ newReference: CatProfileLifeReferencePresentation?
-    ) {
-        saveTask?.cancel()
-        saveTask = Task {
-            isSaving = true
-            do {
-                try await Task.sleep(for: .milliseconds(200))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else {
-                return
-            }
-            await save(profile.identifier, newReference)
-            guard !Task.isCancelled else { return }
-            isSaving = false
+        } header: {
+            Text(kind.title)
         }
     }
+
+    private var primaryKind: Binding<CatProfileLifeReferenceKindPresentation> {
+        Binding(
+            get: { dates.primaryKind ?? .birthday },
+            set: { dates.primaryKind = $0 }
+        )
+    }
+
+    private func reference(
+        for kind: CatProfileLifeReferenceKindPresentation
+    ) -> CatProfileLifeReferencePresentation? {
+        kind == .birthday ? dates.birthday : dates.adoptionDay
+    }
+
+    private func setReference(
+        _ reference: CatProfileLifeReferencePresentation?,
+        for kind: CatProfileLifeReferenceKindPresentation
+    ) {
+        switch kind {
+        case .birthday: dates.birthday = reference
+        case .adoptionDay: dates.adoptionDay = reference
+        }
+        if let primary = dates.primaryKind, self.reference(for: primary) != nil { return }
+        dates.primaryKind = dates.birthday != nil ? .birthday
+            : (dates.adoptionDay != nil ? .adoptionDay : nil)
+    }
+
+    private func dateEnabled(_ kind: CatProfileLifeReferenceKindPresentation) -> Binding<Bool> {
+        Binding(
+            get: { reference(for: kind) != nil },
+            set: { enabled in
+                setReference(enabled ? CatProfileLifeReferencePresentation(
+                    kind: kind, date: .now, isApproximate: false
+                ) : nil, for: kind)
+            }
+        )
+    }
+
+    private func referenceDate(_ kind: CatProfileLifeReferenceKindPresentation) -> Binding<Date> {
+        Binding(
+            get: { reference(for: kind)?.date ?? .now },
+            set: { date in
+                guard var value = reference(for: kind) else { return }
+                value.date = date
+                setReference(value, for: kind)
+            }
+        )
+    }
+
+    private func approximateDate(_ kind: CatProfileLifeReferenceKindPresentation) -> Binding<Bool> {
+        Binding(
+            get: { reference(for: kind)?.isApproximate ?? false },
+            set: { isApproximate in
+                guard var value = reference(for: kind) else { return }
+                value.isApproximate = isApproximate
+                setReference(value, for: kind)
+            }
+        )
+    }
+
 }
 
 struct CatProfileConfirmedPhotosView: View {
@@ -465,12 +480,15 @@ struct CatProfileConfirmedPhotosView: View {
     @State private var showsAssignmentSheet = false
     @State private var showsRemoveConfirmation = false
     @State private var showsGlobalExclusionConfirmation = false
+    @State private var isRemoving = false
+    @State private var membershipSaveFailed = false
 
     var body: some View {
         CatSelectablePhotoGrid(
             photos: profile.confirmedPhotos,
             selection: $selection
         )
+        .disabled(isRemoving)
         .navigationTitle("\(profile.displayName)の写真")
         .safeAreaInset(edge: .bottom) {
             if !selection.isEmpty { actionBar }
@@ -480,8 +498,11 @@ struct CatProfileConfirmedPhotosView: View {
                 photoIdentifiers: Array(selection),
                 profiles: allProfiles,
                 initialAssignmentsByPhotoIdentifier: selectedAssignmentsByPhotoIdentifier,
-                save: actions.replacePhotoAssignments,
-                excludeFromHousehold: actions.excludeFromHousehold
+                save: { assignments in
+                    let saved = await actions.replacePhotoAssignments(assignments)
+                    if saved { selection.removeAll() }
+                    return saved
+                }
             )
         }
         .confirmationDialog(
@@ -491,9 +512,12 @@ struct CatProfileConfirmedPhotosView: View {
         ) {
             Button("\(profile.displayName)ではない") {
                 let identifiers = Array(selection)
-                selection.removeAll()
+                isRemoving = true
+                membershipSaveFailed = false
                 Task {
-                    await actions.removeProfileMembership(profile.identifier, identifiers)
+                    let saved = await actions.removeProfileMembership(profile.identifier, identifiers)
+                    isRemoving = false
+                    if saved { selection.removeAll() } else { membershipSaveFailed = true }
                 }
             }
             Button("キャンセル", role: .cancel) {}
@@ -527,11 +551,16 @@ struct CatProfileConfirmedPhotosView: View {
 
     private var actionBar: some View {
         VStack(spacing: 8) {
+            if membershipSaveFailed {
+                Text("変更を保存できませんでした。もう一度お試しください。")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
             Text("\(selection.count.formatted())枚を選択中")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
-                Button("写っている子を修正", systemImage: "person.2") {
+                Button("写っている猫を選ぶ", systemImage: "person.2") {
                     showsAssignmentSheet = true
                 }
                 Spacer()
@@ -547,6 +576,7 @@ struct CatProfileConfirmedPhotosView: View {
                 }
             }
         }
+        .disabled(isRemoving)
         .padding(12)
         .background(.regularMaterial)
     }
@@ -556,7 +586,7 @@ struct UnassignedCatPhotosView: View {
     let photos: [CatProfilePhotoPresentation]
     let profiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
-    var navigationTitle = "どの子かまだわからない"
+    var navigationTitle = "猫を選んでいない写真"
     /// A picker opened from one cat's page starts with that cat selected while
     /// preserving any other explicit profile assignments on the same photo.
     var preselectedProfileIdentifier: String? = nil
@@ -569,7 +599,7 @@ struct UnassignedCatPhotosView: View {
         Group {
             if photos.isEmpty {
                 ContentUnavailableView(
-                    "未判定の写真はありません",
+                    "選べる写真はありません",
                     systemImage: "checkmark.circle"
                 )
             } else {
@@ -585,8 +615,11 @@ struct UnassignedCatPhotosView: View {
                 photoIdentifiers: Array(selection),
                 profiles: profiles,
                 initialAssignmentsByPhotoIdentifier: selectedAssignmentsByPhotoIdentifier,
-                save: actions.replacePhotoAssignments,
-                excludeFromHousehold: actions.excludeFromHousehold
+                save: { assignments in
+                    let saved = await actions.replacePhotoAssignments(assignments)
+                    if saved { selection.removeAll() }
+                    return saved
+                }
             )
         }
         .confirmationDialog(
@@ -618,7 +651,7 @@ struct UnassignedCatPhotosView: View {
 
     private var actionBar: some View {
         HStack {
-            Button("写っている子を設定", systemImage: "person.crop.circle.badge.checkmark") {
+            Button("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark") {
                 showsAssignmentSheet = true
             }
             .disabled(profiles.isEmpty)
@@ -637,25 +670,22 @@ struct UnassignedCatPhotosView: View {
 struct CatPhotoAssignmentSheet: View {
     let photoIdentifiers: [String]
     let profiles: [CatProfilePresentation]
-    let save: ([String: Set<String>]) async -> Void
-    let excludeFromHousehold: ([String]) async -> Void
+    let save: ([String: Set<String>]) async -> Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var assignmentBatch: CatPhotoAssignmentBatchPresentation
     @State private var isSaving = false
-    @State private var showsGlobalExclusionConfirmation = false
+    @State private var saveFailed = false
 
     init(
         photoIdentifiers: [String],
         profiles: [CatProfilePresentation],
         initialAssignmentsByPhotoIdentifier: [String: Set<String>],
-        save: @escaping ([String: Set<String>]) async -> Void,
-        excludeFromHousehold: @escaping ([String]) async -> Void
+        save: @escaping ([String: Set<String>]) async -> Bool
     ) {
         self.photoIdentifiers = photoIdentifiers
         self.profiles = profiles
         self.save = save
-        self.excludeFromHousehold = excludeFromHousehold
         _assignmentBatch = State(
             initialValue: CatPhotoAssignmentBatchPresentation(
                 photoIdentifiers: photoIdentifiers,
@@ -695,57 +725,42 @@ struct CatPhotoAssignmentSheet: View {
                         .buttonStyle(.plain)
                     }
                 } header: {
-                    Text("写っている子・複数選べます")
+                    Text("写っている猫・複数選べます")
                 } footer: {
                     Text("2匹が同じ写真に写っている場合は両方を選べます。−は一部の写真だけに設定済みです。触らなければ、その所属を保ちます。")
                 }
 
-                Section {
-                    Button(role: .destructive) {
-                        showsGlobalExclusionConfirmation = true
-                    } label: {
-                        Label("表示候補から外す", systemImage: "eye.slash")
+                if saveFailed {
+                    Section {
+                        Text("選択を保存できませんでした。もう一度お試しください。")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                     }
-                } header: {
-                    Text("全体から外す")
-                } footer: {
-                    Text("プロフィールの所属訂正とは別の操作です。すべてのアルバムとウィジェットから除外しますが、写真ライブラリからは削除しません。")
                 }
             }
-            .navigationTitle("写っている子")
+            .disabled(isSaving)
+            .navigationTitle("写っている猫を選ぶ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("キャンセル") { dismiss() }
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "保存中…" : "保存") {
+                        isSaving = true
+                        saveFailed = false
                         Task {
-                            isSaving = true
-                            await save(assignmentBatch.assignmentsByPhotoIdentifier)
+                            let saved = await save(assignmentBatch.assignmentsByPhotoIdentifier)
                             isSaving = false
-                            dismiss()
+                            if saved { dismiss() } else { saveFailed = true }
                         }
                     }
-                    .disabled(isSaving)
+                    .disabled(isSaving || photoIdentifiers.isEmpty || profiles.isEmpty)
                 }
             }
         }
-        .confirmationDialog(
-            "表示候補から外しますか？",
-            isPresented: $showsGlobalExclusionConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("表示候補から外す", role: .destructive) {
-                Task {
-                    await excludeFromHousehold(photoIdentifiers)
-                    dismiss()
-                }
-            }
-            Button("キャンセル", role: .cancel) {}
-        } message: {
-            Text("すべてから除外します。写真ライブラリからは削除しません。")
-        }
+        .interactiveDismissDisabled(isSaving)
     }
 
 }
@@ -792,9 +807,72 @@ struct LegacyCatExclusionReviewView: View {
     }
 }
 
+/// Reuses the candidate grid for a single explicit choice. The presenting
+/// view owns its NavigationStack, and a failed write keeps this picker open.
+struct CatProfilePhotoPicker: View {
+    let photos: [CatProfilePhotoPresentation]
+    let selectedIdentifier: String?
+    let choose: (String) async -> Bool
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var savingIdentifier: String?
+    @State private var saveFailed = false
+
+    var body: some View {
+        Group {
+            if photos.isEmpty {
+                ContentUnavailableView("選べる写真はありません", systemImage: "photo")
+            } else {
+                CatSelectablePhotoGrid(
+                    photos: photos,
+                    selection: .constant(Set(selectedIdentifier.map { [$0] } ?? [])),
+                    onChoose: { identifier in
+                        guard savingIdentifier == nil else { return }
+                        savingIdentifier = identifier
+                        saveFailed = false
+                        Task {
+                            let saved = await choose(identifier)
+                            savingIdentifier = nil
+                            if saved { dismiss() } else { saveFailed = true }
+                        }
+                    }
+                )
+                .disabled(savingIdentifier != nil)
+            }
+        }
+        .navigationTitle("写真を選ぶ")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(savingIdentifier != nil)
+        .safeAreaInset(edge: .bottom) {
+            if savingIdentifier != nil || saveFailed {
+                VStack {
+                    if savingIdentifier != nil {
+                        ProgressView("保存中…")
+                    } else {
+                        Text("選択を保存できませんでした。もう一度お試しください。")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .background(.regularMaterial)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("キャンセル") { dismiss() }
+                    .disabled(savingIdentifier != nil)
+            }
+        }
+        .interactiveDismissDisabled(savingIdentifier != nil)
+    }
+}
+
 private struct CatSelectablePhotoGrid: View {
     let photos: [CatProfilePhotoPresentation]
     @Binding var selection: Set<String>
+    var onChoose: ((String) -> Void)? = nil
 
     private let columns = [
         GridItem(.adaptive(minimum: 104), spacing: 3)
@@ -805,7 +883,11 @@ private struct CatSelectablePhotoGrid: View {
             LazyVGrid(columns: columns, spacing: 3) {
                 ForEach(photos) { photo in
                     Button {
-                        toggle(photo.localIdentifier)
+                        if let onChoose {
+                            onChoose(photo.localIdentifier)
+                        } else {
+                            toggle(photo.localIdentifier)
+                        }
                     } label: {
                         PhotoAssetImageView(
                             localIdentifier: photo.localIdentifier,

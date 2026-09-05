@@ -6,6 +6,7 @@ enum CatProfilesPresentationVerifier {
         try verifiesEveryoneIsAlwaysTheDefaultScope()
         try verifiesIndividualRecognitionCopy()
         try verifiesManyToManyPhotoMembership()
+        try verifiesCreationPickerIncludesSharedAndOlderPhotos()
         try verifiesProfileAlbumLinkPresentation()
         try verifiesSimilarityReviewKeepsCatInstancesSeparate()
         try verifiesMixedBatchAssignmentsArePreserved()
@@ -65,6 +66,33 @@ enum CatProfilesPresentationVerifier {
             "one photo could not retain multiple confirmed cat memberships"
         )
         try require(photo.detectedCatCount == 2, "multiple cats in one photo were collapsed")
+    }
+
+    private static func verifiesCreationPickerIncludesSharedAndOlderPhotos() throws {
+        let common = CatProfilePhotoPresentation(
+            localIdentifier: "both-cats",
+            creationDate: Date(timeIntervalSince1970: 10),
+            assignedProfileIdentifiers: ["mugi", "ame"],
+            detectedCatCount: 2
+        )
+        var mugi = profile("mugi", name: "むぎ", reference: nil)
+        var ame = profile("ame", name: "あめ", reference: nil)
+        mugi.confirmedPhotos = [common]
+        ame.confirmedPhotos = [common]
+        let unassigned = (0..<20).map { index in
+            CatProfilePhotoPresentation(
+                localIdentifier: "unassigned-\(index)",
+                creationDate: Date(timeIntervalSince1970: Double(index + 20))
+            )
+        }
+        let value = CatProfilesPresentation(
+            profiles: [mugi, ame], unassignedPhotos: unassigned
+        )
+        let choices = value.profileCreationPhotos
+        try require(choices.count == 21, "creation picker hid old or assigned photos")
+        try require(choices.last == common, "shared multi-cat photo was lost or duplicated")
+        try require(choices.first?.localIdentifier == "unassigned-19", "picker order was unstable")
+        try require(value.unassignedPhotos.count == 20, "picker changed existing assignments")
     }
 
     private static func verifiesProfileAlbumLinkPresentation() throws {

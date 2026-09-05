@@ -79,6 +79,14 @@ struct CatProfileLifeReferencePresentation: Equatable {
     var isApproximate: Bool
 }
 
+struct CatProfileLifeDatesPresentation: Equatable {
+    var birthday: CatProfileLifeReferencePresentation?
+    var adoptionDay: CatProfileLifeReferencePresentation?
+    var primaryKind: CatProfileLifeReferenceKindPresentation?
+
+    var hasBothDates: Bool { birthday != nil && adoptionDay != nil }
+}
+
 struct CatProfilePhotoPresentation: Identifiable, Equatable {
     var localIdentifier: String
     var creationDate: Date?
@@ -147,6 +155,8 @@ struct CatProfilePresentation: Identifiable, Equatable {
     var manualCandidatePhotos: [CatProfilePhotoPresentation] = []
     var lifeReference: CatProfileLifeReferencePresentation?
     var photoAlbumLink: CatProfilePhotoAlbumLinkPresentation? = nil
+    var lifeDates: CatProfileLifeDatesPresentation = .init()
+    var keyPhotoIdentifier: String? = nil
     var similarityReferencePhotoCount: Int = 0
 
     var id: String { identifier }
@@ -282,6 +292,20 @@ struct CatProfilesPresentation: Equatable {
 
     var availableScopes: [CatProfileScopePresentation] {
         [.everyone] + profiles.map { .profile($0.identifier) }
+    }
+
+    /// A new cat may appear in a photo already assigned to another cat. The
+    /// picker therefore includes both pools, once per photo, without a top-12
+    /// truncation or an assumed single-cat restriction.
+    var profileCreationPhotos: [CatProfilePhotoPresentation] {
+        var seen = Set<String>()
+        return (unassignedPhotos + profiles.flatMap(\.confirmedPhotos))
+            .filter { seen.insert($0.localIdentifier).inserted }
+            .sorted {
+                let lhs = $0.creationDate ?? .distantPast
+                let rhs = $1.creationDate ?? .distantPast
+                return lhs == rhs ? $0.localIdentifier < $1.localIdentifier : lhs > rhs
+            }
     }
 
     func profile(identifier: String) -> CatProfilePresentation? {

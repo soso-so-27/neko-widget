@@ -3123,23 +3123,31 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("window-list-setup-limit", main_tab)
         self.assertIn("window-list-product-limit", main_tab)
 
-    def test_cat_profile_detail_has_one_photo_addition_entry(self) -> None:
+    def test_cat_profile_detail_opens_photo_choices_without_an_extra_sources_page(self) -> None:
         profile = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
         detail = section(
             profile,
             "struct CatProfileDetailView: View",
-            "private struct CatProfilePhotoSourcesView: View",
-        )
-        sources = section(
-            profile,
-            "private struct CatProfilePhotoSourcesView: View",
             "private struct CatProfilePhotoAlbumSelectionView: View",
         )
-        self.assertEqual(detail.count('Text("写真を追加")'), 1)
+        self.assertEqual(detail.count('Text("写真を選ぶ")'), 1)
+        self.assertIn("UnassignedCatPhotosView(", detail)
+        self.assertNotIn("CatProfilePhotoSourcesView", profile)
         self.assertIn('"この子の写真を見る"', detail)
         self.assertIn('Text("この子の時間")', detail)
-        self.assertIn('Text("アプリで写真を選ぶ")', sources)
-        self.assertIn('Text("写真アプリのアルバムをつなぐ")', sources)
+        self.assertIn('"写真アプリのアルバムをつなぐ"', detail)
+        self.assertIn("await actions.setKeyPhoto", detail)
+
+    def test_cat_assignments_wait_for_persistence_before_dismissing(self) -> None:
+        profile = source("NekoWidget/Views/CatProfilePhotoCurationViews.swift")
+        sheet = section(profile, "struct CatPhotoAssignmentSheet: View", "struct LegacyCatExclusionReviewView: View")
+        self.assertIn("let save: ([String: Set<String>]) async -> Bool", sheet)
+        self.assertIn("let saved = await save(assignmentBatch.assignmentsByPhotoIdentifier)", sheet)
+        self.assertIn("if saved { dismiss() } else { saveFailed = true }", sheet)
+        self.assertIn(".interactiveDismissDisabled(isSaving)", sheet)
+        self.assertNotIn("excludeFromHousehold", sheet)
+        main = source("NekoWidget/Views/MainTabView.swift")
+        self.assertNotIn("Task { await catProfilesActions.replacePhotoAssignments(values) }", main)
 
     def test_family_window_separates_received_sent_and_settings(self) -> None:
         family = source("NekoWidget/Views/FamilyWindowView.swift")
