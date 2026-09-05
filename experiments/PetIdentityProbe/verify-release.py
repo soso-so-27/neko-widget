@@ -38,9 +38,9 @@ def require(condition, message):
         raise InvalidRelease(message)
 
 
-def run(*command, input=None):
+def run(*command, input=None, failure_message="A required local verification command failed."):
     result = subprocess.run(command, input=input, capture_output=True, check=False)
-    require(result.returncode == 0, "A required local verification command failed.")
+    require(result.returncode == 0, failure_message)
     return result.stdout
 
 
@@ -213,18 +213,22 @@ def check_app(app, work, team, build):
     require(generated_notices.stat().st_size > 0
             and digest(app / "ThirdPartyNotices.txt") == digest(generated_notices),
             "Packaged third-party notices differ from the verified generated notices.")
-    run("codesign", "--verify", "--deep", "--strict", str(app))
+    run("codesign", "--verify", "--deep", "--strict", str(app),
+        failure_message="App code signature verification failed.")
     entitlement_path = work / "checked-entitlements.plist"
     entitlement_path.unlink(missing_ok=True)
-    run("codesign", "-d", "--entitlements", str(entitlement_path), "--xml", str(app))
+    run("codesign", "-d", "--entitlements", str(entitlement_path), "--xml", str(app),
+        failure_message="Signed app entitlement extraction failed.")
     check_entitlements(load_plist(entitlement_path), team, profile=False)
     for index in range(4):
         (work / f"app-certificate-{index}").unlink(missing_ok=True)
-    run("codesign", "-d", "--extract-certificates", str(work / "app-certificate-"), str(app))
+    run("codesign", "-d", f"--extract-certificates={work / 'app-certificate-'}", str(app),
+        failure_message="Signed app certificate extraction failed.")
     certificate = (work / "distribution.der").read_bytes()
     require((work / "app-certificate-0").read_bytes() == certificate,
             "App signature uses a different distribution certificate.")
-    embedded = plistlib.loads(run("security", "cms", "-D", "-i", str(app / "embedded.mobileprovision")))
+    embedded = plistlib.loads(run("security", "cms", "-D", "-i", str(app / "embedded.mobileprovision"),
+        failure_message="Embedded provisioning profile decoding failed."))
     expected = json.loads((work / "signing.json").read_text())["profile_uuid"]
     require(check_profile(embedded, team, certificate) == expected,
             "App embedded a different provisioning profile.")
@@ -322,9 +326,14 @@ def check_altool(work, stage):
 def safe_diagnostics(text):
     # Only our literal verification messages may pass through unchanged.
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    fixed = {"Release verification could not complete."}
+    fixed = {"Release verification could not complete.", "A required local verification command failed."}
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "run":
+                for keyword in node.keywords:
+                    if (keyword.arg == "failure_message" and isinstance(keyword.value, ast.Constant)
+                            and isinstance(keyword.value.value, str)):
+                        fixed.add(keyword.value.value)
             index = 1 if node.func.id == "require" else 0 if node.func.id == "InvalidRelease" else None
             if index is not None and len(node.args) > index:
                 value = node.args[index]
@@ -491,6 +500,9 @@ def self_test():
     )
     require(len(diagnostics) == 3 and not any("SECRET" in value or "/private/" in value for value in diagnostics),
             "Safe diagnostics leaked a private fixture or lost all actionable context.")
+    require(safe_diagnostics("Signed app certificate extraction failed.\nSECRET_CERTIFICATE")
+            == ["Signed app certificate extraction failed."],
+            "Command-specific diagnostics leaked data or lost their stage.")
     print("Dedicated release checks passed: profile, metadata, privacy and diagnostic-redaction fixtures.")
 
 
