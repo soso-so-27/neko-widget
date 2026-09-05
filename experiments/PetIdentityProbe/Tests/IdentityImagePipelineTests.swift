@@ -110,10 +110,23 @@ final class IdentityImagePipelineTests: XCTestCase {
         let text = try XCTUnwrap(IdentityEvaluationExport.json(run))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["aggregate", "preprocessing", "photoFetch", "duplicatePolicy", "reusePolicy",
-            "nearbyTimePairs", "osVersion", "photosIncluded", "identifiersIncluded", "individualPredictionsIncluded", "embeddingsIncluded", "productionDataChanged"])
+            "selectionStorage", "inputDiagnostics", "inputDiagnosticScope", "nearbyTimePairs", "osVersion", "photosIncluded", "identifiersIncluded", "individualPredictionsIncluded", "embeddingsIncluded", "productionDataChanged"])
         XCTAssertEqual(object["photosIncluded"] as? Bool, false)
         XCTAssertFalse(text.contains("thumbnail"))
         XCTAssertFalse(text.contains("predictionsA"))
         XCTAssertFalse(text.contains("fingerprint"))
+    }
+
+    func testInputDiagnosticsDistinguishDetectorAndCropFailures() throws {
+        let input = try image()
+        func reason(_ boxes: [CGRect]) -> IdentityInputIssue? {
+            if case .failure(let issue) = IdentityImagePipeline.cropResult(input, catBoxes: boxes) { return issue }
+            return nil
+        }
+        let full = CGRect(x: 0, y: 0, width: 1, height: 1)
+        XCTAssertEqual(reason([]), .catNotDetected)
+        XCTAssertEqual(reason([full, full]), .multipleCats)
+        XCTAssertEqual(reason([CGRect(x: 0, y: 0, width: 0.1, height: 0.1)]), .invalidCrop)
+        XCTAssertNil(reason([full]))
     }
 }

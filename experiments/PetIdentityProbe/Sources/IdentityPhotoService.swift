@@ -21,12 +21,42 @@ struct IdentityLocalPhoto {
     let thumbnail: CGImage?
     let embedding: [Float]?
     let fingerprint: UInt64?
+    var inputIssue: IdentityInputIssue? = nil
+}
+
+enum IdentityInputIssue: String, Codable, CaseIterable, Error {
+    case assetUnavailable, localImageUnavailable, catNotDetected, multipleCats, invalidCrop, detectionFailed
+    var title: String {
+        switch self {
+        case .assetUnavailable: "写真にアクセスできない"
+        case .localImageUnavailable: "端末内の画像を読み出せない"
+        case .catNotDetected: "猫を検出できない"
+        case .multipleCats: "複数の猫を検出"
+        case .invalidCrop: "猫の範囲が小さい・切り抜けない"
+        case .detectionFailed: "検出処理でエラー"
+        }
+    }
+}
+
+struct IdentityInputDiagnostic: Codable {
+    let label: String
+    let reasonCounts: [String: Int]
 }
 
 struct IdentityPhotoRun {
     let evaluation: IdentityEvaluationResult
     let photos: [IdentityLocalPhoto]
     let nearbyTimePairs: Int
+
+    var inputDiagnostics: [IdentityInputDiagnostic] {
+        (0..<2).map { cat in
+            let inputs = photos.filter { $0.slot.cat == cat && !$0.slot.isReference }
+            return IdentityInputDiagnostic(label: cat == 0 ? "A" : "B",
+                reasonCounts: Dictionary(uniqueKeysWithValues: IdentityInputIssue.allCases.map { issue in
+                    (issue.rawValue, inputs.filter { $0.inputIssue == issue }.count)
+                }))
+        }
+    }
 }
 
 struct IdentityPhotoFailure: LocalizedError {
@@ -100,11 +130,22 @@ actor IdentityPhotoService {
             for (index, id) in (selections[slot] ?? []).enumerated() {
                 try Task.checkCancellation()
                 let photo = try autoreleasepool { () throws -> IdentityLocalPhoto in
-                    let image = assets[id].flatMap(Self.localImage)
-                    let crop = image.flatMap { try? IdentityImagePipeline.singleCatCrop($0) }
+                    let asset = assets[id]
+                    let image = asset.flatMap(Self.localImage)
+                    var crop: CGImage?
+                    var issue: IdentityInputIssue?
+                    if asset == nil { issue = .assetUnavailable }
+                    else if let image {
+                        do {
+                            switch try IdentityImagePipeline.catCropResult(image) {
+                            case .success(let value): crop = value
+                            case .failure(let failure): issue = failure
+                            }
+                        } catch { issue = .detectionFailed }
+                    } else { issue = .localImageUnavailable }
                     // A missing/undetected evaluation remains in the denominator as unknown.
                     if slot.isReference && crop == nil {
-                        throw IdentityPhotoFailure(message: "\(slot.title)の\(index + 1)枚目を見本にできません。端末内にある、1匹だけがはっきり写った別の写真を選んでください。")
+                        throw IdentityPhotoFailure(message: "\(slot.title)の\(index + 1)枚目：\(issue?.title ?? "読み取り失敗")。選択は残しています。この欄だけ確認・入れ替えできます。")
                     }
                     let embedding: [Float]?
                     if let crop {
@@ -117,7 +158,7 @@ actor IdentityPhotoService {
                             return IdentityImagePipeline.resized(value, width: max(1, Int(Double(value.width) * factor)),
                                 height: max(1, Int(Double(value.height) * factor)))
                         },
-                        embedding: embedding, fingerprint: crop.flatMap(IdentityImagePipeline.fingerprint))
+                        embedding: embedding, fingerprint: crop.flatMap(IdentityImagePipeline.fingerprint), inputIssue: issue)
                 }
                 if let fingerprint = photo.fingerprint,
                    let previous = photos.first(where: {
@@ -135,11 +176,11 @@ actor IdentityPhotoService {
         }
         let result = try IdentityEvaluationCore.evaluate(registrationA: vectors(.referenceA),
             registrationB: vectors(.referenceB), evaluationA: vectors(.evaluationA),
-            evaluationB: vectors(.evaluationB), runtimeVersion: ORTVersion() ?? "unknown")
+            evaluationB: vectors(.evaluationB), runtimeVersion: ORTVersion() ?? "unknown", purpose: .diagnostic)
         // Features are not needed by the result UI; release them before returning.
         let previews = photos.map {
             IdentityLocalPhoto(slot: $0.slot, index: $0.index, thumbnail: $0.thumbnail,
-                               embedding: nil, fingerprint: nil)
+                               embedding: nil, fingerprint: nil, inputIssue: $0.inputIssue)
         }
         return IdentityPhotoRun(evaluation: result, photos: previews, nearbyTimePairs: nearbyTimePairs)
     }
@@ -192,15 +233,28 @@ enum IdentityImagePipeline {
     }
 
     static func singleCatCrop(_ image: CGImage) throws -> CGImage? {
+        switch try catCropResult(image) {
+        case .success(let crop): return crop
+        case .failure: return nil
+        }
+    }
+
+    static func catCropResult(_ image: CGImage) throws -> Result<CGImage, IdentityInputIssue> {
         let request = VNRecognizeAnimalsRequest()
         request.revision = VNRecognizeAnimalsRequestRevision2
         try VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])
         let cats = (request.results ?? []).filter { observation in
             observation.labels.contains { $0.identifier == "Cat" && $0.confidence >= 0.5 }
         }
-        guard cats.count == 1,
-              let rect = cropRect(cats[0].boundingBox, width: image.width, height: image.height) else { return nil }
-        return image.cropping(to: rect)
+        return cropResult(image, catBoxes: cats.map(\.boundingBox))
+    }
+
+    static func cropResult(_ image: CGImage, catBoxes: [CGRect]) -> Result<CGImage, IdentityInputIssue> {
+        guard !catBoxes.isEmpty else { return .failure(.catNotDetected) }
+        guard catBoxes.count == 1 else { return .failure(.multipleCats) }
+        guard let rect = cropRect(catBoxes[0], width: image.width, height: image.height),
+              let crop = image.cropping(to: rect) else { return .failure(.invalidCrop) }
+        return .success(crop)
     }
 
     static func resized(_ image: CGImage, width: Int, height: Int) -> CGImage? {

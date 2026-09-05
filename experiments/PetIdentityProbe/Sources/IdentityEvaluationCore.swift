@@ -13,10 +13,39 @@ enum IdentityPrediction: Equatable, Sendable {
     case unknown
 }
 
+enum IdentityUnknownReason: String, Codable, CaseIterable, Sendable {
+    case missingEmbedding
+    case invalidEmbedding
+    case equalScores
+    case degenerateCalibration
+    case outsideRadius
+    case ambiguous
+    case outsideRadiusAndAmbiguous
+
+    var title: String {
+        switch self {
+        case .missingEmbedding: "特徴量なし"
+        case .invalidEmbedding: "特徴量が不正"
+        case .equalScores: "比較スコアが同点"
+        case .degenerateCalibration: "登録基準が成立せず"
+        case .outsideRadius: "登録基準の範囲外"
+        case .ambiguous: "猫A・Bの差が不足"
+        case .outsideRadiusAndAmbiguous: "範囲外・差も不足"
+        }
+    }
+}
+
+enum IdentityEvaluationPurpose: String, Codable, Sendable {
+    case diagnostic
+    case heldout
+}
+
 struct IdentityEvaluationResult: Sendable {
     let aggregate: IdentityEvaluationAggregate
     let predictionsA: [IdentityPrediction]
     let predictionsB: [IdentityPrediction]
+    let reasonsA: [IdentityUnknownReason?]
+    let reasonsB: [IdentityUnknownReason?]
 }
 
 struct IdentityEvaluationCounts: Codable, Equatable, Sendable {
@@ -31,6 +60,63 @@ struct IdentityEvaluationCounts: Codable, Equatable, Sendable {
 struct IdentityCatAggregate: Codable, Equatable, Sendable {
     let label: IdentityCatLabel
     let counts: IdentityEvaluationCounts
+    let reasonCounts: IdentityUnknownReasonCounts
+}
+
+/// Explicit fixed keys keep absent reasons visible as zero in exported JSON.
+struct IdentityUnknownReasonCounts: Codable, Equatable, Sendable {
+    let missingEmbedding: Int
+    let invalidEmbedding: Int
+    let equalScores: Int
+    let degenerateCalibration: Int
+    let outsideRadius: Int
+    let ambiguous: Int
+    let outsideRadiusAndAmbiguous: Int
+
+    init(reasons: [IdentityUnknownReason?]) {
+        missingEmbedding = reasons.filter { $0 == .missingEmbedding }.count
+        invalidEmbedding = reasons.filter { $0 == .invalidEmbedding }.count
+        equalScores = reasons.filter { $0 == .equalScores }.count
+        degenerateCalibration = reasons.filter { $0 == .degenerateCalibration }.count
+        outsideRadius = reasons.filter { $0 == .outsideRadius }.count
+        ambiguous = reasons.filter { $0 == .ambiguous }.count
+        outsideRadiusAndAmbiguous = reasons.filter { $0 == .outsideRadiusAndAmbiguous }.count
+    }
+
+    var total: Int {
+        IdentityUnknownReason.allCases.reduce(0) { $0 + self[$1] }
+    }
+
+    subscript(reason: IdentityUnknownReason) -> Int {
+        switch reason {
+        case .missingEmbedding: missingEmbedding
+        case .invalidEmbedding: invalidEmbedding
+        case .equalScores: equalScores
+        case .degenerateCalibration: degenerateCalibration
+        case .outsideRadius: outsideRadius
+        case .ambiguous: ambiguous
+        case .outsideRadiusAndAmbiguous: outsideRadiusAndAmbiguous
+        }
+    }
+}
+
+/// Two registration-only calibration summaries, not evaluation-sample scores.
+struct IdentityRegistrationRadii: Codable, Equatable, Sendable {
+    let registrationOnly: Bool
+    let a: Double
+    let b: Double
+
+    init(a: Double, b: Double) {
+        registrationOnly = true
+        self.a = a
+        self.b = b
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case registrationOnly
+        case a = "A"
+        case b = "B"
+    }
 }
 
 /// Rows are actual A/B; columns are predicted A/B/unknown. No sample-level data.
@@ -46,7 +132,7 @@ struct IdentityEvaluationGate: Codable, Equatable, Sendable {
     let explorationCandidate: Bool
     let productValidated: Bool
 
-    init(counts: IdentityEvaluationCounts) {
+    init(counts: IdentityEvaluationCounts, purpose: IdentityEvaluationPurpose = .heldout) {
         // Bound operands before arithmetic, including when called by local tests.
         let valid = [counts.correct, counts.wrong, counts.unknown].allSatisfy { (0...30).contains($0) }
         let complete = valid && counts.total == 30
@@ -55,7 +141,7 @@ struct IdentityEvaluationGate: Codable, Equatable, Sendable {
         let coverage = complete && counts.assigned * 100 >= 30 * 70
         precisionPassed = precision
         coveragePassed = coverage
-        explorationCandidate = precision && coverage
+        explorationCandidate = purpose == .heldout && precision && coverage
         productValidated = false
     }
 }
@@ -68,10 +154,11 @@ struct IdentityEvaluationThresholds: Codable, Equatable, Sendable {
     let maximumInputNormError: Double
 }
 
-/// The only serializable evaluation payload. Calibration radii, distances,
-/// embeddings and individual predictions are intentionally absent.
+/// The only serializable evaluation payload. It includes reason counts and two
+/// registration-only radii, never individual scores, embeddings or predictions.
 struct IdentityEvaluationAggregate: Codable, Equatable, Sendable {
     let protocolIdentifier: String
+    let purpose: IdentityEvaluationPurpose
     let modelSHA256: String
     let runtimeVersion: String
     let embeddingDimensions: Int
@@ -84,6 +171,7 @@ struct IdentityEvaluationAggregate: Codable, Equatable, Sendable {
     let missingEvaluationPolicy: String
     let gateScope: String
     let thresholds: IdentityEvaluationThresholds
+    let registrationRadii: IdentityRegistrationRadii
     let perCat: [IdentityCatAggregate]
     let overall: IdentityEvaluationCounts
     let confusionMatrix: IdentityConfusionMatrix
@@ -122,7 +210,8 @@ enum IdentityEvaluationCore {
         registrationB: [[Float]?],
         evaluationA: [[Float]?],
         evaluationB: [[Float]?],
-        runtimeVersion: String = expectedRuntimeVersion
+        runtimeVersion: String = expectedRuntimeVersion,
+        purpose: IdentityEvaluationPurpose = .heldout
     ) throws -> IdentityEvaluationResult {
         guard runtimeVersion == expectedRuntimeVersion else {
             throw IdentityEvaluationError.unsupportedRuntime
@@ -139,23 +228,35 @@ enum IdentityEvaluationCore {
         let radiusA = radius(referencesA)
         let radiusB = radius(referencesB)
 
-        func predict(_ input: [Float]?) -> IdentityPrediction {
-            guard let input, let vector = normalized(input) else { return .unknown }
+        func predict(_ input: [Float]?) -> (prediction: IdentityPrediction, reason: IdentityUnknownReason?) {
+            // Preserve the classifier's fail-closed order; diagnostics never
+            // alter scoring, calibration or either acceptance threshold.
+            guard let input else { return (.unknown, .missingEmbedding) }
+            guard let vector = normalized(input) else { return (.unknown, .invalidEmbedding) }
             let scoreA = score(vector, against: referencesA)
             let scoreB = score(vector, against: referencesB)
-            guard scoreA != scoreB else { return .unknown }
+            guard scoreA != scoreB else { return (.unknown, .equalScores) }
             let bestIsA = scoreA < scoreB
             let best = bestIsA ? scoreA : scoreB
             let runnerUp = bestIsA ? scoreB : scoreA
             let bestRadius = bestIsA ? radiusA : radiusB
-            guard bestRadius > 0, runnerUp > 0,
-                  best <= bestRadius * radiusMultiplier,
-                  best / runnerUp <= maximumRatio else { return .unknown }
-            return bestIsA ? .a : .b
+            guard bestRadius > 0, runnerUp > 0 else { return (.unknown, .degenerateCalibration) }
+            let withinRadius = best <= bestRadius * radiusMultiplier
+            let unambiguous = best / runnerUp <= maximumRatio
+            switch (withinRadius, unambiguous) {
+            case (false, false): return (.unknown, .outsideRadiusAndAmbiguous)
+            case (false, true): return (.unknown, .outsideRadius)
+            case (true, false): return (.unknown, .ambiguous)
+            case (true, true): return (bestIsA ? .a : .b, nil)
+            }
         }
 
-        let predictionsA = evaluationA.map(predict)
-        let predictionsB = evaluationB.map(predict)
+        let outcomesA = evaluationA.map(predict)
+        let outcomesB = evaluationB.map(predict)
+        let predictionsA = outcomesA.map { $0.prediction }
+        let predictionsB = outcomesB.map { $0.prediction }
+        let reasonsA = outcomesA.map { $0.reason }
+        let reasonsB = outcomesB.map { $0.reason }
         let countsA = counts(predictionsA, actual: .a)
         let countsB = counts(predictionsB, actual: .b)
         let overall = IdentityEvaluationCounts(
@@ -165,6 +266,7 @@ enum IdentityEvaluationCore {
         )
         let aggregate = IdentityEvaluationAggregate(
             protocolIdentifier: protocolIdentifier,
+            purpose: purpose,
             modelSHA256: modelSHA256,
             runtimeVersion: runtimeVersion,
             embeddingDimensions: dimensions,
@@ -175,7 +277,9 @@ enum IdentityEvaluationCore {
             classScore: "median-of-nearest-3-of-5-registration-distances",
             radiusDefinition: "median-of-5-leave-one-out-nearest-3-of-4-distance-medians",
             missingEvaluationPolicy: "nil-or-invalid-is-unknown;denominator-remains-30",
-            gateScope: "overall-30-heldout-samples;exploration-only;no-product-or-generalization-claim",
+            gateScope: purpose == .heldout
+                ? "overall-30-heldout-samples;exploration-only;no-product-or-generalization-claim"
+                : "overall-30-diagnostic-samples;numerical-checks-only;no-exploration-product-or-generalization-claim",
             thresholds: IdentityEvaluationThresholds(
                 radiusMultiplier: radiusMultiplier,
                 maximumBestToRunnerUpRatio: maximumRatio,
@@ -183,18 +287,22 @@ enum IdentityEvaluationCore {
                 minimumCoveragePercent: 70,
                 maximumInputNormError: maximumInputNormError
             ),
-            perCat: [IdentityCatAggregate(label: .a, counts: countsA),
-                     IdentityCatAggregate(label: .b, counts: countsB)],
+            registrationRadii: IdentityRegistrationRadii(a: radiusA, b: radiusB),
+            perCat: [IdentityCatAggregate(label: .a, counts: countsA,
+                                          reasonCounts: IdentityUnknownReasonCounts(reasons: reasonsA)),
+                     IdentityCatAggregate(label: .b, counts: countsB,
+                                          reasonCounts: IdentityUnknownReasonCounts(reasons: reasonsB))],
             overall: overall,
             confusionMatrix: IdentityConfusionMatrix(
                 actualLabels: ["A", "B"], predictedLabels: ["A", "B", "unknown"],
                 counts: [[countsA.correct, countsA.wrong, countsA.unknown],
                          [countsB.wrong, countsB.correct, countsB.unknown]]
             ),
-            gate: IdentityEvaluationGate(counts: overall)
+            gate: IdentityEvaluationGate(counts: overall, purpose: purpose)
         )
         return IdentityEvaluationResult(
-            aggregate: aggregate, predictionsA: predictionsA, predictionsB: predictionsB
+            aggregate: aggregate, predictionsA: predictionsA, predictionsB: predictionsB,
+            reasonsA: reasonsA, reasonsB: reasonsB
         )
     }
 

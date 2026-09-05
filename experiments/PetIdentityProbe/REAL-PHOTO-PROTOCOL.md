@@ -1,5 +1,18 @@
 # 実写真で2匹を見分ける・事前固定protocol
 
+## Build 4診断モードの追補（2026-09-05）
+
+以下のv1はBuild 3で結果を見る前に固定した検証の記録であり、書き換えて合格にしない。初回は猫A 0正解/0誤り/15保留、猫B 5正解/0誤り/10保留（判定率16.7%）。保留の内訳が記録されていなかったため、Build 4は**原因の診断専用**とする。
+
+- 前処理・モデル・距離・半径計算・閾値・30枚固定分母は変更しない。`purpose=diagnostic`、`explorationCandidate=false`、`productValidated=false`を必ず出す。数値上のprecision/coverage条件を満たしても、独立標本による合格にはならない。新しい受け入れ検証は別途計画する。
+- 同じ写真の再実行・欄ごとの入れ替えを許可する。全体同一asset・同猫burst/dHashの重複除外は維持。初回の40枚が消去済みなら復元はできず、最初の再選択だけ必要になり得る。旧版で結果を見た写真も診断には利用可。
+- 途中の選択（各欄0〜5/15枚、全体最大40枚）のPhotoKit localIdentifierだけを専用アプリのApplication Supportにatomic保存。ファイル保護Complete、専用directoryとfileをバックアップ対象外に設定。画像・名前・日時・特徴量・個別結果・履歴は保存しない。保存失敗は明示し、破損・未知schemaは自動上書きしない。画面離脱/backgroundは処理取消と画像・特徴量・結果の破棄のみで、選択は維持する。明示した「保存した選択と結果を消去」で、この固定保存ファイルのみ削除する。原本は変更しない。
+- 保存選択をPHPickerのpreselectionへ渡し、部分選択の再開と欄単位の変更に対応。Cancelは既存preselectionを返し、全解除は空配列を返す仕様を反映。[Apple公式preselection仕様](https://developer.apple.com/documentation/photosui/phpickerconfiguration-swift.struct/preselectedassetidentifiers)。端末変更、アプリ削除、写真削除、権限変更時の参照有効性は保証しない。
+- JSONには猫A/B別の排他的保留理由件数、見本5枚だけから求めた校正半径2値（`registrationOnly=true`）を追加。coreの`missingEmbedding`は、入力診断のasset取得不可・ローカル画像読込不可・猫未検出・複数猫・crop不成立・Vision実行失敗に分かれる。**入力診断はmissingEmbeddingの内訳であり、両者を加算しない。** 個別距離・個別予測・写真・IDは送らない。ORT異常はこれまでどおり処理中止。
+- 共有JSONのOS・モデル等の既存項目は維持。集計の共有は本人の明示操作のみ。本体アプリ・共有サーバー・Widgetは一切変更しない。
+
+## Build 3の固定検証（履歴）
+
 ID: `pet-identity-onnx-heldout-v1`。2026-09-05、実写の結果を見る前に固定。
 目的はCPUの固定モデルが実写評価の次段階へ進めるかを調べること。旧ADR-016のFeaturePrint/HSVのNo-Goは変更しない。本体へ自動識別を実装する合格判定ではない。
 

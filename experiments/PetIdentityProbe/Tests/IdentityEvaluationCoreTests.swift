@@ -27,6 +27,9 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         let result = try evaluate(a, b)
         XCTAssertEqual(Array(result.predictionsA.prefix(3)), [.a, .b, .unknown])
         XCTAssertEqual(Array(result.predictionsB.prefix(3)), [.a, .b, .b])
+        XCTAssertNil(result.reasonsA[0])
+        XCTAssertNil(result.reasonsA[1]) // A confident wrong assignment is not unknown.
+        XCTAssertTrue(result.reasonsB.prefix(3).allSatisfy { $0 == nil })
         XCTAssertEqual(result.aggregate.perCat.map(\.label), [.a, .b])
         XCTAssertEqual(result.aggregate.perCat[0].counts, .init(correct: 1, wrong: 1, unknown: 13))
         XCTAssertEqual(result.aggregate.perCat[1].counts, .init(correct: 2, wrong: 1, unknown: 12))
@@ -44,6 +47,7 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         XCTAssertTrue(result.aggregate.gate.coveragePassed)
         XCTAssertTrue(result.aggregate.gate.explorationCandidate)
         XCTAssertFalse(result.aggregate.gate.productValidated)
+        XCTAssertEqual(result.aggregate.purpose, .heldout)
     }
 
     func testMissingEvaluationKeepsThirtyInDenominatorAndSeventyPercentBoundary() throws {
@@ -118,6 +122,8 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         XCTAssertEqual(changed.predictionsA[0], baseline.predictionsA[0])
         XCTAssertEqual(changed.aggregate.overall.correct, 1)
         XCTAssertEqual(changed.aggregate.overall.unknown, 29)
+        XCTAssertEqual(changed.aggregate.registrationRadii, baseline.aggregate.registrationRadii)
+        XCTAssertTrue(changed.aggregate.registrationRadii.registrationOnly)
     }
 
     func testInvalidEvaluationVectorsAreUnknownAndInvalidRegistrationThrows() throws {
@@ -165,26 +171,138 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         )) { XCTAssertEqual($0 as? IdentityEvaluationError, .unsupportedRuntime) }
     }
 
+    func testReasonPrecedenceMissingInvalidThenTieBeforeDegenerateCalibration() throws {
+        let invalid = Array(repeating: Float(0), count: 512)
+        let inputs: [[Float]?] = [nil, invalid, vector(0)] + Array(repeating: nil, count: 12)
+        let identical = Array<[Float]?>(repeating: vector(0), count: 5)
+        let tie = try IdentityEvaluationCore.evaluate(
+            registrationA: identical, registrationB: identical,
+            evaluationA: inputs, evaluationB: inputs
+        )
+        // Both radii are zero, but missing/invalid/tied inputs keep the earlier reason.
+        XCTAssertEqual(Array(tie.reasonsA.prefix(3)), [.missingEmbedding, .invalidEmbedding, .equalScores])
+        XCTAssertEqual(tie.aggregate.registrationRadii.a, 0)
+        XCTAssertEqual(tie.aggregate.registrationRadii.b, 0)
+        XCTAssertEqual(tie.aggregate.perCat[0].reasonCounts.degenerateCalibration, 0)
+
+        let degenerate = try IdentityEvaluationCore.evaluate(
+            registrationA: identical, registrationB: Array(repeating: vector(1.5), count: 5),
+            evaluationA: Array(repeating: vector(0.7), count: 15),
+            evaluationB: Array(repeating: vector(1.5), count: 15)
+        )
+        // A zero winning radius takes precedence over radius/margin failures.
+        XCTAssertTrue(degenerate.reasonsA.allSatisfy { $0 == .degenerateCalibration })
+        XCTAssertTrue(degenerate.reasonsB.allSatisfy { $0 == .degenerateCalibration })
+    }
+
+    func testRadiusMarginAndJointReasonsDoNotChangeClassification() throws {
+        let inputs: [[Float]?] = [vector(0), vector(0.6), vector(0.7)] + Array(repeating: nil, count: 12)
+        let result = try evaluate(inputs, Array(repeating: nil, count: 15))
+        XCTAssertEqual(Array(result.predictionsA.prefix(3)), [.a, .unknown, .unknown])
+        XCTAssertEqual(Array(result.reasonsA.prefix(3)), [nil, .outsideRadius, .outsideRadiusAndAmbiguous])
+        let overlapping = try IdentityEvaluationCore.evaluate(
+            registrationA: references(0), registrationB: references(0.1),
+            evaluationA: Array(repeating: vector(0.048), count: 15),
+            evaluationB: Array(repeating: nil, count: 15)
+        )
+        XCTAssertTrue(overlapping.predictionsA.allSatisfy { $0 == .unknown })
+        XCTAssertTrue(overlapping.reasonsA.allSatisfy { $0 == .ambiguous })
+    }
+
+    func testReasonCountsSumToUnknownAndFollowPredictionOrder() throws {
+        let invalid = Array(repeating: Float(0), count: 511)
+        let inputs: [[Float]?] = [vector(0), vector(1.5), nil, invalid, vector(0.6), vector(0.7)]
+            + Array(repeating: nil, count: 9)
+        let result = try evaluate(inputs, Array(repeating: nil, count: 15))
+        let reasons = result.aggregate.perCat[0].reasonCounts
+        XCTAssertEqual(reasons.missingEmbedding, 10)
+        XCTAssertEqual(reasons.invalidEmbedding, 1)
+        XCTAssertEqual(reasons.outsideRadius, 1)
+        XCTAssertEqual(reasons.outsideRadiusAndAmbiguous, 1)
+        XCTAssertEqual(reasons.ambiguous, 0)
+        XCTAssertEqual(reasons.equalScores, 0)
+        XCTAssertEqual(reasons.degenerateCalibration, 0)
+        XCTAssertEqual(reasons.total, 13)
+        for (index, pair) in [(result.predictionsA, result.reasonsA),
+                              (result.predictionsB, result.reasonsB)].enumerated() {
+            XCTAssertEqual(pair.0.count, 15)
+            XCTAssertEqual(pair.1.count, 15)
+            for (prediction, reason) in zip(pair.0, pair.1) {
+                XCTAssertEqual(prediction == .unknown, reason != nil)
+            }
+            let row = result.aggregate.perCat[index]
+            XCTAssertEqual(row.reasonCounts.total, row.counts.unknown)
+            XCTAssertEqual(IdentityUnknownReason.allCases.reduce(0) { $0 + row.reasonCounts[$1] }, row.counts.unknown)
+        }
+        XCTAssertEqual(result.aggregate.perCat.reduce(0) { $0 + $1.reasonCounts.total }, result.aggregate.overall.unknown)
+        XCTAssertTrue(IdentityUnknownReason.allCases.allSatisfy { !$0.title.isEmpty })
+    }
+
+    func testDiagnosticPurposeCannotPassExplorationDespitePassingNumericalGates() throws {
+        let a = Array<[Float]?>(repeating: vector(0), count: 15)
+        let b = Array<[Float]?>(repeating: vector(1.5), count: 15)
+        let heldout = try evaluate(a, b)
+        let diagnostic = try IdentityEvaluationCore.evaluate(
+            registrationA: references(0), registrationB: references(1.5),
+            evaluationA: a, evaluationB: b, purpose: .diagnostic
+        )
+        XCTAssertEqual(diagnostic.predictionsA, heldout.predictionsA)
+        XCTAssertEqual(diagnostic.predictionsB, heldout.predictionsB)
+        XCTAssertEqual(diagnostic.reasonsA, heldout.reasonsA)
+        XCTAssertEqual(diagnostic.reasonsB, heldout.reasonsB)
+        XCTAssertEqual(diagnostic.aggregate.overall, heldout.aggregate.overall)
+        XCTAssertEqual(diagnostic.aggregate.thresholds, heldout.aggregate.thresholds)
+        XCTAssertEqual(diagnostic.aggregate.registrationRadii, heldout.aggregate.registrationRadii)
+        XCTAssertEqual(diagnostic.aggregate.purpose, .diagnostic)
+        XCTAssertTrue(diagnostic.aggregate.gateScope.contains("diagnostic"))
+        XCTAssertTrue(diagnostic.aggregate.gate.precisionPassed)
+        XCTAssertTrue(diagnostic.aggregate.gate.coveragePassed)
+        XCTAssertFalse(diagnostic.aggregate.gate.explorationCandidate)
+        XCTAssertFalse(diagnostic.aggregate.gate.productValidated)
+        XCTAssertTrue(heldout.aggregate.gate.explorationCandidate)
+        XCTAssertFalse(heldout.aggregate.gate.productValidated)
+        let direct = IdentityEvaluationGate(counts: .init(correct: 30, wrong: 0, unknown: 0), purpose: .diagnostic)
+        XCTAssertFalse(direct.explorationCandidate)
+        let exported = try JSONEncoder().encode(diagnostic.aggregate)
+        let decoded = try JSONDecoder().decode(IdentityEvaluationAggregate.self, from: exported)
+        XCTAssertEqual(decoded.purpose, .diagnostic)
+        XCTAssertFalse(decoded.gate.explorationCandidate)
+        XCTAssertFalse(decoded.gate.productValidated)
+    }
+
     func testAggregateJSONContainsOnlyFixedMetadataAndCounts() throws {
         let result = try evaluate(Array(repeating: vector(0), count: 15),
                                   Array(repeating: nil, count: 15))
         let data = try JSONEncoder().encode(result.aggregate)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(Set(object.keys), [
-            "protocolIdentifier", "modelSHA256", "runtimeVersion", "embeddingDimensions",
+            "protocolIdentifier", "purpose", "modelSHA256", "runtimeVersion", "embeddingDimensions",
             "registrationCountPerCat", "evaluationCountPerCat", "distanceMetric", "normalization",
             "classScore", "radiusDefinition", "missingEvaluationPolicy", "gateScope", "thresholds",
-            "perCat", "overall", "confusionMatrix", "gate"
+            "registrationRadii", "perCat", "overall", "confusionMatrix", "gate"
         ])
         XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-onnx-heldout-v1")
         XCTAssertEqual(object["modelSHA256"] as? String, IdentityEvaluationCore.modelSHA256)
         XCTAssertEqual(object["runtimeVersion"] as? String, "1.24.2")
+        XCTAssertEqual(object["purpose"] as? String, "heldout")
         let rows = try XCTUnwrap(object["perCat"] as? [[String: Any]])
         XCTAssertEqual(rows.compactMap { $0["label"] as? String }, ["A", "B"])
-        XCTAssertTrue(rows.allSatisfy { Set($0.keys) == ["label", "counts"] })
+        XCTAssertTrue(rows.allSatisfy { Set($0.keys) == ["label", "counts", "reasonCounts"] })
+        for row in rows {
+            let reasonCounts = try XCTUnwrap(row["reasonCounts"] as? [String: Int])
+            let counts = try XCTUnwrap(row["counts"] as? [String: Int])
+            let unknown = try XCTUnwrap(counts["unknown"])
+            XCTAssertEqual(Set(reasonCounts.keys), Set(IdentityUnknownReason.allCases.map(\.rawValue)))
+            XCTAssertEqual(reasonCounts.values.reduce(0, +), unknown)
+        }
+        let radii = try XCTUnwrap(object["registrationRadii"] as? [String: Any])
+        XCTAssertEqual(Set(radii.keys), ["A", "B", "registrationOnly"])
+        XCTAssertEqual(radii["registrationOnly"] as? Bool, true)
+        XCTAssertEqual(radii["A"] as? Double, result.aggregate.registrationRadii.a)
+        XCTAssertEqual(radii["B"] as? Double, result.aggregate.registrationRadii.b)
         let forbiddenKeys: Set<String> = ["predictionsA", "predictionsB", "predictions", "vectors",
                                           "embeddings", "distances", "radiusA", "radiusB", "name",
-                                          "photoID", "assetIdentifier", "date", "samples"]
+                                          "photoID", "assetIdentifier", "date", "samples", "reasonsA", "reasonsB"]
         func check(_ value: Any) {
             if let dictionary = value as? [String: Any] {
                 XCTAssertTrue(forbiddenKeys.isDisjoint(with: dictionary.keys))
