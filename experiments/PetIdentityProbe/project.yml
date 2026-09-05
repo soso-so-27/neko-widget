@@ -1,0 +1,57 @@
+name: PetIdentityProbe
+options:
+  deploymentTarget:
+    iOS: "17.1"
+packages:
+  onnxruntime:
+    url: https://github.com/microsoft/onnxruntime-swift-package-manager
+    revision: b7fb7f7dea8a2469e6335d95a61b8f36d0dc83b2
+settings:
+  SWIFT_VERSION: "5.0"
+  CODE_SIGNING_ALLOWED: NO
+targets:
+  PetIdentityProbe:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - path: Resources
+        buildPhase: resources
+    dependencies:
+      - package: onnxruntime
+        product: onnxruntime
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: local.nekomado.PetIdentityProbe
+      TARGETED_DEVICE_FAMILY: "1,2"
+      MARKETING_VERSION: "0.1"
+      CURRENT_PROJECT_VERSION: "1"
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: 猫識別・動作確認
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+  PetIdentityProbeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: PetIdentityProbe
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: local.nekomado.PetIdentityProbeTests
+      GENERATE_INFOPLIST_FILE: YES
+schemes:
+  PetIdentityProbe:
+    build:
+      targets:
+        PetIdentityProbe: all
+    test:
+      targets:
+        - PetIdentityProbeTests
+      gatherCoverageData: false

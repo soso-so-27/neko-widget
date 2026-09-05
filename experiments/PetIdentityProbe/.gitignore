@@ -1,0 +1,5 @@
+Resources/model.onnx
+Resources/*.download
+Generated/
+PetIdentityProbe.xcodeproj/
+__pycache__/
