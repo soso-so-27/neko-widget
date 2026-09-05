@@ -14,7 +14,13 @@ final class IdentitySelectionArchiveTests: XCTestCase {
         try archive.save([.referenceA: ["synthetic-a-1", "synthetic-a-2"]])
         XCTAssertEqual(try archive.load()[.referenceA], ["synthetic-a-1", "synthetic-a-2"])
         XCTAssertEqual(try archive.url.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+        XCTAssertTrue(IdentitySelectionArchive.writingOptions.contains(.atomic))
+        XCTAssertTrue(IdentitySelectionArchive.writingOptions.contains(.completeFileProtection))
+        // Simulator does not expose iOS hardware-backed data-protection metadata.
+        // Verify the requested policy here; only device tests can assert the attribute.
+        #if !targetEnvironment(simulator)
         XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: archive.url.path)[.protectionKey] as? FileProtectionType, .complete)
+        #endif
         let other = archive.url.deletingLastPathComponent().appendingPathComponent("unrelated.txt")
         try Data("keep".utf8).write(to: other)
         try archive.save([.referenceB: ["replacement"]])

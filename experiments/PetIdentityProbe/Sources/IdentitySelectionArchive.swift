@@ -4,6 +4,7 @@ import Foundation
 /// embeddings, timestamps, predictions, or growing history. Never exported.
 struct IdentitySelectionArchive {
     let url: URL
+    static let writingOptions: Data.WritingOptions = [.atomic, .completeFileProtection]
 
     static var device: IdentitySelectionArchive {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -39,7 +40,7 @@ struct IdentitySelectionArchive {
         try directory.setResourceValues(excluded)
         let payload = Payload(schema: 1, slots: Dictionary(uniqueKeysWithValues: selections.map { ($0.key.rawValue, $0.value) }))
         let data = try JSONEncoder().encode(payload)
-        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        try data.write(to: url, options: Self.writingOptions)
         var file = url
         try file.setResourceValues(excluded)
     }

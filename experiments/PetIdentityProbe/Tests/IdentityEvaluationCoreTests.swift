@@ -298,8 +298,13 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         let radii = try XCTUnwrap(object["registrationRadii"] as? [String: Any])
         XCTAssertEqual(Set(radii.keys), ["A", "B", "registrationOnly"])
         XCTAssertEqual(radii["registrationOnly"] as? Bool, true)
-        XCTAssertEqual(radii["A"] as? Double, result.aggregate.registrationRadii.a)
-        XCTAssertEqual(radii["B"] as? Double, result.aggregate.registrationRadii.b)
+        let radiusA = try XCTUnwrap(radii["A"] as? Double)
+        let radiusB = try XCTUnwrap(radii["B"] as? Double)
+        let expected = result.aggregate
+        // Foundation's decimal JSON conversion can move a radius by a few ULPs.
+        // Keep this tolerance confined to serialized calibration summaries.
+        XCTAssertEqual(radiusA, expected.registrationRadii.a, accuracy: expected.registrationRadii.a.ulp * 4)
+        XCTAssertEqual(radiusB, expected.registrationRadii.b, accuracy: expected.registrationRadii.b.ulp * 4)
         let forbiddenKeys: Set<String> = ["predictionsA", "predictionsB", "predictions", "vectors",
                                           "embeddings", "distances", "radiusA", "radiusB", "name",
                                           "photoID", "assetIdentifier", "date", "samples", "reasonsA", "reasonsB"]
