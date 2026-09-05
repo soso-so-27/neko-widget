@@ -76,7 +76,9 @@ Macを使う場合は独立bundleの開発署名と接続したiPhoneを選ぶ�
 - 現行Xcodeが静的frameworkのbinaryを除きresourcesをコピーすること自体は正常であり、旧TN2435の非embed説明だけでは判断しない。またXcodeGenのpackageでは`embed:false`だけではコピー抑止にならない可能性があるため、この設定案は採用しない。[現行Apple資料](https://developer.apple.com/documentation/xcode/creating-a-static-framework)、[XcodeGen package処理](https://github.com/yonaskolb/XcodeGen/blob/master/Sources/XcodeGenKit/PBXProjGenerator.swift)。
 - device build log 368–371行で、Xcodeが元static archiveを除いた後に`arm64-apple-ios17.1`のstub binaryを注入すると確認。元framework metadataは15.1のままなので、実binaryの最低OSより低い宣言となっていた。空shell除去案は実行前に取り下げた。
 - `align-ort-stub-minimum-os.py`は専用app内の生成済ORT 1.24.2 frameworkだけを対象に、`vtool`の全sliceのplatform/minosをアプリdeploymentと照合し、既知の元15.1または補正済み値だけを許容する。metadataの最低OSを実stubに合わせ（引き下げ禁止）、署名有効時は同じ専用Distribution証明書でframeworkを再署名してからXcodeがappを署名する。archive/IPAでも最低OS整合とapp/frameworkの証明書一致を確認。モデル・ライブラリ版・上流バイナリは変更しない。
-- 修正後の起動/合成入力を確認してからBuild 2を提出する。Apple処理完了と内部配布への反映を確認するまで「配布完了」としない。
+- 修正`a92d08c2990b3590cff7444f22b6336f2ab55c59`は独立署名レビューと対象self-testを通過。[候補CI 33944286226](https://github.com/soso-so-27/neko-widget/actions/runs/33944286226)でiPhone向けbuildとSimulator起動/合成入力が成功（8分12秒）。同じSHAをmainへ進め、重複した合成入力CIは追加しなかった。
+- [main配布CI 33944688433](https://github.com/soso-so-27/neko-widget/actions/runs/33944688433)でBuild `0.1 (2)`の署名archive・IPA検証・Apple validate/uploadが成功（4分9秒、2026-09-05 13:33:59 JST upload完了）。Apple処理完了と内部配布への反映を確認するまで「配布完了」としない。
+- 同日、ASCでBuild 2のアップロード「終了」、内部ビルド「テスト中」、グループ「自分用（猫識別検証）」への自動配布を確認。Build UUIDは`ad8023fa-9ce3-433e-a9c4-1be2b53810f3`。Build 1の90208は解消し、本人用TestFlight配布は完了。実機インストール・CPU測定と結果JSON共有は本人の次操作であり、実機性能や個体識別精度の確認済みとは扱わない。
 
 ## 読み違えてはいけない値
 
