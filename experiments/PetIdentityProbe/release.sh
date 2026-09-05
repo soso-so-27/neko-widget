@@ -45,6 +45,7 @@ case "${1:-}" in
     # mkdir is exclusive: an unrelated existing directory is never reused.
     mkdir "$release_dir"
     printf '%s' "$owner" > "$release_dir/owner"
+    private_stage release-checks python3 verify-release.py self-test
     private_stage xcode-version xcodebuild -version
     private_stage model-download python3 prepare.py
     private_stage python-dependencies python3 -m pip install \

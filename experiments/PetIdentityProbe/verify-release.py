@@ -93,7 +93,9 @@ def check_entitlements(entitlements, team, *, profile):
     groups = entitlements.get("keychain-access-groups", [])
     allowed = [[], [f"{team}.{BUNDLE}"]]
     if profile:
-        allowed.append([f"{team}.*"])
+        # Apple's profile allowlist is broader than the app's claimed rights.
+        # TN3125 documents this standard pair; never allow it in app signatures.
+        allowed.extend([[f"{team}.*"], [f"{team}.*", "com.apple.token"]])
     require(groups in allowed, "Unexpected keychain group.")
 
 
@@ -416,6 +418,22 @@ def self_test():
                          "get-task-allow": False, "beta-reports-active": True},
     }
     check_profile(profile, team, certificate)
+    for groups in ([f"{team}.*"], [f"{team}.*", "com.apple.token"]):
+        check_profile({**profile, "Entitlements": {
+            **profile["Entitlements"], "keychain-access-groups": groups,
+        }}, team, certificate)
+    for groups in ([], [f"{team}.{BUNDLE}"]):
+        check_entitlements({**profile["Entitlements"], "keychain-access-groups": groups},
+                           team, profile=False)
+    for groups in ([f"{team}.*"], ["com.apple.token"],
+                   [f"{team}.*", "com.apple.token"],
+                   [f"{team}.{BUNDLE}", "com.apple.token"]):
+        try:
+            check_entitlements({**profile["Entitlements"], "keychain-access-groups": groups},
+                               team, profile=False)
+        except InvalidRelease:
+            continue
+        raise InvalidRelease("A profile-only keychain group was allowed in an app signature.")
     variants = [
         {**profile, "ProvisionedDevices": []},
         {**profile, "ExpirationDate": now - dt.timedelta(seconds=1)},
@@ -427,6 +445,8 @@ def self_test():
         {"get-task-allow": True}, {"com.apple.security.application-groups": []},
         {"aps-environment": "production"}, {"com.apple.developer.icloud-services": []},
         {"keychain-access-groups": [f"{team}.jp.nekowidget.app"]},
+        {"keychain-access-groups": ["OTHERTEAM1.*", "com.apple.token"]},
+        {"keychain-access-groups": [f"{team}.*", "com.apple.token", "unexpected.group"]},
     ):
         variants.append({**profile, "Entitlements": {**profile["Entitlements"], **change}})
     for variant in variants:
