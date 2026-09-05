@@ -66,6 +66,7 @@ struct CatProfileDetailView: View {
                         }
                         .disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                    .buttonStyle(.borderless)
                     .disabled(isSavingName)
                 } else {
                     Button("名前を変更", systemImage: "pencil") {

@@ -430,9 +430,9 @@ private struct AddCatProfileView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "追加中…" : "追加") {
+                        isSaving = true
+                        saveFailed = false
                         Task {
-                            isSaving = true
-                            saveFailed = false
                             let identifier = await createProfile(draft)
                             isSaving = false
                             if let identifier {
