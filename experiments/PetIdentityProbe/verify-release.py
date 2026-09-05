@@ -22,6 +22,7 @@ import zipfile
 
 BUNDLE = "jp.nekowidget.petidentityprobe"
 VERSION = "0.1"
+PHOTO_PURPOSE = "選んだ猫写真だけを端末内で識別精度の検証に使います。写真の送信や原本の変更はしません。"
 MODEL_SHA256 = "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b"
 ENTITLEMENTS = {
     "application-identifier", "com.apple.developer.team-identifier",
@@ -169,8 +170,10 @@ def check_info(info, build):
             and info.get("CFBundleVersion") == build, "App version/build does not match.")
     require(info.get("UIDeviceFamily") == [1], "Only the independent iPhone target is allowed.")
     require(info.get("CFBundleSupportedPlatforms") == ["iPhoneOS"], "A device app is required.")
-    require(not any(key.startswith("NS") and key.endswith("UsageDescription") for key in info),
-            "Privacy permission usage descriptions are forbidden in this synthetic probe.")
+    permission_keys = {key for key in info if key.startswith("NS") and key.endswith("UsageDescription")}
+    require(permission_keys == {"NSPhotoLibraryUsageDescription"}
+            and info.get("NSPhotoLibraryUsageDescription") == PHOTO_PURPOSE,
+            "Only the fixed, selected-photo evaluation permission is allowed.")
     require(not any(key in info for key in ("NSExtension", "UIBackgroundModes", "CFBundleURLTypes")),
             "Unexpected extension, background or URL capability.")
     require(info.get("ITSAppUsesNonExemptEncryption") is False,
@@ -480,10 +483,11 @@ def self_test():
     info = {"CFBundleIdentifier": BUNDLE, "CFBundleExecutable": "PetIdentityProbe",
             "CFBundleShortVersionString": VERSION, "CFBundleVersion": "1",
             "UIDeviceFamily": [1], "CFBundleSupportedPlatforms": ["iPhoneOS"],
-            "ITSAppUsesNonExemptEncryption": False}
+            "ITSAppUsesNonExemptEncryption": False, "NSPhotoLibraryUsageDescription": PHOTO_PURPOSE}
     check_info(info, "1")
     for change in ({"NSPhotoLibraryUsageDescription": "forbidden"},
                    {"NSPhotoLibraryAddUsageDescription": "forbidden"},
+                   {"NSCameraUsageDescription": "forbidden"},
                    {"CFBundleIdentifier": "jp.nekowidget.app"},
                    {"CFBundleVersion": "2"}):
         try:

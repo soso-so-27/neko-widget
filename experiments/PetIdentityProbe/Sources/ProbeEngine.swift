@@ -1,9 +1,8 @@
-import CryptoKit
 import Darwin
 import Foundation
 import OnnxRuntimeBindings
 
-// This target has no Photos, app-group, networking or application-store access.
+// The synthetic benchmark does not access Photos or the production app's stores.
 enum ProbeEngine {
     private static let worker = Worker()
 
@@ -25,28 +24,8 @@ enum ProbeEngine {
         }
 
         private func measure(mode: ProbeMode) throws -> ProbeReport {
-            let modelHash = "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b"
-            guard let modelURL = Bundle.main.url(forResource: "model-fixed", withExtension: "onnx") else {
-                throw Failure("確認用モデルがありません。prepare.pyを実行してビルドしてください。")
-            }
-            // Stream verification, without keeping another 85 MiB copy in memory.
-            let handle = try FileHandle(forReadingFrom: modelURL)
-            var hash = SHA256()
-            var bytes = 0
-            do {
-                while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
-                    hash.update(data: chunk)
-                    bytes += chunk.count
-                }
-                try handle.close()
-            } catch {
-                try? handle.close()
-                throw error
-            }
-            guard bytes == 89_227_594,
-                  hash.finalize().map({ String(format: "%02x", $0) }).joined() == modelHash else {
-                throw Failure("モデルの検証に失敗しました。測定を中止しました。")
-            }
+            let modelHash = ProbeModelFile.sha256
+            let modelURL = try ProbeModelFile.validatedURL()
 
             let tensors = try ProbeEngine.syntheticInputs()
             let thermalBefore = ProbeEngine.thermalState()

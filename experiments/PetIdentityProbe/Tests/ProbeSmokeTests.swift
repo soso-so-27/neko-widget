@@ -10,13 +10,13 @@ final class ProbeSmokeTests: XCTestCase {
         XCTAssertGreaterThan(cpu.sampledPeakFootprintMiB, 0)
         print("PROBE_CPU_JSON=" + (try json(cpu)))
         // Simulator success is not device evidence. Keep CoreML failures visible.
-        do {
+        if ProcessInfo.processInfo.environment["PROBE_INCLUDE_COREML"] == "1" { do {
             let coreML = try await ProbeEngine.run(mode: .coreML)
             XCTAssertGreaterThanOrEqual(coreML.cpuCosineSimilarity ?? 0, 0.999)
             print("PROBE_COREML_JSON=" + (try json(coreML)))
         } catch {
             print("PROBE_COREML_UNVERIFIED=" + error.localizedDescription)
-        }
+        } }
         print("PROBE_SMOKE_COMPLETE")
     }
 

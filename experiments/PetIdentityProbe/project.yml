@@ -51,6 +51,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
+        NSPhotoLibraryUsageDescription: 選んだ猫写真だけを端末内で識別精度の検証に使います。写真の送信や原本の変更はしません。
+        PHPhotoLibraryPreventAutomaticLimitedAccessAlert: true
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

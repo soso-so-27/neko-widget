@@ -23,6 +23,12 @@ private struct ProbeView: View {
         NavigationStack {
             Form {
                 Section {
+                    NavigationLink("実写真で2匹を見分ける") { IdentityEvaluationView() }
+                        .disabled(runningMode != nil)
+                    Text("見本5枚＋判定用15枚を2匹分。写真は端末内だけで扱います。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
                     Label("合成入力・精度は未測定", systemImage: "exclamationmark.triangle")
                         .font(.headline)
                     Text("同じ合成入力で処理時間と出力の一致を確認します。猫の個体識別精度は評価できません。")
