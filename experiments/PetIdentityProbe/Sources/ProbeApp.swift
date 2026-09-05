@@ -17,6 +17,7 @@ private struct ProbeView: View {
     @State private var reports: [ProbeReport] = []
     @State private var status = "未実行"
     @State private var errorMessage: String?
+    @State private var confirmsCoreML = false
 
     var body: some View {
         NavigationStack {
@@ -30,23 +31,12 @@ private struct ProbeView: View {
                 }
 
                 Section("実行") {
-                    HStack {
-                        Button("CPUを実行") { run(.cpu) }
-                            .frame(maxWidth: .infinity)
-                            .accessibilityIdentifier("probe-run-cpu")
-                        Button("Core ML優先で実行") { run(.coreML) }
-                            .frame(maxWidth: .infinity)
-                            .disabled(!hasCPUReference)
-                            .accessibilityIdentifier("probe-run-coreml")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(runningMode != nil)
-
-                    if !hasCPUReference {
-                        Text("先にCPUで基準を測定")
-                            .font(.footnote)
-                    }
-                    Text("Core ML優先（CPU併用の場合あり）。実行成功だけではGPU・ANEの使用を確認できません。")
+                    Button("CPUで測定する") { run(.cpu) }
+                        .frame(maxWidth: .infinity)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(runningMode != nil)
+                        .accessibilityIdentifier("probe-run-cpu")
+                    Text("写真へのアクセスや自動送信はありません。測定が終わったら結果を共有できます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 
@@ -85,10 +75,50 @@ private struct ProbeView: View {
                         Text("各モードの最新の集計結果だけを共有します。結果はメモリ内に保持し、自動保存しません。")
                     }
                 }
+
+                Section {
+                    DisclosureGroup("追加比較（任意）") {
+                        Text("Core MLは準備に時間とメモリを多く使い、アプリが終了する場合があります。まずCPUの結果だけで確認を進めます。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Button("Core ML優先で測定") { confirmsCoreML = true }
+                            .disabled(runningMode != nil || !hasCPUReference)
+                            .accessibilityIdentifier("probe-run-coreml")
+                        Text("CPU併用の場合もあります。成功だけではGPU・ANEの使用を確認できません。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    NavigationLink("使用モデル・ライセンス") {
+                        ScrollView {
+                            Text(thirdPartyNotices)
+                                .font(.footnote.monospaced())
+                                .textSelection(.enabled)
+                                .padding()
+                        }
+                        .navigationTitle("ライセンス")
+                    }
+                }
             }
-            .navigationTitle("Pet Identity Probe")
+            .navigationTitle("猫識別・動作確認")
             .navigationBarTitleDisplayMode(.inline)
+            .alert("負荷の大きい追加比較を実行しますか？", isPresented: $confirmsCoreML) {
+                Button("キャンセル", role: .cancel) { }
+                Button("実行する") { run(.coreML) }
+            } message: {
+                Text("CPU結果を先に共有してください。アプリが終了すると、未共有の測定結果は失われます。")
+            }
         }
+    }
+
+    private var thirdPartyNotices: String {
+        guard let url = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return "ライセンス情報を読み込めませんでした。"
+        }
+        return text
     }
 
     private var hasCPUReference: Bool {

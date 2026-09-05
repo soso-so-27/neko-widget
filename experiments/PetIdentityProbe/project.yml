@@ -9,26 +9,42 @@ packages:
 settings:
   SWIFT_VERSION: "5.0"
   CODE_SIGNING_ALLOWED: NO
+  PROBE_SIGNING_ALLOWED: NO
+  PROBE_BUILD_NUMBER: "1"
 targets:
   PetIdentityProbe:
     type: application
     platform: iOS
     sources:
       - Sources
+      - path: Generated/ProbeAssets.xcassets
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: Generated/ThirdPartyNotices.txt
+        buildPhase: resources
       - path: Resources/model-fixed.onnx
         buildPhase: resources
     dependencies:
       - package: onnxruntime
         product: onnxruntime
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: local.nekomado.PetIdentityProbe
+      PRODUCT_BUNDLE_IDENTIFIER: jp.nekowidget.petidentityprobe
       TARGETED_DEVICE_FAMILY: "1"
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      CODE_SIGNING_ALLOWED: $(PROBE_SIGNING_ALLOWED)
+      CODE_SIGNING_REQUIRED: YES
+      CODE_SIGN_STYLE: Manual
+      DEVELOPMENT_TEAM: $(PROBE_TEAM_ID)
+      CODE_SIGN_IDENTITY: $(PROBE_SIGN_IDENTITY)
+      PROVISIONING_PROFILE_SPECIFIER: $(PROBE_PROFILE_UUID)
+      OTHER_CODE_SIGN_FLAGS: $(PROBE_CODE_SIGN_FLAGS)
       MARKETING_VERSION: "0.1"
-      CURRENT_PROJECT_VERSION: "1"
+      CURRENT_PROJECT_VERSION: $(PROBE_BUILD_NUMBER)
     info:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: 猫識別・動作確認
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -44,7 +60,7 @@ targets:
     dependencies:
       - target: PetIdentityProbe
     settings:
-      PRODUCT_BUNDLE_IDENTIFIER: local.nekomado.PetIdentityProbeTests
+      PRODUCT_BUNDLE_IDENTIFIER: jp.nekowidget.petidentityprobe.tests
       GENERATE_INFOPLIST_FILE: YES
 schemes:
   PetIdentityProbe:

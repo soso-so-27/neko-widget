@@ -4,7 +4,7 @@
 
 ## 含むもの
 
-- 別アプリ `local.nekomado.PetIdentityProbe`。写真権限、App Group、iCloud、通知、通信実装、解析SDKなし。
+- 別アプリ `jp.nekowidget.petidentityprobe`。写真権限、App Group、iCloud、通知、通信実装、解析SDKなし。
 - CPU基準→Core ML優先の2操作。推論は専用actorで実行し、UIを処理スレッドにしない。
 - 固定モデルのサイズ／SHA-256確認、合成RGB 3種類、18回のwarm処理、512次元出力の検査。
 - Core ML結果とCPU基準のコサイン類似度を比較（合成入力間の最低値0.999以上）。GPU／ANE使用率を確認したことにはしない。
@@ -31,15 +31,37 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python3 prepare.py
 python3 fix-model.py Resources/model.onnx Resources/model-fixed.onnx
+python3 prepare-notices.py
+swift make-icon.swift
 xcodegen generate
 open PetIdentityProbe.xcodeproj
 ```
 
-`prepare.py`だけが公開モデルを固定URLから取得する。アプリ実行時は通信しない。既存ファイルの検証が失敗した時は上書きせず停止する。モデルと生成プロジェクトはgit対象外。
+`prepare.py`が公開モデルを固定URLから取得し、`prepare-notices.py`がハッシュ固定した上流ライセンスを取得する。アプリ実行時は通信しない。既存モデルの検証が失敗した時は上書きせず停止する。モデルと生成プロジェクトはgit対象外。
 
 無署名の端末向けコンパイルとSimulator起動は`run-ci.sh`。既存の手動`ios-scale.yml`へ`pet_identity_probe=true`を渡すと、写真の大量投入テストを起動せず、この試作だけを確認する。既定値falseで既存のscale動作は変わらない。通常の本体CI、main更新、TestFlightアップロードにはつながない。
 
-実機インストールにはMac側で、この独立bundleの開発署名と接続したiPhoneを選ぶ必要がある。プロジェクトの`CODE_SIGNING_ALLOWED=NO`は無署名確認用なので、実機実行時に明示的に開発署名を有効にする。既存アプリの署名設定・配布証明書を使い回して自動登録はしない。
+Macを使う場合は独立bundleの開発署名と接続したiPhoneを選ぶ。`CODE_SIGNING_ALLOWED=NO`は無署名確認用なので、実機実行時だけ署名を有効にする。Macを持たないユーザー向けには、以下の承認済み独立TestFlight経路を使用する。
+
+## 独立TestFlight（2026-09-05承認）
+
+ユーザー承認に基づき、本体を置き換えない専用アプリを登録した。
+
+| 対象 | 登録値 |
+| --- | --- |
+| アプリ名 | 猫識別・動作確認 |
+| Bundle ID | `jp.nekowidget.petidentityprobe` |
+| App Store Connect ID | `6808865207` |
+| 配布プロファイル | `NekoWidget Pet Identity Probe AppStore 2026` (`72JM846MGP`) |
+| 配布範囲 | 本人向け内部TestFlightのみ |
+
+専用workflowは`.github/workflows/pet-identity-testflight.yml`。`main`上の手動実行だけを許可し、既存`testflight` Environmentの承認・branch制約は変更しない。証明書とASC APIキーは既存のものを利用し、専用profileだけを`PET_IDENTITY_PROVISIONING_PROFILE_BASE64`へ追加する。本体profile secret・本体workflow・共有サーバーは変更しない。
+
+`release.sh`と`verify-release.py`で、Appleのアプリレコード／profile／archive／IPAが専用bundleに一致することを検査する。`testFlightInternalTestingOnly=true`でexportし、外部テスターやApp Store公開へ転用しない。公開GitHub artifactにはIPA、モデル、秘密情報を含むログを保存しない。アップロード成功はAppleの処理完了・インストール可能を意味しないため、配布状態は別途確認する。
+
+操作は「CPUで測定する」→「JSONを共有」。合成画像の処理時間・プロセスメモリ等だけを測定し、実際の猫写真は使わない。結果はメモリ内のみ。Core MLは任意の追加比較へ移し、未共有結果を失う可能性の警告を出す。
+
+上流MIT、Apache-2.0、ORT第三者告知とソース案内をアプリ内ライセンスページへ同梱する。内部試作の配布準備であり、実写精度・商用採用・学習データ権利の審査が完了したことにはしない。
 
 ## 読み違えてはいけない値
 
@@ -74,4 +96,4 @@ open PetIdentityProbe.xcodeproj
 
 次に、使用を許可された実写真と固定protocolで精度を評価する。写真を外へ送らない。合成入力は猫の識別精度を評価できない。[ADR-016](../../NekoWidget/docs/ADR-016-猫個体5-shot分離実験.md)のunknown、独立episode、precision／coverageと未使用家庭の検証境界を維持する。
 
-モデルの商用配布条件、必要な帰属表示、実写評価は未完了。[単体調査記録](../../NekoWidget/docs/猫個体識別-モデル単体確認.md)も参照。今回、GalleryのAGPLコードは取り込んでいない。
+モデルの商用採用判断と実写評価は未完了。内部配布用の必要な帰属表示は上記の通り追加した。[単体調査記録](../../NekoWidget/docs/猫個体識別-モデル単体確認.md)も参照。GalleryのAGPLコードは取り込んでいない。

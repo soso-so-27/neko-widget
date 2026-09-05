@@ -7,6 +7,8 @@ mkdir -p "$evidence"
 python3 prepare.py
 python3 -m pip install --disable-pip-version-check --no-cache-dir -r requirements.txt > "$evidence/python-setup.log" 2>&1
 python3 fix-model.py Resources/model.onnx Resources/model-fixed.onnx > "$evidence/static-equivalence.json"
+python3 prepare-notices.py
+swift make-icon.swift
 if ! command -v xcodegen >/dev/null; then
   brew install xcodegen
 fi
@@ -32,7 +34,7 @@ xcodebuild -project PetIdentityProbe.xcodeproj -scheme PetIdentityProbe \
 python3 summarize.py "$evidence/simulator-test.log" "$evidence/summary.json"
 
 # Show the actual standalone first screen; do not add photos to the Simulator.
-xcrun simctl launch "$simulator" local.nekomado.PetIdentityProbe
+xcrun simctl launch "$simulator" jp.nekowidget.petidentityprobe
 sleep 3
 xcrun simctl io "$simulator" screenshot "$evidence/probe-screen.png"
 du -sk "$derived-device/Build/Products/Debug-iphoneos/PetIdentityProbe.app" > "$evidence/unsigned-app-size-kib.txt"

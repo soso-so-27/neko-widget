@@ -1,0 +1,56 @@
+name: Pet Identity Probe internal TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "独立した猫識別・動作確認アプリのCFBundleVersion"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pet-identity-testflight
+  cancel-in-progress: false
+
+jobs:
+  internal-testflight:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: testflight
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      RELEASE_BUILD_NUMBER: ${{ inputs.build_number }}
+      PET_IDENTITY_APP_RECORD_ID: "6808865207"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: "3.11"
+      - name: Prepare the isolated project without signing secrets
+        shell: bash
+        run: bash experiments/PetIdentityProbe/release.sh prepare
+      - name: Verify, sign, and upload the internal-only app
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          PET_IDENTITY_PROVISIONING_PROFILE_BASE64: ${{ secrets.PET_IDENTITY_PROVISIONING_PROFILE_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
+        run: bash experiments/PetIdentityProbe/release.sh upload
+      - name: Remove only this run's signing material and private outputs
+        if: always()
+        shell: bash
+        run: bash experiments/PetIdentityProbe/release.sh cleanup
+
+    # This is a public repository. No IPA, archive, model, framework,
+    # provisioning profile, API key, or raw diagnostic log becomes an artifact.
