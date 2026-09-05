@@ -1,0 +1,42 @@
+{
+  "scope": "synthetic_simulator_only_not_product_approval",
+  "source_sha": "34f01c6",
+  "run_url": "https://github.com/soso-so-27/neko-widget/actions/runs/33938262561",
+  "runtime": "1.24.2",
+  "platform": "iOS 18.6 Simulator arm64",
+  "device_build": "unsigned_arm64_compile_pass",
+  "device_performance_measured": false,
+  "cat_accuracy_measured": false,
+  "source_model_sha256": "6a5e2373ab348bed588cef4072f3914ca9c8bacde3e8d0651019e8dad86b24ba",
+  "fixed_model_sha256": "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b",
+  "shape_equivalence_maximum_absolute_difference": 2.086162567138672e-7,
+  "coreml_ep_run_completed": true,
+  "coreml_acceleration_verified": false,
+  "coreml_compiler_error_lines": 0,
+  "cpu_coreml_cosine_similarity": 0.9999999999971343,
+  "measurements_rounded_to_two_decimals": true,
+  "cpu": {
+    "session_load_ms": 270.23,
+    "first_inference_ms": 101.44,
+    "warm_median_ms": 97.20,
+    "warm_p95_ms": 169.55,
+    "process_sampled_maximum_mib": 229.05,
+    "iterations": 18
+  },
+  "coreml_priority": {
+    "session_load_ms": 22585.93,
+    "first_inference_ms": 238.64,
+    "warm_median_ms": 189.05,
+    "warm_p95_ms": 200.85,
+    "process_sampled_maximum_mib": 1079.56,
+    "iterations": 18
+  },
+  "unsigned_debug_app_allocated_size_kib": 118988,
+  "prior_dynamic_model_run": {
+    "url": "https://github.com/soso-so-27/neko-widget/actions/runs/33937590974",
+    "coreml_compiler_error_lines": 32,
+    "coreml_acceleration_verified": false,
+    "note": "Prior coreml_verified field meant EP returned an output, not hardware acceleration. Superseded by explicit flags. Separate hosted runner; do not infer a precise before/after speedup."
+  },
+  "decision": "Keep out of the product. Start physical-device feasibility with CPU. Hold CoreML integration pending startup/memory evidence. No accuracy claim."
+}
