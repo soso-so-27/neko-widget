@@ -71,7 +71,12 @@ Macを使う場合は独立bundleの開発署名と接続したiPhoneを選ぶ�
 - 初回配布準備で3点を修正：Appleのprofileに標準で含まれる`com.apple.token`の許容漏れ、XcodeGenがInfo.plistへ書く既定バージョン、`codesign --extract-certificates`の省略可能引数を別argvにした不備。profileの許容リストとアプリ自身の権限は区別し、アプリのtoken・別bundle・別Teamアクセスは引き続き拒否する。署名検証の失敗箇所は秘密を出さず固定文言で識別する。
 - 根拠：[Apple TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)、[XcodeGenのInfo.plist初期値](https://github.com/yonaskolb/XcodeGen/blob/master/Sources/XcodeGenKit/InfoPlistGenerator.swift)、[Apple codesign引数定義](https://github.com/apple-oss-distributions/security_systemkeychain/blob/security_systemkeychain-55105/src/codesign.cpp#L163)。旧ログが汎用エラーだった最後のrunについて、実際に証明書抽出まで到達したかは確定していない。
 - `33942426779`は署名前、`33942624240`と`33942819684`は署名archive後の検証で停止し、いずれもAppleアップロード前。修正後の[配布run 33943089253](https://github.com/soso-so-27/neko-widget/actions/runs/33943089253)（コード`eccb6b9cb177e2337c6654a8bf2e0b4775530bfc`）、Build `0.1 (1)`は成功。archive・IPAの署名/内容検証、Apple validate、Apple uploadをすべて通過し、2026-09-05 12:56 JSTにアップロード完了。同じアプリコードの成功CIは理由なく再実行しない。
-- アップロード直後のASC画面ではまだビルド未表示。Appleの処理完了と内部グループへの反映は別途確認し、インストール可能と確認するまでは「配布完了」としない。
+- Appleの後段処理でBuild 1は`90208`（`onnxruntime.framework`のMinimum OS不整合）となり配布失敗。TFのルート画面は「ビルドなし」だったが、`testflight/ios`の「ビルドのアップロード」でエラーを確認できた。altoolの成功だけでは処理成功にならない。
+- 固定配布zip（SHA-256は上記）を実測し、iOS arm64 frameworkの`MinimumOSVersion=15.1`が存在し、FAT内arm64 sliceの先頭が`!<arch>\n`で静的アーカイブと確認。中身は静的binary・Headers・Info.plistのみで実行時resourcesはない。過去のdevice build logには同frameworkをapp/Frameworksへコピーし`-remove-static-executable`する工程があった。
+- 現行Xcodeが静的frameworkのbinaryを除きresourcesをコピーすること自体は正常であり、旧TN2435の非embed説明だけでは判断しない。またXcodeGenのpackageでは`embed:false`だけではコピー抑止にならない可能性があるため、この設定案は採用しない。[現行Apple資料](https://developer.apple.com/documentation/xcode/creating-a-static-framework)、[XcodeGen package処理](https://github.com/yonaskolb/XcodeGen/blob/master/Sources/XcodeGenKit/PBXProjGenerator.swift)。
+- device build log 368–371行で、Xcodeが元static archiveを除いた後に`arm64-apple-ios17.1`のstub binaryを注入すると確認。元framework metadataは15.1のままなので、実binaryの最低OSより低い宣言となっていた。空shell除去案は実行前に取り下げた。
+- `align-ort-stub-minimum-os.py`は専用app内の生成済ORT 1.24.2 frameworkだけを対象に、`vtool`の全sliceのplatform/minosをアプリdeploymentと照合し、既知の元15.1または補正済み値だけを許容する。metadataの最低OSを実stubに合わせ（引き下げ禁止）、署名有効時は同じ専用Distribution証明書でframeworkを再署名してからXcodeがappを署名する。archive/IPAでも最低OS整合とapp/frameworkの証明書一致を確認。モデル・ライブラリ版・上流バイナリは変更しない。
+- 修正後の起動/合成入力を確認してからBuild 2を提出する。Apple処理完了と内部配布への反映を確認するまで「配布完了」としない。
 
 ## 読み違えてはいけない値
 

@@ -27,6 +27,10 @@ targets:
     dependencies:
       - package: onnxruntime
         product: onnxruntime
+    postBuildScripts:
+      - name: Align ORT metadata with the Xcode generated stub
+        script: python3 "$SRCROOT/align-ort-stub-minimum-os.py"
+        basedOnDependencyAnalysis: false
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: jp.nekowidget.petidentityprobe
       TARGETED_DEVICE_FAMILY: "1"

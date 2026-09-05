@@ -205,6 +205,12 @@ def check_app(app, work, team, build):
     check_info(load_plist(app / "Info.plist"), build)
     require(not list(app.rglob("*.appex")) and not list(app.rglob("*.app"))
             and not list(app.rglob("*.xctest")), "Nested applications, extensions and tests are forbidden.")
+    ort_info = app / "Frameworks/onnxruntime.framework/Info.plist"
+    if ort_info.exists():
+        minimum = lambda value: tuple(int(part) for part in value.split(".")) + (0,) * (3 - len(value.split(".")))
+        require(minimum(load_plist(ort_info)["MinimumOSVersion"])
+                == minimum(load_plist(app / "Info.plist")["MinimumOSVersion"]),
+                "ORT copied framework and app minimum OS differ.")
     models = [path for path in app.rglob("*") if path.is_file() and path.suffix.lower() == ".onnx"]
     require(models == [app / "model-fixed.onnx"], "Only the fixed probe model may be packaged.")
     require(digest(app / "model-fixed.onnx") == MODEL_SHA256, "Packaged model digest changed.")
@@ -227,6 +233,13 @@ def check_app(app, work, team, build):
     certificate = (work / "distribution.der").read_bytes()
     require((work / "app-certificate-0").read_bytes() == certificate,
             "App signature uses a different distribution certificate.")
+    if ort_info.exists():
+        for index in range(4):
+            (work / f"ort-certificate-{index}").unlink(missing_ok=True)
+        run("codesign", "-d", f"--extract-certificates={work / 'ort-certificate-'}",
+            str(ort_info.parent), failure_message="ORT framework certificate extraction failed.")
+        require((work / "ort-certificate-0").read_bytes() == certificate,
+                "ORT framework signature uses a different distribution certificate.")
     embedded = plistlib.loads(run("security", "cms", "-D", "-i", str(app / "embedded.mobileprovision"),
         failure_message="Embedded provisioning profile decoding failed."))
     expected = json.loads((work / "signing.json").read_text())["profile_uuid"]
