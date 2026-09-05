@@ -63,6 +63,14 @@ Macを使う場合は独立bundleの開発署名と接続したiPhoneを選ぶ�
 
 上流MIT、Apache-2.0、ORT第三者告知とソース案内をアプリ内ライセンスページへ同梱する。内部試作の配布準備であり、実写精度・商用採用・学習データ権利の審査が完了したことにはしない。
 
+### 配布準備の到達点（2026-09-05）
+
+- コード候補`2475104885790c8acb7d42ef42625d37a23c53b4`の[CI 33941248554](https://github.com/soso-so-27/neko-widget/actions/runs/33941248554)は完了・成功。iPhone向け無署名ビルド、Simulatorの合成入力検査、CPUを主操作にした初期画面を確認済み。実機性能・実写精度・署名済み配布の確認ではない。
+- 本人用内部グループ「自分用（猫識別検証）」を作成し、既存の本人テスター1人だけを追加済み。自動配布は有効、登録ビルドはまだ0。
+- 専用profileは発行済みだが、ブラウザのDownloadが`ERR_BLOCKED_BY_CLIENT`で停止。ユーザーへ[専用profile画面](https://developer.apple.com/account/resources/profiles/review/72JM846MGP)からの手動保存を依頼済み。ブラウザの保護を迂回しない。
+- `PET_IDENTITY_PROVISIONING_PROFILE_BASE64`は未設定。main統合、署名archive/export、Apple検証・アップロードは未実行。本体と本体用署名設定は変更していない。
+- 再開時は保存されたprofileの専用bundle・Team・有効期限・証明書一致を検査し、新しい専用secretだけを設定する。その後main CI→専用workflow→Apple処理完了と本人のインストール可否を確認する。同じコード候補の成功CIは理由なく再実行しない。
+
 ## 読み違えてはいけない値
 
 - `platform=simulator`はコンパイルと合成入出力の証拠だけ。iPhone実機の速度、電池、メモリ上限の証明ではない。
