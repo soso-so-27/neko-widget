@@ -1,0 +1,223 @@
+{
+  "scope": "synthetic native transform comparison only; not model accuracy or actual unknown diagnosis",
+  "sourceCommit": "a85269482b01a0f4ce7c3b8ae61a8c5255ccef5e",
+  "extractedMethodsSHA256": "79352f06dbb10f912e40421d308290da4de624f871b2516ae6195e5d7c910fb4",
+  "native": {
+    "device": "iPhone",
+    "geometryAssertions": 4,
+    "os": "Version 18.6 (Build 22G86)",
+    "runtime": "iOS Simulator",
+    "syntheticOnly": true,
+    "usesONNX": false,
+    "usesPhotoKit": false,
+    "usesVision": false
+  },
+  "versions": {
+    "numpy": "2.4.5",
+    "Pillow": "12.3.0",
+    "OpenCV": "4.13.0"
+  },
+  "fixtureContract": {
+    "colorSpace": "sRGB",
+    "bitsPerComponent": 8,
+    "alpha": "opaque-noneSkipLast",
+    "shouldInterpolate": true,
+    "tensorByteOrder": "little-endian Float32 CHW"
+  },
+  "swiftTarget": "arm64-apple-ios18.6-simulator",
+  "measurements": [
+    {
+      "name": "rgb_sentinel",
+      "size": [
+        224,
+        224
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0,
+        "max_abs_normalized": 0,
+        "mean_abs_RGB_0_255": 0,
+        "max_abs_RGB_0_255": 0
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0,
+        "max_abs_normalized": 0,
+        "mean_abs_RGB_0_255": 0,
+        "max_abs_RGB_0_255": 0
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0,
+        "max_abs_normalized": 0,
+        "mean_abs_RGB_0_255": 0,
+        "max_abs_RGB_0_255": 0
+      }
+    },
+    {
+      "name": "constant",
+      "size": [
+        224,
+        224
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0,
+        "max_abs_normalized": 0,
+        "mean_abs_RGB_0_255": 0,
+        "max_abs_RGB_0_255": 0
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0,
+        "max_abs_normalized": 0,
+        "mean_abs_RGB_0_255": 0,
+        "max_abs_RGB_0_255": 0
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0,
+        "max_abs_normalized": 0,
+        "mean_abs_RGB_0_255": 0,
+        "max_abs_RGB_0_255": 0
+      }
+    },
+    {
+      "name": "portrait",
+      "size": [
+        96,
+        384
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0.00235995,
+        "max_abs_normalized": 0.03485847,
+        "mean_abs_RGB_0_255": 0.136061,
+        "max_abs_RGB_0_255": 2.000004
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0.00323048,
+        "max_abs_normalized": 0.03485847,
+        "mean_abs_RGB_0_255": 0.18651,
+        "max_abs_RGB_0_255": 2.000004
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0.00164098,
+        "max_abs_normalized": 0.01750731,
+        "mean_abs_RGB_0_255": 0.0946,
+        "max_abs_RGB_0_255": 1.000023
+      }
+    },
+    {
+      "name": "landscape",
+      "size": [
+        384,
+        96
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0.00236336,
+        "max_abs_normalized": 0.03485847,
+        "mean_abs_RGB_0_255": 0.136061,
+        "max_abs_RGB_0_255": 2.000004
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0.00324473,
+        "max_abs_normalized": 0.035014,
+        "mean_abs_RGB_0_255": 0.18661,
+        "max_abs_RGB_0_255": 2.000004
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0.00166996,
+        "max_abs_normalized": 0.01750708,
+        "mean_abs_RGB_0_255": 0.096002,
+        "max_abs_RGB_0_255": 1.000023
+      }
+    },
+    {
+      "name": "gradient",
+      "size": [
+        800,
+        600
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0.0031582,
+        "max_abs_normalized": 0.01750731,
+        "mean_abs_RGB_0_255": 0.182464,
+        "max_abs_RGB_0_255": 1.000023
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0.00311502,
+        "max_abs_normalized": 0.01750731,
+        "mean_abs_RGB_0_255": 0.179986,
+        "max_abs_RGB_0_255": 1.000023
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0.00024373,
+        "max_abs_normalized": 0.01742959,
+        "mean_abs_RGB_0_255": 0.013984,
+        "max_abs_RGB_0_255": 1.000023
+      }
+    },
+    {
+      "name": "fine_bands",
+      "size": [
+        800,
+        600
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0.55666172,
+        "max_abs_normalized": 2.23093694,
+        "mean_abs_RGB_0_255": 32.088403,
+        "max_abs_RGB_0_255": 128.000004
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0.55700404,
+        "max_abs_normalized": 2.28322452,
+        "mean_abs_RGB_0_255": 32.13836,
+        "max_abs_RGB_0_255": 131.000004
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0.30240953,
+        "max_abs_normalized": 0.839113,
+        "mean_abs_RGB_0_255": 17.432703,
+        "max_abs_RGB_0_255": 49.000004
+      }
+    },
+    {
+      "name": "hard_edge",
+      "size": [
+        800,
+        600
+      ],
+      "native_vs_PIL": {
+        "mean_abs_normalized": 0.00077472,
+        "max_abs_normalized": 0.10504198,
+        "mean_abs_RGB_0_255": 0.044643,
+        "max_abs_RGB_0_255": 6.000006
+      },
+      "native_vs_OpenCV": {
+        "mean_abs_normalized": 0.00015494,
+        "max_abs_normalized": 0.03501397,
+        "mean_abs_RGB_0_255": 0.008929,
+        "max_abs_RGB_0_255": 2.000001
+      },
+      "PIL_vs_OpenCV": {
+        "mean_abs_normalized": 0.00092966,
+        "max_abs_normalized": 0.10504198,
+        "mean_abs_RGB_0_255": 0.053571,
+        "max_abs_RGB_0_255": 6.000006
+      }
+    }
+  ],
+  "native_crop_order_difference": {
+    "mean_abs_normalized": 0.5319884,
+    "max_abs_normalized": 2.6840961,
+    "mean_abs_RGB_0_255": 30.626741,
+    "max_abs_RGB_0_255": 154.00001
+  },
+  "invariants": {
+    "unscaledRGB": "passed",
+    "cropCoordinatesAndPixels": "passed",
+    "orientation8": "passed"
+  },
+  "limits": [
+    "No PhotoKit fetching, Vision detection, model or user photos",
+    "sRGB opaque fixtures only; no HDR, ICC or natural cat accuracy validation",
+    "Reference library versions are pinned here, not proven identical to author's original environment",
+    "Simulator iOS 18.6 is not the user's iOS 26.6 physical device"
+  ],
+  "productValidated": false
+}
