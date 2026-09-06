@@ -11,7 +11,7 @@ enum IdentityPhotoSlot: String, CaseIterable, Identifiable, Sendable {
     var isReference: Bool { self == .referenceA || self == .referenceB }
     var cat: Int { self == .referenceA || self == .evaluationA ? 0 : 1 }
     var count: Int { isReference ? 5 : 15 }
-    var title: String { "猫\(cat == 0 ? "A" : "B") · \(isReference ? "見本5枚" : "判定用15枚")" }
+    var title: String { "猫\(cat == 0 ? "A" : "B") · \(isReference ? "見本5枚" : "判定写真")" }
 }
 
 // Intentionally not Codable. Identifiers, thumbnails and individual predictions stay on device.
@@ -47,6 +47,8 @@ struct IdentityPhotoRun {
     let evaluation: IdentityEvaluationResult
     let photos: [IdentityLocalPhoto]
     let nearbyTimePairs: Int
+    var repeatedBurstCount = 0
+    var similarPhotoCount = 0
 
     var inputDiagnostics: [IdentityInputDiagnostic] {
         (0..<2).map { cat in
@@ -57,6 +59,45 @@ struct IdentityPhotoRun {
                 }))
         }
     }
+}
+
+/// Input diagnosis has no identity prediction or acceptance gate.
+struct IdentityInputReport: Encodable {
+    let protocolIdentifier = "pet-identity-input-diagnostic-v1"
+    let imageReadable: Bool
+    let singleCatDetected: Bool
+    let cropUsable: Bool
+    let modelOutputValidated: Bool
+    let inputIssue: IdentityInputIssue?
+    let modelFailure: String?
+    let imageWidth: Int?
+    let imageHeight: Int?
+    let cropWidth: Int?
+    let cropHeight: Int?
+    let runtimeVersion: String
+    let modelSHA256 = ProbeModelFile.sha256
+    let photoFetch = "selected-only-current-1024-local-no-network"
+    let preprocessing = "vision-animal-r2-cat0.5-single-exactbbox-min32px-resize224-srgb-chw-imagenet-v1"
+    let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+    let photosIncluded = false
+    let identifiersIncluded = false
+    let embeddingsIncluded = false
+    let identityEvaluated = false
+    let productValidated = false
+    let productionDataChanged = false
+}
+
+// Images are deliberately outside the Codable report, and never persisted.
+struct IdentityInputRun {
+    let report: IdentityInputReport
+    let thumbnail: CGImage?
+    let cropThumbnail: CGImage?
+}
+
+private struct IdentityPreparedPhoto {
+    let image: CGImage?
+    let crop: CGImage?
+    let issue: IdentityInputIssue?
 }
 
 struct IdentityPhotoFailure: LocalizedError {
@@ -89,33 +130,84 @@ enum ProbeModelFile {
 actor IdentityPhotoService {
     private var busy = false
 
+    func inspectInput(id: String) async throws -> IdentityInputRun {
+        guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
+        busy = true
+        defer { busy = false }
+        try Task.checkCancellation()
+        guard !id.isEmpty else { throw IdentityPhotoFailure(message: "写真を1枚選んでください。") }
+        try Self.checkAuthorization()
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
+        let result = autoreleasepool { () -> IdentityInputRun in
+            let prepared = Self.preparePhoto(fetched.firstObject)
+            var validated = false
+            var modelFailure: String?
+            let runtime = ORTVersion() ?? "unknown"
+            if let crop = prepared.crop {
+                if runtime != IdentityEvaluationCore.expectedRuntimeVersion {
+                    modelFailure = "固定したRuntimeと一致しません。"
+                } else {
+                    do {
+                        let engine = try IdentityCPUSession()
+                        _ = try engine.embedding(crop)
+                        validated = true
+                    } catch {
+                        // Do not export system errors, identifiers or photo paths.
+                        modelFailure = "モデルの実行または出力の確認を完了できませんでした。"
+                    }
+                }
+            }
+            return IdentityInputRun(report: IdentityInputReport(
+                imageReadable: prepared.image != nil,
+                singleCatDetected: prepared.crop != nil || prepared.issue == .invalidCrop,
+                cropUsable: prepared.crop != nil, modelOutputValidated: validated,
+                inputIssue: prepared.issue, modelFailure: modelFailure,
+                imageWidth: prepared.image?.width, imageHeight: prepared.image?.height,
+                cropWidth: prepared.crop?.width, cropHeight: prepared.crop?.height, runtimeVersion: runtime),
+                thumbnail: prepared.image.flatMap(Self.thumbnail),
+                cropThumbnail: prepared.crop.flatMap(Self.thumbnail))
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
     func run(selections: [IdentityPhotoSlot: [String]],
+             purpose: IdentityEvaluationPurpose = .diagnostic,
              progress: @Sendable (Int) async -> Void) async throws -> IdentityPhotoRun {
         guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
         busy = true
         defer { busy = false }
         try Task.checkCancellation()
         let ids = IdentityPhotoSlot.allCases.flatMap { selections[$0] ?? [] }
-        guard IdentityPhotoSlot.allCases.allSatisfy({ selections[$0]?.count == $0.count }),
-              ids.count == 40, Set(ids).count == 40, ids.allSatisfy({ !$0.isEmpty }) else {
-            throw IdentityPhotoFailure(message: "同じ写真を重複させず、見本5枚と判定用15枚を2匹分選んでください。")
+        let evaluationCount = (selections[.evaluationA]?.count ?? 0) + (selections[.evaluationB]?.count ?? 0)
+        let referencesReady = selections[.referenceA]?.count == 5 && selections[.referenceB]?.count == 5
+        let evaluationsReady = purpose == .heldout
+            ? selections[.evaluationA]?.count == 15 && selections[.evaluationB]?.count == 15
+            : (1...30).contains(evaluationCount)
+                && [IdentityPhotoSlot.evaluationA, .evaluationB].allSatisfy { (selections[$0]?.count ?? 0) <= 15 }
+        guard referencesReady, evaluationsReady, Set(ids).count == ids.count, ids.allSatisfy({ !$0.isEmpty }) else {
+            throw IdentityPhotoFailure(message: purpose == .heldout
+                ? "同じ写真を重複させず、見本5枚と判定用15枚を2匹分選んでください。"
+                : "見本を猫A・Bそれぞれ5枚、別の判定写真をどちらかの猫で1枚以上選んでください。")
         }
-        let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        guard authorization == .authorized || authorization == .limited else {
-            throw IdentityPhotoFailure(message: "選んだ写真へのアクセスを許可してください。限定アクセスでも利用できます。")
-        }
+        try Self.checkAuthorization()
         // Fetch only explicitly selected assets. Never enumerate the whole library.
         let fetched = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
         var assets: [String: PHAsset] = [:]
         fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
         var nearbyTimePairs = 0
+        var repeatedBurstCount = 0
+        var similarPhotoCount = 0
         for cat in 0..<2 {
             let catIDs = IdentityPhotoSlot.allCases.filter { $0.cat == cat }.flatMap { selections[$0] ?? [] }
             var bursts = Set<String>()
             let dates = catIDs.compactMap { assets[$0]?.creationDate }
             for id in catIDs {
                 if let burst = assets[id]?.burstIdentifier, !bursts.insert(burst).inserted {
-                    throw IdentityPhotoFailure(message: "猫\(cat == 0 ? "A" : "B")に同じ連写の写真があります。別の場面を選んでください。")
+                    if purpose == .heldout {
+                        throw IdentityPhotoFailure(message: "猫\(cat == 0 ? "A" : "B")に同じ連写の写真があります。別の場面を選んでください。")
+                    }
+                    repeatedBurstCount += 1
                 }
             }
             for first in dates.indices {
@@ -130,19 +222,9 @@ actor IdentityPhotoService {
             for (index, id) in (selections[slot] ?? []).enumerated() {
                 try Task.checkCancellation()
                 let photo = try autoreleasepool { () throws -> IdentityLocalPhoto in
-                    let asset = assets[id]
-                    let image = asset.flatMap(Self.localImage)
-                    var crop: CGImage?
-                    var issue: IdentityInputIssue?
-                    if asset == nil { issue = .assetUnavailable }
-                    else if let image {
-                        do {
-                            switch try IdentityImagePipeline.catCropResult(image) {
-                            case .success(let value): crop = value
-                            case .failure(let failure): issue = failure
-                            }
-                        } catch { issue = .detectionFailed }
-                    } else { issue = .localImageUnavailable }
+                    let prepared = Self.preparePhoto(assets[id])
+                    let crop = prepared.crop
+                    let issue = prepared.issue
                     // A missing/undetected evaluation remains in the denominator as unknown.
                     if slot.isReference && crop == nil {
                         throw IdentityPhotoFailure(message: "\(slot.title)の\(index + 1)枚目：\(issue?.title ?? "読み取り失敗")。選択は残しています。この欄だけ確認・入れ替えできます。")
@@ -153,18 +235,17 @@ actor IdentityPhotoService {
                         embedding = try engine.embedding(crop)
                     } else { embedding = nil }
                     return IdentityLocalPhoto(slot: slot, index: index,
-                        thumbnail: image.flatMap { value in
-                            let factor = 160.0 / Double(max(value.width, value.height))
-                            return IdentityImagePipeline.resized(value, width: max(1, Int(Double(value.width) * factor)),
-                                height: max(1, Int(Double(value.height) * factor)))
-                        },
+                        thumbnail: prepared.image.flatMap(Self.thumbnail),
                         embedding: embedding, fingerprint: crop.flatMap(IdentityImagePipeline.fingerprint), inputIssue: issue)
                 }
                 if let fingerprint = photo.fingerprint,
                    let previous = photos.first(where: {
                        $0.slot.cat == slot.cat && $0.fingerprint.map { ($0 ^ fingerprint).nonzeroBitCount <= 2 } == true
                    }) {
-                    throw IdentityPhotoFailure(message: "\(previous.slot.title)の\(previous.index + 1)枚目と\(slot.title)の\(index + 1)枚目が似すぎています。別の場面を選んでください。")
+                    if purpose == .heldout {
+                        throw IdentityPhotoFailure(message: "\(previous.slot.title)の\(previous.index + 1)枚目と\(slot.title)の\(index + 1)枚目が似すぎています。別の場面を選んでください。")
+                    }
+                    similarPhotoCount += 1
                 }
                 photos.append(photo)
                 await progress(photos.count)
@@ -176,13 +257,38 @@ actor IdentityPhotoService {
         }
         let result = try IdentityEvaluationCore.evaluate(registrationA: vectors(.referenceA),
             registrationB: vectors(.referenceB), evaluationA: vectors(.evaluationA),
-            evaluationB: vectors(.evaluationB), runtimeVersion: ORTVersion() ?? "unknown", purpose: .diagnostic)
+            evaluationB: vectors(.evaluationB), runtimeVersion: ORTVersion() ?? "unknown", purpose: purpose)
         // Features are not needed by the result UI; release them before returning.
         let previews = photos.map {
             IdentityLocalPhoto(slot: $0.slot, index: $0.index, thumbnail: $0.thumbnail,
                                embedding: nil, fingerprint: nil, inputIssue: $0.inputIssue)
         }
-        return IdentityPhotoRun(evaluation: result, photos: previews, nearbyTimePairs: nearbyTimePairs)
+        return IdentityPhotoRun(evaluation: result, photos: previews, nearbyTimePairs: nearbyTimePairs,
+                                repeatedBurstCount: repeatedBurstCount, similarPhotoCount: similarPhotoCount)
+    }
+
+    private static func checkAuthorization() throws {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else {
+            throw IdentityPhotoFailure(message: "選んだ写真へのアクセスを許可してください。限定アクセスでも利用できます。")
+        }
+    }
+
+    private static func preparePhoto(_ asset: PHAsset?) -> IdentityPreparedPhoto {
+        guard let asset else { return IdentityPreparedPhoto(image: nil, crop: nil, issue: .assetUnavailable) }
+        guard let image = localImage(asset) else { return IdentityPreparedPhoto(image: nil, crop: nil, issue: .localImageUnavailable) }
+        do {
+            switch try IdentityImagePipeline.catCropResult(image) {
+            case .success(let crop): return IdentityPreparedPhoto(image: image, crop: crop, issue: nil)
+            case .failure(let issue): return IdentityPreparedPhoto(image: image, crop: nil, issue: issue)
+            }
+        } catch { return IdentityPreparedPhoto(image: image, crop: nil, issue: .detectionFailed) }
+    }
+
+    private static func thumbnail(_ image: CGImage) -> CGImage? {
+        let factor = 160.0 / Double(max(image.width, image.height))
+        return IdentityImagePipeline.resized(image, width: max(1, Int(Double(image.width) * factor)),
+                                              height: max(1, Int(Double(image.height) * factor)))
     }
 
     private static func localImage(_ asset: PHAsset) -> CGImage? {

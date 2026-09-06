@@ -14,10 +14,11 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         [-0.12, -0.06, 0, 0.06, 0.12].map { vector(center + $0) }
     }
 
-    private func evaluate(_ a: [[Float]?], _ b: [[Float]?]) throws -> IdentityEvaluationResult {
+    private func evaluate(_ a: [[Float]?], _ b: [[Float]?],
+                          purpose: IdentityEvaluationPurpose = .heldout) throws -> IdentityEvaluationResult {
         try IdentityEvaluationCore.evaluate(
             registrationA: references(0), registrationB: references(1.5),
-            evaluationA: a, evaluationB: b
+            evaluationA: a, evaluationB: b, purpose: purpose
         )
     }
 
@@ -238,7 +239,59 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         XCTAssertTrue(IdentityUnknownReason.allCases.allSatisfy { !$0.title.isEmpty })
     }
 
-    func testDiagnosticPurposeCannotPassExplorationDespitePassingNumericalGates() throws {
+    func testDiagnosticCountsAllowOneCatAndUnequalSelectionsWithoutPadding() throws {
+        for (countA, countB) in [(1, 0), (0, 1), (1, 2)] {
+            let a = Array<[Float]?>(repeating: vector(0), count: countA)
+            let b = Array<[Float]?>(repeating: vector(1.5), count: countB)
+            let result = try evaluate(a, b, purpose: .diagnostic)
+            XCTAssertEqual(result.predictionsA.count, countA)
+            XCTAssertEqual(result.predictionsB.count, countB)
+            XCTAssertEqual(result.reasonsA.count, countA)
+            XCTAssertEqual(result.reasonsB.count, countB)
+            XCTAssertEqual(result.aggregate.perCat.map { $0.counts.total }, [countA, countB])
+            XCTAssertEqual(result.aggregate.overall, .init(correct: countA + countB, wrong: 0, unknown: 0))
+            XCTAssertEqual(result.aggregate.confusionMatrix.counts, [[countA, 0, 0], [0, countB, 0]])
+            XCTAssertEqual(result.aggregate.protocolIdentifier, "pet-identity-onnx-diagnostic-v2")
+            XCTAssertNil(result.aggregate.evaluationCountPerCat)
+            XCTAssertEqual(result.aggregate.evaluationCountsByCat, ["A": countA, "B": countB])
+            XCTAssertFalse(result.aggregate.gate.precisionPassed)
+            XCTAssertFalse(result.aggregate.gate.coveragePassed)
+            XCTAssertFalse(result.aggregate.gate.explorationCandidate)
+            XCTAssertFalse(result.aggregate.gate.productValidated)
+
+            // The same partial selection must not silently become a heldout run.
+            XCTAssertThrowsError(try evaluate(a, b)) {
+                XCTAssertEqual($0 as? IdentityEvaluationError, .invalidEvaluationCount)
+            }
+        }
+    }
+
+    func testDiagnosticRejectsNoSelectionAndMoreThanFifteenPerCat() {
+        for (countA, countB) in [(0, 0), (16, 0), (0, 16), (16, 15), (15, 16)] {
+            XCTAssertThrowsError(try evaluate(
+                Array(repeating: vector(0), count: countA),
+                Array(repeating: vector(1.5), count: countB), purpose: .diagnostic
+            )) { XCTAssertEqual($0 as? IdentityEvaluationError, .invalidDiagnosticEvaluationCount) }
+        }
+        XCTAssertThrowsError(try IdentityEvaluationCore.evaluate(
+            registrationA: Array(references(0).prefix(4)), registrationB: references(1.5),
+            evaluationA: [vector(0)], evaluationB: [], purpose: .diagnostic
+        )) { XCTAssertEqual($0 as? IdentityEvaluationError, .invalidRegistrationCount) }
+    }
+
+    func testDiagnosticSelectedMissingInputRemainsInActualDenominator() throws {
+        let result = try evaluate([nil], [], purpose: .diagnostic)
+        XCTAssertEqual(result.predictionsA, [.unknown])
+        XCTAssertTrue(result.predictionsB.isEmpty)
+        XCTAssertEqual(result.reasonsA, [.missingEmbedding])
+        XCTAssertEqual(result.aggregate.overall, .init(correct: 0, wrong: 0, unknown: 1))
+        XCTAssertEqual(result.aggregate.perCat.map { $0.counts.total }, [1, 0])
+        XCTAssertEqual(result.aggregate.perCat[0].reasonCounts.missingEmbedding, 1)
+        XCTAssertEqual(result.aggregate.perCat[1].reasonCounts.total, 0)
+        XCTAssertEqual(result.aggregate.evaluationCountsByCat, ["A": 1, "B": 0])
+    }
+
+    func testDiagnosticPurposeLeavesAllGatesUnevaluatedEvenWithThirtyCorrect() throws {
         let a = Array<[Float]?>(repeating: vector(0), count: 15)
         let b = Array<[Float]?>(repeating: vector(1.5), count: 15)
         let heldout = try evaluate(a, b)
@@ -255,19 +308,42 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         XCTAssertEqual(diagnostic.aggregate.registrationRadii, heldout.aggregate.registrationRadii)
         XCTAssertEqual(diagnostic.aggregate.purpose, .diagnostic)
         XCTAssertTrue(diagnostic.aggregate.gateScope.contains("diagnostic"))
-        XCTAssertTrue(diagnostic.aggregate.gate.precisionPassed)
-        XCTAssertTrue(diagnostic.aggregate.gate.coveragePassed)
+        XCTAssertTrue(diagnostic.aggregate.gateScope.contains("gates-unevaluated"))
+        XCTAssertFalse(diagnostic.aggregate.gate.precisionPassed)
+        XCTAssertFalse(diagnostic.aggregate.gate.coveragePassed)
         XCTAssertFalse(diagnostic.aggregate.gate.explorationCandidate)
         XCTAssertFalse(diagnostic.aggregate.gate.productValidated)
         XCTAssertTrue(heldout.aggregate.gate.explorationCandidate)
         XCTAssertFalse(heldout.aggregate.gate.productValidated)
         let direct = IdentityEvaluationGate(counts: .init(correct: 30, wrong: 0, unknown: 0), purpose: .diagnostic)
+        XCTAssertFalse(direct.precisionPassed)
+        XCTAssertFalse(direct.coveragePassed)
         XCTAssertFalse(direct.explorationCandidate)
         let exported = try JSONEncoder().encode(diagnostic.aggregate)
         let decoded = try JSONDecoder().decode(IdentityEvaluationAggregate.self, from: exported)
         XCTAssertEqual(decoded.purpose, .diagnostic)
         XCTAssertFalse(decoded.gate.explorationCandidate)
         XCTAssertFalse(decoded.gate.productValidated)
+    }
+
+    func testDiagnosticJSONContainsActualCountsAndOmitsFixedHeldoutCount() throws {
+        let invalid = Array(repeating: Float(0), count: 512)
+        let result = try evaluate([vector(0)], [nil, invalid], purpose: .diagnostic)
+        let data = try JSONEncoder().encode(result.aggregate)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), [
+            "protocolIdentifier", "purpose", "modelSHA256", "runtimeVersion", "embeddingDimensions",
+            "registrationCountPerCat", "evaluationCountsByCat", "distanceMetric", "normalization",
+            "classScore", "radiusDefinition", "missingEvaluationPolicy", "gateScope", "thresholds",
+            "registrationRadii", "perCat", "overall", "confusionMatrix", "gate"
+        ])
+        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-onnx-diagnostic-v2")
+        XCTAssertEqual(object["evaluationCountsByCat"] as? [String: Int], ["A": 1, "B": 2])
+        XCTAssertNil(object["evaluationCountPerCat"])
+        XCTAssertEqual(result.aggregate.overall, .init(correct: 1, wrong: 0, unknown: 2))
+        XCTAssertEqual(result.aggregate.perCat[1].reasonCounts.missingEmbedding, 1)
+        XCTAssertEqual(result.aggregate.perCat[1].reasonCounts.invalidEmbedding, 1)
+        XCTAssertEqual(try JSONDecoder().decode(IdentityEvaluationAggregate.self, from: data), result.aggregate)
     }
 
     func testAggregateJSONContainsOnlyFixedMetadataAndCounts() throws {
@@ -285,6 +361,8 @@ final class IdentityEvaluationCoreTests: XCTestCase {
         XCTAssertEqual(object["modelSHA256"] as? String, IdentityEvaluationCore.modelSHA256)
         XCTAssertEqual(object["runtimeVersion"] as? String, "1.24.2")
         XCTAssertEqual(object["purpose"] as? String, "heldout")
+        XCTAssertEqual(object["evaluationCountPerCat"] as? Int, 15)
+        XCTAssertNil(object["evaluationCountsByCat"])
         let rows = try XCTUnwrap(object["perCat"] as? [[String: Any]])
         XCTAssertEqual(rows.compactMap { $0["label"] as? String }, ["A", "B"])
         XCTAssertTrue(rows.allSatisfy { Set($0.keys) == ["label", "counts", "reasonCounts"] })

@@ -34,7 +34,7 @@ xcodebuild -project PetIdentityProbe.xcodeproj -scheme PetIdentityProbe \
 python3 summarize.py "$evidence/simulator-test.log" "$evidence/summary.json"
 
 # Show the actual standalone first screen; do not add photos to the Simulator.
-xcrun simctl launch "$simulator" jp.nekowidget.petidentityprobe
+xcrun simctl launch "$simulator" jp.nekowidget.petidentityprobe --identity-diagnostic-preview
 sleep 3
 xcrun simctl io "$simulator" screenshot "$evidence/probe-screen.png"
 du -sk "$derived-device/Build/Products/Debug-iphoneos/PetIdentityProbe.app" > "$evidence/unsigned-app-size-kib.txt"

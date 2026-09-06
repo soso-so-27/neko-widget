@@ -110,7 +110,7 @@ final class IdentityImagePipelineTests: XCTestCase {
         let text = try XCTUnwrap(IdentityEvaluationExport.json(run))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["aggregate", "preprocessing", "photoFetch", "duplicatePolicy", "reusePolicy",
-            "selectionStorage", "inputDiagnostics", "inputDiagnosticScope", "nearbyTimePairs", "osVersion", "photosIncluded", "identifiersIncluded", "individualPredictionsIncluded", "embeddingsIncluded", "productionDataChanged"])
+            "selectionStorage", "inputDiagnostics", "inputDiagnosticScope", "nearbyTimePairs", "repeatedBurstCount", "similarPhotoCount", "osVersion", "photosIncluded", "identifiersIncluded", "individualPredictionsIncluded", "embeddingsIncluded", "productionDataChanged"])
         XCTAssertEqual(object["photosIncluded"] as? Bool, false)
         XCTAssertFalse(text.contains("thumbnail"))
         XCTAssertFalse(text.contains("predictionsA"))
@@ -128,5 +128,83 @@ final class IdentityImagePipelineTests: XCTestCase {
         XCTAssertEqual(reason([full, full]), .multipleCats)
         XCTAssertEqual(reason([CGRect(x: 0, y: 0, width: 0.1, height: 0.1)]), .invalidCrop)
         XCTAssertNil(reason([full]))
+    }
+
+    private func inputFixture() throws -> IdentityInputRun {
+        IdentityInputRun(report: IdentityInputReport(imageReadable: true, singleCatDetected: false,
+            cropUsable: false, modelOutputValidated: false, inputIssue: .catNotDetected,
+            modelFailure: nil, imageWidth: 64, imageHeight: 64, cropWidth: nil, cropHeight: nil,
+            runtimeVersion: "1.24.2"), thumbnail: try image(), cropThumbnail: nil)
+    }
+
+    @MainActor func testOnePhotoStartsInputWithoutDemandingFortyAndPreservesOtherReferences() {
+        let store = IdentityEvaluationStore(inputInspector: { _ in throw CancellationError() })
+        let request = IdentityPickerRequest(slot: .referenceA, firstInputOnly: true)
+        store.picker = request
+        store.selected(["first-a"], request: request)
+        XCTAssertEqual(store.selections[.referenceA], ["first-a"])
+        XCTAssertTrue(store.hasInput)
+        XCTAssertTrue(store.checkingInput)
+        XCTAssertFalse(store.ready)
+        store.suspend()
+        store.selections[.referenceA] = ["first-a", "a2", "a3", "a4", "a5"]
+        store.selections[.referenceB] = ["b1", "b2", "b3", "b4", "b5"]
+        let replacement = IdentityPickerRequest(slot: .referenceA, firstInputOnly: true)
+        store.picker = replacement
+        store.selected(["a3"], request: replacement)
+        XCTAssertEqual(store.selections[.referenceA], ["a3", "first-a", "a2", "a4", "a5"])
+        XCTAssertEqual(store.selections[.referenceB]?.count, 5)
+        store.suspend()
+        XCTAssertTrue(store.hasInput)
+        XCTAssertNil(store.inputResult)
+    }
+
+    @MainActor func testReadyWithTenReferencesAndOneEvaluationButNotZero() {
+        let store = IdentityEvaluationStore()
+        store.selections = [.referenceA: (0..<5).map { "a\($0)" }, .referenceB: (0..<5).map { "b\($0)" }]
+        XCTAssertFalse(store.ready)
+        store.selections[.evaluationB] = ["b-held" ]
+        XCTAssertTrue(store.ready)
+        XCTAssertEqual(store.evaluationCount, 1)
+        XCTAssertEqual(store.selectedCount, 11)
+        store.selections[.evaluationA] = (0..<16).map { "too-many-\($0)" }
+        XCTAssertFalse(store.ready)
+    }
+
+    @MainActor func testCancelledInputCannotReviveClearedResults() async throws {
+        let fixture = try inputFixture()
+        let began = expectation(description: "injected input check began")
+        var pending: CheckedContinuation<IdentityInputRun, Never>?
+        let store = IdentityEvaluationStore(inputInspector: { _ in
+            await withCheckedContinuation { continuation in
+                pending = continuation
+                began.fulfill()
+            }
+        })
+        store.selections[.referenceA] = ["synthetic-selected-id"]
+        store.checkInput()
+        await fulfillment(of: [began], timeout: 2)
+        store.clear()
+        try XCTUnwrap(pending).resume(returning: fixture)
+        await Task.yield()
+        XCTAssertNil(store.inputResult)
+        XCTAssertFalse(store.running)
+        XCTAssertFalse(store.checkingInput)
+        XCTAssertTrue(store.selections.isEmpty)
+    }
+
+    func testInputExportHasNoIdentityClaimsPhotosOrIdentifiers() throws {
+        let json = try XCTUnwrap(IdentityInputExport.json(try inputFixture().report))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-input-diagnostic-v1")
+        for key in ["photosIncluded", "identifiersIncluded", "embeddingsIncluded", "identityEvaluated", "productValidated", "productionDataChanged"] {
+            XCTAssertEqual(object[key] as? Bool, false)
+        }
+        XCTAssertEqual(object["inputIssue"] as? String, "catNotDetected")
+        XCTAssertNil(object["aggregate"])
+        XCTAssertNil(object["gate"])
+        XCTAssertNil(object["predictionsA"])
+        XCTAssertNil(object["thumbnail"])
+        XCTAssertFalse(json.contains("synthetic-selected-id"))
     }
 }

@@ -6,7 +6,15 @@ import SwiftUI
 struct PetIdentityProbeApp: App {
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--identity-diagnostic-preview") {
+                NavigationStack { IdentityEvaluationView() }
+            } else {
+                ProbeView()
+            }
+            #else
             ProbeView()
+            #endif
         }
     }
 }
@@ -23,9 +31,9 @@ private struct ProbeView: View {
         NavigationStack {
             Form {
                 Section {
-                    NavigationLink("実写真で保留の原因を調べる") { IdentityEvaluationView() }
+                    NavigationLink("写真1枚から原因を調べる") { IdentityEvaluationView() }
                         .disabled(runningMode != nil)
-                    Text("見本5枚＋判定用15枚を2匹分。選択を保存して、同じ写真で続けられます。")
+                    Text("まず1枚で読み取りを確認。選んだ写真はそのまま次の診断にも使えます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {

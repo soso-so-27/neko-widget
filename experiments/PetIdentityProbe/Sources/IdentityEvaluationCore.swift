@@ -133,6 +133,14 @@ struct IdentityEvaluationGate: Codable, Equatable, Sendable {
     let productValidated: Bool
 
     init(counts: IdentityEvaluationCounts, purpose: IdentityEvaluationPurpose = .heldout) {
+        guard purpose == .heldout else {
+            // Diagnostic selections are not a validation sample, even at 30 photos.
+            precisionPassed = false
+            coveragePassed = false
+            explorationCandidate = false
+            productValidated = false
+            return
+        }
         // Bound operands before arithmetic, including when called by local tests.
         let valid = [counts.correct, counts.wrong, counts.unknown].allSatisfy { (0...30).contains($0) }
         let complete = valid && counts.total == 30
@@ -163,7 +171,9 @@ struct IdentityEvaluationAggregate: Codable, Equatable, Sendable {
     let runtimeVersion: String
     let embeddingDimensions: Int
     let registrationCountPerCat: Int
-    let evaluationCountPerCat: Int
+    // Nil keys are omitted by Codable, preserving the heldout-v1 JSON shape.
+    let evaluationCountPerCat: Int?
+    let evaluationCountsByCat: [String: Int]?
     let distanceMetric: String
     let normalization: String
     let classScore: String
@@ -182,6 +192,7 @@ enum IdentityEvaluationError: Error, LocalizedError, Equatable {
     case unsupportedRuntime
     case invalidRegistrationCount
     case invalidEvaluationCount
+    case invalidDiagnosticEvaluationCount
     case missingRegistration
     case invalidRegistrationVector
 
@@ -190,6 +201,7 @@ enum IdentityEvaluationError: Error, LocalizedError, Equatable {
         case .unsupportedRuntime: "この検証で固定したRuntimeと一致しません。"
         case .invalidRegistrationCount: "登録入力は猫A・Bそれぞれ5枚が必要です。"
         case .invalidEvaluationCount: "評価入力は猫A・Bそれぞれ15枚が必要です。欠損も枠を残してください。"
+        case .invalidDiagnosticEvaluationCount: "診断用の写真は猫A・Bそれぞれ15枚まで、合計1枚以上が必要です。読めない選択済み写真も枚数に含めます。"
         case .missingRegistration: "登録入力に欠損があります。検証を中止しました。"
         case .invalidRegistrationVector: "登録入力の特徴量が仕様に一致しません。検証を中止しました。"
         }
@@ -198,6 +210,7 @@ enum IdentityEvaluationError: Error, LocalizedError, Equatable {
 
 enum IdentityEvaluationCore {
     static let protocolIdentifier = "pet-identity-onnx-heldout-v1"
+    static let diagnosticProtocolIdentifier = "pet-identity-onnx-diagnostic-v2"
     static let modelSHA256 = "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b"
     static let expectedRuntimeVersion = "1.24.2"
     private static let dimensions = 512
@@ -219,8 +232,16 @@ enum IdentityEvaluationCore {
         guard registrationA.count == 5, registrationB.count == 5 else {
             throw IdentityEvaluationError.invalidRegistrationCount
         }
-        guard evaluationA.count == 15, evaluationB.count == 15 else {
-            throw IdentityEvaluationError.invalidEvaluationCount
+        switch purpose {
+        case .heldout:
+            guard evaluationA.count == 15, evaluationB.count == 15 else {
+                throw IdentityEvaluationError.invalidEvaluationCount
+            }
+        case .diagnostic:
+            guard (0...15).contains(evaluationA.count), (0...15).contains(evaluationB.count),
+                  !evaluationA.isEmpty || !evaluationB.isEmpty else {
+                throw IdentityEvaluationError.invalidDiagnosticEvaluationCount
+            }
         }
         let referencesA = try validateRegistration(registrationA)
         let referencesB = try validateRegistration(registrationB)
@@ -265,21 +286,24 @@ enum IdentityEvaluationCore {
             unknown: countsA.unknown + countsB.unknown
         )
         let aggregate = IdentityEvaluationAggregate(
-            protocolIdentifier: protocolIdentifier,
+            protocolIdentifier: purpose == .heldout ? protocolIdentifier : diagnosticProtocolIdentifier,
             purpose: purpose,
             modelSHA256: modelSHA256,
             runtimeVersion: runtimeVersion,
             embeddingDimensions: dimensions,
             registrationCountPerCat: 5,
-            evaluationCountPerCat: 15,
+            evaluationCountPerCat: purpose == .heldout ? 15 : nil,
+            evaluationCountsByCat: purpose == .diagnostic ? ["A": evaluationA.count, "B": evaluationB.count] : nil,
             distanceMetric: "cosine-distance=1-clamp(dot,-1,1)",
             normalization: "finite-float512;abs(L2-1)<=0.005;renormalize-in-float64",
             classScore: "median-of-nearest-3-of-5-registration-distances",
             radiusDefinition: "median-of-5-leave-one-out-nearest-3-of-4-distance-medians",
-            missingEvaluationPolicy: "nil-or-invalid-is-unknown;denominator-remains-30",
+            missingEvaluationPolicy: purpose == .heldout
+                ? "nil-or-invalid-is-unknown;denominator-remains-30"
+                : "nil-or-invalid-selected-input-is-unknown;denominator-is-actual-selected-count;no-padding",
             gateScope: purpose == .heldout
                 ? "overall-30-heldout-samples;exploration-only;no-product-or-generalization-claim"
-                : "overall-30-diagnostic-samples;numerical-checks-only;no-exploration-product-or-generalization-claim",
+                : "actual-selected-diagnostic-samples;gates-unevaluated;no-exploration-product-or-generalization-claim",
             thresholds: IdentityEvaluationThresholds(
                 radiusMultiplier: radiusMultiplier,
                 maximumBestToRunnerUpRatio: maximumRatio,

@@ -85,6 +85,7 @@ final class IdentitySelectionArchiveTests: XCTestCase {
         try archive.save(selections)
         let store = IdentityEvaluationStore(archive: archive)
         XCTAssertTrue(store.ready)
+        XCTAssertTrue(store.showsComparison)
         store.suspend()
         XCTAssertTrue(store.ready)
         XCTAssertNil(store.result)
@@ -107,5 +108,23 @@ final class IdentitySelectionArchiveTests: XCTestCase {
         store.clear()
         XCTAssertNil(store.message)
         XCTAssertTrue(store.selections.isEmpty)
+    }
+
+    @MainActor func testFirstInputReferenceSurvivesReopenAndBecomesOneOfFive() throws {
+        let archive = archive()
+        defer { try? FileManager.default.removeItem(at: archive.url.deletingLastPathComponent()) }
+        let store = IdentityEvaluationStore(archive: archive, inputInspector: { _ in throw CancellationError() })
+        let request = IdentityPickerRequest(slot: .referenceA, firstInputOnly: true)
+        store.picker = request
+        store.selected(["first-input"], request: request)
+        store.suspend()
+        let reopened = IdentityEvaluationStore(archive: archive)
+        XCTAssertEqual(reopened.selections[.referenceA], ["first-input"])
+        XCTAssertTrue(reopened.hasInput)
+        let add = IdentityPickerRequest(slot: .referenceA)
+        reopened.picker = add
+        reopened.selected(["first-input", "a2", "a3", "a4", "a5"], request: add)
+        XCTAssertEqual(try archive.load()[.referenceA]?.count, 5)
+        XCTAssertEqual(try archive.load()[.referenceA]?.first, "first-input")
     }
 }
