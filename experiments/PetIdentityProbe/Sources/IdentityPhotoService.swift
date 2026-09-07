@@ -63,7 +63,7 @@ struct IdentityPhotoRun {
 
 /// Input diagnosis has no identity prediction or acceptance gate.
 struct IdentityInputReport: Encodable {
-    let protocolIdentifier = "pet-identity-input-diagnostic-v1"
+    let protocolIdentifier = "pet-identity-input-diagnostic-v2"
     let imageReadable: Bool
     let singleCatDetected: Bool
     let cropUsable: Bool
@@ -75,6 +75,9 @@ struct IdentityInputReport: Encodable {
     let cropWidth: Int?
     let cropHeight: Int?
     let runtimeVersion: String
+    var animalDetection: IdentityAnimalDetectionDiagnostic? = nil
+    let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let photoFetch = "selected-only-current-1024-local-no-network"
     let preprocessing = "vision-animal-r2-cat0.5-single-exactbbox-min32px-resize224-srgb-chw-imagenet-v1"
@@ -98,6 +101,7 @@ private struct IdentityPreparedPhoto {
     let image: CGImage?
     let crop: CGImage?
     let issue: IdentityInputIssue?
+    var animalDetection: IdentityAnimalDetectionDiagnostic? = nil
 }
 
 struct IdentityPhotoFailure: LocalizedError {
@@ -163,7 +167,8 @@ actor IdentityPhotoService {
                 cropUsable: prepared.crop != nil, modelOutputValidated: validated,
                 inputIssue: prepared.issue, modelFailure: modelFailure,
                 imageWidth: prepared.image?.width, imageHeight: prepared.image?.height,
-                cropWidth: prepared.crop?.width, cropHeight: prepared.crop?.height, runtimeVersion: runtime),
+                cropWidth: prepared.crop?.width, cropHeight: prepared.crop?.height, runtimeVersion: runtime,
+                animalDetection: prepared.animalDetection),
                 thumbnail: prepared.image.flatMap(Self.thumbnail),
                 cropThumbnail: prepared.crop.flatMap(Self.thumbnail))
         }
@@ -278,9 +283,12 @@ actor IdentityPhotoService {
         guard let asset else { return IdentityPreparedPhoto(image: nil, crop: nil, issue: .assetUnavailable) }
         guard let image = localImage(asset) else { return IdentityPreparedPhoto(image: nil, crop: nil, issue: .localImageUnavailable) }
         do {
-            switch try IdentityImagePipeline.catCropResult(image) {
-            case .success(let crop): return IdentityPreparedPhoto(image: image, crop: crop, issue: nil)
-            case .failure(let issue): return IdentityPreparedPhoto(image: image, crop: nil, issue: issue)
+            let inspected = try IdentityImagePipeline.inspectCatCrop(image)
+            switch inspected.result {
+            case .success(let crop):
+                return IdentityPreparedPhoto(image: image, crop: crop, issue: nil, animalDetection: inspected.diagnostic)
+            case .failure(let issue):
+                return IdentityPreparedPhoto(image: image, crop: nil, issue: issue, animalDetection: inspected.diagnostic)
             }
         } catch { return IdentityPreparedPhoto(image: image, crop: nil, issue: .detectionFailed) }
     }
@@ -346,13 +354,21 @@ enum IdentityImagePipeline {
     }
 
     static func catCropResult(_ image: CGImage) throws -> Result<CGImage, IdentityInputIssue> {
+        try inspectCatCrop(image).result
+    }
+
+    static func inspectCatCrop(_ image: CGImage) throws
+        -> (result: Result<CGImage, IdentityInputIssue>, diagnostic: IdentityAnimalDetectionDiagnostic) {
         let request = VNRecognizeAnimalsRequest()
         request.revision = VNRecognizeAnimalsRequestRevision2
         try VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])
-        let cats = (request.results ?? []).filter { observation in
-            observation.labels.contains { $0.identifier == "Cat" && $0.confidence >= 0.5 }
-        }
-        return cropResult(image, catBoxes: cats.map(\.boundingBox))
+        let observations = request.results ?? []
+        let labels = observations.map { $0.labels.map { IdentityAnimalLabelSample(label: $0.identifier, confidence: $0.confidence) } }
+        let diagnostic = IdentityAnimalDetectionDiagnostic(observationLabels: labels, revision: request.revision,
+            systemCatLabel: VNAnimalIdentifier.cat.rawValue, resultsAvailable: request.results != nil)
+        // The same exact-label and 0.5 predicate as before; case-insensitive counts are diagnostic only.
+        let cats = zip(observations, labels).filter { IdentityAnimalDetectionDiagnostic.acceptsCat($0.1) }.map { $0.0 }
+        return (cropResult(image, catBoxes: cats.map(\.boundingBox)), diagnostic)
     }
 
     static func cropResult(_ image: CGImage, catBoxes: [CGRect]) -> Result<CGImage, IdentityInputIssue> {

@@ -194,9 +194,13 @@ final class IdentityImagePipelineTests: XCTestCase {
     }
 
     func testInputExportHasNoIdentityClaimsPhotosOrIdentifiers() throws {
-        let json = try XCTUnwrap(IdentityInputExport.json(try inputFixture().report))
+        var report = try inputFixture().report
+        report.animalDetection = IdentityAnimalDetectionDiagnostic(
+            observationLabels: [[IdentityAnimalLabelSample(label: "cat", confidence: 0.75)]],
+            revision: 2, systemCatLabel: "Cat")
+        let json = try XCTUnwrap(IdentityInputExport.json(report))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-input-diagnostic-v1")
+        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-input-diagnostic-v2")
         for key in ["photosIncluded", "identifiersIncluded", "embeddingsIncluded", "identityEvaluated", "productValidated", "productionDataChanged"] {
             XCTAssertEqual(object[key] as? Bool, false)
         }
@@ -206,5 +210,14 @@ final class IdentityImagePipelineTests: XCTestCase {
         XCTAssertNil(object["predictionsA"])
         XCTAssertNil(object["thumbnail"])
         XCTAssertFalse(json.contains("synthetic-selected-id"))
+        XCTAssertNotNil(object["appVersion"] as? String)
+        XCTAssertNotNil(object["appBuild"] as? String)
+        let detection = try XCTUnwrap(object["animalDetection"] as? [String: Any])
+        XCTAssertEqual(detection["observationCount"] as? Int, 1)
+        XCTAssertEqual(detection["acceptedCatObservationCount"] as? Int, 0)
+        XCTAssertEqual(detection["caseInsensitiveAcceptedCatObservationCount"] as? Int, 1)
+        XCTAssertEqual(detection["maximumCaseInsensitiveCatConfidence"] as? Double, 0.75)
+        XCTAssertFalse(json.contains("boundingBox"))
+        XCTAssertFalse(json.contains("localIdentifier"))
     }
 }

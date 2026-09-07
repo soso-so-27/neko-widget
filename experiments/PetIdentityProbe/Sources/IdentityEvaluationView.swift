@@ -322,6 +322,19 @@ struct IdentityEvaluationView: View {
             inputStep("猫の範囲を切り抜き", passed: report.cropUsable, attempted: report.singleCatDetected)
             inputStep("モデルの実行・出力", passed: report.modelOutputValidated, attempted: report.cropUsable)
             if let issue = report.inputIssue { Text(issue.title).foregroundStyle(.orange) }
+            if let diagnostic = report.animalDetection {
+                Text(diagnostic.summary).font(.subheadline)
+                DisclosureGroup("検出の内訳") {
+                    LabeledContent("動物の候補", value: diagnostic.observationCount.map { "\($0)件" } ?? "結果なし")
+                    LabeledContent("猫として採用", value: "\(diagnostic.acceptedCatObservationCount)件")
+                    ForEach(diagnostic.labels, id: \.label) { label in
+                        LabeledContent(label.label,
+                            value: "\(label.observationCount)件 · \(label.maximumConfidence.map { String(format: "%.3f", $0) } ?? "値なし")")
+                    }
+                    Text("信頼度の採用基準は0.5です。正解する確率ではありません。検出条件は変更していません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }.font(.subheadline)
+            }
             if let failure = report.modelFailure { Text(failure).foregroundStyle(.orange) }
             Text("写真の読み取りの確認です。この猫を見分けられたという意味ではありません。")
                 .font(.footnote).foregroundStyle(.secondary)
