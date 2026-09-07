@@ -1081,7 +1081,7 @@ actor MomentSharingCoordinator {
         _ = try await PairingInstallationGuard.resetLocalSharingAsync(
             expectedState: state,
             lifecycleToken: authorization.lifecycleToken,
-            message: "この相手をブロックし、まどを解除しました。"
+            message: "この相手をブロックし、写真の共有を終了しました。"
         )
     }
 
