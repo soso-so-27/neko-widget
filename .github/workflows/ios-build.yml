@@ -21,8 +21,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    name: Select iOS checks and verify reusable evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+      smoke: ${{ steps.scope.outputs.smoke }}
+      sharing: ${{ steps.scope.outputs.sharing }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test CI selection and evidence boundaries
+        run: python3 NekoWidget/ci/test-plan-ios-ci.py
+      - name: Select checks
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 NekoWidget/ci/plan-ios-ci.py
+
   build-without-signing:
     name: Build disabled app and extensions without signing
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 30
     env:
@@ -882,7 +909,8 @@ jobs:
 
   simulator-smoke-test:
     name: Launch app and scan fixtures in Simulator
-    needs: build-without-signing
+    needs: [plan, build-without-signing]
+    if: needs.plan.outputs.smoke == 'true'
     runs-on: macos-15
     # A cold hosted Simulator can spend several minutes in first-boot data
     # migration. The smoke script itself has bounded waits, so leave enough
@@ -916,7 +944,8 @@ jobs:
 
   sharing-runtime-matrix:
     name: Sharing runtime self-test (iOS 18.5 / 26.2)
-    needs: build-without-signing
+    needs: [plan, build-without-signing]
+    if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     env:
