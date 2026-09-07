@@ -600,6 +600,9 @@ struct AppRootView: View {
 
     private var catProfilesActions: CatProfilesViewActions {
         CatProfilesViewActions(
+            exportProfileDates: { try viewModel.exportCatProfileDates() },
+            previewProfileImport: { try viewModel.previewCatProfileImport($0) },
+            importProfileDates: { await viewModel.importCatProfileDates($0) },
             currentSimilarityCandidates: {
                 viewModel.catSimilarityCandidateInstances
             },

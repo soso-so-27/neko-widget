@@ -26,6 +26,8 @@ enum CatHouseholdIdentityVerifier {
         try verifiesStableConfirmedKeyPhoto()
         try verifiesRevisionPolicyRejectsStaleState()
         try verifiesCodableRoundTrip()
+        try verifiesProfileTransferBoundaries()
+        try await verifiesProfileTransferCommitConflict()
         try await verifiesProtectedAtomicStore()
         print("Cat household identity verifier passed")
     }
@@ -882,6 +884,124 @@ enum CatHouseholdIdentityVerifier {
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 1)
         )
+    }
+
+    private static func verifiesProfileTransferBoundaries() throws {
+        let birthday = lifeReference(year: 2020, month: 2, day: 29).date
+        let adopted = lifeReference(year: 2021, month: 5, day: 3).date
+        var profile = CatProfile(displayName: "テスト猫", keyPhotoLocalIdentifier: "PRIVATE-PHOTO-ID")
+        profile.setLifeDates(CatProfileLifeDates(
+            birthday: birthday, birthdayIsApproximate: true,
+            adoptionDay: adopted, adoptionDayIsApproximate: false
+        ), preferredPrimaryKind: .adoptionDay)
+        let withoutDates = CatProfile(displayName: "テスト猫", lifeDates: CatProfileLifeDates())
+        let transfer = try CatProfileTransfer(profiles: [profile, withoutDates])
+        let data = try transfer.encoded()
+        let text = String(decoding: data, as: UTF8.self)
+        try require(!text.contains("PRIVATE-PHOTO-ID") && !text.contains("keyPhotoLocalIdentifier")
+                    && !text.contains("memberships") && !text.contains("photoAlbumLink"),
+                    "portable file exposed photo settings")
+        let decoded = try CatProfileTransfer.decode(data)
+        try require(decoded == transfer, "portable profile dates did not round-trip")
+        let empty = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: .empty)
+        let proposed = try decoded.applying(to: empty, expectedRevision: empty.mutationRevision)
+        try require(Set(proposed.profiles.map(\.id)) == Set([profile.id, withoutDates.id]),
+                    "same-name cats were merged or assigned new identities")
+        let restored = proposed.profiles.first { $0.id == profile.id }!
+        try require(restored.resolvedLifeDates == profile.resolvedLifeDates
+                    && restored.lifeReference?.kind == .adoptionDay,
+                    "both dates, approximation or primary basis changed")
+        try require(proposed.profiles.first { $0.id == withoutDates.id }!.resolvedLifeDates == CatProfileLifeDates(),
+                    "explicit unset dates were replaced")
+        try require(proposed.memberships.isEmpty && proposed.globalExcludedAssets.isEmpty
+                    && proposed.profiles.allSatisfy { $0.keyPhotoLocalIdentifier == nil && $0.photoAlbumLink == nil },
+                    "import invented photo assignments")
+        var withNewPhotoSettings = proposed
+        withNewPhotoSettings.setManualMembership(assetLocalIdentifier: "new-photo", profileID: profile.id,
+                                                decision: .included, subjectBoundingBox: nil)
+        let repeated = try decoded.applying(to: withNewPhotoSettings, expectedRevision: withNewPhotoSettings.mutationRevision)
+        try require(repeated == withNewPhotoSettings, "repeat import overwrote photo settings or duplicated profiles")
+
+        var other = empty
+        other.upsertProfile(CatProfile(displayName: "既存の猫"))
+        do {
+            _ = try decoded.applying(to: other, expectedRevision: other.mutationRevision)
+            throw VerificationError.failed("import overwrote an existing profile")
+        } catch CatProfileTransferError.existingSettings { }
+        var deletedProfiles = empty
+        deletedProfiles.mode = .profiled
+        var selectedAlbum = CatCandidateCurationState.empty
+        selectedAlbum.selectSourceAlbum(localIdentifier: "existing-album", assetIdentifiers: ["existing-photo"])
+        do {
+            _ = try decoded.applying(to: deletedProfiles, expectedRevision: deletedProfiles.mutationRevision,
+                                     legacyCuration: selectedAlbum)
+            throw VerificationError.failed("import ignored current album settings after profiles were deleted")
+        } catch CatProfileTransferError.existingSettings { }
+        do {
+            _ = try decoded.applying(to: empty, expectedRevision: empty.mutationRevision + 1)
+            throw VerificationError.failed("import accepted a stale preview")
+        } catch CatProfileTransferError.changedState { }
+        var curation = CatCandidateCurationState.empty
+        curation.exclude(localIdentifiers: ["excluded-photo"])
+        let excluded = CatHouseholdIdentityState.legacyUnscoped(lifeReference: nil, curation: curation)
+        do {
+            _ = try decoded.applying(to: excluded, expectedRevision: excluded.mutationRevision)
+            throw VerificationError.failed("import ignored legacy exclusions")
+        } catch CatProfileTransferError.existingSettings { }
+        let legacyDate = CatHouseholdIdentityState.legacyUnscoped(
+            lifeReference: lifeReference(year: 2022, month: 6, day: 1), curation: .empty)
+        do {
+            _ = try decoded.applying(to: legacyDate, expectedRevision: legacyDate.mutationRevision)
+            throw VerificationError.failed("import replaced an existing legacy date")
+        } catch CatProfileTransferError.existingSettings { }
+
+        var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        object["version"] = 99
+        do {
+            _ = try CatProfileTransfer.decode(JSONSerialization.data(withJSONObject: object))
+            throw VerificationError.failed("future transfer version was accepted")
+        } catch CatProfileTransferError.unsupportedVersion { }
+        object["version"] = 1
+        var entries = object["profiles"] as! [[String: Any]]
+        object["profiles"] = [entries[0], entries[0]]
+        do {
+            _ = try CatProfileTransfer.decode(JSONSerialization.data(withJSONObject: object))
+            throw VerificationError.failed("duplicate profile UUID was accepted")
+        } catch CatProfileTransferError.invalidFile { }
+        var dates = entries[0]["dates"] as! [String: Any]
+        dates["birthday"] = ["year": 2020, "month": 2, "day": 31]
+        entries[0]["dates"] = dates
+        object["profiles"] = entries
+        do {
+            _ = try CatProfileTransfer.decode(JSONSerialization.data(withJSONObject: object))
+            throw VerificationError.failed("invalid calendar date was accepted")
+        } catch CatProfileTransferError.invalidFile { }
+        do {
+            _ = try CatProfileTransfer.decode(Data(repeating: 32, count: CatProfileTransfer.maximumBytes + 1))
+            throw VerificationError.failed("oversized transfer was accepted")
+        } catch CatProfileTransferError.invalidFile { }
+    }
+
+    private static func verifiesProfileTransferCommitConflict() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("profile-transfer-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("identity.json")
+        let store = try CatHouseholdIdentityStore(stateURL: url)
+        let original = try await store.loadOrMigrate(legacyLifeReference: nil, legacyCuration: .empty)
+        let transfer = try CatProfileTransfer(profiles: [CatProfile(displayName: "引き継ぐ猫")])
+        let pending = try transfer.applying(to: original, expectedRevision: original.mutationRevision)
+        let afterPreview = try await store.load()
+        try require(afterPreview == original, "preview changed stored state")
+        var concurrent = original
+        concurrent.upsertProfile(CatProfile(displayName: "先に登録した猫"))
+        let newest = try await store.save(concurrent, expectedMutationRevision: original.mutationRevision)
+        do {
+            _ = try await store.save(pending, expectedMutationRevision: original.mutationRevision)
+            throw VerificationError.failed("stale import overwrote concurrent data")
+        } catch CatHouseholdIdentityRevisionError.stale(_, _) { }
+        let afterConflict = try await store.load()
+        try require(afterConflict == newest, "failed import changed stored data")
     }
 
     private static func lifeReference(

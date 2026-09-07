@@ -1106,6 +1106,12 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectPhotoSourceAlbum(localIdentifier: String?) async {
+        await serializeCatIdentityTransition {
+            await self.performSelectPhotoSourceAlbum(localIdentifier: localIdentifier)
+        }
+    }
+
+    private func performSelectPhotoSourceAlbum(localIdentifier: String?) async {
         guard candidateAuthorityIsReady(operation: "select_photo_source") else { return }
         guard canReadPhotos, let curationStore else {
             setError(NekoWidgetError.photoAccessDenied)
@@ -1242,6 +1248,12 @@ final class AppViewModel: ObservableObject {
     /// or rebuilding PhotoKit/Widget outputs. Curated time albums are derived
     /// directly from this published setting and regroup immediately.
     func updateCatLifeReference(_ reference: CatLifeReference?) async {
+        await serializeCatIdentityTransition {
+            await self.performUpdateCatLifeReference(reference)
+        }
+    }
+
+    private func performUpdateCatLifeReference(_ reference: CatLifeReference?) async {
         guard candidateAuthorityIsReady(operation: "update_cat_life_reference") else {
             return
         }
@@ -1262,6 +1274,80 @@ final class AppViewModel: ObservableObject {
             ]
         )
         await saveSnapshot(reportErrors: true)
+    }
+
+    func exportCatProfileDates() throws -> Data {
+        guard catIdentityLoadState == .ready, let current = catHouseholdIdentity else {
+            throw CatProfileTransferError.notReady
+        }
+        return try CatProfileTransfer(profiles: current.profiles).encoded()
+    }
+
+    func previewCatProfileImport(_ data: Data) throws -> CatProfileImportPreview {
+        guard catIdentityLoadState == .ready, let current = catHouseholdIdentity else {
+            throw CatProfileTransferError.notReady
+        }
+        let transfer = try CatProfileTransfer.decode(data)
+        let reconciled = current.reconcilingLegacyUnscoped(
+            lifeReference: settings.catLifeReference, curation: catCandidateCuration
+        )
+        let proposed = try transfer.applying(
+            to: reconciled, expectedRevision: current.mutationRevision,
+            legacyCuration: catCandidateCuration, legacyLifeReference: settings.catLifeReference
+        )
+        return CatProfileImportPreview(
+            transfer: transfer,
+            expectedIdentityRevision: current.mutationRevision,
+            expectedCurationRevision: catCandidateCuration.mutationRevision,
+            expectedLegacyReference: settings.catLifeReference,
+            isUnchanged: proposed == reconciled
+        )
+    }
+
+    func importCatProfileDates(_ preview: CatProfileImportPreview) async -> Result<Bool, Error> {
+        var result: Result<Bool, Error> = .failure(CatProfileTransferError.notReady)
+        await serializeCatIdentityTransition {
+            do {
+                guard self.catIdentityLoadState == .ready,
+                      let current = self.catHouseholdIdentity, let store = self.identityStore else {
+                    throw CatProfileTransferError.notReady
+                }
+                guard self.catCandidateCuration.mutationRevision == preview.expectedCurationRevision,
+                      self.settings.catLifeReference == preview.expectedLegacyReference else {
+                    throw CatProfileTransferError.changedState
+                }
+                let reconciled = current.reconcilingLegacyUnscoped(
+                    lifeReference: self.settings.catLifeReference, curation: self.catCandidateCuration
+                )
+                let proposed = try preview.transfer.applying(
+                    to: reconciled, expectedRevision: preview.expectedIdentityRevision,
+                    legacyCuration: self.catCandidateCuration,
+                    legacyLifeReference: self.settings.catLifeReference
+                )
+                if proposed == reconciled {
+                    result = .success(false)
+                    return
+                }
+                // A single compare-and-swap. Never retry an import over newer settings.
+                let committed = try await store.save(
+                    proposed, expectedMutationRevision: preview.expectedIdentityRevision
+                )
+                if committed.mutationRevision >= (self.catHouseholdIdentity?.mutationRevision ?? -1) {
+                    self.catHouseholdIdentity = committed
+                }
+                result = .success(true)
+            } catch {
+                // Do not put names, dates, file contents or external URLs into logs.
+                // Refresh a newer disk revision for the next explicit preview,
+                // without retrying or applying this import automatically.
+                if let store = self.identityStore, let latest = try? await store.load(),
+                   latest.mutationRevision >= (self.catHouseholdIdentity?.mutationRevision ?? -1) {
+                    self.catHouseholdIdentity = latest
+                }
+                result = .failure(error)
+            }
+        }
+        return result
     }
 
     @discardableResult
@@ -1743,6 +1829,8 @@ final class AppViewModel: ObservableObject {
     func updateSettings(_ newSettings: AppSettings) async {
         guard candidateAuthorityIsReady(operation: "update_settings") else { return }
         var normalized = newSettings.normalized()
+        // Life dates use the serialized, dedicated mutation path.
+        normalized.catLifeReference = settings.catLifeReference
         let detectionChanged = normalized.confidenceThreshold != settings.confidenceThreshold
         let displayRangeChanged = normalized.dateRange != settings.dateRange
         let widgetPolicyChanged = normalized.minimumCatAreaRatio

@@ -703,6 +703,7 @@ jobs:
             Shared/Models/NormalizedRect.swift \
             Shared/Models/CatCandidateCuration.swift \
             Shared/Models/CatHouseholdIdentity.swift \
+            Shared/Models/CatProfileTransfer.swift \
             Shared/Models/NekoWidgetError.swift \
             Shared/Models/WidgetRenderPlan.swift \
             Shared/Models/WidgetManifest.swift \

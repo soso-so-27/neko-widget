@@ -4,6 +4,9 @@ import SwiftUI
 /// membership is explicit and user-confirmed; this build does not perform
 /// automatic individual-cat identification.
 struct CatProfilesViewActions {
+    var exportProfileDates: () throws -> Data
+    var previewProfileImport: (Data) throws -> CatProfileImportPreview
+    var importProfileDates: (CatProfileImportPreview) async -> Result<Bool, Error>
     var currentSimilarityCandidates: @MainActor () -> [CatSimilarityCandidateInstance]
     var createProfile: (CatProfileDraftPresentation) async -> String?
     var updateName: (
@@ -48,6 +51,9 @@ struct CatProfilesViewActions {
     var deleteProfile: (_ profileIdentifier: String) async -> Bool
 
     static let noOp = CatProfilesViewActions(
+        exportProfileDates: { throw CatProfileTransferError.notReady },
+        previewProfileImport: { _ in throw CatProfileTransferError.notReady },
+        importProfileDates: { _ in .failure(CatProfileTransferError.notReady) },
         currentSimilarityCandidates: { [] },
         createProfile: { _ in nil },
         updateName: { _, _ in false },
@@ -83,6 +89,14 @@ struct CatProfilesView: View {
             profilesSection
             unassignedSection
             legacyExclusionSection
+            Section {
+                NavigationLink {
+                    CatProfileTransferView(actions: actions, hasProfiles: !presentation.profiles.isEmpty)
+                } label: {
+                    Label("名前と日付の引き継ぎ", systemImage: "arrow.up.arrow.down.doc")
+                }
+                .accessibilityIdentifier("cat-profile-transfer")
+            }
         }
         .navigationTitle("ねこのプロフィール")
         .sheet(isPresented: $showsAddProfile, onDismiss: {
