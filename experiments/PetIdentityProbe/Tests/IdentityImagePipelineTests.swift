@@ -200,7 +200,7 @@ final class IdentityImagePipelineTests: XCTestCase {
             revision: 2, systemCatLabel: "Cat")
         let json = try XCTUnwrap(IdentityInputExport.json(report))
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-input-diagnostic-v2")
+        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-identity-input-diagnostic-v3")
         for key in ["photosIncluded", "identifiersIncluded", "embeddingsIncluded", "identityEvaluated", "productValidated", "productionDataChanged"] {
             XCTAssertEqual(object[key] as? Bool, false)
         }
