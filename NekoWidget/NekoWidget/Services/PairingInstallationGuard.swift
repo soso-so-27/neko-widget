@@ -210,6 +210,88 @@ enum PairingInstallationGuard {
         }.value
     }
 
+    /// A lost block response can leave the old local room intact. A confirmed
+    /// withdrawal must finish that room's cleanup before discarding its retry
+    /// capability. Never apply this cleanup to a replacement room in the slot.
+    static func completeBlockWithdrawalLocallyAsync(
+        _ record: MomentBlockWithdrawalStore.Record
+    ) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            try SharingLifecycleGate.withExclusive {
+                try finishPendingCleanupBeforeWindowSelectionWhileLocked()
+                guard try readLocalMarker() == record.installationMarker,
+                      try MomentBlockWithdrawalStore.recordWhileLifecycleLocked(
+                        id: record.id, installationMarker: record.installationMarker
+                      ) == record,
+                      let catalog = try PrivateWindowCatalogStore.load()
+                else { throw PairingError.stateUnavailable }
+                if let window = catalog.windows.first(where: { $0.localWindowID == record.localWindowID }) {
+                    guard let state = try PairingStateStore.load(localWindowID: record.localWindowID),
+                          state.installationMarker == record.installationMarker,
+                          state.spaceID == window.spaceID,
+                          state.credentialAccount == window.credentialAccount
+                    else { throw PairingError.stateUnavailable }
+                    if state.spaceID == record.spaceID {
+                        guard state.participantID == record.blockerParticipantID else {
+                            throw PairingError.stateUnavailable
+                        }
+                        _ = try SharingLifecycleGate.bumpEpochWhileLocked()
+                        try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
+                        _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                            localWindowID: record.localWindowID
+                        )
+                        _ = try performCleanupWhileLocked(
+                            marker: record.installationMarker,
+                            message: "この相手との写真共有を終了しました。"
+                        )
+                        _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                            localWindowID: catalog.activeWindowID
+                        )
+                    }
+                }
+                try MomentBlockWithdrawalStore.markWithdrawnWhileLifecycleLocked(record)
+            }
+        }.value
+    }
+
+    /// Explicit restart only. Reuse a proven empty local slot, or create a
+    /// new one through the normal product limits. Never restore the old room.
+    static func prepareNewWindowForBlockRestartAsync() async throws -> BootstrapResult {
+        try await Task.detached(priority: .userInitiated) {
+            let empty: BootstrapResult? = try SharingLifecycleGate.withExclusive {
+                try finishPendingCleanupBeforeWindowSelectionWhileLocked()
+                guard let marker = try readLocalMarker(),
+                      let catalog = try PrivateWindowCatalogStore.load()
+                else { throw PairingError.stateUnavailable }
+                for window in catalog.windows {
+                    let plan = try selectionPlanWhileLocked(
+                        targetLocalWindowID: window.localWindowID,
+                        installationMarker: marker,
+                        rejectInstallationMarkerMismatch: true
+                    )
+                    guard case let .stored(state) = plan,
+                          state.phase == .unpaired, state.credentialAccount == nil
+                    else { continue }
+                    _ = try SharingLifecycleGate.bumpEpochWhileLocked()
+                    try DailySharingStateStore.revokeAllSyncLeasesWhileLifecycleLocked()
+                    _ = try PrivateWindowCatalogStore.activateWhileLifecycleLocked(
+                        localWindowID: window.localWindowID
+                    )
+                    return BootstrapResult(
+                        state: state,
+                        lifecycleToken: try SharingLifecycleGate.issueTokenWhileLocked(),
+                        invalidatedPreviousInstallation: false
+                    )
+                }
+                return nil
+            }
+            // This method rechecks all limits and in-progress setups while
+            // locked, including a window created between the two lock scopes.
+            if let empty { return empty }
+            return try createAndActivatePrivateWindow()
+        }.value
+    }
+
     /// Selects an existing catalog slot. A missing target is never replaced
     /// with a different catalog slot. It may resume its own authenticated
     /// migration copy, or become unpaired only when the target is provably an
@@ -1693,6 +1775,7 @@ enum PairingInstallationGuard {
         }
         if removeAllWindows {
             try PairingKeychainStore.deleteAllSharingCredentials()
+            try MomentBlockWithdrawalStore.deleteAllWhileLifecycleLocked()
         } else if let activeCredentialAccount {
             try PairingKeychainStore.delete(account: activeCredentialAccount)
         }

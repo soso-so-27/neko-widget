@@ -75,6 +75,7 @@ import {
   reserveMomentReport,
   uploadMomentCiphertext,
   uploadMomentReportCiphertext,
+  withdrawParticipantBlock,
 } from "./moments";
 import { getReactionChanges, recordPawReaction } from "./reactions";
 import {
@@ -478,6 +479,10 @@ export async function route(
   );
   if (request.method === "POST" && participantBlockMatch?.[1] !== undefined) {
     return blockParticipant(request, env, participantBlockMatch[1]);
+  }
+  const blockWithdrawalMatch = pathname.match(/^\/v2\/blocks\/([^/]+)\/withdraw$/u);
+  if (request.method === "POST" && blockWithdrawalMatch?.[1] !== undefined) {
+    return withdrawParticipantBlock(request, env, blockWithdrawalMatch[1]);
   }
   if (request.method === "POST" && pathname === "/v2/reports/reservations") {
     return reserveMomentReport(request, env);

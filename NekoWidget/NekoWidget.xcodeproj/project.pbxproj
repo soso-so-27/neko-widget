@@ -86,6 +86,8 @@
 		10000000000000000000016B /* MomentSharePreparationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000251 /* MomentSharePreparationService.swift */; };
 		10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000252 /* MomentSharingAPIClient.swift */; };
 		10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000253 /* MomentSharingCoordinator.swift */; };
+		1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */; };
+		1000000000000000000001F1 /* BlockedSharingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F000000000000000000002F1 /* BlockedSharingView.swift */; };
 		100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000025A /* MomentBackgroundRefreshService.swift */; };
 		100000000000000000000178 /* MomentShareIngressService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000354 /* MomentShareIngressService.swift */; };
 		100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000256 /* MomentShareHandoffProcessor.swift */; };
@@ -325,6 +327,8 @@
 		F00000000000000000000251 /* MomentSharePreparationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharePreparationService.swift; sourceTree = "<group>"; };
 		F00000000000000000000252 /* MomentSharingAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingAPIClient.swift; sourceTree = "<group>"; };
 		F00000000000000000000253 /* MomentSharingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingCoordinator.swift; sourceTree = "<group>"; };
+		F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentBlockWithdrawalStore.swift; sourceTree = "<group>"; };
+		F000000000000000000002F1 /* BlockedSharingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockedSharingView.swift; sourceTree = "<group>"; };
 		F0000000000000000000025A /* MomentBackgroundRefreshService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentBackgroundRefreshService.swift; sourceTree = "<group>"; };
 		F00000000000000000000254 /* MomentSharingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentSharingViewModel.swift; sourceTree = "<group>"; };
 		F00000000000000000000255 /* FamilyWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyWindowView.swift; sourceTree = "<group>"; };
@@ -610,6 +614,7 @@
 				F00000000000000000000251 /* MomentSharePreparationService.swift */,
 				F00000000000000000000252 /* MomentSharingAPIClient.swift */,
 				F00000000000000000000253 /* MomentSharingCoordinator.swift */,
+				F000000000000000000002F0 /* MomentBlockWithdrawalStore.swift */,
 				F0000000000000000000025A /* MomentBackgroundRefreshService.swift */,
 				F00000000000000000000256 /* MomentShareHandoffProcessor.swift */,
 				F0000000000000000000025E /* SeasonalMovieCandidateService.swift */,
@@ -649,6 +654,7 @@
 				F00000000000000000000235 /* PhotoPermissionView.swift */,
 				F00000000000000000000236 /* ScanStatusView.swift */,
 				F00000000000000000000237 /* SettingsView.swift */,
+				F000000000000000000002F1 /* BlockedSharingView.swift */,
 				F00000000000000000000238 /* LogView.swift */,
 				F00000000000000000000239 /* PairingView.swift */,
 				F0000000000000000000023A /* GrowthAlbumSelector.swift */,
@@ -984,6 +990,8 @@
 				10000000000000000000016B /* MomentSharePreparationService.swift in Sources */,
 				10000000000000000000016C /* MomentSharingAPIClient.swift in Sources */,
 				10000000000000000000016D /* MomentSharingCoordinator.swift in Sources */,
+				1000000000000000000001F0 /* MomentBlockWithdrawalStore.swift in Sources */,
+				1000000000000000000001F1 /* BlockedSharingView.swift in Sources */,
 				100000000000000000000177 /* MomentBackgroundRefreshService.swift in Sources */,
 				100000000000000000000178 /* MomentShareIngressService.swift in Sources */,
 				100000000000000000000172 /* MomentShareHandoffProcessor.swift in Sources */,

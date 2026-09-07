@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { base64urlEncode, sha256Base64url } from "../src/encoding";
+import { base64urlEncode, sha256, sha256Base64url } from "../src/encoding";
 import type { Env } from "../src/env";
 import { route } from "../src/index";
 import {
@@ -512,6 +512,26 @@ async function signedFetch(
   nonce = randomValue(16),
 ): Promise<Response> {
   return SELF.fetch(await signedRequest(path, method, member, value, nonce));
+}
+
+async function withdrawalCapability() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return {
+    token: base64urlEncode(bytes),
+    withdrawalId: crypto.randomUUID().toLowerCase(),
+    withdrawalTokenHash: Array.from(await sha256(bytes),
+      (byte) => byte.toString(16).padStart(2, "0")).join(""),
+  };
+}
+
+function withdrawalRequest(id: string, token: string, body: unknown = {
+  protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+}): Request {
+  return new Request(`https://sharing.invalid/v2/blocks/${id}/withdraw`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
 }
 
 async function addFutureParticipant(spaceID: string): Promise<string> {
@@ -1346,6 +1366,167 @@ describe("append-only encrypted moments", () => {
     expect(staleEpoch.response.status).toBe(409);
     const currentEpochButBlocked = await reserve(space.owner, published.ciphertext, { keyEpoch: 2 });
     expect(currentEpochButBlocked.response.status).toBe(409);
+  });
+
+  it("withdrawal removes only its block and never resumes old sharing, even on retry", async () => {
+    const space = await seedActiveSpace();
+    const published = await publish(space.owner);
+    const name = await signedFetch("/v2/window-name", "PUT", space.owner,
+      await windowNameBody(space, 1));
+    expect(name.status).toBe(200);
+    const { token, ...capability } = await withdrawalCapability();
+    const body = { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+      ...capability };
+    const blockPath = `/v2/participants/${space.invitee.id}/block`;
+    const blocked = await signedFetch(blockPath, "POST", space.owner, body);
+    expect(blocked.status).toBe(200);
+    const blockJSON = await blocked.json();
+    expect(blockJSON).toMatchObject({ block: { withdrawalId: capability.withdrawalId } });
+    const replay = await signedFetch(blockPath, "POST", space.owner, body);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(blockJSON);
+    const closedSpace = await testEnv.DB.prepare(
+      "SELECT current_key_epoch, membership_revision FROM moment_spaces WHERE space_id = ?",
+    ).bind(space.id).first();
+
+    const requestID = crypto.randomUUID().toLowerCase();
+    const concurrent = await Promise.all([requestID, requestID].map((id) =>
+      SELF.fetch(withdrawalRequest(capability.withdrawalId, token,
+        { protocolVersion: 2, clientRequestId: id }))));
+    const retry = await SELF.fetch(withdrawalRequest(capability.withdrawalId, token));
+    for (const response of [...concurrent, retry]) {
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ protocolVersion: 2,
+        block: { id: capability.withdrawalId, state: "withdrawn" }, sharingResumed: false });
+    }
+    expect(await testEnv.DB.prepare("SELECT * FROM moment_blocks WHERE space_id = ?")
+      .bind(space.id).first()).toBeNull();
+    expect(await testEnv.DB.prepare(
+      "SELECT current_key_epoch, membership_revision FROM moment_spaces WHERE space_id = ?",
+    ).bind(space.id).first()).toEqual(closedSpace);
+    for (const table of ["members", "moment_participants"]) {
+      expect(await testEnv.DB.prepare(`SELECT state FROM ${table} WHERE id = ?`)
+        .bind(space.invitee.id).first()).toMatchObject({ state: "revoked" });
+    }
+    expect(await testEnv.DB.prepare(
+      "SELECT state FROM moment_devices WHERE participant_id = ?",
+    ).bind(space.invitee.id).first()).toMatchObject({ state: "revoked" });
+    expect(await testEnv.DB.prepare(
+      "SELECT state FROM moment_deliveries WHERE moment_id = ?",
+    ).bind(published.reservation.moment.id).first()).toMatchObject({ state: "revoked" });
+    expect(await testEnv.DB.prepare("SELECT * FROM moment_window_names WHERE space_id = ?")
+      .bind(space.id).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT * FROM notification_events WHERE moment_id = ?")
+      .bind(published.reservation.moment.id).first()).toBeNull();
+    expect((await signedFetch(`/v2/moments/${published.reservation.moment.id}/ciphertext`,
+      "GET", space.invitee)).status).toBe(410);
+    expect((await signedFetch("/v1/sharing/sources", "GET", space.invitee)).status).toBe(410);
+    expect((await reserve(space.owner, published.ciphertext, { keyEpoch: 2 })).response.status)
+      .toBe(409);
+  });
+
+  it("withdrawal rejects another token, noncanonical tokens, unknown IDs and legacy blocks", async () => {
+    const space = await seedActiveSpace();
+    const { token, ...capability } = await withdrawalCapability();
+    expect((await signedFetch(`/v2/participants/${space.invitee.id}/block`, "POST", space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+        ...capability })).status).toBe(200);
+    for (const invalid of [randomValue(32), `${token}=`, randomValue(31), "", "A".repeat(42) + "B"]) {
+      const response = await SELF.fetch(withdrawalRequest(capability.withdrawalId, invalid));
+      expect(response.status).toBe(401);
+    }
+    expect((await SELF.fetch(withdrawalRequest(crypto.randomUUID().toLowerCase(), token))).status)
+      .toBe(401);
+    const legacy = await seedActiveSpace();
+    expect((await signedFetch(`/v2/participants/${legacy.invitee.id}/block`, "POST", legacy.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase() })).status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT * FROM moment_block_withdrawals WHERE space_id = ?")
+      .bind(legacy.id).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT state FROM moment_blocks WHERE space_id = ?")
+      .bind(space.id).first()).toMatchObject({ state: "active" });
+    const other = await withdrawalCapability();
+    const otherSpace = await seedActiveSpace();
+    expect((await signedFetch(`/v2/participants/${otherSpace.invitee.id}/block`, "POST", otherSpace.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(),
+        withdrawalId: other.withdrawalId, withdrawalTokenHash: other.withdrawalTokenHash })).status)
+      .toBe(200);
+    expect((await SELF.fetch(withdrawalRequest(other.withdrawalId, token))).status).toBe(401);
+  });
+
+  it("withdrawal registration validates the optional pair and rolls back a capability ID conflict", async () => {
+    const space = await seedActiveSpace();
+    const { token: _token, ...capability } = await withdrawalCapability();
+    const path = `/v2/participants/${space.invitee.id}/block`;
+    for (const fields of [
+      { withdrawalId: capability.withdrawalId },
+      { withdrawalTokenHash: capability.withdrawalTokenHash },
+      { ...capability, withdrawalId: capability.withdrawalId.toUpperCase() },
+      { ...capability, withdrawalTokenHash: "A".repeat(64) },
+      { ...capability, withdrawalTokenHash: "0".repeat(63) },
+      { ...capability, extra: true },
+    ]) {
+      expect((await signedFetch(path, "POST", space.owner,
+        { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), ...fields })).status)
+        .toBe(400);
+    }
+    expect((await signedFetch(path, "POST", space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), ...capability })).status)
+      .toBe(200);
+    const otherSpace = await seedActiveSpace();
+    expect((await signedFetch(`/v2/participants/${otherSpace.invitee.id}/block`, "POST", otherSpace.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), ...capability })).status)
+      .toBe(409);
+    expect(await testEnv.DB.prepare("SELECT * FROM moment_blocks WHERE space_id = ?")
+      .bind(otherSpace.id).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT current_key_epoch FROM moment_spaces WHERE space_id = ?")
+      .bind(otherSpace.id).first()).toMatchObject({ current_key_epoch: 1 });
+    expect(await testEnv.DB.prepare("SELECT state FROM members WHERE id = ?")
+      .bind(otherSpace.invitee.id).first()).toMatchObject({ state: "active" });
+  });
+
+  it("withdrawal validates its body and fails closed on rate limiting without needing media", async () => {
+    const space = await seedActiveSpace();
+    const { token, ...capability } = await withdrawalCapability();
+    expect((await signedFetch(`/v2/participants/${space.invitee.id}/block`, "POST", space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), ...capability })).status)
+      .toBe(200);
+    for (const body of [
+      { protocolVersion: 1, clientRequestId: crypto.randomUUID().toLowerCase() },
+      { protocolVersion: 2, clientRequestId: "invalid" },
+      { protocolVersion: 2 },
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), token },
+    ]) {
+      expect((await SELF.fetch(withdrawalRequest(capability.withdrawalId, token, body))).status)
+        .toBe(400);
+    }
+    await expect(route(withdrawalRequest(capability.withdrawalId, token), {
+      ...testEnv, MEMBER_RATE_LIMITER: { limit: async () => ({ success: false }) },
+    })).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+    const withoutLimiter = { ...testEnv, ENVIRONMENT: "staging" };
+    delete withoutLimiter.MEMBER_RATE_LIMITER;
+    await expect(route(withdrawalRequest(capability.withdrawalId, token), withoutLimiter))
+      .rejects.toMatchObject({ status: 503, code: "rate_limiter_unavailable" });
+    const restore = await temporarilySetRuntimeGate({ mediaEnabled: 0, apnsEnabled: 0 });
+    try {
+      expect((await SELF.fetch(withdrawalRequest(capability.withdrawalId, token))).status).toBe(200);
+    } finally {
+      await restore();
+    }
+  });
+
+  it("withdrawal cannot authenticate after its space is revoked or cleaned up", async () => {
+    const space = await seedActiveSpace();
+    const { token, ...capability } = await withdrawalCapability();
+    expect((await signedFetch(`/v2/participants/${space.invitee.id}/block`, "POST", space.owner,
+      { protocolVersion: 2, clientRequestId: crypto.randomUUID().toLowerCase(), ...capability })).status)
+      .toBe(200);
+    await testEnv.DB.prepare("UPDATE spaces SET state = 'revoked', revoked_at = ? WHERE id = ?")
+      .bind(Math.floor(Date.now() / 1000), space.id).run();
+    expect((await SELF.fetch(withdrawalRequest(capability.withdrawalId, token))).status).toBe(401);
+    await testEnv.DB.prepare("DELETE FROM spaces WHERE id = ?").bind(space.id).run();
+    expect(await testEnv.DB.prepare("SELECT * FROM moment_block_withdrawals WHERE id = ?")
+      .bind(capability.withdrawalId).first()).toBeNull();
+    expect((await SELF.fetch(withdrawalRequest(capability.withdrawalId, token))).status).toBe(401);
   });
 
   it("binds an additional reporting device to its member and signing key", async () => {

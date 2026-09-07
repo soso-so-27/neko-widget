@@ -242,9 +242,14 @@ private actor RuntimeMomentAPI: MomentSharingAPIClientProtocol {
     func block(
         participantID: String,
         clientRequestID: UUID,
+        withdrawal: MomentBlockWithdrawalAuthorization?,
         pairingState: PairingState,
         credential: PairingCredential
     ) async throws -> MomentBlockResult { try unsupported() }
+
+    func withdrawBlock(id: String, token: Data, clientRequestID: UUID) async throws {
+        throw MomentSharingError.invalidPayload
+    }
 
     func reserveReport(
         momentID: String,
@@ -479,6 +484,9 @@ actor SharingRuntimeSelfTestRunner {
         })
         results.append(run("moment-terminal-authorization-classification") {
             try Self.testMomentTerminalAuthorizationClassification()
+        })
+        results.append(await runAsync("moment-block-withdrawal-lifecycle") {
+            try await Self.testMomentBlockWithdrawalLifecycle()
         })
         results.append(await runAsync("moment-install-bound-handoff") {
             try await Self.testMomentInstallBoundHandoff()
@@ -2856,6 +2864,151 @@ actor SharingRuntimeSelfTestRunner {
             !FileManager.default.fileExists(atPath: $0.path)
         }) == true
         else { throw MomentSharingError.stateUnavailable }
+    }
+
+    /// Real Keychain and window cleanup, including a committed block whose
+    /// response never reached the app. No relay or personal-photo access.
+    private static func testMomentBlockWithdrawalLifecycle() async throws {
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
+        defer { _ = try? PairingInstallationGuard.resetLocalSharingForDisabledConfiguration() }
+
+        func seedPaired(_ seed: UInt8) throws -> PairingInstallationGuard.BootstrapResult {
+            let initial = try PairingInstallationGuard.bootstrap()
+            guard initial.state.phase == .unpaired else { throw PairingError.stateUnavailable }
+            let credential = PairingCrypto.makeCredential(
+                installationMarker: initial.state.installationMarker,
+                includesInvitationSecret: false, includesRoomKey: true
+            )
+            let peer = PairingCrypto.makeCredential(
+                installationMarker: initial.state.installationMarker,
+                includesInvitationSecret: false, includesRoomKey: false
+            )
+            let localMember = PairingMemberIdentity(
+                memberID: opaque(seed), participantID: credential.participantIDString,
+                agreementPublicKey: try PairingCrypto.agreementPublicKey(for: credential).base64URLEncodedString(),
+                signingPublicKey: try PairingCrypto.signingPublicKey(for: credential).base64URLEncodedString()
+            )
+            let peerMember = PairingMemberIdentity(
+                memberID: opaque(seed + 1), participantID: peer.participantIDString,
+                agreementPublicKey: try PairingCrypto.agreementPublicKey(for: peer).base64URLEncodedString(),
+                signingPublicKey: try PairingCrypto.signingPublicKey(for: peer).base64URLEncodedString()
+            )
+            let transcript = PairingVerificationTranscript(
+                spaceID: opaque(seed + 2), invitationID: opaque(seed + 3),
+                enrollmentID: opaque(seed + 4), dailyBoundaryMinuteUTC: 240,
+                inviter: localMember, invitee: peerMember
+            )
+            let bytes = try transcript.canonicalData()
+            let hash = PairingCrypto.sha256(bytes)
+            var creating = initial.state
+            creating.phase = .creatingInvitation
+            creating.role = .inviter
+            creating.credentialAccount = credential.account
+            creating.participantID = credential.participantIDString
+            creating.pendingClientRequestID = UUID().uuidString.lowercased()
+            creating.pendingOperation = "create"
+            creating = try PairingStateStore.saveInitialCredentialAndState(
+                credential: credential, state: creating,
+                expected: initial.state, lifecycleToken: initial.lifecycleToken
+            )
+            var paired = creating
+            paired.phase = .paired
+            paired.spaceID = transcript.spaceID
+            paired.memberID = localMember.memberID
+            paired.invitationID = transcript.invitationID
+            paired.enrollmentID = transcript.enrollmentID
+            paired.peerMemberID = peerMember.memberID
+            paired.peerParticipantID = peerMember.participantID
+            paired.peerAgreementPublicKey = peerMember.agreementPublicKey
+            paired.peerSigningPublicKey = peerMember.signingPublicKey
+            paired.transcript = bytes.base64URLEncodedString()
+            paired.transcriptHash = hash.base64URLEncodedString()
+            paired.verificationPhrase = PairingCrypto.verificationPhrase(for: hash)
+            paired.dailyBoundaryMinuteUTC = 240
+            paired.pendingClientRequestID = nil
+            paired.pendingOperation = nil
+            paired.mediaSharingConsentVersion = PairingMediaSharingConsent.currentVersion
+            paired.mediaSharingConsentAcceptedAt = .now
+            _ = try PairingStateStore.save(paired, expected: creating, lifecycleToken: initial.lifecycleToken)
+            return try PairingInstallationGuard.bootstrap()
+        }
+        func prepare(_ bootstrap: PairingInstallationGuard.BootstrapResult) throws
+            -> MomentBlockWithdrawalStore.Record {
+            guard let peer = bootstrap.state.peerParticipantID else { throw PairingError.stateUnavailable }
+            return try MomentBlockWithdrawalStore.prepare(
+                participantID: peer, pairingState: bootstrap.state,
+                windowDisplayName: "確認用のまど", lifecycleToken: bootstrap.lifecycleToken
+            )
+        }
+        func read(_ record: MomentBlockWithdrawalStore.Record) throws -> MomentBlockWithdrawalStore.Record {
+            try MomentBlockWithdrawalStore.record(id: record.id, installationMarker: record.installationMarker)
+        }
+
+        let first = try seedPaired(0xd0)
+        let pending = try prepare(first)
+        guard pending.phase == .pending, pending.token?.count == 32,
+              try prepare(first) == pending, try read(pending) == pending,
+              try pending.authorization().tokenSHA256.count == 64,
+              let firstAccount = first.state.credentialAccount,
+              let received = SharedContainer.momentSharingReceivedDirectoryURL
+        else { throw PairingError.stateUnavailable }
+        try FileManager.default.createDirectory(at: received, withIntermediateDirectories: true)
+        let sentinel = received.appendingPathComponent("block-cleanup-fixture.jpg")
+        try SharingSecureFile.write(Data("received-fixture".utf8), to: sentinel)
+
+        _ = try PairingInstallationGuard.createAndActivatePrivateWindow()
+        let second = try seedPaired(0xe0)
+        let secondPending = try prepare(second)
+        try MomentBlockWithdrawalStore.markBlocked(secondPending)
+        let blocked = try read(secondPending)
+        let secondUnpaired = try PairingInstallationGuard.resetLocalSharing(
+            expectedState: second.state, lifecycleToken: second.lifecycleToken
+        )
+        guard blocked.phase == .blocked, try read(blocked) == blocked,
+              try read(pending) == pending,
+              let selected = try PrivateWindowCatalogStore.load()?.activeWindowID
+        else { throw PairingError.stateUnavailable }
+
+        // Server withdrawal has been confirmed, but the block's original
+        // response was lost. Clean only that inactive old room before erasing
+        // its withdrawal token; keep the selected second room intact.
+        try await PairingInstallationGuard.completeBlockWithdrawalLocallyAsync(pending)
+        let withdrawn = try read(pending)
+        guard withdrawn.phase == .withdrawn, withdrawn.token == nil,
+              try PairingStateStore.load(localWindowID: pending.localWindowID)?.phase == .unpaired,
+              try PairingStateStore.load() == secondUnpaired,
+              try PrivateWindowCatalogStore.load()?.activeWindowID == selected,
+              !FileManager.default.fileExists(atPath: sentinel.path),
+              (try? PairingKeychainStore.load(account: firstAccount, installationMarker: pending.installationMarker)) == nil,
+              try read(blocked) == blocked
+        else { throw PairingError.stateUnavailable }
+        do {
+            try MomentBlockWithdrawalStore.markBlocked(pending)
+            throw MomentSharingError.invalidPayload
+        } catch PairingError.stateUnavailable { /* stale completion cannot revive a block */ }
+        try await PairingInstallationGuard.completeBlockWithdrawalLocallyAsync(blocked)
+        guard try read(blocked).phase == .withdrawn,
+              try read(blocked).token == nil,
+              try PairingStateStore.load() == secondUnpaired
+        else { throw PairingError.stateUnavailable }
+
+        let restart = try await PairingInstallationGuard.prepareNewWindowForBlockRestartAsync()
+        guard restart.state.phase == .unpaired, restart.state.credentialAccount == nil,
+              restart.state.spaceID == nil, restart.state.peerParticipantID == nil,
+              restart.state.invitationID == nil, restart.state.mediaSharingConsentAcceptedAt == nil,
+              try PrivateWindowCatalogStore.load()?.activeWindowID == pending.localWindowID
+        else { throw PairingError.stateUnavailable }
+        let replacement = try seedPaired(0xf0)
+        try await PairingInstallationGuard.completeBlockWithdrawalLocallyAsync(withdrawn)
+        guard try PairingStateStore.load() == replacement.state else { throw PairingError.stateUnavailable }
+        _ = try prepare(replacement)
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
+        guard try MomentBlockWithdrawalStore.entries(installationMarker: pending.installationMarker).isEmpty
+        else { throw PairingError.stateUnavailable }
+        do {
+            _ = try MomentBlockWithdrawalStore.entries(installationMarker: UUID().uuidString)
+            throw MomentSharingError.invalidPayload
+        } catch PairingError.installationChanged { /* another install cannot read the history */ }
     }
 
     private static func testModerationDualKeyConfiguration() throws {

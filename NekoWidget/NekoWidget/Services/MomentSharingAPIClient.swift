@@ -179,6 +179,7 @@ struct MomentBlockResult: Sendable {
     let blockedParticipantID: String
     let revokedDeliveryCount: Int
     let requiredKeyEpoch: Int
+    let withdrawalID: String?
 }
 
 struct MomentReportReservationResult: Sendable {
@@ -238,9 +239,12 @@ protocol MomentSharingAPIClientProtocol: Sendable {
     func block(
         participantID: String,
         clientRequestID: UUID,
+        withdrawal: MomentBlockWithdrawalAuthorization?,
         pairingState: PairingState,
         credential: PairingCredential
     ) async throws -> MomentBlockResult
+
+    func withdrawBlock(id: String, token: Data, clientRequestID: UUID) async throws
 
     func reserveReport(
         momentID: String,
@@ -834,15 +838,18 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
     func block(
         participantID: String,
         clientRequestID: UUID,
+        withdrawal: MomentBlockWithdrawalAuthorization? = nil,
         pairingState: PairingState,
         credential: PairingCredential
     ) async throws -> MomentBlockResult {
         let response: BlockResponse = try await sendJSON(
             path: "/v2/participants/\(try safePath(participantID))/block",
             method: "POST",
-            body: OperationRequest(
+            body: BlockRequest(
                 protocolVersion: MomentSharingProtocol.version,
-                clientRequestId: clientRequestID.uuidString.lowercased()
+                clientRequestId: clientRequestID.uuidString.lowercased(),
+                withdrawalId: withdrawal?.id,
+                withdrawalTokenHash: withdrawal?.tokenSHA256
             ),
             pairingState: pairingState,
             credential: credential
@@ -850,14 +857,44 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         guard response.protocolVersion == MomentSharingProtocol.version,
               response.block.blockedParticipantId == participantID,
               response.block.state == "active",
+              response.block.withdrawalId == withdrawal?.id,
               response.revokedDeliveryCount >= 0,
               response.requiredKeyEpoch >= 1
         else { throw MomentSharingError.invalidPayload }
         return MomentBlockResult(
             blockedParticipantID: participantID,
             revokedDeliveryCount: response.revokedDeliveryCount,
-            requiredKeyEpoch: response.requiredKeyEpoch
+            requiredKeyEpoch: response.requiredKeyEpoch,
+            withdrawalID: response.block.withdrawalId
         )
+    }
+
+    func withdrawBlock(id: String, token: Data, clientRequestID: UUID) async throws {
+        guard UUID(uuidString: id)?.uuidString.lowercased() == id, token.count == 32,
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        else { throw MomentSharingError.invalidPayload }
+        components.path = "/v2/blocks/\(id)/withdraw"
+        guard let url = components.url else { throw MomentSharingError.invalidPayload }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = try encoder.encode(OperationRequest(
+            protocolVersion: MomentSharingProtocol.version,
+            clientRequestId: clientRequestID.uuidString.lowercased()
+        ))
+        request.timeoutInterval = 45
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token.base64URLEncodedString())", forHTTPHeaderField: "Authorization")
+        // Same ephemeral, no-redirect and bounded response transport as photo
+        // requests. No old room credential is loaded or reconstructed here.
+        let result = try await performRequest(request, maximumResponseBytes: 4_096)
+        let response: BlockWithdrawalResponse
+        do { response = try decoder.decode(BlockWithdrawalResponse.self, from: result.data) }
+        catch { throw MomentSharingError.invalidPayload }
+        guard response.protocolVersion == MomentSharingProtocol.version,
+              response.block.id == id, response.block.state == "withdrawn",
+              response.sharingResumed == false
+        else { throw MomentSharingError.invalidPayload }
     }
 
     func reserveReport(
@@ -1028,6 +1065,13 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
             credential: credential
         )
 
+        return try await performRequest(request, maximumResponseBytes: maximumResponseBytes)
+    }
+
+    private func performRequest(
+        _ request: URLRequest,
+        maximumResponseBytes: Int
+    ) async throws -> (data: Data, response: HTTPURLResponse) {
         do {
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse else {
@@ -1340,11 +1384,26 @@ private struct BlockResponse: Decodable {
         let blockedParticipantId: String
         let state: String
         let createdAt: Int
+        let withdrawalId: String?
     }
     let protocolVersion: Int
     let block: Block
     let revokedDeliveryCount: Int
     let requiredKeyEpoch: Int
+}
+
+private struct BlockRequest: Encodable {
+    let protocolVersion: Int
+    let clientRequestId: String
+    let withdrawalId: String?
+    let withdrawalTokenHash: String?
+}
+
+private struct BlockWithdrawalResponse: Decodable {
+    struct Block: Decodable { let id: String; let state: String }
+    let protocolVersion: Int
+    let block: Block
+    let sharingResumed: Bool
 }
 
 private struct ReportReservationRequest: Encodable {
