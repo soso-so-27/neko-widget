@@ -433,7 +433,6 @@ private struct MainlineAcceptanceFixtureRootView: View {
                             movieStatus = "ready"
                         } catch {
                             movieStatus = "failed"
-                            print("Mainline movie acceptance failed: \(error)")
                         }
                     }
             } else {
