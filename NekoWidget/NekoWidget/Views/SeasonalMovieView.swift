@@ -289,6 +289,10 @@ struct SeasonalMovieView: View {
     @State private var movingPreheatTask: Task<Void, Never>?
     @State private var preheatedSceneIdentifiers: Set<String> = []
     @State private var shareItem: SeasonalMovieShareItem?
+    @State private var sharedExportURL: URL?
+    @State private var latestShareSessionURL: URL?
+    @State private var pendingShareFailure = false
+    @State private var showsShareFailure = false
     @State private var exportErrorMessage: String?
 
     init(
@@ -335,9 +339,11 @@ struct SeasonalMovieView: View {
 
             sceneContext
             playerChrome
+                .disabled(isExporting)
 
             if hasFinished {
                 ending
+                    .disabled(isExporting)
                     .transition(.opacity)
             }
 
@@ -428,9 +434,21 @@ struct SeasonalMovieView: View {
         } message: {
             Text(exportErrorMessage ?? "もう一度お試しください。")
         }
-        .sheet(item: $shareItem) { item in
-            SeasonalMovieShareSheet(url: item.url) {
-                completeSharing(item.url)
+        .alert("動画を保存・共有できませんでした", isPresented: $showsShareFailure) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("もう一度「動画を保存・共有」からお試しください。")
+        }
+        .sheet(item: $shareItem, onDismiss: completeSharing) { item in
+            SeasonalMovieShareSheet(url: item.url) { failed in
+                guard latestShareSessionURL == item.url else { return }
+                if sharedExportURL == nil {
+                    // UIKit may deliver completion after the sheet dismissed.
+                    showsShareFailure = failed
+                } else {
+                    pendingShareFailure = failed
+                    shareItem = nil
+                }
             }
         }
         .accessibilityIdentifier("seasonal-movie-player")
@@ -493,6 +511,14 @@ struct SeasonalMovieView: View {
                 .accessibilityIdentifier("seasonal-movie-sound-toggle")
 
                 if !hasFinished {
+                    Button(action: exportAndShare) {
+                        Image(systemName: "square.and.arrow.up")
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("動画を保存・共有")
+                    .accessibilityIdentifier("seasonal-movie-export-during-playback")
+                    .disabled(isUpdatingScene)
+
                     Menu {
                         Button(role: .destructive) {
                             pauseForSceneAction()
@@ -602,6 +628,12 @@ struct SeasonalMovieView: View {
                 Text("写真や動画は、このiPhoneの中で処理します。")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.74))
+                if activePresentation.scenes.contains(where: { $0.mediaKind == .livePhoto }) {
+                    Text("Live Photoは、保存した動画では静止画になります。")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.74))
+                        .multilineTextAlignment(.center)
+                }
                 Button("中止") {
                     exportTask?.cancel()
                 }
@@ -849,11 +881,12 @@ struct SeasonalMovieView: View {
     }
 
     private func exportAndShare() {
-        guard !isExporting else { return }
+        guard !isExporting, !isUpdatingScene, sharedExportURL == nil else { return }
         isPlaying = false
         soundtrack.setPlaying(false)
         playbackGeneration += 1
         isExporting = true
+        latestShareSessionURL = nil
         exportErrorMessage = nil
         let presentation = activePresentation
         let includesSound = soundEnabled
@@ -875,6 +908,9 @@ struct SeasonalMovieView: View {
                 await MainActor.run {
                     isExporting = false
                     exportTask = nil
+                    sharedExportURL = url
+                    latestShareSessionURL = url
+                    pendingShareFailure = false
                     shareItem = SeasonalMovieShareItem(url: url)
                 }
             } catch {
@@ -890,8 +926,13 @@ struct SeasonalMovieView: View {
         }
     }
 
-    private func completeSharing(_ url: URL) {
-        shareItem = nil
+    private func completeSharing() {
+        // Wait for dismissal before presenting an error. This also cleans up
+        // when the sheet is dismissed without an activity completion callback.
+        showsShareFailure = pendingShareFailure
+        pendingShareFailure = false
+        guard let url = sharedExportURL else { return }
+        sharedExportURL = nil
         Task {
             await SeasonalMovieExportService.shared.cleanupExport(at: url)
         }
@@ -1128,15 +1169,16 @@ private final class SeasonalMovieSoundtrackPlayer: ObservableObject {
 
 private struct SeasonalMovieShareSheet: UIViewControllerRepresentable {
     let url: URL
-    let completed: () -> Void
+    let completed: (Bool) -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let controller = UIActivityViewController(
             activityItems: [url],
             applicationActivities: nil
         )
-        controller.completionWithItemsHandler = { _, _, _, _ in
-            DispatchQueue.main.async(execute: completed)
+        controller.completionWithItemsHandler = { _, _, _, error in
+            let failed = error != nil
+            DispatchQueue.main.async { completed(failed) }
         }
         return controller
     }
