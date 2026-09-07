@@ -89,14 +89,6 @@ struct CatProfilesView: View {
             profilesSection
             unassignedSection
             legacyExclusionSection
-            Section {
-                NavigationLink {
-                    CatProfileTransferView(actions: actions, hasProfiles: !presentation.profiles.isEmpty)
-                } label: {
-                    Label("名前と日付の引き継ぎ", systemImage: "arrow.up.arrow.down.doc")
-                }
-                .accessibilityIdentifier("cat-profile-transfer")
-            }
         }
         .navigationTitle("ねこのプロフィール")
         .sheet(isPresented: $showsAddProfile, onDismiss: {
