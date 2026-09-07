@@ -3,7 +3,7 @@
 @preconcurrency import Photos
 import UIKit
 import Foundation
-/// Explicit acceptance capture for a disposable, empty CI Simulator only.
+/// Explicit acceptance capture for a disposable CI Simulator only.
 /// The PNG is decoded from the shipping exporter's MP4, not a parallel renderer.
 @MainActor
 enum MainlineMovieAcceptance {
@@ -13,10 +13,18 @@ enum MainlineMovieAcceptance {
         options.includeAllBurstAssets = true
         guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized,
               CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument),
-              ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] == "movie",
-              PHAsset.fetchAssets(with: options).count == 0 else {
+              ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] == "movie" else {
             throw SeasonalMovieExportError.assetMissing
         }
+        // Fresh Simulators can contain Apple's bundled non-cat sample photos.
+        // Preserve that exact baseline; export and delete only our new asset.
+        func libraryIdentifiers() -> Set<String> {
+            let assets = PHAsset.fetchAssets(with: options)
+            var identifiers = Set<String>()
+            assets.enumerateObjects { asset, _, _ in _ = identifiers.insert(asset.localIdentifier) }
+            return identifiers
+        }
+        let baselineIdentifiers = libraryIdentifiers()
 
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
@@ -110,6 +118,9 @@ enum MainlineMovieAcceptance {
             guard PHAsset.fetchAssets(withLocalIdentifiers: [createdIdentifier], options: nil).count == 0 else {
                 throw SeasonalMovieExportError.assetMissing
             }
+        }
+        guard libraryIdentifiers() == baselineIdentifiers else {
+            throw SeasonalMovieExportError.assetMissing
         }
         if let failure { throw failure }
         return pngURL

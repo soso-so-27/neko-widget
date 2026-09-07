@@ -98,7 +98,7 @@ final class PhotoPermissionUITests: XCTestCase {
         app.activate()
 
         // The smoke workflow runs this test before importing any fixtures, so
-        // a successful full-library scan must reach the explicit zero-result
+        // Apple's bundled non-cat images may still exist. The scan must reach the zero-cat
         // branch instead of merely leaving the progress screen.
         let zeroResult = app.staticTexts["猫の写真は見つかりませんでした"]
         guard zeroResult.waitForExistence(timeout: 45) else {
@@ -221,7 +221,7 @@ final class PhotoPermissionUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
-        // Reuse this build and its empty, UI-authorized Simulator library.
+        // Reuse this build and its UI-authorized Simulator library baseline.
         // These fixtures exercise the actual views without enrolling cats,
         // sharing, or reading any personal media.
         app.terminate()
