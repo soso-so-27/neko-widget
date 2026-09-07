@@ -248,7 +248,7 @@ final class PhotoPermissionUITests: XCTestCase {
                     XCTAssertTrue(app.staticTexts["mainline-loaded-\(expected)"].waitForExistence(timeout: 15))
                     XCTAssertFalse(app.staticTexts["mainline-loaded-4"].exists)
                 } else {
-                    XCTAssertTrue(app.descendants(matching: .any)["写真を表示できません"].firstMatch
+                    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "写真を表示できません").firstMatch
                         .waitForExistence(timeout: 15))
                 }
                 captureMainlineScreen(scenario)
@@ -275,7 +275,7 @@ final class PhotoPermissionUITests: XCTestCase {
             case "monthly-empty", "monthly-pending":
                 let expected = scenario == "monthly-empty"
                     ? "月の便りはまだありません" : "写真の確認を待っています"
-                let emptyState = app.descendants(matching: .any)["memories-summary-empty-state"].firstMatch
+                let emptyState = app.descendants(matching: .any).matching(identifier: "memories-summary-empty-state").firstMatch
                 XCTAssertTrue(emptyState.waitForExistence(timeout: 15))
                 XCTAssertTrue(emptyState.label.contains(expected))
                 captureMainlineScreen(scenario)
