@@ -677,6 +677,19 @@ actor SeasonalMovieExportService {
         let image = renderer.image { context in
             switch overlay {
             case let .opening(title, period):
+                let originX: CGFloat = 40
+                let titleY = Self.outputSize.height - 260
+                // Unlike the player, the exported frame has no dark chrome
+                // gradient. Keep both white captions readable on bright photos.
+                UIColor.black.withAlphaComponent(0.62).setFill()
+                UIBezierPath(
+                    roundedRect: CGRect(
+                        x: originX - 16, y: titleY - 16,
+                        width: 672, height: 138
+                    ),
+                    cornerRadius: 18
+                ).fill()
+
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.alignment = .left
                 let titleAttributes: [NSAttributedString.Key: Any] = [
@@ -689,8 +702,6 @@ actor SeasonalMovieExportService {
                     .foregroundColor: UIColor.white.withAlphaComponent(0.82),
                     .paragraphStyle: paragraph
                 ]
-                let originX: CGFloat = 40
-                let titleY = Self.outputSize.height - 260
                 (title as NSString).draw(
                     in: CGRect(x: originX, y: titleY, width: 640, height: 58),
                     withAttributes: titleAttributes
