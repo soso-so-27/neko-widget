@@ -78,7 +78,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             return
         }
         let memoriesSectionPicker = app.segmentedControls["memories-section-picker"]
-        let photosSegment = memoriesSectionPicker.buttons["選んだ一枚"]
+        let photosSegment = memoriesSectionPicker.buttons["残した写真"]
         guard memoriesSectionPicker.waitForExistence(timeout: 15),
               photosSegment.waitForExistence(timeout: 5) else {
             fail(
@@ -87,6 +87,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             )
             return
         }
+        captureScreenshot(named: "review-memories-summary")
         photosSegment.tap()
         guard waitForFixturePhotos(
             in: app,
@@ -113,6 +114,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
             fail("PDF creation was not available after photo selection opened.", application: app)
             return
         }
+        captureScreenshot(named: "review-memories-selection")
         let savedPhotosBackButton = app.navigationBars["写真を選ぶ"].buttons["思い出"]
         guard savedPhotosBackButton.waitForExistence(timeout: 5) else {
             fail("Photo selection could not return to Memories.", application: app)
