@@ -611,11 +611,11 @@ struct LikedPhotosView: View {
                             exportPhotoBook: exportPhotoBook
                         )
                     } label: {
-                        Label("かたちにする", systemImage: "square.and.arrow.up")
+                        Label("選ぶ", systemImage: "checkmark.circle")
                             .font(.subheadline.weight(.semibold))
                     }
                     .accessibilityIdentifier("memories-create-from-photos-action")
-                    .accessibilityHint("写真を選んでPDFにまとめます")
+                    .accessibilityHint("写真を選んで、PDFとして共有したり、本のイメージを確認したりできます")
                 }
                 .padding(.horizontal, 16)
             }
@@ -834,7 +834,7 @@ struct LikedPhotosView: View {
                 )
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("次のまとめを準備中")
+                Text(summaryEmptyTitle)
                     .font(.headline)
                 Text(summaryEmptyMessage)
                     .font(.subheadline)
@@ -852,16 +852,17 @@ struct LikedPhotosView: View {
         .accessibilityIdentifier("memories-summary-empty-state")
     }
 
+    private var summaryEmptyTitle: String {
+        monthlyWindowCollection == nil
+            ? "写真の確認を待っています"
+            : "月の便りはまだありません"
+    }
+
     private var summaryEmptyMessage: String {
-        guard let presentation = monthlyWindowCollection?.unavailable else {
-            return "写真を確認しています"
+        guard monthlyWindowCollection != nil else {
+            return "写真の確認が終わると、対象の月の便りを表示します。"
         }
-        switch presentation.reason {
-        case .noDatedPhotos:
-            return "写真がそろうと、ここに月の便りができます"
-        case .notEnoughDistinctScenes:
-            return "あと\(presentation.remainingSceneCount.formatted())場面で、月の便りができます"
-        }
+        return "月が終わると、その月の写真から便りをまとめます。異なる場面の写真が少ない月は、作られないことがあります。"
     }
 
     private func seasonalMovieSection(

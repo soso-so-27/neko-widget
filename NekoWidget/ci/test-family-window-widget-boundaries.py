@@ -1069,7 +1069,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
         self.assertIn("MemoriesRoute.monthlyWindow(presentation)", memory_view)
         self.assertIn('"季節のムービー",', memory_view)
         self.assertIn(
-            'Label("かたちにする", systemImage: "square.and.arrow.up")',
+            'Label("選ぶ", systemImage: "checkmark.circle")',
             memory_view,
         )
         self.assertNotIn("creationPreviewCard", memory_view)
@@ -1225,7 +1225,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "monthlyWindowCollection: MonthlyWindowCollectionPresentation?",
             memories,
         )
-        self.assertIn("presentation.remainingSceneCount.formatted()", memories)
+        self.assertNotIn("presentation.remainingSceneCount.formatted()", memories)
         photos_routes = section(main, "enum PhotosRoute:", "enum MemoriesRoute:")
         memory_routes = section(
             main,

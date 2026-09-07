@@ -570,7 +570,7 @@ jobs:
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'private var footerHeight: CGFloat = 48' \
             NekoWidget/Views/LikedPhotosView.swift
-          grep -Fq 'Label("かたちにする", systemImage: "square.and.arrow.up")' \
+          grep -Fq 'Label("選ぶ", systemImage: "checkmark.circle")' \
             NekoWidget/Views/LikedPhotosView.swift
           grep -Fq 'Text("\(photos.count.formatted())枚")' \
             NekoWidget/Views/LikedPhotosView.swift
