@@ -16,13 +16,12 @@ struct IdentityPixelFormat: Encodable {
         bitsPerComponent = image.bitsPerComponent
         bitsPerPixel = image.bitsPerPixel
         floatComponents = image.bitmapInfo.contains(.floatComponents)
-        switch image.colorSpace?.name as String? {
-        case CGColorSpace.sRGB as String: colorSpace = "sRGB"
-        case CGColorSpace.displayP3 as String: colorSpace = "Display-P3"
-        case CGColorSpace.extendedSRGB as String: colorSpace = "extended-sRGB"
-        case CGColorSpace.extendedLinearSRGB as String: colorSpace = "extended-linear-sRGB"
-        default: colorSpace = "other-or-unspecified"
-        }
+        let name = image.colorSpace?.name as String?
+        if name == (CGColorSpace.sRGB as String) { colorSpace = "sRGB" }
+        else if name == (CGColorSpace.displayP3 as String) { colorSpace = "Display-P3" }
+        else if name == (CGColorSpace.extendedSRGB as String) { colorSpace = "extended-sRGB" }
+        else if name == (CGColorSpace.extendedLinearSRGB as String) { colorSpace = "extended-linear-sRGB" }
+        else { colorSpace = "other-or-unspecified" }
     }
 }
 
