@@ -275,9 +275,10 @@ final class PhotoPermissionUITests: XCTestCase {
             case "monthly-empty", "monthly-pending":
                 let expected = scenario == "monthly-empty"
                     ? "月の便りはまだありません" : "写真の確認を待っています"
-                let emptyState = app.descendants(matching: .any).matching(identifier: "memories-summary-empty-state").firstMatch
+                // SwiftUI exposes the parent section's identifier on the
+                // combined card. Assert the actual visible title instead.
+                let emptyState = app.staticTexts[expected]
                 XCTAssertTrue(emptyState.waitForExistence(timeout: 15))
-                XCTAssertTrue(emptyState.label.contains(expected))
                 captureMainlineScreen(scenario)
             case "movie":
                 let ready = app.staticTexts["mainline-movie-ready"]
