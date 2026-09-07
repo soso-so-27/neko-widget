@@ -1,7 +1,7 @@
 import Photos
 import SwiftUI
 
-/// The five-screen first-run experience described in
+/// The four-screen first-run experience described in
 /// `docs/オンボーディング原稿.md`.
 ///
 /// Navigation is intentionally driven through `page`: the owner can persist
@@ -13,6 +13,7 @@ struct OnboardingView: View {
     let authorizationStatus: PHAuthorizationStatus
     let isPhotoRequestReady: Bool
     let scan: ScanPresentation
+    let resultPhotos: [PhotoPresentation]
     let scanErrorMessage: String?
     let isLimitedAccess: Bool
 
@@ -102,6 +103,7 @@ struct OnboardingView: View {
             // already tied to the same ScanPresentation used by the app.
             InitialScanView(
                 scan: scan,
+                previewPhotos: resultPhotos,
                 isLimitedAccess: isLimitedAccess,
                 chooseMorePhotos: chooseMorePhotos,
                 rescan: rescan,

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InitialScanView: View {
     let scan: ScanPresentation
+    let previewPhotos: [PhotoPresentation]
     let isLimitedAccess: Bool
     let chooseMorePhotos: () -> Void
     let rescan: () -> Void
@@ -10,6 +11,7 @@ struct InitialScanView: View {
 
     init(
         scan: ScanPresentation,
+        previewPhotos: [PhotoPresentation] = [],
         isLimitedAccess: Bool,
         chooseMorePhotos: @escaping () -> Void,
         rescan: @escaping () -> Void,
@@ -17,6 +19,7 @@ struct InitialScanView: View {
         continueToApp: @escaping () -> Void
     ) {
         self.scan = scan
+        self.previewPhotos = Array(previewPhotos.prefix(3))
         self.isLimitedAccess = isLimitedAccess
         self.chooseMorePhotos = chooseMorePhotos
         self.rescan = rescan
@@ -105,6 +108,24 @@ struct InitialScanView: View {
                     Text(scan.hasFinalResult ? "枚ありました" : "枚見つかっています")
                         .font(.title3)
                 }
+            }
+
+            if scan.displayedCatCount > 0, !previewPhotos.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(previewPhotos) { photo in
+                        PhotoAssetImageView(
+                            localIdentifier: photo.localIdentifier,
+                            catBoundingBox: photo.catBoundingBox,
+                            targetPixelSize: CGSize(width: 360, height: 360),
+                            networkAccessAllowed: false
+                        )
+                        .aspectRatio(1, contentMode: .fit)
+                        .frame(maxWidth: 112)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("見つかった猫写真の一部")
             }
 
             if let date = scan.displayedOldestDate {
