@@ -1014,6 +1014,21 @@ TEST_RUNNER_NEKO_EXPECT_DISABLED_RELEASE=1 xcodebuild \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     test || PERMISSION_TEST_STATUS=$?
 
+if [[ -d "$PERMISSION_RESULT_BUNDLE" ]]; then
+    xcrun xcresulttool export attachments \
+        --path "$PERMISSION_RESULT_BUNDLE" \
+        --output-path "$ARTIFACT_DIRECTORY/mainline-screen-attachments"
+fi
+if (( PERMISSION_TEST_STATUS == 0 )); then
+    acceptance_container="$(xcrun simctl get_app_container "$SIMULATOR_UDID" "$APP_BUNDLE_ID" data)"
+    mkdir -p "$ARTIFACT_DIRECTORY/mainline-acceptance"
+    for acceptance_file in opening.mp4 opening.png; do
+        test -s "$acceptance_container/Documents/MainlineAcceptance/$acceptance_file"
+        cp "$acceptance_container/Documents/MainlineAcceptance/$acceptance_file" \
+            "$ARTIFACT_DIRECTORY/mainline-acceptance/$acceptance_file"
+    done
+fi
+
 if (( PERMISSION_TEST_STATUS == 0 )); then
     # XCTest may terminate the AUT when the test session ends. Start one
     # explicit normal launch so the pre-fixture asset IDs are always persisted

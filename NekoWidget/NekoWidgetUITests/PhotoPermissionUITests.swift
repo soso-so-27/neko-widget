@@ -220,6 +220,92 @@ final class PhotoPermissionUITests: XCTestCase {
         screenshot.name = "Widget placement guide reopened from Settings"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+
+        // Reuse this build and its empty, UI-authorized Simulator library.
+        // These fixtures exercise the actual views without enrolling cats,
+        // sharing, or reading any personal media.
+        app.terminate()
+        verifyMainlineAcceptanceScreens()
+    }
+
+    @MainActor
+    private func verifyMainlineAcceptanceScreens() {
+        for scenario in ["one", "three", "unavailable", "limited-zero", "skip",
+                         "monthly-empty", "monthly-pending", "movie"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = scenario
+            app.launch()
+
+            switch scenario {
+            case "one", "three", "unavailable":
+                let next = app.buttons["initial-scan-continue"]
+                XCTAssertTrue(next.waitForExistence(timeout: 15))
+                XCTAssertTrue(next.isHittable, "Continue must not wait for thumbnails.")
+                if scenario != "unavailable" {
+                    let expected = scenario == "one" ? 1 : 3
+                    XCTAssertTrue(app.staticTexts["mainline-loaded-\(expected)"].waitForExistence(timeout: 15))
+                    XCTAssertFalse(app.staticTexts["mainline-loaded-4"].exists)
+                } else {
+                    XCTAssertTrue(app.descendants(matching: .any)["写真を表示できません"].firstMatch
+                        .waitForExistence(timeout: 15))
+                }
+                captureMainlineScreen(scenario)
+                next.tap()
+                let skipWidget = app.buttons["widget-placement-skip"]
+                XCTAssertTrue(skipWidget.waitForExistence(timeout: 15))
+                skipWidget.tap()
+                XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
+            case "limited-zero":
+                XCTAssertTrue(app.staticTexts["猫の写真は見つかりませんでした"].waitForExistence(timeout: 15))
+                captureMainlineScreen(scenario)
+                app.buttons["もっと写真を選ぶ"].tap()
+                XCTAssertTrue(app.staticTexts["mainline-action-choose"].waitForExistence(timeout: 5))
+                app.buttons["もう一度スキャン"].tap()
+                XCTAssertTrue(app.staticTexts["mainline-action-rescan"].waitForExistence(timeout: 5))
+                app.buttons["initial-scan-continue"].tap()
+                XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
+            case "skip":
+                let skip = app.buttons["onboarding-photo-permission-skip"]
+                XCTAssertTrue(skip.waitForExistence(timeout: 15))
+                captureMainlineScreen(scenario)
+                skip.tap()
+                XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
+            case "monthly-empty", "monthly-pending":
+                let expected = scenario == "monthly-empty"
+                    ? "月の便りはまだありません" : "写真の確認を待っています"
+                let emptyState = app.descendants(matching: .any)["memories-summary-empty-state"].firstMatch
+                XCTAssertTrue(emptyState.waitForExistence(timeout: 15))
+                XCTAssertTrue(emptyState.label.contains(expected))
+                captureMainlineScreen(scenario)
+            case "movie":
+                let ready = app.staticTexts["mainline-movie-ready"]
+                let deadline = Date().addingTimeInterval(60)
+                let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                while !ready.exists && Date() < deadline {
+                    if app.staticTexts["mainline-movie-failed"].exists { break }
+                    // The app deletes only the synthetic asset whose ID it
+                    // created. Do not accept unrelated alerts.
+                    let alert = springboard.alerts.firstMatch
+                    for label in ["削除", "Delete"] where alert.exists && alert.buttons[label].exists {
+                        alert.buttons[label].tap()
+                    }
+                    RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+                }
+                XCTAssertTrue(ready.exists, "The real movie export or its fixture cleanup failed.")
+            default: XCTFail("Unexpected acceptance scenario")
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    private func captureMainlineScreen(_ scenario: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = "mainline-\(scenario)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor

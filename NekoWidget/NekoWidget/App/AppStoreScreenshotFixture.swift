@@ -273,6 +273,18 @@ struct AppStoreScreenshotFixtureRootView: View {
     private let windowPhoto = AppStoreScreenshotFixture.windowPhoto
 
     var body: some View {
+#if targetEnvironment(simulator)
+        if let scenario = ProcessInfo.processInfo.environment["NEKO_MAINLINE_ACCEPTANCE_CASE"] {
+            MainlineAcceptanceFixtureRootView(scenario: scenario)
+        } else {
+            productScreens
+        }
+#else
+        productScreens
+#endif
+    }
+
+    private var productScreens: some View {
         MainTabView(
             currentPhoto: windowPhoto,
             likedPhotos: likedPhotos,
@@ -380,5 +392,98 @@ struct AppStoreScreenshotFixtureRootView: View {
         return value
     }
 }
+
+#if targetEnvironment(simulator)
+/// Exercises shipping views with fixed inputs in the existing isolated CI
+/// Simulator. It never starts AppViewModel, billing or sharing services.
+@MainActor
+private struct MainlineAcceptanceFixtureRootView: View {
+    let scenario: String
+    @State private var page: OnboardingPresentationPage
+    @State private var finished = false
+    @State private var action = ""
+    @State private var movieStatus = "working"
+    @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
+
+    init(scenario: String) {
+        self.scenario = scenario
+        _page = State(initialValue: scenario == "skip" ? .photoPermission : .scanResult)
+    }
+
+    var body: some View {
+        Group {
+            if finished {
+                Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
+            } else if scenario == "monthly-empty" || scenario == "monthly-pending" {
+                NavigationStack {
+                    LikedPhotosView(
+                        photos: [], hasPhotoAccess: true,
+                        monthlyWindowCollection: scenario == "monthly-pending" ? nil
+                            : MonthlyWindowCollectionPresentation(letters: [], unavailable: nil),
+                        latestMonthlyWindowIsUnread: false, latestSeasonalMovieIsNew: false,
+                        seasonalMovies: [], exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
+                        openPhotos: { finished = true }
+                    )
+                }
+            } else if scenario == "movie" {
+                Text(movieStatus).accessibilityIdentifier("mainline-movie-\(movieStatus)")
+                    .task {
+                        do {
+                            _ = try await MainlineMovieAcceptance.run()
+                            movieStatus = "ready"
+                        } catch {
+                            movieStatus = "failed"
+                            print("Mainline movie acceptance failed: \(error)")
+                        }
+                    }
+            } else {
+                OnboardingView(
+                    page: $page,
+                    authorizationStatus: scenario == "skip" ? .notDetermined
+                        : (scenario == "limited-zero" ? .limited : .authorized),
+                    isPhotoRequestReady: true, scan: scan, resultPhotos: photos,
+                    scanErrorMessage: nil, isLimitedAccess: scenario == "limited-zero",
+                    requestPhotoAccess: { action = "request" }, skipPhotoAccess: { finished = true },
+                    openPhotoSettings: { action = "settings" },
+                    chooseMorePhotos: { action = "choose" }, rescan: { action = "rescan" },
+                    finishWithoutWidgetPhoto: { finished = true }, finish: { finished = true }
+                )
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            VStack {
+                Text("loaded").accessibilityIdentifier("mainline-loaded-\(loadedCount)")
+                Text("action").accessibilityIdentifier("mainline-action-\(action)")
+            }
+            .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var photos: [PhotoPresentation] {
+        switch scenario {
+        case "one": return Array(AppStoreScreenshotFixture.photos.prefix(1))
+        // Four inputs exercise the shipping three-thumbnail cap.
+        case "three": return Array(AppStoreScreenshotFixture.photos.prefix(4))
+        case "unavailable":
+            return [PhotoPresentation(localIdentifier: "mainline-unavailable-photo", creationDate: nil,
+                                      catBoundingBox: nil, isLiked: false)]
+        default: return []
+        }
+    }
+
+    private var scan: ScanPresentation {
+        var result = ScanPresentation()
+        result.finalCatAssets = photos.count
+        result.totalAssets = photos.count
+        result.scannedAssets = photos.count
+        return result
+    }
+
+    private var loadedCount: Int {
+        Set(loadTracker.loadedImages.map(\.localIdentifier)).count
+    }
+}
+#endif
 
 #endif
