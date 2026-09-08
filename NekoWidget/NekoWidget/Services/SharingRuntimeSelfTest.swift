@@ -4940,7 +4940,11 @@ actor SharingRuntimeSelfTestRunner {
         guard !legacy.hasCurrentRetryClassification else {
             throw MomentSharingError.stateUnavailable
         }
-        let retryAt = Date().addingTimeInterval(1_920)
+        // Match the store's ISO8601 second precision before comparing the
+        // in-memory mutation result with the value loaded back from disk.
+        let retryAt = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 1_920
+        )
         legacy.lastErrorCode = "request-rejected"
         legacy.nextRetryAt = retryAt
         legacy.attemptCount = 7
