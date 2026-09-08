@@ -2793,8 +2793,8 @@ private struct MomentZoomablePhoto: UIViewRepresentable {
             accessibilityTraits = .image
             accessibilityHint = "拡大または元の大きさに戻す操作を選べます"
             accessibilityCustomActions = [
-                UIAccessibilityCustomAction(name: "拡大", target: self, selector: #selector(accessibilityZoomIn)),
-                UIAccessibilityCustomAction(name: "元の大きさに戻す", target: self, selector: #selector(accessibilityResetZoom))
+                UIAccessibilityCustomAction(name: "拡大", target: self, selector: #selector(enlargePhotoForAccessibility)),
+                UIAccessibilityCustomAction(name: "元の大きさに戻す", target: self, selector: #selector(resetPhotoForAccessibility))
             ]
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
@@ -2823,11 +2823,11 @@ private struct MomentZoomablePhoto: UIViewRepresentable {
             accessibilityValue = zoomScale > 1.1 ? "拡大中" : "写真全体"
             #endif
         }
-        @objc private func accessibilityZoomIn() -> Bool {
+        @objc private func enlargePhotoForAccessibility() -> Bool {
             setZoomScale(min(maximumZoomScale, zoomScale * 2), animated: true)
             return true
         }
-        @objc private func accessibilityResetZoom() -> Bool {
+        @objc private func resetPhotoForAccessibility() -> Bool {
             setZoomScale(1, animated: true)
             return true
         }
