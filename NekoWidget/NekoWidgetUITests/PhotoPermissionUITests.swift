@@ -435,6 +435,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                         } else {
                             XCTAssertFalse(app.buttons["photo-detail-read-caption"].exists,
                                            "A photo without a caption must not inherit another photo's text.")
+                            verifyPanoramicPhotoPanning(app, image: decodedPhoto)
                             attach(app, name: "received-no-caption")
                         }
                     }
@@ -538,6 +539,56 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         attach(app, name: "\(name)-zoomed")
         image.doubleTap()
         expectation(for: NSPredicate { _, _ in abs((Self.detailValue(image.value as? String, field: "zoom") ?? 0) - 1) < 0.05 }, evaluatedWith: image)
+        waitForExpectations(timeout: 5)
+    }
+
+    private nonisolated static func panoramicPhotoStaysVisible(_ value: String?) -> Bool {
+        guard let photoHeight = detailValue(value, field: "photoHeight"),
+              let viewportHeight = detailValue(value, field: "viewportHeight"),
+              let contentHeight = detailValue(value, field: "contentHeight"),
+              let viewportWidth = detailValue(value, field: "viewportWidth"),
+              let contentWidth = detailValue(value, field: "contentWidth"),
+              let photoWidth = detailValue(value, field: "photoWidth"),
+              let offsetY = detailValue(value, field: "offsetY"),
+              let visibleHeight = detailValue(value, field: "visibleHeight"),
+              let visibleWidth = detailValue(value, field: "visibleWidth") else { return false }
+        return photoHeight > 0 && photoHeight < viewportHeight
+            && abs(contentHeight - photoHeight) < 2 && abs(contentWidth - photoWidth) < 2
+            && abs(offsetY + (viewportHeight - photoHeight) / 2) < 2
+            && abs(visibleHeight - photoHeight) < 2 && visibleWidth >= viewportWidth - 2
+    }
+
+    @MainActor
+    private func verifyPanoramicPhotoPanning(_ app: XCUIApplication, image: XCUIElement) {
+        let width = Self.detailValue(image.value as? String, field: "photoWidth") ?? 0
+        let height = Self.detailValue(image.value as? String, field: "photoHeight") ?? 1
+        XCTAssertGreaterThan(width / max(height, 1), 3.8,
+                             "The panning fixture must exercise an actual wide photograph.")
+        XCTAssertEqual(Self.detailValue(image.value as? String, field: "zoom") ?? 0, 1, accuracy: 0.05)
+        image.doubleTap()
+        expectation(for: NSPredicate { _, _ in
+            (Self.detailValue(image.value as? String, field: "zoom") ?? 0) > 2
+                && Self.panoramicPhotoStaysVisible(image.value as? String)
+        }, evaluatedWith: image)
+        waitForExpectations(timeout: 5)
+        for (start, end) in [
+            (CGVector(dx: 0.5, dy: 0.8), CGVector(dx: 0.5, dy: 0.1)),
+            (CGVector(dx: 0.5, dy: 0.2), CGVector(dx: 0.5, dy: 0.9)),
+            (CGVector(dx: 0.9, dy: 0.5), CGVector(dx: 0.1, dy: 0.5)),
+            (CGVector(dx: 0.1, dy: 0.5), CGVector(dx: 0.9, dy: 0.5))
+        ] {
+            image.coordinate(withNormalizedOffset: start).press(forDuration: 0.05,
+                thenDragTo: image.coordinate(withNormalizedOffset: end))
+            expectation(for: NSPredicate { _, _ in
+                Self.panoramicPhotoStaysVisible(image.value as? String)
+            }, evaluatedWith: image)
+            waitForExpectations(timeout: 5)
+        }
+        attach(app, name: "received-panorama-edge-pan")
+        image.doubleTap()
+        expectation(for: NSPredicate { _, _ in
+            abs((Self.detailValue(image.value as? String, field: "zoom") ?? 0) - 1) < 0.05
+        }, evaluatedWith: image)
         waitForExpectations(timeout: 5)
     }
 

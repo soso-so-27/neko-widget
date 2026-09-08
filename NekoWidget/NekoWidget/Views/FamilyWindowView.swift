@@ -2497,6 +2497,17 @@ struct MomentReceivedLayoutFixture: View {
             .appendingPathComponent("received-layout-fixture-\(UUID().uuidString)", isDirectory: true)
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var urls = (0..<3).map { MomentExperiencePhotoFixture.url(index: $0) }
+        // A real pixel crop of the repository-owned landscape exercises a
+        // wide photo in the shipping viewer; no user photo is read or changed.
+        let source = MomentExperiencePhotoFixture.image(index: 2).cgImage!
+        let width = CGFloat(source.width)
+        let band = CGRect(x: 0, y: (CGFloat(source.height) - width / 4) / 2,
+                          width: width, height: width / 4).integral
+        let panorama = UIImage(cgImage: source.cropping(to: band)!)
+        let preview = try! MomentCanonicalPreviewBuilder.build(image: panorama)
+        let panoramaURL = directory.appendingPathComponent("panorama.jpg")
+        try! preview.jpeg.write(to: panoramaURL, options: .atomic)
+        urls[2] = panoramaURL
         urls.append(directory.appendingPathComponent("missing.jpg"))
         return urls
     }
@@ -2845,6 +2856,8 @@ private struct MomentZoomablePhoto: UIViewRepresentable {
     final class PhotoScrollView: UIScrollView, UIScrollViewDelegate {
         private let photo = UIImageView()
         private var lastSize = CGSize.zero
+        private var needsPhotoLayout = true
+        private var isResettingPhoto = false
         override init(frame: CGRect) {
             super.init(frame: frame)
             delegate = self
@@ -2852,6 +2865,7 @@ private struct MomentZoomablePhoto: UIViewRepresentable {
             maximumZoomScale = 4
             showsHorizontalScrollIndicator = false
             showsVerticalScrollIndicator = false
+            contentInsetAdjustmentBehavior = .never
             backgroundColor = .black
             photo.contentMode = .scaleAspectFit
             addSubview(photo)
@@ -2871,31 +2885,64 @@ private struct MomentZoomablePhoto: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
         func setImage(_ image: UIImage) {
             guard photo.image !== image else { return }
-            setZoomScale(1, animated: false)
             photo.image = image
-            updateAccessibilityValue()
+            needsPhotoLayout = true
             setNeedsLayout()
         }
         override func layoutSubviews() {
             super.layoutSubviews()
-            guard bounds.size != lastSize else { return }
+            guard !isResettingPhoto,
+                  needsPhotoLayout || bounds.size != lastSize,
+                  bounds.width > 0, bounds.height > 0,
+                  let image = photo.image,
+                  image.size.width > 0, image.size.height > 0 else { return }
+            isResettingPhoto = true
+            defer { isResettingPhoto = false }
             lastSize = bounds.size
+            needsPhotoLayout = false
             setZoomScale(1, animated: false)
-            photo.frame = CGRect(origin: .zero, size: bounds.size)
-            contentSize = bounds.size
+            let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
+            let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            photo.frame = CGRect(origin: .zero, size: fitted)
+            contentSize = fitted
+            centerSmallerAxes()
+            setContentOffset(CGPoint(x: -contentInset.left, y: -contentInset.top), animated: false)
+            updateAccessibilityValue()
         }
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { photo }
-        func scrollViewDidZoom(_ scrollView: UIScrollView) { updateAccessibilityValue() }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            guard !isResettingPhoto else { return }
+            centerSmallerAxes()
+            updateAccessibilityValue()
+        }
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { updateAccessibilityValue() }
+        private func centerSmallerAxes() {
+            let horizontal = max(0, (bounds.width - contentSize.width) / 2)
+            let vertical = max(0, (bounds.height - contentSize.height) / 2)
+            let inset = UIEdgeInsets(top: vertical, left: horizontal, bottom: vertical, right: horizontal)
+            if contentInset != inset { contentInset = inset }
+            var offset = contentOffset
+            if contentSize.width <= bounds.width { offset.x = -horizontal }
+            if contentSize.height <= bounds.height { offset.y = -vertical }
+            if offset != contentOffset { setContentOffset(offset, animated: false) }
+        }
         private func updateAccessibilityValue() {
             #if DEBUG
             let pixels = max(photo.image?.cgImage?.width ?? 0, photo.image?.cgImage?.height ?? 0)
+            let visible = photo.frame.intersection(bounds)
             accessibilityValue = "pixels=\(pixels);zoom=\(zoomScale)"
+                + ";photoWidth=\(photo.frame.width);photoHeight=\(photo.frame.height)"
+                + ";viewportWidth=\(bounds.width);viewportHeight=\(bounds.height)"
+                + ";contentWidth=\(contentSize.width);contentHeight=\(contentSize.height)"
+                + ";offsetX=\(contentOffset.x);offsetY=\(contentOffset.y)"
+                + ";visibleWidth=\(visible.isNull ? 0 : visible.width);visibleHeight=\(visible.isNull ? 0 : visible.height)"
             #else
             accessibilityValue = zoomScale > 1.1 ? "拡大中" : "写真全体"
             #endif
         }
         @objc private func enlargePhotoForAccessibility() -> Bool {
-            setZoomScale(min(maximumZoomScale, zoomScale * 2), animated: true)
+            zoomPhoto(to: min(maximumZoomScale, zoomScale * 2),
+                      centeredAt: CGPoint(x: photo.bounds.midX, y: photo.bounds.midY))
             return true
         }
         @objc private func resetPhotoForAccessibility() -> Bool {
@@ -2904,10 +2951,18 @@ private struct MomentZoomablePhoto: UIViewRepresentable {
         }
         @objc private func toggleZoom(_ recognizer: UITapGestureRecognizer) {
             guard zoomScale < 1.1 else { setZoomScale(1, animated: true); return }
-            let point = recognizer.location(in: photo)
-            let size = CGSize(width: bounds.width / 2.5, height: bounds.height / 2.5)
-            zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
-                            width: size.width, height: size.height), animated: true)
+            zoomPhoto(to: 2.5, centeredAt: recognizer.location(in: photo))
+        }
+        private func zoomPhoto(to scale: CGFloat, centeredAt point: CGPoint) {
+            guard photo.bounds.width > 0, photo.bounds.height > 0 else { return }
+            let point = CGPoint(x: min(max(point.x, 0), photo.bounds.width),
+                                y: min(max(point.y, 0), photo.bounds.height))
+            let size = CGSize(width: bounds.width / scale, height: bounds.height / scale)
+            let x = size.width > photo.bounds.width ? (photo.bounds.width - size.width) / 2
+                : min(max(point.x - size.width / 2, 0), photo.bounds.width - size.width)
+            let y = size.height > photo.bounds.height ? (photo.bounds.height - size.height) / 2
+                : min(max(point.y - size.height / 2, 0), photo.bounds.height - size.height)
+            zoom(to: CGRect(x: x, y: y, width: size.width, height: size.height), animated: true)
         }
     }
 }
