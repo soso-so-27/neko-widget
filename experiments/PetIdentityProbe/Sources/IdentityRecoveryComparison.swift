@@ -124,10 +124,11 @@ struct IdentityRecoveryArm: Encodable {
     }
     let status: Status
     let aggregate: IdentityEvaluationAggregate?
+    var withheldSeparation: IdentityWithheldSeparation? = nil
 }
 
 struct IdentityRecoveryComparisonReport: Encodable {
-    let protocolIdentifier = "pet-identity-half-recovery-paired-diagnostic-v1"
+    let protocolIdentifier = "pet-identity-half-recovery-paired-diagnostic-v2"
     let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
@@ -188,7 +189,8 @@ enum IdentityRecoveryComparisonCore {
             guard !ea.isEmpty || !eb.isEmpty else { return (.init(status: .noEvaluationPhotos, aggregate: nil), nil) }
             let result = try IdentityEvaluationCore.evaluate(registrationA: a, registrationB: b,
                 evaluationA: ea, evaluationB: eb, purpose: .diagnostic)
-            return (.init(status: .evaluated, aggregate: result.aggregate), result)
+            return (.init(status: .evaluated, aggregate: result.aggregate,
+                          withheldSeparation: result.withheldSeparation), result)
         }
         let original = try evaluate(false), candidate = try evaluate(true)
         var paired: [[Int]]?

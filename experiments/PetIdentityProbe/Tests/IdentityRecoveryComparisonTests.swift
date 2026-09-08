@@ -130,6 +130,7 @@ final class IdentityRecoveryComparisonTests: XCTestCase {
         XCTAssertNoThrow(try IdentityRecoveryComparisonCore.validateSelection([.referenceA: ["one-selected-id"]]))
         let report = try IdentityRecoveryComparisonCore.report(items())
         let json = try XCTUnwrap(report.json)
+        XCTAssertEqual(report.protocolIdentifier, "pet-identity-half-recovery-paired-diagnostic-v2")
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["protocolIdentifier", "appVersion", "appBuild", "modelSHA256", "runtimeVersion", "osVersion",
             "scope", "method", "calibration", "duplicatePolicy", "photoFetch", "slots", "original", "candidate", "outcomeOrder", "pairedOutcomes",
@@ -142,7 +143,7 @@ final class IdentityRecoveryComparisonTests: XCTestCase {
         }
         XCTAssertFalse(json.contains("one-selected-id"))
         for arm in ["original", "candidate"] {
-            XCTAssertEqual(Set(try XCTUnwrap(object[arm] as? [String: Any]).keys), ["status", "aggregate"])
+            XCTAssertEqual(Set(try XCTUnwrap(object[arm] as? [String: Any]).keys), ["status", "aggregate", "withheldSeparation"])
         }
     }
 
@@ -162,7 +163,16 @@ final class IdentityRecoveryComparisonTests: XCTestCase {
     }
 
     @MainActor func testRecoveryComparisonPanelRendersAtPhoneWidth() throws {
-        let report = try IdentityRecoveryComparisonCore.report(items())
+        var rows: [IdentityRecoveryItem] = []
+        for (slot, center) in [(IdentityPhotoSlot.referenceA, 0.0), (.referenceB, 0.1)] {
+            rows += [-0.12, -0.06, 0, 0.06, 0.12].map {
+                .init(slot: slot, original: vector(center + $0), candidate: vector(center + $0), recoveryStatus: .originalReused)
+            }
+        }
+        rows += [(IdentityPhotoSlot.evaluationA, 0.048), (.evaluationA, 0.052), (.evaluationB, 0.052)].map {
+            .init(slot: $0.0, original: vector($0.1), candidate: vector($0.1), recoveryStatus: .originalReused)
+        }
+        let report = try IdentityRecoveryComparisonCore.report(rows)
         let view = IdentityRecoveryComparisonView(report: report)
             .padding(16).frame(width: 390).background(Color.black).environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: view); renderer.scale = 2

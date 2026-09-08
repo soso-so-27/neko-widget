@@ -58,6 +58,9 @@ struct IdentityRecoveryComparisonView: View {
                 Text("「—」は判定できていない項目です。0件や成功という意味ではありません。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            if let separation = report.candidate.withheldSeparation {
+                IdentityWithheldSeparationView(separation: separation)
+            }
             DisclosureGroup("見本・判定写真の内訳") {
                 ForEach(Array(report.slots.enumerated()), id: \.offset) { _, slot in
                     if let kind = IdentityPhotoSlot(rawValue: slot.slot) {
@@ -69,12 +72,48 @@ struct IdentityRecoveryComparisonView: View {
                     }
                 }
             }
-            Text("同じ写真を再利用する研究用の比較です。よくなっても精度検証の合格とは扱いません。画像・特徴量・写真ごとの判定は共有しません。")
+            Text("同じ写真を再利用する研究用の比較です。よくなっても精度検証の合格とは扱いません。画像・特徴量・写真ごとの一覧は共有しません。")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
 
     private func count(_ arm: IdentityRecoveryArm, _ key: KeyPath<IdentityEvaluationCounts, Int>) -> some View {
         Text(arm.aggregate.map { "\($0.overall[keyPath: key])枚" } ?? "—")
+    }
+}
+
+struct IdentityWithheldSeparationView: View {
+    let separation: IdentityWithheldSeparation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("保留の内訳").font(.headline)
+            Text("50％も使う方法・選択時の猫A／Bを正解として比較")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(separation.perCat, id: \.actualLabel) { cat in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("猫\(cat.actualLabel.rawValue)・保留\(cat.unknownCount)枚").font(.subheadline.bold())
+                    if cat.unknownCount > 0 {
+                        Text("登録した猫に近い \(cat.closerToExpectedCount)枚 ／ 別の猫に近い \(cat.closerToOtherCount)枚")
+                        if cat.equalScoreCount > 0 || cat.unavailableScoreCount > 0 {
+                            Text("同点 \(cat.equalScoreCount)枚 ／ 比較できない \(cat.unavailableScoreCount)枚")
+                        }
+                        ratio(cat.closerToExpectedRatio, title: "登録した猫に近い分")
+                        ratio(cat.closerToOtherRatio, title: "別の猫に近い分")
+                    }
+                }.font(.footnote)
+            }
+            Text("距離比は小さいほど差が大きく、確率ではありません。判定には0.70以下に加え、見本の基準が成立し、その範囲内であることも必要です。近いだけでは正解にしません。")
+                .font(.footnote).foregroundStyle(.secondary)
+            Text("共有するのは猫ごとの件数と距離比の集計です。1枚だけの欄では、その写真の結果が分かります。写真・識別子・特徴量は含めません。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private func ratio(_ summary: IdentityDistanceRatioSummary?, title: String) -> some View {
+        if let summary {
+            Text("\(title)：距離比中央値 \(summary.median, specifier: "%.3f")（\(summary.count)枚）")
+                .monospacedDigit().foregroundStyle(.secondary)
+        }
     }
 }
