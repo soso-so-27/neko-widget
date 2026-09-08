@@ -12,8 +12,12 @@ struct IdentityUnusableReferenceView: View {
                 if let thumbnail = reference.thumbnail {
                     Image(decorative: thumbnail, scale: 1).resizable().scaledToFit()
                 } else {
-                    ContentUnavailableView("写真を表示できません", systemImage: "photo",
-                        description: Text("写真へのアクセスや端末内の保存状態を確認してください。"))
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo").font(.title)
+                        Text("写真を表示できません").font(.subheadline)
+                        Text("写真へのアクセスや端末内の保存状態を確認してください。")
+                            .font(.caption).multilineTextAlignment(.center)
+                    }.foregroundStyle(.secondary).padding(16)
                 }
             }.frame(maxWidth: .infinity).frame(height: 180)
             Text(reference.reason).font(.subheadline)

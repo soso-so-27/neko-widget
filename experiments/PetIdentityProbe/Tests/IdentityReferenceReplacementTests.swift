@@ -110,6 +110,18 @@ final class IdentityReferenceReplacementTests: XCTestCase {
             let renderer = ImageRenderer(content: view); renderer.scale = 2
             let rendered = try XCTUnwrap(renderer.uiImage)
             XCTAssertEqual(rendered.size.width, 390); XCTAssertGreaterThan(rendered.size.height, 250)
+            // A successful render can still be all-black; verify visible card content too.
+            let raster = try XCTUnwrap(rendered.cgImage)
+            var pixels = [UInt8](repeating: 0, count: 32 * 32 * 4)
+            try pixels.withUnsafeMutableBytes { bytes in
+                let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 32, height: 32,
+                    bitsPerComponent: 8, bytesPerRow: 128, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(raster, in: CGRect(x: 0, y: 0, width: 32, height: 32))
+            }
+            XCTAssertTrue(stride(from: 0, to: pixels.count, by: 4).contains {
+                pixels[$0] > 20 || pixels[$0 + 1] > 20 || pixels[$0 + 2] > 20
+            }, "Card must not render blank: \(name)")
             let attachment = XCTAttachment(image: rendered)
             attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
         }
