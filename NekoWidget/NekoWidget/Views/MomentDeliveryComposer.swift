@@ -137,7 +137,7 @@ struct MomentDeliveryComposer: View {
                 TextField("ひとこと（任意）", text: $caption, axis: .vertical)
                     .lineLimit(1...3)
                     .textFieldStyle(.plain)
-                    .font(.callout.weight(.semibold))
+                    .font(.subheadline)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
                     .tint(.white)
@@ -156,20 +156,20 @@ struct MomentDeliveryComposer: View {
                 if !isCaptionFocused {
                     Button { isCaptionFocused = true } label: {
                         if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text("ひとことを書く")
-                                .font(.callout.weight(.semibold))
+                            Text("ひとことを添える")
+                                .font(.subheadline)
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
-                                .background(.black.opacity(0.65), in: Capsule())
+                                .background(.black.opacity(0.55), in: Capsule())
                                 .padding(12)
                         } else {
-                            MomentPhotoCaption(caption: caption)
+                            MomentPhotoCaption(caption: caption, lineLimit: 2)
                         }
                     }
                     .buttonStyle(.plain)
                     .disabled(isSending)
-                    .accessibilityLabel(caption.isEmpty ? "ひとことを書く" : "ひとことを編集。\(caption)")
+                    .accessibilityLabel(caption.isEmpty ? "ひとことを添える" : "ひとことを編集。\(caption)")
                     .accessibilityIdentifier("family-window-caption-edit")
                 }
             }
@@ -188,14 +188,14 @@ struct MomentPhotoCaption: View {
 
     var body: some View {
         Text(verbatim: caption.trimmingCharacters(in: .whitespacesAndNewlines))
-            .font(.callout.weight(.semibold))
+            .font(.subheadline)
             .multilineTextAlignment(.center)
             .foregroundStyle(.white)
             .lineLimit(lineLimit)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 16))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
             .padding(12)
     }
 }
@@ -253,7 +253,7 @@ struct MomentSentRecordCard: View {
 
     var body: some View {
         let thumbnail = record.localThumbnailJPEG.flatMap { UIImage(data: $0) }
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 6) {
             if let thumbnail {
                 Color(uiColor: .tertiarySystemGroupedBackground)
                     .aspectRatio(1, contentMode: .fit)
@@ -265,62 +265,44 @@ struct MomentSentRecordCard: View {
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                         }
                     }
-                    .overlay(alignment: .bottom) {
-                        if let caption = record.localCaption {
-                            MomentPhotoCaption(caption: caption, lineLimit: 2)
-                        }
-                    }
                     .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
                     .accessibilityHidden(true)
-            } else {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "photo")
-                        .font(.title3)
+                if let caption = record.localCaption {
+                    Text(verbatim: caption)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        if let caption = record.localCaption {
-                            Text(verbatim: caption)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                        }
-                        Text("写真の控えはありません")
+                        .lineLimit(1)
+                        .padding(.horizontal, 2)
+                }
+                if record.hasReceivedHeart {
+                    Image(systemName: "heart.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("ハートが届いています")
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("写真の控えがない送信")
                             .font(.caption)
+                        Text(record.serverAcceptedAt.formatted(.dateTime.month().day()))
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
-                .padding([.horizontal, .top], 12)
+                .padding(12)
+                .background(Color(uiColor: .secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 12))
             }
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text((record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt).formatted(
-                    .dateTime.month().day().hour().minute()
-                ))
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { deliveryLabels }
-                        .fixedSize(horizontal: true, vertical: false)
-                    VStack(alignment: .leading, spacing: 5) { deliveryLabels }
-                }
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-            }
-            .padding(10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    @ViewBuilder
-    private var deliveryLabels: some View {
-        Text(record.deliveryState == .recipientDeviceArrivalConfirmed ? "到着" : "受付済み")
-        if record.hasReceivedHeart {
-            Label("ハート", systemImage: "heart.fill")
-        }
     }
 }
 
@@ -343,31 +325,60 @@ struct MomentSentHistoryFixture: View {
                     .accessibilityLabel(record.localCaption ?? "写真のみ")
                     .accessibilityIdentifier("history-fixture-\(record.id)")
                 }
+                .frame(maxWidth: CommandLine.arguments.contains("--history-narrow") ? 288 : .infinity)
                 .padding(16)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("最近届けた写真")
+            .navigationTitle("送った写真")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(item: $selectedRecord) { record in
-                Text(verbatim: record.localCaption ?? "写真のみ")
-                    .accessibilityIdentifier("history-fixture-detail-caption")
-                    .padding()
+            .fullScreenCover(item: $selectedRecord) { record in
+                NavigationStack {
+                    MomentPhotoDetailBody(
+                        imageURL: record.id == "photo" ? MomentExperiencePhotoFixture.url(index: 0) : nil,
+                        legacyThumbnail: record.id == "legacy"
+                            ? record.localThumbnailJPEG.flatMap { UIImage(data: $0) } : nil,
+                        caption: record.localCaption,
+                        captionIdentifier: "history-fixture-detail-caption",
+                        photoIdentifier: "history-fixture-detail-photo"
+                    ) { EmptyView() }
+                    .frame(maxWidth: CommandLine.arguments.contains("--history-narrow") ? 288 : .infinity)
+                    .navigationTitle("送った写真")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                        Button("閉じる") { selectedRecord = nil }
+                            .accessibilityIdentifier("photo-detail-close")
+                    } }
+                }
+                .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--history-large-text") ? .accessibility5 : .large)
             }
         }
-        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--history-large-text") ? .accessibility2 : .large)
+        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--history-large-text") ? .accessibility5 : .large)
         .preferredColorScheme(CommandLine.arguments.contains("--history-large-text") ? .light : .dark)
     }
 
     private var records: [MomentSentRecordPresentation] {
         let date = Date(timeIntervalSince1970: 1_788_846_000)
-        let image = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
-        let thumbnail = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 240)).image { _ in
-            image.draw(in: CGRect(x: 0, y: 0, width: 240, height: 240))
-        }.jpegData(compressionQuality: 0.6)
+        let thumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+            from: try! Data(contentsOf: MomentExperiencePhotoFixture.url(index: 0))
+        )
+        // Preserve the actual pre-upgrade 240-pixel copy in this fixture even
+        // when newly generated list thumbnails have a larger pixel budget.
+        let original = MomentExperiencePhotoFixture.image(index: 0)
+        let ratio = 240 / max(original.size.width, original.size.height)
+        let legacySize = CGSize(width: original.size.width * ratio, height: original.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let legacyThumbnail = UIGraphicsImageRenderer(size: legacySize, format: format)
+            .image { _ in original.draw(in: CGRect(origin: .zero, size: legacySize)) }
+            .jpegData(compressionQuality: 0.72)
         return [
             MomentSentRecordPresentation(id: "photo", serverAcceptedAt: date,
                 recipientDeliveryConfirmedAt: nil, hasReceivedHeart: false,
                 localThumbnailJPEG: thumbnail, localCaption: "おこってるんだけど？"),
+            MomentSentRecordPresentation(id: "legacy", serverAcceptedAt: date.addingTimeInterval(-300),
+                recipientDeliveryConfirmedAt: nil, hasReceivedHeart: false,
+                localThumbnailJPEG: legacyThumbnail, localCaption: "以前に届けた写真です。"),
             MomentSentRecordPresentation(id: "missing", momentID: "missing-moment", serverAcceptedAt: date.addingTimeInterval(-600),
                 recipientDeliveryConfirmedAt: date, hasReceivedHeart: true,
                 localCaption: "のびー。今日はずっといっしょにいたいみたいです。")
@@ -413,7 +424,7 @@ struct MomentDeliveryComposerFixture: View {
     }
 
     private var fixturePhoto: UIImage {
-        let cat = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
+        let cat = MomentExperiencePhotoFixture.image(index: 1)
         guard CommandLine.arguments.contains("--composer-panorama") else { return cat }
         let size = CGSize(width: 1_800, height: 180)
         return UIGraphicsImageRenderer(size: size).image { context in
@@ -421,6 +432,39 @@ struct MomentDeliveryComposerFixture: View {
             context.fill(CGRect(origin: .zero, size: size))
             cat.draw(in: CGRect(x: 800, y: 0, width: 180, height: 180))
         }
+    }
+}
+
+/// Existing repository-owned cat pixels, injected only for the dedicated CI
+/// capture build. Ordinary Debug retains the offline vector fallback.
+@MainActor
+enum MomentExperiencePhotoFixture {
+    private static let encoded = [
+        "__MOMENT_EXPERIENCE_GRAY_PNG_BASE64__",
+        "__MOMENT_EXPERIENCE_ORANGE_PNG_BASE64__",
+        "__MOMENT_EXPERIENCE_TUXEDO_PNG_BASE64__"
+    ]
+    private static var images: [Int: UIImage] = [:]
+    private static var urls: [Int: URL] = [:]
+
+    static func image(index: Int) -> UIImage {
+        let key = min(2, max(0, index))
+        if let cached = images[key] { return cached }
+        let value = Data(base64Encoded: encoded[key]).flatMap { UIImage(data: $0) }
+            ?? AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-\(key + 1)")!
+        images[key] = value
+        return value
+    }
+
+    static func url(index: Int) -> URL {
+        let key = min(2, max(0, index))
+        if let cached = urls[key] { return cached }
+        let preview = try! MomentCanonicalPreviewBuilder.build(image: image(index: key))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("moment-experience-\(UUID().uuidString).jpg")
+        try! preview.jpeg.write(to: url, options: .atomic)
+        urls[key] = url
+        return url
     }
 }
 #endif

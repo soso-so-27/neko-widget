@@ -546,7 +546,8 @@ struct MomentShareHandoffProcessor: Sendable {
                 senderPolicyVersion: current.senderPolicyVersion,
                 senderPolicyAcceptedAt: current.senderPolicyAcceptedAt,
                 localThumbnailJPEG: localThumbnailJPEG,
-                localCaption: current.caption
+                localCaption: current.caption,
+                localDetailJPEG: current.canonicalJPEG
             )
         }
     }
@@ -558,7 +559,7 @@ struct MomentShareHandoffProcessor: Sendable {
             canonicalJPEG as CFData,
             nil
         ) else { return nil }
-        for candidate in [(240, 0.72), (160, 0.60)] {
+        for candidate in [(512, 0.72), (384, 0.72), (240, 0.72), (160, 0.60)] {
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,

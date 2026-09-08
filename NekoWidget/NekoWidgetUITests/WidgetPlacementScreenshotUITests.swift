@@ -455,8 +455,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             }
         }
         // All three committed cat photos contain light surroundings and darker
-        // fur. The dark missing-image view with sparse white copy does not.
-        // This checks photo presence, not pixel equality or visual correctness.
+        // fur. The white contrast fixture also satisfies this gate: its white
+        // canvas is light, and its 60% caption scrim supplies midtones. A uniform
+        // skeleton has no such light/midtone pair; sparse copy over the dark
+        // missing-image view does not supply the required light area either.
+        // This checks fixture presence, not scenario identity or visual quality.
         return lightPixels > width * height / 10 && midtonePixels > width * height / 20
     }
 

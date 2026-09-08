@@ -701,6 +701,36 @@ final class MomentSharingViewModel: ObservableObject {
         return current.caption
     }
 
+    func sentDetailReference(recordID: String) -> MomentLocalDetailReference? {
+        guard !isShowingLastKnownState, !isReportOnly, isPaired,
+              let id = UUID(uuidString: recordID),
+              let record = sharingState.outbox.first(where: { $0.id == id }),
+              record.phase == .committed,
+              record.context.spaceID == pairingState?.spaceID else { return nil }
+        return record.localDetail
+    }
+
+    func sentDetailURL(recordID: String) async -> URL? {
+        guard !isShowingLastKnownState, isPaired,
+              let id = UUID(uuidString: recordID),
+              let spaceID = pairingState?.spaceID,
+              let record = sharingState.outbox.first(where: { $0.id == id }),
+              record.phase == .committed, let reference = record.localDetail,
+              let token = try? SharingLifecycleGate.issueToken()
+        else { return nil }
+        let url = await Task.detached(priority: .userInitiated) {
+            try? MomentSharingStateStore.localDetailURL(
+                itemID: id, expectedSpaceID: spaceID, validating: token
+            )
+        }.value
+        guard !Task.isCancelled, !isShowingLastKnownState, isPaired,
+              pairingState?.spaceID == spaceID,
+              sharingState.outbox.first(where: { $0.id == id })?.localDetail == reference,
+              (try? SharingLifecycleGate.validate(token)) != nil
+        else { return nil }
+        return url
+    }
+
     func imageURL(for item: MomentInboxItem) -> URL? {
         guard item.state == .available || item.state == .acknowledged,
               let name = item.localJPEGFileName

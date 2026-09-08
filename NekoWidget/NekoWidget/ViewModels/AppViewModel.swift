@@ -2124,6 +2124,7 @@ final class AppViewModel: ObservableObject {
             )
         case let .familyWindow(localWindowID, sourceDigest, action):
             guard SharingAPIConfiguration.current.isReviewVisible else {
+                errorMessage = "共有を現在利用できないため、このまどを開けませんでした。"
                 SharedLog.app.info(
                     "deeplink",
                     "Ignored family window deep link because sharing is unavailable"
@@ -2143,6 +2144,7 @@ final class AppViewModel: ObservableObject {
                             trigger: "widget-window-selection"
                         )
                     } catch {
+                        self.errorMessage = "このまどを開けませんでした。まどの接続状態を確認してください。"
                         Self.logError(
                             error,
                             category: "family-window",
@@ -2169,10 +2171,13 @@ final class AppViewModel: ObservableObject {
                                   validating: bootstrap.lifecycleToken
                               )
                         else {
-                            self.isFamilyWindowPresented = true
+                            // An exact-photo tap must not silently become a
+                            // different photo. Use the existing app alert before
+                            // presenting any new sheet when its target is gone.
+                            self.errorMessage = "ウィジェットに表示された写真を開けませんでした。表示期間が終了したか、削除された可能性があります。"
                             SharedLog.app.info(
                                 "deeplink",
-                                "Opened private window because exact Widget photo expired"
+                                "Exact Widget photo is no longer available"
                             )
                             return
                         }
@@ -2184,11 +2189,13 @@ final class AppViewModel: ObservableObject {
                             )
                         )
                     } catch {
+                        self.errorMessage = "この写真を開けませんでした。時間をおいてもう一度お試しください。"
                         Self.logError(
                             error,
                             category: "family-window",
                             operation: "resolve_widget_photo"
                         )
+                        return
                     }
                 } else {
                     self.pendingFamilyMomentSourceDigest = sourceDigest
@@ -2234,7 +2241,7 @@ final class AppViewModel: ObservableObject {
         generation: Int
     ) async {
         guard SharingAPIConfiguration.current.isMediaAvailable else {
-            errorMessage = "共有を現在利用できないため、通知の写真を開けませんでした。"
+            errorMessage = "共有を現在利用できないため、この写真を開けませんでした。"
             SharedLog.app.info(
                 "moment-notification",
                 "Ignored notification route because sharing is unavailable"
@@ -2246,7 +2253,7 @@ final class AppViewModel: ObservableObject {
             do {
                 guard let catalog = try PrivateWindowCatalogStore.load()
                 else {
-                    errorMessage = "この通知のまどを開けませんでした。接続情報を確認してください。"
+                    errorMessage = "この写真のまどを開けませんでした。接続情報を確認してください。"
                     SharedLog.app.info(
                         "moment-notification",
                         "Ignored notification because its private window was unavailable",
@@ -2256,7 +2263,7 @@ final class AppViewModel: ObservableObject {
                 }
                 let matches = catalog.windows.filter { $0.spaceID == target.spaceID }
                 guard matches.count == 1, let targetWindow = matches.first else {
-                    errorMessage = "この通知のまどを特定できませんでした。まどの接続状態を確認してください。"
+                    errorMessage = "この写真のまどを特定できませんでした。まどの接続状態を確認してください。"
                     SharedLog.app.info(
                         "moment-notification",
                         "Ignored notification because its private window could not be resolved",
@@ -2302,7 +2309,7 @@ final class AppViewModel: ObservableObject {
                 )
                 return
             } catch {
-                errorMessage = "この通知のまどを開けませんでした。時間をおいて、まどからもう一度確認してください。"
+                errorMessage = "この写真のまどを開けませんでした。時間をおいて、まどからもう一度確認してください。"
                 Self.logError(
                     error,
                     category: "moment-notification",

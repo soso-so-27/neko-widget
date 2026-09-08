@@ -39,7 +39,7 @@ private enum FamilyWindowSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .received: "届いた"
-        case .sent: "届けた"
+        case .sent: "送った"
         }
     }
 }
@@ -61,12 +61,18 @@ struct FamilyWindowView: View {
     @State private var showsTerminalResultDismissConfirmation = false
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
-    @State private var sentRecordDisplayLimit = 3
+    @State private var sentRecordDisplayLimit = 20
     @State private var selectedSection: FamilyWindowSection = .received
     @State private var memoryActionMomentID: String?
     @State private var heartActionMomentID: String?
     @State private var memoryResultMomentID: String?
     @State private var heartResultMomentID: String?
+    @State private var memoryResultMessage: String?
+    @State private var memoryResultFailed = false
+    @State private var heartResultMessage: String?
+    @State private var heartResultFailed = false
+    @State private var safetyResultMomentID: String?
+    @State private var safetyResultMessage: String?
     @State private var focusedMomentID: String?
     @State private var focusedSentMomentID: String?
     @State private var widgetMemoryTarget: MomentInboxItem?
@@ -81,6 +87,7 @@ struct FamilyWindowView: View {
     @State private var deliveryCaption = ""
     @State private var selectedSentRecord: MomentSentRecordPresentation?
     @State private var selectedMomentForDetail: MomentInboxItem?
+    @State private var pendingDetailMemoryConfirmationID: String?
     @State private var isPreparingSelectedPhoto = false
     @State private var isDeliveringSelectedPhoto = false
     @State private var photoSelectionMessage: String?
@@ -295,12 +302,12 @@ struct FamilyWindowView: View {
             .accessibilityIdentifier("pairing-build-identity")
     }
 
-    private var moderationDialogs: some View {
-        baseContent
+    private func photoActionDialogs<Content: View>(_ content: Content, isDetail: Bool) -> some View {
+        content
         .confirmationDialog(
             "この写真を通報しますか？",
             isPresented: Binding(
-                get: { reportTarget != nil },
+                get: { isDetail == (selectedMomentForDetail != nil) && reportTarget != nil },
                 set: { if !$0 { reportTarget = nil } }
             ),
             titleVisibility: .visible
@@ -316,7 +323,7 @@ struct FamilyWindowView: View {
         .confirmationDialog(
             "この写真を削除しますか？",
             isPresented: Binding(
-                get: { deleteReceivedTarget != nil },
+                get: { isDetail == (selectedMomentForDetail != nil) && deleteReceivedTarget != nil },
                 set: { if !$0 { deleteReceivedTarget = nil } }
             ),
             titleVisibility: .visible,
@@ -340,24 +347,92 @@ struct FamilyWindowView: View {
         .alert(
             "この相手をブロックしますか？",
             isPresented: Binding(
-                get: { blockTarget != nil },
+                get: { isDetail == (selectedMomentForDetail != nil) && blockTarget != nil },
                 set: { if !$0 { blockTarget = nil } }
             ),
             presenting: blockTarget
         ) { item in
             Button("ブロックする", role: .destructive) {
                 blockTarget = nil
-                Task { await model.block(item.senderParticipantID) }
+                Task {
+                    await model.block(item.senderParticipantID)
+                    safetyResultMomentID = item.id
+                    safetyResultMessage = model.errorMessage
+                    if model.errorMessage == nil, !model.isPaired {
+                        selectedMomentForDetail = nil
+                    }
+                }
             }
             .disabled(model.isShowingLastKnownState || model.isReportOnly)
             Button("キャンセル", role: .cancel) { blockTarget = nil }
         } message: { _ in
             Text("この相手との写真共有を終了し、このまどに届いた写真をこのiPhoneから削除します。ブロックは設定から解除できますが、削除した写真や以前の共有は戻りません。")
         }
+        .confirmationDialog(
+            memorySaveDialogTitle,
+            isPresented: Binding(
+                get: { isDetail == (selectedMomentForDetail != nil) && widgetMemoryTarget != nil },
+                set: {
+                    if !$0 {
+                        widgetMemoryTarget = nil
+                        if clearsWidgetFocusAfterMemorySave {
+                            focusedMomentID = nil
+                        }
+                        clearsWidgetFocusAfterMemorySave = false
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: widgetMemoryTarget
+        ) { item in
+            Button(memorySaveActionTitle(for: item)) {
+                let clearsWidgetFocus = clearsWidgetFocusAfterMemorySave
+                widgetMemoryTarget = nil
+                clearsWidgetFocusAfterMemorySave = false
+                performMemoryAction(
+                    item,
+                    shouldSave: true,
+                    clearsWidgetFocusAfterCompletion: clearsWidgetFocus
+                )
+            }
+            .disabled(
+                model.isPerformingAction
+                    || model.isShowingLastKnownState
+                    || model.isReportOnly
+            )
+            Button("今はしない", role: .cancel) {
+                widgetMemoryTarget = nil
+                if clearsWidgetFocusAfterMemorySave {
+                    focusedMomentID = nil
+                }
+                clearsWidgetFocusAfterMemorySave = false
+            }
+        } message: { item in
+            Text(memorySaveConfirmationMessage(for: item))
+        }
+        .confirmationDialog(
+            "思い出から外しますか？",
+            isPresented: Binding(
+                get: { isDetail == (selectedMomentForDetail != nil) && memoryRemovalTarget != nil },
+                set: { if !$0 { memoryRemovalTarget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: memoryRemovalTarget
+        ) { item in
+            Button("思い出から外す", role: .destructive) {
+                memoryRemovalTarget = nil
+                performMemoryAction(item, shouldSave: false)
+            }
+            Button("やめる", role: .cancel) {
+                memoryRemovalTarget = nil
+            }
+        } message: { _ in
+            Text("思い出一覧から外します。写真アプリへコピーした写真は削除されません。")
+        }
     }
 
     private var cleanupDialogs: some View {
-        moderationDialogs
+        photoActionDialogs(baseContent, isDetail: false)
         .confirmationDialog(
             "この端末の暗号化済み送信待ちをすべて取り消しますか？",
             isPresented: $showsPendingCancelConfirmation,
@@ -411,102 +486,113 @@ struct FamilyWindowView: View {
         } message: {
             Text("ウィジェットの新しい写真で、もう一度お試しください。")
         }
-        .confirmationDialog(
-            memorySaveDialogTitle,
-            isPresented: Binding(
-                get: { widgetMemoryTarget != nil },
-                set: {
-                    if !$0 {
-                        widgetMemoryTarget = nil
-                        if clearsWidgetFocusAfterMemorySave {
-                            focusedMomentID = nil
-                        }
-                        clearsWidgetFocusAfterMemorySave = false
-                    }
-                }
-            ),
-            titleVisibility: .visible,
-            presenting: widgetMemoryTarget
-        ) { item in
-            Button(memorySaveActionTitle(for: item)) {
-                let clearsWidgetFocus = clearsWidgetFocusAfterMemorySave
-                widgetMemoryTarget = nil
-                clearsWidgetFocusAfterMemorySave = false
-                performMemoryAction(
-                    item,
-                    shouldSave: true,
-                    clearsWidgetFocusAfterCompletion: clearsWidgetFocus
-                )
-            }
-            .disabled(
-                model.isPerformingAction
-                    || model.isShowingLastKnownState
-                    || model.isReportOnly
-            )
-            Button("今はしない", role: .cancel) {
-                widgetMemoryTarget = nil
-                if clearsWidgetFocusAfterMemorySave {
-                    focusedMomentID = nil
-                }
-                clearsWidgetFocusAfterMemorySave = false
-            }
-        } message: { item in
-            Text(memorySaveConfirmationMessage(for: item))
-        }
-        .confirmationDialog(
-            "思い出から外しますか？",
-            isPresented: Binding(
-                get: { memoryRemovalTarget != nil },
-                set: { if !$0 { memoryRemovalTarget = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: memoryRemovalTarget
-        ) { item in
-            Button("思い出から外す", role: .destructive) {
-                memoryRemovalTarget = nil
-                performMemoryAction(item, shouldSave: false)
-            }
-            Button("やめる", role: .cancel) {
-                memoryRemovalTarget = nil
-            }
-        } message: { _ in
-            Text("思い出一覧から外します。写真アプリへコピーした写真は削除されません。")
-        }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
         }) { delivery in
             deliveryConfirmation(delivery)
                 .id(delivery.id)
         }
-        .sheet(item: $selectedSentRecord) { record in
+        .fullScreenCover(item: $selectedSentRecord) { record in
             sentRecordDetail(recordID: record.id)
         }
-        .sheet(
+        .fullScreenCover(
             item: $selectedMomentForDetail,
-            onDismiss: { notificationAccessibilityFocus = nil }
+            onDismiss: {
+                notificationAccessibilityFocus = nil
+                pendingDetailMemoryConfirmationID = nil
+                widgetMemoryTarget = nil
+                memoryRemovalTarget = nil
+                reportTarget = nil
+                deleteReceivedTarget = nil
+                blockTarget = nil
+            }
         ) { item in
-            NavigationStack {
-                ScrollView {
-                    momentCard(
-                        item,
-                        receivesNotificationFocus:
-                            notificationAccessibilityFocus == item.id
-                    )
-                        .padding(16)
+            photoActionDialogs(receivedPhotoDetail(item.id), isDetail: true)
+                .task {
+                    // Present the exact photo before asking to copy it. A
+                    // Widget bookmark must not open a dialog behind the viewer.
+                    await Task.yield()
+                    guard !Task.isCancelled, pendingDetailMemoryConfirmationID == item.id,
+                          selectedMomentForDetail?.id == item.id,
+                          !model.isShowingLastKnownState, !model.isReportOnly,
+                          let current = model.receivedMoments.first(where: { $0.id == item.id })
+                    else { return }
+                    pendingDetailMemoryConfirmationID = nil
+                    if !model.isSavedMemory(current) { widgetMemoryTarget = current }
                 }
-                .background(Color(uiColor: .systemGroupedBackground))
-                .navigationTitle("届いた写真")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("閉じる") {
-                            notificationAccessibilityFocus = nil
-                            selectedMomentForDetail = nil
+        }
+    }
+
+    private func receivedPhotoDetail(_ momentID: String) -> some View {
+        NavigationStack {
+            Group {
+                if let item = model.receivedMoments.first(where: { $0.id == momentID }),
+                   !model.isShowingLastKnownState {
+                    MomentPhotoDetailBody(
+                        imageURL: model.imageURL(for: item),
+                        caption: model.caption(for: item),
+                        captionIdentifier: "family-window-received-caption-full"
+                    ) {
+                        VStack(spacing: 0) {
+                            if !model.isReportOnly {
+                                receivedPhotoActionControls(item)
+                                if memoryResultMomentID == item.id,
+                                   let message = memoryResultMessage {
+                                    Text(message).font(.footnote).foregroundStyle(.secondary)
+                                        .padding(.horizontal, 16).padding(.bottom, 8)
+                                        .accessibilityIdentifier("family-window-bookmark-result")
+                                }
+                                if heartResultMomentID == item.id,
+                                   let message = heartResultMessage {
+                                    Text(message).font(.footnote).foregroundStyle(.secondary)
+                                        .padding(.horizontal, 16).padding(.bottom, 8)
+                                        .accessibilityIdentifier("family-window-paw-result")
+                                }
+                            }
+                            if safetyResultMomentID == item.id, let message = safetyResultMessage {
+                                Label(message, systemImage: "exclamationmark.circle")
+                                    .font(.footnote).foregroundStyle(.orange)
+                                    .padding(16)
+                                    .accessibilityIdentifier("family-window-safety-result")
+                            } else if let status = model.reportStatusText(item) {
+                                Text(status).font(.footnote).foregroundStyle(.secondary)
+                                    .padding(16)
+                            }
                         }
                     }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Menu {
+                                Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
+                                if model.isEncryptedReportAvailable {
+                                    Button(model.reportActionTitle(item)) { reportTarget = item }
+                                        .disabled(!model.canSubmitReport(item))
+                                }
+                                Button("この写真を削除", role: .destructive) { deleteReceivedTarget = item }
+                                if !model.isReportOnly {
+                                    Button("この相手をブロック", role: .destructive) { blockTarget = item }
+                                }
+                            } label: { Image(systemName: "ellipsis.circle") }
+                            .accessibilityLabel("写真の情報と操作")
+                            .disabled(model.isWorking || model.isShowingLastKnownState)
+                        }
+                    }
+                } else {
+                    ContentUnavailableView("この写真は表示できません", systemImage: "photo",
+                        description: Text(model.errorMessage ?? "写真が削除されたか、表示期間が終了しました。"))
+                }
+            }
+            .background(.black)
+            .navigationTitle(model.windowDisplayName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { selectedMomentForDetail = nil }
+                        .accessibilityIdentifier("photo-detail-close")
                 }
             }
         }
+        .preferredColorScheme(.dark)
     }
 
     private var pairedContent: some View {
@@ -627,9 +713,9 @@ struct FamilyWindowView: View {
             outgoingStatusSection
         } else {
             ContentUnavailableView(
-                "届けた写真はまだありません",
+                "送った写真はまだありません",
                 systemImage: "paperplane",
-                description: Text("写真を届けると、受付と相手のiPhoneへの到着をここで確認できます。")
+                description: Text("届けた写真を、ここで見返せます。")
             )
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
@@ -780,12 +866,12 @@ struct FamilyWindowView: View {
 
     private var notificationRouteResolutionTitle: String {
         if notificationRouteResolutionFailed {
-            return "通知の写真を表示できません"
+            return "選んだ写真を表示できません"
         }
         if notificationRouteHasSynchronizationError {
-            return "通知の写真を確認できません"
+            return "選んだ写真を確認できません"
         }
-        return "通知の写真を開いています…"
+        return "選んだ写真を開いています…"
     }
 
     private var notificationRouteResolutionDetail: String {
@@ -793,9 +879,9 @@ struct FamilyWindowView: View {
             return "写真が期限切れ、削除済み、または安全確認で非表示の可能性があります。別の写真は表示しません。"
         }
         if notificationRouteHasSynchronizationError {
-            return "共有データを更新できませんでした。接続を確認して再試行するか、この案内を閉じてください。別の写真は表示しません。"
+            return "共有データを更新できませんでした。時間をおいてもう一度確認してください。"
         }
-        return "通知と一致する写真だけを安全に確認します。別の写真は表示しません。"
+        return "選んだ写真を確認しています。"
     }
 
     private func prepareSelectedPhoto(_ item: PhotosPickerItem?) {
@@ -1176,7 +1262,7 @@ struct FamilyWindowView: View {
             if !model.outgoingPresentation.sentRecords.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("最近届けた写真")
+                        Text("送った写真")
                             .font(.headline)
                         Spacer()
                         if canManageOutgoingPresentation,
@@ -1197,11 +1283,11 @@ struct FamilyWindowView: View {
                     }
                 }
 
-                if model.outgoingPresentation.sentRecords.count > 3 {
+                if model.outgoingPresentation.sentRecords.count > 20 {
                     HStack {
-                        if sentRecordDisplayLimit > 3 {
-                            Button("最新3件に戻す") {
-                                withAnimation { sentRecordDisplayLimit = 3 }
+                        if sentRecordDisplayLimit > 20 {
+                            Button("最新の写真に戻す") {
+                                withAnimation { sentRecordDisplayLimit = 20 }
                             }
                         }
                         Spacer(minLength: 12)
@@ -1235,7 +1321,7 @@ struct FamilyWindowView: View {
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
         let allRecords = model.outgoingPresentation.sentRecords
-        var records = Array(allRecords.prefix(max(3, sentRecordDisplayLimit)))
+        var records = Array(allRecords.prefix(max(20, sentRecordDisplayLimit)))
         if let focusedSentMomentID,
            let target = allRecords.first(where: {
                $0.momentID == focusedSentMomentID
@@ -1311,8 +1397,8 @@ struct FamilyWindowView: View {
         .accessibilityLabel(sentRecordAccessibilityLabel(record))
         .accessibilityHint(
             isNotificationTarget
-                ? "通知で開いた写真です"
-                : "到着は閲覧や既読の確認ではありません"
+                ? "選んだ写真です"
+                : "写真を開きます"
         )
         .accessibilityFocused(
             $notificationAccessibilityFocus,
@@ -1322,71 +1408,17 @@ struct FamilyWindowView: View {
     }
 
     private func sentRecordDetail(recordID: String) -> some View {
-        NavigationStack {
-            ScrollView {
-                if let record = model.outgoingPresentation.sentRecords.first(where: {
-                    $0.id == recordID
-                }), !model.isShowingLastKnownState {
-                    let image = sentRecordThumbnail(record)
-                    VStack(alignment: .leading, spacing: 16) {
-                        if let image {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxWidth: 240)
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
-                                .frame(maxWidth: .infinity)
-                                .accessibilityLabel("届けた写真の控え")
-                        } else {
-                            Label("写真の控えは残っていません", systemImage: "photo")
-                                .foregroundStyle(.secondary)
-                        }
-                        if let caption = record.localCaption {
-                            Text(verbatim: caption)
-                                .font(.body)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                                .accessibilityIdentifier("family-window-sent-caption")
-                        }
-                        Text(record.title).font(.headline)
-                        Text(record.detail).font(.footnote).foregroundStyle(.secondary)
-                        Text("「到着」は、相手が写真を開いたことを示しません。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        DisclosureGroup("写真の控えについて") {
-                            Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。以前の送信や、別のiPhoneの履歴にはプレビューがありません。")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 6)
-                        }
-                    }
-                    .padding(20)
-                } else {
-                    Text("この写真の控えは表示できません。")
-                        .padding(20)
-                }
-            }
-            .navigationTitle("届けた写真")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる") { selectedSentRecord = nil }
-                }
-            }
+        MomentSentPhotoDetail(model: model, recordID: recordID) {
+            selectedSentRecord = nil
         }
     }
 
     private func sentRecordAccessibilityLabel(
         _ record: MomentSentRecordPresentation
     ) -> String {
-        let delivery = record.deliveryState == .recipientDeviceArrivalConfirmed
-            ? "相手のiPhoneへ到着"
-            : "サーバー受付済み"
-        let statusDate = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
         var parts = [
-            "届けた写真",
-            delivery,
-            statusDate.formatted(.dateTime.month().day().hour().minute())
+            "送った写真",
+            record.serverAcceptedAt.formatted(.dateTime.month().day())
         ]
         if record.hasReceivedHeart {
             parts.append("ハートが届いています")
@@ -1553,7 +1585,7 @@ struct FamilyWindowView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("写真とひとことの全文を開きます")
+                .accessibilityHint("写真を大きく開きます。ひとことは詳細から全文を読めます")
             } else {
                 receivedPhotoHeader(
                     item,
@@ -1571,8 +1603,6 @@ struct FamilyWindowView: View {
             }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(captureLabel(item))
-                        .font(.subheadline.weight(.semibold))
                     Text("届いた日 \(item.receivedAt.formatted(.dateTime.month().day().hour().minute()))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1622,16 +1652,16 @@ struct FamilyWindowView: View {
                 receivedPhotoActionControls(item)
 
                 if memoryResultMomentID == item.id,
-                   let message = model.memoryActionMessage ?? model.errorMessage {
+                   let message = memoryResultMessage {
                     Label(
                         message,
-                        systemImage: model.memoryActionMessage == nil
+                        systemImage: memoryResultFailed
                             ? "exclamationmark.circle"
                             : "checkmark.circle.fill"
                     )
                         .font(.caption)
                         .foregroundStyle(
-                            model.memoryActionMessage == nil
+                            memoryResultFailed
                                 ? Color.orange
                                 : Color.accentColor
                         )
@@ -1640,14 +1670,14 @@ struct FamilyWindowView: View {
                         .accessibilityIdentifier("family-window-bookmark-result")
                 }
                 if heartResultMomentID == item.id,
-                   let message = model.heartActionMessage ?? model.errorMessage {
+                   let message = heartResultMessage {
                     Label(
                         message,
                         systemImage: heartResultIcon(for: item)
                     )
                         .font(.caption)
                         .foregroundStyle(
-                            model.heartActionMessage == nil
+                            heartResultFailed
                                 ? Color.orange
                                 : Color.accentColor
                         )
@@ -1718,6 +1748,8 @@ struct FamilyWindowView: View {
             Task {
                 await model.sendHeart(item)
                 heartActionMomentID = nil
+                heartResultMessage = model.heartActionMessage ?? model.errorMessage
+                heartResultFailed = model.heartActionMessage == nil
                 heartResultMomentID = item.id
             }
         } label: {
@@ -1861,6 +1893,8 @@ struct FamilyWindowView: View {
         Task {
             await model.setSavedMemory(item, isSaved: shouldSave)
             memoryActionMomentID = nil
+            memoryResultMessage = model.memoryActionMessage ?? model.errorMessage
+            memoryResultFailed = model.memoryActionMessage == nil
             memoryResultMomentID = item.id
             if clearsWidgetFocusAfterCompletion {
                 focusedMomentID = nil
@@ -1930,9 +1964,10 @@ struct FamilyWindowView: View {
         clearsWidgetFocusAfterMemorySave = false
         selectedSection = .received
         focusedMomentID = target.id
+        selectedMomentForDetail = target
         if !model.isSavedMemory(target) {
             clearsWidgetFocusAfterMemorySave = true
-            widgetMemoryTarget = target
+            pendingDetailMemoryConfirmationID = target.id
         }
     }
 
@@ -2083,7 +2118,7 @@ struct FamilyWindowView: View {
     }
 
     private func heartResultIcon(for item: MomentInboxItem) -> String {
-        guard model.heartActionMessage != nil else {
+        guard !heartResultFailed else {
             return "exclamationmark.circle"
         }
         return model.heartOutboxItem(for: item)?.phase == .sent
@@ -2201,7 +2236,11 @@ struct FamilyWindowView: View {
         Button(title, role: .destructive) {
             guard let target = reportTarget else { return }
             reportTarget = nil
-            Task { await model.report(target, reason: reason) }
+            Task {
+                await model.report(target, reason: reason)
+                safetyResultMomentID = target.id
+                safetyResultMessage = model.errorMessage
+            }
         }
         .disabled(reportTarget.map { !model.canSubmitReport($0) } ?? true)
     }
@@ -2273,7 +2312,7 @@ struct MomentReceivedPhotoHeader: View {
         MomentReceivedPhotoSurface(url: url, aspectRatio: 4.0 / 3.0, contentMode: contentMode)
             .overlay(alignment: .bottom) {
                 if let caption {
-                    MomentPhotoCaption(caption: caption, lineLimit: 3)
+                    MomentPhotoCaption(caption: caption, lineLimit: 2)
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         .accessibilityIdentifier("family-window-received-caption")
                 }
@@ -2289,42 +2328,21 @@ struct MomentReceivedPhotoThumbnail: View {
     let receivedAt: Date
     let isSaved: Bool
     let hasSentHeart: Bool
+    var photoIdentifier = "received-tile-photo"
 
     var body: some View {
-        MomentReceivedPhotoSurface(url: url, aspectRatio: 1, contentMode: .fill)
-            .overlay {
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.72)],
-                    startPoint: .center,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: 6) {
+            MomentReceivedPhotoSurface(url: url, aspectRatio: 1, contentMode: .fill)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .accessibilityIdentifier(photoIdentifier)
+            if let caption {
+                Text(verbatim: caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .overlay(alignment: .bottom) {
-                VStack(spacing: 0) {
-                    if let caption {
-                        MomentPhotoCaption(caption: caption, lineLimit: 2)
-                    }
-                    HStack(spacing: 5) {
-                        Text(receivedAt.formatted(.dateTime.month().day()))
-                            .font(.caption.weight(.semibold))
-                        Spacer(minLength: 2)
-                        if isSaved {
-                            Image(systemName: "bookmark.fill")
-                                .accessibilityLabel("思い出に残した写真")
-                        }
-                        if hasSentHeart {
-                            Image(systemName: "heart.fill")
-                                .accessibilityLabel("ハートを送信済み")
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .padding(10)
-                }
-                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .contentShape(Rectangle())
     }
 }
 
@@ -2332,8 +2350,11 @@ struct MomentReceivedPhotoThumbnail: View {
 /// Uses the shipping received-photo components and async decoder, offline.
 /// Deliberately mixes aspect ratios and a missing file in one scrolling layout.
 struct MomentReceivedLayoutFixture: View {
-    @State private var showsDetail = false
+    private struct Selection: Identifiable { let id: Int }
+    @State private var selection: Selection?
     @State private var didUseAction = false
+    @State private var didSave = false
+    @State private var didHeart = false
     private let urls = Self.makePhotos()
     private let caption = String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3)
     private var largeText: Bool { CommandLine.arguments.contains("--received-large-text") }
@@ -2342,7 +2363,7 @@ struct MomentReceivedLayoutFixture: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Button { showsDetail = true } label: {
+                    Button { selection = Selection(id: 0) } label: {
                         MomentReceivedPhotoHeader(url: urls[0], caption: caption, contentMode: .fill)
                     }
                     .buttonStyle(.plain)
@@ -2357,13 +2378,14 @@ struct MomentReceivedLayoutFixture: View {
                     Text("以前に届いた写真")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10), count: largeText ? 1 : 2), spacing: 10) {
                         ForEach(0..<4) { index in
-                            Button { showsDetail = true } label: {
+                            Button { selection = Selection(id: index) } label: {
                                 MomentReceivedPhotoThumbnail(
                                     url: index < 3 ? urls[index] : urls[3],
                                     caption: index == 2 ? nil : caption,
                                     receivedAt: Date(timeIntervalSince1970: 1_788_846_000),
                                     isSaved: index == 0,
-                                    hasSentHeart: index == 1
+                                    hasSentHeart: index == 1,
+                                    photoIdentifier: "received-fixture-tile-photo-\(index)"
                                 )
                             }
                             .buttonStyle(.plain)
@@ -2377,27 +2399,45 @@ struct MomentReceivedLayoutFixture: View {
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("届いた写真")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showsDetail) {
+            .fullScreenCover(item: $selection) { selected in
                 NavigationStack {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 13) {
-                            MomentReceivedPhotoHeader(url: urls[0], caption: caption, contentMode: .fit)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel("届いた写真")
-                                .accessibilityIdentifier("received-fixture-detail-photo")
-                            Text(verbatim: caption)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("received-fixture-full-caption")
+                    MomentPhotoDetailBody(
+                        imageURL: urls[selected.id],
+                        caption: selected.id == 2 ? nil : caption,
+                        captionIdentifier: "received-fixture-full-caption",
+                        photoIdentifier: "received-fixture-detail-photo"
+                    ) {
+                        VStack(spacing: 8) {
+                            HStack {
+                                Button("思い出に残す") { didSave = true }
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .accessibilityIdentifier("received-fixture-detail-save")
+                                Button("ハートを送る") { didHeart = true }
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .accessibilityIdentifier("received-fixture-detail-heart")
+                            }.buttonStyle(.bordered).font(.caption)
+                            if didSave {
+                                Text("保存の操作を受け取りました").font(.footnote)
+                                    .accessibilityIdentifier("received-fixture-detail-save-result")
+                            }
+                            if didHeart {
+                                Text("ハートの操作を受け取りました").font(.footnote)
+                                    .accessibilityIdentifier("received-fixture-detail-heart-result")
+                            }
                         }
-                        .padding(16)
+                        .padding(13)
                     }
+                    .navigationTitle("届いた写真").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
-                        Button("閉じる") { showsDetail = false }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("閉じる") { selection = nil }
+                                .accessibilityIdentifier("photo-detail-close")
+                        }
                     }
                 }
             }
         }
-        .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
+        .environment(\.dynamicTypeSize, largeText ? .accessibility5 : .large)
         .preferredColorScheme(largeText ? .light : .dark)
     }
 
@@ -2405,43 +2445,202 @@ struct MomentReceivedLayoutFixture: View {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("received-layout-fixture-\(UUID().uuidString)", isDirectory: true)
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let cat = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
-        let sizes = [CGSize(width: 300, height: 1200), CGSize(width: 1600, height: 160), CGSize(width: 400, height: 400)]
-        var urls: [URL] = []
-        for (index, size) in sizes.enumerated() {
-            let image = UIGraphicsImageRenderer(size: size).image { context in
-                UIColor.darkGray.setFill()
-                context.fill(CGRect(origin: .zero, size: size))
-                let side = min(size.width, size.height)
-                cat.draw(in: CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side))
-            }
-            let url = directory.appendingPathComponent("\(index).jpg")
-            try! image.jpegData(compressionQuality: 0.75)!.write(to: url)
-            urls.append(url)
-        }
+        var urls = (0..<3).map { MomentExperiencePhotoFixture.url(index: $0) }
         urls.append(directory.appendingPathComponent("missing.jpg"))
         return urls
     }
 }
 #endif
 
+/// The full photo stays separate from optional reading and secondary actions.
+struct MomentPhotoDetailBody<Actions: View>: View {
+    let imageURL: URL?
+    var legacyThumbnail: UIImage? = nil
+    var isLoading = false
+    let caption: String?
+    var captionIdentifier = "photo-detail-caption-full"
+    var photoIdentifier = "photo-detail-image"
+    @ViewBuilder let actions: () -> Actions
+    @State private var showsFullCaption = false
+
+    var body: some View {
+        GeometryReader { geometry in
+          VStack(spacing: 0) {
+            Group {
+                if isLoading {
+                    ProgressView().tint(.white)
+                } else if let imageURL {
+                    MomentLocalImageView(url: imageURL, contentMode: .fit,
+                        maximumPixelSize: MomentSharingProtocol.maximumCanonicalPixelDimension,
+                        allowsZoom: true)
+                } else if let legacyThumbnail {
+                    VStack(spacing: 16) {
+                        Image(uiImage: legacyThumbnail).resizable().scaledToFit()
+                            .frame(maxWidth: legacyThumbnail.size.width / UIScreen.main.scale,
+                                   maxHeight: legacyThumbnail.size.height / UIScreen.main.scale)
+                            .accessibilityIdentifier("photo-detail-legacy-image")
+                            #if DEBUG
+                            .accessibilityValue("pixels=\(max(legacyThumbnail.cgImage?.width ?? 0, legacyThumbnail.cgImage?.height ?? 0))")
+                            #endif
+                        Text("この写真は小さいサイズで保存されています")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }.padding(20)
+                } else {
+                    ContentUnavailableView("写真を表示できません", systemImage: "photo")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .accessibilityIdentifier(photoIdentifier)
+
+            ViewThatFits(in: .vertical) {
+                footer.fixedSize(horizontal: false, vertical: true)
+                ScrollView { footer }
+            }
+            .frame(maxHeight: geometry.size.height * 0.42)
+          }
+        }
+        .background(.black)
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showsFullCaption) {
+            NavigationStack {
+                ScrollView {
+                    Text(verbatim: caption ?? "").font(.body).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(20)
+                        .accessibilityIdentifier(captionIdentifier)
+                }
+                .navigationTitle("ひとこと").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { showsFullCaption = false }
+                } }
+            }
+        }
+    }
+
+    private var footer: some View {
+        VStack(spacing: 0) {
+            if let caption, !caption.isEmpty {
+                Button { showsFullCaption = true } label: {
+                    HStack(spacing: 10) {
+                        Text(verbatim: caption).font(.subheadline)
+                            .multilineTextAlignment(.leading).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.down").font(.caption2)
+                    }
+                    .foregroundStyle(.secondary).padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("ひとこと。\(caption)")
+                .accessibilityHint("全文を開きます")
+                .accessibilityIdentifier("photo-detail-read-caption")
+            }
+            actions()
+        }
+    }
+}
+
+private struct MomentSentPhotoDetail: View {
+    @ObservedObject var model: MomentSharingViewModel
+    let recordID: String
+    let onClose: () -> Void
+    @State private var detailURL: URL?
+    @State private var isLoading = true
+    @State private var showsInformation = false
+
+    private var record: MomentSentRecordPresentation? {
+        guard !model.isShowingLastKnownState, !model.isReportOnly else { return nil }
+        return model.outgoingPresentation.sentRecords.first { $0.id == recordID }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let record {
+                    MomentPhotoDetailBody(imageURL: model.sentDetailReference(recordID: recordID) == nil ? nil : detailURL,
+                        legacyThumbnail: record.localThumbnailJPEG.flatMap { UIImage(data: $0) },
+                        isLoading: isLoading, caption: record.localCaption,
+                        captionIdentifier: "family-window-sent-caption") { EmptyView() }
+                } else {
+                    ContentUnavailableView("この写真は表示できません", systemImage: "photo")
+                }
+            }
+            .background(.black)
+            .navigationTitle("送った写真").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showsInformation = true } label: { Image(systemName: "info.circle") }
+                        .accessibilityLabel("送信の詳細").disabled(record == nil)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる", action: onClose).accessibilityIdentifier("photo-detail-close")
+                }
+            }
+            .task(id: model.sentDetailReference(recordID: recordID)) {
+                detailURL = nil
+                isLoading = true
+                let url = await model.sentDetailURL(recordID: recordID)
+                guard !Task.isCancelled else { return }
+                detailURL = url
+                isLoading = false
+            }
+            .sheet(isPresented: $showsInformation) {
+                NavigationStack {
+                    Form {
+                        if let record {
+                            Section("送信状況") {
+                                Text(record.title)
+                                Text(record.detail).font(.footnote).foregroundStyle(.secondary)
+                                Text("到着は、相手が写真を開いたことを示しません。")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                            Section("送った日") {
+                                Text(record.serverAcceptedAt.formatted(.dateTime.month().day().hour().minute()))
+                            }
+                            Section("このiPhoneの控え") {
+                                Text("控えは最長30日・最大200件まで保持します。以前の送信には小さな控えだけが残っている場合があります。")
+                                    .font(.footnote)
+                            }
+                        }
+                    }
+                    .navigationTitle("送信の詳細").navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                        Button("閉じる") { showsInformation = false }
+                    } }
+                }
+            }
+        }.preferredColorScheme(.dark)
+    }
+}
+
 struct MomentLocalImageView: View {
     let url: URL
     let contentMode: ContentMode
     let hidesImageAccessibility: Bool
+    let maximumPixelSize: Int
+    let allowsZoom: Bool
     @State private var image: UIImage?
     @State private var loadFailed = false
+    @State private var retryCount = 0
 
-    init(url: URL, contentMode: ContentMode = .fill, hidesImageAccessibility: Bool = false) {
+    init(url: URL, contentMode: ContentMode = .fill, hidesImageAccessibility: Bool = false,
+         maximumPixelSize: Int? = nil, allowsZoom: Bool = false) {
         self.url = url
         self.contentMode = contentMode
         self.hidesImageAccessibility = hidesImageAccessibility
+        self.maximumPixelSize = maximumPixelSize ?? min(
+            MomentSharingProtocol.maximumCanonicalPixelDimension,
+            max(900, Int(UIScreen.main.bounds.width * UIScreen.main.scale)))
+        self.allowsZoom = allowsZoom
     }
 
     @ViewBuilder
     var body: some View {
         Group {
             if let image {
+                if allowsZoom {
+                    MomentZoomablePhoto(image: image)
+                } else {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
@@ -2451,12 +2650,21 @@ struct MomentLocalImageView: View {
                     // supplies its label. Their intrinsic bounds must not
                     // enlarge that button's accessibility frame.
                     .accessibilityHidden(hidesImageAccessibility)
+                }
             } else if loadFailed {
                 ZStack {
                     Color(uiColor: .tertiarySystemFill)
-                    Image(systemName: "photo")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
+                    if allowsZoom {
+                        VStack(spacing: 16) {
+                            Label("写真を読み込めませんでした", systemImage: "photo")
+                                .font(.subheadline).multilineTextAlignment(.center)
+                            Button("もう一度読み込む") { retryCount += 1 }
+                                .buttonStyle(.bordered).frame(minHeight: 44)
+                                .accessibilityIdentifier("photo-detail-retry")
+                        }.padding(20)
+                    } else {
+                        Image(systemName: "photo").font(.title2).foregroundStyle(.secondary)
+                    }
                 }
             } else {
                 ZStack {
@@ -2466,25 +2674,22 @@ struct MomentLocalImageView: View {
                 .aspectRatio(4 / 3, contentMode: .fit)
             }
         }
-        .task(id: url) {
+        .task(id: "\(url.absoluteString)#\(maximumPixelSize)#\(retryCount)") {
             // A safety-state change can replace the latest URL with an older
             // safe photo. Never retain the previous pixels while the new file
             // is loading or if its decode fails.
             image = nil
             loadFailed = false
-            if let cached = MomentLocalImageCache.shared.image(for: url) {
+            if let cached = MomentLocalImageCache.shared.image(for: url, maximumPixelSize: maximumPixelSize) {
                 guard !Task.isCancelled else { return }
                 image = cached
                 return
             }
-            let maximumPixelSize = min(
-                MomentSharingProtocol.maximumCanonicalPixelDimension,
-                max(900, Int(UIScreen.main.bounds.width * UIScreen.main.scale))
-            )
+            let requestedPixelSize = self.maximumPixelSize
             let rendered = await Task.detached(priority: .utility) {
                 MomentDownsampledImage.make(
                     url: url,
-                    maximumPixelSize: maximumPixelSize
+                    maximumPixelSize: requestedPixelSize
                 )
             }.value
             guard !Task.isCancelled else { return }
@@ -2496,6 +2701,7 @@ struct MomentLocalImageView: View {
             MomentLocalImageCache.shared.insert(
                 value,
                 for: url,
+                maximumPixelSize: maximumPixelSize,
                 pixelWidth: rendered.cgImage.width,
                 pixelHeight: rendered.cgImage.height
             )
@@ -2536,24 +2742,101 @@ private struct MomentDownsampledImage: @unchecked Sendable {
 @MainActor
 private final class MomentLocalImageCache {
     static let shared = MomentLocalImageCache()
-    private let cache = NSCache<NSURL, UIImage>()
+    private let cache = NSCache<NSString, UIImage>()
 
     private init() {
         cache.countLimit = 24
         cache.totalCostLimit = 48 * 1_024 * 1_024
     }
 
-    func image(for url: URL) -> UIImage? {
-        cache.object(forKey: url as NSURL)
+    func image(for url: URL, maximumPixelSize: Int) -> UIImage? {
+        cache.object(forKey: "\(url.absoluteString)#\(maximumPixelSize)" as NSString)
     }
 
     func insert(
         _ image: UIImage,
         for url: URL,
+        maximumPixelSize: Int,
         pixelWidth: Int,
         pixelHeight: Int
     ) {
         let cost = min(Int.max / 4, pixelWidth * pixelHeight) * 4
-        cache.setObject(image, forKey: url as NSURL, cost: cost)
+        cache.setObject(image, forKey: "\(url.absoluteString)#\(maximumPixelSize)" as NSString, cost: cost)
+    }
+}
+
+/// Zoom changes only the viewed pixels; closing never writes or crops a photo.
+private struct MomentZoomablePhoto: UIViewRepresentable {
+    let image: UIImage
+    func makeUIView(context: Context) -> PhotoScrollView { PhotoScrollView() }
+    func updateUIView(_ view: PhotoScrollView, context: Context) { view.setImage(image) }
+
+    final class PhotoScrollView: UIScrollView, UIScrollViewDelegate {
+        private let photo = UIImageView()
+        private var lastSize = CGSize.zero
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            delegate = self
+            minimumZoomScale = 1
+            maximumZoomScale = 4
+            showsHorizontalScrollIndicator = false
+            showsVerticalScrollIndicator = false
+            backgroundColor = .black
+            photo.contentMode = .scaleAspectFit
+            addSubview(photo)
+            let doubleTap = UITapGestureRecognizer(target: self, action: #selector(toggleZoom(_:)))
+            doubleTap.numberOfTapsRequired = 2
+            addGestureRecognizer(doubleTap)
+            isAccessibilityElement = true
+            accessibilityIdentifier = "photo-detail-zoom-surface"
+            accessibilityLabel = "写真"
+            accessibilityTraits = .image
+            accessibilityHint = "拡大または元の大きさに戻す操作を選べます"
+            accessibilityCustomActions = [
+                UIAccessibilityCustomAction(name: "拡大", target: self, selector: #selector(accessibilityZoomIn)),
+                UIAccessibilityCustomAction(name: "元の大きさに戻す", target: self, selector: #selector(accessibilityResetZoom))
+            ]
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
+        func setImage(_ image: UIImage) {
+            guard photo.image !== image else { return }
+            setZoomScale(1, animated: false)
+            photo.image = image
+            updateAccessibilityValue()
+            setNeedsLayout()
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard bounds.size != lastSize else { return }
+            lastSize = bounds.size
+            setZoomScale(1, animated: false)
+            photo.frame = CGRect(origin: .zero, size: bounds.size)
+            contentSize = bounds.size
+        }
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { photo }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { updateAccessibilityValue() }
+        private func updateAccessibilityValue() {
+            #if DEBUG
+            let pixels = max(photo.image?.cgImage?.width ?? 0, photo.image?.cgImage?.height ?? 0)
+            accessibilityValue = "pixels=\(pixels);zoom=\(zoomScale)"
+            #else
+            accessibilityValue = zoomScale > 1.1 ? "拡大中" : "写真全体"
+            #endif
+        }
+        @objc private func accessibilityZoomIn() -> Bool {
+            setZoomScale(min(maximumZoomScale, zoomScale * 2), animated: true)
+            return true
+        }
+        @objc private func accessibilityResetZoom() -> Bool {
+            setZoomScale(1, animated: true)
+            return true
+        }
+        @objc private func toggleZoom(_ recognizer: UITapGestureRecognizer) {
+            guard zoomScale < 1.1 else { setZoomScale(1, animated: true); return }
+            let point = recognizer.location(in: photo)
+            let size = CGSize(width: bounds.width / 2.5, height: bounds.height / 2.5)
+            zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                            width: size.width, height: size.height), animated: true)
+        }
     }
 }

@@ -68,6 +68,11 @@ struct AppRootView: View {
                 momentNotificationTapMailbox.consume(id: tap.id)
             }
         }
+        .onChange(of: momentNotificationTapMailbox.pendingWidgetFeedback, initial: true) { _, feedback in
+            guard let feedback else { return }
+            presentedError = PresentedError(message: feedback.message)
+            momentNotificationTapMailbox.consumeWidgetFeedback(id: feedback.id)
+        }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:

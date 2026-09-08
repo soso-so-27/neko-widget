@@ -190,6 +190,31 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('timeIntervalSince(visibleSince) >= 0.5', self.widget_ui_test)
         self.assertIn('visibleSince = nil', self.widget_ui_test)
 
+        # Extra comparisons run only after the ordinary UI pass succeeds, and
+        # reuse just the existing Gallery test with independent result bundles.
+        scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
+        normal_failure = runtime.index('if (( composer_status != 0 )); then')
+        self.assertLess(normal_failure, scenarios)
+        self.assertIn('return "$composer_status"', runtime[normal_failure:scenarios])
+        scenario_body = runtime[scenarios:runtime.index('\n        done', scenarios)]
+        self.assertEqual(scenario_body.count('-only-testing:'), 1)
+        self.assertIn(
+            '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'
+            'testCaptureSharedWidgetAllSupportedSizes', scenario_body,
+        )
+        self.assertIn('-derivedDataPath "$DERIVED_DATA_DIRECTORY"', scenario_body)
+        self.assertIn(
+            'WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND '
+            'WIDGET_VISUAL_REVIEW_LARGE_TEXT', scenario_body,
+        )
+        self.assertIn('widget_scenario_conditions="WIDGET_VISUAL_REVIEW_NO_CAPTION"', scenario_body)
+        self.assertIn('Widget-$widget_scenario.xcresult', scenario_body)
+        self.assertIn('widget-$widget_scenario-screenshots', scenario_body)
+        self.assertIn('return "$widget_scenario_status"', scenario_body)
+        workflow = source('.github/workflows/ios-build.yml')
+        runtime_job = workflow[workflow.index('\n  sharing-runtime-matrix:'):]
+        self.assertIn('timeout-minutes: 40', runtime_job)
+
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [
             "01-local-cat-widget",

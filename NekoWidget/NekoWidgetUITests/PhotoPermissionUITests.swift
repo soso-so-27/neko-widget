@@ -383,24 +383,64 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                           "The cropped photo must not intercept adjacent controls.")
             attach(app, name: "received-layout-\(variant)")
             latest.tap()
-            let fullCaption = app.staticTexts["received-fixture-full-caption"]
-            XCTAssertTrue(fullCaption.waitForExistence(timeout: 5))
-            XCTAssertEqual(fullCaption.label, String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3))
-            let detailPhoto = app.descendants(matching: .any)["received-fixture-detail-photo"].firstMatch
-            XCTAssertTrue(detailPhoto.exists)
-            XCTAssertGreaterThanOrEqual(fullCaption.frame.minY, detailPhoto.frame.maxY)
-            attach(app, name: "received-detail-\(variant)")
-            app.buttons["閉じる"].tap()
-            expectation(for: NSPredicate { _, _ in !fullCaption.exists }, evaluatedWith: app)
-            waitForExpectations(timeout: 5)
+            verifySharpDetail(app, name: "received-detail-\(variant)")
+            let firstPhotoPixels = Self.detailValue(
+                app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.value as? String,
+                field: "pixels")
+            verifyCaptionRoundTrip(app,
+                identifier: "received-fixture-full-caption",
+                expected: String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3))
+            for action in ["save", "heart"] {
+                let control = app.buttons["received-fixture-detail-\(action)"]
+                XCTAssertTrue(control.isHittable)
+                control.tap()
+                XCTAssertTrue(app.staticTexts["received-fixture-detail-\(action)-result"].waitForExistence(timeout: 5))
+            }
+            closePhotoDetail(app)
+            XCTAssertTrue(latest.isHittable)
             let scroll = app.scrollViews.firstMatch
             for index in 0..<4 {
                 let tile = app.buttons["received-fixture-tile-\(index)"]
                 for _ in 0..<6 where !tile.isHittable { scroll.swipeUp() }
                 XCTAssertTrue(tile.isHittable, "Every photo, including the missing-file placeholder, stays reachable.")
-                XCTAssertEqual(tile.frame.width, tile.frame.height, accuracy: 2)
+                let photo = app.descendants(matching: .any)["received-fixture-tile-photo-\(index)"].firstMatch
+                XCTAssertTrue(photo.exists)
+                XCTAssertEqual(photo.frame.width, photo.frame.height, accuracy: 2)
+                XCTAssertTrue(tile.frame.insetBy(dx: -2, dy: -2).contains(photo.frame),
+                              "Caption and photo must remain inside the same reachable tile.")
                 XCTAssertGreaterThanOrEqual(tile.frame.minX, app.frame.minX)
                 XCTAssertLessThanOrEqual(tile.frame.maxX, app.frame.maxX)
+                if variant == "standard", index > 0 {
+                    tile.tap()
+                    let decodedPhoto = app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch
+                    if index == 3 {
+                        let retry = app.buttons["photo-detail-retry"]
+                        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+                        XCTAssertFalse(decodedPhoto.exists,
+                                       "A missing file must not retain the previously opened photo.")
+                        retry.tap()
+                        XCTAssertTrue(app.staticTexts["写真を読み込めませんでした"].waitForExistence(timeout: 10))
+                        XCTAssertTrue(retry.isHittable)
+                        XCTAssertFalse(decodedPhoto.exists)
+                    } else {
+                        XCTAssertTrue(decodedPhoto.waitForExistence(timeout: 10))
+                        XCTAssertGreaterThanOrEqual(Self.detailValue(decodedPhoto.value as? String, field: "pixels") ?? 0, 1_000)
+                        if index == 1 {
+                            // The gray portrait and orange square fixtures have
+                            // different canonical dimensions. Read the decoded
+                            // image, not merely a selected-row label.
+                            XCTAssertNotEqual(Self.detailValue(decodedPhoto.value as? String, field: "pixels"), firstPhotoPixels,
+                                              "Opening a different tile must replace the previous decoded photo.")
+                            attach(app, name: "received-second-photo")
+                        } else {
+                            XCTAssertFalse(app.buttons["photo-detail-read-caption"].exists,
+                                           "A photo without a caption must not inherit another photo's text.")
+                            attach(app, name: "received-no-caption")
+                        }
+                    }
+                    closePhotoDetail(app)
+                    XCTAssertTrue(tile.isHittable)
+                }
             }
             attach(app, name: "received-grid-\(variant)")
             app.terminate()
@@ -409,34 +449,116 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 
     @MainActor
     func testSentHistoryKeepsPhotosVisibleAndMissingPhotosCompact() {
-        for variant in ["standard", "large", "notification"] {
+        for variant in ["standard", "narrow", "large", "notification"] {
             let app = XCUIApplication()
             app.launchArguments = ["--moment-history-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
             if variant == "large" { app.launchArguments.append("--history-large-text") }
+            if variant == "narrow" { app.launchArguments.append("--history-narrow") }
             if variant == "notification" { app.launchArguments.append("--history-notification-target") }
             app.launch()
             let photo = app.buttons["history-fixture-photo"]
             let missing = app.buttons["history-fixture-missing"]
             XCTAssertTrue(photo.waitForExistence(timeout: 15))
-            XCTAssertTrue(missing.exists)
             XCTAssertTrue(photo.isHittable)
-            XCTAssertTrue(missing.isHittable)
-            XCTAssertLessThan(missing.frame.height, photo.frame.height,
-                              "Fileless history must not occupy a full photo tile.")
+            let photoHeight = photo.frame.height
             if variant == "notification" {
+                XCTAssertTrue(missing.isHittable)
                 XCTAssertLessThanOrEqual(missing.frame.maxY, photo.frame.minY,
                                          "The exact notification target stays first even without a preview.")
-            } else {
+            }
+            for _ in 0..<6 where !missing.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            XCTAssertTrue(missing.isHittable)
+            XCTAssertLessThan(missing.frame.height, photoHeight,
+                              "Fileless history must not occupy a full photo tile.")
+            if variant != "notification", photo.isHittable {
                 XCTAssertGreaterThanOrEqual(missing.frame.minY, photo.frame.maxY,
                                             "Photo content must come before fileless history.")
             }
             attach(app, name: "sent-history-\(variant)")
+            for status in ["サーバー受付済み", "相手のiPhoneへ到着"] {
+                XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", status)).firstMatch.exists,
+                               "Normal delivery bookkeeping must not take over the photo list.")
+            }
             missing.tap()
-            let caption = app.staticTexts["history-fixture-detail-caption"]
-            XCTAssertTrue(caption.waitForExistence(timeout: 5))
-            XCTAssertEqual(caption.label, "のびー。今日はずっといっしょにいたいみたいです。")
+            XCTAssertTrue(app.staticTexts["写真を表示できません"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.exists)
+            verifyCaptionRoundTrip(app, identifier: "history-fixture-detail-caption",
+                expected: "のびー。今日はずっといっしょにいたいみたいです。")
+            closePhotoDetail(app)
+            for _ in 0..<6 where !photo.isHittable { app.scrollViews.firstMatch.swipeDown() }
+            XCTAssertTrue(photo.isHittable)
+            photo.tap()
+            verifySharpDetail(app, name: "sent-canonical-\(variant)")
+            verifyCaptionRoundTrip(app, identifier: "history-fixture-detail-caption",
+                expected: "おこってるんだけど？")
+            closePhotoDetail(app)
+            XCTAssertTrue(photo.isHittable)
+            if variant == "standard" {
+                let legacy = app.buttons["history-fixture-legacy"]
+                for _ in 0..<6 where !legacy.isHittable { app.scrollViews.firstMatch.swipeUp() }
+                legacy.tap()
+                let image = app.descendants(matching: .any)["photo-detail-legacy-image"].firstMatch
+                XCTAssertTrue(image.waitForExistence(timeout: 5))
+                XCTAssertGreaterThan(Self.detailValue(image.value as? String, field: "pixels") ?? 0, 0)
+                XCTAssertLessThanOrEqual(Self.detailValue(image.value as? String, field: "pixels") ?? .infinity, 240)
+                XCTAssertFalse(app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.exists)
+                attach(app, name: "sent-legacy-small-copy")
+                closePhotoDetail(app)
+                XCTAssertTrue(legacy.isHittable)
+            }
             app.terminate()
         }
+    }
+
+    private nonisolated static func detailValue(_ value: String?, field: String) -> Double? {
+        guard let value else { return nil }
+        return value.split(separator: ";").compactMap { part -> Double? in
+            let pair = part.split(separator: "=", maxSplits: 1)
+            guard pair.count == 2, pair[0] == field else { return nil }
+            return Double(pair[1])
+        }.first
+    }
+
+    @MainActor
+    private func verifySharpDetail(_ app: XCUIApplication, name: String) {
+        let image = app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(Self.detailValue(image.value as? String, field: "pixels") ?? 0, 1_000,
+                                    "Opened detail must decode the canonical photo, not the list thumbnail.")
+        XCTAssertEqual(Self.detailValue(image.value as? String, field: "zoom") ?? 0, 1, accuracy: 0.05)
+        XCTAssertTrue(app.frame.insetBy(dx: -2, dy: -2).contains(image.frame))
+        attach(app, name: name)
+        image.doubleTap()
+        expectation(for: NSPredicate { _, _ in (Self.detailValue(image.value as? String, field: "zoom") ?? 0) > 1.1 }, evaluatedWith: image)
+        waitForExpectations(timeout: 5)
+        attach(app, name: "\(name)-zoomed")
+        image.doubleTap()
+        expectation(for: NSPredicate { _, _ in abs((Self.detailValue(image.value as? String, field: "zoom") ?? 0) - 1) < 0.05 }, evaluatedWith: image)
+        waitForExpectations(timeout: 5)
+    }
+
+    @MainActor
+    private func verifyCaptionRoundTrip(_ app: XCUIApplication, identifier: String, expected: String) {
+        let read = app.buttons["photo-detail-read-caption"]
+        XCTAssertTrue(read.waitForExistence(timeout: 5))
+        XCTAssertTrue(read.isHittable)
+        read.tap()
+        let caption = app.staticTexts[identifier]
+        XCTAssertTrue(caption.waitForExistence(timeout: 5))
+        XCTAssertEqual(caption.label, expected)
+        app.navigationBars["ひとこと"].buttons["閉じる"].tap()
+        expectation(for: NSPredicate { _, _ in !caption.exists }, evaluatedWith: app)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(read.isHittable)
+    }
+
+    @MainActor
+    private func closePhotoDetail(_ app: XCUIApplication) {
+        let close = app.buttons["photo-detail-close"]
+        XCTAssertTrue(close.isHittable)
+        close.tap()
+        expectation(for: NSPredicate { _, _ in !close.exists }, evaluatedWith: app)
+        waitForExpectations(timeout: 5)
     }
 
     @MainActor

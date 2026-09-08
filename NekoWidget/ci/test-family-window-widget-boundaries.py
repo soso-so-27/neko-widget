@@ -314,7 +314,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         photo_actions = section(
             view,
-            "private func photoActionButtons(atTop: Bool = false) -> some View",
+            "private func photoActionButtons() -> some View",
             "@ViewBuilder\n    private var familyMemoryControl",
         )
         self.assertNotIn("if family == .systemSmall", photo_actions)
@@ -372,6 +372,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         accepted = section(heart_control, "case .serverAccepted:", "case .hidden:")
         hidden = heart_control.split("case .hidden:", 1)[1]
         self.assertIn("heartMark(status: .pending)", pending)
+        self.assertIn("ハートは送信待ちです", pending)
         self.assertIn("heartMark(status: .serverAccepted)", accepted)
         self.assertIn("Color.clear", hidden)
         self.assertIn(".frame(width: 44, height: 44)", hidden)
@@ -389,6 +390,35 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("localWindowID: localWindowID", heart_intent)
         self.assertIn("PrivateWindowCatalogStore.activeEntry()", heart_intent)
         self.assertIn("localWindowID: canonicalWindowID", heart_intent)
+
+        # A successful mutation hands off the same photo through the existing
+        # cold-launch mailbox. Extension builds must not reference app UI.
+        send_heart = section(
+            heart_intent,
+            "struct SendFamilyWidgetHeartIntent",
+            "private enum FamilyWidgetActionTargetResolver",
+        )
+        self.assertLess(
+            send_heart.index("MomentSharingStateStore.queuePaw("),
+            send_heart.index("await presentQueuedHeart("),
+        )
+        handoff = send_heart.split("private func presentQueuedHeart(", 1)[1]
+        self.assertIn("$0.localWindowID == localWindowID", handoff)
+        self.assertIn("spaceID: spaceID", handoff)
+        self.assertIn("momentID: momentID", handoff)
+        self.assertIn("MomentNotificationTapMailbox.shared.enqueue(route)", handoff)
+        self.assertNotIn("queuePaw(", handoff)
+        self.assertNotIn("MomentSharingStateStore.", handoff)
+        self.assertIn("enqueueWidgetFeedback(message)", handoff)
+        self.assertIn("#if NEKO_HOST_APP", send_heart)
+        self.assertNotIn(".result(opensIntent: OpenURLIntent", send_heart)
+
+        project = source("NekoWidget.xcodeproj/project.pbxproj")
+        app_debug = section(project, "A00000000000000000000052 /* Debug */ = {", "A00000000000000000000053 /* Release */ = {")
+        app_release = section(project, "A00000000000000000000053 /* Release */ = {", "A00000000000000000000054 /* Debug */ = {")
+        self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NEKO_HOST_APP";', app_debug)
+        self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NEKO_HOST_APP";', app_release)
+        self.assertEqual(project.count("NEKO_HOST_APP"), 2)
 
         deep_link = source("Shared/Routing/DeepLink.swift")
         self.assertIn('components.host = "family-window"', deep_link)
@@ -428,7 +458,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private var emptyStateMarkSize: CGFloat",
         )
         self.assertIn('return "このまどは利用できません"', empty_title)
-        self.assertIn('return "まだ届いていません"', empty_title)
+        self.assertIn('return "写真を待っています"', empty_title)
+        self.assertNotIn('return "まだ届いていません"', empty_title)
         self.assertIn('return "写真を準備しています"', empty_title)
         self.assertIn('return "ウィジェットを編集してください"', empty_title)
         self.assertIn("return entry.windowDisplayName", empty_title)
@@ -746,7 +777,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("focusedMomentID = nil", rejection)
         self.assertIn("widgetMemoryTarget = nil", rejection)
         self.assertIn("showsStaleWidgetPhotoAlert = true", rejection)
-        self.assertIn("widgetMemoryTarget = target", resolver)
+        self.assertIn("selectedMomentForDetail = target", resolver)
+        self.assertIn("pendingDetailMemoryConfirmationID = target.id", resolver)
+        self.assertIn("pendingDetailMemoryConfirmationID == item.id", family_view)
+        self.assertIn("selectedMomentForDetail?.id == item.id", family_view)
+        self.assertIn("if !model.isSavedMemory(current) { widgetMemoryTarget = current }", family_view)
         self.assertIn('alert("この写真は更新されました"', family_view)
         self.assertIn("ウィジェットの新しい写真で、もう一度お試しください。", family_view)
         self.assertIn("memorySaveDialogTitle", family_view)
@@ -902,7 +937,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("heart?.phase == .sent", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
         self.assertIn(
-            'Label("ハート", systemImage: "heart.fill")',
+            '.accessibilityLabel("ハートが届いています")',
             source("NekoWidget/Views/MomentDeliveryComposer.swift"),
         )
         self.assertIn('parts.append("ハートが届いています")', family_view)
@@ -2939,15 +2974,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("serverAccepted", presentation)
         self.assertIn("recipientDeviceArrivalConfirmed", presentation)
         self.assertIn("閲覧・既読の確認ではありません", presentation)
-        self.assertIn('Text("最近届けた写真")', family)
+        self.assertIn('Text("送った写真")', family)
         self.assertIn('Text("いまの送信")', family)
         self.assertNotIn('Text("履歴")', family)
         self.assertIn("届いた写真は最長90日です", family)
         self.assertIn("残したい写真は「取り込んで残す」を選びます", family)
-        self.assertIn("「到着」は、相手が写真を開いたことを示しません", family)
+        self.assertIn("到着は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
-        self.assertIn("let image = sentRecordThumbnail(record)", family)
+        self.assertIn("MomentSentRecordCard(record: record)", family)
         target_record = section(
             family,
             "private var outgoingStatusSection: some View",
@@ -2961,11 +2996,12 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
         self.assertIn("sentRecordDisplayLimit + 20", family)
         self.assertIn('Button("さらに見る")', family)
-        self.assertIn('Button("最新3件に戻す")', family)
+        self.assertIn('Button("最新の写真に戻す")', family)
+        self.assertIn("sentRecordDisplayLimit = 20", family)
         self.assertIn("static let sentRecordLimit = 200", presentation)
         self.assertIn(
-            "record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt",
-            source("NekoWidget/Views/MomentDeliveryComposer.swift"),
+            "Text(record.serverAcceptedAt.formatted",
+            family,
         )
         self.assertIn("localThumbnailFileName", store)
         self.assertIn("legacyInlineLocalThumbnailJPEG", store)
@@ -3245,7 +3281,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("sendPhotoAction", paired)
         self.assertEqual(paired.count("sendPhotoAction"), 1)
         self.assertIn('case .received: "届いた"', family)
-        self.assertIn('case .sent: "届けた"', family)
+        self.assertIn('case .sent: "送った"', family)
 
         received_start = paired.index(
             "if model.isReportOnly || selectedSection == .received {"
@@ -3379,7 +3415,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertLess(
             pending_widget.index("if !model.isSavedMemory(target)"),
-            pending_widget.index("widgetMemoryTarget = target"),
+            pending_widget.index("pendingDetailMemoryConfirmationID = target.id"),
         )
 
         sent = section(

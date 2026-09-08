@@ -12,6 +12,12 @@ import UIKit
 #if WIDGET_VISUAL_REVIEW_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)
 #error("Widget visual review requires Debug and the dedicated screenshot fixture.")
 #endif
+#if (WIDGET_VISUAL_REVIEW_LONG_CAPTION || WIDGET_VISUAL_REVIEW_NO_CAPTION || WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND || WIDGET_VISUAL_REVIEW_LARGE_TEXT) && !WIDGET_VISUAL_REVIEW_FIXTURE
+#error("Widget review scenarios require the dedicated visual review fixture.")
+#endif
+#if WIDGET_VISUAL_REVIEW_LONG_CAPTION && WIDGET_VISUAL_REVIEW_NO_CAPTION
+#error("Choose one Widget caption review scenario per build.")
+#endif
 
 struct NekoWidgetView: View {
     @Environment(\.widgetFamily) private var family
@@ -30,10 +36,6 @@ struct NekoWidgetView: View {
                 )
             {
                 GeometryReader { proxy in
-                    // Small has too little room for two controls over the
-                    // photo: reserve their row so they cannot obscure eyes.
-                    let headerHeight: CGFloat = family == .systemSmall && familyCaption != nil
-                        ? 44 + actionButtonInset : 0
                     ZStack {
                         Color(red: 0.12, green: 0.10, blue: 0.09)
 
@@ -46,31 +48,43 @@ struct NekoWidgetView: View {
                             .scaledToFill()
                             .frame(
                                 width: proxy.size.width,
-                                height: max(1, proxy.size.height - headerHeight)
+                                height: proxy.size.height
                             )
                             .clipped()
-                            .offset(y: headerHeight / 2)
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(loadedPhotoAccessibilityLabel)
                     .overlay(alignment: .bottom) {
-                        if let caption = familyCaption {
-                            familyCaptionBand(caption)
-                        } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let caption = familyCaption {
+                                familyCaptionPreview(caption)
+                            }
                             photoActionButtons()
+                        }
+                        .padding(actionButtonInset)
+                        .background {
+                            if familyCaption != nil {
+                                // Keep the text-bearing area at 60% black even
+                                // without an action row. White text over white
+                                // photo pixels then has about 5.7:1 contrast.
+                                // Only the short edge above the text fades out.
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .clear, location: 0),
+                                        .init(color: .black.opacity(0.60), location: 0.20),
+                                        .init(color: .black.opacity(0.60), location: 1),
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .padding(.top, -20)
+                                .allowsHitTesting(false)
+                            }
                         }
                     }
                     .overlay(alignment: .topLeading) {
-                        if familyCaption != nil {
-                            HStack(spacing: 0) {
-                                familySourceLabel
-                                Spacer(minLength: 0)
-                                photoActionButtons(atTop: true)
-                            }
-                        } else {
-                            familySourceLabel
-                        }
+                        familySourceLabel
                     }
                 }
             } else {
@@ -80,6 +94,11 @@ struct NekoWidgetView: View {
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
+#if WIDGET_VISUAL_REVIEW_LARGE_TEXT
+        // Use the normal shipping text-size limits, with the environment at
+        // its largest setting; this never changes ordinary or Release Widgets.
+        .environment(\.dynamicTypeSize, .accessibility5)
+#endif
         // A photo is always navigation, never an implicit memory action.
         // Explicit controls below keep the action routes discoverable without
         // changing what a tap on the image means across widget families.
@@ -102,34 +121,30 @@ struct NekoWidgetView: View {
         return familyCaption.map { "\(photo)。ひとこと。\($0)" } ?? photo
     }
 
-    private func familyCaptionBand(_ caption: String) -> some View {
+    private func familyCaptionPreview(_ caption: String) -> some View {
         Text(verbatim: caption)
-            .font((family == .systemLarge ? Font.callout : Font.caption).weight(.semibold))
+            .font(.caption)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .foregroundStyle(.white)
-            .multilineTextAlignment(.center)
-            .lineLimit(family == .systemLarge ? 3 : 2)
+            .multilineTextAlignment(.leading)
+            .lineLimit(family == .systemSmall ? 1 : 2)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 12))
-            .padding(actionButtonInset)
+            .frame(maxWidth: .infinity, alignment: .leading)
             // The photo owns its deep link and reads the full text once.
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
 
     @ViewBuilder
-    private func photoActionButtons(atTop: Bool = false) -> some View {
+    private func photoActionButtons() -> some View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
            let localWindowID = WidgetPhotoSource.localWindowID(
                from: entry.photoSourceIdentifier
            ),
            entry.isBookmarkInteractionEnabled {
-            actionTray(atTop: atTop) {
+            actionTray {
                 familyMemoryControl
                 familyHeartControl(
                     sourceDigest: sourceDigest,
@@ -139,7 +154,7 @@ struct NekoWidgetView: View {
         } else if WidgetPhotoSource.isFamilyWindowSourceID(
             entry.photoSourceIdentifier
         ), entry.familyActionsRequireApp, let photoURL = entry.photoURL {
-            actionTray(atTop: atTop) {
+            actionTray {
                 Link(destination: photoURL) {
                     openInAppLabel
                 }
@@ -150,7 +165,7 @@ struct NekoWidgetView: View {
         } else if let localIdentifier = entry.localIdentifier,
                   entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
                   entry.isLikeInteractionEnabled {
-            actionTray(atTop: atTop) {
+            actionTray {
                 if entry.isLiked {
                     memoryMark(isSelected: true)
                     .accessibilityElement(children: .ignore)
@@ -214,7 +229,8 @@ struct NekoWidgetView: View {
         case .pending:
             heartMark(status: .pending)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートを送っています")
+            .accessibilityLabel("ハートは送信待ちです")
+            .accessibilityHint("アプリの同期で送ります")
         case .serverAccepted:
             heartMark(status: .serverAccepted)
             .accessibilityElement(children: .ignore)
@@ -232,17 +248,13 @@ struct NekoWidgetView: View {
     }
 
     private func actionTray<Content: View>(
-        atTop: Bool,
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(spacing: actionButtonSpacing) {
-            if !atTop { Spacer(minLength: 0) }
+            Spacer(minLength: 0)
             content()
         }
-        .fixedSize(horizontal: atTop, vertical: false)
-        .frame(maxWidth: atTop ? nil : .infinity, alignment: .trailing)
-        .padding(.horizontal, actionButtonInset)
-        .padding(atTop ? .top : .bottom, actionButtonInset)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     /// The private-memory control stays in exactly the same place before and
@@ -260,13 +272,13 @@ struct NekoWidgetView: View {
                 Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
             }
         }
-        .font(.system(size: 14, weight: .semibold))
+        .font(.system(size: 13, weight: .medium))
         .foregroundStyle(.white)
-        .frame(width: 36, height: 36)
+        .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
             Circle()
-                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
         }
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
@@ -285,13 +297,13 @@ struct NekoWidgetView: View {
                     .offset(x: 2, y: 2)
             }
         }
-        .font(.system(size: 14, weight: .semibold))
+        .font(.system(size: 13, weight: .medium))
         .foregroundStyle(.white)
-        .frame(width: 36, height: 36)
+        .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
             Circle()
-                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
         }
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
@@ -317,10 +329,10 @@ struct NekoWidgetView: View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            entry.cacheFilename != nil {
             Text(entry.windowDisplayName)
-                .font(.caption2.bold())
-                // The small captioned Widget reserves one 52pt control row.
-                // Keep the visual name inside it; the photo reads the full name.
-                .dynamicTypeSize(...(family == .systemSmall && familyCaption != nil
+                .font(.caption2)
+                // The source owns this width independently of the controls.
+                // The full name remains in the photo's accessibility label.
+                .dynamicTypeSize(...(family == .systemSmall
                     ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility5))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -415,7 +427,8 @@ struct NekoWidgetView: View {
             return "写真を表示できません"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
-            return "まだ届いていません"
+            // Waiting also follows the expiry of a previously displayed photo.
+            return "写真を待っています"
         }
         return "写真を準備しています"
     }
@@ -533,6 +546,18 @@ enum AppStoreWidgetPreviewFixture {
 
     static func image(maximumPixelSize: Int) -> UIImage? {
 #if WIDGET_VISUAL_REVIEW_FIXTURE
+#if WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND
+        // Uniform white is a worst-case text-contrast control, not a cat photo
+        // or resolution evidence. Other scenarios retain the injected photos.
+        let size = CGSize(width: 32, height: 32)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+#else
         // CI replaces these fixed markers only for the dedicated Debug capture.
         // Missing injection must show no photo, never a substitute illustration.
         let encoded: String
@@ -556,6 +581,7 @@ enum AppStoreWidgetPreviewFixture {
               ] as CFDictionary)
         else { return nil }
         return UIImage(cgImage: image)
+#endif
 #else
         return image
 #endif
@@ -606,18 +632,31 @@ enum AppStoreWidgetPreviewFixture {
     }
 
 #if WIDGET_VISUAL_REVIEW_FIXTURE
-    private static func caption(for variant: WidgetImageVariant) -> String {
+    /// Additional flags use the existing Widget-only fixture build setting:
+    /// LONG_CAPTION or NO_CAPTION selects the same case for all three sizes;
+    /// WHITE_BACKGROUND and LARGE_TEXT can be combined with either text case.
+    private static func caption(for variant: WidgetImageVariant) -> String? {
+#if WIDGET_VISUAL_REVIEW_NO_CAPTION
+        return nil
+#elseif WIDGET_VISUAL_REVIEW_LONG_CAPTION
+        return longCaption
+#else
         switch variant {
         case .small:
             return "おひるねのあと 🐾"
         case .medium:
             return "窓辺でのんびり。\nきょうもいっしょ 🐈"
         case .large:
-            // 100 characters, two line breaks, and emoji exercise truncation
-            // without changing the original text read by VoiceOver.
-            return String(repeating: "あたたかい窓辺でのんびり。", count: 6)
-                + "\n今日もいっしょにいようね。\nおやすみ 🐾。"
+            return longCaption
         }
+#endif
+    }
+
+    private static var longCaption: String {
+        // 100 Swift Characters, two line breaks, and emoji; the original text
+        // remains available to VoiceOver even when the small preview truncates.
+        String(repeating: "あたたかい窓辺でのんびり。", count: 6)
+            + "\n今日もいっしょにいようね。\nおやすみ 🐾。"
     }
 #endif
 

@@ -265,7 +265,7 @@ run_runtime_body() {
             || validator_status=$?
     fi
     # After ordinary runtime validation, use the same iOS 26 Simulator for UI
-    # review. Only this final test build enables Widget Gallery fixture pixels.
+    # review. Only these final test builds enable Widget Gallery fixture pixels.
     # These DEBUG fixtures have no accounts, PhotoKit access or network activity.
     if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
         local composer_status=0
@@ -299,6 +299,22 @@ for size, filename in [
         raise SystemExit("Widget fixture must be a PNG")
     source = source.replace(marker, base64.b64encode(image).decode("ascii"))
 view.write_text(source, encoding="utf-8")
+
+view = Path("NekoWidget/Views/MomentDeliveryComposer.swift")
+source = view.read_text(encoding="utf-8")
+for name, filename in [
+    ("GRAY", "cat-gray-portrait.png"),
+    ("ORANGE", "cat-orange-square.png"),
+    ("TUXEDO", "cat-tuxedo-landscape.png"),
+]:
+    marker = f"__MOMENT_EXPERIENCE_{name}_PNG_BASE64__"
+    if source.count(marker) != 1:
+        raise SystemExit(f"Missing or duplicate photo experience fixture marker: {name}")
+    image = Path("ci/fixtures/cats", filename).read_bytes()
+    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise SystemExit("Photo experience fixture must be a PNG")
+    source = source.replace(marker, base64.b64encode(image).decode("ascii"))
+view.write_text(source, encoding="utf-8")
 PY
         xcodebuild \
             -project NekoWidget.xcodeproj \
@@ -326,6 +342,54 @@ PY
         if (( composer_status != 0 )); then
             return "$composer_status"
         fi
+
+        # Reuse the same three-family Gallery test and DerivedData. Rebuilding
+        # the Widget with each condition keeps these comparisons on the real
+        # component while leaving ordinary runtime and release builds unchanged.
+        # These captures do not install a Home Screen Widget or invoke actions.
+        local widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
+        local widget_scenario=""
+        local widget_scenario_conditions=""
+        local widget_scenario_result=""
+        local widget_scenario_status=0
+        for widget_scenario in long-white-large no-caption; do
+            case "$widget_scenario" in
+                long-white-large)
+                    widget_scenario_conditions="WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT"
+                    ;;
+                no-caption)
+                    widget_scenario_conditions="WIDGET_VISUAL_REVIEW_NO_CAPTION"
+                    ;;
+            esac
+            widget_scenario_result="$runtime_artifacts/Widget-$widget_scenario.xcresult"
+            widget_scenario_status=0
+            xcrun simctl terminate "$simulator_udid" "$APP_BUNDLE_ID" >/dev/null 2>&1 || true
+            xcodebuild \
+                -project NekoWidget.xcodeproj \
+                -scheme NekoWidget \
+                -configuration Debug \
+                -sdk iphonesimulator \
+                -destination "platform=iOS Simulator,id=$simulator_udid" \
+                -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
+                -resultBundlePath "$widget_scenario_result" \
+                -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes \
+                -parallel-testing-enabled NO \
+                -testLanguage ja \
+                -testRegion JP \
+                COMPILER_INDEX_STORE_ENABLE=NO \
+                CODE_SIGNING_ALLOWED=YES \
+                CODE_SIGN_IDENTITY=- \
+                AD_HOC_CODE_SIGNING_ALLOWED=YES \
+                "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$widget_review_conditions $widget_scenario_conditions" \
+                test || widget_scenario_status=$?
+            if [[ -d "$widget_scenario_result" ]]; then
+                xcrun xcresulttool export attachments --path "$widget_scenario_result" \
+                    --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots"
+            fi
+            if (( widget_scenario_status != 0 )); then
+                return "$widget_scenario_status"
+            fi
+        done
     fi
     return "$validator_status"
 }
