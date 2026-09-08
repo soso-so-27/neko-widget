@@ -186,8 +186,9 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('galleryPage(pages) == [1, 3]', self.widget_ui_test)
         self.assertIn('galleryPage(pages) == [index + 2, 3]', self.widget_ui_test)
         self.assertIn('NSPredicate(format: "value != %@", previousPage)', self.widget_ui_test)
-        self.assertIn('pixels == previousPixels', self.widget_ui_test)
-        self.assertIn('timeIntervalSince(unchangedSince) >= 0.5', self.widget_ui_test)
+        self.assertNotIn('pixels == previousPixels', self.widget_ui_test)
+        self.assertIn('timeIntervalSince(visibleSince) >= 0.5', self.widget_ui_test)
+        self.assertIn('visibleSince = nil', self.widget_ui_test)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [

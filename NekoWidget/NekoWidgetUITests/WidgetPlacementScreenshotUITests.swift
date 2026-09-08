@@ -374,24 +374,21 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     @MainActor
     private func waitForFixturePalette(timeout: TimeInterval) -> XCUIScreenshot? {
         let deadline = Date().addingTimeInterval(timeout)
-        var previousPixels: Data?
-        var unchangedSince = Date()
+        var visibleSince: Date?
         repeat {
             let screenshot = XCUIScreen.main.screenshot()
             if fixturePaletteIsVisible(in: screenshot) {
-                // Loaded pixels alone can still be mid-transition. Require the
-                // actual captured screen to settle, within the same deadline.
-                let pixels = screenshot.pngRepresentation
-                if pixels == previousPixels {
-                    if Date().timeIntervalSince(unchangedSince) >= 0.5 {
+                // Gallery previews keep gently moving. Require sustained photo
+                // visibility, not identical pixels, within the same deadline.
+                if let visibleSince {
+                    if Date().timeIntervalSince(visibleSince) >= 0.5 {
                         return screenshot
                     }
                 } else {
-                    previousPixels = pixels
-                    unchangedSince = Date()
+                    visibleSince = Date()
                 }
             } else {
-                previousPixels = nil
+                visibleSince = nil
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
