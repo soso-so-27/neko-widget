@@ -104,16 +104,23 @@ final class IdentityReferenceReplacementTests: XCTestCase {
     @MainActor func testFailedReferenceCardRendersWithGeneratedPhotoAndUnavailablePhoto() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: IdentityDetectorControlID.orange.rawValue, withExtension: "png"))
         let image = try XCTUnwrap(UIImage(contentsOfFile: url.path)?.cgImage)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
         for (name, thumbnail) in [("generated-failed-reference-card", Optional(image)), ("unavailable-reference-card", nil)] {
             let view = IdentityUnusableReferenceView(reference: failed(thumbnail), enabled: true, replace: {})
                 .padding(16).frame(width: 390).background(Color.black).environment(\.colorScheme, .dark)
             // ImageRenderer intermittently omits hosted text/buttons. Render an actual UIKit window.
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 480))
+            let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 480)
             window.overrideUserInterfaceStyle = .dark
             let host = UIHostingController(rootView: view)
             window.rootViewController = host
-            window.isHidden = false
-            defer { window.isHidden = true; window.rootViewController = nil }
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true; window.rootViewController = nil
+                previousKeyWindow?.makeKey()
+            }
             host.view.frame = window.bounds
             host.view.setNeedsLayout(); host.view.layoutIfNeeded()
             try await Task.sleep(for: .milliseconds(200))
