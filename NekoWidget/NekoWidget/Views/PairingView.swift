@@ -263,6 +263,15 @@ struct PairingView: View {
 
         switch state.phase {
         case .unpaired:
+            if model.isMediaSyncEnabled {
+                Section {
+                    NavigationLink {
+                        BlockedSharingView()
+                    } label: {
+                        Label("ブロックした共有を確認", systemImage: "hand.raised")
+                    }
+                }
+            }
             if setupPath == nil || setupPath == .create {
                 windowNameSection(state)
             }

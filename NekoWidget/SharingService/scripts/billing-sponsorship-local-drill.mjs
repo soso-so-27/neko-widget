@@ -45,6 +45,7 @@ const expectedMigrationNames = [
   "0023_billing_window_sponsorship.sql",
   "0024_billing_window_owner_detach.sql",
   "0025_billing_apple_notification_history_recovery.sql",
+  "0026_moment_block_withdrawals.sql",
 ];
 
 const databaseGateColumns = [

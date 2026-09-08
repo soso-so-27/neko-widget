@@ -1052,17 +1052,29 @@ actor MomentSharingCoordinator {
         }
         let authorization = try loadAuthorization()
         let state = authorization.state
-        guard state.memberID != participantID
+        guard state.participantID != participantID
         else { throw MomentSharingError.notPaired }
         let api = try makeNetworkClient()
         try SharingLifecycleGate.validate(authorization.lifecycleToken)
+        let withdrawal = try MomentBlockWithdrawalStore.prepare(
+            participantID: participantID, pairingState: state,
+            windowDisplayName: PrivateWindowPresentationStore.resolvedDisplayName(
+                pairing: state, validating: authorization.lifecycleToken
+            ),
+            lifecycleToken: authorization.lifecycleToken
+        )
         do {
-            _ = try await api.block(
+            let result = try await api.block(
                 participantID: participantID,
-                clientRequestID: UUID(),
+                clientRequestID: withdrawal.blockRequestID,
+                withdrawal: try withdrawal.authorization(),
                 pairingState: state,
                 credential: authorization.credential
             )
+            guard result.withdrawalID == withdrawal.id else {
+                throw MomentSharingError.invalidPayload
+            }
+            try MomentBlockWithdrawalStore.markBlocked(withdrawal)
         } catch let error as MomentSharingError {
             if case let .reportOnly(until) = error {
                 _ = await establishReportOnlyBoundary(
@@ -1081,7 +1093,7 @@ actor MomentSharingCoordinator {
         _ = try await PairingInstallationGuard.resetLocalSharingAsync(
             expectedState: state,
             lifecycleToken: authorization.lifecycleToken,
-            message: "この相手をブロックし、まどを解除しました。"
+            message: "この相手をブロックし、写真の共有を終了しました。"
         )
     }
 

@@ -40,6 +40,7 @@ CASES = {
     "moment-process-serialized-refresh",
     "moment-report-outbox-bounds-and-recovery",
     "moment-terminal-authorization-classification",
+    "moment-block-withdrawal-lifecycle",
     "normalizer-orientation-scale-parity",
     "own-source-local-promotion",
     "partial-download-resume-tamper",

@@ -1787,11 +1787,23 @@ export async function blockParticipant(
   const targetParticipantID = opaqueId(targetParticipantIDValue, "participant");
   const { body, member } = await signedRequest(request, env);
   let clientRequestID: string;
+  let withdrawal: { id: string; tokenHash: string } | undefined;
   try {
     const object = parseJsonBody(request, body);
-    exactKeys(object, ["protocolVersion", "clientRequestId"]);
+    const hasWithdrawal = "withdrawalId" in object || "withdrawalTokenHash" in object;
+    exactKeys(object, hasWithdrawal
+      ? ["protocolVersion", "clientRequestId", "withdrawalId", "withdrawalTokenHash"]
+      : ["protocolVersion", "clientRequestId"]);
     protocolVersion2(object);
     clientRequestID = uuidField(object, "clientRequestId");
+    if (hasWithdrawal) {
+      const id = uuidField(object, "withdrawalId");
+      const tokenHash = stringField(object, "withdrawalTokenHash");
+      if (!/^[0-9a-f]{64}$/u.test(tokenHash)) {
+        throw new ApiError(400, "invalid_field", "The withdrawal token hash is invalid.");
+      }
+      withdrawal = { id, tokenHash };
+    }
   } catch (error) {
     return consumeAndThrow(env, member, error);
   }
@@ -1828,6 +1840,11 @@ export async function blockParticipant(
       WHERE blocker_participant_id = ? AND blocked_participant_id = ? AND state = 'active'`,
   ).bind(context.participant_id, targetParticipantID).first<{ created_at: number }>();
   if (existing !== null) {
+    // A new capability must never retrofit or take ownership of an earlier block.
+    if (withdrawal !== undefined) {
+      return consumeAndThrow(env, member,
+        new ApiError(409, "block_conflict", "The participant could not be blocked."));
+    }
     const responseBody = {
       protocolVersion: MOMENT_PROTOCOL_VERSION,
       block: {
@@ -1899,6 +1916,7 @@ export async function blockParticipant(
       blockedParticipantId: targetParticipantID,
       state: "active",
       createdAt: member.now,
+      ...(withdrawal === undefined ? {} : { withdrawalId: withdrawal.id }),
     },
     revokedDeliveryCount: affected?.count ?? 0,
     requiredKeyEpoch,
@@ -1918,6 +1936,15 @@ export async function blockParticipant(
         requiredKeyEpoch,
         member.now,
       ),
+      ...(withdrawal === undefined ? [] : [env.DB.prepare(
+        `INSERT INTO moment_block_withdrawals(
+           id, token_hash, space_id, blocker_participant_id, blocked_participant_id,
+           created_key_epoch, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        withdrawal.id, withdrawal.tokenHash, member.spaceId,
+        context.participant_id, targetParticipantID, requiredKeyEpoch, member.now,
+      )]),
       env.DB.prepare(
         `INSERT INTO moment_changes(
            cursor, participant_id, change_type, moment_id, created_at
@@ -2056,6 +2083,63 @@ export async function blockParticipant(
     throw new ApiError(409, "block_conflict", "The participant could not be blocked.");
   }
   return jsonResponse(responseBody);
+}
+
+export async function withdrawParticipantBlock(
+  request: Request,
+  env: Env,
+  withdrawalIDValue: string,
+): Promise<Response> {
+  await enforceRateLimit(env, env.MEMBER_RATE_LIMITER,
+    transientNetworkKey(request, "block-withdrawal"));
+  const unauthorized = () => new ApiError(
+    401, "invalid_authentication", "The withdrawal authorization is invalid.",
+  );
+  let token: Uint8Array;
+  try {
+    const authorization = request.headers.get("Authorization") ?? "";
+    const match = /^Bearer ([A-Za-z0-9_-]{43})$/u.exec(authorization);
+    if (match?.[1] === undefined) throw unauthorized();
+    token = base64urlDecode(match[1], 32);
+  } catch {
+    throw unauthorized();
+  }
+  const withdrawalID = uuidField({ withdrawalId: withdrawalIDValue }, "withdrawalId");
+  const object = parseJsonBody(request, await readBody(request, 1024));
+  exactKeys(object, ["protocolVersion", "clientRequestId"]);
+  protocolVersion2(object);
+  uuidField(object, "clientRequestId");
+  const tokenHash = Array.from(await sha256(token),
+    (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+  // Authorization and the transition share one statement. Its trigger only removes
+  // the matching block; revoked members, devices, deliveries and epochs stay closed.
+  const result = await env.DB.prepare(
+    `UPDATE moment_block_withdrawals SET withdrawn_at = COALESCE(withdrawn_at, ?)
+      WHERE id = ? AND token_hash = ?
+        AND EXISTS (
+          SELECT 1 FROM moment_spaces AS moment_space
+          JOIN spaces AS space ON space.id = moment_space.space_id
+          WHERE moment_space.space_id = moment_block_withdrawals.space_id
+            AND moment_space.state = 'active' AND space.state = 'active'
+        )
+        AND (withdrawn_at IS NOT NULL OR EXISTS (
+          SELECT 1 FROM moment_blocks AS block
+          WHERE block.space_id = moment_block_withdrawals.space_id
+            AND block.blocker_participant_id = moment_block_withdrawals.blocker_participant_id
+            AND block.blocked_participant_id = moment_block_withdrawals.blocked_participant_id
+            AND block.created_key_epoch = moment_block_withdrawals.created_key_epoch
+            AND block.created_at = moment_block_withdrawals.created_at
+            AND block.state = 'active'
+        ))
+      RETURNING id`,
+  ).bind(Math.floor(Date.now() / 1000), withdrawalID, tokenHash).first<{ id: string }>();
+  if (result === null) throw unauthorized();
+  return jsonResponse({
+    protocolVersion: MOMENT_PROTOCOL_VERSION,
+    block: { id: withdrawalID, state: "withdrawn" },
+    sharingResumed: false,
+  });
 }
 
 interface ReportableMomentRow {

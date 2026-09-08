@@ -334,14 +334,14 @@ struct FamilyWindowView: View {
             ),
             presenting: blockTarget
         ) { item in
-            Button("ブロックしてまどを解除", role: .destructive) {
+            Button("ブロックする", role: .destructive) {
                 blockTarget = nil
                 Task { await model.block(item.senderParticipantID) }
             }
             .disabled(model.isShowingLastKnownState || model.isReportOnly)
             Button("キャンセル", role: .cancel) { blockTarget = nil }
         } message: { _ in
-            Text("今後の送受信を止め、端末内の共有鍵と届いた写真を削除します。")
+            Text("この相手との写真共有を終了し、このまどに届いた写真をこのiPhoneから削除します。ブロックは設定から解除できますが、削除した写真や以前の共有は戻りません。")
         }
     }
 

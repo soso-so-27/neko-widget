@@ -171,6 +171,14 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settings-sharing-review")
                 }
+                if SharingAPIConfiguration.current.isAvailable {
+                    NavigationLink {
+                        BlockedSharingView()
+                    } label: {
+                        Label("ブロックした共有", systemImage: "hand.raised")
+                    }
+                    .accessibilityIdentifier("settings-blocked-sharing")
+                }
             } header: {
                 Text("まど")
             }
