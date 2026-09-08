@@ -1,4 +1,7 @@
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -16,6 +19,94 @@ def section(value: str, start: str, end: str) -> str:
 
 
 class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "Requires macOS Foundation /private aliases")
+    def test_sent_thumbnail_paths_accept_missing_private_alias_children(self) -> None:
+        store = source("Shared/Sharing/MomentSharingStore.swift")
+        helpers = section(
+            store,
+            "private static func localThumbnailURL(fileName: String)",
+            "/// A reservation is only an upload lease.",
+        )
+        filename = section(
+            store,
+            "static func localThumbnailFileName(for id: UUID)",
+            "static func isValidLocalThumbnail",
+        )
+        # Compile the shipping path helpers themselves, with only their App
+        # Group destination and unrelated model dependencies supplied here.
+        swift = (
+            "import Foundation\nimport Darwin\n"
+            "enum MomentSharingError: Error { case stateUnavailable }\n"
+            "enum SharedContainer { static var momentSharingSentThumbnailDirectoryURL: URL? { "
+            "URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true) } }\n"
+            "enum MomentOutboxItem {\n" + filename + "\n}\n"
+            "enum MomentSharingStateStore {\n" + helpers + r'''
+    static func verifyPrivateAlias() throws {
+        let manager = FileManager.default
+        let leaf = SharedContainer.momentSharingSentThumbnailDirectoryURL!
+        let parent = leaf.deletingLastPathComponent()
+        let root = parent.deletingLastPathComponent()
+        try manager.createDirectory(at: parent, withIntermediateDirectories: true)
+        let name = MomentOutboxItem.localThumbnailFileName(for: UUID())
+
+        // Frozen expressions from the defective implementation prove that
+        // existing-parent/missing-child standardization disagrees on this OS.
+        precondition(leaf.standardizedFileURL.deletingLastPathComponent()
+            != parent.standardizedFileURL, "Legacy missing-leaf comparison must reproduce")
+        _ = try localThumbnailURL(fileName: name)
+        try manager.createDirectory(at: leaf, withIntermediateDirectories: false)
+        precondition(leaf.appendingPathComponent(name, isDirectory: false)
+            .standardizedFileURL.deletingLastPathComponent()
+            != leaf.standardizedFileURL, "Legacy missing-file comparison must reproduce")
+        let firstURL = try localThumbnailURL(fileName: name)
+        let bytes = Data([0x51, 0x52, 0x53])
+        try bytes.write(to: firstURL)
+        let existingURL = try localThumbnailURL(fileName: name)
+        let reloaded = try Data(contentsOf: existingURL)
+        precondition(reloaded == bytes,
+            "The newly created file must remain readable through the same helper")
+
+        func requireRejected(_ filename: String) throws {
+            var rejected = false
+            do { _ = try localThumbnailURL(fileName: filename) }
+            catch MomentSharingError.stateUnavailable { rejected = true }
+            precondition(rejected, "Unsafe thumbnail path must remain rejected")
+        }
+        try requireRejected("../" + name)
+        let target = root.appendingPathComponent("symlink-target", isDirectory: true)
+        try manager.createDirectory(at: target, withIntermediateDirectories: false)
+        let sentinel = target.appendingPathComponent("sentinel", isDirectory: false)
+        try bytes.write(to: sentinel)
+        try manager.removeItem(at: existingURL)
+        try manager.createSymbolicLink(at: existingURL, withDestinationURL: sentinel)
+        try requireRejected(name)
+        try manager.removeItem(at: existingURL)
+        try manager.removeItem(at: leaf)
+        try manager.createSymbolicLink(at: leaf, withDestinationURL: target)
+        try requireRejected(name)
+        try manager.removeItem(at: leaf)
+        try manager.removeItem(at: parent)
+        try manager.createSymbolicLink(at: parent, withDestinationURL: target)
+        try requireRejected(name)
+        let retainedSentinel = try Data(contentsOf: sentinel)
+        precondition(retainedSentinel == bytes,
+            "Rejected links must not change their destination")
+        print("sent-thumbnail-private-alias: legacy-comparisons-reproduced, creation-readable, symlinks-rejected")
+    }
+}
+try MomentSharingStateStore.verifyPrivateAlias()
+'''
+        )
+        with tempfile.TemporaryDirectory(prefix="neko-sent-thumbnail-", dir="/private/tmp") as temporary:
+            script = Path(temporary) / "verify.swift"
+            script.write_text(swift, encoding="utf-8")
+            result = subprocess.run(
+                ["xcrun", "swift", str(script), str(Path(temporary) / "sharing" / "sent-moment-thumbnails")],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            print(result.stdout.strip())
+
     def test_handoff_purge_removes_legacy_quarantines(self) -> None:
         handoff = source("Shared/Sharing/MomentShareHandoffStore.swift")
         purge = section(
@@ -3318,7 +3409,7 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func sentRecordCard(",
             "private func outgoingStatusCard(",
         )
-        self.assertIn("sentRecordPhotoSurface(record)", sent)
+        self.assertIn("sentRecordPhotoSurface(thumbnail)", sent)
         self.assertIn('arrived ? "到着" : "受付済み"', sent)
         self.assertIn('sentRecordBadge("ハート", systemImage: "heart.fill")', sent)
         self.assertIn("private func sentRecordBadge(", sent)
@@ -3330,9 +3421,10 @@ class FamilyWindowWidgetBoundaryTests(unittest.TestCase):
             "private func sentRecordPhotoSurface(",
             "private func sentRecordAccessibilityLabel(",
         )
-        self.assertIn("if let thumbnail = sentRecordThumbnail(record)", sent_photo)
+        self.assertIn("if let thumbnail {", sent_photo)
         self.assertIn(".scaledToFill()", sent)
-        self.assertIn('Text("送信履歴のみ\\n画像はありません")', sent_photo)
+        self.assertNotIn('Text("写真の控えはありません")', sent_photo)
+        self.assertIn('Text("写真の控えはありません")', sent)
         self.assertIn(".aspectRatio(1, contentMode: .fit)", sent_photo)
         self.assertNotIn(".frame(width: 72, height: 72)", sent)
         self.assertNotIn("LazyVStack", sent)
