@@ -101,14 +101,26 @@ final class IdentityReferenceReplacementTests: XCTestCase {
         XCTAssertEqual(store.picker?.id, newer.id); XCTAssertEqual(store.selections, saved)
     }
 
-    @MainActor func testFailedReferenceCardRendersWithGeneratedPhotoAndUnavailablePhoto() throws {
+    @MainActor func testFailedReferenceCardRendersWithGeneratedPhotoAndUnavailablePhoto() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: IdentityDetectorControlID.orange.rawValue, withExtension: "png"))
         let image = try XCTUnwrap(UIImage(contentsOfFile: url.path)?.cgImage)
         for (name, thumbnail) in [("generated-failed-reference-card", Optional(image)), ("unavailable-reference-card", nil)] {
             let view = IdentityUnusableReferenceView(reference: failed(thumbnail), enabled: true, replace: {})
                 .padding(16).frame(width: 390).background(Color.black).environment(\.colorScheme, .dark)
-            let renderer = ImageRenderer(content: view); renderer.scale = 2
-            let rendered = try XCTUnwrap(renderer.uiImage)
+            // ImageRenderer intermittently omits hosted text/buttons. Render an actual UIKit window.
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 480))
+            window.overrideUserInterfaceStyle = .dark
+            let host = UIHostingController(rootView: view)
+            window.rootViewController = host
+            window.isHidden = false
+            defer { window.isHidden = true; window.rootViewController = nil }
+            host.view.frame = window.bounds
+            host.view.setNeedsLayout(); host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            let format = UIGraphicsImageRendererFormat(); format.scale = 2
+            let rendered = UIGraphicsImageRenderer(size: window.bounds.size, format: format).image { _ in
+                XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+            }
             XCTAssertEqual(rendered.size.width, 390); XCTAssertGreaterThan(rendered.size.height, 250)
             // A successful render can still be all-black; verify visible card content too.
             let raster = try XCTUnwrap(rendered.cgImage)
@@ -122,6 +134,9 @@ final class IdentityReferenceReplacementTests: XCTestCase {
             XCTAssertTrue(stride(from: 0, to: pixels.count, by: 4).contains {
                 pixels[$0] > 20 || pixels[$0 + 1] > 20 || pixels[$0 + 2] > 20
             }, "Card must not render blank: \(name)")
+            XCTAssertTrue(stride(from: 0, to: pixels.count, by: 4).contains {
+                pixels[$0 + 2] > 150 && Int(pixels[$0 + 2]) - Int(pixels[$0]) > 80
+            }, "Replacement button must be visible, not just the generated photo: \(name)")
             let attachment = XCTAttachment(image: rendered)
             attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
         }
