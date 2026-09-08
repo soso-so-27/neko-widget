@@ -84,6 +84,40 @@ private enum PrivateWindowDisplayNameVerifier {
             "legacy reader rejected the optional name key"
         )
 
+        // Caption is additive to schema 1. Exercise an actual photo rather
+        // than only the empty manifest used by the name migration above.
+        struct PreCaptionPhoto: Codable {
+            var sourceDigest: String
+            var cacheFilenames: WidgetCacheFilenames
+            var receivedAt: Date
+            var freshUntil: Date
+        }
+        let oldPhoto = PreCaptionPhoto(
+            sourceDigest: String(repeating: "a", count: 64),
+            cacheFilenames: WidgetCacheFilenames(
+                small: "s.jpg", medium: "m.jpg", large: "l.jpg"
+            ),
+            receivedAt: current.generatedAt,
+            freshUntil: current.generatedAt.addingTimeInterval(3_600)
+        )
+        let oldPhotoData = try encoder.encode(oldPhoto)
+        var upgraded = try decoder.decode(FamilyWidgetManifestItem.self, from: oldPhotoData)
+        try require(upgraded.caption == nil, "old photo invented a caption")
+        upgraded.caption = "窓辺でおひるね 🐈\nまたあとで"
+        let upgradedData = try encoder.encode(upgraded)
+        let roundTrip = try decoder.decode(FamilyWidgetManifestItem.self, from: upgradedData)
+        let oldPhotoReader = try decoder.decode(PreCaptionPhoto.self, from: upgradedData)
+        try require(roundTrip == upgraded, "photo and caption did not round trip together")
+        try require(
+            oldPhotoReader.sourceDigest == oldPhoto.sourceDigest
+                && oldPhotoReader.cacheFilenames == oldPhoto.cacheFilenames,
+            "old Widget could not read a captioned photo"
+        )
+        upgraded.caption = nil
+        let noCaptionData = try encoder.encode(upgraded)
+        let noCaptionJSON = try JSONSerialization.jsonObject(with: noCaptionData) as? [String: Any]
+        try require(noCaptionJSON?["caption"] == nil, "photo-only manifest retained caption")
+
         print("Private window display name verifier passed")
     }
 }

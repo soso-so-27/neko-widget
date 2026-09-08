@@ -4697,6 +4697,51 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
         try requireNoModerationResidue()
 
+        // Follow the real decrypted receipt into the App Group publication.
+        // A reused JPEG must still refresh optional text, including its removal.
+        let widgetBuilder = WidgetCacheBuilder()
+        let widgetPhoto = recoveredState.inbox[0]
+        let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
+        let captionedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard let widgetManifestURL = SharedContainer.familyWidgetManifestURL,
+              let widgetCacheURL = SharedContainer.familyWidgetCacheDirectoryURL,
+              let publishedPhoto = captionedWidget.item,
+              publishedPhoto.momentID == widgetPhoto.id,
+              publishedPhoto.caption == widgetPhoto.caption
+        else { throw MomentSharingError.stateUnavailable }
+        let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
+        let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
+        // Model an old app/extension handoff with no caption in the cache.
+        var oldWidget = captionedWidget
+        oldWidget.item?.caption = nil
+        try AtomicJSON.write(oldWidget, to: widgetManifestURL)
+        let repairedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard repairedWidget.item == captionedWidget.item,
+              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox[0].caption = nil
+        }
+        // Pass the older snapshot deliberately: publication must use current
+        // lifecycle-locked state, never the stale caller's caption.
+        let photoOnlyWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard photoOnlyWidget.item?.caption == nil,
+              photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
+              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox[0].caption = widgetPhoto.caption
+        }
+
         // A normal visible receipt can be removed without blocking the peer.
         // Its fileless tombstone prevents an older relay page from restoring
         // the photo, and local memory/reaction state is removed atomically.
@@ -4728,6 +4773,15 @@ actor SharingRuntimeSelfTestRunner {
                   credential: credential,
                   lifecycleToken: lifecycleToken
               ) == 0
+        else { throw MomentSharingError.stateUnavailable }
+
+        let deletedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        let deletedWidgetOnDisk = try AtomicJSON.read(FamilyWidgetManifest.self, from: widgetManifestURL)
+        guard deletedWidget.item == nil, deletedWidgetOnDisk.item == nil,
+              !FileManager.default.fileExists(atPath: widgetJPEGURL.path)
         else { throw MomentSharingError.stateUnavailable }
 
         try clearMomentSharingFixture()

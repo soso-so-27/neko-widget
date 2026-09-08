@@ -314,7 +314,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         photo_actions = section(
             view,
-            "private var photoActionButtons: some View",
+            "private func photoActionButtons(atTop: Bool = false) -> some View",
             "@ViewBuilder\n    private var familyMemoryControl",
         )
         self.assertNotIn("if family == .systemSmall", photo_actions)

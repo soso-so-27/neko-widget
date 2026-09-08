@@ -2,6 +2,7 @@ import SwiftUI
 import WidgetKit
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
 import Foundation
+import ImageIO
 import UIKit
 #endif
 
@@ -44,21 +45,29 @@ struct NekoWidgetView: View {
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
-                            ? "\(entry.windowDisplayName)に届いた写真"
-                            : "このiPhoneで見つけた猫写真"
-                    )
+                    .accessibilityLabel(loadedPhotoAccessibilityLabel)
+                    .overlay(alignment: .bottom) {
+                        if let caption = familyCaption {
+                            familyCaptionBand(caption)
+                        } else {
+                            photoActionButtons()
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if familyCaption != nil {
+                            HStack(spacing: 0) {
+                                familySourceLabel
+                                Spacer(minLength: 0)
+                                photoActionButtons(atTop: true)
+                            }
+                        } else {
+                            familySourceLabel
+                        }
+                    }
                 }
             } else {
                 emptyState
             }
-        }
-        .overlay(alignment: .bottom) {
-            photoActionButtons
-        }
-        .overlay(alignment: .topLeading) {
-            familySourceLabel
         }
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
@@ -69,15 +78,50 @@ struct NekoWidgetView: View {
         .widgetURL(entry.photoURL)
     }
 
+    /// Used only inside the successfully decoded photo branch above. The
+    /// optional text never gives an empty or personal-library Widget a caption.
+    private var familyCaption: String? {
+        guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
+              let text = entry.familyCaption?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        return text
+    }
+
+    private var loadedPhotoAccessibilityLabel: String {
+        guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
+        else { return "このiPhoneで見つけた猫写真" }
+        let photo = "\(entry.windowDisplayName)に届いた写真"
+        return familyCaption.map { "\(photo)。ひとこと。\($0)" } ?? photo
+    }
+
+    private func familyCaptionBand(_ caption: String) -> some View {
+        Text(verbatim: caption)
+            .font((family == .systemLarge ? Font.callout : Font.caption).weight(.semibold))
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .lineLimit(family == .systemLarge ? 3 : 2)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 12))
+            .padding(actionButtonInset)
+            // The photo owns its deep link and reads the full text once.
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
     @ViewBuilder
-    private var photoActionButtons: some View {
+    private func photoActionButtons(atTop: Bool = false) -> some View {
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
            let sourceDigest = entry.familySourceDigest,
            let localWindowID = WidgetPhotoSource.localWindowID(
                from: entry.photoSourceIdentifier
            ),
            entry.isBookmarkInteractionEnabled {
-            actionTray {
+            actionTray(atTop: atTop) {
                 familyMemoryControl
                 familyHeartControl(
                     sourceDigest: sourceDigest,
@@ -87,7 +131,7 @@ struct NekoWidgetView: View {
         } else if WidgetPhotoSource.isFamilyWindowSourceID(
             entry.photoSourceIdentifier
         ), entry.familyActionsRequireApp, let photoURL = entry.photoURL {
-            actionTray {
+            actionTray(atTop: atTop) {
                 Link(destination: photoURL) {
                     openInAppLabel
                 }
@@ -98,7 +142,7 @@ struct NekoWidgetView: View {
         } else if let localIdentifier = entry.localIdentifier,
                   entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
                   entry.isLikeInteractionEnabled {
-            actionTray {
+            actionTray(atTop: atTop) {
                 if entry.isLiked {
                     memoryMark(isSelected: true)
                     .accessibilityElement(children: .ignore)
@@ -180,15 +224,17 @@ struct NekoWidgetView: View {
     }
 
     private func actionTray<Content: View>(
+        atTop: Bool,
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(spacing: actionButtonSpacing) {
-            Spacer(minLength: 0)
+            if !atTop { Spacer(minLength: 0) }
             content()
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .fixedSize(horizontal: atTop, vertical: false)
+        .frame(maxWidth: atTop ? nil : .infinity, alignment: .trailing)
         .padding(.horizontal, actionButtonInset)
-        .padding(.bottom, actionButtonInset)
+        .padding(atTop ? .top : .bottom, actionButtonInset)
     }
 
     /// The private-memory control stays in exactly the same place before and
@@ -473,6 +519,36 @@ private struct QuietWindowOpening: Shape {
 enum AppStoreWidgetPreviewFixture {
     static let cacheFilename = "app-store-widget-gallery-preview.fixture"
 
+    static func image(maximumPixelSize: Int) -> UIImage? {
+#if WIDGET_VISUAL_REVIEW_FIXTURE
+        // CI replaces these fixed markers only for the dedicated Debug capture.
+        // Missing injection must show no photo, never a substitute illustration.
+        let encoded: String
+        switch maximumPixelSize {
+        case WidgetImageVariant.small.maximumPixelDimension:
+            encoded = "__W1_WIDGET_SMALL_PNG_BASE64__"
+        case WidgetImageVariant.medium.maximumPixelDimension:
+            encoded = "__W1_WIDGET_MEDIUM_PNG_BASE64__"
+        case WidgetImageVariant.large.maximumPixelDimension:
+            encoded = "__W1_WIDGET_LARGE_PNG_BASE64__"
+        default:
+            return nil
+        }
+        guard let data = Data(base64Encoded: encoded),
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+                  kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary)
+        else { return nil }
+        return UIImage(cgImage: image)
+#else
+        return image
+#endif
+    }
+
     static func entry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
 #if WIDGET_VISUAL_REVIEW_FIXTURE
         // Fixed display-only identities; no catalog, room key, Photos or relay.
@@ -493,7 +569,8 @@ enum AppStoreWidgetPreviewFixture {
             isBookmarkInteractionEnabled: true,
             familyHeartStatus: .ready,
             familyActionsRequireApp: false,
-            emptyStateReason: .none
+            emptyStateReason: .none,
+            familyCaption: caption(for: variant)
         )
 #else
         return NekoWidgetEntry(
@@ -515,6 +592,22 @@ enum AppStoreWidgetPreviewFixture {
         )
 #endif
     }
+
+#if WIDGET_VISUAL_REVIEW_FIXTURE
+    private static func caption(for variant: WidgetImageVariant) -> String {
+        switch variant {
+        case .small:
+            return "おひるねのあと 🐾"
+        case .medium:
+            return "窓辺でのんびり。\nきょうもいっしょ 🐈"
+        case .large:
+            // 100 characters, two line breaks, and emoji exercise truncation
+            // without changing the original text read by VoiceOver.
+            return String(repeating: "あたたかい窓辺でのんびり。", count: 6)
+                + "\n今日もいっしょにいようね。\nおやすみ 🐾。"
+        }
+    }
+#endif
 
     /// Original code-defined pixels only: no Photos input, account, network,
     /// EXIF/GPS, face, text, logo, or third-party asset lineage.

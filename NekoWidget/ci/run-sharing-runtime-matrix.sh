@@ -265,7 +265,7 @@ run_runtime_body() {
             || validator_status=$?
     fi
     # After ordinary runtime validation, use the same iOS 26 Simulator for UI
-    # review. Only this final test build enables generated Widget Gallery pixels.
+    # review. Only this final test build enables Widget Gallery fixture pixels.
     # These DEBUG fixtures have no accounts, PhotoKit access or network activity.
     if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
         local composer_status=0
@@ -278,6 +278,28 @@ run_runtime_body() {
             AppleLanguages -array ja
         xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
             AppleLocale -string ja_JP
+        # Embed only the repository's known cat fixtures into this dedicated
+        # Debug build. Normal app builds and the release checkout are untouched.
+        python3 - <<'PY'
+import base64
+from pathlib import Path
+
+view = Path("NekoWidgetWidget/NekoWidgetView.swift")
+source = view.read_text(encoding="utf-8")
+for size, filename in [
+    ("SMALL", "cat-orange-square.png"),
+    ("MEDIUM", "cat-tuxedo-landscape.png"),
+    ("LARGE", "cat-gray-portrait.png"),
+]:
+    marker = f"__W1_WIDGET_{size}_PNG_BASE64__"
+    if source.count(marker) != 1:
+        raise SystemExit(f"Missing or duplicate Widget fixture marker: {size}")
+    image = Path("ci/fixtures/cats", filename).read_bytes()
+    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise SystemExit("Widget fixture must be a PNG")
+    source = source.replace(marker, base64.b64encode(image).decode("ascii"))
+view.write_text(source, encoding="utf-8")
+PY
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \

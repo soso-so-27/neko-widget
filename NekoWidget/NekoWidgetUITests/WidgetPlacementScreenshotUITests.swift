@@ -241,23 +241,19 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             )
             return
         }
-        guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {
-            fail(
-                "The Widget gallery did not render the deterministic local cat preview.",
-                application: springboard
-            )
-            return
-        }
-
         if captureAllSizes {
             // SpringBoard also exposes the obscured Home Screen page control.
             // Only the Gallery's scroll view contains the size picker control.
-            let pages = springboard.scrollViews
+            let gallery = springboard.scrollViews
                 .containing(.pageIndicator, identifier: nil)
-                .firstMatch.pageIndicators.firstMatch
+                .firstMatch
+            let pages = gallery.pageIndicators.firstMatch
             guard pages.waitForExistence(timeout: 10),
-                  galleryPage(pages) == [1, 3] else {
-                fail("The Widget size page indicator is unavailable.", application: springboard)
+                  galleryPage(pages) == [1, 3],
+                  let fixtureScreenshot = waitForFixturePhoto(
+                      in: gallery, springboard: springboard, timeout: 15
+                  ) else {
+                fail("The small Widget page did not display its fixture photo.", application: springboard)
                 return
             }
             captureScreenshot(named: "widget-family-small", screenshot: fixtureScreenshot)
@@ -278,7 +274,9 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     object: pages
                 )
                 guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
-                      let screenshot = waitForFixturePalette(timeout: 10),
+                      let screenshot = waitForFixturePhoto(
+                          in: gallery, springboard: springboard, timeout: 10
+                      ),
                       galleryPage(pages) == [index + 2, 3] else {
                     fail("The Widget size did not advance to a rendered photo.", application: springboard)
                     return
@@ -286,6 +284,10 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 captureScreenshot(named: "widget-family-\(size)", screenshot: screenshot)
             }
         } else {
+            guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {
+                fail("The Widget gallery did not render the deterministic local cat preview.", application: springboard)
+                return
+            }
             captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
         }
         // Do not tap Add Widget. The disposable Simulator is erased after the
@@ -369,6 +371,93 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     private func galleryPage(_ indicator: XCUIElement) -> [Int] {
         guard let value = indicator.value as? String else { return [] }
         return value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+    }
+
+    @MainActor
+    private func waitForFixturePhoto(
+        in gallery: XCUIElement,
+        springboard: XCUIApplication,
+        timeout: TimeInterval
+    ) -> XCUIScreenshot? {
+        // CI's Gallery AX exposes the preview as a Button with a "Widget,"
+        // value. Its page control supplies the size; don't require the preview
+        // to be interactive or depend on unobserved localized size suffixes.
+        let photos = gallery.buttons.matching(
+            NSPredicate(format: "value BEGINSWITH %@", "Widget,")
+        )
+        let deadline = Date().addingTimeInterval(timeout)
+        var visibleSince: Date?
+        repeat {
+            let screenshot = XCUIScreen.main.screenshot()
+            let screenFrame = springboard.frame
+            if let photo = photos.allElementsBoundByIndex.first(where: {
+                $0.exists && screenFrame.contains($0.frame)
+                    && abs($0.frame.midX - screenFrame.midX) < 20
+            }),
+               fixturePhotoIsVisible(
+                   in: screenshot, photoFrame: photo.frame, screenFrame: screenFrame
+               ) {
+                if let visibleSince {
+                    if Date().timeIntervalSince(visibleSince) >= 0.5 { return screenshot }
+                } else {
+                    visibleSince = Date()
+                }
+            } else {
+                visibleSince = nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    @MainActor
+    private func fixturePhotoIsVisible(
+        in screenshot: XCUIScreenshot,
+        photoFrame: CGRect,
+        screenFrame: CGRect
+    ) -> Bool {
+        guard let source = screenshot.image.cgImage,
+              screenFrame.width > 0, screenFrame.height > 0,
+              screenFrame.contains(photoFrame), !photoFrame.isEmpty else { return false }
+        let scaleX = CGFloat(source.width) / screenFrame.width
+        let scaleY = CGFloat(source.height) / screenFrame.height
+        let crop = CGRect(
+            x: (photoFrame.minX - screenFrame.minX) * scaleX,
+            y: (photoFrame.minY - screenFrame.minY) * scaleY,
+            width: photoFrame.width * scaleX, height: photoFrame.height * scaleY
+        )
+        guard let photo = source.cropping(to: crop) else { return false }
+        let width = 100
+        let height = max(1, Int(Double(photo.height) / Double(photo.width) * Double(width)))
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var rendered = false
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue
+                    | CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return }
+            context.draw(photo, in: CGRect(x: 0, y: 0, width: width, height: height))
+            rendered = true
+        }
+        guard rendered else { return false }
+        var lightPixels = 0
+        var midtonePixels = 0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[offset]), green = Int(pixels[offset + 1])
+            let blue = Int(pixels[offset + 2])
+            if red > 130 && green > 130 && blue > 110 { lightPixels += 1 }
+            let brightness = (red + green + blue) / 3
+            if brightness > 40 && brightness < 120 && max(red, green, blue) < 140 {
+                midtonePixels += 1
+            }
+        }
+        // All three committed cat photos contain light surroundings and darker
+        // fur. The dark missing-image view with sparse white copy does not.
+        // This checks photo presence, not pixel equality or visual correctness.
+        return lightPixels > width * height / 10 && midtonePixels > width * height / 20
     }
 
     @MainActor

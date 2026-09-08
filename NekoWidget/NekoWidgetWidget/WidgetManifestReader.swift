@@ -66,7 +66,7 @@ enum WidgetManifestReader {
               ),
               let manifest = readFamilyManifest(from: manifestURL),
               manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
-              let item = manifest.item,
+              var item = manifest.item,
               item.sourceDigest.utf8.count == 64,
               item.sourceDigest.utf8.allSatisfy({
                 ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
@@ -83,6 +83,9 @@ enum WidgetManifestReader {
               size > 0,
               size <= variant.maximumJPEGByteCount
         else { return nil }
+        // A bad optional caption must not hide an otherwise valid photo.
+        // Reuse the encrypted-message limits at this local publication boundary.
+        item.caption = try? MomentCaption.normalized(item.caption)
         return item
     }
 
