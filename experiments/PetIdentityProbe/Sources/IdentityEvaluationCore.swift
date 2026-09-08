@@ -336,6 +336,44 @@ enum IdentityEvaluationCore {
         )
     }
 
+    /// Retrieval comparison only. Never feeds the heldout evaluator or changes
+    /// its radii, ratio, predictions or acceptance gates. Labels score outcomes
+    /// after ranking; they never influence either distance rule.
+    static func compareReferenceRanking(
+        registrationA: [[Float]?], registrationB: [[Float]?],
+        evaluationA: [[Float]?], evaluationB: [[Float]?],
+        runtimeVersion: String = expectedRuntimeVersion
+    ) throws -> IdentityReferenceRankingComparison {
+        guard runtimeVersion == expectedRuntimeVersion else { throw IdentityEvaluationError.unsupportedRuntime }
+        guard registrationA.count == 5, registrationB.count == 5 else {
+            throw IdentityEvaluationError.invalidRegistrationCount
+        }
+        guard (0...15).contains(evaluationA.count), (0...15).contains(evaluationB.count),
+              !evaluationA.isEmpty || !evaluationB.isEmpty else {
+            throw IdentityEvaluationError.invalidDiagnosticEvaluationCount
+        }
+        let a = try validateRegistration(registrationA), b = try validateRegistration(registrationB)
+        func rank(_ input: [Float]?) -> (IdentityRankingOutcome, IdentityRankingOutcome) {
+            guard let input else { return (.missingEmbedding, .missingEmbedding) }
+            guard let vector = normalized(input) else { return (.invalidEmbedding, .invalidEmbedding) }
+            let da = a.map { distance(vector, $0) }.sorted()
+            let db = b.map { distance(vector, $0) }.sorted()
+            func first(_ lhs: Double, _ rhs: Double) -> IdentityRankingOutcome {
+                lhs == rhs ? .equalScores : lhs < rhs ? .a : .b
+            }
+            return (first(da[1], db[1]), first(da[0], db[0]))
+        }
+        var aggregated: [(IdentityCatLabel, IdentityRankingOutcome)] = []
+        var nearest: [(IdentityCatLabel, IdentityRankingOutcome)] = []
+        for (label, inputs) in [(IdentityCatLabel.a, evaluationA), (.b, evaluationB)] {
+            for input in inputs {
+                let outcome = rank(input)
+                aggregated.append((label, outcome.0)); nearest.append((label, outcome.1))
+            }
+        }
+        return .init(aggregated: aggregated, nearest: nearest)
+    }
+
     private static func validateRegistration(_ inputs: [[Float]?]) throws -> [[Double]] {
         try inputs.map { input in
             guard let input else { throw IdentityEvaluationError.missingRegistration }
