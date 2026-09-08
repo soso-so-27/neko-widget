@@ -1417,6 +1417,8 @@ struct FamilyWindowView: View {
                 if status.kind == .failed
                     || status.kind == .resultUnknown
                     || status.kind == .dailyQuotaWaiting
+                    || (status.kind == .waiting
+                        && (status.hasOtherRetryReason || status.isServerRuntimeUnavailable))
                     || status.kind == .safetyCheckWaiting
                     || status.kind == .preparationRetryWaiting {
                     Text(status.detail)

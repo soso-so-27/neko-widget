@@ -246,7 +246,7 @@ enum MomentSharingPresentationVerifier {
             "disabled runtime was presented as a completed delivery"
         )
         try require(
-            waiting.detail.contains("通信状態に応じて"),
+            waiting.detail.contains("時間をおいて再試行"),
             "a general retry was incorrectly collapsed into the runtime-disabled reason"
         )
         try require(sending.count == 2, "reserved and uploaded sends were not grouped")
@@ -305,6 +305,8 @@ enum MomentSharingPresentationVerifier {
         let waiting = try requireStatus(.waiting, in: presentation)
         try require(quota.count == 1 && waiting.count == 2,
                     "quota was mixed with transport or an old generic error")
+        try require(waiting.title.contains("送信できていません"),
+                    "an existing failed send was still presented as ordinary initial waiting")
         try require(quota.quotaResetAt == date(86_400) && quota.nextRetryAt == date(86_400),
                     "quota reset time was replaced by a transport retry time")
         try require(quota.title.contains("送信上限") && quota.detail.contains("まだ送信していません"),

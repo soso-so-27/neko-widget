@@ -288,7 +288,10 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
         case .safetyCheckWaiting: "安全確認待ち \(count)枚"
         case .preparing: "写真を準備中 \(count)枚"
         case .preparationRetryWaiting: "準備の再試行待ち \(count)枚"
-        case .waiting: "送信待ち \(count)枚"
+        case .waiting:
+            hasOtherRetryReason || isServerRuntimeUnavailable
+                ? "送信できていません（\(count)枚）"
+                : "送信待ち \(count)枚"
         case .dailyQuotaWaiting: "1日の送信上限に達しました（\(count)枚待機）"
         case .sending: "送信処理中 \(count)枚"
         case .confirming: "配信結果を確認中 \(count)枚"
@@ -324,7 +327,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
                 reasons.append("この中には、共有サーバーの準備待ちで配信受付をまだ確認できていない写真があります。")
             }
             if hasOtherRetryReason {
-                reasons.append("この中には、通信状態に応じて同じ送信を重複なく再試行する写真があります。")
+                reasons.append("送信を完了できなかった写真があります。同じ写真を保持して、時間をおいて再試行します。")
             }
             if reasons.isEmpty {
                 return "暗号化済みの写真が、送信開始を待っています。"
