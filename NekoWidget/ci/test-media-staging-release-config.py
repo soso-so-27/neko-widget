@@ -29,6 +29,7 @@ METADATA_WRITER = ROOT / "ci/write-moderation-release-metadata.py"
 
 USER_ID = "NSPrivacyCollectedDataTypeUserID"
 PHOTOS = "NSPrivacyCollectedDataTypePhotosorVideos"
+TEXT_MESSAGES = "NSPrivacyCollectedDataTypeEmailsOrTextMessages"
 DEVICE_ID = "NSPrivacyCollectedDataTypeDeviceID"
 PRODUCT_INTERACTION = "NSPrivacyCollectedDataTypeProductInteraction"
 APP_FUNCTIONALITY = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
@@ -280,9 +281,9 @@ class MediaStagingReleaseConfigTests(unittest.TestCase):
         by_type = {item["NSPrivacyCollectedDataType"]: item for item in items}
         self.assertEqual(
             set(by_type),
-            {USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION},
+            {USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION},
         )
-        self.assertEqual(len(items), 4)
+        self.assertEqual(len(items), 5)
         for data_type, item in by_type.items():
             with self.subTest(data_type=data_type):
                 self.assertIs(item["NSPrivacyCollectedDataTypeLinked"], True)

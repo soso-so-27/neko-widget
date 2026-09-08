@@ -21,7 +21,10 @@ from urllib.parse import urlparse
 
 
 PAIRING_COLLECTIONS = {"NSPrivacyCollectedDataTypeUserID"}
-MEDIA_COLLECTIONS = {"NSPrivacyCollectedDataTypePhotosorVideos"}
+MEDIA_COLLECTIONS = {
+    "NSPrivacyCollectedDataTypePhotosorVideos",
+    "NSPrivacyCollectedDataTypeEmailsOrTextMessages",
+}
 MEDIA_INTERACTION_COLLECTIONS = {
     "NSPrivacyCollectedDataTypeDeviceID",
     "NSPrivacyCollectedDataTypeProductInteraction",

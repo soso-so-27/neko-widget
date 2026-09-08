@@ -17,6 +17,7 @@ SCRIPT = Path(__file__).with_name("validate-sharing-release.py")
 ENDPOINT = "https://sharing.nekonomado.jp"
 USER_ID = "NSPrivacyCollectedDataTypeUserID"
 PHOTOS = "NSPrivacyCollectedDataTypePhotosorVideos"
+TEXT_MESSAGES = "NSPrivacyCollectedDataTypeEmailsOrTextMessages"
 DEVICE_ID = "NSPrivacyCollectedDataTypeDeviceID"
 PRODUCT_INTERACTION = "NSPrivacyCollectedDataTypeProductInteraction"
 PURPOSE = "NSPrivacyCollectedDataTypePurposeAppFunctionality"
@@ -488,7 +489,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         ]["NSExtensionActivationSupportsImageWithMaxCount"] = 0
         result = self.run_preflight(
             media,
-            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION),
             share_info_value=media_share,
         )
         self.assertNotEqual(result.returncode, 0)
@@ -621,7 +622,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
     def test_media_cannot_be_enabled_without_pairing(self) -> None:
         result = self.run_preflight(
             info("NO", "YES", ENDPOINT),
-            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Expected media-staging flags", result.stderr)
@@ -721,7 +722,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             ENDPOINT,
             release_mode="media-staging",
         )
-        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        manifest = privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
         result = self.run_preflight(app, manifest)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
@@ -737,7 +738,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
 
     def test_media_staging_binds_reviewed_key_fingerprint_and_build(self) -> None:
         app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
-        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        manifest = privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
 
         result = self.run_preflight(app, manifest)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -784,7 +785,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         self.assertIn("CFBundleVersion", result.stderr)
 
     def test_media_staging_rejects_unreviewed_or_malformed_key_ids(self) -> None:
-        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        manifest = privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
         for key_id in ("moderation-v3", " moderation-v1", "", "MODERATION-V1"):
             with self.subTest(key_id=key_id):
                 app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
@@ -814,7 +815,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         app["SharingModerationPublicKey"] = SYNTHETIC_V2_PUBLIC_KEY
         result = self.run_preflight(
             app,
-            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION),
             expected_moderation_key_id="moderation-v2",
             expected_moderation_public_key=SYNTHETIC_V2_PUBLIC_KEY,
             expected_moderation_public_key_sha256=SYNTHETIC_V2_PUBLIC_KEY_SHA256,
@@ -826,7 +827,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         app["SharingModerationPublicKey"] = f" {MODERATION_PUBLIC_KEY}"
         result = self.run_preflight(
             app,
-            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION),
             expected_moderation_public_key=f" {MODERATION_PUBLIC_KEY}",
         )
         self.assertNotEqual(result.returncode, 0)
@@ -843,7 +844,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             bytes.fromhex("ee" + ("ff" * 30) + "7f"),
             bytes.fromhex(("00" * 31) + "80"),
         )
-        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        manifest = privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
         for raw_key in small_order_keys:
             with self.subTest(raw_key=raw_key.hex()):
                 app = info("YES", "YES", ENDPOINT, release_mode="media-staging")
@@ -875,7 +876,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
             "SharingSupportURL",
             "SharingCommunityStandardsURL",
         )
-        manifest = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        manifest = privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
         for key in configuration_keys:
             with self.subTest(key=key):
                 app = dict(baseline)
@@ -936,14 +937,21 @@ class SharingReleasePreflightTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(PHOTOS, result.stderr)
 
-        complete = self.run_preflight(
+        missing_text = self.run_preflight(
             info("YES", "YES", ENDPOINT),
             privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+        )
+        self.assertNotEqual(missing_text.returncode, 0)
+        self.assertIn(TEXT_MESSAGES, missing_text.stderr)
+
+        complete = self.run_preflight(
+            info("YES", "YES", ENDPOINT),
+            privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION),
         )
         self.assertEqual(complete.returncode, 0, complete.stderr)
 
     def test_media_requires_safety_configuration(self) -> None:
-        expected_privacy = privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION)
+        expected_privacy = privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION)
         for key in (
             "SharingModerationKeyID",
             "SharingModerationPublicKey",
@@ -1025,7 +1033,7 @@ class SharingReleasePreflightTests(unittest.TestCase):
         )
         result = self.run_preflight(
             app,
-            privacy(USER_ID, PHOTOS, DEVICE_ID, PRODUCT_INTERACTION),
+            privacy(USER_ID, PHOTOS, TEXT_MESSAGES, DEVICE_ID, PRODUCT_INTERACTION),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Expected media-staging flags", result.stderr)
