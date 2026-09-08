@@ -63,8 +63,9 @@ struct IdentityDetectorControlResult: Encodable {
 struct IdentityDetectorComparisonReport: Encodable {
     let controls: [IdentityDetectorControlResult]
     let savedPhoto: IdentityDetectorInputReport?
+    let savedPhotoScaleComparison: IdentityDetectorScaleComparison?
     let allControlsHaveSingleUsableCrop: Bool
-    let protocolIdentifier = "pet-detector-controls-v1"
+    let protocolIdentifier = "pet-detector-controls-v2"
     let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -73,7 +74,7 @@ struct IdentityDetectorComparisonReport: Encodable {
     #else
     let platform = "device"
     #endif
-    let method = "three-generated-controls-and-at-most-one-saved-photo;upright-max1024;vision-r2-cat0.5;no-fallback"
+    let method = "three-generated-controls-and-at-most-one-saved-photo;upright-max1024;vision-r2-cat0.5;zero-observations-trigger-three-scale-comparisons;no-fallback"
     let photosIncluded = false
     let identifiersIncluded = false
     let embeddingsIncluded = false
@@ -83,9 +84,11 @@ struct IdentityDetectorComparisonReport: Encodable {
     let productValidated = false
     let productionDataChanged = false
 
-    init(controls: [IdentityDetectorControlResult], savedPhoto: IdentityDetectorInputReport?) {
+    init(controls: [IdentityDetectorControlResult], savedPhoto: IdentityDetectorInputReport?,
+         savedPhotoScaleComparison: IdentityDetectorScaleComparison? = nil) {
         self.controls = controls
         self.savedPhoto = savedPhoto
+        self.savedPhotoScaleComparison = savedPhotoScaleComparison
         allControlsHaveSingleUsableCrop = controls.count == IdentityDetectorControlID.allCases.count
             && Set(controls.map(\.control)) == Set(IdentityDetectorControlID.allCases)
             && controls.allSatisfy { $0.input.cropUsable }
