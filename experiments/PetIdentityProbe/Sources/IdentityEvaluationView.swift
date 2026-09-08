@@ -413,20 +413,27 @@ struct IdentityEvaluationView: View {
         }
     }
 
-    private func controlPreview(_ control: IdentityDetectorControlResult) -> some View {
+    @ViewBuilder private func controlPreview(_ control: IdentityDetectorControlResult) -> some View {
         let ratio = control.input.format.map { CGFloat($0.width) / CGFloat(max(1, $0.height)) } ?? 1
-        return Image(control.control.rawValue).resizable().aspectRatio(ratio, contentMode: .fit)
-            .overlay {
-                GeometryReader { proxy in
-                    ForEach(Array(control.acceptedBoxes.enumerated()), id: \.offset) { _, box in
-                        Rectangle().stroke(Color.orange, lineWidth: 2)
-                            .frame(width: CGFloat(box.width) * proxy.size.width, height: CGFloat(box.height) * proxy.size.height)
-                            .position(x: CGFloat(box.x + box.width / 2) * proxy.size.width,
-                                      y: CGFloat(1 - box.y - box.height / 2) * proxy.size.height)
+        // These PNGs are file resources, not asset-catalog named images.
+        if let url = Bundle.main.url(forResource: control.control.rawValue, withExtension: "png"),
+           let source = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: source).resizable().aspectRatio(ratio, contentMode: .fit)
+                .overlay {
+                    GeometryReader { proxy in
+                        ForEach(Array(control.acceptedBoxes.enumerated()), id: \.offset) { _, box in
+                            Rectangle().stroke(Color.orange, lineWidth: 2)
+                                .frame(width: CGFloat(box.width) * proxy.size.width, height: CGFloat(box.height) * proxy.size.height)
+                                .position(x: CGFloat(box.x + box.width / 2) * proxy.size.width,
+                                          y: CGFloat(1 - box.y - box.height / 2) * proxy.size.height)
+                        }
                     }
                 }
-            }
-            .accessibilityLabel(control.control.title)
+                .accessibilityLabel(control.control.title)
+        } else {
+            Text("基準画像を表示できません").font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity).aspectRatio(ratio, contentMode: .fit)
+        }
     }
 
     @ViewBuilder private func inputResults(_ input: IdentityInputRun) -> some View {
