@@ -62,6 +62,31 @@ final class IdentityImagePipelineTests: XCTestCase {
         XCTAssertLessThan(abs(sqrt(vector.reduce(0.0) { $0 + Double($1) * Double($1) }) - 1), 0.005)
     }
 
+    func testGeneratedCatControlsReachAcceptedCropWithUnchangedPipeline() throws {
+        // Positive controls, not an accuracy benchmark. No PhotoKit, user photo,
+        // network fetch, identity model, changed threshold, or format fallback.
+        let bundle = Bundle(for: IdentityImagePipelineTests.self)
+        for name in ["cat-orange-square", "cat-tuxedo-landscape", "cat-gray-portrait"] {
+            try autoreleasepool {
+                let url = try XCTUnwrap(bundle.url(forResource: name, withExtension: "png"))
+                let source = try XCTUnwrap(UIImage(contentsOfFile: url.path))
+                let raster = try XCTUnwrap(IdentityImagePipeline.upright(source))
+                let inspected = try IdentityImagePipeline.inspectCatCrop(raster)
+                let encoded = try JSONEncoder().encode(inspected.diagnostic)
+                print("PROBE_CAT_CONTROL name=\(name) width=\(raster.width) height=\(raster.height) diagnostic=\(String(decoding: encoded, as: UTF8.self))")
+                XCTAssertTrue(inspected.diagnostic.resultsAvailable, name)
+                XCTAssertEqual(inspected.diagnostic.acceptedCatObservationCount, 1, name)
+                switch inspected.result {
+                case .success(let crop):
+                    XCTAssertGreaterThanOrEqual(crop.width, 32, name)
+                    XCTAssertGreaterThanOrEqual(crop.height, 32, name)
+                case .failure(let issue):
+                    XCTFail("Generated control \(name) did not reach a usable cat crop: \(issue)")
+                }
+            }
+        }
+    }
+
     @MainActor func testPickerRejectsDuplicatesAndClearInvalidatesResults() {
         let store = IdentityEvaluationStore()
         func select(_ ids: [String?], slot: IdentityPhotoSlot) {

@@ -65,6 +65,13 @@ targets:
     platform: iOS
     sources:
       - Tests
+      # Existing generated CC0 controls; test bundle only, never the shipped app.
+      - path: ../../NekoWidget/ci/fixtures/cats/cat-orange-square.png
+        buildPhase: resources
+      - path: ../../NekoWidget/ci/fixtures/cats/cat-tuxedo-landscape.png
+        buildPhase: resources
+      - path: ../../NekoWidget/ci/fixtures/cats/cat-gray-portrait.png
+        buildPhase: resources
     dependencies:
       - target: PetIdentityProbe
     settings:
