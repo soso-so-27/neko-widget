@@ -218,6 +218,8 @@ struct IdentityEvaluationView: View {
             Section("まず1枚で確認") {
                 Text("写真を読み取れるかを確認します。この猫を「猫A」の最初の見本にします。")
                     .font(.subheadline).foregroundStyle(.secondary)
+                Text("検出できないときは、同じ写真の画像形式を揃えて比較します。")
+                    .font(.footnote).foregroundStyle(.secondary)
                 if store.hasInput {
                     Button("保存した猫Aの1枚目で確認") { store.checkInput() }
                         .buttonStyle(.borderedProminent).disabled(store.running)
@@ -315,7 +317,7 @@ struct IdentityEvaluationView: View {
         Section(report.modelOutputValidated ? "この写真を読み取れました" : "この写真の確認結果") {
             HStack(alignment: .top, spacing: 12) {
                 inputPreview(input.thumbnail, title: "元の写真")
-                inputPreview(input.cropThumbnail, title: "猫の範囲")
+                inputPreview(input.cropThumbnail, title: "猫の範囲", emptyMessage: "切り抜きなし")
             }
             inputStep("写真の読み出し", passed: report.imageReadable, attempted: true)
             inputStep("1匹の猫を検出", passed: report.singleCatDetected, attempted: report.imageReadable)
@@ -336,6 +338,17 @@ struct IdentityEvaluationView: View {
                 }.font(.subheadline)
             }
             if let failure = report.modelFailure { Text(failure).foregroundStyle(.orange) }
+            if let comparison = report.formatComparison {
+                Divider()
+                Text("同じ写真で形式を比較").font(.headline)
+                Text(comparison.summary).font(.subheadline)
+                if comparison.status == .completed, let result = comparison.normalizedDetection, result.resultsAvailable {
+                    LabeledContent("元の形式の猫候補", value: "\(report.animalDetection?.acceptedCatObservationCount ?? 0)件")
+                    LabeledContent("形式を揃えた猫候補", value: "\(result.acceptedCatObservationCount)件")
+                }
+                Text("写真の向き・範囲・検出基準は同じです。比較だけでは原因や識別精度は確定しません。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Text("写真の読み取りの確認です。この猫を見分けられたという意味ではありません。")
                 .font(.footnote).foregroundStyle(.secondary)
             if let json = IdentityInputExport.json(input.report) {
@@ -358,13 +371,20 @@ struct IdentityEvaluationView: View {
         }.font(.subheadline)
     }
 
-    private func inputPreview(_ thumbnail: CGImage?, title: String) -> some View {
+    private func inputPreview(_ thumbnail: CGImage?, title: String, emptyMessage: String = "表示なし") -> some View {
         VStack(spacing: 6) {
             GeometryReader { proxy in
                 if let thumbnail {
                     Image(decorative: thumbnail, scale: 1).resizable().scaledToFit()
                         .frame(width: proxy.size.width, height: proxy.size.height)
-                } else { Color.secondary.opacity(0.1).overlay(Image(systemName: "photo")) }
+                } else {
+                    Color.secondary.opacity(0.1).overlay {
+                        VStack(spacing: 6) {
+                            Image(systemName: "photo")
+                            Text(emptyMessage).font(.caption)
+                        }.foregroundStyle(.secondary)
+                    }
+                }
             }.aspectRatio(1, contentMode: .fit)
             Text(title).font(.caption).foregroundStyle(.secondary)
         }

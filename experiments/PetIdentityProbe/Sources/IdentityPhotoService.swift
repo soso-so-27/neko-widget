@@ -63,7 +63,7 @@ struct IdentityPhotoRun {
 
 /// Input diagnosis has no identity prediction or acceptance gate.
 struct IdentityInputReport: Encodable {
-    let protocolIdentifier = "pet-identity-input-diagnostic-v2"
+    let protocolIdentifier = "pet-identity-input-diagnostic-v3"
     let imageReadable: Bool
     let singleCatDetected: Bool
     let cropUsable: Bool
@@ -76,6 +76,7 @@ struct IdentityInputReport: Encodable {
     let cropHeight: Int?
     let runtimeVersion: String
     var animalDetection: IdentityAnimalDetectionDiagnostic? = nil
+    var formatComparison: IdentityImageFormatComparison? = nil
     let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
@@ -142,8 +143,18 @@ actor IdentityPhotoService {
         guard !id.isEmpty else { throw IdentityPhotoFailure(message: "写真を1枚選んでください。") }
         try Self.checkAuthorization()
         let fetched = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
-        let result = autoreleasepool { () -> IdentityInputRun in
+        let result = try autoreleasepool { () throws -> IdentityInputRun in
             let prepared = Self.preparePhoto(fetched.firstObject)
+            try Task.checkCancellation()
+            let formatComparison: IdentityImageFormatComparison?
+            if let image = prepared.image {
+                formatComparison = try IdentityImageFormatProbe.compareIfNeeded(image, original: prepared.animalDetection,
+                    detect: { converted in
+                        try Task.checkCancellation()
+                        return try IdentityImagePipeline.inspectCatCrop(converted).diagnostic
+                    })
+            } else { formatComparison = nil }
+            try Task.checkCancellation()
             var validated = false
             var modelFailure: String?
             let runtime = ORTVersion() ?? "unknown"
@@ -168,7 +179,7 @@ actor IdentityPhotoService {
                 inputIssue: prepared.issue, modelFailure: modelFailure,
                 imageWidth: prepared.image?.width, imageHeight: prepared.image?.height,
                 cropWidth: prepared.crop?.width, cropHeight: prepared.crop?.height, runtimeVersion: runtime,
-                animalDetection: prepared.animalDetection),
+                animalDetection: prepared.animalDetection, formatComparison: formatComparison),
                 thumbnail: prepared.image.flatMap(Self.thumbnail),
                 cropThumbnail: prepared.crop.flatMap(Self.thumbnail))
         }
