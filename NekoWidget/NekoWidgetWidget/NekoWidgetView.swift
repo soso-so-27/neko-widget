@@ -318,6 +318,10 @@ struct NekoWidgetView: View {
            entry.cacheFilename != nil {
             Text(entry.windowDisplayName)
                 .font(.caption2.bold())
+                // The small captioned Widget reserves one 52pt control row.
+                // Keep the visual name inside it; the photo reads the full name.
+                .dynamicTypeSize(...(family == .systemSmall && familyCaption != nil
+                    ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility5))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .foregroundStyle(.white)
