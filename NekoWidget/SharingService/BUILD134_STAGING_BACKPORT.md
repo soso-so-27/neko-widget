@@ -32,6 +32,12 @@ Local typechecking and all 33 moment integration tests pass with migrations
 server CI on this exact commit before deployment. No iOS CI is needed for this
 server-only branch; the mainline iOS candidate has its own CI.
 
+The first remote migration attempt rolled back with `incomplete input`. Its
+unparenthesized CASE expression violated the existing Cloudflare-compatibility
+rule, but 0026 had not been registered in that check. CASE is now parenthesized,
+0026 is registered, and the check requires every migration file to be listed.
+This changes SQL parsing compatibility only; the trigger condition is unchanged.
+
 Use the live downloaded bindings, vars and three cron expressions in an ignored
 deployment config. Preserve media/APNs ON, report OFF at runtime gate generation 5,
 the three rate limiters, the two private R2 buckets, and existing APNs secrets.

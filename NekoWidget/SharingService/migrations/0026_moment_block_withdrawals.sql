@@ -22,7 +22,7 @@ CREATE INDEX moment_block_withdrawals_space ON moment_block_withdrawals(space_id
 CREATE TRIGGER moment_block_withdrawals_require_block
 BEFORE INSERT ON moment_block_withdrawals
 BEGIN
-    SELECT CASE WHEN NEW.withdrawn_at IS NOT NULL OR NOT EXISTS (
+    SELECT (CASE WHEN NEW.withdrawn_at IS NOT NULL OR NOT EXISTS (
         SELECT 1 FROM moment_blocks
         WHERE space_id = NEW.space_id
           AND blocker_participant_id = NEW.blocker_participant_id
@@ -30,7 +30,7 @@ BEGIN
           AND created_key_epoch = NEW.created_key_epoch
           AND created_at = NEW.created_at
           AND state = 'active'
-    ) THEN RAISE(ABORT, 'withdrawal_requires_matching_block') END;
+    ) THEN RAISE(ABORT, 'withdrawal_requires_matching_block') END);
 END;
 
 -- This never reactivates the old space, credentials, deliveries or notifications.

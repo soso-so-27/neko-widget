@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -277,7 +277,16 @@ test("keeps trigger migrations compatible with Cloudflare remote apply", async (
     ["0016_moderation_operator_access_audit.sql", 45],
     ["0017_moderation_operator_enrollment_trust.sql", 39],
     ["0018_moderation_operator_case_reference_binding.sql", 21],
+    ["0026_moment_block_withdrawals.sql", 4],
   ]);
+  const migrationNames = (await readdir(join(projectDirectory, "migrations")))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  assert.deepEqual(
+    [...expectedStatementCounts.keys()].sort(),
+    migrationNames,
+    "Every migration must be included in the remote-compatibility check",
+  );
   for (const [name, expectedStatementCount] of expectedStatementCounts) {
     const migration = await readFile(join(projectDirectory, "migrations", name));
     assert.equal(
