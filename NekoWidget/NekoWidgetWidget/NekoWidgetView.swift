@@ -30,6 +30,10 @@ struct NekoWidgetView: View {
                 )
             {
                 GeometryReader { proxy in
+                    // Small has too little room for two controls over the
+                    // photo: reserve their row so they cannot obscure eyes.
+                    let headerHeight: CGFloat = family == .systemSmall && familyCaption != nil
+                        ? 44 + actionButtonInset : 0
                     ZStack {
                         Color(red: 0.12, green: 0.10, blue: 0.09)
 
@@ -40,8 +44,12 @@ struct NekoWidgetView: View {
                             .resizable()
                             .interpolation(.high)
                             .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .frame(
+                                width: proxy.size.width,
+                                height: max(1, proxy.size.height - headerHeight)
+                            )
                             .clipped()
+                            .offset(y: headerHeight / 2)
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
