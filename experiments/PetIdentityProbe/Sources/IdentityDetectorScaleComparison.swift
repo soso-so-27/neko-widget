@@ -34,8 +34,8 @@ struct IdentityDetectorScaleComparison: Encodable {
 enum IdentityDetectorScaleProbe {
     static func compareIfNeeded(_ image: CGImage, original: IdentityAnimalDetectionDiagnostic?,
         normalize: (CGImage) -> CGImage? = IdentityImageFormatProbe.standardRGB,
-        detect: (CGImage) throws -> IdentityAnimalDetectionDiagnostic = {
-            try IdentityImagePipeline.inspectCatCrop($0).diagnostic
+        detect: (CGImage, IdentityDetectorScale) throws -> IdentityAnimalDetectionDiagnostic = { image, _ in
+            try IdentityImagePipeline.inspectCatCrop(image).diagnostic
         }) throws -> IdentityDetectorScaleComparison? {
         guard let original, original.resultsAvailable, original.observationCount == 0 else { return nil }
         try Task.checkCancellation()
@@ -52,7 +52,7 @@ enum IdentityDetectorScaleProbe {
                 }
                 let format = IdentityPixelFormat(rendered)
                 do {
-                    let diagnostic = try detect(rendered)
+                    let diagnostic = try detect(rendered, scale)
                     try Task.checkCancellation()
                     return IdentityDetectorScaleResult(scalePercent: scale,
                         status: diagnostic.resultsAvailable ? .completed : .resultsUnavailable,

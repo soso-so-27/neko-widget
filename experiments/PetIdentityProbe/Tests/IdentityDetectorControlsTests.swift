@@ -61,8 +61,11 @@ final class IdentityDetectorControlsTests: XCTestCase {
         XCTAssertEqual(calls, 1)
         XCTAssertNil(store.picker)
         store.suspend()
+        let lateCrop = IdentityRecoveredCropPreview(report: IdentityRecoveredCropReport(status: .candidatePrepared),
+            originalThumbnail: nil, cropThumbnail: nil, originalBox: CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8))
         try XCTUnwrap(pending).resume(returning: IdentityDetectorComparisonRun(
-            report: IdentityDetectorComparisonReport(controls: [], savedPhoto: nil), savedPhotoThumbnail: nil))
+            report: IdentityDetectorComparisonReport(controls: [], savedPhoto: nil, savedPhotoCropCheck: lateCrop.report),
+            savedPhotoThumbnail: nil, recoveredCropPreview: lateCrop))
         await Task.yield()
         XCTAssertEqual(store.selections, selections)
         XCTAssertNil(store.detectorResult)
@@ -75,13 +78,16 @@ final class IdentityDetectorControlsTests: XCTestCase {
         let store = IdentityEvaluationStore(detectorInspector: { id in
             XCTAssertNil(id)
             completed.fulfill()
+            let crop = IdentityRecoveredCropPreview(report: IdentityRecoveredCropReport(status: .candidatePrepared),
+                originalThumbnail: nil, cropThumbnail: nil, originalBox: CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8))
             return IdentityDetectorComparisonRun(report: IdentityDetectorComparisonReport(controls: [], savedPhoto: nil),
-                                                 savedPhotoThumbnail: nil)
+                                                 savedPhotoThumbnail: nil, recoveredCropPreview: crop)
         })
         store.compareDetector()
         await fulfillment(of: [completed], timeout: 2)
         await Task.yield()
         XCTAssertNotNil(store.detectorResult)
+        XCTAssertNotNil(store.detectorResult?.recoveredCropPreview?.originalBox)
         XCTAssertTrue(store.selections.isEmpty)
         XCTAssertFalse(store.running)
         store.suspend()
