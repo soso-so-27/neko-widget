@@ -33,7 +33,7 @@ xcodebuild -project PetIdentityProbe.xcodeproj -scheme PetIdentityProbe \
     tail -n 90 "$evidence/simulator-test.log"; exit 1;
   }
 python3 summarize.py "$evidence/simulator-test.log" "$evidence/summary.json"
-# The single rendering attachment uses only the bundled generated cat; no private photos.
+# Rendering attachments use only a bundled generated cat and synthetic counts; no private photos.
 xcrun xcresulttool export attachments --path "$RUNNER_TEMP/PetIdentityProbeTests.xcresult" \
   --output-path "$evidence/generated-previews"
 

@@ -49,26 +49,37 @@ enum IdentityRecoveredCropProbe {
         return .success(mapped)
     }
 
+    // The same bounds and original-raster crop for both local preview and the separate diagnostic experiment.
+    static func recoverCrop(original: CGImage, diagnostic: IdentityAnimalDetectionDiagnostic,
+                            acceptedBoxes: [CGRect]) -> Result<(crop: CGImage, box: CGRect), IdentityRecoveredCropReport.Status> {
+        guard diagnostic.resultsAvailable else { return .failure(.resultsUnavailable) }
+        guard diagnostic.acceptedCatObservationCount == acceptedBoxes.count else { return .failure(.inconsistentResult) }
+        guard !acceptedBoxes.isEmpty else { return .failure(.noCandidate) }
+        guard acceptedBoxes.count == 1 else { return .failure(.multipleCandidates) }
+        let mapped: CGRect
+        switch mapHalfBoxToOriginal(acceptedBoxes[0]) {
+        case .failure(let status): return .failure(status)
+        case .success(let box): mapped = box
+        }
+        guard let pixels = IdentityImagePipeline.cropRect(mapped, width: original.width, height: original.height) else {
+            return .failure(.tooSmall)
+        }
+        // Crop the original fetched raster, not the 50%-resampled or padded variant.
+        guard let crop = original.cropping(to: pixels) else { return .failure(.cropFailed) }
+        return .success((crop, mapped))
+    }
+
     static func makePreview(original: CGImage, diagnostic: IdentityAnimalDetectionDiagnostic,
                             acceptedBoxes: [CGRect]) -> IdentityRecoveredCropPreview {
         func result(_ status: IdentityRecoveredCropReport.Status) -> IdentityRecoveredCropPreview {
             IdentityRecoveredCropPreview(report: IdentityRecoveredCropReport(status: status),
                 originalThumbnail: thumbnail(original), cropThumbnail: nil, originalBox: nil)
         }
-        guard diagnostic.resultsAvailable else { return result(.resultsUnavailable) }
-        guard diagnostic.acceptedCatObservationCount == acceptedBoxes.count else { return result(.inconsistentResult) }
-        guard !acceptedBoxes.isEmpty else { return result(.noCandidate) }
-        guard acceptedBoxes.count == 1 else { return result(.multipleCandidates) }
-        let mapped: CGRect
-        switch mapHalfBoxToOriginal(acceptedBoxes[0]) {
+        let crop: CGImage, mapped: CGRect
+        switch recoverCrop(original: original, diagnostic: diagnostic, acceptedBoxes: acceptedBoxes) {
         case .failure(let status): return result(status)
-        case .success(let box): mapped = box
+        case .success(let recovered): crop = recovered.crop; mapped = recovered.box
         }
-        guard let pixels = IdentityImagePipeline.cropRect(mapped, width: original.width, height: original.height) else {
-            return result(.tooSmall)
-        }
-        // Crop the original fetched raster, not the 50%-resampled or padded variant.
-        guard let crop = original.cropping(to: pixels) else { return result(.cropFailed) }
         guard let originalThumbnail = thumbnail(original), let cropThumbnail = thumbnail(crop) else {
             return result(.previewFailed)
         }

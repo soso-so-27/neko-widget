@@ -135,6 +135,49 @@ enum ProbeModelFile {
 actor IdentityPhotoService {
     private var busy = false
 
+    func compareIdentityRecovery(selections: [IdentityPhotoSlot: [String]],
+                                 progress: @Sendable (Int) async -> Void) async throws -> IdentityRecoveryComparisonReport {
+        guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
+        busy = true
+        defer { busy = false }
+        try Task.checkCancellation()
+        try IdentityRecoveryComparisonCore.validateSelection(selections)
+        guard ORTVersion() == IdentityEvaluationCore.expectedRuntimeVersion else {
+            throw IdentityEvaluationError.unsupportedRuntime
+        }
+        try Self.checkAuthorization()
+        let ids = IdentityPhotoSlot.allCases.flatMap { selections[$0] ?? [] }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+        var assets: [String: PHAsset] = [:]
+        fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
+        var engine: IdentityCPUSession?
+        var inputs: [IdentityRecoveryItem] = []
+        for slot in IdentityPhotoSlot.allCases {
+            for id in selections[slot] ?? [] {
+                try Task.checkCancellation()
+                let input = try autoreleasepool {
+                    let prepared = Self.preparePhoto(assets[id]) // Read this selected raster once for both arms.
+                    var input = try IdentityRecoveryInputProbe.process(slot: slot, originalCrop: prepared.crop,
+                        recover: {
+                            try IdentityRecoveryInputProbe.attempt(image: prepared.image, original: prepared.animalDetection)
+                        }, embed: { crop in
+                            if engine == nil { engine = try IdentityCPUSession() }
+                            return try engine!.embedding(crop) // Model errors abort; never counted as uncertain identities.
+                        })
+                    input.originalIssue = prepared.issue
+                    return input
+                }
+                inputs.append(input)
+                await progress(inputs.count)
+            }
+        }
+        try Task.checkCancellation()
+        let report = try IdentityRecoveryComparisonCore.report(inputs)
+        try Task.checkCancellation()
+        // No images, identifiers, per-photo outcomes or embeddings escape this method.
+        return report
+    }
+
     func compareDetector(id: String?) async throws -> IdentityDetectorComparisonRun {
         guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
         busy = true

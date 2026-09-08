@@ -20,6 +20,8 @@ final class IdentityEvaluationStore: ObservableObject {
     @Published var detectorResult: IdentityDetectorComparisonRun?
     @Published var checkingDetector = false
     @Published var checkingInput = false
+    @Published var checkingRecovery = false
+    @Published var recoveryResult: IdentityRecoveryComparisonReport?
     @Published var showsComparison = false
     @Published var picker: IdentityPickerRequest?
     private var task: Task<Void, Never>?
@@ -29,12 +31,15 @@ final class IdentityEvaluationStore: ObservableObject {
     private let service = IdentityPhotoService()
     private let inputInspector: ((String) async throws -> IdentityInputRun)?
     private let detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)?
+    private let recoveryInspector: (([IdentityPhotoSlot: [String]]) async throws -> IdentityRecoveryComparisonReport)?
 
     init(archive: IdentitySelectionArchive? = nil, inputInspector: ((String) async throws -> IdentityInputRun)? = nil,
-         detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)? = nil) {
+         detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)? = nil,
+         recoveryInspector: (([IdentityPhotoSlot: [String]]) async throws -> IdentityRecoveryComparisonReport)? = nil) {
         self.archive = archive
         self.inputInspector = inputInspector
         self.detectorInspector = detectorInspector
+        self.recoveryInspector = recoveryInspector
         restoreSelection()
     }
 
@@ -61,6 +66,7 @@ final class IdentityEvaluationStore: ObservableObject {
     var selectedCount: Int { selections.values.reduce(0) { $0 + $1.count } }
     var hasInput: Bool { selections[.referenceA]?.first != nil }
     var canCompareDetector: Bool { !running && !archiveReadFailed }
+    var canCompareRecovery: Bool { !running && !archiveReadFailed && selectedCount > 0 }
 
     func choose(_ slot: IdentityPhotoSlot, firstInputOnly: Bool = false) {
         guard !running, !archiveReadFailed else { return }
@@ -106,6 +112,7 @@ final class IdentityEvaluationStore: ObservableObject {
             return
         }
         selections[slot] = values
+        recoveryResult = nil
         result = nil
         inputResult = nil
         detectorResult = nil
@@ -124,6 +131,7 @@ final class IdentityEvaluationStore: ObservableObject {
         let current = generation
         running = true
         checkingInput = true
+        recoveryResult = nil
         inputResult = nil
         detectorResult = nil
         message = nil
@@ -156,6 +164,7 @@ final class IdentityEvaluationStore: ObservableObject {
         let id = selections[.referenceA]?.first
         running = true
         checkingDetector = true
+        recoveryResult = nil
         detectorResult = nil
         inputResult = nil
         result = nil
@@ -180,6 +189,42 @@ final class IdentityEvaluationStore: ObservableObject {
         }
     }
 
+    func compareRecovery() {
+        guard canCompareRecovery else { return }
+        let current = generation
+        let selected = selections
+        running = true
+        checkingRecovery = true
+        progress = 0
+        message = nil
+        recoveryResult = nil
+        result = nil
+        inputResult = nil
+        detectorResult = nil
+        task = Task { @MainActor in
+            do {
+                try Task.checkCancellation()
+                let completed: IdentityRecoveryComparisonReport
+                if let recoveryInspector { completed = try await recoveryInspector(selected) }
+                else {
+                    completed = try await service.compareIdentityRecovery(selections: selected) { [weak self] count in
+                        await self?.updateProgress(count, generation: current)
+                    }
+                }
+                guard !Task.isCancelled, generation == current else { return }
+                recoveryResult = completed
+            } catch is CancellationError {
+            } catch {
+                guard generation == current else { return }
+                message = "比較を完了できませんでした。写真のアクセス許可・モデルの読み取りなどを確認してください。途中結果は採用せず、保存した選択は残しています。"
+            }
+            guard generation == current else { return }
+            checkingRecovery = false
+            running = false
+            task = nil
+        }
+    }
+
     func start() {
         guard ready else { return }
         let current = generation
@@ -189,6 +234,7 @@ final class IdentityEvaluationStore: ObservableObject {
         progress = 0
         message = nil
         result = nil
+        recoveryResult = nil
         inputResult = nil
         detectorResult = nil
         task = Task { @MainActor in
@@ -227,10 +273,12 @@ final class IdentityEvaluationStore: ObservableObject {
         running = false
         progress = 0
         result = nil
+        recoveryResult = nil
         inputResult = nil
         detectorResult = nil
         checkingDetector = false
         checkingInput = false
+        checkingRecovery = false
         picker = nil
     }
 
@@ -256,6 +304,35 @@ struct IdentityEvaluationView: View {
 
     var body: some View {
         Form {
+            Section("保存済みの写真で見分け方を比較") {
+                Text("元の方法と、未検出の写真だけ50％で探す方法を比較します。猫A・Bの選択はそのまま使います。")
+                    .font(.subheadline)
+                Button("保存した\(store.selectedCount)枚で比較する") { store.compareRecovery() }
+                    .buttonStyle(.borderedProminent).disabled(!store.canCompareRecovery)
+                    .accessibilityIdentifier("identity-recovery-compare")
+                if !store.ready && !store.running {
+                    Text("見本はA \(store.selections[.referenceA]?.count ?? 0)/5枚・B \(store.selections[.referenceB]?.count ?? 0)/5枚、判定用は\(store.evaluationCount)枚です。不足があっても、保存済みの分の入力確認はできます。追加は下の猫A・B欄から行えます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if !store.showsComparison {
+                        Button("猫A・Bの選択を確認") { store.showsComparison = true }.disabled(store.running)
+                    }
+                }
+                if store.checkingRecovery {
+                    ProgressView("同じ写真を比較中 \(store.progress) / \(store.selectedCount)",
+                        value: Double(store.progress), total: Double(max(1, store.selectedCount)))
+                    Button("中止（選択は残す）") { store.suspend() }
+                }
+                Text("別の猫との取り違えも比較します。本体の分類は変更しません。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let comparison = store.recoveryResult {
+                Section("見分け方の比較結果") {
+                    IdentityRecoveryComparisonView(report: comparison)
+                    if let json = comparison.json {
+                        ShareLink("比較結果を共有", item: json).accessibilityIdentifier("identity-recovery-share")
+                    }
+                }
+            }
             Section("検出をまとめて確認") {
                 Text(store.hasInput
                      ? "用意した猫画像3枚と、保存した猫Aの1枚目を比較します。検出候補が0件なら、同じ写真を縮小して比較します。選び直しは不要です。"
@@ -330,7 +407,7 @@ struct IdentityEvaluationView: View {
                     Button("選んだ\(store.evaluationCount)枚を判定する") { store.start() }
                         .buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
                         .disabled(!store.ready).accessibilityIdentifier("identity-evaluate")
-            if store.running && !store.checkingInput && !store.checkingDetector {
+            if store.running && !store.checkingInput && !store.checkingDetector && !store.checkingRecovery {
                         ProgressView("見本と判定写真を確認中 \(store.progress) / \(store.selectedCount)",
                                      value: Double(store.progress), total: Double(max(1, store.selectedCount)))
                         Button("中止（選択は残す）") { store.suspend() }
