@@ -231,9 +231,9 @@ struct MomentDeliveryComposerFixture: View {
                     isPresented = false
                 }
             )
+            .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--composer-large-text") ? .accessibility2 : .large)
         }
         .preferredColorScheme(.dark)
-        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--composer-large-text") ? .accessibility2 : .large)
     }
 
     private var fixturePhoto: UIImage {

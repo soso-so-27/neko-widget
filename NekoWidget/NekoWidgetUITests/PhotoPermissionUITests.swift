@@ -359,6 +359,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 
     @MainActor
     func testCaptionOnPhotoAndReturnFromKeyboard() {
+        var standardCaptionHeight: CGFloat = 0
         for variant in ["standard", "large", "panorama"] {
             let app = XCUIApplication()
             app.launchArguments = ["--moment-composer-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -386,6 +387,11 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             else { footerDone.tap() }
             XCTAssertTrue(waitForKeyboardToClose(app))
             XCTAssertTrue(edit.label.contains("のびー"), "Finishing input must preserve the caption on the photo.")
+            if variant == "standard" { standardCaptionHeight = edit.frame.height }
+            if variant == "large" {
+                XCTAssertGreaterThan(edit.frame.height, standardCaptionHeight * 1.2,
+                                     "Large text must actually reach the presented composer.")
+            }
             let photo = app.descendants(matching: .any)["family-window-composer-photo"].firstMatch
             XCTAssertTrue(photo.exists)
             XCTAssertTrue(photo.frame.insetBy(dx: -1, dy: -1).contains(edit.frame), "The caption belongs inside the photo preview.")
