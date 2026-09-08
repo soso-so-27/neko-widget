@@ -459,7 +459,40 @@ struct MomentRequestContext: Codable, Equatable, Sendable {
     }
 }
 
-/// This entire value is encrypted. In particular, `capturedAt` must never be
+enum MomentCaption {
+    static let maximumCharacters = 100
+    static let maximumLineBreaks = 2
+    static let maximumUTF8Bytes = 4_096
+
+    static func normalized(_ text: String?) throws -> String? {
+        guard let text else { return nil }
+        let value = canonicalValue(text)
+        guard !value.isEmpty else { return nil }
+        guard violation(value) == nil else { throw MomentSharingError.invalidPayload }
+        return value
+    }
+
+    static func validationMessage(for text: String) -> String? {
+        violation(canonicalValue(text))
+    }
+
+    private static func canonicalValue(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: .newlines).joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func violation(_ value: String) -> String? {
+        if value.utf8.count > maximumUTF8Bytes { return "ひとことを短くしてください。" }
+        if value.count > maximumCharacters { return "ひとことは100文字までです。" }
+        if value.filter({ $0 == "\n" }).count > maximumLineBreaks {
+            return "改行は2個までです。"
+        }
+        return nil
+    }
+}
+
+/// This entire value is encrypted. In particular, `capturedAt` and `caption` must never be
 /// copied into a Server row, object metadata, URL, or application log.
 struct MomentEncryptedManifest: Codable, Equatable, Sendable {
     var protocolVersion: Int = MomentSharingProtocol.version
@@ -469,8 +502,12 @@ struct MomentEncryptedManifest: Codable, Equatable, Sendable {
     let pixelWidth: Int
     let pixelHeight: Int
     let plaintextSHA256: Data
+    var caption: String? = nil
 
     func validated() throws -> Self {
+        guard try MomentCaption.normalized(caption) == caption else {
+            throw MomentSharingError.invalidPayload
+        }
         guard protocolVersion == MomentSharingProtocol.version,
               captureDateIsMissing == (capturedAt == nil),
               (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(pixelWidth),
@@ -574,7 +611,8 @@ enum MomentCrypto {
         pixelHeight: Int,
         context: MomentRequestContext,
         spaceGenerationKey: Data,
-        moderationVersion: Int = MomentSharingProtocol.moderationVersion
+        moderationVersion: Int = MomentSharingProtocol.moderationVersion,
+        caption: String? = nil
     ) throws -> MomentPreparedPayload {
         _ = try context.validated()
         guard !canonicalJPEG.isEmpty,
@@ -596,7 +634,8 @@ enum MomentCrypto {
             captureDateIsMissing: capturedAt == nil,
             pixelWidth: pixelWidth,
             pixelHeight: pixelHeight,
-            plaintextSHA256: Data(SHA256.hash(data: canonicalJPEG))
+            plaintextSHA256: Data(SHA256.hash(data: canonicalJPEG)),
+            caption: try MomentCaption.normalized(caption)
         )
         let manifestCiphertext = try seal(
             try manifest.encoded(),

@@ -351,7 +351,8 @@ enum MomentSharingPresentationVerifier {
                 committedAt: TimeInterval(900 + index),
                 recipientDeliveryConfirmedAt: index == 204 ? 1_150 : nil,
                 hasReceivedHeart: index == 204,
-                localThumbnailJPEG: index == 204 ? localThumbnail : nil
+                localThumbnailJPEG: index == 204 ? localThumbnail : nil,
+                localCaption: "写真 \(index) のひとこと"
             )
         }
         deliveries.append(
@@ -385,13 +386,18 @@ enum MomentSharingPresentationVerifier {
             arrived.deliveryState == .recipientDeviceArrivalConfirmed
                 && arrived.recipientDeliveryConfirmedAt == date(1_150)
                 && arrived.hasReceivedHeart
-                && arrived.localThumbnailJPEG == localThumbnail,
+                && arrived.localThumbnailJPEG == localThumbnail
+                && arrived.localCaption == "写真 204 のひとこと",
             "recipient device arrival was collapsed into server acceptance"
         )
         try require(
             arrived.title.contains("端末へ到着")
                 && arrived.detail.contains("閲覧・既読の確認ではありません"),
             "recipient arrival copy implied that the photo was viewed or read"
+        )
+        try require(
+            presentation.sentRecords.last?.localCaption == "写真 5 のひとこと",
+            "caption moved to a different photograph when sent records were bounded"
         )
         guard let acceptedOnly = presentation.sentRecords.dropFirst().first else {
             throw VerificationError("missing server-accepted sent record")
@@ -730,7 +736,8 @@ enum MomentSharingPresentationVerifier {
         recipientDeliveryConfirmedAt: TimeInterval? = nil,
         hasReceivedHeart: Bool = false,
         serverMomentID: String? = nil,
-        localThumbnailJPEG: Data? = nil
+        localThumbnailJPEG: Data? = nil,
+        localCaption: String? = nil
     ) -> MomentDeliveryPresentationInput {
         MomentDeliveryPresentationInput(
             stableID: id,
@@ -745,7 +752,8 @@ enum MomentSharingPresentationVerifier {
             recipientDeliveryConfirmedAt: recipientDeliveryConfirmedAt.map { date($0) },
             hasReceivedHeart: hasReceivedHeart,
             serverMomentID: serverMomentID,
-            localThumbnailJPEG: localThumbnailJPEG
+            localThumbnailJPEG: localThumbnailJPEG,
+            localCaption: localCaption
         )
     }
 

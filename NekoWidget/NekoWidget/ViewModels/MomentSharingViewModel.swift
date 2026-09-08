@@ -252,7 +252,8 @@ final class MomentSharingViewModel: ObservableObject {
     /// delivery may continue in the ordinary synchronization pipeline.
     func deliverSelectedPhoto(
         _ photo: MomentShareIngressPhoto,
-        to confirmedDestination: MomentDeliveryDestination
+        to confirmedDestination: MomentDeliveryDestination,
+        caption: String? = nil
     ) async -> Bool {
         guard !isWorking,
               !isShowingLastKnownState,
@@ -287,7 +288,8 @@ final class MomentSharingViewModel: ObservableObject {
             try await MomentShareIngressService().stage(
                 photo,
                 admissionID: admission.id,
-                senderPolicyAcceptedAt: .now
+                senderPolicyAcceptedAt: .now,
+                caption: try MomentCaption.normalized(caption)
             )
             didStage = true
             do {
@@ -675,6 +677,15 @@ final class MomentSharingViewModel: ObservableObject {
         }
     }
 
+    func caption(for item: MomentInboxItem) -> String? {
+        guard !isShowingLastKnownState,
+              let current = sharingState.inbox.first(where: { $0.id == item.id }),
+              current.state == .available || current.state == .acknowledged,
+              imageURL(for: current) != nil
+        else { return nil }
+        return current.caption
+    }
+
     func imageURL(for item: MomentInboxItem) -> URL? {
         guard item.state == .available || item.state == .acknowledged,
               let name = item.localJPEGFileName
@@ -875,7 +886,8 @@ final class MomentSharingViewModel: ObservableObject {
                     } ?? false,
                     serverMomentID: $0.serverMomentID,
                     localThumbnailJPEG: MomentSharingStateStore
-                        .readLocalThumbnail(for: $0)
+                        .readLocalThumbnail(for: $0),
+                    localCaption: $0.localCaption
                 )
             },
             outcomes: sharingState.outgoingOutcomes.map {

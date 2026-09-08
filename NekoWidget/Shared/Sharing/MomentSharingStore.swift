@@ -54,6 +54,8 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     /// a dedicated local directory, never in this frequently rewritten state
     /// document and never in a relay request.
     var localThumbnailFileName: String? = nil
+    /// Protected local display metadata; never part of a relay request.
+    var localCaption: String? = nil
     /// Decode-only compatibility for the short-lived Build 92 inline format.
     /// `encode(to:)` deliberately omits it; `loadWhileLocked()` migrates it to
     /// the protected file before returning state to callers.
@@ -83,6 +85,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         case createdAt
         case updatedAt
         case localThumbnailFileName
+        case localCaption
         case localThumbnailJPEG
     }
 
@@ -110,7 +113,8 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         createdAt: Date,
         updatedAt: Date,
         localThumbnailFileName: String? = nil,
-        legacyInlineLocalThumbnailJPEG: Data? = nil
+        legacyInlineLocalThumbnailJPEG: Data? = nil,
+        localCaption: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -135,6 +139,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.localThumbnailFileName = localThumbnailFileName
+        self.localCaption = localCaption
         self.legacyInlineLocalThumbnailJPEG = legacyInlineLocalThumbnailJPEG
     }
 
@@ -179,6 +184,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
             Data.self,
             forKey: .localThumbnailJPEG
         )
+        localCaption = try container.decodeIfPresent(String.self, forKey: .localCaption)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -209,11 +215,15 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(localThumbnailFileName, forKey: .localThumbnailFileName)
+        try container.encodeIfPresent(localCaption, forKey: .localCaption)
         // Never re-encode legacyInlineLocalThumbnailJPEG.
     }
 
     func validated() throws -> Self {
         _ = try context.validated()
+        guard try MomentCaption.normalized(localCaption) == localCaption else {
+            throw MomentSharingError.stateUnavailable
+        }
         guard schemaVersion == Self.schemaVersion,
               id == context.clientMomentID,
               ciphertextFileName == "\(id.uuidString.lowercased()).ciphertext",
@@ -465,8 +475,12 @@ struct MomentInboxItem: Codable, Equatable, Identifiable, Sendable {
     var state: MomentInboxState
     var acknowledgedAt: Date? = nil
     var accessExpiresAt: Date
+    var caption: String? = nil
 
     func validated() throws -> Self {
+        guard try MomentCaption.normalized(caption) == caption,
+              (state != .revoked && state != .blocked) || caption == nil
+        else { throw MomentSharingError.stateUnavailable }
         guard schemaVersion == Self.schemaVersion,
               Self.isOpaqueIdentifier(id),
               Self.isOpaqueIdentifier(senderParticipantID),
@@ -1086,7 +1100,9 @@ enum MomentSharingStateStore {
                 // acknowledged/available duplicate also needs no rewrite.
                 if existing.state == .revoked { return existing }
                 guard existing.capturedAt == candidate.capturedAt,
-                      existing.captureDateIsMissing == candidate.captureDateIsMissing
+                      existing.captureDateIsMissing == candidate.captureDateIsMissing,
+                      existing.state == .blocked || candidate.state == .blocked
+                        || existing.caption == candidate.caption
                 else { throw MomentSharingError.stateUnavailable }
                 if existing.state == .blocked || candidate.state == .available {
                     return existing
@@ -1149,6 +1165,7 @@ enum MomentSharingStateStore {
                 if state.inbox[index].state != .blocked {
                     state.inbox[index].state = .revoked
                 }
+                state.inbox[index].caption = nil
             } else {
                 state.inbox.append(tombstone)
             }
@@ -1202,6 +1219,7 @@ enum MomentSharingStateStore {
             state.pawOutbox.removeAll { $0.momentID == momentID }
             state.inbox[index].state = .revoked
             state.inbox[index].localJPEGFileName = nil
+            state.inbox[index].caption = nil
             state.storageRevision += 1
             try writeWhileLocked(try state.validated())
         }
@@ -1774,6 +1792,7 @@ enum MomentSharingStateStore {
         senderPolicyVersion: Int,
         senderPolicyAcceptedAt: Date,
         localThumbnailJPEG: Data? = nil,
+        localCaption: String? = nil,
         validating lifecycleToken: SharingLifecycleGate.Token? = nil,
         now: Date = .now
     ) throws -> MomentOutboxItem {
@@ -1783,6 +1802,7 @@ enum MomentSharingStateStore {
                 senderPolicyVersion: senderPolicyVersion,
                 senderPolicyAcceptedAt: senderPolicyAcceptedAt,
                 localThumbnailJPEG: localThumbnailJPEG,
+                localCaption: localCaption,
                 now: now
             )
         }
@@ -1798,6 +1818,7 @@ enum MomentSharingStateStore {
         senderPolicyVersion: Int,
         senderPolicyAcceptedAt: Date,
         localThumbnailJPEG: Data? = nil,
+        localCaption: String? = nil,
         now: Date = .now
     ) throws -> MomentOutboxItem {
         let payload = try payload.validated()
@@ -1821,7 +1842,8 @@ enum MomentSharingStateStore {
             senderPolicyAcceptedAt: senderPolicyAcceptedAt,
             attemptCount: 0,
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            localCaption: try MomentCaption.normalized(localCaption)
         ).validated()
         guard !SharingLifecycleGate.isCleanupRequired,
               let directory = SharedContainer.momentSharingCiphertextDirectoryURL
@@ -1836,6 +1858,7 @@ enum MomentSharingStateStore {
         if let existing = state.outbox.first(where: { $0.id == item.id }) {
             guard existing.context == item.context,
                   existing.ciphertextSHA256 == item.ciphertextSHA256,
+                  existing.localCaption == item.localCaption,
                   existing.senderPolicyVersion == item.senderPolicyVersion,
                   samePersistedSecond(
                       existing.senderPolicyAcceptedAt,
@@ -1904,7 +1927,8 @@ enum MomentSharingStateStore {
         kind: MomentKind,
         keyEpoch: Int,
         senderPolicyVersion: Int,
-        senderPolicyAcceptedAt: Date
+        senderPolicyAcceptedAt: Date,
+        localCaption: String? = nil
     ) throws -> MomentOutboxItem? {
         let state = try loadWhileLocked()
         if let reportOnlyUntil = state.reportOnlyUntil {
@@ -1925,6 +1949,7 @@ enum MomentSharingStateStore {
               ),
               existing.context.kind == kind,
               existing.context.keyEpoch == keyEpoch,
+              existing.localCaption == localCaption,
               existing.senderPolicyVersion == senderPolicyVersion,
               samePersistedSecond(
                   existing.senderPolicyAcceptedAt,

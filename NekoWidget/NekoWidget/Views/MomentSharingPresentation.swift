@@ -167,6 +167,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     /// Optional, metadata-free preview retained only on this sender's device.
     /// It is never required for a delivery row and never comes from the relay.
     let localThumbnailJPEG: Data?
+    /// User-authored text for the matching local photograph; never diagnostic metadata.
+    let localCaption: String?
 
     init(
         stableID: String,
@@ -181,7 +183,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         recipientDeliveryConfirmedAt: Date? = nil,
         hasReceivedHeart: Bool = false,
         serverMomentID: String? = nil,
-        localThumbnailJPEG: Data? = nil
+        localThumbnailJPEG: Data? = nil,
+        localCaption: String? = nil
     ) {
         self.stableID = stableID
         self.destinationKey = destinationKey
@@ -196,6 +199,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.hasReceivedHeart = hasReceivedHeart
         self.serverMomentID = serverMomentID
         self.localThumbnailJPEG = localThumbnailJPEG
+        self.localCaption = localCaption
     }
 }
 
@@ -369,9 +373,9 @@ enum MomentSentRecordDeliveryState: Equatable, Sendable {
     case recipientDeviceArrivalConfirmed
 }
 
-/// Privacy-safe delivery ledger entry. It may contain a bounded, metadata-free
-/// preview that originated on this device; it never contains a path, URL,
-/// filename, recipient identity, or image downloaded back from the relay.
+/// A bounded delivery entry with the photograph and optional text originating
+/// on this device. System metadata contains no path, URL, filename, or recipient
+/// identity. The caption is user-authored content, not diagnostic metadata.
 struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let id: String
     /// Opaque relay identifier retained only for notification-target matching.
@@ -381,6 +385,8 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
     let recipientDeliveryConfirmedAt: Date?
     let hasReceivedHeart: Bool
     let localThumbnailJPEG: Data?
+    /// User-authored text for the matching local photograph; never diagnostic metadata.
+    let localCaption: String?
 
     init(
         id: String,
@@ -388,7 +394,8 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
         serverAcceptedAt: Date,
         recipientDeliveryConfirmedAt: Date?,
         hasReceivedHeart: Bool,
-        localThumbnailJPEG: Data? = nil
+        localThumbnailJPEG: Data? = nil,
+        localCaption: String? = nil
     ) {
         self.id = id
         self.momentID = momentID
@@ -396,6 +403,7 @@ struct MomentSentRecordPresentation: Equatable, Identifiable, Sendable {
         self.recipientDeliveryConfirmedAt = recipientDeliveryConfirmedAt
         self.hasReceivedHeart = hasReceivedHeart
         self.localThumbnailJPEG = localThumbnailJPEG
+        self.localCaption = localCaption
     }
 
     var deliveryState: MomentSentRecordDeliveryState {
@@ -630,7 +638,8 @@ enum MomentSharingPresentationPolicy {
                     serverAcceptedAt: serverAcceptedAt,
                     recipientDeliveryConfirmedAt: confirmedAt,
                     hasReceivedHeart: delivery.hasReceivedHeart,
-                    localThumbnailJPEG: delivery.localThumbnailJPEG
+                    localThumbnailJPEG: delivery.localThumbnailJPEG,
+                    localCaption: delivery.localCaption
                 )
             }
 

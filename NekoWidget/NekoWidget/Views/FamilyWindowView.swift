@@ -78,6 +78,9 @@ struct FamilyWindowView: View {
         MomentNotificationAuthorizationState = .checking
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var preparedDelivery: PreparedMomentDelivery?
+    @State private var deliveryCaption = ""
+    @FocusState private var isCaptionFocused: Bool
+    @State private var selectedSentRecord: MomentSentRecordPresentation?
     @State private var selectedMomentForDetail: MomentInboxItem?
     @State private var isPreparingSelectedPhoto = false
     @State private var isDeliveringSelectedPhoto = false
@@ -461,8 +464,15 @@ struct FamilyWindowView: View {
         } message: { _ in
             Text("思い出一覧から外します。写真アプリへコピーした写真は削除されません。")
         }
-        .sheet(item: $preparedDelivery) { delivery in
+        .sheet(item: $preparedDelivery, onDismiss: {
+            deliveryCaption = ""
+            isCaptionFocused = false
+        }) { delivery in
             deliveryConfirmation(delivery)
+                .id(delivery.id)
+        }
+        .sheet(item: $selectedSentRecord) { record in
+            sentRecordDetail(recordID: record.id)
         }
         .sheet(
             item: $selectedMomentForDetail,
@@ -789,6 +799,8 @@ struct FamilyWindowView: View {
         photoSelectionMessage = nil
         selectedDeliveryMessage = nil
         preparedDelivery = nil
+        deliveryCaption = ""
+        isCaptionFocused = false
         isPreparingSelectedPhoto = true
         Task {
             defer {
@@ -824,81 +836,113 @@ struct FamilyWindowView: View {
         _ delivery: PreparedMomentDelivery
     ) -> some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                Image(uiImage: delivery.preview)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 420)
-                    .background(Color.black.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Image(uiImage: delivery.preview)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: 420)
+                        .background(Color.black.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("届け先")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(delivery.destination.displayName)
-                        .font(.title3.weight(.semibold))
-                    Label(
-                        "最大2,048px・位置情報を除いて送信",
-                        systemImage: "lock.shield"
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                }
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("ひとこと（任意）", text: $deliveryCaption, axis: .vertical)
+                            .lineLimit(1...3)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($isCaptionFocused)
+                            .disabled(isDeliveringSelectedPhoto)
+                            .accessibilityLabel("ひとこと（任意）")
+                            .accessibilityHint("100文字まで、改行は2個まで。空欄でも送信できます")
+                            .accessibilityIdentifier("family-window-caption-input")
+                        Text("残り\(max(0, MomentCaption.maximumCharacters - deliveryCaption.count))文字・改行2個まで")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let message = MomentCaption.validationMessage(for: deliveryCaption) {
+                            Text(message)
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                        }
+                        Text("ひとことはまど内に表示されます。以前のバージョンでは写真だけが届きます。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
 
-                if let selectedDeliveryMessage {
-                    Label(
-                        selectedDeliveryMessage,
-                        systemImage: "exclamationmark.circle"
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                }
-
-                Spacer(minLength: 0)
-
-                Button {
-                    selectedDeliveryMessage = nil
-                    isDeliveringSelectedPhoto = true
-                    Task {
-                        let didStage = await model.deliverSelectedPhoto(
-                            delivery.photo,
-                            to: delivery.destination
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("届け先")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(delivery.destination.displayName)
+                            .font(.title3.weight(.semibold))
+                        Label(
+                            "最大2,048px・位置情報を除いて送信",
+                            systemImage: "lock.shield"
                         )
-                        isDeliveringSelectedPhoto = false
-                        if didStage {
-                            preparedDelivery = nil
-                            selectedSection = .sent
-                        } else {
-                            selectedDeliveryMessage = model.errorMessage
-                                ?? "写真を準備できませんでした。もう一度お試しください。"
-                        }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                     }
-                } label: {
-                    HStack {
-                        if isDeliveringSelectedPhoto {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "paperplane.fill")
-                        }
-                        Text(isDeliveringSelectedPhoto
-                            ? "届けています…"
-                            : "この1枚を届ける")
-                            .font(.headline)
+
+                    if let selectedDeliveryMessage {
+                        Label(
+                            selectedDeliveryMessage,
+                            systemImage: "exclamationmark.circle"
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
                     }
-                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        isCaptionFocused = false
+                        // Capture the draft with this immutable photo/destination before suspension.
+                        let caption = deliveryCaption
+                        selectedDeliveryMessage = nil
+                        isDeliveringSelectedPhoto = true
+                        Task {
+                            let didStage = await model.deliverSelectedPhoto(
+                                delivery.photo,
+                                to: delivery.destination,
+                                caption: caption
+                            )
+                            isDeliveringSelectedPhoto = false
+                            if didStage {
+                                preparedDelivery = nil
+                                selectedSection = .sent
+                            } else {
+                                selectedDeliveryMessage = model.errorMessage
+                                    ?? "写真を準備できませんでした。もう一度お試しください。"
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            if isDeliveringSelectedPhoto {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "paperplane.fill")
+                            }
+                            Text(isDeliveringSelectedPhoto
+                                ? "届けています…"
+                                : "この1枚を届ける")
+                                .font(.headline)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isDeliveringSelectedPhoto || model.isWorking
+                        || MomentCaption.validationMessage(for: deliveryCaption) != nil)
+                    .accessibilityIdentifier("family-window-confirm-delivery")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(isDeliveringSelectedPhoto || model.isWorking)
-                .accessibilityIdentifier("family-window-confirm-delivery")
+                .padding(20)
             }
-            .padding(20)
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("写真を確認")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isDeliveringSelectedPhoto)
             .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("入力を閉じる") { isCaptionFocused = false }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("やめる") { preparedDelivery = nil }
                         .disabled(isDeliveringSelectedPhoto)
@@ -1263,7 +1307,12 @@ struct FamilyWindowView: View {
 
                     LazyVGrid(columns: sentRecordColumns, spacing: 10) {
                         ForEach(visibleSentRecords) { record in
-                            sentRecordCard(record)
+                            Button {
+                                selectedSentRecord = record
+                            } label: {
+                                sentRecordCard(record)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -1378,34 +1427,42 @@ struct FamilyWindowView: View {
             record.momentID == $0
         } ?? false
 
-        return ZStack(alignment: .bottomLeading) {
-            sentRecordPhotoSurface(record)
+        return VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                sentRecordPhotoSurface(record)
 
-            LinearGradient(
-                colors: [.clear, .black.opacity(0.76)],
-                startPoint: .center,
-                endPoint: .bottom
-            )
-            .allowsHitTesting(false)
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.76)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
-                    sentRecordBadge(
-                        arrived ? "到着" : "受付済み",
-                        systemImage: arrived ? "iphone" : "server.rack"
-                    )
-                    if record.hasReceivedHeart {
-                        sentRecordBadge("ハート", systemImage: "heart.fill")
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        sentRecordBadge(
+                            arrived ? "到着" : "受付済み",
+                            systemImage: arrived ? "iphone" : "server.rack"
+                        )
+                        if record.hasReceivedHeart {
+                            sentRecordBadge("ハート", systemImage: "heart.fill")
+                        }
                     }
-                }
 
-                Text(statusDate.formatted(
-                    .dateTime.month().day().hour().minute()
-                ))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white)
+                    Text(statusDate.formatted(
+                        .dateTime.month().day().hour().minute()
+                    ))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white)
+                }
+                .padding(10)
             }
-            .padding(10)
+            if let caption = record.localCaption {
+                Text(verbatim: caption)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                    .padding(10)
+            }
         }
         .background(
             Color(uiColor: .secondarySystemGroupedBackground),
@@ -1433,6 +1490,49 @@ struct FamilyWindowView: View {
             equals: accessibilityFocusID
         )
         .accessibilityIdentifier("family-window-sent-record-\(record.id)")
+    }
+
+    private func sentRecordDetail(recordID: String) -> some View {
+        NavigationStack {
+            ScrollView {
+                if let record = model.outgoingPresentation.sentRecords.first(where: {
+                    $0.id == recordID
+                }), !model.isShowingLastKnownState {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let image = sentRecordThumbnail(record) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .accessibilityLabel("届けた写真の控え")
+                        } else {
+                            Label("写真の控えは残っていません", systemImage: "photo")
+                                .foregroundStyle(.secondary)
+                        }
+                        if let caption = record.localCaption {
+                            Text(verbatim: caption)
+                                .font(.body)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                                .accessibilityIdentifier("family-window-sent-caption")
+                        }
+                        Text(record.title).font(.headline)
+                        Text(record.detail).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .padding(20)
+                } else {
+                    Text("この写真の控えは表示できません。")
+                        .padding(20)
+                }
+            }
+            .navigationTitle("届けた写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { selectedSentRecord = nil }
+                }
+            }
+        }
     }
 
     private func sentRecordBadge(
@@ -1490,6 +1590,9 @@ struct FamilyWindowView: View {
         ]
         if record.hasReceivedHeart {
             parts.append("ハートが届いています")
+        }
+        if let caption = record.localCaption {
+            parts.append("ひとこと。\(caption)")
         }
         if sentRecordThumbnail(record) == nil {
             parts.append("写真のプレビューはこのiPhoneに残っていません")
@@ -1638,6 +1741,14 @@ struct FamilyWindowView: View {
                 receivesNotificationFocus: receivesNotificationFocus,
                 contentMode: fillsPhotoFrame ? .fill : .fit
             )
+            if let caption = model.caption(for: item) {
+                Text(verbatim: caption)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding([.horizontal, .top], 13)
+                    .accessibilityIdentifier("family-window-received-caption")
+            }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(captureLabel(item))

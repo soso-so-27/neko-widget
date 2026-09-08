@@ -220,6 +220,61 @@ let missingDateOpened = try MomentCrypto.open(missingDatePayload, spaceGeneratio
 require(missingDateOpened.manifest.capturedAt == nil, "missing date was invented")
 require(missingDateOpened.manifest.captureDateIsMissing, "missing date flag was lost")
 
+let emptyCaption = try MomentCaption.normalized(" \t\r\n　")
+require(emptyCaption == nil, "blank caption was retained")
+let canonicalCaption = try MomentCaption.normalized("  ねこ\r\nお昼寝\u{2028}また明日  ")
+require(canonicalCaption == "ねこ\nお昼寝\nまた明日", "caption newlines were not normalized")
+let hundredCats = String(repeating: "🐈", count: 100)
+let fullCaption = try MomentCaption.normalized(hundredCats)
+require(fullCaption == hundredCats, "100 visible characters were rejected")
+for invalidCaption in [hundredCats + "🐈", "a\nb\nc\nd", "a" + String(repeating: "\u{0301}", count: 2_048)] {
+    require(MomentCaption.validationMessage(for: invalidCaption) != nil, "caption error was not explained")
+    do {
+        _ = try MomentCaption.normalized(invalidCaption)
+        fatalError("caption outside limits was accepted")
+    } catch MomentSharingError.invalidPayload {}
+}
+
+let privateCaption = "caption_fixture_private\nひとこと"
+let captionPayload = try MomentCrypto.prepare(
+    canonicalJPEG: jpeg, capturedAt: capturedAt, pixelWidth: 1_920, pixelHeight: 1_280,
+    context: context, spaceGenerationKey: roomKey, caption: privateCaption
+)
+let captionOpened = try MomentCrypto.open(captionPayload, spaceGenerationKey: roomKey)
+require(captionOpened.jpeg == jpeg, "caption changed photograph bytes")
+require(captionOpened.manifest.caption == privateCaption, "encrypted caption did not round trip")
+let captionOuterJSON = try JSONEncoder().encode(captionPayload)
+require(captionOuterJSON.range(of: Data("caption_fixture_private".utf8)) == nil,
+        "caption plaintext escaped the encrypted manifest")
+require(captionOuterJSON.range(of: Data("\"caption\"".utf8)) == nil,
+        "caption key escaped the encrypted manifest")
+
+// Build 134's manifest fields: its decoder ignores the additive caption,
+// while the version, media digest and encrypted object format stay unchanged.
+private struct LegacyMomentManifest: Decodable {
+    let protocolVersion: Int
+    let kind: MomentKind
+    let capturedAt: Date?
+    let captureDateIsMissing: Bool
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let plaintextSHA256: Data
+}
+let legacyManifestDecoder = JSONDecoder()
+legacyManifestDecoder.dateDecodingStrategy = .millisecondsSince1970
+let legacyManifest = try legacyManifestDecoder.decode(
+    LegacyMomentManifest.self, from: captionOpened.manifest.encoded()
+)
+require(legacyManifest.protocolVersion == 2 && legacyManifest.kind == context.kind,
+        "caption broke the legacy manifest version")
+require(legacyManifest.plaintextSHA256 == Data(SHA256.hash(data: jpeg)),
+        "caption broke legacy photo validation")
+let oldManifestBytes = try opened.manifest.encoded()
+require(oldManifestBytes.range(of: Data("\"caption\"".utf8)) == nil,
+        "absent caption added a field to the old format")
+let oldManifest = try MomentEncryptedManifest.decodeValidated(oldManifestBytes)
+require(oldManifest.caption == nil, "old manifest invented a caption")
+
 var tamperedMedia = payload.ciphertext
 tamperedMedia[tamperedMedia.startIndex] ^= 0x01
 let tampered = MomentPreparedPayload(

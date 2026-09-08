@@ -299,7 +299,8 @@ struct MomentShareHandoffProcessor: Sendable {
                     pixelWidth: claim.record.pixelWidth,
                     pixelHeight: claim.record.pixelHeight,
                     context: context,
-                    spaceGenerationKey: roomKey
+                    spaceGenerationKey: roomKey,
+                    caption: claim.record.caption
                 )
                 _ = try reconcileOrPromote(
                     claim: claim,
@@ -544,7 +545,8 @@ struct MomentShareHandoffProcessor: Sendable {
                 payload: payload,
                 senderPolicyVersion: current.senderPolicyVersion,
                 senderPolicyAcceptedAt: current.senderPolicyAcceptedAt,
-                localThumbnailJPEG: localThumbnailJPEG
+                localThumbnailJPEG: localThumbnailJPEG,
+                localCaption: current.caption
             )
         }
     }
@@ -619,7 +621,8 @@ struct MomentShareHandoffProcessor: Sendable {
             kind: record.kind,
             keyEpoch: 1,
             senderPolicyVersion: record.senderPolicyVersion,
-            senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
+            senderPolicyAcceptedAt: record.senderPolicyAcceptedAt,
+            localCaption: record.caption
         )
     }
 
@@ -639,6 +642,7 @@ struct MomentShareHandoffProcessor: Sendable {
               ),
               existing.context.kind == record.kind,
               existing.context.keyEpoch == 1,
+              existing.localCaption == record.caption,
               existing.senderPolicyVersion == record.senderPolicyVersion,
               Self.samePersistedSecond(
                   existing.senderPolicyAcceptedAt,

@@ -72,7 +72,8 @@ struct MomentShareIngressService {
         _ photo: MomentShareIngressPhoto,
         admissionID: UUID,
         senderPolicyAcceptedAt: Date,
-        now: Date = .now
+        now: Date = .now,
+        caption: String? = nil
     ) async throws {
         _ = try await Task.detached(priority: .userInitiated) {
             try MomentShareHandoffStore.stageCapture(
@@ -83,7 +84,8 @@ struct MomentShareIngressService {
                 pixelHeight: photo.pixelHeight,
                 senderPolicyVersion: Self.senderPolicyVersion,
                 senderPolicyAcceptedAt: senderPolicyAcceptedAt,
-                now: now
+                now: now,
+                caption: caption
             )
         }.value
     }

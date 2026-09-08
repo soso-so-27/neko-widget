@@ -2549,7 +2549,8 @@ actor SharingRuntimeSelfTestRunner {
             pixelHeight: preview.pixelHeight,
             senderPolicyVersion: 1,
             senderPolicyAcceptedAt: acceptedAt,
-            now: base.addingTimeInterval(2 * 60 * 60)
+            now: base.addingTimeInterval(2 * 60 * 60),
+            caption: "  写真に結び付いたひとこと\r\n再試行でも同じ  "
         )
         let spaceID = opaque(0x61)
         let memberID = opaque(0x62)
@@ -2569,12 +2570,14 @@ actor SharingRuntimeSelfTestRunner {
             pixelWidth: reconcileRecord.pixelWidth,
             pixelHeight: reconcileRecord.pixelHeight,
             context: context,
-            spaceGenerationKey: Data(repeating: 0x63, count: 32)
+            spaceGenerationKey: Data(repeating: 0x63, count: 32),
+            caption: reconcileRecord.caption
         )
         let durable = try MomentSharingStateStore.enqueue(
             payload: payload,
             senderPolicyVersion: reconcileRecord.senderPolicyVersion,
             senderPolicyAcceptedAt: reconcileRecord.senderPolicyAcceptedAt,
+            localCaption: reconcileRecord.caption,
             validating: token,
             now: base.addingTimeInterval(2 * 60 * 60)
         )
@@ -2583,6 +2586,36 @@ actor SharingRuntimeSelfTestRunner {
             validating: token,
             now: base.addingTimeInterval(2 * 60 * 60 + 1)
         ) else { throw MomentSharingError.stateUnavailable }
+        guard reconcileClaim.record.caption == "写真に結び付いたひとこと\n再試行でも同じ",
+              durable.localCaption == reconcileClaim.record.caption
+        else { throw MomentSharingError.stateUnavailable }
+        var changedCaptionRecord = reconcileClaim.record
+        changedCaptionRecord.caption = "別のひとこと"
+        let changedCaptionClaim = MomentPendingCaptureClaim(
+            record: changedCaptionRecord, claimID: reconcileClaim.claimID
+        )
+        var promotedChangedCaption = false
+        do {
+            try MomentShareHandoffStore.promoteCapture(
+                changedCaptionClaim, validating: token,
+                now: base.addingTimeInterval(2 * 60 * 60 + 2)
+            ) { _ in promotedChangedCaption = true }
+            throw MomentSharingError.invalidPayload
+        } catch MomentSharingError.stateUnavailable {}
+        guard !promotedChangedCaption else { throw MomentSharingError.invalidPayload }
+        let durableBytes = try JSONEncoder().encode(durable)
+        let durableRoundTrip = try JSONDecoder().decode(MomentOutboxItem.self, from: durableBytes)
+        guard durableRoundTrip.localCaption == durable.localCaption else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard var legacyOutboxJSON = try JSONSerialization.jsonObject(with: durableBytes) as? [String: Any]
+        else { throw MomentSharingError.stateUnavailable }
+        legacyOutboxJSON.removeValue(forKey: "localCaption")
+        let legacyOutbox = try JSONDecoder().decode(MomentOutboxItem.self,
+            from: JSONSerialization.data(withJSONObject: legacyOutboxJSON))
+        guard legacyOutbox.localCaption == nil,
+              legacyOutbox.ciphertextSHA256 == durable.ciphertextSHA256
+        else { throw MomentSharingError.stateUnavailable }
         let reconciled = try MomentShareHandoffStore.promoteCapture(
             reconcileClaim,
             validating: token,
@@ -2599,11 +2632,14 @@ actor SharingRuntimeSelfTestRunner {
                     kind: record.kind,
                     keyEpoch: 1,
                     senderPolicyVersion: record.senderPolicyVersion,
-                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt
+                    senderPolicyAcceptedAt: record.senderPolicyAcceptedAt,
+                    localCaption: record.caption
                 ) else { throw MomentSharingError.stateUnavailable }
             return existing
         }
         guard reconciled.id == durable.id,
+              reconciled.localCaption == durable.localCaption,
+              reconciled.ciphertextSHA256 == durable.ciphertextSHA256,
               try MomentShareHandoffStore.nextPendingCapture(
                   admissionID: secondAdmission.id,
                   validating: token,
@@ -3642,7 +3678,8 @@ actor SharingRuntimeSelfTestRunner {
             committedAt: baseDate,
             receivedAt: baseDate,
             state: .available,
-            accessExpiresAt: baseDate.addingTimeInterval(30 * 24 * 60 * 60)
+            accessExpiresAt: baseDate.addingTimeInterval(30 * 24 * 60 * 60),
+            caption: "失効した写真と一緒に消すひとこと"
         ).validated()
         let jpeg = Data([0xFF, 0xD8, 0xFF, 0xD9])
         _ = try MomentSharingStateStore.publishReceivedJPEG(
@@ -3799,6 +3836,7 @@ actor SharingRuntimeSelfTestRunner {
         let revoked = try MomentSharingStateStore.load()
         guard revoked.savedMemories.isEmpty,
               revoked.inbox.first(where: { $0.id == momentID })?.state == .revoked,
+              revoked.inbox.first(where: { $0.id == momentID })?.caption == nil,
               revoked.inbox.first(where: { $0.id == blockedMomentID })?.state == .blocked
         else { throw MomentSharingError.stateUnavailable }
 
@@ -4545,7 +4583,8 @@ actor SharingRuntimeSelfTestRunner {
                     kind: .live,
                     keyEpoch: 1
                 ),
-                spaceGenerationKey: roomKey
+                spaceGenerationKey: roomKey,
+                caption: "受信した写真のひとこと"
             )
             let momentID = "moment_inbound_\(suffix)"
             let committedAt = Date().addingTimeInterval(-60)
@@ -4639,6 +4678,7 @@ actor SharingRuntimeSelfTestRunner {
         guard recoveredState.changeCursor == disabledFixture.0.cursor,
               recoveredState.inbox.count == 1,
               recoveredState.inbox[0].state == .acknowledged,
+              recoveredState.inbox[0].caption == "受信した写真のひとこと",
               recoveredCounts.downloads == 2,
               recoveredCounts.acknowledgements == 1,
               recoveredAnalysisCount == 2,
@@ -4670,6 +4710,7 @@ actor SharingRuntimeSelfTestRunner {
         guard deletedVisibleState.inbox.count == 1,
               deletedVisibleState.inbox[0].state == .revoked,
               deletedVisibleState.inbox[0].localJPEGFileName == nil,
+              deletedVisibleState.inbox[0].caption == nil,
               deletedVisibleState.savedMemories.isEmpty,
               deletedVisibleState.pawOutbox.isEmpty,
               !FileManager.default.fileExists(atPath: disabledFixture.2.path),

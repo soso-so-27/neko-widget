@@ -154,8 +154,12 @@ struct MomentPendingCaptureRecord: Codable, Equatable, Identifiable, Sendable {
     var claimedAt: Date?
     var nextRetryAt: Date?
     var lastErrorCode: String?
+    var caption: String? = nil
 
     func validated() throws -> Self {
+        guard try MomentCaption.normalized(caption) == caption else {
+            throw MomentSharingError.stateUnavailable
+        }
         let hasJPEGSignature = canonicalJPEG.count >= 4
             && canonicalJPEG.starts(with: [UInt8(0xff), 0xd8, 0xff])
             && canonicalJPEG.suffix(2).elementsEqual([UInt8(0xff), 0xd9])
@@ -988,7 +992,8 @@ enum MomentShareHandoffStore {
         requiredHostModerationVersion: Int = MomentSharingProtocol.moderationVersion,
         senderPolicyVersion: Int,
         senderPolicyAcceptedAt: Date,
-        now: Date = .now
+        now: Date = .now,
+        caption: String? = nil
     ) throws -> MomentPendingCaptureRecord {
         let id = UUID()
         let record = try MomentPendingCaptureRecord(
@@ -1014,7 +1019,8 @@ enum MomentShareHandoffStore {
             claimID: nil,
             claimedAt: nil,
             nextRetryAt: nil,
-            lastErrorCode: nil
+            lastErrorCode: nil,
+            caption: try MomentCaption.normalized(caption)
         ).validated()
         let encoded = try encode(record)
         guard encoded.count <= maximumEncodedCaptureBytes else {
@@ -1562,6 +1568,7 @@ enum MomentShareHandoffStore {
               current.clientRequestID == claim.record.clientRequestID,
               current.admissionID == claim.record.admissionID,
               current.canonicalJPEGSHA256 == claim.record.canonicalJPEGSHA256,
+              current.caption == claim.record.caption,
               !requiresUnexpiredCapture || current.expiresAt > now
         else { throw MomentSharingError.stateUnavailable }
         if requiresActiveAdmission {

@@ -2396,7 +2396,8 @@ actor MomentSharingCoordinator {
             receivedAt: .now,
             changeSequence: change.sequence,
             state: state,
-            accessExpiresAt: change.accessExpiresAt
+            accessExpiresAt: change.accessExpiresAt,
+            caption: state == .available ? manifest.caption : nil
         ).validated()
         // Final file publication and monotonic inbox mutation share the
         // lifecycle flock. A revoke/unlink either wins first or observes the
