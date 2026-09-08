@@ -508,7 +508,7 @@ struct FamilyWindowView: View {
             }
         ) { item in
             photoActionDialogs(receivedPhotoDetail(item.id), isDetail: true)
-                .task {
+                .task(id: pendingDetailMemoryConfirmationID) {
                     // Present the exact photo before asking to copy it. A
                     // Widget bookmark must not open a dialog behind the viewer.
                     await Task.yield()
