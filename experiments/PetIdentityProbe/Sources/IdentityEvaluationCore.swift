@@ -46,6 +46,7 @@ struct IdentityEvaluationResult: Sendable {
     let predictionsB: [IdentityPrediction]
     let reasonsA: [IdentityUnknownReason?]
     let reasonsB: [IdentityUnknownReason?]
+    let withheldSeparation: IdentityWithheldSeparation?
 }
 
 struct IdentityEvaluationCounts: Codable, Equatable, Sendable {
@@ -249,26 +250,27 @@ enum IdentityEvaluationCore {
         let radiusA = radius(referencesA)
         let radiusB = radius(referencesB)
 
-        func predict(_ input: [Float]?) -> (prediction: IdentityPrediction, reason: IdentityUnknownReason?) {
+        func predict(_ input: [Float]?) -> (prediction: IdentityPrediction, reason: IdentityUnknownReason?, distances: IdentityClassDistances?) {
             // Preserve the classifier's fail-closed order; diagnostics never
             // alter scoring, calibration or either acceptance threshold.
-            guard let input else { return (.unknown, .missingEmbedding) }
-            guard let vector = normalized(input) else { return (.unknown, .invalidEmbedding) }
+            guard let input else { return (.unknown, .missingEmbedding, nil) }
+            guard let vector = normalized(input) else { return (.unknown, .invalidEmbedding, nil) }
             let scoreA = score(vector, against: referencesA)
             let scoreB = score(vector, against: referencesB)
-            guard scoreA != scoreB else { return (.unknown, .equalScores) }
+            let distances = IdentityClassDistances(a: scoreA, b: scoreB)
+            guard scoreA != scoreB else { return (.unknown, .equalScores, distances) }
             let bestIsA = scoreA < scoreB
             let best = bestIsA ? scoreA : scoreB
             let runnerUp = bestIsA ? scoreB : scoreA
             let bestRadius = bestIsA ? radiusA : radiusB
-            guard bestRadius > 0, runnerUp > 0 else { return (.unknown, .degenerateCalibration) }
+            guard bestRadius > 0, runnerUp > 0 else { return (.unknown, .degenerateCalibration, distances) }
             let withinRadius = best <= bestRadius * radiusMultiplier
             let unambiguous = best / runnerUp <= maximumRatio
             switch (withinRadius, unambiguous) {
-            case (false, false): return (.unknown, .outsideRadiusAndAmbiguous)
-            case (false, true): return (.unknown, .outsideRadius)
-            case (true, false): return (.unknown, .ambiguous)
-            case (true, true): return (bestIsA ? .a : .b, nil)
+            case (false, false): return (.unknown, .outsideRadiusAndAmbiguous, distances)
+            case (false, true): return (.unknown, .outsideRadius, distances)
+            case (true, false): return (.unknown, .ambiguous, distances)
+            case (true, true): return (bestIsA ? .a : .b, nil, distances)
             }
         }
 
@@ -326,7 +328,11 @@ enum IdentityEvaluationCore {
         )
         return IdentityEvaluationResult(
             aggregate: aggregate, predictionsA: predictionsA, predictionsB: predictionsB,
-            reasonsA: reasonsA, reasonsB: reasonsB
+            reasonsA: reasonsA, reasonsB: reasonsB,
+            withheldSeparation: purpose == .diagnostic ? IdentityWithheldSeparation(perCat: [
+                .init(actual: .a, withheld: outcomesA.filter { $0.prediction == .unknown }.map { $0.distances }),
+                .init(actual: .b, withheld: outcomesB.filter { $0.prediction == .unknown }.map { $0.distances })
+            ]) : nil
         )
     }
 
