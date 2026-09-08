@@ -180,9 +180,14 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("WIDGET_VISUAL_REVIEW_FIXTURE", self.config)
         self.assertNotIn("WIDGET_VISUAL_REVIEW_FIXTURE", self.workflow)
-        self.assertIn('for size in ["medium", "large"]', self.widget_ui_test)
-        self.assertIn('springboard.pageIndicators.firstMatch', self.widget_ui_test)
+        self.assertIn('["medium", "large"].enumerated()', self.widget_ui_test)
+        self.assertNotIn('springboard.pageIndicators.firstMatch', self.widget_ui_test)
+        self.assertIn('.containing(.pageIndicator, identifier: nil)', self.widget_ui_test)
+        self.assertIn('galleryPage(pages) == [1, 3]', self.widget_ui_test)
+        self.assertIn('galleryPage(pages) == [index + 2, 3]', self.widget_ui_test)
         self.assertIn('NSPredicate(format: "value != %@", previousPage)', self.widget_ui_test)
+        self.assertIn('pixels == previousPixels', self.widget_ui_test)
+        self.assertIn('timeIntervalSince(unchangedSince) >= 0.5', self.widget_ui_test)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [

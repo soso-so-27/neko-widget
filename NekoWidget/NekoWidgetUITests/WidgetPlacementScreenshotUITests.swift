@@ -250,13 +250,18 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         }
 
         if captureAllSizes {
-            captureScreenshot(named: "widget-family-small", screenshot: fixtureScreenshot)
-            let pages = springboard.pageIndicators.firstMatch
-            guard pages.waitForExistence(timeout: 10) else {
+            // SpringBoard also exposes the obscured Home Screen page control.
+            // Only the Gallery's scroll view contains the size picker control.
+            let pages = springboard.scrollViews
+                .containing(.pageIndicator, identifier: nil)
+                .firstMatch.pageIndicators.firstMatch
+            guard pages.waitForExistence(timeout: 10),
+                  galleryPage(pages) == [1, 3] else {
                 fail("The Widget size page indicator is unavailable.", application: springboard)
                 return
             }
-            for size in ["medium", "large"] {
+            captureScreenshot(named: "widget-family-small", screenshot: fixtureScreenshot)
+            for (index, size) in ["medium", "large"].enumerated() {
                 guard let previousPage = pages.value as? String, !previousPage.isEmpty else {
                     fail("The Widget size page cannot be identified.", application: springboard)
                     return
@@ -273,7 +278,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     object: pages
                 )
                 guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
-                      let screenshot = waitForFixturePalette(timeout: 10) else {
+                      let screenshot = waitForFixturePalette(timeout: 10),
+                      galleryPage(pages) == [index + 2, 3] else {
                     fail("The Widget size did not advance to a rendered photo.", application: springboard)
                     return
                 }
@@ -360,12 +366,32 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    private func galleryPage(_ indicator: XCUIElement) -> [Int] {
+        guard let value = indicator.value as? String else { return [] }
+        return value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+    }
+
+    @MainActor
     private func waitForFixturePalette(timeout: TimeInterval) -> XCUIScreenshot? {
         let deadline = Date().addingTimeInterval(timeout)
+        var previousPixels: Data?
+        var unchangedSince = Date()
         repeat {
             let screenshot = XCUIScreen.main.screenshot()
             if fixturePaletteIsVisible(in: screenshot) {
-                return screenshot
+                // Loaded pixels alone can still be mid-transition. Require the
+                // actual captured screen to settle, within the same deadline.
+                let pixels = screenshot.pngRepresentation
+                if pixels == previousPixels {
+                    if Date().timeIntervalSince(unchangedSince) >= 0.5 {
+                        return screenshot
+                    }
+                } else {
+                    previousPixels = pixels
+                    unchangedSince = Date()
+                }
+            } else {
+                previousPixels = nil
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
