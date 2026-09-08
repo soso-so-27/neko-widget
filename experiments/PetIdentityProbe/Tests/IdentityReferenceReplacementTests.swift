@@ -1,0 +1,117 @@
+import XCTest
+import SwiftUI
+import UIKit
+@testable import PetIdentityProbe
+
+final class IdentityReferenceReplacementTests: XCTestCase {
+    private var saved: [IdentityPhotoSlot: [String]] {
+        [.referenceA: (0..<5).map { "a\($0)" }, .referenceB: (0..<5).map { "b\($0)" },
+         .evaluationA: ["eval-a"], .evaluationB: ["eval-b"]]
+    }
+    private func failed(_ thumbnail: CGImage? = nil) -> IdentityUnusableReference {
+        .init(slot: .referenceB, target: .init(index: 2, assetIdentifier: "b2"), thumbnail: thumbnail,
+              originalIssue: .catNotDetected, recoveryStatus: .noCandidate)
+    }
+    private func run(_ reference: IdentityUnusableReference) throws -> IdentityRecoveryRun {
+        .init(report: try IdentityRecoveryComparisonCore.report([]), unusableReferences: [reference])
+    }
+
+    func testOnlyCandidateFailedReferencesGetLocalPreviewsAndNeverEnterJSON() throws {
+        let missing = IdentityRecoveryItem(slot: .referenceB, original: nil, candidate: nil,
+            recoveryStatus: .noCandidate, originalIssue: .catNotDetected)
+        var requested = 0
+        let failed = try XCTUnwrap(IdentityUnusableReference.make(slot: .referenceB, index: 2,
+            identifier: "private-photo-id", input: missing, thumbnail: { requested += 1; return nil }))
+        XCTAssertEqual(requested, 1); XCTAssertNil(failed.thumbnail)
+        XCTAssertEqual(failed.title, "猫B・見本3枚目")
+        XCTAssertTrue(failed.reason.contains("検出できません"))
+        let recovered = IdentityRecoveryItem(slot: .referenceA, original: nil, candidate: [1], recoveryStatus: .recovered)
+        XCTAssertNil(IdentityUnusableReference.make(slot: .referenceA, index: 0, identifier: "a",
+            input: recovered, thumbnail: { XCTFail("do not retain successful reference images"); return nil }))
+        let evaluation = IdentityRecoveryItem(slot: .evaluationB, original: nil, candidate: nil, recoveryStatus: .noCandidate)
+        XCTAssertNil(IdentityUnusableReference.make(slot: .evaluationB, index: 0, identifier: "eval",
+            input: evaluation, thumbnail: { XCTFail("not a reference"); return nil }))
+        XCTAssertNil(IdentityUnusableReference.make(slot: .referenceA, index: 0, identifier: "wrong-slot",
+            input: missing, thumbnail: { XCTFail("mismatched slot"); return nil }))
+        let aggregate = try IdentityRecoveryComparisonCore.report([missing])
+        let local = IdentityRecoveryRun(report: aggregate, unusableReferences: [failed])
+        XCTAssertEqual(local.report.json, aggregate.json)
+        let json = try XCTUnwrap(local.report.json)
+        for forbidden in ["private-photo-id", "thumbnail", "assetIdentifier", "unusableReferences", "target"] {
+            XCTAssertFalse(json.contains(forbidden))
+        }
+        XCTAssertFalse(local.report.photosIncluded); XCTAssertFalse(local.report.identifiersIncluded)
+    }
+
+    @MainActor func testOneReplacementPreservesEveryOtherSelectionAndPersistsOnlyIDs() throws {
+        let archive = IdentitySelectionArchive(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProbeReferenceReplacement-\(UUID().uuidString)/selection-v1.json"))
+        defer { try? FileManager.default.removeItem(at: archive.url.deletingLastPathComponent()) }
+        try archive.save(saved)
+        let store = IdentityEvaluationStore(archive: archive)
+        let reference = failed()
+        store.recoveryResult = try run(reference)
+        store.replaceReference(reference)
+        let request = try XCTUnwrap(store.picker)
+        XCTAssertTrue(request.singleSelection); XCTAssertFalse(request.firstInputOnly)
+        XCTAssertTrue(store.pickerSelection(for: request).isEmpty)
+        store.selected(["new-b-reference"], request: request)
+        var expected = saved; expected[.referenceB]?[2] = "new-b-reference"
+        XCTAssertEqual(store.selections, expected); XCTAssertEqual(try archive.load(), expected)
+        XCTAssertNil(store.picker); XCTAssertNil(store.recoveryResult)
+        XCTAssertFalse(store.running); XCTAssertTrue(store.message?.contains("再確認") == true)
+        let reopened = IdentityEvaluationStore(archive: archive)
+        XCTAssertEqual(reopened.selections, expected)
+        let json = String(decoding: try Data(contentsOf: archive.url), as: UTF8.self)
+        XCTAssertFalse(json.contains("thumbnail")); XCTAssertFalse(json.contains("recoveryStatus"))
+    }
+
+    @MainActor func testCancelInvalidDuplicateAndSamePhotoLeaveOriginalSelectionsAndPreview() throws {
+        let attempts: [[String?]] = [[], [nil], [""], ["b1"], ["a0"], ["eval-b"], ["new", "another"], ["b2"]]
+        for chosen in attempts {
+            let store = IdentityEvaluationStore()
+            store.selections = saved; store.recoveryResult = try run(failed())
+            store.replaceReference(failed())
+            let request = try XCTUnwrap(store.picker)
+            store.selected(chosen, request: request)
+            XCTAssertEqual(store.selections, saved)
+            XCTAssertEqual(store.recoveryResult?.unusableReferences.first?.target, failed().target)
+            XCTAssertNil(store.picker); XCTAssertFalse(store.running)
+        }
+    }
+
+    @MainActor func testStaleAndBackgroundPickerCannotReplaceOrReviveReference() throws {
+        let store = IdentityEvaluationStore()
+        store.selections = saved; store.recoveryResult = try run(failed())
+        store.replaceReference(failed())
+        let old = try XCTUnwrap(store.picker)
+        store.selections[.referenceB]?[2] = "changed"
+        store.selected(["new"], request: old)
+        XCTAssertEqual(store.selections[.referenceB]?[2], "changed")
+        store.selections = saved; store.recoveryResult = try run(failed())
+        store.replaceReference(failed())
+        let beforeBackground = try XCTUnwrap(store.picker)
+        store.suspend()
+        store.selected(["late"], request: beforeBackground)
+        XCTAssertEqual(store.selections, saved); XCTAssertNil(store.recoveryResult); XCTAssertNil(store.picker)
+        store.replaceReference(failed()); XCTAssertNil(store.picker) // No current failed-reference result.
+        store.recoveryResult = try run(failed()); store.replaceReference(failed())
+        let newer = try XCTUnwrap(store.picker)
+        store.selected(["late"], request: old)
+        XCTAssertEqual(store.picker?.id, newer.id); XCTAssertEqual(store.selections, saved)
+    }
+
+    @MainActor func testFailedReferenceCardRendersWithGeneratedPhotoAndUnavailablePhoto() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: IdentityDetectorControlID.orange.rawValue, withExtension: "png"))
+        let image = try XCTUnwrap(UIImage(contentsOfFile: url.path)?.cgImage)
+        for (name, thumbnail) in [("generated-failed-reference-card", Optional(image)), ("unavailable-reference-card", nil)] {
+            let view = IdentityUnusableReferenceView(reference: failed(thumbnail), enabled: true, replace: {})
+                .padding(16).frame(width: 390).background(Color.black).environment(\.colorScheme, .dark)
+            let renderer = ImageRenderer(content: view); renderer.scale = 2
+            let rendered = try XCTUnwrap(renderer.uiImage)
+            XCTAssertEqual(rendered.size.width, 390); XCTAssertGreaterThan(rendered.size.height, 250)
+            let attachment = XCTAttachment(image: rendered)
+            attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+}

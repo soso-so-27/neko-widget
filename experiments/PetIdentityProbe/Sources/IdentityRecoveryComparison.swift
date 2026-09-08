@@ -1,6 +1,43 @@
 import CoreGraphics
 import Foundation
 
+// Intentionally not Encodable. Failed-reference previews and IDs stay on this screen only.
+struct IdentityRecoveryRun {
+    let report: IdentityRecoveryComparisonReport
+    let unusableReferences: [IdentityUnusableReference]
+}
+
+struct IdentityReferenceTarget: Equatable {
+    let index: Int
+    let assetIdentifier: String
+}
+
+struct IdentityUnusableReference: Identifiable {
+    let slot: IdentityPhotoSlot
+    let target: IdentityReferenceTarget
+    let thumbnail: CGImage?
+    let originalIssue: IdentityInputIssue?
+    let recoveryStatus: IdentityRecoveryStatus
+    var id: String { "\(slot.rawValue)-\(target.index)" }
+    var title: String { "猫\(slot.cat == 0 ? "A" : "B")・見本\(target.index + 1)枚目" }
+    var reason: String {
+        switch recoveryStatus {
+        case .noCandidate: "元の方法でも、50％で探しても猫を検出できませんでした。"
+        case .multipleCandidates: "50％で探したところ、猫の候補が複数あり範囲を決められませんでした。"
+        case .invalidCrop: "50％で見つけた猫の範囲を、安全に切り抜けませんでした。"
+        case .conversionFailed, .detectionFailed, .resultsUnavailable: "追加の検出処理を完了できませんでした。"
+        default: originalIssue?.title ?? "この見本を読み取れませんでした。"
+        }
+    }
+
+    static func make(slot: IdentityPhotoSlot, index: Int, identifier: String,
+                     input: IdentityRecoveryItem, thumbnail: () -> CGImage?) -> Self? {
+        guard slot == input.slot, slot.isReference, (0..<slot.count).contains(index), input.candidate == nil else { return nil }
+        return Self(slot: slot, target: .init(index: index, assetIdentifier: identifier),
+                    thumbnail: thumbnail(), originalIssue: input.originalIssue, recoveryStatus: input.recoveryStatus)
+    }
+}
+
 // Local-only inputs. Never persist or encode feature vectors or photo identifiers.
 struct IdentityRecoveryItem {
     let slot: IdentityPhotoSlot

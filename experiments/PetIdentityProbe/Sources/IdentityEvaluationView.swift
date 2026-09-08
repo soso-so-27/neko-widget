@@ -6,6 +6,8 @@ struct IdentityPickerRequest: Identifiable {
     let id = UUID()
     let slot: IdentityPhotoSlot
     var firstInputOnly = false
+    var replacement: IdentityReferenceTarget? = nil
+    var singleSelection: Bool { firstInputOnly || replacement != nil }
 }
 
 @MainActor
@@ -21,7 +23,7 @@ final class IdentityEvaluationStore: ObservableObject {
     @Published var checkingDetector = false
     @Published var checkingInput = false
     @Published var checkingRecovery = false
-    @Published var recoveryResult: IdentityRecoveryComparisonReport?
+    @Published var recoveryResult: IdentityRecoveryRun?
     @Published var showsComparison = false
     @Published var picker: IdentityPickerRequest?
     private var task: Task<Void, Never>?
@@ -31,11 +33,11 @@ final class IdentityEvaluationStore: ObservableObject {
     private let service = IdentityPhotoService()
     private let inputInspector: ((String) async throws -> IdentityInputRun)?
     private let detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)?
-    private let recoveryInspector: (([IdentityPhotoSlot: [String]]) async throws -> IdentityRecoveryComparisonReport)?
+    private let recoveryInspector: (([IdentityPhotoSlot: [String]]) async throws -> IdentityRecoveryRun)?
 
     init(archive: IdentitySelectionArchive? = nil, inputInspector: ((String) async throws -> IdentityInputRun)? = nil,
          detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)? = nil,
-         recoveryInspector: (([IdentityPhotoSlot: [String]]) async throws -> IdentityRecoveryComparisonReport)? = nil) {
+         recoveryInspector: (([IdentityPhotoSlot: [String]]) async throws -> IdentityRecoveryRun)? = nil) {
         self.archive = archive
         self.inputInspector = inputInspector
         self.detectorInspector = detectorInspector
@@ -68,6 +70,24 @@ final class IdentityEvaluationStore: ObservableObject {
     var canCompareDetector: Bool { !running && !archiveReadFailed }
     var canCompareRecovery: Bool { !running && !archiveReadFailed && selectedCount > 0 }
 
+    func replaceReference(_ reference: IdentityUnusableReference) {
+        guard canCompareRecovery, picker == nil, reference.slot.isReference,
+              recoveryResult?.unusableReferences.contains(where: {
+                  $0.slot == reference.slot && $0.target == reference.target
+              }) == true,
+              let current = selections[reference.slot], current.indices.contains(reference.target.index),
+              current[reference.target.index] == reference.target.assetIdentifier else { return }
+        message = nil
+        picker = IdentityPickerRequest(slot: reference.slot, replacement: reference.target)
+    }
+
+    func pickerSelection(for request: IdentityPickerRequest) -> [String] {
+        // No preselection for one-item replacement: Cancel must not deselect the old reference.
+        if request.replacement != nil { return [] }
+        let current = selections[request.slot] ?? []
+        return request.firstInputOnly ? Array(current.prefix(1)) : current
+    }
+
     func choose(_ slot: IdentityPhotoSlot, firstInputOnly: Bool = false) {
         guard !running, !archiveReadFailed else { return }
         message = nil
@@ -90,12 +110,24 @@ final class IdentityEvaluationStore: ObservableObject {
         guard !running, !archiveReadFailed else { return }
         // With preselection PHPicker returns those IDs on Cancel; an empty
         // result means the user explicitly deselected everything (or canceled an empty slot).
-        guard ids.count <= (request.firstInputOnly ? 1 : slot.count), ids.allSatisfy({ $0 != nil }), Set(ids.compactMap { $0 }).count == ids.count else {
+        guard ids.count <= (request.singleSelection ? 1 : slot.count), ids.allSatisfy({ $0?.isEmpty == false }), Set(ids.compactMap { $0 }).count == ids.count else {
             message = "\(slot.title)を選んでください。限定アクセスの場合は、選ぶ写真にもアクセスを許可してください。"
             return
         }
         var values = ids.compactMap { $0 }
-        if request.firstInputOnly {
+        if let target = request.replacement {
+            guard !request.firstInputOnly, slot.isReference, let chosen = values.first else { return }
+            values = selections[slot] ?? []
+            guard values.indices.contains(target.index), values[target.index] == target.assetIdentifier else {
+                message = "選択が変わったため入れ替えませんでした。もう一度比較してください。"
+                return
+            }
+            values[target.index] = chosen // Keep every other slot and its exact ordering.
+            guard Set(values).count == values.count else {
+                message = "ほかの見本とは別の写真を選んでください。元の選択は残しています。"
+                return
+            }
+        } else if request.firstInputOnly {
             // This picker replaces/moves the first A reference, never discards the other four.
             guard slot == .referenceA, let chosen = values.first else { return }
             values = selections[slot] ?? []
@@ -122,6 +154,9 @@ final class IdentityEvaluationStore: ObservableObject {
             storageWarning = nil
         } catch {
             storageWarning = "選択を端末に保存できませんでした。この画面では使えますが、閉じると選び直しになる可能性があります。"
+        }
+        if request.replacement != nil {
+            message = "見本1枚を入れ替えました。上の「保存した\(selectedCount)枚で比較する」で再確認してください。"
         }
         if request.firstInputOnly { checkInput() }
     }
@@ -204,7 +239,7 @@ final class IdentityEvaluationStore: ObservableObject {
         task = Task { @MainActor in
             do {
                 try Task.checkCancellation()
-                let completed: IdentityRecoveryComparisonReport
+                let completed: IdentityRecoveryRun
                 if let recoveryInspector { completed = try await recoveryInspector(selected) }
                 else {
                     completed = try await service.compareIdentityRecovery(selections: selected) { [weak self] count in
@@ -326,9 +361,20 @@ struct IdentityEvaluationView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if let comparison = store.recoveryResult {
+                if !comparison.unusableReferences.isEmpty {
+                    Section("使えなかった見本") {
+                        Text("50％で探す方法でも使えなかった見本です。他の見本と判定用の写真は残したまま、この1枚だけ入れ替えられます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        ForEach(comparison.unusableReferences) { reference in
+                            IdentityUnusableReferenceView(reference: reference, enabled: !store.running) {
+                                store.replaceReference(reference)
+                            }
+                        }
+                    }
+                }
                 Section("見分け方の比較結果") {
-                    IdentityRecoveryComparisonView(report: comparison)
-                    if let json = comparison.json {
+                    IdentityRecoveryComparisonView(report: comparison.report)
+                    if let json = comparison.report.json {
                         ShareLink("比較結果を共有", item: json).accessibilityIdentifier("identity-recovery-share")
                     }
                 }
@@ -431,8 +477,8 @@ struct IdentityEvaluationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $store.picker) { request in
             IdentityPhotoPicker(slot: request.slot,
-                                selected: request.firstInputOnly ? Array((store.selections[request.slot] ?? []).prefix(1)) : store.selections[request.slot] ?? [],
-                                firstInputOnly: request.firstInputOnly) {
+                                selected: store.pickerSelection(for: request),
+                                singleSelection: request.singleSelection) {
                 store.selected($0, request: request)
             }
         }
@@ -715,12 +761,12 @@ struct IdentityEvaluationView: View {
 private struct IdentityPhotoPicker: UIViewControllerRepresentable {
     let slot: IdentityPhotoSlot
     let selected: [String]
-    var firstInputOnly = false
+    var singleSelection = false
     let completion: ([String?]) -> Void
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
-        configuration.selectionLimit = firstInputOnly ? 1 : slot.count
+        configuration.selectionLimit = singleSelection ? 1 : slot.count
         configuration.selection = .ordered
         configuration.preselectedAssetIdentifiers = selected
         let picker = PHPickerViewController(configuration: configuration)

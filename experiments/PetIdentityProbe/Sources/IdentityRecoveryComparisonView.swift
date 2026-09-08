@@ -1,5 +1,31 @@
 import SwiftUI
 
+struct IdentityUnusableReferenceView: View {
+    let reference: IdentityUnusableReference
+    let enabled: Bool
+    let replace: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(reference.title).font(.headline)
+            Group {
+                if let thumbnail = reference.thumbnail {
+                    Image(decorative: thumbnail, scale: 1).resizable().scaledToFit()
+                } else {
+                    ContentUnavailableView("写真を表示できません", systemImage: "photo",
+                        description: Text("写真へのアクセスや端末内の保存状態を確認してください。"))
+                }
+            }.frame(maxWidth: .infinity).frame(height: 180)
+            Text(reference.reason).font(.subheadline)
+            Button("この1枚を入れ替える", action: replace)
+                .buttonStyle(.borderedProminent).disabled(!enabled)
+                .accessibilityIdentifier("identity-reference-replace-\(reference.id)")
+            Text("同じ猫の別の写真を選んでください。原本は削除・変更しません。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }.padding(.vertical, 4)
+    }
+}
+
 struct IdentityRecoveryComparisonView: View {
     let report: IdentityRecoveryComparisonReport
     var body: some View {

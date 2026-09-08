@@ -175,10 +175,12 @@ final class IdentityRecoveryComparisonTests: XCTestCase {
 
     @MainActor func testStoreReusesSavedSelectionsAndDiscardsLateAndBackgroundResults() async throws {
         let began = expectation(description: "comparison began")
-        var pending: CheckedContinuation<IdentityRecoveryComparisonReport, Never>?
+        var pending: CheckedContinuation<IdentityRecoveryRun, Never>?
         var calls = 0
         let saved: [IdentityPhotoSlot: [String]] = [.referenceA: ["saved-a"], .referenceB: ["saved-b"]]
-        let report = try IdentityRecoveryComparisonCore.report([])
+        let report = IdentityRecoveryRun(report: try IdentityRecoveryComparisonCore.report([]), unusableReferences: [
+            .init(slot: .referenceB, target: .init(index: 0, assetIdentifier: "saved-b"), thumbnail: nil,
+                  originalIssue: .catNotDetected, recoveryStatus: .noCandidate)])
         let store = IdentityEvaluationStore(recoveryInspector: { selections in
             XCTAssertEqual(selections, saved); calls += 1
             return await withCheckedContinuation { pending = $0; began.fulfill() }

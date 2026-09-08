@@ -136,7 +136,7 @@ actor IdentityPhotoService {
     private var busy = false
 
     func compareIdentityRecovery(selections: [IdentityPhotoSlot: [String]],
-                                 progress: @Sendable (Int) async -> Void) async throws -> IdentityRecoveryComparisonReport {
+                                 progress: @Sendable (Int) async -> Void) async throws -> IdentityRecoveryRun {
         guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
         busy = true
         defer { busy = false }
@@ -152,8 +152,9 @@ actor IdentityPhotoService {
         fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
         var engine: IdentityCPUSession?
         var inputs: [IdentityRecoveryItem] = []
+        var unusableReferences: [IdentityUnusableReference] = []
         for slot in IdentityPhotoSlot.allCases {
-            for id in selections[slot] ?? [] {
+            for (index, id) in (selections[slot] ?? []).enumerated() {
                 try Task.checkCancellation()
                 let input = try autoreleasepool {
                     let prepared = Self.preparePhoto(assets[id]) // Read this selected raster once for both arms.
@@ -165,6 +166,10 @@ actor IdentityPhotoService {
                             return try engine!.embedding(crop) // Model errors abort; never counted as uncertain identities.
                         })
                     input.originalIssue = prepared.issue
+                    if let failed = IdentityUnusableReference.make(slot: slot, index: index, identifier: id,
+                            input: input, thumbnail: { prepared.image.flatMap(Self.thumbnail) }) {
+                        unusableReferences.append(failed)
+                    }
                     return input
                 }
                 inputs.append(input)
@@ -174,8 +179,9 @@ actor IdentityPhotoService {
         try Task.checkCancellation()
         let report = try IdentityRecoveryComparisonCore.report(inputs)
         try Task.checkCancellation()
-        // No images, identifiers, per-photo outcomes or embeddings escape this method.
-        return report
+        // Only failed-reference thumbnails/IDs reach the local UI; never the Encodable report.
+        // Full images, embeddings and individual predictions are released here.
+        return IdentityRecoveryRun(report: report, unusableReferences: unusableReferences)
     }
 
     func compareDetector(id: String?) async throws -> IdentityDetectorComparisonRun {
