@@ -340,7 +340,7 @@ struct IdentityEvaluationView: View {
     var body: some View {
         Form {
             Section("保存済みの写真で見分け方を比較") {
-                Text("元の方法と、未検出の写真だけ50％で探す方法を比較します。猫A・Bの選択はそのまま使います。")
+                Text("同じ写真で「見本をまとめる方法」と「最も似た見本を探す方法」を一度に比較します。保存した猫A・Bの選択はそのまま使います。")
                     .font(.subheadline)
                 Button("保存した\(store.selectedCount)枚で比較する") { store.compareRecovery() }
                     .buttonStyle(.borderedProminent).disabled(!store.canCompareRecovery)
@@ -357,7 +357,7 @@ struct IdentityEvaluationView: View {
                         value: Double(store.progress), total: Double(max(1, store.selectedCount)))
                     Button("中止（選択は残す）") { store.suspend() }
                 }
-                Text("別の猫との取り違えも比較します。本体の分類は変更しません。")
+                Text("候補の探し方と従来の保留判定を分けて確認します。写真の追加選択や本体の分類変更はしません。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if let comparison = store.recoveryResult {

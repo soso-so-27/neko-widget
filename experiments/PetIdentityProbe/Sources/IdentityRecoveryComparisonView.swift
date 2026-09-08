@@ -34,6 +34,42 @@ struct IdentityRecoveryComparisonView: View {
     let report: IdentityRecoveryComparisonReport
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let ranking = report.referenceRanking {
+                IdentityReferenceRankingView(comparison: ranking)
+                Divider()
+                if let counts = report.candidate.aggregate?.overall {
+                    Text("従来の保留基準を適用した結果").font(.headline)
+                    Text("正解 \(counts.correct)・誤判定 \(counts.wrong)・保留 \(counts.unknown)枚")
+                        .font(.subheadline).monospacedDigit()
+                    Text("上の順位比較とは別です。判定の基準は緩めていません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if report.candidate.status != .evaluated {
+                Text("照合方式の比較は未実行：\(report.candidate.status.title)").font(.subheadline)
+            }
+            DisclosureGroup("猫の検出・入力回復の比較") { detectionComparison }
+            if let separation = report.candidate.withheldSeparation {
+                DisclosureGroup("保留の距離差") { IdentityWithheldSeparationView(separation: separation) }
+            }
+            DisclosureGroup("見本・判定写真の内訳") {
+                ForEach(Array(report.slots.enumerated()), id: \.offset) { _, slot in
+                    if let kind = IdentityPhotoSlot(rawValue: slot.slot) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(kind.title).font(.subheadline)
+                            Text("選択\(slot.selected)枚・特徴量 \(slot.usableOriginal) → \(slot.usableCandidate)枚")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Text("同じ写真を再利用する研究用の比較です。よくなっても精度検証の合格とは扱いません。画像・特徴量・写真ごとの一覧は共有しません。猫ごとに1枚の集計はその1枚の結果が分かります。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private var detectionComparison: some View {
+        VStack(alignment: .leading, spacing: 12) {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
                 GridRow { Text(""); Text("元の方法"); Text("50％も使う") }.font(.subheadline.bold())
                 GridRow {
@@ -58,27 +94,44 @@ struct IdentityRecoveryComparisonView: View {
                 Text("「—」は判定できていない項目です。0件や成功という意味ではありません。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if let separation = report.candidate.withheldSeparation {
-                IdentityWithheldSeparationView(separation: separation)
-            }
-            DisclosureGroup("見本・判定写真の内訳") {
-                ForEach(Array(report.slots.enumerated()), id: \.offset) { _, slot in
-                    if let kind = IdentityPhotoSlot(rawValue: slot.slot) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(kind.title).font(.subheadline)
-                            Text("選択\(slot.selected)枚・特徴量 \(slot.usableOriginal) → \(slot.usableCandidate)枚")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            Text("同じ写真を再利用する研究用の比較です。よくなっても精度検証の合格とは扱いません。画像・特徴量・写真ごとの一覧は共有しません。")
-                .font(.footnote).foregroundStyle(.secondary)
         }
     }
 
     private func count(_ arm: IdentityRecoveryArm, _ key: KeyPath<IdentityEvaluationCounts, Int>) -> some View {
         Text(arm.aggregate.map { "\($0.overall[keyPath: key])枚" } ?? "—")
+    }
+}
+
+struct IdentityReferenceRankingView: View {
+    let comparison: IdentityReferenceRankingComparison
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("候補の探し方を比較").font(.headline)
+            Text("同じ写真・同じ特徴量で、猫AとBのどちらが近いかを比較します。選択時の猫を正解として集計します。")
+                .font(.subheadline).foregroundStyle(.secondary)
+            method(comparison.aggregatedReferences, title: "見本をまとめる", detail: "従来と同じ距離のまとめ方・保留基準なし")
+            method(comparison.nearestReference, title: "最も似た見本を探す", detail: "各猫の見本5枚から、一番近い1枚で比較")
+            Text("上位＝識別成功ではありません").font(.subheadline.bold())
+            Text("知らない猫にもAかBが近いと出るため、この順位だけで自動振り分けはしません。同点・特徴量なしは順位を付けず、集計に残します。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private func method(_ method: IdentityRankingMethod, title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline.bold())
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+            Text("正しい猫が上位 \(method.overall.expectedFirst) / \(method.overall.selected)枚")
+                .font(.subheadline).monospacedDigit()
+            Text("別の猫が上位 \(method.overall.otherFirst)枚・順位なし \(method.overall.notRanked)枚")
+                .font(.footnote).monospacedDigit()
+            ForEach(method.perCat, id: \.label) { cat in
+                Text("猫\(cat.label.rawValue)：正しい猫 \(cat.counts.expectedFirst)・別の猫 \(cat.counts.otherFirst)・順位なし \(cat.counts.notRanked)")
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 

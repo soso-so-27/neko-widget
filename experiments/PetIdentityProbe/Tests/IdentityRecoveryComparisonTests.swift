@@ -130,10 +130,10 @@ final class IdentityRecoveryComparisonTests: XCTestCase {
         XCTAssertNoThrow(try IdentityRecoveryComparisonCore.validateSelection([.referenceA: ["one-selected-id"]]))
         let report = try IdentityRecoveryComparisonCore.report(items())
         let json = try XCTUnwrap(report.json)
-        XCTAssertEqual(report.protocolIdentifier, "pet-identity-half-recovery-paired-diagnostic-v2")
+        XCTAssertEqual(report.protocolIdentifier, "pet-identity-half-recovery-paired-diagnostic-v3")
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["protocolIdentifier", "appVersion", "appBuild", "modelSHA256", "runtimeVersion", "osVersion",
-            "scope", "method", "calibration", "duplicatePolicy", "photoFetch", "slots", "original", "candidate", "outcomeOrder", "pairedOutcomes",
+            "scope", "method", "calibration", "duplicatePolicy", "photoFetch", "slots", "original", "candidate", "outcomeOrder", "pairedOutcomes", "referenceRanking",
             "photosIncluded", "identifiersIncluded", "embeddingsIncluded", "individualPredictionsIncluded", "productionDataChanged", "productValidated"])
         for slot in try XCTUnwrap(object["slots"] as? [[String: Any]]) {
             XCTAssertEqual(Set(slot.keys), ["slot", "selected", "usableOriginal", "usableCandidate", "recoveryCounts", "originalInputIssues"])

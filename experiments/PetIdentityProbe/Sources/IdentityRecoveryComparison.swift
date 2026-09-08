@@ -128,7 +128,7 @@ struct IdentityRecoveryArm: Encodable {
 }
 
 struct IdentityRecoveryComparisonReport: Encodable {
-    let protocolIdentifier = "pet-identity-half-recovery-paired-diagnostic-v2"
+    let protocolIdentifier = "pet-identity-half-recovery-paired-diagnostic-v3"
     let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
@@ -136,7 +136,7 @@ struct IdentityRecoveryComparisonReport: Encodable {
     let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
     let scope = "same-selected-assets;diagnostic-reuse;no-independent-validation-or-generalization-claim"
     let method = "original-success-reused;raw-zero-only-half-srgb-gray128;single-contained-box-to-original-min32px;resize224-chw-imagenet"
-    let calibration = "each-arm-own-five-registration-inputs-only;no-evaluation-tuning;unchanged-radius1.25-ratio0.70"
+    let calibration = "original-and-candidate-acceptance-only;each-arm-own-five-registration-inputs;no-evaluation-tuning;unchanged-radius1.25-ratio0.70;referenceRanking-is-unthresholded-retrieval-only"
     let duplicatePolicy = "global-asset-unique;no-independence-filter;diagnostic-only"
     let photoFetch = "selected-only-current-1024-local-no-network;one-fetch-per-selected-asset"
     let slots: [IdentityRecoverySlotSummary]
@@ -144,6 +144,7 @@ struct IdentityRecoveryComparisonReport: Encodable {
     let candidate: IdentityRecoveryArm
     let outcomeOrder = ["correct", "wrong", "unknown"]
     let pairedOutcomes: [[Int]]? // Rows original, columns candidate; absent if either arm cannot evaluate.
+    var referenceRanking: IdentityReferenceRankingComparison? = nil
     let photosIncluded = false
     let identifiersIncluded = false
     let embeddingsIncluded = false
@@ -205,6 +206,15 @@ enum IdentityRecoveryComparisonCore {
             }
             paired = counts
         }
-        return IdentityRecoveryComparisonReport(slots: slots, original: original.arm, candidate: candidate.arm, pairedOutcomes: paired)
+        var report = IdentityRecoveryComparisonReport(slots: slots, original: original.arm, candidate: candidate.arm, pairedOutcomes: paired)
+        if candidate.result != nil {
+            func vectors(_ slot: IdentityPhotoSlot) -> [[Float]?] {
+                items.filter { $0.slot == slot }.map { $0.candidate }
+            }
+            report.referenceRanking = try IdentityEvaluationCore.compareReferenceRanking(
+                registrationA: vectors(.referenceA), registrationB: vectors(.referenceB),
+                evaluationA: vectors(.evaluationA), evaluationB: vectors(.evaluationB))
+        }
+        return report
     }
 }
