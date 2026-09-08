@@ -2206,9 +2206,16 @@ enum MomentSharingStateStore {
         else { throw MomentSharingError.stateUnavailable }
         guard try isSafeThumbnailDirectory(directory, requireExisting: false)
         else { throw MomentSharingError.stateUnavailable }
-        let standardizedDirectory = directory.standardizedFileURL
-        let url = directory.appendingPathComponent(fileName, isDirectory: false)
+        // Foundation may strip /private only from an existing path. Normalize
+        // the verified, existing parent first; standardizing the missing leaf
+        // or JPEG separately can make one physical directory compare unequal.
+        let standardizedParent = directory.deletingLastPathComponent()
             .standardizedFileURL
+        let standardizedDirectory = standardizedParent.appendingPathComponent(
+            directory.lastPathComponent,
+            isDirectory: true
+        )
+        let url = standardizedDirectory.appendingPathComponent(fileName, isDirectory: false)
         guard url.deletingLastPathComponent() == standardizedDirectory else {
             throw MomentSharingError.stateUnavailable
         }
@@ -2244,6 +2251,7 @@ enum MomentSharingStateStore {
     ) throws -> Bool {
         let manager = FileManager.default
         let parent = directory.deletingLastPathComponent()
+        guard directory.lastPathComponent == "sent-moment-thumbnails" else { return false }
         let parentExists = manager.fileExists(atPath: parent.path)
         let directoryExists = manager.fileExists(atPath: directory.path)
         guard parentExists else { return false }
@@ -2258,16 +2266,10 @@ enum MomentSharingStateStore {
             guard (attributes[.type] as? FileAttributeType) == .typeDirectory
             else { return false }
         }
-        let standardizedParent = parent.standardizedFileURL
-        let standardizedDirectory = directory.standardizedFileURL
-        guard standardizedDirectory.deletingLastPathComponent()
-                == standardizedParent
-        else { return false }
-
         // A not-yet-created child cannot itself be a symlink. Its existing,
-        // app-owned parent was checked above, so resolving the missing child
-        // would only invite Foundation to return a partially canonicalized
-        // path on some iOS releases.
+        // app-owned parent was checked above. Neither resolving nor
+        // standardizing the missing child is safe for a /private alias:
+        // Foundation strips that prefix only when the resulting path exists.
         guard directoryExists else { return !requireExisting }
 
         let resolvedParent = parent.resolvingSymlinksInPath().standardizedFileURL

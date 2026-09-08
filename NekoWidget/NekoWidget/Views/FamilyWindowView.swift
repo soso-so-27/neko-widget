@@ -1339,6 +1339,7 @@ struct FamilyWindowView: View {
     }
 
     private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
+        let thumbnail = sentRecordThumbnail(record)
         let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
         let statusDate = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
         let accessibilityFocusID = record.momentID ?? "sent-record-\(record.id)"
@@ -1348,19 +1349,41 @@ struct FamilyWindowView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
-                sentRecordPhotoSurface(record)
+                sentRecordPhotoSurface(thumbnail)
 
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.76)],
-                    startPoint: .center,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
+                if thumbnail != nil {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.76)],
+                        startPoint: .center,
+                        endPoint: .bottom
+                    )
+                    .allowsHitTesting(false)
+                }
 
                 VStack(alignment: .leading, spacing: 5) {
+                    if thumbnail == nil {
+                        // Keep the missing-photo notice and caption in one layout,
+                        // so a longer caption cannot cover the notice.
+                        VStack(spacing: 7) {
+                            Image(systemName: "photo")
+                                .font(.title2)
+                            Text("写真の控えはありません")
+                                .font(.caption2.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                     if let caption = record.localCaption {
-                        MomentPhotoCaption(caption: caption, lineLimit: 2)
-                            .frame(maxWidth: .infinity)
+                        if thumbnail != nil {
+                            MomentPhotoCaption(caption: caption, lineLimit: 2)
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text(verbatim: caption)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                        }
                     }
                     HStack(spacing: 5) {
                         sentRecordBadge(
@@ -1376,7 +1399,7 @@ struct FamilyWindowView: View {
                         .dateTime.month().day().hour().minute()
                     ))
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(thumbnail == nil ? Color.primary : Color.white)
                 }
                 .padding(10)
             }
@@ -1474,27 +1497,17 @@ struct FamilyWindowView: View {
     }
 
     private func sentRecordPhotoSurface(
-        _ record: MomentSentRecordPresentation
+        _ thumbnail: UIImage?
     ) -> some View {
         Color(uiColor: .tertiarySystemGroupedBackground)
             .aspectRatio(1, contentMode: .fit)
             .overlay {
                 GeometryReader { geometry in
-                    if let thumbnail = sentRecordThumbnail(record) {
+                    if let thumbnail {
                         Image(uiImage: thumbnail)
                             .resizable()
                             .scaledToFill()
                             .frame(width: geometry.size.width, height: geometry.size.height)
-                    } else {
-                        VStack(spacing: 7) {
-                            Image(systemName: "photo")
-                                .font(.title2)
-                            Text("送信履歴のみ\n画像はありません")
-                                .font(.caption2.weight(.semibold))
-                                .multilineTextAlignment(.center)
-                        }
-                        .foregroundStyle(.secondary)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                 }
             }
