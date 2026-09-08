@@ -53,6 +53,7 @@ private struct DiagnosticLogPrivacyVerifier {
         )
         for code in [
             "commit-result-expired",
+            "daily-quota-exceeded",
             "moderation-disabled",
             "moment-runtime-disabled",
             "pending-expired",

@@ -358,6 +358,53 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes() {
+        for variant in ["standard", "narrow", "large"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--moment-received-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if variant == "narrow" { app.launchArguments.append("--received-narrow") }
+            if variant == "large" { app.launchArguments.append("--received-large-text") }
+            app.launch()
+            let latest = app.buttons["received-fixture-latest"]
+            XCTAssertTrue(latest.waitForExistence(timeout: 15))
+            let initialFrame = latest.frame
+            XCTAssertEqual(initialFrame.height, initialFrame.width * 0.75, accuracy: 2)
+            XCTAssertGreaterThanOrEqual(initialFrame.minX, app.frame.minX)
+            XCTAssertLessThanOrEqual(initialFrame.maxX, app.frame.maxX)
+            let settled = NSPredicate { _, _ in app.progressIndicators.count == 0 }
+            expectation(for: settled, evaluatedWith: app)
+            waitForExpectations(timeout: 10)
+            XCTAssertEqual(latest.frame.height, initialFrame.height, accuracy: 2,
+                           "Decoded pixels must not resize the surrounding screen.")
+            let actions = app.staticTexts["received-fixture-actions"]
+            XCTAssertGreaterThanOrEqual(actions.frame.minY, latest.frame.maxY)
+            attach(app, name: "received-layout-\(variant)")
+            latest.tap()
+            let fullCaption = app.staticTexts["received-fixture-full-caption"]
+            XCTAssertTrue(fullCaption.waitForExistence(timeout: 5))
+            XCTAssertEqual(fullCaption.label, String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3))
+            let detailPhoto = app.descendants(matching: .any)["received-fixture-detail-photo"].firstMatch
+            XCTAssertTrue(detailPhoto.exists)
+            XCTAssertGreaterThanOrEqual(fullCaption.frame.minY, detailPhoto.frame.maxY)
+            attach(app, name: "received-detail-\(variant)")
+            app.buttons["閉じる"].tap()
+            expectation(for: NSPredicate { _, _ in !fullCaption.exists }, evaluatedWith: app)
+            waitForExpectations(timeout: 5)
+            let scroll = app.scrollViews.firstMatch
+            for index in 0..<4 {
+                let tile = app.buttons["received-fixture-tile-\(index)"]
+                for _ in 0..<6 where !tile.isHittable { scroll.swipeUp() }
+                XCTAssertTrue(tile.isHittable, "Every photo, including the missing-file placeholder, stays reachable.")
+                XCTAssertEqual(tile.frame.width, tile.frame.height, accuracy: 2)
+                XCTAssertGreaterThanOrEqual(tile.frame.minX, app.frame.minX)
+                XCTAssertLessThanOrEqual(tile.frame.maxX, app.frame.maxX)
+            }
+            attach(app, name: "received-grid-\(variant)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testSentHistoryKeepsPhotosVisibleAndMissingPhotosCompact() {
         for variant in ["standard", "large", "notification"] {
             let app = XCUIApplication()

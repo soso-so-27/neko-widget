@@ -538,9 +538,53 @@ require(
         status: 429,
         code: "moment_daily_quota_exceeded",
         message: "relay-internal-detail-must-not-appear"
-    ).localizedDescription == "今日届けられる枚数に達しました。明日、もう一度お試しください。",
+    ).localizedDescription == "1日の送信上限に達しました。上限更新後に同じ写真の送信を再試行します。",
     "moment quota guidance was not preserved"
 )
+
+let quotaError = MomentSharingError.requestRejected(
+    status: 429, code: "moment_daily_quota_exceeded", message: "ignored"
+)
+let beforeUTCReset = Date(timeIntervalSince1970: 86_399.5)
+require(
+    MomentOutboxRetryPolicy.nextRetryAt(
+        for: quotaError, awaitingReservation: true, attemptCount: 7, now: beforeUTCReset
+    ) == Date(timeIntervalSince1970: 86_400),
+    "daily quota did not retry at the next UTC boundary"
+)
+require(
+    MomentOutboxRetryPolicy.nextRetryAt(
+        for: quotaError, awaitingReservation: true, attemptCount: 1,
+        now: Date(timeIntervalSince1970: 86_400)
+    ) == Date(timeIntervalSince1970: 172_800),
+    "an exact UTC boundary reused the rejected quota day"
+)
+let afternoonUTC = Date(timeIntervalSince1970: 54_000)
+let quotaReset = MomentOutboxRetryPolicy.nextRetryAt(
+    for: quotaError, awaitingReservation: true, attemptCount: 2, now: afternoonUTC
+)
+var japaneseCalendar = Calendar(identifier: .gregorian)
+japaneseCalendar.timeZone = TimeZone(secondsFromGMT: 9 * 3_600)!
+require(japaneseCalendar.component(.hour, from: quotaReset) == 9,
+        "quota reset followed local midnight instead of 09:00 JST")
+for nonQuota in [
+    MomentSharingError.retryableServer(retryAfterSeconds: nil),
+    .requestRejected(status: 429, code: nil, message: "ignored"),
+    .requestRejected(status: 429, code: "report_daily_quota_exceeded", message: "ignored"),
+    .requestRejected(status: 503, code: "moment_daily_quota_exceeded", message: "ignored")
+] {
+    require(!MomentOutboxRetryPolicy.isDailyQuotaExceeded(nonQuota),
+            "an unproven failure became a daily photo quota rejection")
+    require(MomentOutboxRetryPolicy.nextRetryAt(
+        for: nonQuota, awaitingReservation: true, attemptCount: 1, now: afternoonUTC
+    ) == afternoonUTC.addingTimeInterval(30), "transport retry changed")
+    require(MomentOutboxRetryPolicy.nextRetryAt(
+        for: nonQuota, awaitingReservation: true, attemptCount: 12, now: afternoonUTC
+    ) == afternoonUTC.addingTimeInterval(1_920), "bounded transport backoff changed")
+}
+require(MomentOutboxRetryPolicy.nextRetryAt(
+    for: quotaError, awaitingReservation: false, attemptCount: 1, now: afternoonUTC
+) == afternoonUTC.addingTimeInterval(30), "ambiguous commit reconciliation was deferred for a day")
 require(
     !MomentSharingError.requestRejected(
         status: 400,

@@ -50,6 +50,8 @@ struct NekoWidgetApp: App {
                 MomentDeliveryComposerFixture()
             } else if CommandLine.arguments.contains("--moment-history-ui-fixture") {
                 MomentSentHistoryFixture()
+            } else if CommandLine.arguments.contains("--moment-received-ui-fixture") {
+                MomentReceivedLayoutFixture()
             } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()
             } else {

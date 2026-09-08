@@ -256,6 +256,7 @@ enum MomentOutgoingStatusKind: Int, CaseIterable, Identifiable, Sendable, Hashab
     case preparing
     case preparationRetryWaiting
     case waiting
+    case dailyQuotaWaiting
     case sending
     case confirming
     case resultUnknown
@@ -278,6 +279,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
     let isServerRuntimeUnavailable: Bool
     let isOutboxCapacityBlocked: Bool
     let hasOtherRetryReason: Bool
+    var quotaResetAt: Date? = nil
 
     var id: MomentOutgoingStatusKind { kind }
 
@@ -287,6 +289,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
         case .preparing: "写真を準備中 \(count)枚"
         case .preparationRetryWaiting: "準備の再試行待ち \(count)枚"
         case .waiting: "送信待ち \(count)枚"
+        case .dailyQuotaWaiting: "1日の送信上限に達しました（\(count)枚待機）"
         case .sending: "送信処理中 \(count)枚"
         case .confirming: "配信結果を確認中 \(count)枚"
         case .resultUnknown: "送信結果を確認できない写真 \(count)枚"
@@ -328,6 +331,8 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
             }
             reasons.append("配信完了ではありません。")
             return reasons.joined(separator: " ")
+        case .dailyQuotaWaiting:
+            return "この写真はまだ送信していません。送信できる時刻まで、このiPhoneに保存して待ちます。時刻を過ぎた後の更新で再試行するので、送り直す必要はありません。"
         case .sending:
             var reasons: [String] = []
             if isServerRuntimeUnavailable {
@@ -447,7 +452,7 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
     /// implies that a relay upload and a local handoff have the same boundary.
     var cancellableEncryptedDeliveryCount: Int {
         statuses
-            .filter { $0.kind == .waiting || $0.kind == .sending }
+            .filter { $0.kind == .waiting || $0.kind == .dailyQuotaWaiting || $0.kind == .sending }
             .reduce(0) { $0 + $1.cancellableCount }
     }
 
@@ -523,7 +528,14 @@ enum MomentSharingPresentationPolicy {
         }
 
         for delivery in deliveries {
-            guard let kind = statusKind(for: delivery.phase) else { continue }
+            let kind: MomentOutgoingStatusKind
+            if delivery.phase == .prepared,
+               delivery.lastErrorCode == "daily-quota-exceeded" {
+                kind = .dailyQuotaWaiting
+            } else {
+                guard let phaseKind = statusKind(for: delivery.phase) else { continue }
+                kind = phaseKind
+            }
             var accumulator = groups[kind] ?? Accumulator()
             accumulator.count += 1
             accumulator.destinationKeys.insert(delivery.destinationKey)
@@ -538,6 +550,9 @@ enum MomentSharingPresentationPolicy {
             )
             if let retryAt = delivery.retryAt, retryAt > now {
                 accumulator.nextRetryAt = min(accumulator.nextRetryAt ?? retryAt, retryAt)
+            }
+            if kind == .dailyQuotaWaiting, let resetAt = delivery.retryAt {
+                accumulator.quotaResetAt = min(accumulator.quotaResetAt ?? resetAt, resetAt)
             }
             groups[kind] = accumulator
         }
@@ -568,7 +583,9 @@ enum MomentSharingPresentationPolicy {
                         $0 != "moderation-disabled"
                             && $0 != "outbox-full"
                             && $0 != "moment-runtime-disabled"
-                    })
+                            && $0 != "daily-quota-exceeded"
+                    }),
+                    quotaResetAt: value.quotaResetAt
                 )
             }
 
@@ -700,6 +717,7 @@ enum MomentSharingPresentationPolicy {
     }
 
     private struct Accumulator {
+        var quotaResetAt: Date?
         var count = 0
         var destinationKeys: Set<String> = []
         var processingCount = 0

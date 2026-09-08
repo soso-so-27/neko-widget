@@ -863,47 +863,13 @@ struct FamilyWindowView: View {
         Button {
             selectedMomentForDetail = item
         } label: {
-            ZStack(alignment: .bottom) {
-                if let url = model.imageURL(for: item) {
-                    receivedPhotoSurface(
-                        url: url,
-                        aspectRatio: 1,
-                        contentMode: .fill
-                    )
-                } else {
-                    receivedPhotoPlaceholder(aspectRatio: 1)
-                }
-
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.72)],
-                    startPoint: .center,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
-
-                VStack(spacing: 0) {
-                    if let caption = model.caption(for: item) {
-                        MomentPhotoCaption(caption: caption, lineLimit: 2)
-                    }
-                    HStack(spacing: 5) {
-                        Text(item.receivedAt.formatted(.dateTime.month().day()))
-                            .font(.caption.weight(.semibold))
-                        Spacer(minLength: 2)
-                        if model.isSavedMemory(item) {
-                            Image(systemName: "bookmark.fill")
-                                .accessibilityLabel("思い出に残した写真")
-                        }
-                        if model.heartOutboxItem(for: item)?.phase == .sent {
-                            Image(systemName: "heart.fill")
-                                .accessibilityLabel("ハートを送信済み")
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .padding(10)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+            MomentReceivedPhotoThumbnail(
+                url: model.imageURL(for: item),
+                caption: model.caption(for: item),
+                receivedAt: item.receivedAt,
+                isSaved: model.isSavedMemory(item),
+                hasSentHeart: model.heartOutboxItem(for: item)?.phase == .sent
+            )
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -1450,6 +1416,7 @@ struct FamilyWindowView: View {
                     .font(.subheadline.weight(.semibold))
                 if status.kind == .failed
                     || status.kind == .resultUnknown
+                    || status.kind == .dailyQuotaWaiting
                     || status.kind == .safetyCheckWaiting
                     || status.kind == .preparationRetryWaiting {
                     Text(status.detail)
@@ -1461,7 +1428,11 @@ struct FamilyWindowView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                if let retryAt = status.nextRetryAt {
+                if let resetAt = status.quotaResetAt {
+                    Text("送信再開 \(resetAt.formatted(.dateTime.month().day().hour().minute())) 以降")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let retryAt = status.nextRetryAt {
                     Text("再試行予定 \(retryAt.formatted(.dateTime.month().day().hour().minute()))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -1534,6 +1505,7 @@ struct FamilyWindowView: View {
         switch kind {
         case .safetyCheckWaiting: "shield.lefthalf.filled"
         case .preparationRetryWaiting, .waiting: "clock.fill"
+        case .dailyQuotaWaiting: "calendar.badge.clock"
         case .resultUnknown: "questionmark.diamond.fill"
         case .failed: "exclamationmark.triangle.fill"
         case .preparing, .sending, .confirming: "arrow.triangle.2.circlepath"
@@ -1542,7 +1514,7 @@ struct FamilyWindowView: View {
 
     private func outgoingStatusColor(_ kind: MomentOutgoingStatusKind) -> Color {
         switch kind {
-        case .failed, .resultUnknown: .orange
+        case .failed, .resultUnknown, .dailyQuotaWaiting: .orange
         case .safetyCheckWaiting, .preparing, .preparationRetryWaiting,
              .waiting, .sending, .confirming:
             .accentColor
@@ -1550,7 +1522,7 @@ struct FamilyWindowView: View {
     }
 
     private func outgoingStatusBackground(_ kind: MomentOutgoingStatusKind) -> Color {
-        kind == .failed || kind == .resultUnknown
+        kind == .failed || kind == .resultUnknown || kind == .dailyQuotaWaiting
             ? Color.orange.opacity(0.1)
             : Color(uiColor: .secondarySystemGroupedBackground)
     }
@@ -1561,11 +1533,31 @@ struct FamilyWindowView: View {
         fillsPhotoFrame: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            receivedPhotoHeader(
-                item,
-                receivesNotificationFocus: receivesNotificationFocus,
-                contentMode: fillsPhotoFrame ? .fill : .fit
-            )
+            if fillsPhotoFrame {
+                Button { selectedMomentForDetail = item } label: {
+                    receivedPhotoHeader(
+                        item,
+                        receivesNotificationFocus: receivesNotificationFocus,
+                        contentMode: .fill
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("写真とひとことの全文を開きます")
+            } else {
+                receivedPhotoHeader(
+                    item,
+                    receivesNotificationFocus: receivesNotificationFocus,
+                    contentMode: .fit
+                )
+                if let caption = model.caption(for: item) {
+                    Text(verbatim: caption)
+                        .font(.body)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(13)
+                        .accessibilityIdentifier("family-window-received-caption-full")
+                }
+            }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(captureLabel(item))
@@ -1671,23 +1663,11 @@ struct FamilyWindowView: View {
         receivesNotificationFocus: Bool,
         contentMode: ContentMode
     ) -> some View {
-        let photo = Group {
-            if let url = model.imageURL(for: item) {
-                receivedPhotoSurface(
-                    url: url,
-                    aspectRatio: 4.0 / 3.0,
-                    contentMode: contentMode
-                )
-            } else {
-                receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if let caption = model.caption(for: item) {
-                MomentPhotoCaption(caption: caption)
-                    .accessibilityIdentifier("family-window-received-caption")
-            }
-        }
+        let photo = MomentReceivedPhotoHeader(
+            url: model.imageURL(for: item),
+            caption: model.caption(for: item),
+            contentMode: contentMode
+        )
         .accessibilityLabel("届いた写真。\(captureLabel(item))")
 
         if receivesNotificationFocus {
@@ -1764,33 +1744,6 @@ struct FamilyWindowView: View {
             )
         )
         .accessibilityIdentifier("family-window-send-paw")
-    }
-
-    private func receivedPhotoSurface(
-        url: URL,
-        aspectRatio: CGFloat,
-        contentMode: ContentMode
-    ) -> some View {
-        ZStack {
-            Color(uiColor: .tertiarySystemFill)
-            MomentLocalImageView(url: url, contentMode: contentMode)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        // The container owns the size. Asking the image itself to establish a
-        // square inside a flexible grid lets portrait and landscape assets
-        // produce different row heights on device.
-        .aspectRatio(aspectRatio, contentMode: .fit)
-        .clipped()
-    }
-
-    private func receivedPhotoPlaceholder(aspectRatio: CGFloat) -> some View {
-        ZStack {
-            Color(uiColor: .tertiarySystemFill)
-            Image(systemName: "photo")
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-        }
-        .aspectRatio(aspectRatio, contentMode: .fit)
     }
 
     @ViewBuilder
@@ -2266,6 +2219,188 @@ struct FamilyWindowView: View {
         return "撮影日は不明"
     }
 }
+
+/// Only the available width and requested ratio determine layout. The decoded
+/// image, loading/error placeholders and captions must never size their parent.
+struct MomentReceivedPhotoSurface: View {
+    let url: URL?
+    let aspectRatio: CGFloat
+    let contentMode: ContentMode
+
+    var body: some View {
+        Color(uiColor: .tertiarySystemFill)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .overlay {
+                GeometryReader { geometry in
+                    Group {
+                        if let url {
+                            MomentLocalImageView(url: url, contentMode: contentMode)
+                        } else {
+                            Image(systemName: "photo")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+            }
+            .clipped()
+    }
+}
+
+struct MomentReceivedPhotoHeader: View {
+    let url: URL?
+    let caption: String?
+    let contentMode: ContentMode
+
+    var body: some View {
+        MomentReceivedPhotoSurface(url: url, aspectRatio: 4.0 / 3.0, contentMode: contentMode)
+            .overlay(alignment: .bottom) {
+                if let caption {
+                    MomentPhotoCaption(caption: caption, lineLimit: 3)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .accessibilityIdentifier("family-window-received-caption")
+                }
+            }
+            .clipped()
+    }
+}
+
+struct MomentReceivedPhotoThumbnail: View {
+    let url: URL?
+    let caption: String?
+    let receivedAt: Date
+    let isSaved: Bool
+    let hasSentHeart: Bool
+
+    var body: some View {
+        MomentReceivedPhotoSurface(url: url, aspectRatio: 1, contentMode: .fill)
+            .overlay {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.72)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    if let caption {
+                        MomentPhotoCaption(caption: caption, lineLimit: 2)
+                    }
+                    HStack(spacing: 5) {
+                        Text(receivedAt.formatted(.dateTime.month().day()))
+                            .font(.caption.weight(.semibold))
+                        Spacer(minLength: 2)
+                        if isSaved {
+                            Image(systemName: "bookmark.fill")
+                                .accessibilityLabel("思い出に残した写真")
+                        }
+                        if hasSentHeart {
+                            Image(systemName: "heart.fill")
+                                .accessibilityLabel("ハートを送信済み")
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(10)
+                }
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+#if DEBUG
+/// Uses the shipping received-photo components and async decoder, offline.
+/// Deliberately mixes aspect ratios and a missing file in one scrolling layout.
+struct MomentReceivedLayoutFixture: View {
+    @State private var showsDetail = false
+    private let urls = Self.makePhotos()
+    private let caption = String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3)
+    private var largeText: Bool { CommandLine.arguments.contains("--received-large-text") }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Button { showsDetail = true } label: {
+                        MomentReceivedPhotoHeader(url: urls[0], caption: caption, contentMode: .fill)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("received-fixture-latest")
+                    Text("届いた写真の操作")
+                        .accessibilityIdentifier("received-fixture-actions")
+                    Text("以前に届いた写真")
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10), count: largeText ? 1 : 2), spacing: 10) {
+                        ForEach(0..<4) { index in
+                            Button { showsDetail = true } label: {
+                                MomentReceivedPhotoThumbnail(
+                                    url: index < 3 ? urls[index] : urls[3],
+                                    caption: index == 2 ? nil : caption,
+                                    receivedAt: Date(timeIntervalSince1970: 1_788_846_000),
+                                    isSaved: index == 0,
+                                    hasSentHeart: index == 1
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("received-fixture-tile-\(index)")
+                        }
+                    }
+                }
+                .frame(maxWidth: CommandLine.arguments.contains("--received-narrow") ? 288 : .infinity)
+                .padding(16)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("届いた写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showsDetail) {
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 13) {
+                            MomentReceivedPhotoHeader(url: urls[0], caption: caption, contentMode: .fit)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("届いた写真")
+                                .accessibilityIdentifier("received-fixture-detail-photo")
+                            Text(verbatim: caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("received-fixture-full-caption")
+                        }
+                        .padding(16)
+                    }
+                    .toolbar {
+                        Button("閉じる") { showsDetail = false }
+                    }
+                }
+            }
+        }
+        .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
+        .preferredColorScheme(largeText ? .light : .dark)
+    }
+
+    private static func makePhotos() -> [URL] {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("received-layout-fixture-\(UUID().uuidString)", isDirectory: true)
+        try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let cat = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
+        let sizes = [CGSize(width: 300, height: 1200), CGSize(width: 1600, height: 160), CGSize(width: 400, height: 400)]
+        var urls: [URL] = []
+        for (index, size) in sizes.enumerated() {
+            let image = UIGraphicsImageRenderer(size: size).image { context in
+                UIColor.darkGray.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+                let side = min(size.width, size.height)
+                cat.draw(in: CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side))
+            }
+            let url = directory.appendingPathComponent("\(index).jpg")
+            try! image.jpegData(compressionQuality: 0.75)!.write(to: url)
+            urls.append(url)
+        }
+        urls.append(directory.appendingPathComponent("missing.jpg"))
+        return urls
+    }
+}
+#endif
 
 struct MomentLocalImageView: View {
     let url: URL

@@ -3303,11 +3303,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private func compactMomentCard(",
             "private func sharingErrorCard(",
         )
-        self.assertIn("receivedPhotoSurface(", compact)
-        self.assertIn("aspectRatio: 1", compact)
-        self.assertIn("contentMode: .fill", compact)
-        self.assertIn("receivedPhotoPlaceholder(aspectRatio: 1)", compact)
-        self.assertNotIn(".aspectRatio(1, contentMode: .fill)", compact)
+        # Real photo geometry is exercised by the received-layout iOS fixture.
+        self.assertIn("MomentReceivedPhotoThumbnail(", compact)
+        self.assertIn("selectedMomentForDetail = item", compact)
 
         received_section = section(
             family,
@@ -3328,13 +3326,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private func momentCard(",
             "private func memoryActionControl(",
         )
-        self.assertIn("receivedPhotoSurface(", primary)
-        self.assertIn("aspectRatio: 4.0 / 3.0", primary)
-        self.assertIn("fillsPhotoFrame ? .fill : .fit", primary)
-        self.assertIn(
-            "receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)",
-            primary,
-        )
+        self.assertIn("MomentReceivedPhotoHeader(", primary)
+        self.assertIn("contentMode: .fit", primary)
+        self.assertIn("contentMode: .fill", primary)
+        self.assertIn("family-window-received-caption-full", primary)
         self.assertNotIn(".frame(height: 280)", primary)
         self.assertNotIn("maxHeight: 520", primary)
 
@@ -3344,15 +3339,6 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "@ViewBuilder\n    private var sentSectionContent",
         )
         self.assertIn("momentCard(latest, fillsPhotoFrame: true)", received_section)
-
-        surface = section(
-            family,
-            "private func receivedPhotoSurface(",
-            "@ViewBuilder\n    private func memoryActionControl(",
-        )
-        self.assertIn(".frame(maxWidth: .infinity, maxHeight: .infinity)", surface)
-        self.assertIn(".aspectRatio(aspectRatio, contentMode: .fit)", surface)
-        self.assertIn(".clipped()", surface)
 
         local_image = section(
             family,
@@ -3411,7 +3397,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         actions = section(
             family,
             "private func receivedPhotoActionControls(",
-            "private func receivedPhotoSurface(",
+            "private func memoryActionControl(",
         )
         self.assertIn("AnyLayout(VStackLayout", actions)
         self.assertIn("AnyLayout(HStackLayout", actions)

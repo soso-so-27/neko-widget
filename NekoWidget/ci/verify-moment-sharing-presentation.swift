@@ -7,6 +7,7 @@ enum MomentSharingPresentationVerifier {
         try verifiesEmptyState()
         try verifiesPreparationBoundary()
         try verifiesEveryOutboxPhasePrecisely()
+        try verifiesDailyQuotaIsSeparateFromTransport()
         try verifiesMultipleDestinationsRemainGrouped()
         try verifiesTerminalPreparationOutcomes()
         try verifiesLatestServerAcceptanceDeterministically()
@@ -284,6 +285,40 @@ enum MomentSharingPresentationVerifier {
                 && presentation.latestServerAcceptance?.unreceivedExpiresAt == date(500),
             "relay acknowledgement metadata was replaced with a local timestamp"
         )
+    }
+
+    private static func verifiesDailyQuotaIsSeparateFromTransport() throws {
+        let inputs = [
+            delivery("quota", "space-a", .prepared, updatedAt: 200,
+                     retryAt: 86_400, error: "daily-quota-exceeded"),
+            delivery("transport", "space-a", .prepared, updatedAt: 201,
+                     retryAt: 231, error: "retryable-server"),
+            delivery("old-generic", "space-a", .prepared, updatedAt: 202,
+                     retryAt: 232, error: "request-rejected"),
+            delivery("accepted", "space-a", .committed, updatedAt: 203,
+                     committedAt: 203, recipientCount: 1)
+        ]
+        let presentation = MomentSharingPresentationPolicy.make(
+            preparations: [], deliveries: inputs, now: date(210)
+        )
+        let quota = try requireStatus(.dailyQuotaWaiting, in: presentation)
+        let waiting = try requireStatus(.waiting, in: presentation)
+        try require(quota.count == 1 && waiting.count == 2,
+                    "quota was mixed with transport or an old generic error")
+        try require(quota.quotaResetAt == date(86_400) && quota.nextRetryAt == date(86_400),
+                    "quota reset time was replaced by a transport retry time")
+        try require(quota.title.contains("送信上限") && quota.detail.contains("まだ送信していません"),
+                    "daily quota was presented as ordinary progress or accepted delivery")
+        try require(quota.cancellableCount == 1 && presentation.cancellableEncryptedDeliveryCount == 3,
+                    "quota waiting lost cancellation or ordinary waiting")
+        try require(presentation.latestServerAcceptance?.stableID == "accepted",
+                    "quota waiting changed an accepted delivery")
+        let afterReset = MomentSharingPresentationPolicy.make(
+            preparations: [], deliveries: inputs, now: date(86_401)
+        )
+        let readyQuota = try requireStatus(.dailyQuotaWaiting, in: afterReset)
+        try require(readyQuota.quotaResetAt == date(86_400) && readyQuota.nextRetryAt == nil,
+                    "a passed reset was silently extended or erased")
     }
 
     private static func verifiesMultipleDestinationsRemainGrouped() throws {
