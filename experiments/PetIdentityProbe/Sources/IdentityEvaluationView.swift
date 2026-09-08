@@ -17,6 +17,8 @@ final class IdentityEvaluationStore: ObservableObject {
     @Published var storageWarning: String?
     @Published var result: IdentityPhotoRun?
     @Published var inputResult: IdentityInputRun?
+    @Published var detectorResult: IdentityDetectorComparisonRun?
+    @Published var checkingDetector = false
     @Published var checkingInput = false
     @Published var showsComparison = false
     @Published var picker: IdentityPickerRequest?
@@ -26,10 +28,13 @@ final class IdentityEvaluationStore: ObservableObject {
     private var archiveReadFailed = false
     private let service = IdentityPhotoService()
     private let inputInspector: ((String) async throws -> IdentityInputRun)?
+    private let detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)?
 
-    init(archive: IdentitySelectionArchive? = nil, inputInspector: ((String) async throws -> IdentityInputRun)? = nil) {
+    init(archive: IdentitySelectionArchive? = nil, inputInspector: ((String) async throws -> IdentityInputRun)? = nil,
+         detectorInspector: ((String?) async throws -> IdentityDetectorComparisonRun)? = nil) {
         self.archive = archive
         self.inputInspector = inputInspector
+        self.detectorInspector = detectorInspector
         restoreSelection()
     }
 
@@ -55,6 +60,7 @@ final class IdentityEvaluationStore: ObservableObject {
     var evaluationCount: Int { (selections[.evaluationA]?.count ?? 0) + (selections[.evaluationB]?.count ?? 0) }
     var selectedCount: Int { selections.values.reduce(0) { $0 + $1.count } }
     var hasInput: Bool { selections[.referenceA]?.first != nil }
+    var canCompareDetector: Bool { !running && !archiveReadFailed }
 
     func choose(_ slot: IdentityPhotoSlot, firstInputOnly: Bool = false) {
         guard !running, !archiveReadFailed else { return }
@@ -102,6 +108,7 @@ final class IdentityEvaluationStore: ObservableObject {
         selections[slot] = values
         result = nil
         inputResult = nil
+        detectorResult = nil
         message = nil
         do {
             try archive?.save(selections)
@@ -118,6 +125,7 @@ final class IdentityEvaluationStore: ObservableObject {
         running = true
         checkingInput = true
         inputResult = nil
+        detectorResult = nil
         message = nil
         task = Task { @MainActor in
             do {
@@ -142,6 +150,36 @@ final class IdentityEvaluationStore: ObservableObject {
         }
     }
 
+    func compareDetector() {
+        guard canCompareDetector else { return }
+        let current = generation
+        let id = selections[.referenceA]?.first
+        running = true
+        checkingDetector = true
+        detectorResult = nil
+        inputResult = nil
+        result = nil
+        message = nil
+        task = Task { @MainActor in
+            do {
+                try Task.checkCancellation()
+                let completed: IdentityDetectorComparisonRun
+                if let detectorInspector { completed = try await detectorInspector(id) }
+                else { completed = try await service.compareDetector(id: id) }
+                guard !Task.isCancelled, generation == current else { return }
+                detectorResult = completed
+            } catch is CancellationError {
+            } catch {
+                guard generation == current else { return }
+                message = "比較を完了できませんでした。保存した写真の選択は残しています。"
+            }
+            guard generation == current else { return }
+            checkingDetector = false
+            running = false
+            task = nil
+        }
+    }
+
     func start() {
         guard ready else { return }
         let current = generation
@@ -152,6 +190,7 @@ final class IdentityEvaluationStore: ObservableObject {
         message = nil
         result = nil
         inputResult = nil
+        detectorResult = nil
         task = Task { @MainActor in
             do {
                 let completed = try await service.run(selections: selected) { [weak self] count in
@@ -189,6 +228,8 @@ final class IdentityEvaluationStore: ObservableObject {
         progress = 0
         result = nil
         inputResult = nil
+        detectorResult = nil
+        checkingDetector = false
         checkingInput = false
         picker = nil
     }
@@ -215,7 +256,23 @@ struct IdentityEvaluationView: View {
 
     var body: some View {
         Form {
-            Section("まず1枚で確認") {
+            Section("検出をまとめて確認") {
+                Text(store.hasInput
+                     ? "用意した猫画像3枚と、保存した猫Aの1枚目を比較します。写真の選び直しは不要です。"
+                     : "用意した猫画像3枚で、このiPhoneの検出処理を確認します。写真を選ぶ必要はありません。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Button("まとめて確認する") { store.compareDetector() }
+                    .buttonStyle(.borderedProminent).disabled(!store.canCompareDetector)
+                    .accessibilityIdentifier("identity-detector-compare")
+                if store.checkingDetector {
+                    ProgressView("猫の検出を比較しています")
+                    Button("中止（選択は残す）") { store.suspend() }
+                }
+                Text("猫を見つける処理だけを確認。個体識別や自動送信はしません。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            if let comparison = store.detectorResult { detectorResults(comparison) }
+            Section("個別の写真確認（任意）") {
                 Text("写真を読み取れるかを確認します。この猫を「猫A」の最初の見本にします。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text("検出できないときは、同じ写真の画像形式を揃えて比較します。")
@@ -273,7 +330,7 @@ struct IdentityEvaluationView: View {
                     Button("選んだ\(store.evaluationCount)枚を判定する") { store.start() }
                         .buttonStyle(.borderedProminent).frame(maxWidth: .infinity)
                         .disabled(!store.ready).accessibilityIdentifier("identity-evaluate")
-                    if store.running && !store.checkingInput {
+            if store.running && !store.checkingInput && !store.checkingDetector {
                         ProgressView("見本と判定写真を確認中 \(store.progress) / \(store.selectedCount)",
                                      value: Double(store.progress), total: Double(max(1, store.selectedCount)))
                         Button("中止（選択は残す）") { store.suspend() }
@@ -309,6 +366,73 @@ struct IdentityEvaluationView: View {
         .onDisappear { store.suspend() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { store.suspend() }
+        }
+        #if DEBUG
+        .task {
+            // CI's fresh Simulator has no selections. Release builds have no auto-run.
+            if ProcessInfo.processInfo.arguments.contains("--detector-controls-preview") {
+                store.compareDetector()
+            }
+        }
+        #endif
+    }
+
+    @ViewBuilder private func detectorResults(_ run: IdentityDetectorComparisonRun) -> some View {
+        Section("このiPhoneでの比較結果") {
+            ForEach(run.report.controls, id: \.control) { control in
+                HStack(alignment: .top, spacing: 12) {
+                    controlPreview(control).frame(width: 96)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(control.control.title).font(.headline)
+                        Text(control.input.summary).font(.subheadline)
+                        Text("画像に写る猫は1匹です。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let input = run.report.savedPhoto {
+                HStack(alignment: .top, spacing: 12) {
+                    inputPreview(run.savedPhotoThumbnail, title: "保存した1枚").frame(width: 96)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("保存した猫Aの1枚目").font(.headline)
+                        Text(input.summary).font(.subheadline)
+                    }
+                }
+            } else {
+                Text("保存した写真は未選択です。今回は基準画像だけを確認しました。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Text("枠は検出候補です。1匹に複数の枠が出ることもあり、枠の数は実際の猫の数とは限りません。")
+                .font(.footnote).foregroundStyle(.secondary)
+            if let json = run.report.json {
+                ShareLink("まとめた診断結果を共有", item: json)
+                    .accessibilityIdentifier("identity-detector-share")
+            }
+            Text("共有するのは検出結果の数値だけです。ご自身の写真・写真ID・検出位置は含めません。基準画像の結果だけでは原因や識別精度は確定しません。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private func controlPreview(_ control: IdentityDetectorControlResult) -> some View {
+        let ratio = control.input.format.map { CGFloat($0.width) / CGFloat(max(1, $0.height)) } ?? 1
+        // These PNGs are file resources, not asset-catalog named images.
+        if let url = Bundle.main.url(forResource: control.control.rawValue, withExtension: "png"),
+           let source = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: source).resizable().aspectRatio(ratio, contentMode: .fit)
+                .overlay {
+                    GeometryReader { proxy in
+                        ForEach(Array(control.acceptedBoxes.enumerated()), id: \.offset) { _, box in
+                            Rectangle().stroke(Color.orange, lineWidth: 2)
+                                .frame(width: CGFloat(box.width) * proxy.size.width, height: CGFloat(box.height) * proxy.size.height)
+                                .position(x: CGFloat(box.x + box.width / 2) * proxy.size.width,
+                                          y: CGFloat(1 - box.y - box.height / 2) * proxy.size.height)
+                        }
+                    }
+                }
+                .accessibilityLabel(control.control.title)
+        } else {
+            Text("基準画像を表示できません").font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity).aspectRatio(ratio, contentMode: .fit)
         }
     }
 
