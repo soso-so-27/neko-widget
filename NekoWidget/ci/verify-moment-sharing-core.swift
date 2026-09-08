@@ -251,7 +251,7 @@ require(captionOuterJSON.range(of: Data("\"caption\"".utf8)) == nil,
 
 // Build 134's manifest fields: its decoder ignores the additive caption,
 // while the version, media digest and encrypted object format stay unchanged.
-private struct LegacyMomentManifest: Decodable {
+struct LegacyMomentManifest: Decodable {
     let protocolVersion: Int
     let kind: MomentKind
     let capturedAt: Date?
