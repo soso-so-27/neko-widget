@@ -79,7 +79,6 @@ struct FamilyWindowView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var preparedDelivery: PreparedMomentDelivery?
     @State private var deliveryCaption = ""
-    @FocusState private var isCaptionFocused: Bool
     @State private var selectedSentRecord: MomentSentRecordPresentation?
     @State private var selectedMomentForDetail: MomentInboxItem?
     @State private var isPreparingSelectedPhoto = false
@@ -466,7 +465,6 @@ struct FamilyWindowView: View {
         }
         .sheet(item: $preparedDelivery, onDismiss: {
             deliveryCaption = ""
-            isCaptionFocused = false
         }) { delivery in
             deliveryConfirmation(delivery)
                 .id(delivery.id)
@@ -800,7 +798,6 @@ struct FamilyWindowView: View {
         selectedDeliveryMessage = nil
         preparedDelivery = nil
         deliveryCaption = ""
-        isCaptionFocused = false
         isPreparingSelectedPhoto = true
         Task {
             defer {
@@ -835,120 +832,34 @@ struct FamilyWindowView: View {
     private func deliveryConfirmation(
         _ delivery: PreparedMomentDelivery
     ) -> some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Image(uiImage: delivery.preview)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 420)
-                        .background(Color.black.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField("ひとこと（任意）", text: $deliveryCaption, axis: .vertical)
-                            .lineLimit(1...3)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($isCaptionFocused)
-                            .disabled(isDeliveringSelectedPhoto)
-                            .accessibilityLabel("ひとこと（任意）")
-                            .accessibilityHint("100文字まで、改行は2個まで。空欄でも送信できます")
-                            .accessibilityIdentifier("family-window-caption-input")
-                        Text("残り\(max(0, MomentCaption.maximumCharacters - deliveryCaption.count))文字・改行2個まで")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if let message = MomentCaption.validationMessage(for: deliveryCaption) {
-                            Text(message)
-                                .font(.footnote)
-                                .foregroundStyle(.orange)
-                        }
-                        Text("ひとことはまど内に表示されます。以前のバージョンでは写真だけが届きます。")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+        MomentDeliveryComposer(
+            preview: delivery.preview,
+            destinationName: delivery.destination.displayName,
+            caption: $deliveryCaption,
+            isSending: isDeliveringSelectedPhoto,
+            canSend: !model.isWorking,
+            errorMessage: selectedDeliveryMessage,
+            onCancel: { preparedDelivery = nil },
+            onSend: { caption in
+                selectedDeliveryMessage = nil
+                isDeliveringSelectedPhoto = true
+                Task {
+                    let didStage = await model.deliverSelectedPhoto(
+                        delivery.photo,
+                        to: delivery.destination,
+                        caption: caption
+                    )
+                    isDeliveringSelectedPhoto = false
+                    if didStage {
+                        preparedDelivery = nil
+                        selectedSection = .sent
+                    } else {
+                        selectedDeliveryMessage = model.errorMessage
+                            ?? "写真を準備できませんでした。もう一度お試しください。"
                     }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("届け先")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(delivery.destination.displayName)
-                            .font(.title3.weight(.semibold))
-                        Label(
-                            "最大2,048px・位置情報を除いて送信",
-                            systemImage: "lock.shield"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    }
-
-                    if let selectedDeliveryMessage {
-                        Label(
-                            selectedDeliveryMessage,
-                            systemImage: "exclamationmark.circle"
-                        )
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                    }
-
-                    Button {
-                        isCaptionFocused = false
-                        // Capture the draft with this immutable photo/destination before suspension.
-                        let caption = deliveryCaption
-                        selectedDeliveryMessage = nil
-                        isDeliveringSelectedPhoto = true
-                        Task {
-                            let didStage = await model.deliverSelectedPhoto(
-                                delivery.photo,
-                                to: delivery.destination,
-                                caption: caption
-                            )
-                            isDeliveringSelectedPhoto = false
-                            if didStage {
-                                preparedDelivery = nil
-                                selectedSection = .sent
-                            } else {
-                                selectedDeliveryMessage = model.errorMessage
-                                    ?? "写真を準備できませんでした。もう一度お試しください。"
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            if isDeliveringSelectedPhoto {
-                                ProgressView()
-                                    .tint(.white)
-                            } else {
-                                Image(systemName: "paperplane.fill")
-                            }
-                            Text(isDeliveringSelectedPhoto
-                                ? "届けています…"
-                                : "この1枚を届ける")
-                                .font(.headline)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(isDeliveringSelectedPhoto || model.isWorking
-                        || MomentCaption.validationMessage(for: deliveryCaption) != nil)
-                    .accessibilityIdentifier("family-window-confirm-delivery")
-                }
-                .padding(20)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("写真を確認")
-            .navigationBarTitleDisplayMode(.inline)
-            .interactiveDismissDisabled(isDeliveringSelectedPhoto)
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("入力を閉じる") { isCaptionFocused = false }
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("やめる") { preparedDelivery = nil }
-                        .disabled(isDeliveringSelectedPhoto)
                 }
             }
-        }
+        )
     }
 
     private func compactMomentCard(_ item: MomentInboxItem) -> some View {
@@ -973,21 +884,26 @@ struct FamilyWindowView: View {
                 )
                 .allowsHitTesting(false)
 
-                HStack(spacing: 5) {
-                    Text(item.receivedAt.formatted(.dateTime.month().day()))
-                        .font(.caption.weight(.semibold))
-                    Spacer(minLength: 2)
-                    if model.isSavedMemory(item) {
-                        Image(systemName: "bookmark.fill")
-                            .accessibilityLabel("思い出に残した写真")
+                VStack(spacing: 0) {
+                    if let caption = model.caption(for: item) {
+                        MomentPhotoCaption(caption: caption, lineLimit: 2)
                     }
-                    if model.heartOutboxItem(for: item)?.phase == .sent {
-                        Image(systemName: "heart.fill")
-                            .accessibilityLabel("ハートを送信済み")
+                    HStack(spacing: 5) {
+                        Text(item.receivedAt.formatted(.dateTime.month().day()))
+                            .font(.caption.weight(.semibold))
+                        Spacer(minLength: 2)
+                        if model.isSavedMemory(item) {
+                            Image(systemName: "bookmark.fill")
+                                .accessibilityLabel("思い出に残した写真")
+                        }
+                        if model.heartOutboxItem(for: item)?.phase == .sent {
+                            Image(systemName: "heart.fill")
+                                .accessibilityLabel("ハートを送信済み")
+                        }
                     }
+                    .foregroundStyle(.white)
+                    .padding(10)
                 }
-                .foregroundStyle(.white)
-                .padding(10)
             }
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .contentShape(RoundedRectangle(cornerRadius: 16))
@@ -1005,6 +921,9 @@ struct FamilyWindowView: View {
             captureLabel(item),
             "届いた日 \(item.receivedAt.formatted(.dateTime.month().day()))"
         ]
+        if let caption = model.caption(for: item) {
+            parts.append("ひとこと。\(caption)")
+        }
         if model.isSavedMemory(item) {
             parts.append("思い出に残しました")
         }
@@ -1439,6 +1358,10 @@ struct FamilyWindowView: View {
                 .allowsHitTesting(false)
 
                 VStack(alignment: .leading, spacing: 5) {
+                    if let caption = record.localCaption {
+                        MomentPhotoCaption(caption: caption, lineLimit: 2)
+                            .frame(maxWidth: .infinity)
+                    }
                     HStack(spacing: 5) {
                         sentRecordBadge(
                             arrived ? "到着" : "受付済み",
@@ -1456,12 +1379,6 @@ struct FamilyWindowView: View {
                     .foregroundStyle(.white)
                 }
                 .padding(10)
-            }
-            if let caption = record.localCaption {
-                Text(verbatim: caption)
-                    .font(.subheadline)
-                    .lineLimit(2)
-                    .padding(10)
             }
         }
         .background(
@@ -1498,18 +1415,25 @@ struct FamilyWindowView: View {
                 if let record = model.outgoingPresentation.sentRecords.first(where: {
                     $0.id == recordID
                 }), !model.isShowingLastKnownState {
+                    let image = sentRecordThumbnail(record)
                     VStack(alignment: .leading, spacing: 16) {
-                        if let image = sentRecordThumbnail(record) {
+                        if let image {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFit()
                                 .frame(maxWidth: .infinity)
+                                .overlay(alignment: .bottom) {
+                                    if let caption = record.localCaption {
+                                        MomentPhotoCaption(caption: caption)
+                                            .accessibilityIdentifier("family-window-sent-caption")
+                                    }
+                                }
                                 .accessibilityLabel("届けた写真の控え")
                         } else {
                             Label("写真の控えは残っていません", systemImage: "photo")
                                 .foregroundStyle(.secondary)
                         }
-                        if let caption = record.localCaption {
+                        if image == nil, let caption = record.localCaption {
                             Text(verbatim: caption)
                                 .font(.body)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1552,28 +1476,30 @@ struct FamilyWindowView: View {
     private func sentRecordPhotoSurface(
         _ record: MomentSentRecordPresentation
     ) -> some View {
-        ZStack {
-            Color(uiColor: .tertiarySystemGroupedBackground)
-            if let thumbnail = sentRecordThumbnail(record) {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                VStack(spacing: 7) {
-                    Image(systemName: "photo")
-                        .font(.title2)
-                    Text("送信履歴のみ\n画像はありません")
-                        .font(.caption2.weight(.semibold))
-                        .multilineTextAlignment(.center)
+        Color(uiColor: .tertiarySystemGroupedBackground)
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                GeometryReader { geometry in
+                    if let thumbnail = sentRecordThumbnail(record) {
+                        Image(uiImage: thumbnail)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                    } else {
+                        VStack(spacing: 7) {
+                            Image(systemName: "photo")
+                                .font(.title2)
+                            Text("送信履歴のみ\n画像はありません")
+                                .font(.caption2.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
                 }
-                .foregroundStyle(.secondary)
             }
-        }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit)
-        .clipped()
-        .accessibilityHidden(true)
+            .clipped()
+            .accessibilityHidden(true)
     }
 
     private func sentRecordAccessibilityLabel(
@@ -1741,14 +1667,6 @@ struct FamilyWindowView: View {
                 receivesNotificationFocus: receivesNotificationFocus,
                 contentMode: fillsPhotoFrame ? .fill : .fit
             )
-            if let caption = model.caption(for: item) {
-                Text(verbatim: caption)
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding([.horizontal, .top], 13)
-                    .accessibilityIdentifier("family-window-received-caption")
-            }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(captureLabel(item))
@@ -1863,6 +1781,12 @@ struct FamilyWindowView: View {
                 )
             } else {
                 receivedPhotoPlaceholder(aspectRatio: 4.0 / 3.0)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let caption = model.caption(for: item) {
+                MomentPhotoCaption(caption: caption)
+                    .accessibilityIdentifier("family-window-received-caption")
             }
         }
         .accessibilityLabel("届いた写真。\(captureLabel(item))")

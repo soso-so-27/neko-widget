@@ -264,6 +264,38 @@ run_runtime_body() {
             --renderer-version "$RENDERER_VERSION" \
             || validator_status=$?
     fi
+    # Reuse the built app and exact iOS 26 runtime for the keyboard regression.
+    # This DEBUG fixture has no accounts, PhotoKit access or network activity.
+    if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
+        local composer_status=0
+        local composer_result="$runtime_artifacts/MomentComposer.xcresult"
+        xcrun simctl terminate "$simulator_udid" "$APP_BUNDLE_ID" >/dev/null 2>&1 || true
+        defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
+        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleKeyboards -array ja_JP-Kana en_US
+        xcodebuild \
+            -project NekoWidget.xcodeproj \
+            -scheme NekoWidget \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$simulator_udid" \
+            -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
+            -resultBundlePath "$composer_result" \
+            -only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests \
+            -parallel-testing-enabled NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            test || composer_status=$?
+        if [[ -d "$composer_result" ]]; then
+            xcrun xcresulttool export attachments --path "$composer_result" \
+                --output-path "$runtime_artifacts/composer-screenshots"
+        fi
+        if (( composer_status != 0 )); then
+            return "$composer_status"
+        fi
+    fi
     return "$validator_status"
 }
 

@@ -349,3 +349,92 @@ final class PhotoPermissionUITests: XCTestCase {
         add(attachment)
     }
 }
+
+/// Exercises the production composer offline, including the Japanese keyboard.
+final class MomentDeliveryComposerUITests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+    }
+
+    @MainActor
+    func testCaptionOnPhotoAndReturnFromKeyboard() {
+        for variant in ["standard", "large", "panorama"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--moment-composer-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if variant == "large" { app.launchArguments.append("--composer-large-text") }
+            if variant == "panorama" { app.launchArguments.append("--composer-panorama") }
+            app.launch()
+            let open = app.buttons["composer-fixture-open"]
+            XCTAssertTrue(open.waitForExistence(timeout: 15))
+            open.tap()
+            let edit = app.buttons["family-window-caption-edit"]
+            XCTAssertTrue(edit.waitForExistence(timeout: 10))
+            XCTAssertTrue(edit.isHittable)
+            edit.tap()
+            let input = app.descendants(matching: .any)["family-window-caption-input"].firstMatch
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            input.typeText("のびー")
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            let done = app.buttons["family-window-caption-done-top"]
+            XCTAssertTrue(done.isHittable, "The navigation Done action must stay above the keyboard.")
+            let footerDone = app.buttons["family-window-caption-done"]
+            XCTAssertTrue(footerDone.isHittable, "The footer must remain above the keyboard.")
+            XCTAssertTrue(app.buttons["family-window-cancel-delivery"].isHittable)
+            attach(app, name: "caption-edit-\(variant)")
+            if variant == "standard" { done.tap() }
+            else { footerDone.tap() }
+            XCTAssertTrue(waitForKeyboardToClose(app))
+            XCTAssertTrue(edit.label.contains("のびー"), "Finishing input must preserve the caption on the photo.")
+            let photo = app.descendants(matching: .any)["family-window-composer-photo"].firstMatch
+            XCTAssertTrue(photo.exists)
+            XCTAssertTrue(photo.frame.insetBy(dx: -1, dy: -1).contains(edit.frame), "The caption belongs inside the photo preview.")
+            let send = app.buttons["family-window-confirm-delivery"]
+            XCTAssertTrue(send.isHittable, "Sending must be reachable without scrolling after input.")
+            attach(app, name: "caption-preview-\(variant)")
+            send.tap()
+            let sent = app.staticTexts["composer-fixture-sent"]
+            XCTAssertTrue(sent.waitForExistence(timeout: 5))
+            XCTAssertEqual(sent.label, "送信内容：のびー")
+
+            if variant != "standard" {
+                app.terminate()
+                continue
+            }
+
+            // Cancel directly while editing, then ensure the next photo is blank.
+            open.tap()
+            XCTAssertTrue(edit.waitForExistence(timeout: 5))
+            edit.tap()
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            input.typeText("とりけし")
+            app.buttons["family-window-cancel-delivery"].tap()
+            XCTAssertTrue(open.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.navigationBars["写真を確認"].exists)
+            open.tap()
+            XCTAssertTrue(edit.waitForExistence(timeout: 5))
+            XCTAssertEqual(edit.label, "ひとことを書く")
+            app.buttons["family-window-confirm-delivery"].tap()
+            XCTAssertTrue(sent.waitForExistence(timeout: 5))
+            XCTAssertEqual(sent.label, "送信内容：")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    private func waitForKeyboardToClose(_ app: XCUIApplication) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: app.keyboards.firstMatch
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: 5) == .completed
+    }
+
+    @MainActor
+    private func attach(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

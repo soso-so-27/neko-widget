@@ -408,6 +408,7 @@ actor SharingRuntimeSelfTestRunner {
     private enum ThumbnailProgressCase: String {
         case sentDeliveryReceipt = "sent-delivery-receipt"
         case outboxBounds = "outbox-bounds"
+        case handoffPreview = "handoff-preview"
     }
 
     private enum ThumbnailProgressPhase: String {
@@ -432,6 +433,8 @@ actor SharingRuntimeSelfTestRunner {
         case outboxCapacityValidated = "outbox-capacity-validated"
         case outboxLoaded = "outbox-loaded"
         case thumbnailReferencesValidated = "thumbnail-references-validated"
+        case handoffThumbnailReadable = "handoff-thumbnail-readable"
+        case committedThumbnailReadable = "committed-thumbnail-readable"
         case committingStateWritten = "committing-state-written"
         case pendingDiscardExecuted = "pending-discard-executed"
         case pendingDiscarded = "pending-discarded"
@@ -3209,6 +3212,11 @@ actor SharingRuntimeSelfTestRunner {
             expected: creating,
             lifecycleToken: lifecycleToken
         )
+        try await testMomentSentPreviewThroughHandoff(
+            pairing: paired,
+            credential: credential,
+            lifecycleToken: lifecycleToken
+        )
         // A crash before state publication can leave more than the one account
         // referenced by PairingState. The disabled purge must delete the exact
         // sharing service wholesale, not only the currently bound account.
@@ -5890,6 +5898,91 @@ actor SharingRuntimeSelfTestRunner {
                   atPath: directory.appendingPathComponent(first.ciphertextFileName).path
               )
         else { throw MomentSharingError.stateUnavailable }
+    }
+
+    /// Uses the real paired App Group/Keychain fixture and complete host
+    /// promotion path. The moderator sees only a generated image; no relay
+    /// request, Photo Library access, or personal image is involved.
+    private static func testMomentSentPreviewThroughHandoff(
+        pairing: PairingState,
+        credential: PairingCredential,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) async throws {
+        let processor = MomentShareHandoffProcessor(
+            moderation: RuntimeMomentModerator(steps: [.safe])
+        )
+        try clearMomentSharingFixture()
+        defer {
+            try? processor.revokeAdmissions(lifecycleToken: lifecycleToken)
+            try? clearMomentSharingFixture()
+        }
+        writeThumbnailProgress(caseID: .handoffPreview, phase: .started)
+        let preview = try MomentCanonicalPreviewBuilder.build(
+            image: generatedImage(size: CGSize(width: 1_536, height: 2_048))
+        )
+        guard let expectedThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
+            from: preview.jpeg
+        ), MomentOutboxItem.isValidLocalThumbnail(expectedThumbnail)
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailValidated)
+        let admissions = try processor.refreshAdmissionCatalog(lifecycleToken: lifecycleToken)
+        guard let admission = admissions.destinations.first else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let staged = try MomentShareHandoffStore.stageCapture(
+            admissionID: admission.id,
+            canonicalJPEG: preview.jpeg,
+            capturedAt: nil,
+            pixelWidth: preview.pixelWidth,
+            pixelHeight: preview.pixelHeight,
+            senderPolicyVersion: 1,
+            senderPolicyAcceptedAt: .now,
+            caption: "生成した写真の控え"
+        )
+        let promotedCount = try await processor.refreshAdmissionsAndDrain(
+            pairing: pairing,
+            credential: credential,
+            lifecycleToken: lifecycleToken
+        )
+        guard promotedCount == 1,
+              !MomentShareHandoffStore.captureExists(staged),
+              let prepared = try MomentSharingStateStore.load().outbox.first(where: {
+                  $0.id == staged.id
+              }),
+              prepared.phase == .prepared,
+              prepared.localCaption == staged.caption
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(caseID: .handoffPreview, phase: .outboxLoaded)
+        guard prepared.localThumbnailFileName
+                == MomentOutboxItem.localThumbnailFileName(for: staged.id)
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailReferencesValidated)
+        guard MomentSharingStateStore.readLocalThumbnail(for: prepared) == expectedThumbnail
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(caseID: .handoffPreview, phase: .handoffThumbnailReadable)
+
+        // Apply the persisted acceptance fields and ciphertext cleanup used by
+        // the coordinator, then reload/prune as a foreground refresh does.
+        let committedAt = Date().addingTimeInterval(1)
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == staged.id })
+            else { throw MomentSharingError.stateUnavailable }
+            state.outbox[index].phase = .committed
+            state.outbox[index].serverMomentID = "moment_sent_preview_fixture"
+            state.outbox[index].commitStartedAt = committedAt
+            state.outbox[index].committedAt = committedAt
+            state.outbox[index].unreceivedExpiresAt = committedAt.addingTimeInterval(3_600)
+            state.outbox[index].recipientCount = 1
+            state.outbox[index].updatedAt = committedAt
+        }
+        try MomentSharingStateStore.removeCiphertext(for: prepared)
+        try MomentSharingStateStore.pruneLocalHistory(now: committedAt)
+        guard let committed = try MomentSharingStateStore.load().outbox.first(where: {
+            $0.id == staged.id
+        }), committed.phase == .committed,
+        MomentSharingStateStore.readLocalThumbnail(for: committed) == expectedThumbnail
+        else { throw MomentSharingError.stateUnavailable }
+        writeThumbnailProgress(caseID: .handoffPreview, phase: .committedThumbnailReadable)
     }
 
     private static func clearMomentSharingFixture() throws {
