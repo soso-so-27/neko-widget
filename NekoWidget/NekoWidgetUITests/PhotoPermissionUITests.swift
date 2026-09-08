@@ -376,8 +376,11 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             waitForExpectations(timeout: 10)
             XCTAssertEqual(latest.frame.height, initialFrame.height, accuracy: 2,
                            "Decoded pixels must not resize the surrounding screen.")
-            let actions = app.staticTexts["received-fixture-actions"]
+            let actions = app.buttons["received-fixture-actions"]
             XCTAssertGreaterThanOrEqual(actions.frame.minY, latest.frame.maxY)
+            actions.tap()
+            XCTAssertTrue(app.staticTexts["received-fixture-action-result"].exists,
+                          "The cropped photo must not intercept adjacent controls.")
             attach(app, name: "received-layout-\(variant)")
             latest.tap()
             let fullCaption = app.staticTexts["received-fixture-full-caption"]

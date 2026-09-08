@@ -2234,7 +2234,11 @@ struct MomentReceivedPhotoSurface: View {
                 GeometryReader { geometry in
                     Group {
                         if let url {
-                            MomentLocalImageView(url: url, contentMode: contentMode)
+                            MomentLocalImageView(
+                                url: url,
+                                contentMode: contentMode,
+                                hidesImageAccessibility: true
+                            )
                         } else {
                             Image(systemName: "photo")
                                 .font(.largeTitle)
@@ -2245,6 +2249,7 @@ struct MomentReceivedPhotoSurface: View {
                 }
             }
             .clipped()
+            .contentShape(Rectangle())
     }
 }
 
@@ -2263,6 +2268,7 @@ struct MomentReceivedPhotoHeader: View {
                 }
             }
             .clipped()
+            .contentShape(Rectangle())
     }
 }
 
@@ -2316,6 +2322,7 @@ struct MomentReceivedPhotoThumbnail: View {
 /// Deliberately mixes aspect ratios and a missing file in one scrolling layout.
 struct MomentReceivedLayoutFixture: View {
     @State private var showsDetail = false
+    @State private var didUseAction = false
     private let urls = Self.makePhotos()
     private let caption = String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3)
     private var largeText: Bool { CommandLine.arguments.contains("--received-large-text") }
@@ -2329,8 +2336,13 @@ struct MomentReceivedLayoutFixture: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("received-fixture-latest")
-                    Text("届いた写真の操作")
+                    Button("届いた写真の操作") { didUseAction = true }
+                        .frame(minHeight: 44)
                         .accessibilityIdentifier("received-fixture-actions")
+                    if didUseAction {
+                        Text("操作できました")
+                            .accessibilityIdentifier("received-fixture-action-result")
+                    }
                     Text("以前に届いた写真")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10), count: largeText ? 1 : 2), spacing: 10) {
                         ForEach(0..<4) { index in
@@ -2405,12 +2417,14 @@ struct MomentReceivedLayoutFixture: View {
 struct MomentLocalImageView: View {
     let url: URL
     let contentMode: ContentMode
+    let hidesImageAccessibility: Bool
     @State private var image: UIImage?
     @State private var loadFailed = false
 
-    init(url: URL, contentMode: ContentMode = .fill) {
+    init(url: URL, contentMode: ContentMode = .fill, hidesImageAccessibility: Bool = false) {
         self.url = url
         self.contentMode = contentMode
+        self.hidesImageAccessibility = hidesImageAccessibility
     }
 
     @ViewBuilder
@@ -2422,6 +2436,10 @@ struct MomentLocalImageView: View {
                     .aspectRatio(contentMode: contentMode)
                     .frame(maxWidth: .infinity)
                     .background(Color(uiColor: .tertiarySystemFill))
+                    // Cropped pixels are decorative when the containing photo
+                    // supplies its label. Their intrinsic bounds must not
+                    // enlarge that button's accessibility frame.
+                    .accessibilityHidden(hidesImageAccessibility)
             } else if loadFailed {
                 ZStack {
                     Color(uiColor: .tertiarySystemFill)
