@@ -15,6 +15,9 @@ extension Notification.Name {
     static let momentSharingContentNeedsReload = Notification.Name(
         "jp.nekowidget.sharing.content-needs-reload"
     )
+    static let momentSharingSynchronizationSucceeded = Notification.Name(
+        "jp.nekowidget.sharing.synchronization-succeeded"
+    )
     static let receivedMemoryImportNeedsRefresh = Notification.Name(
         "jp.nekowidget.received-memory-import-needs-refresh"
     )

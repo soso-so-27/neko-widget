@@ -167,6 +167,15 @@ struct FamilyWindowView: View {
             consumePendingMemoryTargetIfReady()
             consumePendingNotificationRoute()
         }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .momentSharingSynchronizationSucceeded
+            )
+        ) { notification in
+            if let completion = notification.object as? MomentSynchronizationSuccess {
+                model.receiveSynchronizationSuccess(completion)
+            }
+        }
         .onChange(of: pendingMemorySourceDigest) { _, _ in
             model.reloadContentFromDisk()
             consumePendingMemoryTargetIfReady()

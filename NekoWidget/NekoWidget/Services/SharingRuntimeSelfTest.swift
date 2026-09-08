@@ -4922,6 +4922,80 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
     }
 
+    private static func verifyLegacyRejectionRecheck(
+        item: MomentOutboxItem,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        guard item.hasCurrentRetryClassification else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard var legacyJSON = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(item)
+        ) as? [String: Any] else { throw MomentSharingError.stateUnavailable }
+        legacyJSON.removeValue(forKey: "hasCurrentRetryClassification")
+        var legacy = try JSONDecoder().decode(
+            MomentOutboxItem.self,
+            from: JSONSerialization.data(withJSONObject: legacyJSON)
+        )
+        guard !legacy.hasCurrentRetryClassification else {
+            throw MomentSharingError.stateUnavailable
+        }
+        let retryAt = Date().addingTimeInterval(1_920)
+        legacy.lastErrorCode = "request-rejected"
+        legacy.nextRetryAt = retryAt
+        legacy.attemptCount = 7
+        for code in [MomentOutboxRetryPolicy.dailyQuotaErrorCode, "retryable-server", "unknown"] {
+            var protected = legacy
+            protected.lastErrorCode = code
+            var expected = protected
+            expected.hasCurrentRetryClassification = true
+            guard protected.applyLegacyRetryClassificationUpgrade(), protected == expected else {
+                throw MomentSharingError.stateUnavailable
+            }
+        }
+        for phase in [MomentOutboxPhase.reserved, .uploaded, .committing, .committed, .deliveryResultUnknown, .failed] {
+            var protected = legacy
+            protected.phase = phase
+            var expected = protected
+            expected.hasCurrentRetryClassification = true
+            guard protected.applyLegacyRetryClassificationUpgrade(), protected == expected else {
+                throw MomentSharingError.stateUnavailable
+            }
+        }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == item.id }) else {
+                throw MomentSharingError.stateUnavailable
+            }
+            state.outbox[index] = legacy
+        }
+        let before = try MomentSharingStateStore.load()
+        let ciphertextBefore = try MomentSharingStateStore.readCiphertext(for: item)
+        var expected = before
+        guard let index = expected.outbox.firstIndex(where: { $0.id == item.id }) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        expected.outbox[index].hasCurrentRetryClassification = true
+        expected.outbox[index].nextRetryAt = nil
+        expected.storageRevision += 1
+        let upgraded = try MomentSharingStateStore.prepareOutboxForRetryClassification(
+            validating: lifecycleToken
+        )
+        guard upgraded == expected,
+              try MomentSharingStateStore.load() == expected,
+              try MomentSharingStateStore.readCiphertext(for: upgraded.outbox[index])
+                == ciphertextBefore
+        else { throw MomentSharingError.stateUnavailable }
+        // Simulate a new generic rejection after recheck, then reload from disk.
+        // Neither another poll nor a restart may accelerate that new backoff.
+        let retried = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.outbox[index].nextRetryAt = retryAt
+            state.outbox[index].attemptCount += 1
+        }
+        guard try MomentSharingStateStore.prepareOutboxForRetryClassification(
+            validating: lifecycleToken
+        ) == retried else { throw MomentSharingError.stateUnavailable }
+    }
+
     private static func testMomentOutboxBoundsAndExpiry() throws {
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
@@ -5015,6 +5089,9 @@ actor SharingRuntimeSelfTestRunner {
         guard initialOutbox.count == 10 else {
             throw MomentSharingError.stateUnavailable
         }
+        try verifyLegacyRejectionRecheck(
+            item: initialOutbox[0], lifecycleToken: lifecycleToken
+        )
         writeThumbnailProgress(
             caseID: .outboxBounds,
             phase: .outboxLoaded

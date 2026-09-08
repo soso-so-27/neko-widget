@@ -4,6 +4,7 @@ import Foundation
 enum MomentSharingPresentationVerifier {
     static func main() throws {
         try verifiesForegroundRefreshPolicy()
+        try verifiesSynchronizationErrorRecovery()
         try verifiesEmptyState()
         try verifiesPreparationBoundary()
         try verifiesEveryOutboxPhasePrecisely()
@@ -18,6 +19,31 @@ enum MomentSharingPresentationVerifier {
         try verifiesPhotoDeepLinkCompatibility()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
         print("Moment sharing presentation verifier passed")
+    }
+
+    private static func verifiesSynchronizationErrorRecovery() throws {
+        let failure = MomentSynchronizationFailure(
+            spaceID: "window-a", message: "sync failed", occurredAt: date(100)
+        )
+        try require(failure.canRecover(
+            after: date(101), synchronizedSpaceID: "window-a",
+            currentSpaceID: "window-a", currentMessage: "sync failed"
+        ), "a newer successful sync left the old error visible")
+        for (time, synchronizedSpace, currentSpace, message) in [
+            (date(99), "window-a", "window-a", "sync failed"),
+            (date(101), "window-b", "window-a", "sync failed"),
+            (date(101), "window-a", "window-b", "sync failed"),
+            (date(101), "window-a", "window-a", "save failed")
+        ] {
+            try require(!failure.canRecover(
+                after: time, synchronizedSpaceID: synchronizedSpace,
+                currentSpaceID: currentSpace, currentMessage: message
+            ), "an older/different-window sync or unrelated action erased an error")
+        }
+        try require(!failure.canRecover(
+            after: date(101), synchronizedSpaceID: "window-a",
+            currentSpaceID: nil, currentMessage: "sync failed"
+        ), "an unpaired screen inherited a previous window's success")
     }
 
     private static func verifiesForegroundRefreshPolicy() throws {

@@ -1,5 +1,23 @@
 import Foundation
 
+struct MomentSynchronizationFailure: Equatable, Sendable {
+    let spaceID: String
+    let message: String
+    let occurredAt: Date
+
+    func canRecover(
+        after completedAt: Date,
+        synchronizedSpaceID: String,
+        currentSpaceID: String?,
+        currentMessage: String?
+    ) -> Bool {
+        synchronizedSpaceID == spaceID
+            && currentSpaceID == spaceID
+            && completedAt >= occurredAt
+            && currentMessage == message
+    }
+}
+
 /// Foreground polling is deliberately bounded to an active, paired and
 /// consented app session. It never depends on Photos authorization, and it
 /// makes no background-delivery promise when the app is locked or terminated.

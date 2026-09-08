@@ -20,7 +20,9 @@ final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var outgoingPresentation: MomentOutgoingPresentation = .empty
     @Published private(set) var isSynchronizing = false
     @Published private(set) var isPerformingAction = false
-    @Published private(set) var errorMessage: String?
+    @Published private(set) var errorMessage: String? {
+        didSet { synchronizationFailure = nil }
+    }
     @Published private(set) var windowDisplayName = PrivateWindowDisplayName.fallback
     @Published private(set) var manualRefreshMessage: String?
     @Published private(set) var manualRefreshCompletedAt: Date?
@@ -35,6 +37,7 @@ final class MomentSharingViewModel: ObservableObject {
     private let configuration: SharingAPIConfiguration
     private let coordinator: MomentSharingCoordinator
     private var notificationTargetSentMomentID: String?
+    private var synchronizationFailure: MomentSynchronizationFailure?
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
@@ -182,9 +185,16 @@ final class MomentSharingViewModel: ObservableObject {
                 errorMessage = synchronizationMessage
             } else if !synchronizationSucceeded {
                 errorMessage = preliminaryFailureMessage
-                    ?? "写真の共有状況を更新できませんでした。接続を確認して、もう一度お試しください。"
+                    ?? "写真の共有状況を更新できませんでした。時間をおいて、もう一度確認してください。"
             } else {
                 errorMessage = nil
+            }
+            if let message = errorMessage, let spaceID = pairingState?.spaceID {
+                synchronizationFailure = MomentSynchronizationFailure(
+                    spaceID: spaceID,
+                    message: message,
+                    occurredAt: .now
+                )
             }
             if isManual {
                 manualRefreshCompletedAt = .now
@@ -192,7 +202,7 @@ final class MomentSharingViewModel: ObservableObject {
                     && errorMessage == nil
                 if !synchronizationSucceeded {
                     manualRefreshMessage =
-                        "更新できませんでした。接続を確認して、もう一度お試しください。"
+                        "更新できませんでした。時間をおいて、もう一度確認してください。"
                 } else {
                     manualRefreshMessage = errorMessage == nil
                         ? "更新しました。新しい写真はありません。"
@@ -211,7 +221,7 @@ final class MomentSharingViewModel: ObservableObject {
             if isManual {
                 manualRefreshCompletedAt = .now
                 manualRefreshSucceeded = false
-                manualRefreshMessage = "更新できませんでした。接続を確認して、もう一度お試しください。"
+                manualRefreshMessage = "更新できませんでした。時間をおいて、もう一度確認してください。"
             }
         }
     }
@@ -750,9 +760,36 @@ final class MomentSharingViewModel: ObservableObject {
         }
     }
 
-    func reloadContentFromDisk() {
+    /// Foreground polling uses another coordinator. Its successful refresh can
+    /// recover this screen's old sync error, but never a different window's
+    /// error, a newer error, or an unrelated save/report/action failure.
+    func receiveSynchronizationSuccess(_ completion: MomentSynchronizationSuccess) {
+        guard !isWorking, !isShowingLastKnownState,
+              let failure = synchronizationFailure,
+              failure.canRecover(
+                after: completion.completedAt,
+                synchronizedSpaceID: completion.spaceID,
+                currentSpaceID: pairingState?.spaceID,
+                currentMessage: errorMessage
+              )
+        else { return }
+        guard reloadContentFromDisk(),
+              pairingState?.spaceID == completion.spaceID,
+              errorMessage == failure.message
+        else { return }
+        errorMessage = nil
+        if manualRefreshSucceeded == false {
+            manualRefreshMessage = nil
+            manualRefreshCompletedAt = nil
+            manualRefreshSucceeded = nil
+        }
+    }
+
+    @discardableResult
+    func reloadContentFromDisk() -> Bool {
         do {
             try reload(notifyPresentationChange: false)
+            return true
         } catch {
             let message = Self.userFacingMessage(for: error)
             errorMessage = message
@@ -762,6 +799,7 @@ final class MomentSharingViewModel: ObservableObject {
             } else {
                 bootstrapPresentationState = .temporarilyUnavailable(message: message)
             }
+            return false
         }
     }
 

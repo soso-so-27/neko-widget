@@ -35,6 +35,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     var attemptCount: Int
     var nextRetryAt: Date? = nil
     var lastErrorCode: String? = nil
+    /// New records already use precise quota classification. Missing in older
+    /// JSON: allow one recheck of an ambiguous prepared rejection after upgrade.
+    var hasCurrentRetryClassification: Bool = true
     var commitStartedAt: Date? = nil
     /// Relay acknowledgement metadata. These fields prove only that the relay
     /// accepted the idempotent commit; they do not mean that a recipient has
@@ -77,6 +80,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         case attemptCount
         case nextRetryAt
         case lastErrorCode
+        case hasCurrentRetryClassification
         case commitStartedAt
         case committedAt
         case unreceivedExpiresAt
@@ -163,6 +167,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         attemptCount = try container.decode(Int.self, forKey: .attemptCount)
         nextRetryAt = try container.decodeIfPresent(Date.self, forKey: .nextRetryAt)
         lastErrorCode = try container.decodeIfPresent(String.self, forKey: .lastErrorCode)
+        hasCurrentRetryClassification = try container.decodeIfPresent(
+            Bool.self, forKey: .hasCurrentRetryClassification
+        ) ?? false
         commitStartedAt = try container.decodeIfPresent(Date.self, forKey: .commitStartedAt)
         committedAt = try container.decodeIfPresent(Date.self, forKey: .committedAt)
         unreceivedExpiresAt = try container.decodeIfPresent(
@@ -204,6 +211,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         try container.encode(attemptCount, forKey: .attemptCount)
         try container.encodeIfPresent(nextRetryAt, forKey: .nextRetryAt)
         try container.encodeIfPresent(lastErrorCode, forKey: .lastErrorCode)
+        try container.encode(hasCurrentRetryClassification, forKey: .hasCurrentRetryClassification)
         try container.encodeIfPresent(commitStartedAt, forKey: .commitStartedAt)
         try container.encodeIfPresent(committedAt, forKey: .committedAt)
         try container.encodeIfPresent(unreceivedExpiresAt, forKey: .unreceivedExpiresAt)
@@ -217,6 +225,18 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         try container.encodeIfPresent(localThumbnailFileName, forKey: .localThumbnailFileName)
         try container.encodeIfPresent(localCaption, forKey: .localCaption)
         // Never re-encode legacyInlineLocalThumbnailJPEG.
+    }
+
+    /// Mark every legacy row, even when its current error is not eligible, so
+    /// later ordinary failures cannot repeatedly bypass their normal backoff.
+    @discardableResult
+    mutating func applyLegacyRetryClassificationUpgrade() -> Bool {
+        guard !hasCurrentRetryClassification else { return false }
+        hasCurrentRetryClassification = true
+        if phase == .prepared && lastErrorCode == "request-rejected" {
+            nextRetryAt = nil
+        }
+        return true
     }
 
     func validated() throws -> Self {
@@ -969,6 +989,31 @@ enum MomentSharingStateStore {
     static func load() throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
             try loadWhileLocked()
+        }
+    }
+
+    /// Commit the one-time marker and eligible retry deadline together before
+    /// any request is sent. A failed write must not return an accelerated row.
+    static func prepareOutboxForRetryClassification(
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentSharingState {
+        try withLifecycleLock(validating: lifecycleToken) {
+            guard !SharingLifecycleGate.isCleanupRequired else {
+                throw MomentSharingError.stateUnavailable
+            }
+            var state = try loadWhileLocked()
+            var changed = false
+            for index in state.outbox.indices {
+                if state.outbox[index].applyLegacyRetryClassificationUpgrade() {
+                    changed = true
+                }
+            }
+            if changed {
+                state.storageRevision += 1
+                state = try state.validated()
+                try writeWhileLocked(state)
+            }
+            return state
         }
     }
 

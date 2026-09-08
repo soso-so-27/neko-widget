@@ -5,6 +5,13 @@ enum MomentSynchronizationNotice: Equatable, Sendable {
     case inboundModerationUnavailable
 }
 
+/// A completed photo synchronization for one authenticated window. This is
+/// distinct from a delivery receipt: pending photos may still be waiting.
+struct MomentSynchronizationSuccess: Sendable {
+    let spaceID: String
+    let completedAt: Date
+}
+
 private struct MomentSynchronizationRunResult: Sendable {
     let notice: MomentSynchronizationNotice?
     let succeeded: Bool
@@ -620,6 +627,18 @@ actor MomentSharingCoordinator {
                     "windowNameChanged": "\(windowNameChanged)"
                 ]
             )
+            if let spaceID = loadedAuthorization.state.spaceID {
+                let completion = MomentSynchronizationSuccess(
+                    spaceID: spaceID,
+                    completedAt: .now
+                )
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .momentSharingSynchronizationSucceeded,
+                        object: completion
+                    )
+                }
+            }
             return true
         } catch {
             latestSynchronizationNotice = Self.synchronizationNotice(for: error)
@@ -1851,7 +1870,9 @@ actor MomentSharingCoordinator {
     ) async throws -> Int {
         try SharingLifecycleGate.validate(lifecycleToken)
         var sentCount = 0
-        let snapshot = try MomentSharingStateStore.load()
+        let snapshot = try MomentSharingStateStore.prepareOutboxForRetryClassification(
+            validating: lifecycleToken
+        )
         for candidate in snapshot.outbox where
             candidate.phase != .committed
                 && candidate.phase != .deliveryResultUnknown
