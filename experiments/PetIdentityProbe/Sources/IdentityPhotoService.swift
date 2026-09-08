@@ -148,6 +148,7 @@ actor IdentityPhotoService {
         var selected: IdentityDetectorInputReport?
         var thumbnail: CGImage?
         var scaleComparison: IdentityDetectorScaleComparison?
+        var recoveredCrop: IdentityRecoveredCropPreview?
         if let id, !id.isEmpty {
             do {
                 try Self.checkAuthorization()
@@ -160,7 +161,15 @@ actor IdentityPhotoService {
                     thumbnail = prepared.image.flatMap(Self.thumbnail)
                     if let image = prepared.image {
                         scaleComparison = try IdentityDetectorScaleProbe.compareIfNeeded(image,
-                            original: prepared.animalDetection)
+                            original: prepared.animalDetection, detect: { variant, scale in
+                                let inspected = try IdentityImagePipeline.inspectCatCrop(variant)
+                                try Task.checkCancellation()
+                                if scale == .half {
+                                    recoveredCrop = IdentityRecoveredCropProbe.makePreview(original: image,
+                                        diagnostic: inspected.diagnostic, acceptedBoxes: inspected.acceptedBoxes)
+                                }
+                                return inspected.diagnostic
+                            })
                     }
                 }
             } catch is CancellationError {
@@ -173,7 +182,8 @@ actor IdentityPhotoService {
         }
         try Task.checkCancellation()
         return IdentityDetectorComparisonRun(report: IdentityDetectorComparisonReport(
-            controls: controls, savedPhoto: selected, savedPhotoScaleComparison: scaleComparison), savedPhotoThumbnail: thumbnail)
+            controls: controls, savedPhoto: selected, savedPhotoScaleComparison: scaleComparison,
+            savedPhotoCropCheck: recoveredCrop?.report), savedPhotoThumbnail: thumbnail, recoveredCropPreview: recoveredCrop)
     }
 
     func inspectInput(id: String) async throws -> IdentityInputRun {

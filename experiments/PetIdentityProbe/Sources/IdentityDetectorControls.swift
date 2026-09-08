@@ -64,8 +64,9 @@ struct IdentityDetectorComparisonReport: Encodable {
     let controls: [IdentityDetectorControlResult]
     let savedPhoto: IdentityDetectorInputReport?
     let savedPhotoScaleComparison: IdentityDetectorScaleComparison?
+    let savedPhotoCropCheck: IdentityRecoveredCropReport?
     let allControlsHaveSingleUsableCrop: Bool
-    let protocolIdentifier = "pet-detector-controls-v2"
+    let protocolIdentifier = "pet-detector-controls-v3"
     let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -74,7 +75,7 @@ struct IdentityDetectorComparisonReport: Encodable {
     #else
     let platform = "device"
     #endif
-    let method = "three-generated-controls-and-at-most-one-saved-photo;upright-max1024;vision-r2-cat0.5;zero-observations-trigger-three-scale-comparisons;no-fallback"
+    let method = "three-generated-controls-and-at-most-one-saved-photo;upright-max1024;vision-r2-cat0.5;zero-observations-trigger-three-scale-comparisons;half-scale-local-crop-preview;no-identity-fallback"
     let photosIncluded = false
     let identifiersIncluded = false
     let embeddingsIncluded = false
@@ -85,10 +86,12 @@ struct IdentityDetectorComparisonReport: Encodable {
     let productionDataChanged = false
 
     init(controls: [IdentityDetectorControlResult], savedPhoto: IdentityDetectorInputReport?,
-         savedPhotoScaleComparison: IdentityDetectorScaleComparison? = nil) {
+         savedPhotoScaleComparison: IdentityDetectorScaleComparison? = nil,
+         savedPhotoCropCheck: IdentityRecoveredCropReport? = nil) {
         self.controls = controls
         self.savedPhoto = savedPhoto
         self.savedPhotoScaleComparison = savedPhotoScaleComparison
+        self.savedPhotoCropCheck = savedPhotoCropCheck
         allControlsHaveSingleUsableCrop = controls.count == IdentityDetectorControlID.allCases.count
             && Set(controls.map(\.control)) == Set(IdentityDetectorControlID.allCases)
             && controls.allSatisfy { $0.input.cropUsable }
@@ -105,6 +108,7 @@ struct IdentityDetectorComparisonReport: Encodable {
 struct IdentityDetectorComparisonRun {
     let report: IdentityDetectorComparisonReport
     let savedPhotoThumbnail: CGImage?
+    var recoveredCropPreview: IdentityRecoveredCropPreview? = nil
 }
 
 enum IdentityDetectorControls {

@@ -62,12 +62,12 @@ final class IdentityDetectorScaleComparisonTests: XCTestCase {
         for original in [nil, diagnostic(available: false), cat, weakCat, dog] {
             XCTAssertNil(try IdentityDetectorScaleProbe.compareIfNeeded(image, original: original,
                 normalize: { _ in XCTFail("not a raw-zero result"); return nil },
-                detect: { _ in XCTFail("must not detect"); return cat }))
+                detect: { _, _ in XCTFail("must not detect"); return cat }))
         }
         var calls = 0, conversions = 0
         let compared = try XCTUnwrap(IdentityDetectorScaleProbe.compareIfNeeded(image, original: diagnostic(),
             normalize: { conversions += 1; return IdentityImageFormatProbe.standardRGB($0) },
-            detect: { _ in calls += 1; return cat }))
+            detect: { _, _ in calls += 1; return cat }))
         XCTAssertEqual(conversions, 1); XCTAssertEqual(calls, 3)
         XCTAssertEqual(compared.variants.map(\.scalePercent), IdentityDetectorScale.allCases)
         XCTAssertEqual(compared.status, .completed); XCTAssertFalse(compared.usedForIdentity)
@@ -78,7 +78,7 @@ final class IdentityDetectorScaleComparisonTests: XCTestCase {
         XCTAssertEqual(report.savedPhoto!.inputIssue, .catNotDetected)
         XCTAssertFalse(report.modelExecuted); XCTAssertFalse(report.identityEvaluated)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(report.json).utf8)) as? [String: Any])
-        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-detector-controls-v2")
+        XCTAssertEqual(object["protocolIdentifier"] as? String, "pet-detector-controls-v3")
         let scale = try XCTUnwrap(object["savedPhotoScaleComparison"] as? [String: Any])
         XCTAssertEqual(Set(scale.keys), ["status", "normalizedFormat", "variants", "trigger", "method", "scope", "usedForIdentity"])
         for variant in try XCTUnwrap(scale["variants"] as? [[String: Any]]) {
@@ -92,10 +92,10 @@ final class IdentityDetectorScaleComparisonTests: XCTestCase {
     func testFailuresAreNotZeroResultsAndCancellationStopsRemainingVariants() throws {
         let image = try source()
         let failed = try XCTUnwrap(IdentityDetectorScaleProbe.compareIfNeeded(image, original: diagnostic(),
-            normalize: { _ in nil }, detect: { _ in XCTFail("must not detect"); return self.diagnostic() }))
+            normalize: { _ in nil }, detect: { _, _ in XCTFail("must not detect"); return self.diagnostic() }))
         XCTAssertEqual(failed.status, .normalizationFailed); XCTAssertTrue(failed.variants.isEmpty)
         var calls = 0
-        let incomplete = try XCTUnwrap(IdentityDetectorScaleProbe.compareIfNeeded(image, original: diagnostic(), detect: { _ in
+        let incomplete = try XCTUnwrap(IdentityDetectorScaleProbe.compareIfNeeded(image, original: diagnostic(), detect: { _, _ in
             calls += 1
             if calls == 1 { throw NSError(domain: "private-photo-id", code: 1) }
             return self.diagnostic(available: calls != 2)
@@ -107,7 +107,7 @@ final class IdentityDetectorScaleComparisonTests: XCTestCase {
         XCTAssertEqual(incomplete.variants[2].animalDetection?.observationCount, 0)
         XCTAssertFalse(String(data: try JSONEncoder().encode(incomplete), encoding: .utf8)!.contains("private-photo-id"))
         calls = 0
-        XCTAssertThrowsError(try IdentityDetectorScaleProbe.compareIfNeeded(image, original: diagnostic(), detect: { _ in
+        XCTAssertThrowsError(try IdentityDetectorScaleProbe.compareIfNeeded(image, original: diagnostic(), detect: { _, _ in
             calls += 1
             throw CancellationError()
         })) { XCTAssertTrue($0 is CancellationError) }
@@ -122,11 +122,19 @@ final class IdentityDetectorScaleComparisonTests: XCTestCase {
         let normalized = try XCTUnwrap(IdentityImageFormatProbe.standardRGB(source))
         for scale in IdentityDetectorScale.allCases {
             let rendered = try XCTUnwrap(IdentityDetectorScaleProbe.render(normalized, scale: scale))
-            let diagnostic = try IdentityImagePipeline.inspectCatCrop(rendered).diagnostic
+            let inspected = try IdentityImagePipeline.inspectCatCrop(rendered)
+            let diagnostic = inspected.diagnostic
             XCTAssertTrue(diagnostic.resultsAvailable)
             if scale == .full { XCTAssertEqual(diagnostic.acceptedCatObservationCount, 1) }
             // Infrastructure check only; not a reproduction of the private close-up photo.
             print("PROBE_GENERATED_SCALE percent=\(scale.rawValue) cats=\(diagnostic.acceptedCatObservationCount)")
+            if scale == .half {
+                let preview = IdentityRecoveredCropProbe.makePreview(original: source,
+                    diagnostic: diagnostic, acceptedBoxes: inspected.acceptedBoxes)
+                XCTAssertEqual(preview.report.status, .candidatePrepared)
+                XCTAssertNotNil(preview.cropThumbnail)
+                print("PROBE_GENERATED_RECOVERED_CROP status=\(preview.report.status.rawValue)")
+            }
         }
     }
 }

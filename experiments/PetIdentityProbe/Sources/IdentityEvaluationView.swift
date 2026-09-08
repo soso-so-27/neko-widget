@@ -418,11 +418,44 @@ struct IdentityEvaluationView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }.font(.subheadline)
             }
+            if let preview = run.recoveredCropPreview {
+                recoveredCropResults(preview)
+            }
             if let json = run.report.json {
                 ShareLink("まとめた診断結果を共有", item: json)
                     .accessibilityIdentifier("identity-detector-share")
             }
             Text("共有するのは検出結果の数値だけです。ご自身の写真・写真ID・検出位置は含めません。基準画像の結果だけでは原因や識別精度は確定しません。")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    // Internal so the generated-image rendering test exercises this exact panel.
+    func recoveredCropResults(_ preview: IdentityRecoveredCropPreview) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("50％表示で見つけた範囲").font(.headline)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let image = preview.originalThumbnail {
+                        Image(uiImage: UIImage(cgImage: image)).resizable().scaledToFit()
+                            .overlay {
+                                if let box = preview.originalBox {
+                                    GeometryReader { proxy in
+                                        Rectangle().stroke(Color.orange, lineWidth: 2)
+                                            .frame(width: box.width * proxy.size.width, height: box.height * proxy.size.height)
+                                            .position(x: box.midX * proxy.size.width, y: (1 - box.midY) * proxy.size.height)
+                                    }
+                                }
+                            }
+                            .accessibilityLabel("元の写真と検出枠")
+                    } else { Text("元の写真を表示できません").font(.caption) }
+                    Text("元の写真と検出枠").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity)
+                inputPreview(preview.cropThumbnail, title: "切り抜き候補", emptyMessage: "切り抜きなし")
+                    .frame(maxWidth: .infinity)
+            }
+            Text(preview.report.status.summary).font(.subheadline)
+            Text("画像と枠はこの画面だけに表示します。写真の保存・変更や、個体識別は行いません。")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }

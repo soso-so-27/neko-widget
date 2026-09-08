@@ -27,11 +27,15 @@ xcrun simctl boot "$simulator"
 xcrun simctl bootstatus "$simulator" -b
 xcodebuild -project PetIdentityProbe.xcodeproj -scheme PetIdentityProbe \
   -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath "$derived" \
+  -resultBundlePath "$RUNNER_TEMP/PetIdentityProbeTests.xcresult" \
   -parallel-testing-enabled NO -only-testing:PetIdentityProbeTests \
   CODE_SIGNING_ALLOWED=NO test > "$evidence/simulator-test.log" 2>&1 || {
     tail -n 90 "$evidence/simulator-test.log"; exit 1;
   }
 python3 summarize.py "$evidence/simulator-test.log" "$evidence/summary.json"
+# The single rendering attachment uses only the bundled generated cat; no private photos.
+xcrun xcresulttool export attachments --path "$RUNNER_TEMP/PetIdentityProbeTests.xcresult" \
+  --output-path "$evidence/generated-previews"
 
 # Show the actual standalone first screen; do not add photos to the Simulator.
 xcrun simctl launch "$simulator" jp.nekowidget.petidentityprobe --identity-diagnostic-preview --detector-controls-preview
