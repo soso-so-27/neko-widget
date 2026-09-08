@@ -200,7 +200,181 @@ struct MomentPhotoCaption: View {
     }
 }
 
+/// Shares the shipping history layout with the offline visual fixture.
+/// Fileless history stays available as short rows instead of empty photo tiles.
+struct MomentSentHistory<Card: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let records: [MomentSentRecordPresentation]
+    var focusedMomentID: String? = nil
+    @ViewBuilder let card: (MomentSentRecordPresentation) -> Card
+
+    var body: some View {
+        let focusedRecord = focusedMomentID.flatMap { momentID in
+            records.first { $0.momentID == momentID }
+        }
+        let remainingRecords = records.filter { $0.id != focusedRecord?.id }
+        let photoRecords = remainingRecords.filter { record in
+            record.localThumbnailJPEG.flatMap { UIImage(data: $0) } != nil
+        }
+        let photoIDs = Set(photoRecords.map(\.id))
+        let filelessRecords = remainingRecords.filter { !photoIDs.contains($0.id) }
+
+        VStack(alignment: .leading, spacing: 14) {
+            // Preserve the exact notification target before either history group.
+            if let focusedRecord {
+                card(focusedRecord)
+                    .frame(maxWidth: focusedRecord.localThumbnailJPEG == nil ? .infinity : 240)
+            }
+            if !photoRecords.isEmpty {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+                    ForEach(photoRecords) { record in
+                        card(record)
+                            .frame(maxWidth: 240)
+                    }
+                }
+            }
+            ForEach(filelessRecords) { record in
+                card(record)
+            }
+        }
+    }
+
+    private var columns: [GridItem] {
+        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        return Array(
+            repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .leading),
+            count: count
+        )
+    }
+}
+
+struct MomentSentRecordCard: View {
+    let record: MomentSentRecordPresentation
+
+    var body: some View {
+        let thumbnail = record.localThumbnailJPEG.flatMap { UIImage(data: $0) }
+        VStack(alignment: .leading, spacing: 0) {
+            if let thumbnail {
+                Color(uiColor: .tertiarySystemGroupedBackground)
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        GeometryReader { geometry in
+                            Image(uiImage: thumbnail)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if let caption = record.localCaption {
+                            MomentPhotoCaption(caption: caption, lineLimit: 2)
+                        }
+                    }
+                    .clipped()
+                    .accessibilityHidden(true)
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "photo")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let caption = record.localCaption {
+                            Text(verbatim: caption)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                        }
+                        Text("写真の控えはありません")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding([.horizontal, .top], 12)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text((record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt).formatted(
+                    .dateTime.month().day().hour().minute()
+                ))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { deliveryLabels }
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 5) { deliveryLabels }
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            }
+            .padding(10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var deliveryLabels: some View {
+        Text(record.deliveryState == .recipientDeviceArrivalConfirmed ? "到着" : "受付済み")
+        if record.hasReceivedHeart {
+            Label("ハート", systemImage: "heart.fill")
+        }
+    }
+}
+
 #if DEBUG
+/// Only deterministic bundled images and values; no sharing state or network.
+struct MomentSentHistoryFixture: View {
+    @State private var selectedRecord: MomentSentRecordPresentation?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                MomentSentHistory(
+                    records: records,
+                    focusedMomentID: CommandLine.arguments.contains("--history-notification-target") ? "missing-moment" : nil
+                ) { record in
+                    Button { selectedRecord = record } label: {
+                        MomentSentRecordCard(record: record)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(record.localCaption ?? "写真のみ")
+                    .accessibilityIdentifier("history-fixture-\(record.id)")
+                }
+                .padding(16)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("最近届けた写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $selectedRecord) { record in
+                Text(verbatim: record.localCaption ?? "写真のみ")
+                    .accessibilityIdentifier("history-fixture-detail-caption")
+                    .padding()
+            }
+        }
+        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--history-large-text") ? .accessibility2 : .large)
+        .preferredColorScheme(CommandLine.arguments.contains("--history-large-text") ? .light : .dark)
+    }
+
+    private var records: [MomentSentRecordPresentation] {
+        let date = Date(timeIntervalSince1970: 1_788_846_000)
+        let image = AppStoreScreenshotFixture.image(for: "app-store-screenshot-fixture-1")!
+        let thumbnail = UIGraphicsImageRenderer(size: CGSize(width: 240, height: 240)).image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: 240, height: 240))
+        }.jpegData(compressionQuality: 0.6)
+        return [
+            MomentSentRecordPresentation(id: "photo", serverAcceptedAt: date,
+                recipientDeliveryConfirmedAt: nil, hasReceivedHeart: false,
+                localThumbnailJPEG: thumbnail, localCaption: "おこってるんだけど？"),
+            MomentSentRecordPresentation(id: "missing", momentID: "missing-moment", serverAcceptedAt: date.addingTimeInterval(-600),
+                recipientDeliveryConfirmedAt: date, hasReceivedHeart: true,
+                localCaption: "のびー。今日はずっといっしょにいたいみたいです。")
+        ]
+    }
+}
+
 /// No accounts, PhotoKit, persistence or network; uses the production composer.
 struct MomentDeliveryComposerFixture: View {
     @State private var isPresented = false

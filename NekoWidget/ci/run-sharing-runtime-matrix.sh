@@ -264,8 +264,9 @@ run_runtime_body() {
             --renderer-version "$RENDERER_VERSION" \
             || validator_status=$?
     fi
-    # Reuse the built app and exact iOS 26 runtime for the keyboard regression.
-    # This DEBUG fixture has no accounts, PhotoKit access or network activity.
+    # After ordinary runtime validation, use the same iOS 26 Simulator for UI
+    # review. Only this final test build enables generated Widget Gallery pixels.
+    # These DEBUG fixtures have no accounts, PhotoKit access or network activity.
     if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
         local composer_status=0
         local composer_result="$runtime_artifacts/MomentComposer.xcresult"
@@ -273,6 +274,10 @@ run_runtime_body() {
         defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
         xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
             AppleKeyboards -array ja_JP-Kana en_US
+        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLanguages -array ja
+        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLocale -string ja_JP
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
@@ -282,11 +287,15 @@ run_runtime_body() {
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
             -only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests \
+            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes \
             -parallel-testing-enabled NO \
+            -testLanguage ja \
+            -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            'WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE' \
             test || composer_status=$?
         if [[ -d "$composer_result" ]]; then
             xcrun xcresulttool export attachments --path "$composer_result" \

@@ -902,8 +902,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("heart?.phase == .sent", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
         self.assertIn(
-            'sentRecordBadge("ハート", systemImage: "heart.fill")',
-            family_view,
+            'Label("ハート", systemImage: "heart.fill")',
+            source("NekoWidget/Views/MomentDeliveryComposer.swift"),
         )
         self.assertIn('parts.append("ハートが届いています")', family_view)
         self.assertNotIn("family-window-received-paws", family_view)
@@ -2947,22 +2947,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("「到着」は、相手が写真を開いたことを示しません", family)
         self.assertIn("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します", family)
         self.assertIn("別のiPhoneや再インストール後には表示されません", family)
-        self.assertIn("let thumbnail = sentRecordThumbnail(record)", family)
+        self.assertIn("let image = sentRecordThumbnail(record)", family)
         target_record = section(
             family,
             "private var outgoingStatusSection: some View",
             "private var visibleSentRecords",
         )
-        self.assertIn("LazyVGrid(columns: sentRecordColumns, spacing: 10)", target_record)
-        self.assertIn("ForEach(visibleSentRecords)", target_record)
+        self.assertIn("records: visibleSentRecords", target_record)
+        self.assertIn("focusedMomentID: focusedSentMomentID", target_record)
         self.assertNotIn("プレビュー画像は送信したiPhoneだけに最長30日残り", target_record)
-        sent_columns = section(
-            family,
-            "private var sentRecordColumns:",
-            "private var visibleSentRecords:",
-        )
-        self.assertIn("dynamicTypeSize.isAccessibilitySize ? 1 : 2", sent_columns)
-        self.assertIn("GridItem(.flexible(minimum: 0)", sent_columns)
         self.assertIn("if let focusedSentMomentID", family)
         self.assertIn("records.insert(target, at: records.startIndex)", family)
         self.assertIn("写真のプレビューはこのiPhoneに残っていません", family)
@@ -2972,9 +2965,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("static let sentRecordLimit = 200", presentation)
         self.assertIn(
             "record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt",
-            family,
+            source("NekoWidget/Views/MomentDeliveryComposer.swift"),
         )
-        self.assertIn("let arrived = record.deliveryState", family)
         self.assertIn("localThumbnailFileName", store)
         self.assertIn("legacyInlineLocalThumbnailJPEG", store)
         self.assertIn("Never re-encode legacyInlineLocalThumbnailJPEG", store)
@@ -3267,8 +3259,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("sentSectionContent", sent_branch)
         self.assertNotIn("sendPhotoAction", sent_branch)
         self.assertLess(
-            paired.index("sendPhotoAction"),
             paired.index('Picker("まどに表示する内容"'),
+            paired.index("sendPhotoAction"),
         )
         self.assertNotIn("prioritizesNotificationTarget", family)
         self.assertNotIn("sharingManagementLink", paired)
@@ -3409,25 +3401,9 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "private func sentRecordCard(",
             "private func outgoingStatusCard(",
         )
-        self.assertIn("sentRecordPhotoSurface(thumbnail)", sent)
-        self.assertIn('arrived ? "到着" : "受付済み"', sent)
-        self.assertIn('sentRecordBadge("ハート", systemImage: "heart.fill")', sent)
-        self.assertIn("private func sentRecordBadge(", sent)
-        self.assertIn(".font(.caption2.bold())", sent)
-        self.assertIn(".background(.black.opacity(0.48), in: Capsule())", sent)
-
-        sent_photo = section(
-            family,
-            "private func sentRecordPhotoSurface(",
-            "private func sentRecordAccessibilityLabel(",
-        )
-        self.assertIn("if let thumbnail {", sent_photo)
-        self.assertIn(".scaledToFill()", sent)
-        self.assertNotIn('Text("写真の控えはありません")', sent_photo)
-        self.assertIn('Text("写真の控えはありません")', sent)
-        self.assertIn(".aspectRatio(1, contentMode: .fit)", sent_photo)
-        self.assertNotIn(".frame(width: 72, height: 72)", sent)
-        self.assertNotIn("LazyVStack", sent)
+        # Geometry is exercised by MomentDeliveryComposerUITests on iOS,
+        # rather than pinning the old overlay implementation here.
+        self.assertIn("MomentSentRecordCard(record: record)", sent)
         self.assertNotIn("閲覧・既読の確認ではありません", sent)
         self.assertIn("sentRecordAccessibilityLabel(record)", sent)
         self.assertIn("accessibilityElement(children: .ignore)", sent)

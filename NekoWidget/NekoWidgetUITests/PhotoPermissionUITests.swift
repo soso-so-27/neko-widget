@@ -358,6 +358,38 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testSentHistoryKeepsPhotosVisibleAndMissingPhotosCompact() {
+        for variant in ["standard", "large", "notification"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--moment-history-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if variant == "large" { app.launchArguments.append("--history-large-text") }
+            if variant == "notification" { app.launchArguments.append("--history-notification-target") }
+            app.launch()
+            let photo = app.buttons["history-fixture-photo"]
+            let missing = app.buttons["history-fixture-missing"]
+            XCTAssertTrue(photo.waitForExistence(timeout: 15))
+            XCTAssertTrue(missing.exists)
+            XCTAssertTrue(photo.isHittable)
+            XCTAssertTrue(missing.isHittable)
+            XCTAssertLessThan(missing.frame.height, photo.frame.height,
+                              "Fileless history must not occupy a full photo tile.")
+            if variant == "notification" {
+                XCTAssertLessThanOrEqual(missing.frame.maxY, photo.frame.minY,
+                                         "The exact notification target stays first even without a preview.")
+            } else {
+                XCTAssertGreaterThanOrEqual(missing.frame.minY, photo.frame.maxY,
+                                            "Photo content must come before fileless history.")
+            }
+            attach(app, name: "sent-history-\(variant)")
+            missing.tap()
+            let caption = app.staticTexts["history-fixture-detail-caption"]
+            XCTAssertTrue(caption.waitForExistence(timeout: 5))
+            XCTAssertEqual(caption.label, "のびー。今日はずっといっしょにいたいみたいです。")
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testCaptionOnPhotoAndReturnFromKeyboard() {
         var standardCaptionHeight: CGFloat = 0
         for variant in ["standard", "large", "panorama"] {

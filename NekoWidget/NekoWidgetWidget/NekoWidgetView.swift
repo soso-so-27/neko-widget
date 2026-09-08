@@ -8,6 +8,9 @@ import UIKit
 #if APP_STORE_SCREENSHOT_WIDGET_FIXTURE && !DEBUG
 #error("The App Store Widget screenshot fixture must never compile outside Debug.")
 #endif
+#if WIDGET_VISUAL_REVIEW_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)
+#error("Widget visual review requires Debug and the dedicated screenshot fixture.")
+#endif
 
 struct NekoWidgetView: View {
     @Environment(\.widgetFamily) private var family
@@ -465,13 +468,35 @@ private struct QuietWindowOpening: Shape {
 
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
 /// A workflow-gated Widget Gallery preview. It is compiled only in Debug and
-/// only when the manual screenshot workflow injects its dedicated compiler
+/// only when a screenshot run injects its dedicated compiler
 /// condition. Ordinary Debug and every Release archive omit these pixels.
 enum AppStoreWidgetPreviewFixture {
     static let cacheFilename = "app-store-widget-gallery-preview.fixture"
 
     static func entry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
-        NekoWidgetEntry(
+#if WIDGET_VISUAL_REVIEW_FIXTURE
+        // Fixed display-only identities; no catalog, room key, Photos or relay.
+        // The Gallery capture never invokes these production action controls.
+        return NekoWidgetEntry(
+            date: date,
+            localIdentifier: nil,
+            cacheFilename: cacheFilename,
+            imageVariant: variant,
+            photoSourceIdentifier: WidgetPhotoSource.familyWindowIDPrefix
+                + "00000000-0000-4000-8000-000000000001",
+            familySourceDigest: String(repeating: "a", count: 64),
+            usesFamilySpecificImage: true,
+            windowDisplayName: "みんなのねこと毎日の写真のまど",
+            isLiked: false,
+            isLikeInteractionEnabled: false,
+            isBookmarked: false,
+            isBookmarkInteractionEnabled: true,
+            familyHeartStatus: .ready,
+            familyActionsRequireApp: false,
+            emptyStateReason: .none
+        )
+#else
+        return NekoWidgetEntry(
             date: date,
             localIdentifier: nil,
             cacheFilename: cacheFilename,
@@ -488,6 +513,7 @@ enum AppStoreWidgetPreviewFixture {
             familyActionsRequireApp: false,
             emptyStateReason: .none
         )
+#endif
     }
 
     /// Original code-defined pixels only: no Photos input, account, network,

@@ -159,6 +159,31 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", failure_upload)
         self.assertNotIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=", self.workflow)
 
+    def test_shared_widget_review_is_gated_after_ordinary_runtime_validation(self) -> None:
+        runtime = source("NekoWidget/ci/run-sharing-runtime-matrix.sh")
+        condition = (
+            "WIDGET_SCREENSHOT_FIXTURE_CONDITION="
+            "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
+        )
+        self.assertEqual(runtime.count(condition), 1)
+        review = runtime.index('if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]')
+        self.assertLess(runtime.index('python3 "$VALIDATOR"'), review)
+        self.assertGreater(runtime.index(condition), review)
+        self.assertIn("-only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests", runtime)
+        self.assertIn(
+            "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
+            "testCaptureSharedWidgetAllSupportedSizes", runtime,
+        )
+        self.assertIn(
+            "#if WIDGET_VISUAL_REVIEW_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)",
+            self.widget_view,
+        )
+        self.assertNotIn("WIDGET_VISUAL_REVIEW_FIXTURE", self.config)
+        self.assertNotIn("WIDGET_VISUAL_REVIEW_FIXTURE", self.workflow)
+        self.assertIn('for size in ["medium", "large"]', self.widget_ui_test)
+        self.assertIn('springboard.pageIndicators.firstMatch', self.widget_ui_test)
+        self.assertIn('NSPredicate(format: "value != %@", previousPage)', self.widget_ui_test)
+
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [
             "01-local-cat-widget",

@@ -517,13 +517,6 @@ struct FamilyWindowView: View {
                         sharingErrorCard(message)
                     }
 
-                    manualRefreshResult
-
-                    if pendingNotificationRoute?.target == nil,
-                       model.errorMessage == nil {
-                        sendPhotoAction
-                    }
-
                     Picker("まどに表示する内容", selection: $selectedSection) {
                         ForEach(FamilyWindowSection.allCases) { section in
                             Text(section.title).tag(section)
@@ -537,12 +530,21 @@ struct FamilyWindowView: View {
                         focusedSentMomentID = nil
                         notificationAccessibilityFocus = nil
                     }
+
+                    if pendingNotificationRoute?.target == nil,
+                       model.errorMessage == nil {
+                        sendPhotoAction
+                    }
                 }
 
                 if model.isReportOnly || selectedSection == .received {
                     receivedSectionContent
                 } else {
                     sentSectionContent
+                }
+
+                if !model.isReportOnly {
+                    manualRefreshResult
                 }
             }
             .padding(16)
@@ -683,20 +685,14 @@ struct FamilyWindowView: View {
                     Text(isPreparingSelectedPhoto
                         ? "写真を準備しています…"
                         : "写真を届ける")
-                        .font(.headline.weight(.semibold))
+                        .font(.subheadline.weight(.semibold))
                 }
-                .frame(maxWidth: .infinity, minHeight: 54)
+                .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.roundedRectangle(radius: 18))
-            .controlSize(.large)
-            .shadow(
-                color: Color.accentColor.opacity(0.22),
-                radius: 8,
-                x: 0,
-                y: 4
-            )
+            .buttonBorderShape(.roundedRectangle(radius: 14))
+            .controlSize(.regular)
             .disabled(
                 model.isWorking
                     || model.isShowingLastKnownState
@@ -715,6 +711,7 @@ struct FamilyWindowView: View {
                     .foregroundStyle(.orange)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private var notificationRouteResolutionCard: some View {
@@ -1212,27 +1209,16 @@ struct FamilyWindowView: View {
                             outgoingManagementMenu
                         }
                     }
-                    Text("「到着」は、相手が写真を開いたことを示しません。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if visibleSentRecords.allSatisfy({
-                        sentRecordThumbnail($0) == nil
-                    }) {
-                        Text("以前の送信や、別のiPhoneの履歴にはプレビューがありません。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    LazyVGrid(columns: sentRecordColumns, spacing: 10) {
-                        ForEach(visibleSentRecords) { record in
-                            Button {
-                                selectedSentRecord = record
-                            } label: {
-                                sentRecordCard(record)
-                            }
-                            .buttonStyle(.plain)
+                    MomentSentHistory(
+                        records: visibleSentRecords,
+                        focusedMomentID: focusedSentMomentID
+                    ) { record in
+                        Button {
+                            selectedSentRecord = record
+                        } label: {
+                            sentRecordCard(record)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -1270,14 +1256,6 @@ struct FamilyWindowView: View {
             || !model.outgoingPresentation.outcomes.isEmpty
             || (model.outgoingPresentation.sentRecords.isEmpty
                 && model.outgoingPresentation.latestServerAcceptance != nil)
-    }
-
-    private var sentRecordColumns: [GridItem] {
-        let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
-        return Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: 10),
-            count: count
-        )
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
@@ -1339,76 +1317,12 @@ struct FamilyWindowView: View {
     }
 
     private func sentRecordCard(_ record: MomentSentRecordPresentation) -> some View {
-        let thumbnail = sentRecordThumbnail(record)
-        let arrived = record.deliveryState == .recipientDeviceArrivalConfirmed
-        let statusDate = record.recipientDeliveryConfirmedAt ?? record.serverAcceptedAt
         let accessibilityFocusID = record.momentID ?? "sent-record-\(record.id)"
         let isNotificationTarget = focusedSentMomentID.map {
             record.momentID == $0
         } ?? false
 
-        return VStack(alignment: .leading, spacing: 0) {
-            ZStack(alignment: .bottomLeading) {
-                sentRecordPhotoSurface(thumbnail)
-
-                if thumbnail != nil {
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.76)],
-                        startPoint: .center,
-                        endPoint: .bottom
-                    )
-                    .allowsHitTesting(false)
-                }
-
-                VStack(alignment: .leading, spacing: 5) {
-                    if thumbnail == nil {
-                        // Keep the missing-photo notice and caption in one layout,
-                        // so a longer caption cannot cover the notice.
-                        VStack(spacing: 7) {
-                            Image(systemName: "photo")
-                                .font(.title2)
-                            Text("写真の控えはありません")
-                                .font(.caption2.weight(.semibold))
-                                .multilineTextAlignment(.center)
-                        }
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    if let caption = record.localCaption {
-                        if thumbnail != nil {
-                            MomentPhotoCaption(caption: caption, lineLimit: 2)
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text(verbatim: caption)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                        }
-                    }
-                    HStack(spacing: 5) {
-                        sentRecordBadge(
-                            arrived ? "到着" : "受付済み",
-                            systemImage: arrived ? "iphone" : "server.rack"
-                        )
-                        if record.hasReceivedHeart {
-                            sentRecordBadge("ハート", systemImage: "heart.fill")
-                        }
-                    }
-
-                    Text(statusDate.formatted(
-                        .dateTime.month().day().hour().minute()
-                    ))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(thumbnail == nil ? Color.primary : Color.white)
-                }
-                .padding(10)
-            }
-        }
-        .background(
-            Color(uiColor: .secondarySystemGroupedBackground),
-            in: RoundedRectangle(cornerRadius: 16)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        return MomentSentRecordCard(record: record)
         .overlay {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(
@@ -1444,19 +1358,15 @@ struct FamilyWindowView: View {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFit()
+                                .frame(maxWidth: 240)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
                                 .frame(maxWidth: .infinity)
-                                .overlay(alignment: .bottom) {
-                                    if let caption = record.localCaption {
-                                        MomentPhotoCaption(caption: caption)
-                                            .accessibilityIdentifier("family-window-sent-caption")
-                                    }
-                                }
                                 .accessibilityLabel("届けた写真の控え")
                         } else {
                             Label("写真の控えは残っていません", systemImage: "photo")
                                 .foregroundStyle(.secondary)
                         }
-                        if image == nil, let caption = record.localCaption {
+                        if let caption = record.localCaption {
                             Text(verbatim: caption)
                                 .font(.body)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1465,6 +1375,15 @@ struct FamilyWindowView: View {
                         }
                         Text(record.title).font(.headline)
                         Text(record.detail).font(.footnote).foregroundStyle(.secondary)
+                        Text("「到着」は、相手が写真を開いたことを示しません。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DisclosureGroup("写真の控えについて") {
+                            Text("届けた写真のプレビューは、このiPhoneだけに最長30日・最大200件まで保持します。以前の送信や、別のiPhoneの履歴にはプレビューがありません。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 6)
+                        }
                     }
                     .padding(20)
                 } else {
@@ -1480,39 +1399,6 @@ struct FamilyWindowView: View {
                 }
             }
         }
-    }
-
-    private func sentRecordBadge(
-        _ title: String,
-        systemImage: String
-    ) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption2.bold())
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(.black.opacity(0.48), in: Capsule())
-    }
-
-    private func sentRecordPhotoSurface(
-        _ thumbnail: UIImage?
-    ) -> some View {
-        Color(uiColor: .tertiarySystemGroupedBackground)
-            .aspectRatio(1, contentMode: .fit)
-            .overlay {
-                GeometryReader { geometry in
-                    if let thumbnail {
-                        Image(uiImage: thumbnail)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                    }
-                }
-            }
-            .clipped()
-            .accessibilityHidden(true)
     }
 
     private func sentRecordAccessibilityLabel(

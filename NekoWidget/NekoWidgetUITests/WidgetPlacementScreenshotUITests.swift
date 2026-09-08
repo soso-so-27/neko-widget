@@ -2,8 +2,8 @@ import XCTest
 import UIKit
 
 /// Captures privacy-safe, real SpringBoard screenshots for the in-app Widget
-/// placement guide. This test is intentionally excluded from the normal smoke
-/// path and is run only by the manual screenshot-capture workflow.
+/// placement guide and explicitly enabled Widget visual review. Ordinary smoke
+/// runs do not enable the Widget screenshot compiler conditions.
 ///
 /// The workflow erases its Simulator before and after the test. No Photos are
 /// imported, and the final "Add Widget" button is deliberately not tapped.
@@ -138,6 +138,17 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
 
     @MainActor
     func testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore() {
+        captureFixtureGallery(captureAllSizes: false)
+    }
+
+    @MainActor
+    func testCaptureSharedWidgetAllSupportedSizes() {
+        executionTimeAllowance = 180
+        captureFixtureGallery(captureAllSizes: true)
+    }
+
+    @MainActor
+    private func captureFixtureGallery(captureAllSizes: Bool) {
         let app = XCUIApplication()
         app.launchArguments += [
             "-AppleLanguages", "(ja)",
@@ -238,7 +249,39 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             return
         }
 
-        captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
+        if captureAllSizes {
+            captureScreenshot(named: "widget-family-small", screenshot: fixtureScreenshot)
+            let pages = springboard.pageIndicators.firstMatch
+            guard pages.waitForExistence(timeout: 10) else {
+                fail("The Widget size page indicator is unavailable.", application: springboard)
+                return
+            }
+            for size in ["medium", "large"] {
+                guard let previousPage = pages.value as? String, !previousPage.isEmpty else {
+                    fail("The Widget size page cannot be identified.", application: springboard)
+                    return
+                }
+                let start = springboard.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.85, dy: 0.57)
+                )
+                let end = springboard.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.15, dy: 0.57)
+                )
+                start.press(forDuration: 0.1, thenDragTo: end)
+                let changedPage = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "value != %@", previousPage),
+                    object: pages
+                )
+                guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
+                      let screenshot = waitForFixturePalette(timeout: 10) else {
+                    fail("The Widget size did not advance to a rendered photo.", application: springboard)
+                    return
+                }
+                captureScreenshot(named: "widget-family-\(size)", screenshot: screenshot)
+            }
+        } else {
+            captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
+        }
         // Do not tap Add Widget. The disposable Simulator is erased after the
         // run, but the capture itself remains read-only SpringBoard review.
     }
