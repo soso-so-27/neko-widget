@@ -282,9 +282,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
                 || localThumbnailFileName == Self.localThumbnailFileName(for: id),
               legacyInlineLocalThumbnailJPEG.map(Self.isValidLocalThumbnail) ?? true,
               localThumbnailFileName == nil || legacyInlineLocalThumbnailJPEG == nil,
-              localDetail.map {
+              localDetail.map({
                   $0.fileName == Self.localDetailFileName(for: id) && $0.sha256.count == 32
-              } ?? true,
+              }) ?? true,
               Self.hasValidCommitMetadata(
                   phase: phase,
                   commitStartedAt: commitStartedAt,
