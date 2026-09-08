@@ -24,6 +24,13 @@ targets:
         buildPhase: resources
       - path: Resources/model-fixed.onnx
         buildPhase: resources
+      # Fixed generated controls for same-device diagnosis. No user photos.
+      - path: ../../NekoWidget/ci/fixtures/cats/cat-orange-square.png
+        buildPhase: resources
+      - path: ../../NekoWidget/ci/fixtures/cats/cat-tuxedo-landscape.png
+        buildPhase: resources
+      - path: ../../NekoWidget/ci/fixtures/cats/cat-gray-portrait.png
+        buildPhase: resources
     dependencies:
       - package: onnxruntime
         product: onnxruntime
@@ -65,7 +72,7 @@ targets:
     platform: iOS
     sources:
       - Tests
-      # Existing generated CC0 controls; test bundle only, never the shipped app.
+      # Same generated CC0 controls are available to direct test-bundle checks.
       - path: ../../NekoWidget/ci/fixtures/cats/cat-orange-square.png
         buildPhase: resources
       - path: ../../NekoWidget/ci/fixtures/cats/cat-tuxedo-landscape.png

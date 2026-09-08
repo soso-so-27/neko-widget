@@ -13,8 +13,16 @@ SOURCES = [
 
 ORIGIN = """猫識別・動作確認 — Internal engineering evaluation only
 
-This app measures runtime performance using synthetic inputs. It does not
-access photos, identify actual cats, or automatically transmit results.
+This app measures runtime performance using synthetic inputs and offers
+explicit, local-only diagnosis of user-selected photos. It never automatically
+transmits photos or results and does not modify production photo assignments.
+
+Three generated cat controls are bundled for detector diagnosis (CC0 1.0):
+cat-orange-square.png, cat-tuxedo-landscape.png, cat-gray-portrait.png.
+Generated for this repository on 2026-08-15 without personal or reference photos.
+Fixture provenance and license:
+https://github.com/soso-so-27/neko-widget/tree/main/NekoWidget/ci/fixtures/cats
+https://creativecommons.org/publicdomain/zero/1.0/legalcode
 
 Model: open-noodle/pet-recognition-small
 Model card and license designation (Apache-2.0):

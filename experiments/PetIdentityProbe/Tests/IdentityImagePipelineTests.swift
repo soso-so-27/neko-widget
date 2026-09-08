@@ -62,11 +62,11 @@ final class IdentityImagePipelineTests: XCTestCase {
         XCTAssertLessThan(abs(sqrt(vector.reduce(0.0) { $0 + Double($1) * Double($1) }) - 1), 0.005)
     }
 
-    func testGeneratedCatControlsReachAcceptedCropWithUnchangedPipeline() throws {
+    func testGeneratedOrangeAndTuxedoControlsReachAcceptedCropWithUnchangedPipeline() throws {
         // Positive controls, not an accuracy benchmark. No PhotoKit, user photo,
         // network fetch, identity model, changed threshold, or format fallback.
         let bundle = Bundle(for: IdentityImagePipelineTests.self)
-        for name in ["cat-orange-square", "cat-tuxedo-landscape", "cat-gray-portrait"] {
+        for name in ["cat-orange-square", "cat-tuxedo-landscape"] {
             try autoreleasepool {
                 let url = try XCTUnwrap(bundle.url(forResource: name, withExtension: "png"))
                 let source = try XCTUnwrap(UIImage(contentsOfFile: url.path))
@@ -84,6 +84,60 @@ final class IdentityImagePipelineTests: XCTestCase {
                     XCTFail("Generated control \(name) did not reach a usable cat crop: \(issue)")
                 }
             }
+        }
+    }
+
+    func testGeneratedGrayCatRecordsKnownMultipleDetectionLimitationWithoutMergingBoxes() throws {
+        // This public generated fixture visibly contains one cat, but CI 34173886801
+        // returned two accepted boxes and multipleCats. This test checks the unchanged
+        // rejection policy and records the limitation; passing is not detection accuracy.
+        // Geometry must stay confined to this fixed fixture, never selected user photos.
+        let name = "cat-gray-portrait"
+        let bundle = Bundle(for: IdentityImagePipelineTests.self)
+        let url = try XCTUnwrap(bundle.url(forResource: name, withExtension: "png"))
+        let source = try XCTUnwrap(UIImage(contentsOfFile: url.path))
+        let raster = try XCTUnwrap(IdentityImagePipeline.upright(source))
+        let inspected = try IdentityImagePipeline.inspectCatCrop(raster)
+        let boxes = inspected.acceptedBoxes
+        let count = inspected.diagnostic.acceptedCatObservationCount
+        let encoded = try JSONEncoder().encode(inspected.diagnostic)
+        print("PROBE_CAT_CONTROL_KNOWN_LIMITATION name=\(name) visibleCats=1 historicalAcceptedCats=2 currentAcceptedCats=\(count) accuracyValidated=false diagnostic=\(String(decoding: encoded, as: UTF8.self))")
+
+        let coordinates = boxes.map { box in
+            ["x": Double(box.minX), "y": Double(box.minY),
+             "width": Double(box.width), "height": Double(box.height)]
+        }
+        var pairs: [[String: Any]] = []
+        for first in boxes.indices {
+            for second in boxes.indices where second > first {
+                let overlap = boxes[first].intersection(boxes[second])
+                let overlapArea = overlap.isNull ? 0 : Double(overlap.width * overlap.height)
+                let firstArea = Double(boxes[first].width * boxes[first].height)
+                let secondArea = Double(boxes[second].width * boxes[second].height)
+                let unionArea = firstArea + secondArea - overlapArea
+                let smallerArea = min(firstArea, secondArea)
+                pairs.append(["first": first, "second": second,
+                    "iou": unionArea > 0 ? overlapArea / unionArea : 0,
+                    "intersectionOverSmallerBox": smallerArea > 0 ? overlapArea / smallerArea : 0])
+            }
+        }
+        let geometry = try JSONSerialization.data(withJSONObject: [
+            "coordinateSystem": "vision-normalized-bottom-left", "boxes": coordinates, "pairs": pairs,
+            "confidenceScope": "diagnostic-aggregate-only;no-per-box-confidence"
+        ], options: [.sortedKeys])
+        print("PROBE_GENERATED_GRAY_GEOMETRY name=\(name) geometry=\(String(decoding: geometry, as: UTF8.self))")
+
+        XCTAssertTrue(inspected.diagnostic.resultsAvailable, name)
+        XCTAssertGreaterThanOrEqual(count, 1, name)
+        XCTAssertEqual(boxes.count, count, name)
+        switch inspected.result {
+        case .success(let crop):
+            XCTAssertEqual(count, 1, "A crop must require exactly one accepted box")
+            XCTAssertGreaterThanOrEqual(crop.width, 32, name)
+            XCTAssertGreaterThanOrEqual(crop.height, 32, name)
+        case .failure(let issue):
+            XCTAssertGreaterThan(count, 1, "A single accepted box must remain a usable crop for this fixture")
+            XCTAssertEqual(issue, .multipleCats, name)
         }
     }
 

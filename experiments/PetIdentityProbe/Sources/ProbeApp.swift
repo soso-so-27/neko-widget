@@ -31,9 +31,9 @@ private struct ProbeView: View {
         NavigationStack {
             Form {
                 Section {
-                    NavigationLink("写真1枚から原因を調べる") { IdentityEvaluationView() }
+                    NavigationLink("猫の検出を確認する") { IdentityEvaluationView() }
                         .disabled(runningMode != nil)
-                    Text("まず1枚で読み取りを確認。選んだ写真はそのまま次の診断にも使えます。")
+                    Text("基準画像と保存した写真をまとめて比較できます。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {

@@ -31,7 +31,7 @@ enum IdentityInputIssue: String, Codable, CaseIterable, Error {
         case .assetUnavailable: "写真にアクセスできない"
         case .localImageUnavailable: "端末内の画像を読み出せない"
         case .catNotDetected: "猫を検出できない"
-        case .multipleCats: "複数の猫を検出"
+        case .multipleCats: "猫の候補が複数あり、範囲を決められない"
         case .invalidCrop: "猫の範囲が小さい・切り抜けない"
         case .detectionFailed: "検出処理でエラー"
         }
@@ -134,6 +134,42 @@ enum ProbeModelFile {
 
 actor IdentityPhotoService {
     private var busy = false
+
+    func compareDetector(id: String?) async throws -> IdentityDetectorComparisonRun {
+        guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
+        busy = true
+        defer { busy = false }
+        var controls: [IdentityDetectorControlResult] = []
+        for control in IdentityDetectorControlID.allCases {
+            try Task.checkCancellation()
+            controls.append(autoreleasepool { IdentityDetectorControls.inspect(control) })
+        }
+        try Task.checkCancellation()
+        var selected: IdentityDetectorInputReport?
+        var thumbnail: CGImage?
+        if let id, !id.isEmpty {
+            do {
+                try Self.checkAuthorization()
+                try Task.checkCancellation()
+                let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+                autoreleasepool {
+                    let prepared = Self.preparePhoto(asset)
+                    selected = IdentityDetectorInputReport(image: prepared.image,
+                        diagnostic: prepared.animalDetection, issue: prepared.issue)
+                    thumbnail = prepared.image.flatMap(Self.thumbnail)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Controls remain useful when access to the saved selection was revoked.
+                // Never export the underlying PhotoKit error or the identifier.
+                selected = IdentityDetectorInputReport(image: nil, diagnostic: nil, issue: .assetUnavailable)
+            }
+        }
+        try Task.checkCancellation()
+        return IdentityDetectorComparisonRun(report: IdentityDetectorComparisonReport(
+            controls: controls, savedPhoto: selected), savedPhotoThumbnail: thumbnail)
+    }
 
     func inspectInput(id: String) async throws -> IdentityInputRun {
         guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
@@ -369,7 +405,7 @@ enum IdentityImagePipeline {
     }
 
     static func inspectCatCrop(_ image: CGImage) throws
-        -> (result: Result<CGImage, IdentityInputIssue>, diagnostic: IdentityAnimalDetectionDiagnostic) {
+        -> (result: Result<CGImage, IdentityInputIssue>, diagnostic: IdentityAnimalDetectionDiagnostic, acceptedBoxes: [CGRect]) {
         let request = VNRecognizeAnimalsRequest()
         request.revision = VNRecognizeAnimalsRequestRevision2
         try VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])
@@ -379,7 +415,8 @@ enum IdentityImagePipeline {
             systemCatLabel: VNAnimalIdentifier.cat.rawValue, resultsAvailable: request.results != nil)
         // The same exact-label and 0.5 predicate as before; case-insensitive counts are diagnostic only.
         let cats = zip(observations, labels).filter { IdentityAnimalDetectionDiagnostic.acceptsCat($0.1) }.map { $0.0 }
-        return (cropResult(image, catBoxes: cats.map(\.boundingBox)), diagnostic)
+        let boxes = cats.map(\.boundingBox)
+        return (cropResult(image, catBoxes: boxes), diagnostic, boxes)
     }
 
     static func cropResult(_ image: CGImage, catBoxes: [CGRect]) -> Result<CGImage, IdentityInputIssue> {
