@@ -242,7 +242,7 @@ struct MomentSentHistory<Card: View>: View {
     private var columns: [GridItem] {
         let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
         return Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .leading),
+            repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading),
             count: count
         )
     }
@@ -322,6 +322,7 @@ struct MomentSentHistoryFixture: View {
                         MomentSentRecordCard(record: record)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(record.localCaption ?? "写真のみ")
                     .accessibilityIdentifier("history-fixture-\(record.id)")
                 }
@@ -338,8 +339,7 @@ struct MomentSentHistoryFixture: View {
                         legacyThumbnail: record.id == "legacy"
                             ? record.localThumbnailJPEG.flatMap { UIImage(data: $0) } : nil,
                         caption: record.localCaption,
-                        captionIdentifier: "history-fixture-detail-caption",
-                        photoIdentifier: "history-fixture-detail-photo"
+                        captionIdentifier: "history-fixture-detail-caption"
                     ) { EmptyView() }
                     .frame(maxWidth: CommandLine.arguments.contains("--history-narrow") ? 288 : .infinity)
                     .navigationTitle("送った写真")
@@ -418,7 +418,7 @@ struct MomentDeliveryComposerFixture: View {
                     isPresented = false
                 }
             )
-            .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--composer-large-text") ? .accessibility2 : .large)
+            .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--composer-large-text") ? .accessibility5 : .large)
         }
         .preferredColorScheme(.dark)
     }

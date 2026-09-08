@@ -59,6 +59,8 @@ struct FamilyWindowView: View {
     @State private var showsPendingCancelConfirmation = false
     @State private var showsPreparationCancelConfirmation = false
     @State private var showsTerminalResultDismissConfirmation = false
+    @State private var showsOutgoingDetails = false
+    @State private var pendingOutgoingConfirmation: OutgoingConfirmation?
     @State private var showsWidgetGuide = false
     @State private var showsPrivacyDetails = false
     @State private var sentRecordDisplayLimit = 20
@@ -93,6 +95,8 @@ struct FamilyWindowView: View {
     @State private var photoSelectionMessage: String?
     @State private var selectedDeliveryMessage: String?
     @State private var showsUnavailableSupportDetails = false
+
+    private enum OutgoingConfirmation { case preparations, deliveries, terminalResults }
 
     init(
         initialPresentation: FamilyWindowInitialPresentation = .content,
@@ -211,6 +215,7 @@ struct FamilyWindowView: View {
             showsPendingCancelConfirmation = false
             showsPreparationCancelConfirmation = false
             showsTerminalResultDismissConfirmation = false
+            pendingOutgoingConfirmation = nil
             widgetMemoryTarget = nil
             memoryRemovalTarget = nil
             clearsWidgetFocusAfterMemorySave = false
@@ -492,6 +497,9 @@ struct FamilyWindowView: View {
             deliveryConfirmation(delivery)
                 .id(delivery.id)
         }
+        .sheet(isPresented: $showsOutgoingDetails, onDismiss: presentPendingOutgoingConfirmation) {
+            outgoingDetails
+        }
         .fullScreenCover(item: $selectedSentRecord) { record in
             sentRecordDetail(recordID: record.id)
         }
@@ -735,7 +743,7 @@ struct FamilyWindowView: View {
     private var receivedPhotoColumns: [GridItem] {
         let count = dynamicTypeSize.isAccessibilitySize ? 1 : 2
         return Array(
-            repeating: GridItem(.flexible(minimum: 0), spacing: 10),
+            repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading),
             count: count
         )
     }
@@ -835,7 +843,7 @@ struct FamilyWindowView: View {
                     .foregroundStyle(.secondary)
                 if !model.isWorking {
                     HStack(spacing: 14) {
-                        Button("もう一度確認") {
+                        Button("共有状況を更新") {
                             notificationRouteResolutionFailed = false
                             Task { await resolvePendingNotificationRoute() }
                         }
@@ -1005,7 +1013,7 @@ struct FamilyWindowView: View {
                 Button {
                     Task { await model.synchronize() }
                 } label: {
-                    Label("もう一度確認", systemImage: "arrow.clockwise")
+                    Label("共有状況を更新", systemImage: "arrow.clockwise")
                         .font(.subheadline.weight(.semibold))
                 }
                 .buttonStyle(.bordered)
@@ -1233,30 +1241,25 @@ struct FamilyWindowView: View {
 
     private var outgoingStatusSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if hasOutgoingActivityState {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("いまの送信")
-                            .font(.headline)
-                        Spacer()
-                        if canManageOutgoingPresentation {
-                            outgoingManagementMenu
-                        }
+            if let summary = model.outgoingPresentation.activitySummary {
+                Button { showsOutgoingDetails = true } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: model.outgoingPresentation.activityNeedsAttention
+                            ? "exclamationmark.circle" : "arrow.triangle.2.circlepath")
+                            .foregroundStyle(model.outgoingPresentation.activityNeedsAttention ? Color.orange : .secondary)
+                        Text(summary).font(.subheadline).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right").font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-
-                    ForEach(model.outgoingPresentation.statuses) { status in
-                        outgoingStatusCard(status)
-                    }
-
-                    ForEach(model.outgoingPresentation.outcomes) { outcome in
-                        outgoingOutcomeCard(outcome)
-                    }
-
-                    if model.outgoingPresentation.sentRecords.isEmpty,
-                       let acceptance = model.outgoingPresentation.latestServerAcceptance {
-                        latestServerAcceptanceCard(acceptance)
-                    }
+                    .padding(.horizontal, 12).frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(summary)
+                .accessibilityHint("詳しい送信状況と、できる操作を開きます")
+                .accessibilityIdentifier("family-window-outgoing-summary")
             }
 
             if !model.outgoingPresentation.sentRecords.isEmpty {
@@ -1265,10 +1268,6 @@ struct FamilyWindowView: View {
                         Text("送った写真")
                             .font(.headline)
                         Spacer()
-                        if canManageOutgoingPresentation,
-                           !hasOutgoingActivityState {
-                            outgoingManagementMenu
-                        }
                     }
                     MomentSentHistory(
                         records: visibleSentRecords,
@@ -1312,11 +1311,58 @@ struct FamilyWindowView: View {
         .accessibilityIdentifier("family-window-outgoing-status")
     }
 
-    private var hasOutgoingActivityState: Bool {
-        !model.outgoingPresentation.statuses.isEmpty
-            || !model.outgoingPresentation.outcomes.isEmpty
-            || (model.outgoingPresentation.sentRecords.isEmpty
-                && model.outgoingPresentation.latestServerAcceptance != nil)
+    private var outgoingDetails: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let message = model.errorMessage { sharingErrorCard(message) }
+                    if model.outgoingPresentation.activitySummary == nil {
+                        Text("確認が必要な送信や、送信待ちの写真はありません。")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(model.outgoingPresentation.statuses) { status in
+                        outgoingStatusCard(status)
+                    }
+                    ForEach(model.outgoingPresentation.outcomes) { outcome in
+                        outgoingOutcomeCard(outcome)
+                    }
+                    if canManageOutgoingPresentation { outgoingManagementMenu }
+                }
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("送信状況").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { showsOutgoingDetails = false }
+                        .accessibilityIdentifier("family-window-outgoing-details-close")
+                }
+            }
+        }
+    }
+
+    private func requestOutgoingConfirmation(_ confirmation: OutgoingConfirmation) {
+        pendingOutgoingConfirmation = confirmation
+        showsOutgoingDetails = false
+    }
+
+    private func presentPendingOutgoingConfirmation() {
+        let confirmation = pendingOutgoingConfirmation
+        pendingOutgoingConfirmation = nil
+        guard !model.isShowingLastKnownState, !model.isPerformingAction else { return }
+        switch confirmation {
+        case .preparations:
+            guard !model.isReportOnly, model.outgoingPresentation.cancellablePreparationCount > 0 else { return }
+            showsPreparationCancelConfirmation = true
+        case .deliveries:
+            guard !model.isReportOnly, model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 else { return }
+            showsPendingCancelConfirmation = true
+        case .terminalResults:
+            guard model.outgoingPresentation.terminalDeliveryResultCount > 0 else { return }
+            showsTerminalResultDismissConfirmation = true
+        case nil:
+            break
+        }
     }
 
     private var visibleSentRecords: [MomentSentRecordPresentation] {
@@ -1351,21 +1397,21 @@ struct FamilyWindowView: View {
             }
             if model.outgoingPresentation.terminalDeliveryResultCount > 0 {
                 Button("送信結果をすべて消す", role: .destructive) {
-                    showsTerminalResultDismissConfirmation = true
+                    requestOutgoingConfirmation(.terminalResults)
                 }
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
             if !model.isReportOnly,
                model.outgoingPresentation.cancellablePreparationCount > 0 {
                 Button("準備中の写真を取り消す", role: .destructive) {
-                    showsPreparationCancelConfirmation = true
+                    requestOutgoingConfirmation(.preparations)
                 }
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
             if !model.isReportOnly,
                model.outgoingPresentation.cancellableEncryptedDeliveryCount > 0 {
                 Button("送信待ちを取り消す", role: .destructive) {
-                    showsPendingCancelConfirmation = true
+                    requestOutgoingConfirmation(.deliveries)
                 }
                 .disabled(model.isPerformingAction || model.isShowingLastKnownState)
             }
@@ -1455,17 +1501,9 @@ struct FamilyWindowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(status.title)
                     .font(.subheadline.weight(.semibold))
-                if status.kind == .failed
-                    || status.kind == .resultUnknown
-                    || status.kind == .dailyQuotaWaiting
-                    || (status.kind == .waiting
-                        && (status.hasOtherRetryReason || status.isServerRuntimeUnavailable))
-                    || status.kind == .safetyCheckWaiting
-                    || status.kind == .preparationRetryWaiting {
-                    Text(status.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(status.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if status.destinationCount > 1 {
                     Text("\(status.destinationCount)個のまどへの送信があります")
                         .font(.caption2)
@@ -1723,17 +1761,12 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoActionControls(_ item: MomentInboxItem) -> some View {
         let heart = model.heartOutboxItem(for: item)
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(spacing: 10))
-            : AnyLayout(HStackLayout(spacing: 10))
-
-        return layout {
+        return MomentPhotoActionsLayout {
             memoryActionControl(item)
             if model.canSendHeart(for: item) || heart != nil {
                 heartActionControl(item, heart: heart)
             }
         }
-        .padding(13)
     }
 
     private func heartActionControl(
@@ -2270,6 +2303,20 @@ struct FamilyWindowView: View {
     }
 }
 
+/// Keep the shipping photo actions and their visual fixture on the same
+/// horizontal/vertical layout, including the largest accessibility text sizes.
+struct MomentPhotoActionsLayout<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
+        layout { content() }.padding(13)
+    }
+}
+
 /// Only the available width and requested ratio determine layout. The decoded
 /// image, loading/error placeholders and captions must never size their parent.
 struct MomentReceivedPhotoSurface: View {
@@ -2376,7 +2423,7 @@ struct MomentReceivedLayoutFixture: View {
                             .accessibilityIdentifier("received-fixture-action-result")
                     }
                     Text("以前に届いた写真")
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10), count: largeText ? 1 : 2), spacing: 10) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading), count: largeText ? 1 : 2), spacing: 10) {
                         ForEach(0..<4) { index in
                             Button { selection = Selection(id: index) } label: {
                                 MomentReceivedPhotoThumbnail(
@@ -2404,18 +2451,23 @@ struct MomentReceivedLayoutFixture: View {
                     MomentPhotoDetailBody(
                         imageURL: urls[selected.id],
                         caption: selected.id == 2 ? nil : caption,
-                        captionIdentifier: "received-fixture-full-caption",
-                        photoIdentifier: "received-fixture-detail-photo"
+                        captionIdentifier: "received-fixture-full-caption"
                     ) {
                         VStack(spacing: 8) {
-                            HStack {
-                                Button("思い出に残す") { didSave = true }
-                                    .frame(maxWidth: .infinity, minHeight: 44)
-                                    .accessibilityIdentifier("received-fixture-detail-save")
-                                Button("ハートを送る") { didHeart = true }
-                                    .frame(maxWidth: .infinity, minHeight: 44)
-                                    .accessibilityIdentifier("received-fixture-detail-heart")
-                            }.buttonStyle(.bordered).font(.caption)
+                            MomentPhotoActionsLayout {
+                                Button { didSave = true } label: {
+                                    Label("取り込んで残す", systemImage: "bookmark")
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                }
+                                .accessibilityIdentifier("received-fixture-detail-save")
+                                Button { didHeart = true } label: {
+                                    Label("ハートを送る", systemImage: "heart")
+                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                }
+                                .accessibilityIdentifier("received-fixture-detail-heart")
+                            }
+                            .buttonStyle(.bordered).font(.caption.weight(.semibold))
+                            .multilineTextAlignment(.center)
                             if didSave {
                                 Text("保存の操作を受け取りました").font(.footnote)
                                     .accessibilityIdentifier("received-fixture-detail-save-result")
@@ -2425,7 +2477,6 @@ struct MomentReceivedLayoutFixture: View {
                                     .accessibilityIdentifier("received-fixture-detail-heart-result")
                             }
                         }
-                        .padding(13)
                     }
                     .navigationTitle("届いた写真").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -2459,13 +2510,11 @@ struct MomentPhotoDetailBody<Actions: View>: View {
     var isLoading = false
     let caption: String?
     var captionIdentifier = "photo-detail-caption-full"
-    var photoIdentifier = "photo-detail-image"
     @ViewBuilder let actions: () -> Actions
     @State private var showsFullCaption = false
 
     var body: some View {
-        GeometryReader { geometry in
-          VStack(spacing: 0) {
+        MomentPhotoDetailLayout {
             Group {
                 if isLoading {
                     ProgressView().tint(.white)
@@ -2491,15 +2540,13 @@ struct MomentPhotoDetailBody<Actions: View>: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
-            .accessibilityIdentifier(photoIdentifier)
 
             ViewThatFits(in: .vertical) {
                 footer.fixedSize(horizontal: false, vertical: true)
                 ScrollView { footer }
             }
-            .frame(maxHeight: geometry.size.height * 0.42)
-          }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showsFullCaption) {
@@ -2525,7 +2572,8 @@ struct MomentPhotoDetailBody<Actions: View>: View {
                         Text(verbatim: caption).font(.subheadline)
                             .multilineTextAlignment(.leading).lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "chevron.down").font(.caption2)
+                        Image(systemName: "chevron.right").font(.caption2)
+                            .accessibilityHidden(true)
                     }
                     .foregroundStyle(.secondary).padding(.horizontal, 16)
                     .frame(minHeight: 44)
@@ -2537,6 +2585,29 @@ struct MomentPhotoDetailBody<Actions: View>: View {
             }
             actions()
         }
+    }
+}
+
+/// The footer gets only the height its content needs. A maximum is a safety
+/// ceiling for large text, not a permanently reserved band below every photo.
+private struct MomentPhotoDetailLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions(by: CGSize(width: 320, height: 480))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let naturalFooter = subviews[1].sizeThatFits(
+            ProposedViewSize(width: bounds.width, height: nil)
+        ).height
+        let footerHeight = min(max(0, naturalFooter), bounds.height * 0.42)
+        let photoHeight = max(0, bounds.height - footerHeight)
+        subviews[0].place(at: bounds.origin, anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: photoHeight))
+        subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + photoHeight),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: footerHeight))
     }
 }
 

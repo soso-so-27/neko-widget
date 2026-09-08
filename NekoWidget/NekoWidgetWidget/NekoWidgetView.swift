@@ -63,25 +63,6 @@ struct NekoWidgetView: View {
                             photoActionButtons()
                         }
                         .padding(actionButtonInset)
-                        .background {
-                            if familyCaption != nil {
-                                // Keep the text-bearing area at 60% black even
-                                // without an action row. White text over white
-                                // photo pixels then has about 5.7:1 contrast.
-                                // Only the short edge above the text fades out.
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .clear, location: 0),
-                                        .init(color: .black.opacity(0.60), location: 0.20),
-                                        .init(color: .black.opacity(0.60), location: 1),
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                .padding(.top, -20)
-                                .allowsHitTesting(false)
-                            }
-                        }
                     }
                     .overlay(alignment: .topLeading) {
                         familySourceLabel
@@ -131,6 +112,28 @@ struct NekoWidgetView: View {
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                // Keep 60% black directly behind the text (about 5.7:1 for
+                // white on a white photo). Short fades surround only the
+                // caption; the action row keeps its individual backgrounds.
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.60)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: 10)
+                    Color.black.opacity(0.60)
+                    LinearGradient(
+                        colors: [.black.opacity(0.60), .clear],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: 6)
+                }
+                .padding(.horizontal, -actionButtonInset)
+                .padding(.top, -10)
+                .padding(.bottom, -6)
+                .allowsHitTesting(false)
+            }
             // The photo owns its deep link and reads the full text once.
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -558,29 +561,28 @@ enum AppStoreWidgetPreviewFixture {
             context.fill(CGRect(origin: .zero, size: size))
         }
 #else
-        // CI replaces these fixed markers only for the dedicated Debug capture.
+        // CI injects the three JPEGs built by production buildFamilyWindow from
+        // one known portrait. This retains its Vision-guided crop and encoding.
         // Missing injection must show no photo, never a substitute illustration.
         let encoded: String
         switch maximumPixelSize {
         case WidgetImageVariant.small.maximumPixelDimension:
-            encoded = "__W1_WIDGET_SMALL_PNG_BASE64__"
+            encoded = "__W1_WIDGET_SMALL_CACHE_JPEG_BASE64__"
         case WidgetImageVariant.medium.maximumPixelDimension:
-            encoded = "__W1_WIDGET_MEDIUM_PNG_BASE64__"
+            encoded = "__W1_WIDGET_MEDIUM_CACHE_JPEG_BASE64__"
         case WidgetImageVariant.large.maximumPixelDimension:
-            encoded = "__W1_WIDGET_LARGE_PNG_BASE64__"
+            encoded = "__W1_WIDGET_LARGE_CACHE_JPEG_BASE64__"
         default:
             return nil
         }
         guard let data = Data(base64Encoded: encoded),
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                  kCGImageSourceCreateThumbnailFromImageAlways: true,
-                  kCGImageSourceCreateThumbnailWithTransform: true,
-                  kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
-                  kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary)
+              data.starts(with: [0xff, 0xd8])
         else { return nil }
-        return UIImage(cgImage: image)
+        return WidgetCacheImageLoader.decodedImage(
+            data: data,
+            maximumPixelSize: maximumPixelSize,
+            fileHash: SharedLog.shortHash(cacheFilename)
+        )
 #endif
 #else
         return image

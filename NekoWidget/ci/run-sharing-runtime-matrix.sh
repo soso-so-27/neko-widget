@@ -201,6 +201,8 @@ run_runtime_body() {
     local report_published="false"
     local poll_attempt=0
     local validator_status=0
+    local app_data_container=""
+    local -a runtime_launch_arguments=("--sharing-runtime-self-test")
 
     mkdir -p "$runtime_artifacts"
     xcrun simctl shutdown "$simulator_udid" >/dev/null 2>&1 || true
@@ -218,9 +220,31 @@ run_runtime_body() {
         return 1
     fi
 
+    if [[ "$label" == "ios-26-2" ]]; then
+        app_data_container="$(xcrun simctl get_app_container "$simulator_udid" "$APP_BUNDLE_ID" data)"
+        if [[ ! -d "$app_data_container/tmp" ]]; then
+            echo "The Widget review fixture container is unavailable." >&2
+            return 1
+        fi
+        # The same fixed public portrait enters the real canonicalization,
+        # decrypted-receipt, Vision and family-cache path in the runtime test.
+        # The app independently verifies this exact hash before using/exporting it.
+        python3 - "$app_data_container/tmp" <<'PY' || return $?
+import hashlib
+import sys
+from pathlib import Path
+
+data = Path("ci/fixtures/cats/cat-gray-portrait.png").read_bytes()
+if hashlib.sha256(data).hexdigest() != "bd5a348e5e6df1b32837c51ab0357505119ea564d13ac4afefe3803b1b8dfbf8":
+    raise SystemExit("The fixed Widget portrait fixture failed its hash check")
+Path(sys.argv[1], "sharing-widget-review-source.png").write_bytes(data)
+PY
+        runtime_launch_arguments+=("--sharing-widget-portrait-review")
+    fi
+
     if ! launch_output="$(
         xcrun simctl launch --terminate-running-process \
-            "$simulator_udid" "$APP_BUNDLE_ID" --sharing-runtime-self-test
+            "$simulator_udid" "$APP_BUNDLE_ID" "${runtime_launch_arguments[@]}"
     )"; then
         echo "$runtime failed to launch the generated-data self-test." >&2
         return 1
@@ -278,27 +302,51 @@ run_runtime_body() {
             AppleLanguages -array ja
         xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
             AppleLocale -string ja_JP
-        # Embed only the repository's known cat fixtures into this dedicated
-        # Debug build. Normal app builds and the release checkout are untouched.
-        python3 - <<'PY'
+        # Export only the three runtime-validated JPEGs derived from the known
+        # portrait. Reuse those exact bytes in normal and no-caption Gallery
+        # builds; the separate white-background comparison remains synthetic.
+        # Normal app builds and the release checkout do not inject these bytes.
+        python3 - "$app_data_container/tmp" "$runtime_artifacts/widget-portrait-cache" <<'PY' || return $?
 import base64
+import hashlib
+import json
+import sys
 from pathlib import Path
 
+cache_output = Path(sys.argv[2])
+cache_output.mkdir(parents=True, exist_ok=True)
+exported = []
 view = Path("NekoWidgetWidget/NekoWidgetView.swift")
 source = view.read_text(encoding="utf-8")
-for size, filename in [
-    ("SMALL", "cat-orange-square.png"),
-    ("MEDIUM", "cat-tuxedo-landscape.png"),
-    ("LARGE", "cat-gray-portrait.png"),
+for size, width, height, byte_cap in [
+    ("small", 500, 500, 100 * 1024),
+    ("medium", 1050, 500, 200 * 1024),
+    ("large", 1050, 1100, 220 * 1024),
 ]:
-    marker = f"__W1_WIDGET_{size}_PNG_BASE64__"
+    marker = f"__W1_WIDGET_{size.upper()}_CACHE_JPEG_BASE64__"
     if source.count(marker) != 1:
         raise SystemExit(f"Missing or duplicate Widget fixture marker: {size}")
-    image = Path("ci/fixtures/cats", filename).read_bytes()
-    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise SystemExit("Widget fixture must be a PNG")
+    image = Path(sys.argv[1], f"sharing-widget-review-{size}.jpg").read_bytes()
+    if not image.startswith(b"\xff\xd8") or not image.endswith(b"\xff\xd9") or len(image) > byte_cap:
+        raise SystemExit("Widget fixture must be the bounded runtime JPEG")
+    filename = f"{size}.jpg"
+    (cache_output / filename).write_bytes(image)
+    exported.append({
+        "file": filename,
+        "sha256": hashlib.sha256(image).hexdigest(),
+        "bytes": len(image),
+        "expectedWidth": width,
+        "expectedHeight": height,
+    })
     source = source.replace(marker, base64.b64encode(image).decode("ascii"))
 view.write_text(source, encoding="utf-8")
+(cache_output / "fixture-lineage.json").write_text(json.dumps({
+    "schemaVersion": 1,
+    "source": "cat-gray-portrait.png",
+    "sourceSHA256": "bd5a348e5e6df1b32837c51ab0357505119ea564d13ac4afefe3803b1b8dfbf8",
+    "productionBuilder": "WidgetCacheBuilder.buildFamilyWindow",
+    "outputs": exported,
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 view = Path("NekoWidget/Views/MomentDeliveryComposer.swift")
 source = view.read_text(encoding="utf-8")

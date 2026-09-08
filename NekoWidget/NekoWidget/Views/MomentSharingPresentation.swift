@@ -503,6 +503,55 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
             .filter { $0.kind == .failed || $0.kind == .resultUnknown }
             .reduce(0) { $0 + $1.count }
     }
+
+    /// One entry into delivery details, without putting the entire ledger in
+    /// front of the photographs. An unknown result is never called unsent.
+    var activitySummary: String? {
+        guard !statuses.isEmpty || !outcomes.isEmpty else { return nil }
+        if statuses.count == 1, outcomes.isEmpty,
+           let status = statuses.first, status.kind == .dailyQuotaWaiting {
+            return "送信上限で待機 \(status.count)枚"
+        }
+        let unknown = statuses.filter { $0.kind == .resultUnknown }.reduce(0) { $0 + $1.count }
+        let failed = statuses.filter { $0.kind == .failed }.reduce(0) { $0 + $1.count }
+        let settings = statuses.filter {
+            $0.kind != .failed && $0.kind != .resultUnknown && $0.requiresSensitiveContentWarning
+        }.reduce(0) { $0 + $1.count }
+        let retrying = statuses.reduce(0) { $0 + Self.automaticRetryCount($1) }
+        let waiting = statuses.filter {
+            $0.kind == .waiting && !Self.needsAttention($0)
+        }.reduce(0) { $0 + $1.count - Self.automaticRetryCount($1) }
+        let progressing = statuses.filter {
+            $0.kind != .waiting && !Self.needsAttention($0)
+        }.reduce(0) { $0 + $1.count - Self.automaticRetryCount($1) }
+        var parts: [String] = []
+        if unknown > 0 { parts.append("結果不明 \(unknown)枚") }
+        if failed > 0 { parts.append("送信できなかった \(failed)枚") }
+        if outcomeCount > 0 { parts.append("送信しなかった \(outcomeCount)枚") }
+        if settings > 0 { parts.append("準備待ち \(settings)枚（設定の確認あり）") }
+        if retrying > 0 { parts.append("再試行待ち \(retrying)枚") }
+        if waiting > 0 { parts.append("送信待ち \(waiting)枚") }
+        if progressing > 0 { parts.append("送信・準備中 \(progressing)枚") }
+        return parts.joined(separator: "・")
+    }
+
+    var activityNeedsAttention: Bool {
+        !outcomes.isEmpty || statuses.contains(where: Self.needsAttention)
+    }
+
+    private static func needsAttention(_ status: MomentOutgoingStatusPresentation) -> Bool {
+        status.kind == .failed || status.kind == .resultUnknown
+            || status.requiresSensitiveContentWarning
+    }
+
+    private static func automaticRetryCount(_ status: MomentOutgoingStatusPresentation) -> Int {
+        guard !needsAttention(status) else { return 0 }
+        if status.kind == .dailyQuotaWaiting || status.kind == .preparationRetryWaiting { return status.count }
+        // Error flags describe a whole group and may apply to only one photo.
+        // Use the actual deferred count instead of calling every queued photo
+        // a retry when new and previously attempted sends share a group.
+        return min(status.count, max(0, status.retryDeferredCount))
+    }
 }
 
 /// Pure policy that translates handoff/outbox persistence phases into precise

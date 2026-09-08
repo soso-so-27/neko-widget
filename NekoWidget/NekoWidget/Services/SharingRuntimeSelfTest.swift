@@ -370,6 +370,7 @@ actor SharingRuntimeSelfTestRunner {
     static let shared = SharingRuntimeSelfTestRunner()
 
     private static let launchArgument = "--sharing-runtime-self-test"
+    private static let widgetPortraitReviewArgument = "--sharing-widget-portrait-review"
     private static let reportFilename = "sharing-runtime-self-test.json"
     private static let progressFilename = "sharing-runtime-self-test-progress.json"
     private static let thumbnailProgressFilename =
@@ -4541,6 +4542,58 @@ actor SharingRuntimeSelfTestRunner {
         }
     }
 
+    /// The disposable Simulator may opt into one repository-owned portrait for
+    /// Gallery review. Its fixed hash excludes arbitrary Photos or user files;
+    /// ordinary runtime tests continue to use the generated image below.
+    private static func widgetPortraitReviewImageIfRequested() throws -> UIImage? {
+        guard CommandLine.arguments.contains(launchArgument),
+              CommandLine.arguments.contains(widgetPortraitReviewArgument)
+        else { return nil }
+#if targetEnvironment(simulator)
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sharing-widget-review-source.png", isDirectory: false)
+        let data = try Data(contentsOf: sourceURL)
+        let hash = PairingCrypto.sha256(data)
+            .map { String(format: "%02x", $0) }.joined()
+        guard hash == "bd5a348e5e6df1b32837c51ab0357505119ea564d13ac4afefe3803b1b8dfbf8",
+              let image = UIImage(data: data),
+              image.imageOrientation == .up,
+              image.cgImage?.width == 1_024,
+              image.cgImage?.height == 1_536
+        else { throw MomentSharingError.invalidPayload }
+        return image
+#else
+        throw MomentSharingError.stateUnavailable
+#endif
+    }
+
+    /// Preserve the actual production JPEGs before the receipt/purge test
+    /// removes its App Group cache. Only the fixed public portrait may export;
+    /// no catalog, account, keys, paths, or arbitrary image data are exported.
+    private static func exportWidgetPortraitReviewIfRequested(
+        filenames: WidgetCacheFilenames,
+        cacheDirectory: URL
+    ) throws {
+        guard try widgetPortraitReviewImageIfRequested() != nil else { return }
+        for variant in WidgetImageVariant.allCases {
+            let fileURL = cacheDirectory.appendingPathComponent(
+                filenames.filename(for: variant), isDirectory: false
+            )
+            let data = try Data(contentsOf: fileURL)
+            guard data.starts(with: [0xff, 0xd8]),
+                  data.count <= variant.maximumJPEGByteCount,
+                  let image = UIImage(data: data)?.cgImage,
+                  image.width == variant.pixelWidth,
+                  image.height == variant.pixelHeight
+            else { throw MomentSharingError.invalidPayload }
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "sharing-widget-review-\(variant.rawValue).jpg", isDirectory: false
+                )
+            try data.write(to: outputURL, options: .atomic)
+        }
+    }
+
     private static func testMomentInboundModerationFlow() async throws {
         try clearMomentSharingFixture()
         let moderationDirectory = FileManager.default.temporaryDirectory
@@ -4555,7 +4608,9 @@ actor SharingRuntimeSelfTestRunner {
         }
 
         let lifecycleToken = try SharingLifecycleGate.issueToken()
-        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+        let preview = try MomentCanonicalPreviewBuilder.build(
+            image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
+        )
         let roomKey = Data(repeating: 0x71, count: 32)
         let installationMarker = UUID().uuidString.lowercased()
         let spaceID = "space_inbound_moderation_flow"
@@ -4712,6 +4767,10 @@ actor SharingRuntimeSelfTestRunner {
               publishedPhoto.momentID == widgetPhoto.id,
               publishedPhoto.caption == widgetPhoto.caption
         else { throw MomentSharingError.stateUnavailable }
+        try exportWidgetPortraitReviewIfRequested(
+            filenames: publishedPhoto.cacheFilenames,
+            cacheDirectory: widgetCacheURL
+        )
         let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
         let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
         // Model an old app/extension handoff with no caption in the cache.

@@ -527,6 +527,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                                     "Opened detail must decode the canonical photo, not the list thumbnail.")
         XCTAssertEqual(Self.detailValue(image.value as? String, field: "zoom") ?? 0, 1, accuracy: 0.05)
         XCTAssertTrue(app.frame.insetBy(dx: -2, dy: -2).contains(image.frame))
+        if name.hasSuffix("standard") {
+            XCTAssertGreaterThan(image.frame.height, app.frame.height * 0.65,
+                "Ordinary captions must not reserve an empty footer that shrinks the photo.")
+        }
         attach(app, name: name)
         image.doubleTap()
         expectation(for: NSPredicate { _, _ in (Self.detailValue(image.value as? String, field: "zoom") ?? 0) > 1.1 }, evaluatedWith: image)
@@ -623,7 +627,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             XCTAssertFalse(app.navigationBars["写真を確認"].exists)
             open.tap()
             XCTAssertTrue(edit.waitForExistence(timeout: 5))
-            XCTAssertEqual(edit.label, "ひとことを書く")
+            XCTAssertEqual(edit.label, "ひとことを添える")
             app.buttons["family-window-confirm-delivery"].tap()
             XCTAssertTrue(sent.waitForExistence(timeout: 5))
             XCTAssertEqual(sent.label, "送信内容：")

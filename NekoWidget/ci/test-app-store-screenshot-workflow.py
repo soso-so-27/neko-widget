@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import struct
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -214,6 +215,43 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         workflow = source('.github/workflows/ios-build.yml')
         runtime_job = workflow[workflow.index('\n  sharing-runtime-matrix:'):]
         self.assertIn('timeout-minutes: 40', runtime_job)
+
+    def test_widget_portrait_review_reuses_production_cache_and_decoder(self) -> None:
+        runtime = source("NekoWidget/ci/run-sharing-runtime-matrix.sh")
+        app_runtime = source("NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift")
+        portrait_hash = hashlib.sha256(
+            (ROOT / "ci/fixtures/cats/cat-gray-portrait.png").read_bytes()
+        ).hexdigest()
+        self.assertIn(portrait_hash, runtime)
+        self.assertIn(portrait_hash, app_runtime)
+        self.assertTrue(app_runtime.startswith("#if DEBUG\n"))
+        image_helper = app_runtime.split(
+            "private static func widgetPortraitReviewImageIfRequested()", 1
+        )[1].split("private static func exportWidgetPortraitReviewIfRequested", 1)[0]
+        self.assertIn("#if targetEnvironment(simulator)", image_helper)
+        self.assertIn("CommandLine.arguments.contains(launchArgument)", image_helper)
+        self.assertIn("CommandLine.arguments.contains(widgetPortraitReviewArgument)", image_helper)
+        self.assertIn("PairingCrypto.sha256(data)", image_helper)
+        flow = app_runtime.split("private static func testMomentInboundModerationFlow()", 1)[1]
+        self.assertIn("image: widgetPortraitReviewImageIfRequested() ?? generatedImage()", flow)
+        self.assertLess(flow.index("widgetBuilder.buildFamilyWindow("),
+                        flow.index("exportWidgetPortraitReviewIfRequested("))
+        self.assertIn("filenames: publishedPhoto.cacheFilenames", flow)
+        self.assertIn("image.width == variant.pixelWidth", app_runtime)
+        self.assertIn("image.height == variant.pixelHeight", app_runtime)
+        self.assertIn("data.count <= variant.maximumJPEGByteCount", app_runtime)
+        self.assertIn('runtime_launch_arguments+=("--sharing-widget-portrait-review")', runtime)
+        self.assertIn('"${runtime_launch_arguments[@]}"', runtime)
+        self.assertIn('f"sharing-widget-review-{size}.jpg"', runtime)
+        self.assertIn('"$runtime_artifacts/widget-portrait-cache"', runtime)
+        self.assertIn('"productionBuilder": "WidgetCacheBuilder.buildFamilyWindow"', runtime)
+        for size in ("SMALL", "MEDIUM", "LARGE"):
+            self.assertEqual(self.widget_view.count(f"__W1_WIDGET_{size}_CACHE_JPEG_BASE64__"), 1)
+        self.assertNotIn("__W1_WIDGET_SMALL_PNG_BASE64__", self.widget_view)
+        self.assertIn("WidgetCacheImageLoader.decodedImage(", self.widget_view)
+        self.assertNotIn("CGImageSourceCreateThumbnailAtIndex", self.widget_view)
+        self.assertEqual(self.widget_loader.count("CGImageSourceCreateThumbnailAtIndex("), 1)
+        self.assertIn("return decodedImage(data: data,", self.widget_loader)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [

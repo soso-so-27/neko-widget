@@ -100,6 +100,7 @@ enum MomentSharingPresentationVerifier {
         )
         try require(presentation == .empty, "empty sharing state produced a status")
         try require(!presentation.hasActivity, "empty sharing state claimed activity")
+        try require(presentation.activitySummary == nil, "empty sharing state added a summary row")
     }
 
     private static func verifiesPreparationBoundary() throws {
@@ -202,6 +203,12 @@ enum MomentSharingPresentationVerifier {
             now: date(112)
         )
         let transient = try requireStatus(.preparationRetryWaiting, in: transientPresentation)
+        try require(transientPresentation.activitySummary == "再試行待ち 1枚"
+                    && !transientPresentation.activityNeedsAttention,
+                    "automatic preparation retry demanded another user check")
+        try require(presentation.activitySummary?.contains("設定の確認あり") == true
+                    && presentation.activityNeedsAttention,
+                    "required system setting disappeared behind an automatic retry summary")
         try require(
             !transient.detail.contains("設定でオン")
                 && transient.detail.contains("再試行"),
@@ -265,6 +272,9 @@ enum MomentSharingPresentationVerifier {
         let confirming = try requireStatus(.confirming, in: presentation)
         let unknown = try requireStatus(.resultUnknown, in: presentation)
         let failed = try requireStatus(.failed, in: presentation)
+        try require(presentation.activitySummary?.contains("結果不明 1枚") == true
+                    && presentation.activitySummary?.contains("送信できなかった 1枚") == true,
+                    "unknown delivery was conflated with a definite unsent failure")
         try require(waiting.cancellableCount == 2, "prepared sends stopped being cancellable")
         try require(waiting.retryDeferredCount == 2, "mixed send retries were hidden")
         try require(
@@ -341,6 +351,21 @@ enum MomentSharingPresentationVerifier {
                     "quota waiting lost cancellation or ordinary waiting")
         try require(presentation.latestServerAcceptance?.stableID == "accepted",
                     "quota waiting changed an accepted delivery")
+        try require(presentation.activitySummary == "再試行待ち 3枚"
+                    && !presentation.activityNeedsAttention,
+                    "scheduled retries demanded user action or included accepted photos")
+        let quotaOnly = MomentSharingPresentationPolicy.make(
+            preparations: [], deliveries: [inputs[0]], now: date(210)
+        )
+        try require(quotaOnly.activitySummary == "送信上限で待機 1枚"
+                    && !quotaOnly.activityNeedsAttention,
+                    "daily limit disappeared or was presented as user-action failure")
+        let mixedWaiting = MomentSharingPresentationPolicy.make(
+            preparations: [], deliveries: [inputs[1], delivery("fresh", "space-a", .prepared, updatedAt: 205)],
+            now: date(210)
+        )
+        try require(mixedWaiting.activitySummary == "再試行待ち 1枚・送信待ち 1枚",
+                    "a mixed waiting group called an untouched photo a failed retry")
         let afterReset = MomentSharingPresentationPolicy.make(
             preparations: [], deliveries: inputs, now: date(86_401)
         )
@@ -387,6 +412,8 @@ enum MomentSharingPresentationVerifier {
             now: date(500)
         )
         try require(presentation.statuses.isEmpty, "committed sends stayed pending")
+        try require(presentation.activitySummary == nil && !presentation.activityNeedsAttention,
+                    "normal delivery receipts returned to the photo list as activity")
         try require(
             presentation.latestServerAcceptance?.stableID == "a",
             "equal-time latest server acceptance was not deterministic"
@@ -580,6 +607,9 @@ enum MomentSharingPresentationVerifier {
             now: date(610)
         )
         try require(presentation.outcomeCount == 4, "terminal outcomes were collapsed")
+        try require(presentation.activitySummary == "送信しなかった 4枚"
+                    && presentation.activityNeedsAttention,
+                    "preparation outcomes were hidden or called delivery failures")
         try require(
             presentation.outcomes.map(\.reason)
                 == [.sensitiveContent, .preparationFailed, .preparationExpired],
