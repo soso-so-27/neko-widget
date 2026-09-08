@@ -147,16 +147,21 @@ actor IdentityPhotoService {
         try Task.checkCancellation()
         var selected: IdentityDetectorInputReport?
         var thumbnail: CGImage?
+        var scaleComparison: IdentityDetectorScaleComparison?
         if let id, !id.isEmpty {
             do {
                 try Self.checkAuthorization()
                 try Task.checkCancellation()
                 let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
-                autoreleasepool {
+                try autoreleasepool {
                     let prepared = Self.preparePhoto(asset)
                     selected = IdentityDetectorInputReport(image: prepared.image,
                         diagnostic: prepared.animalDetection, issue: prepared.issue)
                     thumbnail = prepared.image.flatMap(Self.thumbnail)
+                    if let image = prepared.image {
+                        scaleComparison = try IdentityDetectorScaleProbe.compareIfNeeded(image,
+                            original: prepared.animalDetection)
+                    }
                 }
             } catch is CancellationError {
                 throw CancellationError()
@@ -168,7 +173,7 @@ actor IdentityPhotoService {
         }
         try Task.checkCancellation()
         return IdentityDetectorComparisonRun(report: IdentityDetectorComparisonReport(
-            controls: controls, savedPhoto: selected), savedPhotoThumbnail: thumbnail)
+            controls: controls, savedPhoto: selected, savedPhotoScaleComparison: scaleComparison), savedPhotoThumbnail: thumbnail)
     }
 
     func inspectInput(id: String) async throws -> IdentityInputRun {

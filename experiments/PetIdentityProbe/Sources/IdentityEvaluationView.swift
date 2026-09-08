@@ -258,7 +258,7 @@ struct IdentityEvaluationView: View {
         Form {
             Section("検出をまとめて確認") {
                 Text(store.hasInput
-                     ? "用意した猫画像3枚と、保存した猫Aの1枚目を比較します。写真の選び直しは不要です。"
+                     ? "用意した猫画像3枚と、保存した猫Aの1枚目を比較します。検出候補が0件なら、同じ写真を縮小して比較します。選び直しは不要です。"
                      : "用意した猫画像3枚で、このiPhoneの検出処理を確認します。写真を選ぶ必要はありません。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Button("まとめて確認する") { store.compareDetector() }
@@ -404,6 +404,20 @@ struct IdentityEvaluationView: View {
             }
             Text("枠は検出候補です。1匹に複数の枠が出ることもあり、枠の数は実際の猫の数とは限りません。")
                 .font(.footnote).foregroundStyle(.secondary)
+            if let comparison = run.report.savedPhotoScaleComparison {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("同じ写真の大きさを比較").font(.headline)
+                    ForEach(comparison.variants, id: \.scalePercent) { variant in
+                        LabeledContent(variant.scalePercent.title, value: variant.summary)
+                    }
+                    if comparison.status != .completed {
+                        Text("一部の比較を完了できませんでした。検出0件とは区別しています。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Text("画像形式と外枠の寸法を揃え、縮小時は灰色の余白を付けています。結果が変わっても、大きさだけが原因とは限りません。比較結果は個体識別には使いません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }.font(.subheadline)
+            }
             if let json = run.report.json {
                 ShareLink("まとめた診断結果を共有", item: json)
                     .accessibilityIdentifier("identity-detector-share")
