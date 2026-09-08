@@ -20,13 +20,15 @@ struct MomentDeliveryComposer: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         photo(height: photoHeight(in: geometry.size))
-                        HStack {
-                            Text("残り\(max(0, MomentCaption.maximumCharacters - caption.count))文字")
-                            Spacer()
-                            Text("改行2個まで・入力は任意")
+                        if isCaptionFocused {
+                            HStack {
+                                Text("残り\(max(0, MomentCaption.maximumCharacters - caption.count))文字")
+                                Spacer()
+                                Text("改行2個まで・入力は任意")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
 
                         if let message = MomentCaption.validationMessage(for: caption) {
                             Text(message)
@@ -35,7 +37,7 @@ struct MomentDeliveryComposer: View {
                                 .accessibilityIdentifier("family-window-caption-validation")
                         }
                         if !isCaptionFocused {
-                            Label("最大2,048px・位置情報を除いて送信", systemImage: "lock.shield")
+                            Label("写真の位置情報を除いて届けます", systemImage: "lock.shield")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -154,7 +156,7 @@ struct MomentDeliveryComposer: View {
                 if !isCaptionFocused {
                     Button { isCaptionFocused = true } label: {
                         if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Label("ひとことを書く", systemImage: "text.cursor")
+                            Text("ひとことを書く")
                                 .font(.callout.weight(.semibold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 14)

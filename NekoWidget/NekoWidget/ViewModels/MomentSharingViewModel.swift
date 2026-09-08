@@ -315,6 +315,11 @@ final class MomentSharingViewModel: ObservableObject {
         isPerformingAction = false
 
         if didStage {
+            // A previous pull-to-refresh result is unrelated to this new send.
+            // Keep it unchanged when staging fails; the handoff is durable here.
+            manualRefreshMessage = nil
+            manualRefreshCompletedAt = nil
+            manualRefreshSucceeded = nil
             // Local staging is the user-visible completion boundary. Continue
             // moderation and relay synchronization without keeping the
             // confirmation sheet blocked on the network.
