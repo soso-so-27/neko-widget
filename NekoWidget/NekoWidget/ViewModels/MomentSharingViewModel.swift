@@ -239,10 +239,11 @@ final class MomentSharingViewModel: ObservableObject {
             let bootstrap = try PairingInstallationGuard.bootstrap()
             return try MomentShareHandoffProcessor().refreshAdmissionCatalog(
                 lifecycleToken: bootstrap.lifecycleToken
-            ).destinations.map {
-                MomentDeliveryDestination(localWindowID: $0.localWindowID,
-                                          bindingSHA256: $0.bindingSHA256,
-                                          displayName: $0.displayName)
+            ).destinations.compactMap { admission -> MomentDeliveryDestination? in
+                guard let localWindowID = admission.localWindowID else { return nil }
+                return MomentDeliveryDestination(localWindowID: localWindowID,
+                                                 bindingSHA256: admission.bindingSHA256,
+                                                 displayName: admission.displayName)
             }
         }.value
     }

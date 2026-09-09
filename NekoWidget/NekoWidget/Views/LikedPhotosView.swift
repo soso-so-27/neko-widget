@@ -1715,7 +1715,7 @@ struct PhotoBrowserView: View {
         _selectedPhotoIdentifier = State(initialValue: initialPhoto.localIdentifier)
     }
 
-    var body: some View {
+    private var browserContent: some View {
         VStack(spacing: 0) {
             PhotoBrowserPager(
                 photos: browserPhotos,
@@ -1847,6 +1847,10 @@ struct PhotoBrowserView: View {
                 .background(.ultraThinMaterial)
             }
         }
+    }
+
+    private var browserNavigation: some View {
+        browserContent
         .background(Color.black)
         .navigationTitle("写真")
         .navigationBarTitleDisplayMode(.inline)
@@ -1899,6 +1903,10 @@ struct PhotoBrowserView: View {
                 }
             }
         }
+    }
+
+    private var browserDialogs: some View {
+        browserNavigation
         .confirmationDialog(
             "思い出から外しますか？",
             isPresented: Binding(
@@ -1951,6 +1959,10 @@ struct PhotoBrowserView: View {
             payload in
             MemoryPhotoJPEGActivityView(payload: payload)
         }
+    }
+
+    var body: some View {
+        browserDialogs
         .sheet(item: $deliveryPhoto, onDismiss: {
             deliveryStartedDestination = pendingDeliveryStartedDestination
             pendingDeliveryStartedDestination = nil

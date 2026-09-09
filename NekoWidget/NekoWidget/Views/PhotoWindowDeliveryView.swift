@@ -101,6 +101,7 @@ struct PhotoWindowDeliveryFixture: View {
 }
 #endif
 
+@MainActor
 struct PhotoWindowDeliveryView: View {
     let photo: PhotoPresentation
     let onCancel: () -> Void
@@ -119,13 +120,13 @@ struct PhotoWindowDeliveryView: View {
     @State private var preparationTask: Task<Void, Never>?
 
     init(photo: PhotoPresentation,
-         actions: PhotoWindowDeliveryActions = .live,
+         actions: PhotoWindowDeliveryActions? = nil,
          onCancel: @escaping () -> Void,
          onStaged: @escaping (String) -> Void) {
         self.photo = photo
         self.onCancel = onCancel
         self.onStaged = onStaged
-        _actions = State(initialValue: actions)
+        _actions = State(initialValue: actions ?? .live)
     }
 
     var body: some View {
