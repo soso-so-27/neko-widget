@@ -2,6 +2,18 @@ import ImageIO
 import SwiftUI
 import UIKit
 
+private struct DeliveryProgressReducedMotionKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    /// A preview can reduce motion further; it cannot override the user's setting.
+    var deliveryProgressReducesMotion: Bool {
+        get { self[DeliveryProgressReducedMotionKey.self] }
+        set { self[DeliveryProgressReducedMotionKey.self] = newValue }
+    }
+}
+
 /// Presentation only: the owner supplies current rows and the accepted-row lifetime.
 @MainActor
 struct MomentPhotoDeliveryProgressView: View {
@@ -64,6 +76,7 @@ private struct MomentPhotoDeliveryProgressRow: View {
     let onDetails: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.deliveryProgressReducesMotion) private var previewReducesMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
     @State private var thumbnail: UIImage?
@@ -166,7 +179,7 @@ private struct MomentPhotoDeliveryProgressRow: View {
 
     private var statusMark: some View {
         Group {
-            if scenePhase == .active, !reduceMotion, photo.animates(at: now) {
+            if scenePhase == .active, !reduceMotion, !previewReducesMotion, photo.animates(at: now) {
                 ProgressView()
                     .controlSize(.small)
                     .tint(.secondary)
@@ -214,7 +227,6 @@ private struct MomentPhotoDeliveryProgressRow: View {
 /// Unlike the host, this fixture leaves accepted visible until another selection.
 @MainActor
 struct MomentPhotoDeliveryProgressFixture: View {
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var phase: MomentPhotoDeliveryProgress.Phase
     @State private var startedAt: Date
     @State private var usesLargeText: Bool
@@ -278,7 +290,7 @@ struct MomentPhotoDeliveryProgressFixture: View {
             .navigationTitle("送信表示の確認")
         }
         .environment(\.dynamicTypeSize, usesLargeText ? .accessibility5 : .large)
-        .environment(\.accessibilityReduceMotion, reducesMotion || systemReduceMotion)
+        .environment(\.deliveryProgressReducesMotion, reducesMotion)
     }
 
     private func fixtureStateButton(
