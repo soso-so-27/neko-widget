@@ -32,9 +32,9 @@ struct CandidateReviewView: View {
                 DisclosureGroup("写真と結果の扱い") {
                     Text("選択した写真だけを端末内で処理し、ネットワークから取得しません。本アプリの所属・写真アプリの原本は変更しません。")
                     Text("選択IDのみをこの検証アプリに保存し、画像・特徴量・候補・確認結果は画面終了やバックグラウンドで破棄します。戻っても同じ選択から再開できますが、確認操作はやり直しになります。")
-                    Text("保存済みの見本・判定写真と同じIDは使えません。連写や類似写真のチェックは補助で、過去に試した全写真や独立した撮影場面を保証するものではありません。")
+                    Text("現在保存している見本・判定写真との重なりは自動で外します。保存が残っていない以前の選択までは判別できませんが、覚えていなくても進められます。この試作は独立した精度評価には使いません。")
                 }.font(.footnote).foregroundStyle(.secondary)
-                if store.session == nil && (!store.selected.isEmpty || store.candidateReadFailed) {
+                if store.session == nil && (!store.selected.isEmpty || store.hasArchivedSelection || store.candidateReadFailed) {
                     Button("今回の写真選択を消去", role: .destructive) { confirmsClear = true }
                         .disabled(store.running)
                 }
@@ -79,14 +79,12 @@ struct CandidateReviewView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             Button { store.choose() } label: {
-                Label(store.selected.isEmpty ? "新しい写真をまとめて選ぶ" : "選んだ\(store.selected.count)枚を変更",
+                Label(store.selected.isEmpty ? "写真をまとめて選ぶ" : "選んだ\(store.selected.count)枚を変更",
                       systemImage: "photo.on.rectangle.angled")
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
             }.buttonStyle(.bordered).disabled(!store.canChoose)
-            Text("まず6〜12枚程度。猫別に分けずに選べます（最大24枚）。可能なら別の猫や一緒に写る写真も混ぜてください。")
+            Text("猫別に分けず、まず6〜12枚ほど（最大24枚）。保存済みの見本・判定写真は、選んだ後に自動で外します。以前選んだかの確認は不要です。")
                 .font(.footnote).foregroundStyle(.secondary)
-            Toggle("見本・前の判定とは別場面の写真です", isOn: $store.differentScenes)
-                .font(.subheadline).disabled(store.running)
             if store.running {
                 ProgressView("写真を確認中 \(store.progress) / \(store.total)",
                              value: Double(store.progress), total: Double(max(1, store.total)))

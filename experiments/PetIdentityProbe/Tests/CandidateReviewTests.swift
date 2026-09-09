@@ -87,6 +87,18 @@ final class CandidateReviewTests: XCTestCase {
         XCTAssertThrowsError(try CandidateReviewSelection.validate(["new"], saved: [:]))
     }
 
+    func testKnownPhotosAreFilteredWithoutDiscardingTheOtherPicks() throws {
+        let eligible = try CandidateReviewSelection.filteringKnownPhotos(["new2", "a0", "old-eval", "new1", "b3"], saved: saved)
+        XCTAssertEqual(eligible, ["new2", "new1"])
+        try CandidateReviewSelection.validate(eligible, saved: saved)
+        XCTAssertEqual(try CandidateReviewSelection.filteringKnownPhotos(["a0", "old-eval"], saved: saved), [])
+        // Filtering does not bypass malformed input or missing-reference checks.
+        for ids in [["a0", "a0", "new"], ["", "new"], (0..<25).map { "p\($0)" }] {
+            XCTAssertThrowsError(try CandidateReviewSelection.filteringKnownPhotos(ids, saved: saved))
+        }
+        XCTAssertThrowsError(try CandidateReviewSelection.filteringKnownPhotos(["new"], saved: [:]))
+    }
+
     func testExportIsAggregateOnlyAndNeverCallsUserConfirmationAccuracy() throws {
         var session = CandidateReviewSession(run: try makeReviewFixture())
         session.confirmGroup(.a)
@@ -134,6 +146,7 @@ final class CandidateReviewTests: XCTestCase {
         let archive = CandidateSelectionArchive(url: directory.appendingPathComponent("candidate.json"))
         try legacy.save(saved); try archive.save(["fresh"])
         let store = CandidateReviewStore(referenceArchive: legacy, candidateArchive: archive)
+        XCTAssertTrue(store.canRun) // No memory/scene attestation is required.
         let attempts: [[String?]] = [[], [nil], ["a0"], ["old-eval"], ["x", "x"]]
         for ids in attempts {
             let request = CandidatePickerRequest(); store.picker = request
@@ -141,21 +154,54 @@ final class CandidateReviewTests: XCTestCase {
             XCTAssertEqual(store.selected, ["fresh"])
         }
         let request = CandidatePickerRequest(); store.picker = request
-        store.differentScenes = true
-        store.picked(["new1", "new2"], request: request)
-        XCTAssertFalse(store.differentScenes); XCTAssertEqual(try archive.load(), ["new1", "new2"])
+        store.picked(["a0", "new1", "old-eval", "new2"], request: request)
+        XCTAssertTrue(store.canRun); XCTAssertEqual(try archive.load(), ["new1", "new2"])
+        XCTAssertTrue(store.message?.contains("重なる2枚を自動で外しました") == true)
+        XCTAssertTrue(store.message?.contains("残りの2枚で進められます") == true)
+        let reused = CandidatePickerRequest(); store.picker = reused
+        store.picked(["b0", "old-eval"], request: reused)
+        XCTAssertEqual(store.selected, ["new1", "new2"])
+        XCTAssertEqual(try archive.load(), ["new1", "new2"])
+        XCTAssertTrue(store.message?.contains("元の2枚は残しています") == true)
         let stale = CandidatePickerRequest(); store.picker = stale
         store.session = CandidateReviewSession(run: try makeReviewFixture())
         store.suspend(); store.picked(["late"], request: stale)
         XCTAssertNil(store.session); XCTAssertNil(store.picker); XCTAssertEqual(store.selected, ["new1", "new2"])
+        XCTAssertTrue(store.canRun)
         store.clearCandidateSelection()
         XCTAssertTrue(try archive.load().isEmpty); XCTAssertEqual(try legacy.load(), saved)
+        let allKnown = CandidatePickerRequest(); store.picker = allKnown
+        store.picked(["a0", "old-eval"], request: allKnown)
+        XCTAssertTrue(store.selected.isEmpty); XCTAssertFalse(store.canRun)
+        XCTAssertTrue(store.message?.contains("ほかの写真を追加できます") == true)
         try Data("broken".utf8).write(to: archive.url)
         let corrupt = CandidateReviewStore(referenceArchive: legacy, candidateArchive: archive)
         XCTAssertTrue(corrupt.candidateReadFailed); XCTAssertFalse(corrupt.canChoose)
         corrupt.clearCandidateSelection()
         XCTAssertFalse(corrupt.candidateReadFailed); XCTAssertTrue(corrupt.canChoose)
         XCTAssertEqual(try legacy.load(), saved)
+    }
+
+    @MainActor func testRestoringSelectionExcludesKnownPhotosWithoutRewritingArchives() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CandidateRestoreTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = IdentitySelectionArchive(url: directory.appendingPathComponent("legacy.json"))
+        let archive = CandidateSelectionArchive(url: directory.appendingPathComponent("candidate.json"))
+        try legacy.save(saved); let legacyBefore = try Data(contentsOf: legacy.url)
+        for ids in [["a0", "fresh", "old-eval"], ["a0", "old-eval"]] {
+            try archive.save(ids); let candidateBefore = try Data(contentsOf: archive.url)
+            let store = CandidateReviewStore(referenceArchive: legacy, candidateArchive: archive)
+            let expected = ids.filter { $0 == "fresh" }
+            XCTAssertEqual(store.selected, expected)
+            XCTAssertEqual(store.canRun, !expected.isEmpty)
+            XCTAssertTrue(store.message?.contains("重なる2枚を自動で外しました") == true)
+            XCTAssertEqual(try Data(contentsOf: archive.url), candidateBefore)
+            XCTAssertEqual(try Data(contentsOf: legacy.url), legacyBefore)
+            XCTAssertTrue(store.hasArchivedSelection) // Keep clear available even when every photo was filtered.
+            store.clearCandidateSelection()
+            XCTAssertFalse(store.hasArchivedSelection); XCTAssertTrue(try archive.load().isEmpty)
+            XCTAssertEqual(try Data(contentsOf: legacy.url), legacyBefore)
+        }
     }
 
     @MainActor func testLateCompletionAndReferenceChangeDoNotPublish() async throws {
@@ -169,7 +215,7 @@ final class CandidateReviewTests: XCTestCase {
         let store = CandidateReviewStore(referenceArchive: legacy, candidateArchive: archive, runner: { _, _ in
             try await withCheckedThrowingContinuation { finish = $0; started.fulfill() }
         })
-        store.differentScenes = true; store.start()
+        store.start()
         await fulfillment(of: [started], timeout: 2)
         XCTAssertTrue(store.running)
         store.suspend()
@@ -178,7 +224,7 @@ final class CandidateReviewTests: XCTestCase {
         XCTAssertNil(store.session); XCTAssertFalse(store.running); XCTAssertEqual(store.selected, ["fresh"])
         var changed = saved; changed[.referenceA]?[0] = "changed"
         try legacy.save(changed)
-        store.differentScenes = true; store.start()
+        store.start()
         XCTAssertFalse(store.running); XCTAssertTrue(store.message?.contains("見本が変わりました") == true)
     }
 
