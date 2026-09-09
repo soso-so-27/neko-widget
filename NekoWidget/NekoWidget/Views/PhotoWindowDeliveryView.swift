@@ -53,9 +53,10 @@ struct PhotoWindowDeliveryFixture: View {
                 profiles: [], assignmentsByPhotoIdentifier: [:],
                 replaceProfileAssignments: { _ in true }, deliveryActions: fixtureActions)
         }
-        .safeAreaInset(edge: .top) {
+        .overlay(alignment: .top) {
             Text("\(sendCount)|\(sentSource)|\(sentDestination)|\(sentCaption)")
-                .font(.caption2)
+                .font(.system(size: 1))
+                .frame(height: 1)
                 .accessibilityIdentifier("photo-window-fixture-result")
         }
         .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--photo-window-large") ? .accessibility5 : .large)

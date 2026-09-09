@@ -1617,6 +1617,7 @@ private struct MemoryPhotoJPEGActivityView: UIViewControllerRepresentable {
 /// Paging is gesture-only: there is deliberately no "next" button competing
 /// with the primary private action, "思い出に残す".
 struct PhotoBrowserView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
 
@@ -1973,6 +1974,7 @@ struct PhotoBrowserView: View {
                     pendingDeliveryStartedDestination = destination
                     deliveryPhoto = nil
                 })
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .alert("送信を開始しました", isPresented: Binding(
             get: { deliveryStartedDestination != nil },

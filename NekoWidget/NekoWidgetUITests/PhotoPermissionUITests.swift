@@ -359,6 +359,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 
     @MainActor
     func testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation() {
+        var standardDestinationHeight: CGFloat = 0
         for variant in ["standard", "large"] {
             let app = XCUIApplication()
             app.launchArguments = ["--photo-window-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -373,7 +374,6 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
             for _ in 0..<4 where !deliver.isHittable { app.scrollViews.firstMatch.swipeUp() }
             XCTAssertTrue(deliver.isHittable)
-            attach(app, name: "photo-window-entry-\(variant)")
             deliver.tap()
             let family = app.buttons["photo-window-destination-family"]
             XCTAssertTrue(family.waitForExistence(timeout: 10))
@@ -394,12 +394,20 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             let destination = app.staticTexts["family-window-composer-destination"]
             XCTAssertTrue(destination.waitForExistence(timeout: 10))
             XCTAssertTrue(destination.label.contains("猫ともだち"))
+            if variant == "standard" { standardDestinationHeight = destination.frame.height }
+            if variant == "large" {
+                XCTAssertGreaterThan(destination.frame.height, standardDestinationHeight * 1.4,
+                    "Maximum text size must reach the presented confirmation, not only the photo browser.")
+            }
             XCTAssertTrue(app.buttons["family-window-caption-edit"].label.contains("ねむい"))
             attach(app, name: "photo-window-confirmation-\(variant)")
             app.buttons["family-window-cancel-delivery"].tap()
             let result = app.staticTexts["photo-window-fixture-result"]
             XCTAssertTrue(result.waitForExistence(timeout: 5))
             XCTAssertTrue(result.label.hasPrefix("0|"), "Choosing and cancelling must not send.")
+            // Any initial PhotoKit system prompt has been handled by the
+            // preceding interaction; capture the unobscured production entry.
+            attach(app, name: "photo-window-entry-\(variant)")
             deliver.tap()
             XCTAssertTrue(friends.waitForExistence(timeout: 10))
             friends.tap()
