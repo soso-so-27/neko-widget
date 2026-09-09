@@ -77,7 +77,12 @@ struct CatProfilesView: View {
     let presentation: CatProfilesPresentation
     let actions: CatProfilesViewActions
 
-    @State private var showsAddProfile = false
+    private struct CreationRequest: Identifiable {
+        let id = UUID()
+        let photoIdentifier: String?
+    }
+
+    @State private var creationRequest: CreationRequest?
     @State private var showsCreationPhotoPicker = false
     @State private var creationPhotoIdentifier: String?
     @State private var continuesProfileCreation = false
@@ -97,7 +102,7 @@ struct CatProfilesView: View {
         .sheet(isPresented: $showsCreationPhotoPicker, onDismiss: {
             if continuesProfileCreation {
                 continuesProfileCreation = false
-                showsAddProfile = true
+                creationRequest = CreationRequest(photoIdentifier: creationPhotoIdentifier)
             }
         }) {
             NavigationStack {
@@ -120,17 +125,18 @@ struct CatProfilesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showsAddProfile, onDismiss: {
+        .sheet(item: $creationRequest, onDismiss: {
             openedProfileIdentifier = createdProfileIdentifier
             createdProfileIdentifier = nil
-        }) {
+        }) { request in
             AddCatProfileView(
                 referenceCandidates: presentation.profileCreationPhotos,
                 initialLifeReference: presentation.legacyLifeReference,
-                initialPhotoIdentifier: creationPhotoIdentifier,
+                initialPhotoIdentifier: request.photoIdentifier,
                 createProfile: actions.createProfile,
                 onCreated: { createdProfileIdentifier = $0 }
             )
+            .id(request.id)
         }
         .navigationDestination(item: $openedProfileIdentifier) { identifier in
             if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
@@ -186,7 +192,7 @@ struct CatProfilesView: View {
                 creationPhotoIdentifier = nil
                 continuesProfileCreation = false
                 if presentation.profileCreationPhotos.isEmpty {
-                    showsAddProfile = true
+                    creationRequest = CreationRequest(photoIdentifier: nil)
                 } else {
                     showsCreationPhotoPicker = true
                 }

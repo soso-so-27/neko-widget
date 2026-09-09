@@ -80,6 +80,8 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         choices[photoIndex].tap()
         let field = app.textFields["cat-profile-name"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["cat-profile-key-photo"].label.contains("別の写真を選ぶ"),
+                      "The selected photo was lost between the picker and naming sheet.")
         field.tap()
         field.typeText(name)
         app.buttons["cat-profile-create"].tap()

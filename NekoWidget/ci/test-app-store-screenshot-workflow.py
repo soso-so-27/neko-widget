@@ -81,6 +81,17 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
             self.assertIn(value, self.workflow)
         self.assertIn("releaseBoundary\": \"local-only-disabled", self.exporter)
 
+    def test_generated_photo_preheating_never_fetches_photokit_assets(self) -> None:
+        preheating = self.photo_image.split("private static func assets(withLocalIdentifiers", 1)[1].split(
+            "private static func fullImageRequestOptions", 1
+        )[0]
+        debug_filter, release = preheating.split("#else", 1)
+        self.assertIn("#if DEBUG", debug_filter)
+        self.assertIn('!$0.hasPrefix("app-store-screenshot-fixture-")', debug_filter)
+        self.assertIn("let photoIdentifiers = identifiers", release)
+        self.assertLess(preheating.index("guard !photoIdentifiers.isEmpty"), preheating.index("PHAsset.fetchAssets"))
+        self.assertIn("withLocalIdentifiers: photoIdentifiers", preheating)
+
     def test_fixture_is_debug_only_and_owns_no_external_input(self) -> None:
         self.assertTrue(self.fixture.startswith("#if DEBUG\n"))
         self.assertTrue(self.fixture.rstrip().endswith("#endif"))

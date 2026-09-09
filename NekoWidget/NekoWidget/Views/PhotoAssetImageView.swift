@@ -44,9 +44,18 @@ enum PhotoAssetImagePipeline {
     }
 
     private static func assets(withLocalIdentifiers identifiers: [String]) -> [PHAsset] {
-        guard !identifiers.isEmpty else { return [] }
+#if DEBUG
+        // Generated UI images never belong to PhotoKit, including preheating.
+        // A fetch for these fake identifiers can itself trigger a Photos prompt.
+        let photoIdentifiers = identifiers.filter {
+            !$0.hasPrefix("app-store-screenshot-fixture-")
+        }
+#else
+        let photoIdentifiers = identifiers
+#endif
+        guard !photoIdentifiers.isEmpty else { return [] }
         let fetchResult = PHAsset.fetchAssets(
-            withLocalIdentifiers: identifiers,
+            withLocalIdentifiers: photoIdentifiers,
             options: nil
         )
         var assets: [PHAsset] = []
