@@ -948,8 +948,9 @@ jobs:
     needs: [plan, build-without-signing]
     if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
-    # Includes offline UI and three Widget Gallery scenarios after the runtime checks.
-    timeout-minutes: 40
+    # Includes offline sharing/memories UI and three Widget Gallery scenarios.
+    # Leave room for the focused memories cases without repeating a timed-out run.
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 

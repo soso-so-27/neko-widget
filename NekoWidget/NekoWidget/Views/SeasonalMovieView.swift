@@ -175,10 +175,75 @@ private struct SeasonalMovieAboutSheet: View {
 
 /// A compact card used by the device-only archive under 思い出.
 struct SeasonalMovieArchiveCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let presentation: SeasonalMoviePresentation
     let isNew: Bool
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibleCard
+            } else {
+                compactCard
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(presentation.periodTitle)の季節のムービー、\(presentation.scenes.count)場面"
+                + (isNew ? "、新着" : "")
+        )
+        .accessibilityHint("開くと再生します")
+    }
+
+    private var accessibleCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if let cover = presentation.coverScene {
+                    PhotoAssetImageView(
+                        localIdentifier: cover.localIdentifier,
+                        catBoundingBox: cover.catBoundingBox,
+                        targetPixelSize: CGSize(width: 840, height: 630),
+                        targetAspectRatio: 4.0 / 3.0,
+                        showsFullImage: true,
+                        networkAccessAllowed: false
+                    )
+                }
+            }
+            .frame(width: 280, height: 210)
+            .clipped()
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.42), in: Circle())
+                    .padding(12)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(presentation.periodTitle)
+                    .font(.headline)
+                Text("\(presentation.scenes.count)場面")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if isNew {
+                    Text("新着")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier("seasonal-movie-new-badge")
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(14)
+        }
+        .frame(width: 280, alignment: .leading)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .contentShape(RoundedRectangle(cornerRadius: 22))
+    }
+
+    private var compactCard: some View {
         ZStack(alignment: .bottomLeading) {
             if let cover = presentation.coverScene {
                 PhotoAssetImageView(
@@ -227,12 +292,6 @@ struct SeasonalMovieArchiveCard: View {
                     .accessibilityIdentifier("seasonal-movie-new-badge")
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "\(presentation.periodTitle)の季節のムービー、\(presentation.scenes.count)場面"
-                + (isNew ? "、新着" : "")
-        )
-        .accessibilityHint("開くと再生します")
     }
 }
 

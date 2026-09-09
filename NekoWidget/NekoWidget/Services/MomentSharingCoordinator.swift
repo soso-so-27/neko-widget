@@ -189,6 +189,8 @@ actor MomentSharingCoordinator {
     private let moderation: any MomentModerating
     private let handoffProcessor: MomentShareHandoffProcessor
     private var latestSynchronizationNotice: MomentSynchronizationNotice?
+    // Shared by coordinator instances in this process, never persisted.
+    private static let deliveryDiagnosticNonce = UUID()
 #if DEBUG
     private var runtimeNetworkClientConstructionCount = 0
 #endif
@@ -1878,16 +1880,26 @@ actor MomentSharingCoordinator {
                 && candidate.phase != .deliveryResultUnknown
                 && candidate.phase != .failed {
             if let retryAt = candidate.nextRetryAt, retryAt > .now { continue }
+            let trace = MomentDeliveryDiagnostic.correlation(
+                for: candidate.id, processNonce: Self.deliveryDiagnosticNonce
+            )
+            var stage = MomentDeliveryDiagnostic.Stage.load
+            SharedLog.app.info("moment-delivery", "Photo delivery attempt started", metadata: [
+                "deliveryTrace": trace,
+                "deliveryPriorFailures": String(candidate.attemptCount)
+            ])
             do {
                 var item = try currentOutboxItem(candidate.id)
                 if item.phase == .prepared {
                     try SharingLifecycleGate.validate(lifecycleToken)
+                    stage = .reserve
                     let reservation = try await api.reserve(
                         item: item,
                         pairingState: pairing,
                         credential: credential
                     )
                     try SharingLifecycleGate.validate(lifecycleToken)
+                    stage = .saveReservation
                     item = try mutateOutbox(
                         item.id,
                         expected: .prepared,
@@ -1901,11 +1913,13 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .reserved {
+                    stage = .readCiphertext
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
                     let ciphertext = try MomentSharingStateStore.readCiphertext(for: item)
                     try SharingLifecycleGate.validate(lifecycleToken)
+                    stage = .upload
                     try await api.upload(
                         momentID: momentID,
                         ciphertext: ciphertext,
@@ -1913,6 +1927,7 @@ actor MomentSharingCoordinator {
                         credential: credential
                     )
                     try SharingLifecycleGate.validate(lifecycleToken)
+                    stage = .saveUpload
                     item = try mutateOutbox(
                         item.id,
                         expected: .reserved,
@@ -1924,6 +1939,7 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .uploaded {
+                    stage = .beginCommit
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
@@ -1939,6 +1955,7 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .committing {
+                    stage = .commit
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
@@ -1950,6 +1967,7 @@ actor MomentSharingCoordinator {
                         credential: credential
                     )
                     try SharingLifecycleGate.validate(lifecycleToken)
+                    stage = .saveCommit
                     item = try mutateOutbox(
                         item.id,
                         expected: .committing,
@@ -1962,6 +1980,11 @@ actor MomentSharingCoordinator {
                         value.unreceivedExpiresAt = commit.unreceivedExpiresAt
                         value.recipientCount = commit.recipientCount
                     }
+                    SharedLog.app.info("moment-delivery", "Photo delivery acceptance confirmed", metadata: [
+                        "deliveryTrace": trace,
+                        "deliveryPriorFailures": String(item.attemptCount)
+                    ])
+                    stage = .cleanup
                     try MomentSharingStateStore.removeCiphertext(for: item)
                     sentCount += 1
                 }
@@ -1976,10 +1999,17 @@ actor MomentSharingCoordinator {
                 // even when the durable local phase had already become
                 // `.committing` before a crash or long suspension.
                 if Self.isExpiredReservation(error) {
-                    _ = try MomentSharingStateStore.recoverExpiredReservation(
+                    let recovered = try MomentSharingStateStore.recoverExpiredReservation(
                         itemID: candidate.id,
                         validating: lifecycleToken
                     )
+                    if recovered,
+                       let recoveredItem = try? currentOutboxItem(candidate.id),
+                       let retryAt = recoveredItem.nextRetryAt {
+                        Self.logDeliveryWait(trace: trace, stage: stage, error: error,
+                            priorFailures: recoveredItem.attemptCount,
+                            retryAt: retryAt)
+                    }
                     continue
                 }
                 if Self.isNonterminalAuthenticationFailure(error) {
@@ -1990,6 +2020,8 @@ actor MomentSharingCoordinator {
                     try? recordRetry(
                         for: candidate.id,
                         error: error,
+                        trace: trace,
+                        stage: stage,
                         lifecycleToken: lifecycleToken
                     )
                     continue
@@ -2002,6 +2034,8 @@ actor MomentSharingCoordinator {
                     try? recordRetry(
                         for: candidate.id,
                         error: error,
+                        trace: trace,
+                        stage: stage,
                         lifecycleToken: lifecycleToken
                     )
                     continue
@@ -2027,6 +2061,8 @@ actor MomentSharingCoordinator {
                     try? recordRetry(
                         for: candidate.id,
                         error: error,
+                        trace: trace,
+                        stage: stage,
                         lifecycleToken: lifecycleToken
                     )
                 } catch {
@@ -2038,6 +2074,8 @@ actor MomentSharingCoordinator {
                     try? recordRetry(
                         for: candidate.id,
                         error: error,
+                        trace: trace,
+                        stage: stage,
                         lifecycleToken: lifecycleToken
                     )
                 } catch {
@@ -2538,21 +2576,60 @@ actor MomentSharingCoordinator {
     private func recordRetry(
         for id: UUID,
         error: Error,
+        trace: String,
+        stage: MomentDeliveryDiagnostic.Stage,
         lifecycleToken: SharingLifecycleGate.Token
     ) throws {
-        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
-            guard let index = state.outbox.firstIndex(where: { $0.id == id }) else { return }
-            state.outbox[index].attemptCount += 1
-            let now = Date()
-            state.outbox[index].nextRetryAt = MomentOutboxRetryPolicy.nextRetryAt(
-                for: error,
-                awaitingReservation: state.outbox[index].phase == .prepared,
-                attemptCount: state.outbox[index].attemptCount,
-                now: now
-            )
-            state.outbox[index].lastErrorCode = Self.safeErrorCode(error)
-            state.outbox[index].updatedAt = .now
+        let snapshot: MomentSharingState
+        do {
+            snapshot = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+                guard let index = state.outbox.firstIndex(where: { $0.id == id }) else { return }
+                state.outbox[index].attemptCount += 1
+                let now = Date()
+                state.outbox[index].nextRetryAt = MomentOutboxRetryPolicy.nextRetryAt(
+                    for: error,
+                    awaitingReservation: state.outbox[index].phase == .prepared,
+                    attemptCount: state.outbox[index].attemptCount,
+                    now: now
+                )
+                state.outbox[index].lastErrorCode = Self.safeErrorCode(error)
+                state.outbox[index].updatedAt = .now
+            }
+        } catch {
+            SharedLog.app.warning("moment-delivery", "Photo delivery retry state could not be saved", metadata: [
+                "deliveryTrace": trace,
+                "deliveryStage": stage.rawValue,
+                "deliveryReason": MomentDeliveryDiagnostic.reason(for: error).rawValue
+            ])
+            throw error
         }
+        if let item = snapshot.outbox.first(where: { $0.id == id }), let retryAt = item.nextRetryAt {
+            if item.phase == .committed {
+                // The existing cleanup failure path records a retry date, but
+                // committed items never re-enter sendOutbox. Do not imply a resend.
+                SharedLog.app.warning("moment-delivery", "Accepted photo local cleanup failed", metadata: [
+                    "deliveryTrace": trace,
+                    "deliveryStage": stage.rawValue,
+                    "deliveryReason": MomentDeliveryDiagnostic.reason(for: error).rawValue
+                ])
+            } else {
+                Self.logDeliveryWait(trace: trace, stage: stage, error: error,
+                    priorFailures: item.attemptCount, retryAt: retryAt)
+            }
+        }
+    }
+
+    private nonisolated static func logDeliveryWait(
+        trace: String, stage: MomentDeliveryDiagnostic.Stage, error: Error,
+        priorFailures: Int, retryAt: Date
+    ) {
+        SharedLog.app.warning("moment-delivery", "Photo delivery deferred for retry", metadata: [
+            "deliveryTrace": trace,
+            "deliveryStage": stage.rawValue,
+            "deliveryReason": MomentDeliveryDiagnostic.reason(for: error).rawValue,
+            "deliveryPriorFailures": String(priorFailures),
+            "deliveryRetryAt": ISO8601DateFormatter().string(from: retryAt)
+        ])
     }
 
     @discardableResult

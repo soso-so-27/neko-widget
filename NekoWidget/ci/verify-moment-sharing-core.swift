@@ -594,6 +594,37 @@ require(
     "relay error detail reached the user-facing description"
 )
 
+// A failure's fixed diagnostic category must not depend on relay prose or
+// NSError userInfo. It does not replace or modify the actual retry policy.
+let diagnosticCases: [(Error, MomentDeliveryDiagnostic.Reason)] = [
+    (MomentSharingError.retryableServer(retryAfterSeconds: nil), .transport),
+    (MomentSharingError.stateUnavailable, .state),
+    (MomentSharingError.invalidPayload, .payload),
+    (MomentSharingError.requestRejected(status: 429, code: "moment_daily_quota_exceeded", message: "private caption"), .quota),
+    (MomentSharingError.requestRejected(status: 429, code: "untrusted-code", message: "private caption"), .rateLimited),
+    (MomentSharingError.requestRejected(status: 401, code: "invalid_authentication", message: "Bearer secret"), .authentication),
+    (MomentSharingError.requestRejected(status: 503, code: "private-code", message: "https://private.invalid"), .server),
+    (MomentSharingError.requestRejected(status: 408, code: nil, message: "private caption"), .httpTransient),
+    (MomentSharingError.requestRejected(status: 400, code: "moment_daily_quota_exceeded", message: "private caption"), .httpOther),
+    (MomentSharingError.requestRejected(status: 410, code: "reservation_expired", message: "private caption"), .reservationExpired),
+    (NSError(domain: NSCocoaErrorDomain, code: 260, userInfo: [NSFilePathErrorKey: "/private/photo.jpg"]), .fileIO),
+    (NSError(domain: "private-user-domain", code: 12, userInfo: [NSLocalizedDescriptionKey: "secret"]), .unknown),
+    (CancellationError(), .cancelled)
+]
+for (error, expected) in diagnosticCases {
+    require(MomentDeliveryDiagnostic.reason(for: error) == expected, "delivery diagnostic category drifted")
+}
+let diagnosticNonce = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+let nextDiagnosticNonce = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+let diagnosticTrace = MomentDeliveryDiagnostic.correlation(for: context.clientMomentID, processNonce: diagnosticNonce)
+require(diagnosticTrace.count == 12 && diagnosticTrace.allSatisfy { "0123456789abcdef".contains($0) },
+    "delivery correlation is not a short hexadecimal digest")
+require(diagnosticTrace == MomentDeliveryDiagnostic.correlation(for: context.clientMomentID, processNonce: diagnosticNonce),
+    "retry and acceptance could not be correlated in the same process")
+require(diagnosticTrace != MomentDeliveryDiagnostic.correlation(for: context.clientMomentID, processNonce: nextDiagnosticNonce)
+    && diagnosticTrace != MomentDeliveryDiagnostic.correlation(for: context.clientRequestID, processNonce: diagnosticNonce),
+    "delivery correlation persisted across launches or confused distinct photos")
+
 print("Moment sharing core verifier passed")
 }
 }

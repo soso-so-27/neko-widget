@@ -412,6 +412,68 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
     }
 }
 
+/// Diagnostics only. No identifiers, relay text or paths leave this boundary.
+/// Correlation changes each process launch; it cannot join sends across launches.
+enum MomentDeliveryDiagnostic {
+    enum Stage: String, CaseIterable, Sendable {
+        case load = "load-outbox"
+        case reserve
+        case saveReservation = "save-reservation"
+        case readCiphertext = "read-ciphertext"
+        case upload
+        case saveUpload = "save-upload"
+        case beginCommit = "begin-commit"
+        case commit
+        case saveCommit = "save-commit"
+        case cleanup
+    }
+
+    enum Reason: String, CaseIterable, Sendable {
+        case transport = "transport-unclassified"
+        case authentication = "authentication-rejected"
+        case quota = "daily-quota"
+        case rateLimited = "rate-limited"
+        case server = "server-error"
+        case httpTransient = "http-transient"
+        case httpOther = "http-other"
+        case reservationExpired = "reservation-expired"
+        case state = "local-state"
+        case fileIO = "local-file-io"
+        case cancelled
+        case payload = "invalid-payload"
+        case unavailable
+        case unknown
+    }
+
+    static func correlation(for id: UUID, processNonce: UUID) -> String {
+        let bytes = Data((processNonce.uuidString + ":" + id.uuidString).utf8)
+        return SHA256.hash(data: bytes).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func reason(for error: Error) -> Reason {
+        if error is CancellationError { return .cancelled }
+        if let error = error as? MomentSharingError {
+            switch error {
+            case .retryableServer: return .transport
+            case .stateUnavailable: return .state
+            case .invalidPayload, .payloadTooLarge: return .payload
+            case let .requestRejected(status, code, _):
+                if status == 429 && code == "moment_daily_quota_exceeded" { return .quota }
+                if status == 401 && code == "invalid_authentication" { return .authentication }
+                if status == 410 && code == "reservation_expired" { return .reservationExpired }
+                if status == 429 { return .rateLimited }
+                if (500...599).contains(status) { return .server }
+                if status == 408 || status == 425 { return .httpTransient }
+                return .httpOther
+            default: return .unavailable
+            }
+        }
+        let value = error as NSError
+        if value.domain == NSCocoaErrorDomain || value.domain == NSPOSIXErrorDomain { return .fileIO }
+        return .unknown
+    }
+}
+
 enum MomentOutboxRetryPolicy {
     static let dailyQuotaErrorCode = "daily-quota-exceeded"
 

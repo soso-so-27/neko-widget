@@ -1265,8 +1265,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
             ".onChange(of: hasUnreadSummary, initial: true)",
             memory_view,
         )
-        self.assertIn("selectedSection: MemoriesSection = .summaries", memory_view)
-        self.assertIn("selection: $selectedSection", memory_view)
+        self.assertIn("selectedSection: MemoriesSection?", memory_view)
+        self.assertIn("selection: sectionSelection", memory_view)
         self.assertIn('Label("写真から選ぶ"', memory_view)
         self.assertIn("photosPath = NavigationPath()", main_tab)
         self.assertIn("openPhotos: {", main_tab)
