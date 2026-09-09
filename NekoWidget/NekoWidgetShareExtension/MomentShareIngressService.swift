@@ -68,14 +68,15 @@ struct MomentShareIngressService {
         }.value
     }
 
+    @discardableResult
     func stage(
         _ photo: MomentShareIngressPhoto,
         admissionID: UUID,
         senderPolicyAcceptedAt: Date,
         now: Date = .now,
         caption: String? = nil
-    ) async throws {
-        _ = try await Task.detached(priority: .userInitiated) {
+    ) async throws -> UUID {
+        let capture = try await Task.detached(priority: .userInitiated) {
             try MomentShareHandoffStore.stageCapture(
                 admissionID: admissionID,
                 canonicalJPEG: photo.canonicalJPEG,
@@ -88,6 +89,7 @@ struct MomentShareIngressService {
                 caption: caption
             )
         }.value
+        return capture.id
     }
 
     private static func canonicalPhoto(from url: URL) throws -> MomentShareIngressPhoto {

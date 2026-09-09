@@ -10,7 +10,10 @@ struct PhotoWindowDeliveryActions {
     var send: (MomentShareIngressPhoto, MomentDeliveryDestination, String) async -> String?
 
     static var live: Self {
-        let model = MomentSharingViewModel()
+        live(model: MomentSharingViewModel())
+    }
+
+    static func live(model: MomentSharingViewModel) -> Self {
         return Self(
             destinations: { try await MomentSharingViewModel.libraryDeliveryDestinations() },
             prepare: { photo in

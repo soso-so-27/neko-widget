@@ -9,6 +9,8 @@ enum MomentSharingPresentationVerifier {
         try verifiesPreparationBoundary()
         try verifiesEveryOutboxPhasePrecisely()
         try verifiesDailyQuotaIsSeparateFromTransport()
+        try verifiesPhotoProgressTimingAndIdentity()
+        try verifiesPhotoProgressCompletionLifetime()
         try verifiesMultipleDestinationsRemainGrouped()
         try verifiesTerminalPreparationOutcomes()
         try verifiesLatestServerAcceptanceDeterministically()
@@ -19,6 +21,95 @@ enum MomentSharingPresentationVerifier {
         try verifiesPhotoDeepLinkCompatibility()
         try verifiesFamilyWindowDeepLinkHasNoPhotoIdentifier()
         print("Moment sharing presentation verifier passed")
+    }
+
+    private static func verifiesPhotoProgressTimingAndIdentity() throws {
+        let jpeg = Data([1, 2, 3])
+        let sending = MomentPhotoDeliveryProgress(
+            id: "photo-a", thumbnailJPEG: jpeg, startedAt: date(100), phase: .sending
+        )
+        try require(sending.animates(at: date(109.999)), "a fresh send did not animate")
+        try require(!sending.animates(at: date(110))
+            && sending.title(at: date(110)) == "時間がかかっています",
+            "the ten-second boundary kept animating or implied failure")
+        let staticPhases: [MomentPhotoDeliveryProgress.Phase] = [.waiting, .quotaWaiting, .attention, .resultUnknown]
+        for phase in staticPhases {
+            let photo = MomentPhotoDeliveryProgress(
+                id: "photo-a", thumbnailJPEG: jpeg, startedAt: date(100), phase: phase
+            )
+            try require(!photo.animates(at: date(101)), "a deferred or unresolved photo animated")
+            try require(photo.title(at: date(101)) != "送信しました", "an unresolved photo claimed success")
+        }
+        let preparations = [
+            MomentPreparationPresentationInput(destinationKey: "window-a", phase: .pending,
+                lastErrorCode: nil, updatedAt: date(100), expiresAt: date(200),
+                nextRetryAt: date(150), isCancellable: true,
+                stableID: "deferred-preparation", createdAt: date(100)),
+            MomentPreparationPresentationInput(destinationKey: "window-a", phase: .pending,
+                lastErrorCode: nil, updatedAt: date(100), expiresAt: date(200),
+                nextRetryAt: nil, isCancellable: true,
+                stableID: "photo-a", createdAt: date(90))
+        ]
+        let result = MomentSharingPresentationPolicy.make(preparations: preparations, deliveries: [
+            delivery("photo-a", "window-a", .reserved, updatedAt: 100,
+                localThumbnailJPEG: jpeg, createdAt: 90),
+            delivery("backoff", "window-a", .prepared, updatedAt: 100, retryAt: 150),
+            delivery("quota", "window-a", .prepared, updatedAt: 100, retryAt: 200,
+                error: "daily-quota-exceeded"),
+            delivery("failed", "window-a", .failed, updatedAt: 100),
+            delivery("unknown", "window-a", .deliveryResultUnknown, updatedAt: 100),
+            delivery("old-accepted", "window-a", .committed, updatedAt: 90, committedAt: 90)
+        ], now: date(101)).photoProgress
+        try require(result.filter { $0.id == "photo-a" }.count == 1,
+            "handoff promotion duplicated the same photograph")
+        try require(result.first { $0.id == "photo-a" }?.thumbnailJPEG == jpeg
+            && result.first { $0.id == "photo-a" }?.startedAt == date(90),
+            "promotion changed the photograph or restarted its elapsed time")
+        let expectedPhases: [(String, MomentPhotoDeliveryProgress.Phase)] = [
+            ("deferred-preparation", .waiting), ("backoff", .waiting),
+            ("quota", .quotaWaiting), ("failed", .attention), ("unknown", .resultUnknown)
+        ]
+        for (id, phase) in expectedPhases {
+            try require(result.first { $0.id == id }?.phase == phase,
+                "photo progress lost the explicit deferred/failed/unknown state")
+        }
+        try require(!result.contains { $0.id == "old-accepted" }, "old receipts replayed progress")
+    }
+
+    private static func verifiesPhotoProgressCompletionLifetime() throws {
+        let photo = MomentPhotoDeliveryProgress(
+            id: "new-photo", thumbnailJPEG: Data([4, 5]), startedAt: date(100), phase: .sending
+        )
+        var tracker = MomentPhotoDeliveryProgressTracker()
+        try require(tracker.update(photos: [], acceptedIDs: ["old-photo"], now: date(100)).isEmpty,
+            "opening old history replayed a success")
+        _ = tracker.update(photos: [photo], acceptedIDs: ["old-photo"], now: date(101))
+        let accepted = tracker.update(photos: [], acceptedIDs: ["old-photo", photo.id], now: date(102))
+        try require(accepted.count == 1 && accepted.first?.id == photo.id
+            && accepted.first?.phase == .accepted && accepted.first?.thumbnailJPEG == photo.thumbnailJPEG,
+            "success did not preserve the exact observed photograph")
+        try require(tracker.nextCompletionExpiry == date(104), "success did not last two seconds")
+        _ = tracker.update(photos: [], acceptedIDs: [photo.id], now: date(103.9))
+        try require(tracker.nextCompletionExpiry == date(104), "refresh extended success indefinitely")
+        try require(tracker.update(photos: [], acceptedIDs: [photo.id], now: date(104)).isEmpty
+            && tracker.nextCompletionExpiry == nil, "expired success retained its photograph")
+        let disappearingPhases: [MomentPhotoDeliveryProgress.Phase] = [.sending, .attention, .resultUnknown]
+        for phase in disappearingPhases {
+            var removed = MomentPhotoDeliveryProgressTracker()
+            _ = removed.update(photos: [MomentPhotoDeliveryProgress(id: photo.id,
+                thumbnailJPEG: photo.thumbnailJPEG, startedAt: date(100), phase: phase)],
+                acceptedIDs: [], now: date(101))
+            try require(removed.update(photos: [], acceptedIDs: ["different-photo"], now: date(102)).isEmpty,
+                "cancellation, expiry or unresolved disappearance was treated as acceptance")
+        }
+        var revoked = MomentPhotoDeliveryProgressTracker()
+        _ = revoked.update(photos: [photo], acceptedIDs: [], now: date(101))
+        _ = revoked.update(photos: [], acceptedIDs: [photo.id], now: date(102))
+        try require(revoked.update(photos: [], acceptedIDs: [], now: date(102.1)).isEmpty
+            && revoked.nextCompletionExpiry == nil, "revocation retained a success photograph")
+        var otherWindow = MomentPhotoDeliveryProgressTracker()
+        try require(otherWindow.update(photos: [], acceptedIDs: [photo.id], now: date(103)).isEmpty,
+            "a fresh window tracker inherited another window's success")
     }
 
     private static func verifiesSynchronizationErrorRecovery() throws {
@@ -830,7 +921,8 @@ enum MomentSharingPresentationVerifier {
         hasReceivedHeart: Bool = false,
         serverMomentID: String? = nil,
         localThumbnailJPEG: Data? = nil,
-        localCaption: String? = nil
+        localCaption: String? = nil,
+        createdAt: TimeInterval? = nil
     ) -> MomentDeliveryPresentationInput {
         MomentDeliveryPresentationInput(
             stableID: id,
@@ -846,7 +938,8 @@ enum MomentSharingPresentationVerifier {
             hasReceivedHeart: hasReceivedHeart,
             serverMomentID: serverMomentID,
             localThumbnailJPEG: localThumbnailJPEG,
-            localCaption: localCaption
+            localCaption: localCaption,
+            createdAt: createdAt.map { date($0) }
         )
     }
 

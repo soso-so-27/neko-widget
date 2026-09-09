@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		E02609080000000000000001 /* MomentDeliveryComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* MomentDeliveryComposer.swift */; };
 		E02609090000000000000011 /* PhotoWindowDeliveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000012 /* PhotoWindowDeliveryView.swift */; };
+		E02609090000000000000021 /* MomentPhotoDeliveryProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */; };
 		100000000000000000000001 /* SharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000101 /* SharedContainer.swift */; };
 		100000000000000000000002 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000102 /* AppSettings.swift */; };
 		100000000000000000000003 /* AssetRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000103 /* AssetRecord.swift */; };
@@ -223,6 +224,7 @@
 /* Begin PBXFileReference section */
 		E02609080000000000000002 /* MomentDeliveryComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentDeliveryComposer.swift; sourceTree = "<group>"; };
 		E02609090000000000000012 /* PhotoWindowDeliveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoWindowDeliveryView.swift; sourceTree = "<group>"; };
+		E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentPhotoDeliveryProgressView.swift; sourceTree = "<group>"; };
 		F00000000000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		F00000000000000000000002 /* Config.Disabled.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.Disabled.xcconfig; sourceTree = "<group>"; };
 		F00000000000000000000101 /* SharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedContainer.swift; sourceTree = "<group>"; };
@@ -678,6 +680,7 @@
 				F00000000000000000000255 /* FamilyWindowView.swift */,
 				E02609080000000000000002 /* MomentDeliveryComposer.swift */,
 				E02609090000000000000012 /* PhotoWindowDeliveryView.swift */,
+				E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */,
 				F00000000000000000000257 /* MomentSharingPresentation.swift */,
 				F00000000000000000000258 /* PairingPresentation.swift */,
 			);
@@ -1005,6 +1008,7 @@
 				10000000000000000000016F /* FamilyWindowView.swift in Sources */,
 				E02609080000000000000001 /* MomentDeliveryComposer.swift in Sources */,
 				E02609090000000000000011 /* PhotoWindowDeliveryView.swift in Sources */,
+				E02609090000000000000021 /* MomentPhotoDeliveryProgressView.swift in Sources */,
 				100000000000000000000173 /* MomentSharingPresentation.swift in Sources */,
 				100000000000000000000174 /* PairingPresentation.swift in Sources */,
 				100000000000000000000131 /* HomeView.swift in Sources */,

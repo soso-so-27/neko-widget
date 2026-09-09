@@ -1652,8 +1652,8 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
     @State private var deliveryPhoto: PhotoPresentation?
-    @State private var deliveryStartedDestination: String?
-    @State private var pendingDeliveryStartedDestination: String?
+    @StateObject private var photoDeliveryModel = MomentSharingViewModel()
+    @State private var stagedDeliveryID: String?
 
     init(
         photos: [PhotoPresentation],
@@ -1964,25 +1964,36 @@ struct PhotoBrowserView: View {
 
     var body: some View {
         browserDialogs
-        .sheet(item: $deliveryPhoto, onDismiss: {
-            deliveryStartedDestination = pendingDeliveryStartedDestination
-            pendingDeliveryStartedDestination = nil
-        }) { photo in
-            PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live,
+        .sheet(item: $deliveryPhoto) { photo in
+            PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live(model: photoDeliveryModel),
                 onCancel: { deliveryPhoto = nil },
-                onStaged: { destination in
-                    pendingDeliveryStartedDestination = destination
+                onStaged: { _ in
+                    stagedDeliveryID = photoDeliveryModel.lastStagedPhotoID
                     deliveryPhoto = nil
                 })
                 .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
-        .alert("送信を開始しました", isPresented: Binding(
-            get: { deliveryStartedDestination != nil },
-            set: { if !$0 { deliveryStartedDestination = nil } }
-        )) {
-            Button("閉じる", role: .cancel) { deliveryStartedDestination = nil }
-        } message: {
-            Text("「\(deliveryStartedDestination ?? "")」への送信状況は、「まど」の「送った」で確認できます。")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let stagedDeliveryID, !photoDeliveryModel.isShowingLastKnownState {
+                MomentPhotoDeliveryProgressView(photos: photoDeliveryModel.outgoingPhotoProgress.filter {
+                    $0.id == stagedDeliveryID
+                })
+                .padding(.horizontal, 12)
+                .background(.ultraThinMaterial)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingPresentationNeedsRefresh)) { _ in
+            if stagedDeliveryID != nil { photoDeliveryModel.reloadContentFromDisk() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingContentNeedsReload)) { _ in
+            if stagedDeliveryID != nil { photoDeliveryModel.reloadContentFromDisk() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .momentSharingSynchronizationSucceeded)) { notification in
+            if stagedDeliveryID != nil,
+               let completion = notification.object as? MomentSynchronizationSuccess,
+               completion.spaceID == photoDeliveryModel.pairingState?.spaceID {
+                photoDeliveryModel.reloadContentFromDisk()
+            }
         }
         .alert(
             "写真を書き出せませんでした",

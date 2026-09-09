@@ -1241,13 +1241,19 @@ struct FamilyWindowView: View {
 
     private var outgoingStatusSection: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if !model.isShowingLastKnownState {
+                MomentPhotoDeliveryProgressView(photos: Array(model.outgoingPhotoProgress.prefix(4))) {
+                    showsOutgoingDetails = true
+                }
+            }
             if let summary = model.outgoingPresentation.activitySummary {
                 Button { showsOutgoingDetails = true } label: {
                     HStack(spacing: 10) {
                         Image(systemName: model.outgoingPresentation.activityNeedsAttention
                             ? "exclamationmark.circle" : "arrow.triangle.2.circlepath")
                             .foregroundStyle(model.outgoingPresentation.activityNeedsAttention ? Color.orange : .secondary)
-                        Text(summary).font(.subheadline).lineLimit(2)
+                        Text(model.outgoingPhotoProgress.isEmpty ? summary : "送信状況を見る")
+                            .font(.subheadline).lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "chevron.right").font(.caption)
                             .foregroundStyle(.secondary)
@@ -1257,7 +1263,7 @@ struct FamilyWindowView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(summary)
+                .accessibilityLabel(model.outgoingPhotoProgress.isEmpty ? summary : "送信状況を見る")
                 .accessibilityHint("詳しい送信状況と、できる操作を開きます")
                 .accessibilityIdentifier("family-window-outgoing-summary")
             }

@@ -358,6 +358,53 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testPhotoDeliveryProgressAllowsOtherActionsAndShowsTruthfulStates() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-delivery-progress-ui-fixture", "--delivery-progress-display-only",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let status = app.staticTexts["photo-delivery-progress-status-fixture-photo"]
+        XCTAssertTrue(status.waitForExistence(timeout: 15))
+        XCTAssertEqual(status.label, "送信中")
+        attach(app, name: "photo-delivery-progress-sending")
+        let otherAction = app.buttons["delivery-progress-fixture-other-action"]
+        XCTAssertTrue(otherAction.isHittable)
+        otherAction.tap()
+        XCTAssertEqual(app.staticTexts["delivery-progress-fixture-other-action-count"].label, "別の操作：1回")
+        app.buttons["delivery-progress-fixture-waiting"].tap()
+        XCTAssertEqual(status.label, "時間がかかっています")
+        XCTAssertTrue(app.staticTexts["写真は保持しています。送り直しは不要です。"].exists)
+        attach(app, name: "photo-delivery-progress-waiting")
+        otherAction.tap()
+        XCTAssertEqual(app.staticTexts["delivery-progress-fixture-other-action-count"].label, "別の操作：2回")
+        app.buttons["delivery-progress-fixture-accepted"].tap()
+        XCTAssertEqual(status.label, "送信しました。サーバーの受付を確認しました")
+        attach(app, name: "photo-delivery-progress-accepted")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    @MainActor
+    func testPhotoDeliveryProgressRemainsUsableWithLargestTextAndReducedMotion() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-delivery-progress-ui-fixture", "--delivery-progress-large-text",
+                               "--delivery-progress-reduce-motion", "--delivery-progress-long-running",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let status = app.staticTexts["photo-delivery-progress-status-fixture-photo"]
+        XCTAssertTrue(status.waitForExistence(timeout: 15))
+        XCTAssertEqual(status.label, "時間がかかっています")
+        XCTAssertGreaterThan(status.frame.height, 40)
+        XCTAssertGreaterThanOrEqual(status.frame.minX, 0)
+        XCTAssertLessThanOrEqual(status.frame.maxX, app.frame.maxX)
+        attach(app, name: "photo-delivery-progress-large-text-reduced-motion")
+        let otherAction = app.buttons["delivery-progress-fixture-other-action"]
+        for _ in 0..<3 where !otherAction.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(otherAction.isHittable)
+        otherAction.tap()
+        XCTAssertEqual(app.staticTexts["delivery-progress-fixture-other-action-count"].label, "別の操作：1回")
+    }
+
+    @MainActor
     func testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation() {
         var standardDestinationHeight: CGFloat = 0
         for variant in ["standard", "large"] {
@@ -414,8 +461,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             let confirm = app.buttons["family-window-confirm-delivery"]
             XCTAssertTrue(confirm.waitForExistence(timeout: 10))
             confirm.tap()
-            XCTAssertTrue(app.alerts["送信を開始しました"].waitForExistence(timeout: 10))
-            app.alerts.buttons["閉じる"].tap()
+            expectation(for: NSPredicate(format: "label == %@", "1|2|friends|"), evaluatedWith: result)
+            waitForExpectations(timeout: 10)
+            XCTAssertFalse(app.alerts["送信を開始しました"].exists, "Sending must not block photo browsing.")
             XCTAssertEqual(result.label, "1|2|friends|", "Send exactly the visible, unsaved photo; a cancelled caption must not leak.")
             XCTAssertTrue(app.staticTexts["2 / 2"].exists, "Return to the same photo.")
             app.terminate()
@@ -447,9 +495,11 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         XCTAssertTrue(edit.label.contains("おやすみ"))
         XCTAssertTrue(app.staticTexts["family-window-composer-destination"].label.contains("マイファミリー"))
         confirm.tap()
-        XCTAssertTrue(app.alerts["送信を開始しました"].waitForExistence(timeout: 10))
-        app.alerts.buttons["閉じる"].tap()
-        XCTAssertEqual(app.staticTexts["photo-window-fixture-result"].label, "1|1|family|おやすみ")
+        let result = app.staticTexts["photo-window-fixture-result"]
+        expectation(for: NSPredicate(format: "label == %@", "1|1|family|おやすみ"), evaluatedWith: result)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.alerts["送信を開始しました"].exists)
+        XCTAssertEqual(result.label, "1|1|family|おやすみ")
     }
 
     @MainActor

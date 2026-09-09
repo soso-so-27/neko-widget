@@ -1,5 +1,80 @@
 import Foundation
 
+/// A photo-bound display state. It neither advances the outbox nor schedules I/O.
+struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
+    enum Phase: Equatable, Sendable {
+        case preparing, sending, confirming, waiting, quotaWaiting, attention, resultUnknown, accepted
+    }
+    let id: String
+    let thumbnailJPEG: Data?
+    let startedAt: Date
+    let phase: Phase
+
+    func title(at now: Date) -> String {
+        switch phase {
+        case .accepted: return "送信しました"
+        case .quotaWaiting: return "送信できる時刻を待っています"
+        case .attention: return "確認が必要です"
+        case .resultUnknown: return "送信結果を確認できません"
+        case .waiting: return "時間がかかっています"
+        default:
+            if now.timeIntervalSince(startedAt) >= 10 { return "時間がかかっています" }
+            return phase == .preparing ? "写真を準備中" : "送信中"
+        }
+    }
+
+    func detail(at now: Date) -> String? {
+        switch phase {
+        case .accepted: return nil
+        case .attention: return "送信状況から、必要な操作を確認できます。"
+        case .resultUnknown: return "届いている可能性があるため、送り直す前に送信状況を確認してください。"
+        case .quotaWaiting: return "写真は保持しています。送り直しは不要です。"
+        case .waiting: return "写真は保持しています。送り直しは不要です。"
+        default:
+            return now.timeIntervalSince(startedAt) >= 10
+                ? "写真は保持しています。送り直しは不要です。" : nil
+        }
+    }
+
+    func animates(at now: Date) -> Bool {
+        (phase == .preparing || phase == .sending || phase == .confirming)
+            && now.timeIntervalSince(startedAt) < 10
+    }
+
+    func withThumbnail(_ jpeg: Data?) -> Self {
+        Self(id: id, thumbnailJPEG: jpeg, startedAt: startedAt, phase: phase)
+    }
+}
+
+/// Success is shown only for a photo observed pending in this presentation
+/// session and then found in the committed ledger. Disappearance alone is not
+/// success (cancel, expiry, revocation and a failed snapshot can also remove it).
+struct MomentPhotoDeliveryProgressTracker {
+    private var previous: [String: MomentPhotoDeliveryProgress] = [:]
+    private var completions: [String: (photo: MomentPhotoDeliveryProgress, until: Date)] = [:]
+
+    mutating func update(
+        photos: [MomentPhotoDeliveryProgress], acceptedIDs: Set<String>, now: Date
+    ) -> [MomentPhotoDeliveryProgress] {
+        let current = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for (id, photo) in previous where current[id] == nil && acceptedIDs.contains(id) {
+            completions[id] = (MomentPhotoDeliveryProgress(id: id,
+                thumbnailJPEG: photo.thumbnailJPEG, startedAt: photo.startedAt, phase: .accepted),
+                now.addingTimeInterval(2))
+        }
+        previous = current
+        completions = completions.filter {
+            $0.value.until > now && acceptedIDs.contains($0.key) && current[$0.key] == nil
+        }
+        return (photos + completions.values.map(\.photo)).sorted {
+            if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+            return $0.id < $1.id
+        }
+    }
+
+    var nextCompletionExpiry: Date? { completions.values.map(\.until).min() }
+}
+
 struct MomentSynchronizationFailure: Equatable, Sendable {
     let spaceID: String
     let message: String
@@ -147,6 +222,9 @@ struct MomentPreparationPresentationInput: Equatable, Sendable {
     let expiresAt: Date
     let nextRetryAt: Date?
     let isCancellable: Bool
+    /// Local correlation only; never rendered or exported to diagnostics.
+    var stableID: String? = nil
+    var createdAt: Date? = nil
 }
 
 /// Persistence-independent input for one encrypted outbound item. Keeping the
@@ -187,6 +265,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     let localThumbnailJPEG: Data?
     /// User-authored text for the matching local photograph; never diagnostic metadata.
     let localCaption: String?
+    let createdAt: Date
 
     init(
         stableID: String,
@@ -202,7 +281,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         hasReceivedHeart: Bool = false,
         serverMomentID: String? = nil,
         localThumbnailJPEG: Data? = nil,
-        localCaption: String? = nil
+        localCaption: String? = nil,
+        createdAt: Date? = nil
     ) {
         self.stableID = stableID
         self.destinationKey = destinationKey
@@ -218,6 +298,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.serverMomentID = serverMomentID
         self.localThumbnailJPEG = localThumbnailJPEG
         self.localCaption = localCaption
+        self.createdAt = createdAt ?? updatedAt
     }
 }
 
@@ -460,6 +541,7 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
     let outcomes: [MomentOutgoingOutcomeGroupPresentation]
     let latestServerAcceptance: MomentLatestServerAcceptancePresentation?
     let sentRecords: [MomentSentRecordPresentation]
+    var photoProgress: [MomentPhotoDeliveryProgress] = []
 
     static let empty = Self(
         statuses: [],
@@ -746,8 +828,45 @@ enum MomentSharingPresentationPolicy {
             statuses: statuses,
             outcomes: outcomeGroups,
             latestServerAcceptance: latestServerAcceptance,
-            sentRecords: sentRecords
+            sentRecords: sentRecords,
+            photoProgress: photoProgress(preparations: preparations, deliveries: deliveries, now: now)
         )
+    }
+
+    private static func photoProgress(
+        preparations: [MomentPreparationPresentationInput],
+        deliveries: [MomentDeliveryPresentationInput],
+        now: Date
+    ) -> [MomentPhotoDeliveryProgress] {
+        let deliveryIDs = Set(deliveries.map(\.stableID))
+        let preparing = preparations.compactMap { item -> MomentPhotoDeliveryProgress? in
+            guard let id = item.stableID, !deliveryIDs.contains(id) else { return nil }
+            let phase: MomentPhotoDeliveryProgress.Phase
+            if item.lastErrorCode == "moderation-disabled" { phase = .attention }
+            else if item.lastErrorCode != nil || (item.nextRetryAt.map { $0 > now } ?? false) { phase = .waiting }
+            else { phase = .preparing }
+            return MomentPhotoDeliveryProgress(id: id, thumbnailJPEG: nil,
+                startedAt: item.createdAt ?? item.updatedAt, phase: phase)
+        }
+        let sending = deliveries.compactMap { item -> MomentPhotoDeliveryProgress? in
+            let phase: MomentPhotoDeliveryProgress.Phase
+            switch item.phase {
+            case .committed: return nil
+            case .failed: phase = .attention
+            case .deliveryResultUnknown: phase = .resultUnknown
+            default:
+                if item.phase == .prepared && item.lastErrorCode == "daily-quota-exceeded" {
+                    phase = .quotaWaiting
+                } else if isRetryDeferred(item, at: now) {
+                    phase = .waiting
+                } else if item.phase == .committing {
+                    phase = .confirming
+                } else { phase = .sending }
+            }
+            return MomentPhotoDeliveryProgress(id: item.stableID,
+                thumbnailJPEG: item.localThumbnailJPEG, startedAt: item.createdAt, phase: phase)
+        }
+        return (preparing + sending).sorted { $0.startedAt > $1.startedAt }
     }
 
     private static func preparationStatusKind(

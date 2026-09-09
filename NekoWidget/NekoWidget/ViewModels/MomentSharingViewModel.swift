@@ -18,7 +18,11 @@ struct MomentDeliveryDestination: Equatable, Sendable {
 final class MomentSharingViewModel: ObservableObject {
     @Published private(set) var pairingState: PairingState?
     @Published private(set) var sharingState: MomentSharingState = .empty
-    @Published private(set) var outgoingPresentation: MomentOutgoingPresentation = .empty
+    @Published private(set) var outgoingPresentation: MomentOutgoingPresentation = .empty {
+        didSet { updatePhotoProgress() }
+    }
+    @Published private(set) var outgoingPhotoProgress: [MomentPhotoDeliveryProgress] = []
+    private(set) var lastStagedPhotoID: String?
     @Published private(set) var isSynchronizing = false
     @Published private(set) var isPerformingAction = false
     @Published private(set) var errorMessage: String? {
@@ -39,6 +43,11 @@ final class MomentSharingViewModel: ObservableObject {
     private let coordinator: MomentSharingCoordinator
     private var notificationTargetSentMomentID: String?
     private var synchronizationFailure: MomentSynchronizationFailure?
+    private var stagedPhotoPreviews: [String: Data] = [:]
+    private var photoProgressTracker = MomentPhotoDeliveryProgressTracker()
+    private var photoProgressSpaceID: String?
+    private var photoProgressExpiryTask: Task<Void, Never>?
+    private var photoProgressExpiry: Date?
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
@@ -353,13 +362,23 @@ final class MomentSharingViewModel: ObservableObject {
                 return false
             }
 
-            try await MomentShareIngressService().stage(
+            let captureID = try await MomentShareIngressService().stage(
                 photo,
                 admissionID: admission.id,
                 senderPolicyAcceptedAt: .now,
                 caption: try MomentCaption.normalized(caption)
             )
             didStage = true
+            lastStagedPhotoID = captureID.uuidString.lowercased()
+            // A small in-memory preview covers the few moments before the
+            // encrypted outbox owns its existing persisted thumbnail. It is
+            // keyed by the exact capture ID, never by filename or queue order.
+            let preview = await Task.detached(priority: .utility) {
+                MomentShareHandoffProcessor.sentHistoryThumbnail(from: photo.canonicalJPEG)
+            }.value
+            if let preview {
+                stagedPhotoPreviews[captureID.uuidString.lowercased()] = preview
+            }
             do {
                 try reload()
             } catch {
@@ -929,6 +948,7 @@ final class MomentSharingViewModel: ObservableObject {
     private func refreshOutgoingPresentation() async {
         let configuration = self.configuration
         let notificationTargetMomentID = notificationTargetSentMomentID
+        let expectedSpaceID = pairingState?.spaceID
         do {
             let presentation = try await Task.detached(priority: .utility) {
                 let handoffSnapshot = Self.bestEffortHandoffPresentationSnapshot(configuration: configuration)
@@ -942,11 +962,48 @@ final class MomentSharingViewModel: ObservableObject {
                     now: .now
                 )
             }.value
+            guard pairingState?.spaceID == expectedSpaceID else { return }
             outgoingPresentation = presentation
         } catch {
             // The full synchronization and final reload remain authoritative.
             // A transient progress-snapshot failure must not replace them with
             // a misleading user-visible network error.
+        }
+    }
+
+    private func updatePhotoProgress() {
+        let spaceID = pairingState?.spaceID
+        if photoProgressSpaceID != spaceID || isReportOnly || !configuration.isMediaAvailable {
+            photoProgressTracker = MomentPhotoDeliveryProgressTracker()
+            stagedPhotoPreviews = [:]
+            photoProgressSpaceID = spaceID
+            photoProgressExpiryTask?.cancel()
+            photoProgressExpiry = nil
+        }
+        guard spaceID != nil, !isReportOnly, configuration.isMediaAvailable else {
+            outgoingPhotoProgress = []
+            return
+        }
+        let photos = outgoingPresentation.photoProgress.map {
+            $0.withThumbnail($0.thumbnailJPEG ?? stagedPhotoPreviews[$0.id])
+        }
+        outgoingPhotoProgress = photoProgressTracker.update(
+            photos: photos,
+            acceptedIDs: Set(outgoingPresentation.sentRecords.map(\.id)),
+            now: .now
+        )
+        let retainedIDs = Set(photos.map(\.id))
+        stagedPhotoPreviews = stagedPhotoPreviews.filter { retainedIDs.contains($0.key) }
+        let expiry = photoProgressTracker.nextCompletionExpiry
+        guard expiry != photoProgressExpiry else { return }
+        photoProgressExpiryTask?.cancel()
+        photoProgressExpiry = expiry
+        guard let expiry else { return }
+        photoProgressExpiryTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSinceNow))) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            self?.updatePhotoProgress()
         }
     }
 
@@ -988,7 +1045,7 @@ final class MomentSharingViewModel: ObservableObject {
         let receivedHeartMomentIDs = Set(
             sharingState.receivedPaws.map(\.momentID)
         )
-        return MomentSharingPresentationPolicy.make(
+        var presentation = MomentSharingPresentationPolicy.make(
             preparations: handoffSnapshot.statuses.map {
                 MomentPreparationPresentationInput(
                     destinationKey: $0.destinationKey,
@@ -997,7 +1054,9 @@ final class MomentSharingViewModel: ObservableObject {
                     updatedAt: $0.updatedAt,
                     expiresAt: $0.expiresAt,
                     nextRetryAt: $0.nextRetryAt,
-                    isCancellable: $0.isCancellable
+                    isCancellable: $0.isCancellable,
+                    stableID: $0.stableID,
+                    createdAt: $0.createdAt
                 )
             },
             deliveries: sharingState.outbox.map {
@@ -1018,7 +1077,8 @@ final class MomentSharingViewModel: ObservableObject {
                     serverMomentID: $0.serverMomentID,
                     localThumbnailJPEG: MomentSharingStateStore
                         .readLocalThumbnail(for: $0),
-                    localCaption: $0.localCaption
+                    localCaption: $0.localCaption,
+                    createdAt: $0.createdAt
                 )
             },
             outcomes: sharingState.outgoingOutcomes.map {
@@ -1037,6 +1097,17 @@ final class MomentSharingViewModel: ObservableObject {
             notificationTargetMomentID: notificationTargetMomentID,
             now: now
         )
+        // Aggregate management retains its existing multi-window counts. A
+        // photograph's progress row belongs only to the current window.
+        let activeWindowID = (try? PrivateWindowCatalogStore.load())?.activeWindowID
+        let activePreparationIDs = Set(handoffSnapshot.statuses.compactMap { item in
+            item.localWindowID != nil && item.localWindowID == activeWindowID ? item.stableID : nil
+        })
+        let outboxIDs = Set(sharingState.outbox.map { $0.id.uuidString.lowercased() })
+        presentation.photoProgress = presentation.photoProgress.filter {
+            outboxIDs.contains($0.id) || activePreparationIDs.contains($0.id)
+        }
+        return presentation
     }
 
     private nonisolated static func presentationPhase(
