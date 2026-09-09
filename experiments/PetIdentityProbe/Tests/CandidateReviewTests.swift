@@ -13,7 +13,7 @@ final class CandidateReviewTests: XCTestCase {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: IdentityDetectorControlID.orange.rawValue, withExtension: "png"))
         return try XCTUnwrap(UIImage(contentsOfFile: url.path)?.cgImage)
     }
-    private func run() throws -> CandidateReviewRun {
+    private func makeReviewFixture() throws -> CandidateReviewRun {
         let raster = try image()
         return .init(photos: [
             .init(id: 0, image: raster, suggestion: .a, issue: nil),
@@ -42,7 +42,7 @@ final class CandidateReviewTests: XCTestCase {
     }
 
     func testBatchExclusionCorrectionUndoAndUnseenPhotosRemainSeparate() throws {
-        var session = CandidateReviewSession(run: try run())
+        var session = CandidateReviewSession(run: try makeReviewFixture())
         XCTAssertTrue(session.decisions.isEmpty)
         session.toggleExcluded(1)
         session.confirmGroup(.a)
@@ -88,7 +88,7 @@ final class CandidateReviewTests: XCTestCase {
     }
 
     func testExportIsAggregateOnlyAndNeverCallsUserConfirmationAccuracy() throws {
-        var session = CandidateReviewSession(run: try run())
+        var session = CandidateReviewSession(run: try makeReviewFixture())
         session.confirmGroup(.a)
         let json = try XCTUnwrap(session.report.json)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
@@ -145,7 +145,7 @@ final class CandidateReviewTests: XCTestCase {
         store.picked(["new1", "new2"], request: request)
         XCTAssertFalse(store.differentScenes); XCTAssertEqual(try archive.load(), ["new1", "new2"])
         let stale = CandidatePickerRequest(); store.picker = stale
-        store.session = CandidateReviewSession(run: try run())
+        store.session = CandidateReviewSession(run: try makeReviewFixture())
         store.suspend(); store.picked(["late"], request: stale)
         XCTAssertNil(store.session); XCTAssertNil(store.picker); XCTAssertEqual(store.selected, ["new1", "new2"])
         store.clearCandidateSelection()
@@ -173,7 +173,7 @@ final class CandidateReviewTests: XCTestCase {
         await fulfillment(of: [started], timeout: 2)
         XCTAssertTrue(store.running)
         store.suspend()
-        finish?.resume(returning: try run())
+        finish?.resume(returning: try makeReviewFixture())
         await Task.yield(); await Task.yield()
         XCTAssertNil(store.session); XCTAssertFalse(store.running); XCTAssertEqual(store.selected, ["fresh"])
         var changed = saved; changed[.referenceA]?[0] = "changed"
@@ -185,7 +185,7 @@ final class CandidateReviewTests: XCTestCase {
     @MainActor func testCandidateBoardRendersWithGeneratedImages() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
-        let fixture = try run()
+        let fixture = try makeReviewFixture()
         let view = ScrollView {
             CandidateReviewBoard(session: CandidateReviewSession(run: fixture), toggle: { _ in }, confirm: { _ in }, open: { _ in }, undo: {})
                 .padding(20)
