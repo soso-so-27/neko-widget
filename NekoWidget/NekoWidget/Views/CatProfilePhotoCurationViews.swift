@@ -89,11 +89,8 @@ struct CatProfileDetailView: View {
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("写真を選ぶ")
+                            Text("この子の写真を追加")
                                 .foregroundStyle(.primary)
-                            Text("候補 \(manualCandidatePhotos.count.formatted())枚")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     } icon: {
                         Image(systemName: "photo.badge.plus")
@@ -134,7 +131,7 @@ struct CatProfileDetailView: View {
             } header: {
                 Text("写真")
             } footer: {
-                Text("2匹が一緒なら両方のプロフィールへ追加できます。写真は移動・削除されません。")
+                Text("一緒に写っている猫を複数選べます。写真は移動・削除されません。")
             }
 
             Section {
@@ -476,8 +473,14 @@ struct CatProfileConfirmedPhotosView: View {
     let profile: CatProfilePresentation
     let allProfiles: [CatProfilePresentation]
     let actions: CatProfilesViewActions
+    /// Supplied by the cat list; omitted when opened from profile settings.
+    var profileSettingsAlbumOptions: [CatProfilePhotoAlbumOptionPresentation]? = nil
 
     @State private var selection = Set<String>()
+    @State private var isSelecting = false
+    @State private var previewPhoto: CatProfilePhotoPresentation?
+    @State private var showsAddPhotos = false
+    @State private var addedPhotoCount = 0
     @State private var showsAssignmentSheet = false
     @State private var showsRemoveConfirmation = false
     @State private var showsGlobalExclusionConfirmation = false
@@ -485,14 +488,88 @@ struct CatProfileConfirmedPhotosView: View {
     @State private var membershipSaveFailed = false
 
     var body: some View {
-        CatSelectablePhotoGrid(
-            photos: profile.confirmedPhotos,
-            selection: $selection
-        )
+        Group {
+            if profile.confirmedPhotos.isEmpty {
+                ContentUnavailableView {
+                    Label("\(profile.displayName)の写真", systemImage: "photo.on.rectangle")
+                } description: {
+                    Text("この子が写っている写真を追加すると、ここで見返せます。")
+                } actions: {
+                    addPhotosButton
+                }
+            } else if isSelecting {
+                CatSelectablePhotoGrid(photos: profile.confirmedPhotos, selection: $selection)
+            } else {
+                CatSelectablePhotoGrid(
+                    photos: profile.confirmedPhotos,
+                    selection: .constant([]),
+                    onChoose: { identifier in
+                        previewPhoto = profile.confirmedPhotos.first { $0.localIdentifier == identifier }
+                    },
+                    showsSelectionMarks: false
+                )
+            }
+        }
         .disabled(isRemoving)
         .navigationTitle("\(profile.displayName)の写真")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !profile.confirmedPhotos.isEmpty {
+                    Button(isSelecting ? "完了" : "選択") {
+                        selection.removeAll()
+                        isSelecting.toggle()
+                    }
+                    .disabled(isRemoving)
+                }
+                if let albums = profileSettingsAlbumOptions {
+                    NavigationLink {
+                        CatProfileDetailView(
+                            profile: profile,
+                            allProfiles: allProfiles,
+                            manualCandidatePhotos: profile.manualCandidatePhotos,
+                            photoAlbumOptions: albums,
+                            actions: actions
+                        )
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("\(profile.displayName)のプロフィール設定")
+                    .disabled(isRemoving)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
-            if !selection.isEmpty { actionBar }
+            if isSelecting && !selection.isEmpty {
+                actionBar
+            } else if !isSelecting && !profile.confirmedPhotos.isEmpty {
+                VStack(spacing: 8) {
+                    if addedPhotoCount > 0 {
+                        Text("\(addedPhotoCount.formatted())枚を追加しました")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    addPhotosButton
+                }
+                .padding(12)
+                .background(.regularMaterial)
+            }
+        }
+        .sheet(isPresented: $showsAddPhotos) {
+            NavigationStack {
+                UnassignedCatPhotosView(
+                    photos: profile.manualCandidatePhotos,
+                    profiles: allProfiles,
+                    actions: actions,
+                    navigationTitle: "\(profile.displayName)の写真を追加",
+                    preselectedProfileIdentifier: profile.identifier,
+                    dismissAfterSaving: true,
+                    onPhotosAdded: { addedPhotoCount = $0 }
+                )
+            }
+        }
+        .sheet(item: $previewPhoto) { photo in
+            CatProfilePhotoPreview(photo: photo)
         }
         .sheet(isPresented: $showsAssignmentSheet) {
             CatPhotoAssignmentSheet(
@@ -541,6 +618,20 @@ struct CatProfileConfirmedPhotosView: View {
         }
     }
 
+    private var addPhotosButton: some View {
+        Button {
+            addedPhotoCount = 0
+            showsAddPhotos = true
+        } label: {
+            Label("この子の写真を追加", systemImage: "photo.badge.plus")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(profile.manualCandidatePhotos.isEmpty || isRemoving)
+        .accessibilityIdentifier("cat-profile-add-photos")
+    }
+
     private var selectedAssignmentsByPhotoIdentifier: [String: Set<String>] {
         let selectedPhotos = profile.confirmedPhotos.filter {
             selection.contains($0.localIdentifier)
@@ -561,7 +652,7 @@ struct CatProfileConfirmedPhotosView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
-                Button("写っている猫を選ぶ", systemImage: "person.2") {
+                Button("写っている猫を選ぶ", systemImage: "cat") {
                     showsAssignmentSheet = true
                 }
                 Spacer()
@@ -583,6 +674,31 @@ struct CatProfileConfirmedPhotosView: View {
     }
 }
 
+private struct CatProfilePhotoPreview: View {
+    let photo: CatProfilePhotoPresentation
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            GeometryReader { geometry in
+                PhotoAssetImageView(
+                    localIdentifier: photo.localIdentifier,
+                    targetPixelSize: CGSize(width: 1600, height: 1600),
+                    showsFullImage: true
+                )
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+            .navigationTitle(photo.creationDate?.formatted(date: .abbreviated, time: .omitted) ?? "写真")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 struct UnassignedCatPhotosView: View {
     let photos: [CatProfilePhotoPresentation]
     let profiles: [CatProfilePresentation]
@@ -591,10 +707,16 @@ struct UnassignedCatPhotosView: View {
     /// A picker opened from one cat's page starts with that cat selected while
     /// preserving any other explicit profile assignments on the same photo.
     var preselectedProfileIdentifier: String? = nil
+    var dismissAfterSaving = false
+    var onPhotosAdded: ((Int) -> Void)? = nil
 
+    @Environment(\.dismiss) private var dismiss
     @State private var selection = Set<String>()
     @State private var showsAssignmentSheet = false
     @State private var showsGlobalExclusionConfirmation = false
+    @State private var isSaving = false
+    @State private var saveFailed = false
+    @State private var assignmentWasSaved = false
 
     var body: some View {
         Group {
@@ -607,18 +729,40 @@ struct UnassignedCatPhotosView: View {
                 CatSelectablePhotoGrid(photos: photos, selection: $selection)
             }
         }
+        .disabled(isSaving)
         .navigationTitle(navigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isSaving)
+        .interactiveDismissDisabled(isSaving)
+        .toolbar {
+            if dismissAfterSaving {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                        .disabled(isSaving)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if !selection.isEmpty { actionBar }
         }
-        .sheet(isPresented: $showsAssignmentSheet) {
+        .sheet(isPresented: $showsAssignmentSheet, onDismiss: {
+            if assignmentWasSaved && dismissAfterSaving { dismiss() }
+            assignmentWasSaved = false
+        }) {
             CatPhotoAssignmentSheet(
                 photoIdentifiers: Array(selection),
                 profiles: profiles,
                 initialAssignmentsByPhotoIdentifier: selectedAssignmentsByPhotoIdentifier,
                 save: { assignments in
                     let saved = await actions.replacePhotoAssignments(assignments)
-                    if saved { selection.removeAll() }
+                    if saved {
+                        let addedCount = preselectedProfileIdentifier.map { profileID in
+                            assignments.values.filter { $0.contains(profileID) }.count
+                        } ?? 0
+                        if addedCount > 0 { onPhotosAdded?(addedCount) }
+                        assignmentWasSaved = true
+                        selection.removeAll()
+                    }
                     return saved
                 }
             )
@@ -651,20 +795,65 @@ struct UnassignedCatPhotosView: View {
     }
 
     private var actionBar: some View {
-        HStack {
-            Button("写っている猫を選ぶ", systemImage: "person.crop.circle.badge.checkmark") {
-                showsAssignmentSheet = true
+        VStack(spacing: 10) {
+            if saveFailed {
+                Text("追加できませんでした。選択は残っています。もう一度お試しください。")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
             }
-            .disabled(profiles.isEmpty)
-            Spacer()
-            Button(role: .destructive) {
-                showsGlobalExclusionConfirmation = true
-            } label: {
-                Label("表示候補から外す", systemImage: "eye.slash")
+            if let profileID = preselectedProfileIdentifier {
+                Button {
+                    addSelectedPhotos(to: profileID)
+                } label: {
+                    Text(isSaving ? "追加中…" : "\(selection.count.formatted())枚を追加")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!profiles.contains { $0.identifier == profileID })
+                if profiles.count > 1 {
+                    Button("ほかの猫も選ぶ", systemImage: "cat") {
+                        showsAssignmentSheet = true
+                    }
+                }
+            } else {
+                HStack {
+                    Button("写っている猫を選ぶ", systemImage: "cat") {
+                        showsAssignmentSheet = true
+                    }
+                    .disabled(profiles.isEmpty)
+                    Spacer()
+                    Button(role: .destructive) {
+                        showsGlobalExclusionConfirmation = true
+                    } label: {
+                        Label("表示候補から外す", systemImage: "eye.slash")
+                    }
+                }
             }
         }
+        .disabled(isSaving)
         .padding(12)
         .background(.regularMaterial)
+    }
+
+    private func addSelectedPhotos(to profileIdentifier: String) {
+        guard !isSaving, !selection.isEmpty,
+              profiles.contains(where: { $0.identifier == profileIdentifier }) else { return }
+        let identifiers = Array(selection)
+        isSaving = true
+        saveFailed = false
+        Task {
+            // Add only this cat. Do not replace another cat's membership.
+            let saved = await actions.confirmProfileMembership(profileIdentifier, identifiers)
+            isSaving = false
+            if saved {
+                onPhotosAdded?(identifiers.count)
+                selection.removeAll()
+                if dismissAfterSaving { dismiss() }
+            } else {
+                saveFailed = true
+            }
+        }
     }
 }
 
@@ -728,7 +917,7 @@ struct CatPhotoAssignmentSheet: View {
                 } header: {
                     Text("写っている猫・複数選べます")
                 } footer: {
-                    Text("2匹が同じ写真に写っている場合は両方を選べます。−は一部の写真だけに設定済みです。触らなければ、その所属を保ちます。")
+                    Text("一緒に写っている猫を複数選べます。−は一部の写真だけに設定済みです。変更しなければ、そのまま残ります。")
                 }
 
                 if saveFailed {
@@ -874,6 +1063,7 @@ private struct CatSelectablePhotoGrid: View {
     let photos: [CatProfilePhotoPresentation]
     @Binding var selection: Set<String>
     var onChoose: ((String) -> Void)? = nil
+    var showsSelectionMarks = true
 
     private let columns = [
         GridItem(.adaptive(minimum: 104), spacing: 3)
@@ -898,7 +1088,9 @@ private struct CatSelectablePhotoGrid: View {
                         )
                         .aspectRatio(1, contentMode: .fit)
                         .overlay(alignment: .topTrailing) {
-                            selectionMark(for: photo.localIdentifier)
+                            if showsSelectionMarks {
+                                selectionMark(for: photo.localIdentifier)
+                            }
                         }
                         .overlay(alignment: .bottomLeading) {
                             if photo.detectedCatCount > 1 {

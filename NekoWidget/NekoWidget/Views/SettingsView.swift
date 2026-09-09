@@ -130,7 +130,7 @@ struct SettingsView: View {
                             ? "未登録"
                             : "\(catProfilesPresentation.profiles.count.formatted())匹")
                     } label: {
-                        Label("ねこのプロフィール", systemImage: "cat.fill")
+                        Label("猫ごとの写真・プロフィール", systemImage: "cat.fill")
                     }
                 }
 

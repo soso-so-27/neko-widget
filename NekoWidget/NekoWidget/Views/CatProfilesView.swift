@@ -78,6 +78,9 @@ struct CatProfilesView: View {
     let actions: CatProfilesViewActions
 
     @State private var showsAddProfile = false
+    @State private var showsCreationPhotoPicker = false
+    @State private var creationPhotoIdentifier: String?
+    @State private var continuesProfileCreation = false
     @State private var createdProfileIdentifier: String?
     @State private var openedProfileIdentifier: String?
 
@@ -90,7 +93,33 @@ struct CatProfilesView: View {
             unassignedSection
             legacyExclusionSection
         }
-        .navigationTitle("ねこのプロフィール")
+        .navigationTitle("猫ごとの写真")
+        .sheet(isPresented: $showsCreationPhotoPicker, onDismiss: {
+            if continuesProfileCreation {
+                continuesProfileCreation = false
+                showsAddProfile = true
+            }
+        }) {
+            NavigationStack {
+                CatProfilePhotoPicker(
+                    photos: presentation.profileCreationPhotos,
+                    selectedIdentifier: nil,
+                    choose: { identifier in
+                        creationPhotoIdentifier = identifier
+                        continuesProfileCreation = true
+                        return true
+                    }
+                )
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("写真はあとで") {
+                            continuesProfileCreation = true
+                            showsCreationPhotoPicker = false
+                        }
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $showsAddProfile, onDismiss: {
             openedProfileIdentifier = createdProfileIdentifier
             createdProfileIdentifier = nil
@@ -98,6 +127,7 @@ struct CatProfilesView: View {
             AddCatProfileView(
                 referenceCandidates: presentation.profileCreationPhotos,
                 initialLifeReference: presentation.legacyLifeReference,
+                initialPhotoIdentifier: creationPhotoIdentifier,
                 createProfile: actions.createProfile,
                 onCreated: { createdProfileIdentifier = $0 }
             )
@@ -105,6 +135,11 @@ struct CatProfilesView: View {
         .navigationDestination(item: $openedProfileIdentifier) { identifier in
             if let profile = presentation.profiles.first(where: { $0.identifier == identifier }) {
                 profileDetail(profile)
+            }
+        }
+        .onChange(of: presentation.profiles.map(\.identifier)) { _, identifiers in
+            if let openedProfileIdentifier, !identifiers.contains(openedProfileIdentifier) {
+                self.openedProfileIdentifier = nil
             }
         }
     }
@@ -115,7 +150,7 @@ struct CatProfilesView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("猫ごとに写真を見返す")
                         .font(.headline)
-                    Text("登録は任意です。今までの写真やアルバムは、そのまま使えます。")
+                    Text("写真を1枚選んで、写っている猫に名前を付けるところから。あとから写真を追加できます。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -130,25 +165,40 @@ struct CatProfilesView: View {
     private var profilesSection: some View {
         Section {
             ForEach(presentation.profiles) { profile in
-                NavigationLink {
-                    profileDetail(profile)
+                Button {
+                    openedProfileIdentifier = profile.identifier
                 } label: {
-                    CatProfileRow(profile: profile)
+                    HStack {
+                        CatProfileRow(profile: profile)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                    }
                 }
+                .buttonStyle(.plain)
+                .accessibilityHint("この子の写真を開きます")
             }
 
             Button {
-                showsAddProfile = true
+                creationPhotoIdentifier = nil
+                continuesProfileCreation = false
+                if presentation.profileCreationPhotos.isEmpty {
+                    showsAddProfile = true
+                } else {
+                    showsCreationPhotoPicker = true
+                }
             } label: {
                 Label("猫を追加", systemImage: "plus.circle")
             }
             .accessibilityIdentifier("cat-profile-add")
         } header: {
-            Text("プロフィール")
+            Text("猫たち")
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(CatIndividualRecognitionCopy.unavailable)
-                Text("写っている猫は自分で選べます。プロフィールと猫別の写真設定は、このiPhone内で管理します。")
+                Text("猫の登録や写真の振り分けは任意です。設定はこのiPhone内で管理します。")
             }
         }
     }
@@ -208,12 +258,11 @@ struct CatProfilesView: View {
     }
 
     private func profileDetail(_ profile: CatProfilePresentation) -> some View {
-        CatProfileDetailView(
+        CatProfileConfirmedPhotosView(
             profile: profile,
             allProfiles: presentation.profiles,
-            manualCandidatePhotos: profile.manualCandidatePhotos,
-            photoAlbumOptions: presentation.photoAlbumOptions,
-            actions: actions
+            actions: actions,
+            profileSettingsAlbumOptions: presentation.photoAlbumOptions
         )
     }
 
@@ -364,6 +413,7 @@ private struct AddCatProfileView: View {
     init(
         referenceCandidates: [CatProfilePhotoPresentation],
         initialLifeReference: CatProfileLifeReferencePresentation?,
+        initialPhotoIdentifier: String? = nil,
         createProfile: @escaping (CatProfileDraftPresentation) async -> String?,
         onCreated: @escaping (String) -> Void
     ) {
@@ -371,7 +421,8 @@ private struct AddCatProfileView: View {
         self.createProfile = createProfile
         self.onCreated = onCreated
         _draft = State(initialValue: CatProfileDraftPresentation(
-            lifeReference: initialLifeReference
+            lifeReference: initialLifeReference,
+            referencePhotoIdentifier: initialPhotoIdentifier
         ))
     }
 
@@ -388,7 +439,7 @@ private struct AddCatProfileView: View {
                             HStack(spacing: 12) {
                                 CatProfileThumbnail(photo: selectedPhoto)
                                     .frame(width: 58, height: 58)
-                                Text(selectedPhoto == nil ? "プロフィール写真を選ぶ" : "写真を変更")
+                                Text(selectedPhoto == nil ? "この子の写真を選ぶ" : "別の写真を選ぶ")
                                 Spacer()
                                 Image(systemName: "chevron.right")
                                     .font(.caption.weight(.semibold))
@@ -404,7 +455,7 @@ private struct AddCatProfileView: View {
                         }
                     }
                 } footer: {
-                    Text("写真や誕生日は、追加したあとでも設定できます。")
+                    Text("選んだ写真はこの子の写真に追加されます。誕生日などは、あとから設定できます。")
                 }
 
                 if let reference = draft.lifeReference {
