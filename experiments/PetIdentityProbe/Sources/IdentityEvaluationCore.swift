@@ -374,6 +374,25 @@ enum IdentityEvaluationCore {
         return .init(aggregated: aggregated, nearest: nearest)
     }
 
+    /// Unthresholded suggestions for an explicitly user-reviewed, local-only trial.
+    /// No expected labels are accepted and no identity assignments are returned.
+    static func reviewSuggestions(registrationA: [[Float]?], registrationB: [[Float]?],
+                                  inputs: [[Float]?]) throws -> [IdentityRankingOutcome] {
+        guard registrationA.count == 5, registrationB.count == 5 else {
+            throw IdentityEvaluationError.invalidRegistrationCount
+        }
+        guard (1...CandidateReviewSelection.limit).contains(inputs.count) else {
+            throw IdentityEvaluationError.invalidDiagnosticEvaluationCount
+        }
+        let a = try validateRegistration(registrationA), b = try validateRegistration(registrationB)
+        return inputs.map { input in
+            guard let input else { return .missingEmbedding }
+            guard let vector = normalized(input) else { return .invalidEmbedding }
+            let da = score(vector, against: a), db = score(vector, against: b)
+            return da == db ? .equalScores : da < db ? .a : .b
+        }
+    }
+
     private static func validateRegistration(_ inputs: [[Float]?]) throws -> [[Double]] {
         try inputs.map { input in
             guard let input else { throw IdentityEvaluationError.missingRegistration }
