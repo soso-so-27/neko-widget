@@ -1816,10 +1816,7 @@ struct PhotoBrowserView: View {
                                 .foregroundStyle(.secondary)
 
                             NavigationLink {
-                                DayPhotosView(
-                                    date: creationDate,
-                                    photos: photos(onSameDayAs: creationDate)
-                                )
+                                dayPhotosView(for: creationDate)
                             } label: {
                                 Label("この日の写真をすべて見る", systemImage: "photo.stack")
                                     .font(.subheadline.weight(.semibold))
@@ -2246,6 +2243,28 @@ struct PhotoBrowserView: View {
             }
     }
 
+    private func dayPhotosView(for date: Date) -> some View {
+        let dayPhotos = photos(onSameDayAs: date)
+        return DayPhotosView(date: date, photos: dayPhotos) { photo in
+            PhotoBrowserView(
+                photos: dayPhotos,
+                libraryPhotos: libraryPhotos,
+                initialPhoto: photo,
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: setMemorySaved,
+                exportMemoryPhoto: exportMemoryPhoto,
+                excludedCatCandidateIdentifiers: excludedCatCandidateIdentifiers,
+                excludeFromCatCandidates: excludeFromCatCandidates,
+                restoreCatCandidates: restoreCatCandidates,
+                profiles: profiles,
+                assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
+                replaceProfileAssignments: replaceProfileAssignments,
+                deliveryActions: deliveryActions
+            )
+        }
+    }
+
     private var widgetTiming: some View {
         VStack(spacing: 4) {
             Label(
@@ -2552,6 +2571,7 @@ private final class PhotoBrowserPerformanceProbe: ObservableObject {
 private struct DayPhotosView: View {
     let date: Date
     let photos: [PhotoPresentation]
+    let photoDestination: (PhotoPresentation) -> PhotoBrowserView
 
     private let columns = Array(
         repeating: GridItem(.flexible(), spacing: 2),
@@ -2570,18 +2590,25 @@ private struct DayPhotosView: View {
             } else {
                 LazyVGrid(columns: columns, spacing: 2) {
                     ForEach(photos) { photo in
-                        PhotoAssetImageView(
-                            localIdentifier: photo.localIdentifier,
-                            catBoundingBox: photo.catBoundingBox,
-                            targetPixelSize: CGSize(width: 360, height: 360),
-                            targetAspectRatio: 1
-                        )
-                        .aspectRatio(1, contentMode: .fit)
+                        NavigationLink {
+                            photoDestination(photo)
+                        } label: {
+                            PhotoAssetImageView(
+                                localIdentifier: photo.localIdentifier,
+                                catBoundingBox: photo.catBoundingBox,
+                                targetPixelSize: CGSize(width: 360, height: 360),
+                                targetAspectRatio: 1
+                            )
+                            .aspectRatio(1, contentMode: .fit)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("day-photos-photo-\(photo.localIdentifier)")
                         .accessibilityLabel(
                             photo.creationDate.map {
                                 "\($0.formatted(.dateTime.hour().minute()))に撮影した写真"
                             } ?? "撮影時刻不明の写真"
                         )
+                        .accessibilityHint("写真を大きく表示します")
                     }
                 }
             }

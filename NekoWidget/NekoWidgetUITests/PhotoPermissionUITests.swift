@@ -367,6 +367,48 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testSameDayRediscoveryOpensAndSavesTheTappedPhoto() {
+        let app = launch("rediscovery")
+        let sameDay = app.buttons["この日の写真をすべて見る"]
+        XCTAssertTrue(sameDay.waitForExistence(timeout: 15))
+        for _ in 0..<3 where !sameDay.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(sameDay.isHittable)
+        sameDay.tap()
+
+        let firstPhoto = app.buttons["day-photos-photo-app-store-screenshot-fixture-1"]
+        let secondPhoto = app.buttons["day-photos-photo-app-store-screenshot-fixture-2"]
+        XCTAssertTrue(firstPhoto.waitForExistence(timeout: 10))
+        XCTAssertTrue(secondPhoto.isHittable)
+        XCTAssertTrue(app.staticTexts["mainline-loaded-2"].waitForExistence(timeout: 15))
+        secondPhoto.tap()
+        XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 10))
+
+        let save = app.buttons["思い出に残す"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10))
+        for _ in 0..<3 where !save.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(save.isHittable)
+        save.tap()
+        let requested = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-2|true"),
+            object: app.staticTexts["solo-rediscovery-memory-request"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [requested], timeout: 10), .completed)
+        XCTAssertTrue(element("photo-browser-memory-saved-state", in: app).waitForExistence(timeout: 10))
+        capture("solo-rediscovery-same-day-second-photo-saved")
+
+        let backToDay = app.navigationBars["写真"].buttons.element(boundBy: 0)
+        XCTAssertTrue(backToDay.isHittable)
+        XCTAssertNotEqual(backToDay.label, "写真メニュー")
+        backToDay.tap()
+        XCTAssertTrue(firstPhoto.waitForExistence(timeout: 10))
+        XCTAssertTrue(firstPhoto.isHittable)
+        XCTAssertTrue(secondPhoto.isHittable)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+                                                        "day-photos-photo-")).count, 2)
+        app.terminate()
+    }
+
+    @MainActor
     func testEmptyAndSingleSavedPhotoStartWithPhotosIncludingDeniedAccess() {
         for scenario in ["empty", "saved", "denied"] {
             let app = launch(scenario)

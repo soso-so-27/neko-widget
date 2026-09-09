@@ -414,6 +414,8 @@ private struct MainlineAcceptanceFixtureRootView: View {
         Group {
             if finished {
                 Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
+            } else if scenario == "solo-memories-rediscovery" {
+                SoloRediscoveryFixtureView()
             } else if scenario.hasPrefix("solo-memories-") {
                 SoloMemoriesFixtureView(scenario: scenario)
             } else if scenario == "monthly-empty" || scenario == "monthly-pending" {
@@ -628,6 +630,61 @@ private struct SoloMemoriesFixtureView: View {
         case let .photo(identifier): "photo:\(identifier)"
         case let .monthlyWindow(presentation): "monthly:\(presentation.periodIdentifier)"
         case let .seasonalMovie(period): "seasonal:\(period.id)"
+        }
+    }
+}
+
+/// The real single-photo browser opens the real same-day grid. This fixture
+/// records which save callback is requested and republishes presentation state
+/// only; it never calls the memory store or writes a Photos asset.
+@MainActor
+private struct SoloRediscoveryFixtureView: View {
+    @State private var savedIdentifiers = Set<String>()
+    @State private var memoryRequest = "none"
+
+    var body: some View {
+        let dayPhotos = photos
+        NavigationStack {
+            PhotoBrowserView(
+                photos: [dayPhotos[0]],
+                libraryPhotos: dayPhotos,
+                initialPhoto: dayPhotos[0],
+                widgetShownAt: nil,
+                showsWidgetTiming: false,
+                setMemorySaved: { identifier, isSaved in
+                    memoryRequest = "\(identifier)|\(isSaved)"
+                    if isSaved {
+                        savedIdentifiers.insert(identifier)
+                    } else {
+                        savedIdentifiers.remove(identifier)
+                    }
+                },
+                excludedCatCandidateIdentifiers: [],
+                excludeFromCatCandidates: { _ in },
+                restoreCatCandidates: { _ in },
+                profiles: [],
+                assignmentsByPhotoIdentifier: [:],
+                replaceProfileAssignments: { _ in true }
+            )
+        }
+        .overlay(alignment: .topLeading) {
+            Text(memoryRequest)
+                .accessibilityIdentifier("solo-rediscovery-memory-request")
+                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var photos: [PhotoPresentation] {
+        AppStoreScreenshotFixture.photos.prefix(2).enumerated().map { index, photo in
+            let isSaved = savedIdentifiers.contains(photo.localIdentifier)
+            return PhotoPresentation(
+                localIdentifier: photo.localIdentifier,
+                creationDate: Date(timeIntervalSince1970: 1_754_006_400 + Double(index) * 3_600),
+                catBoundingBox: photo.catBoundingBox,
+                isLiked: isSaved,
+                likedAt: isSaved ? Date(timeIntervalSince1970: 1_788_912_000) : nil
+            )
         }
     }
 }
