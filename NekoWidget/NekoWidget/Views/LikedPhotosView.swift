@@ -516,9 +516,9 @@ private enum MemoriesSection: String, CaseIterable, Identifiable {
 }
 
 /// The entry point for photos the user deliberately kept as memories.
-/// Automatic reflections are the default so the tab opens on new value; the
-/// complete manual collection remains one segment away and owns the explicit
-/// PDF/photo-selection action.
+/// Opens on an available reflection, or the saved collection when none is
+/// ready. The first visible section is kept for this view's lifetime so new
+/// results never move someone away from the photos they are looking at.
 struct LikedPhotosView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -531,14 +531,36 @@ struct LikedPhotosView: View {
     let exportPhotoBook: ([String]) async throws -> URL
     let openPhotos: () -> Void
 
-    @State private var selectedSection: MemoriesSection = .summaries
+    @State private var selectedSection: MemoriesSection?
+    @State private var prefersSeasonalSummary: Bool?
+
+    private var initialSection: MemoriesSection {
+        hasPhotoAccess && (readyMonthlyWindow != nil || !seasonalMovies.isEmpty)
+            ? .summaries : .photos
+    }
+
+    private var displayedSection: MemoriesSection {
+        selectedSection ?? initialSection
+    }
+
+    private var sectionSelection: Binding<MemoriesSection> {
+        Binding(
+            get: { displayedSection },
+            set: { selectedSection = $0 }
+        )
+    }
+
+    private var showsSeasonalSummaryFirst: Bool {
+        prefersSeasonalSummary
+            ?? (readyMonthlyWindow == nil && !seasonalMovies.isEmpty)
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 memoriesSectionControl
 
-                switch selectedSection {
+                switch displayedSection {
                 case .photos:
                     savedPhotosSection
                 case .summaries:
@@ -549,6 +571,13 @@ struct LikedPhotosView: View {
         }
         .navigationTitle("思い出")
         .background(Color(.systemGroupedBackground))
+        .onAppear {
+            // Resolve at presentation, not when an inactive tab is built.
+            // This also preserves the user's selection on return/navigation.
+            if selectedSection == nil {
+                selectedSection = initialSection
+            }
+        }
     }
 
     @ViewBuilder
@@ -559,7 +588,7 @@ struct LikedPhotosView: View {
                     Button {
                         selectedSection = section
                     } label: {
-                        if selectedSection == section {
+                        if displayedSection == section {
                             Label(section.title, systemImage: "checkmark")
                         } else {
                             Text(section.title)
@@ -568,7 +597,7 @@ struct LikedPhotosView: View {
                 }
             } label: {
                 Label(
-                    "表示：\(selectedSection.title)",
+                    "表示：\(displayedSection.title)",
                     systemImage: "line.3.horizontal.decrease.circle"
                 )
                 .font(.headline)
@@ -578,7 +607,7 @@ struct LikedPhotosView: View {
             .padding(.horizontal, 16)
             .accessibilityIdentifier("memories-section-menu")
         } else {
-            Picker("表示する思い出", selection: $selectedSection) {
+            Picker("表示する思い出", selection: sectionSelection) {
                 ForEach(MemoriesSection.allCases) { section in
                     Text(section.title).tag(section)
                 }
@@ -635,6 +664,7 @@ struct LikedPhotosView: View {
                     in: RoundedRectangle(cornerRadius: 18)
                 )
                 .padding(.horizontal, 16)
+                .accessibilityIdentifier("memories-open-photos")
                 .accessibilityHint("猫写真の一覧を開きます")
             } else {
                 LazyVGrid(columns: photoColumns, spacing: 3) {
@@ -659,11 +689,15 @@ struct LikedPhotosView: View {
     private var summarySection: some View {
         VStack(alignment: .leading, spacing: 18) {
             if hasPhotoAccess {
-                latestSummarySection
-
-                summarySectionDivider
-
-                seasonalMovieSection(seasonalMovies)
+                if showsSeasonalSummaryFirst {
+                    seasonalMovieSection(seasonalMovies)
+                    summarySectionDivider
+                    latestSummarySection
+                } else {
+                    latestSummarySection
+                    summarySectionDivider
+                    seasonalMovieSection(seasonalMovies)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 12) {
@@ -689,6 +723,12 @@ struct LikedPhotosView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("ふりかえり")
         .accessibilityIdentifier("memories-summaries-section")
+        .onAppear {
+            // A late monthly result must not move a movie already on screen.
+            if prefersSeasonalSummary == nil {
+                prefersSeasonalSummary = showsSeasonalSummaryFirst
+            }
+        }
     }
 
     private var latestSummarySection: some View {

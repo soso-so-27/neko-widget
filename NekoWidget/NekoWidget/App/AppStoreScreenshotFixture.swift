@@ -414,6 +414,8 @@ private struct MainlineAcceptanceFixtureRootView: View {
         Group {
             if finished {
                 Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
+            } else if scenario.hasPrefix("solo-memories-") {
+                SoloMemoriesFixtureView(scenario: scenario)
             } else if scenario == "monthly-empty" || scenario == "monthly-pending" {
                 NavigationStack {
                     LikedPhotosView(
@@ -477,6 +479,130 @@ private struct MainlineAcceptanceFixtureRootView: View {
         result.totalAssets = photos.count
         result.scannedAssets = photos.count
         return result
+    }
+
+    private var loadedCount: Int {
+        Set(loadTracker.loadedImages.map(\.localIdentifier)).count
+    }
+}
+
+/// Keeps the shipping Memories view alive while its inputs change. Only
+/// presentation values and existing in-memory illustrations are supplied;
+/// navigation destinations acknowledge the action without opening services.
+@MainActor
+private struct SoloMemoriesFixtureView: View {
+    let scenario: String
+    @State private var hasMonthlyLetter: Bool
+    @State private var hasPhotoAccess: Bool
+    @State private var showsOtherScreen = false
+    @State private var otherScreenTitle = "別の画面"
+    @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
+
+    init(scenario: String) {
+        self.scenario = scenario
+        _hasMonthlyLetter = State(initialValue: [
+            "solo-memories-monthly", "solo-memories-denied",
+        ].contains(scenario))
+        _hasPhotoAccess = State(initialValue: scenario != "solo-memories-denied")
+    }
+
+    var body: some View {
+        NavigationStack {
+            LikedPhotosView(
+                photos: savedPhotos,
+                hasPhotoAccess: hasPhotoAccess,
+                monthlyWindowCollection: MonthlyWindowCollectionPresentation(
+                    letters: hasMonthlyLetter ? [monthlyLetter] : [], unavailable: nil
+                ),
+                latestMonthlyWindowIsUnread: hasMonthlyLetter,
+                latestSeasonalMovieIsNew: !seasonalMovies.isEmpty,
+                seasonalMovies: seasonalMovies,
+                exportPhotoBook: { _ in throw CocoaError(.fileWriteUnknown) },
+                openPhotos: {
+                    otherScreenTitle = "写真"
+                    showsOtherScreen = true
+                }
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("便りを追加") { hasMonthlyLetter = true }
+                            .disabled(hasMonthlyLetter)
+                            .accessibilityIdentifier("solo-memories-add-letter")
+                        Button("写真アクセスを切り替える") { hasPhotoAccess.toggle() }
+                            .accessibilityIdentifier("solo-memories-toggle-access")
+                        Button("別の画面へ") {
+                            otherScreenTitle = "別の画面"
+                            showsOtherScreen = true
+                        }
+                        .accessibilityIdentifier("solo-memories-open-other")
+                    } label: {
+                        Label("確認操作", systemImage: "ellipsis.circle")
+                    }
+                    .accessibilityIdentifier("solo-memories-fixture-actions")
+                    .accessibilityValue(
+                        "便り\(hasMonthlyLetter ? "あり" : "なし")、"
+                            + "写真アクセス\(hasPhotoAccess ? "あり" : "なし")"
+                    )
+                }
+            }
+            .navigationDestination(isPresented: $showsOtherScreen) {
+                VStack(spacing: 20) {
+                    Text(otherScreenTitle)
+                        .accessibilityIdentifier("solo-memories-other-screen")
+                    Button("思い出に戻る") { showsOtherScreen = false }
+                        .accessibilityIdentifier("solo-memories-return")
+                }
+            }
+        }
+        .dynamicTypeSize(scenario.hasSuffix("-large") ? .accessibility5 : .large)
+        .overlay(alignment: .topLeading) {
+            Text("loaded")
+                .accessibilityIdentifier("solo-memories-loaded-\(loadedCount)")
+                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var savedPhotos: [PhotoPresentation] {
+        guard hasPhotoAccess,
+              scenario != "solo-memories-empty" else { return [] }
+        return Array(AppStoreScreenshotFixture.likedPhotos.prefix(1))
+    }
+
+    private var monthlyLetter: MonthlyWindowPresentation {
+        MonthlyWindowPresentation(
+            monthStart: Date(timeIntervalSince1970: 1_754_006_400),
+            yearNumber: 2025, monthNumber: 8,
+            photos: Array(AppStoreScreenshotFixture.photos.prefix(5)),
+            availableSceneCount: 5
+        )
+    }
+
+    private var seasonalMovies: [SeasonalMovieArchiveRecord] {
+        guard scenario == "solo-memories-seasonal-large" else { return [] }
+        let start = Date(timeIntervalSince1970: 1_751_328_000)
+        let end = Date(timeIntervalSince1970: 1_759_276_800)
+        let scenes = AppStoreScreenshotFixture.photos.prefix(3).enumerated().map { index, photo in
+            SeasonalMovieCandidate(
+                localIdentifier: photo.localIdentifier,
+                creationDate: start.addingTimeInterval(Double(index) * 31 * 86_400),
+                mediaKind: .stillPhoto, catBoundingBox: photo.catBoundingBox,
+                largestCatAreaRatio: photo.largestCatAreaRatio,
+                isMemory: photo.isLiked, suggestedStartTime: nil, suggestedDuration: nil
+            )
+        }
+        let presentation = SeasonalMoviePresentation(
+            quarterStart: start, quarterEnd: end,
+            startYearNumber: 2025, startMonthNumber: 7,
+            endYearNumber: 2025, endMonthNumber: 9, scenes: scenes
+        )
+        return [SeasonalMovieArchiveRecord(
+            version: SeasonalMovieArchiveRecord.schemaVersion,
+            periodID: SeasonalMoviePeriodID(presentation: presentation),
+            createdAt: end, updatedAt: end, presentation: presentation,
+            excludedSceneIdentifiers: [], frozenAt: nil, freezeReason: nil
+        )]
     }
 
     private var loadedCount: Int {

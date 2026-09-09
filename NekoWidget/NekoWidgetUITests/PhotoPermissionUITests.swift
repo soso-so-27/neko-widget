@@ -273,6 +273,11 @@ final class PhotoPermissionUITests: XCTestCase {
                 skip.tap()
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
             case "monthly-empty", "monthly-pending":
+                // With no completed reflection, Memories opens on saved
+                // photos. Explicitly visit the existing empty/pending state.
+                let summaries = app.segmentedControls["memories-section-picker"].buttons["ふりかえり"]
+                XCTAssertTrue(summaries.waitForExistence(timeout: 15))
+                summaries.tap()
                 let expected = scenario == "monthly-empty"
                     ? "月の便りはまだありません" : "写真の確認を待っています"
                 // SwiftUI exposes the parent section's identifier on the
@@ -344,6 +349,194 @@ final class PhotoPermissionUITests: XCTestCase {
 
     private func addDiagnosticAttachment(name: String, contents: String) {
         let attachment = XCTAttachment(string: contents)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}
+
+/// Deterministic presentation tests: no library permission request, archive
+/// write, movie export, or network operation is part of this fixture route.
+final class SoloMemoriesUITests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+    }
+
+    @MainActor
+    func testEmptyAndSingleSavedPhotoStartWithPhotosIncludingDeniedAccess() {
+        for scenario in ["empty", "saved", "denied"] {
+            let app = launch(scenario)
+            assertSection("残した写真", in: app)
+            if scenario == "saved" {
+                XCTAssertTrue(app.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
+                XCTAssertEqual(app.staticTexts["photo-book-progress"].label, "1枚")
+                XCTAssertFalse(app.buttons["memories-open-photos"].exists)
+                capture("solo-memories-single-saved-photo")
+            } else {
+                let openPhotos = app.buttons["memories-open-photos"]
+                XCTAssertTrue(openPhotos.waitForExistence(timeout: 10))
+                XCTAssertTrue(openPhotos.isHittable)
+                if scenario == "empty" { capture("solo-memories-empty") }
+                openPhotos.tap()
+                let destination = app.staticTexts["solo-memories-other-screen"]
+                XCTAssertTrue(destination.waitForExistence(timeout: 10))
+                XCTAssertEqual(destination.label, "写真")
+                app.buttons["solo-memories-return"].tap()
+                assertSection("残した写真", in: app)
+            }
+            if scenario == "denied" {
+                fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスあり")
+                assertSection("残した写真", in: app)
+            }
+            // Both sections stay available, independently of the initial one.
+            selectSection("ふりかえり", in: app)
+            if scenario == "denied" {
+                XCTAssertTrue(element("memories-monthly-window", in: app).exists)
+            } else {
+                XCTAssertTrue(app.staticTexts["月の便りはまだありません"].exists)
+            }
+            selectSection("残した写真", in: app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testInitialReflectionAndLaterChangesPreserveTheChosenSection() {
+        let app = launch("saved")
+        assertSection("残した写真", in: app)
+        fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
+        assertSection("残した写真", in: app)
+        selectSection("ふりかえり", in: app)
+        XCTAssertTrue(element("memories-monthly-window", in: app).waitForExistence(timeout: 10))
+
+        fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスなし")
+        assertSection("ふりかえり", in: app)
+        XCTAssertTrue(app.staticTexts["写真へのアクセスを許可すると表示されます"].exists)
+        fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスあり")
+        assertSection("ふりかえり", in: app)
+        XCTAssertTrue(element("memories-monthly-window", in: app).exists)
+        visitOtherScreenAndReturn(in: app)
+        assertSection("ふりかえり", in: app)
+
+        selectSection("残した写真", in: app)
+        visitOtherScreenAndReturn(in: app)
+        assertSection("残した写真", in: app)
+        app.terminate()
+
+        // A fresh first display with a completed letter starts on that letter.
+        let readyApp = launch("monthly")
+        assertSection("ふりかえり", in: readyApp)
+        XCTAssertTrue(element("memories-monthly-window", in: readyApp).waitForExistence(timeout: 10))
+        XCTAssertTrue(readyApp.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
+        capture("solo-memories-monthly-ready")
+        readyApp.terminate()
+    }
+
+    @MainActor
+    func testSeasonalOnlyStartsFirstAndKeepsItsOrderWithLargestText() {
+        let app = launch("seasonal-large")
+        assertSection("ふりかえり", in: app, largeText: true)
+        XCTAssertTrue(app.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
+        let seasonalTitle = element("memories-seasonal-movies-title", in: app)
+        let monthlyTitle = element("memories-latest-summary-title", in: app)
+        XCTAssertTrue(seasonalTitle.waitForExistence(timeout: 10))
+        XCTAssertTrue(monthlyTitle.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(seasonalTitle.frame.height, 0)
+        XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY)
+        let menu = app.buttons["memories-section-menu"]
+        XCTAssertTrue(menu.isHittable)
+        XCTAssertGreaterThanOrEqual(menu.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(menu.frame.minX, app.frame.minX)
+        XCTAssertLessThanOrEqual(menu.frame.maxX, app.frame.maxX)
+        capture("solo-memories-seasonal-first-largest-text")
+
+        fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
+        assertSection("ふりかえり", in: app, largeText: true)
+        XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY,
+                          "A late monthly letter must not move the seasonal movie below it.")
+        let monthlyCard = element("memories-monthly-window", in: app)
+        for _ in 0..<6 where !monthlyCard.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(monthlyCard.isHittable, "The later monthly letter must remain reachable.")
+        for _ in 0..<6 where !menu.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(menu.isHittable)
+        selectSection("残した写真", in: app, largeText: true)
+        visitOtherScreenAndReturn(in: app)
+        assertSection("残した写真", in: app, largeText: true)
+        selectSection("ふりかえり", in: app, largeText: true)
+        XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY)
+        app.terminate()
+    }
+
+    @MainActor
+    private func launch(_ scenario: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "solo-memories-\(scenario)"
+        app.launch()
+        return app
+    }
+
+    @MainActor
+    private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    @MainActor
+    private func assertSection(_ title: String, in app: XCUIApplication, largeText: Bool = false) {
+        let identifier = title == "残した写真" ? "memories-saved-section" : "memories-summaries-section"
+        XCTAssertTrue(element(identifier, in: app).waitForExistence(timeout: 10))
+        if largeText {
+            let menu = app.buttons["memories-section-menu"]
+            XCTAssertTrue(menu.waitForExistence(timeout: 10))
+            XCTAssertTrue(menu.label.contains(title))
+        } else {
+            let selected = app.segmentedControls["memories-section-picker"].buttons[title]
+            XCTAssertTrue(selected.waitForExistence(timeout: 10))
+            XCTAssertTrue(selected.isSelected, "The visible section and selected control must agree.")
+        }
+    }
+
+    @MainActor
+    private func selectSection(_ title: String, in app: XCUIApplication, largeText: Bool = false) {
+        if largeText {
+            app.buttons["memories-section-menu"].tap()
+            let option = app.buttons[title]
+            XCTAssertTrue(option.waitForExistence(timeout: 5))
+            option.tap()
+        } else {
+            app.segmentedControls["memories-section-picker"].buttons[title].tap()
+        }
+        assertSection(title, in: app, largeText: largeText)
+    }
+
+    @MainActor
+    private func fixtureAction(_ identifier: String, in app: XCUIApplication, expectedValue: String? = nil) {
+        let actions = app.buttons["solo-memories-fixture-actions"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        actions.tap()
+        let action = app.buttons[identifier]
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        action.tap()
+        if let expectedValue {
+            let changed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value CONTAINS %@", expectedValue), object: actions
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        }
+    }
+
+    @MainActor
+    private func visitOtherScreenAndReturn(in app: XCUIApplication) {
+        fixtureAction("solo-memories-open-other", in: app)
+        XCTAssertTrue(app.staticTexts["solo-memories-other-screen"].waitForExistence(timeout: 10))
+        app.buttons["solo-memories-return"].tap()
+    }
+
+    @MainActor
+    private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
