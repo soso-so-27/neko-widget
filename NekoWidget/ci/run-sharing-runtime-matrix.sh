@@ -387,18 +387,21 @@ PY
             xcrun xcresulttool export attachments --path "$composer_result" \
                 --output-path "$runtime_artifacts/composer-screenshots"
         fi
-        # Reuse the same three-family Gallery test and DerivedData. Rebuilding
-        # the Widget with each condition keeps these comparisons on the real
-        # component while leaving ordinary runtime and release builds unchanged.
+        # Reuse DerivedData, but reset the disposable Simulator between
+        # fixture builds. WidgetKit can otherwise serve the previous Gallery
+        # snapshot even after Xcode installs the newly compiled extension.
         # These captures do not install a Home Screen Widget or invoke actions.
         local widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
         local widget_scenario=""
         local widget_scenario_conditions=""
         local widget_scenario_result=""
         local widget_scenario_status=0
+        local widget_scenario_test=""
         for widget_scenario in long-white-large no-caption; do
+            widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
             case "$widget_scenario" in
                 long-white-large)
+                    widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
                     widget_scenario_conditions="WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT"
                     ;;
                 no-caption)
@@ -407,7 +410,13 @@ PY
             esac
             widget_scenario_result="$runtime_artifacts/Widget-$widget_scenario.xcresult"
             widget_scenario_status=0
-            xcrun simctl terminate "$simulator_udid" "$APP_BUNDLE_ID" >/dev/null 2>&1 || true
+            # Runtime results and cache JPEGs were exported above. These last
+            # builds need no simulator data: erase both extension registrations
+            # and SpringBoard's cached previews before installing each fixture.
+            xcrun simctl shutdown "$simulator_udid" || return $?
+            xcrun simctl erase "$simulator_udid" || return $?
+            xcrun simctl boot "$simulator_udid" || return $?
+            xcrun simctl bootstatus "$simulator_udid" -b || return $?
             xcodebuild \
                 -project NekoWidget.xcodeproj \
                 -scheme NekoWidget \
@@ -416,7 +425,7 @@ PY
                 -destination "platform=iOS Simulator,id=$simulator_udid" \
                 -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
                 -resultBundlePath "$widget_scenario_result" \
-                -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes \
+                "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/$widget_scenario_test" \
                 -parallel-testing-enabled NO \
                 -testLanguage ja \
                 -testRegion JP \

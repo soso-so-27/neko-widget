@@ -148,7 +148,16 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
-    private func captureFixtureGallery(captureAllSizes: Bool) {
+    func testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes() {
+        executionTimeAllowance = 180
+        captureFixtureGallery(captureAllSizes: true, expectWhiteFixture: true)
+    }
+
+    @MainActor
+    private func captureFixtureGallery(
+        captureAllSizes: Bool,
+        expectWhiteFixture: Bool = false
+    ) {
         let app = XCUIApplication()
         app.launchArguments += [
             "-AppleLanguages", "(ja)",
@@ -251,7 +260,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             guard pages.waitForExistence(timeout: 10),
                   galleryPage(pages) == [1, 3],
                   let fixtureScreenshot = waitForFixturePhoto(
-                      in: gallery, springboard: springboard, timeout: 15
+                      in: gallery, springboard: springboard, timeout: 15,
+                      expectWhiteFixture: expectWhiteFixture
                   ) else {
                 fail("The small Widget page did not display its fixture photo.", application: springboard)
                 return
@@ -275,7 +285,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 )
                 guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
                       let screenshot = waitForFixturePhoto(
-                          in: gallery, springboard: springboard, timeout: 10
+                          in: gallery, springboard: springboard, timeout: 10,
+                          expectWhiteFixture: expectWhiteFixture
                       ),
                       galleryPage(pages) == [index + 2, 3] else {
                     fail("The Widget size did not advance to a rendered photo.", application: springboard)
@@ -377,7 +388,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     private func waitForFixturePhoto(
         in gallery: XCUIElement,
         springboard: XCUIApplication,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        expectWhiteFixture: Bool = false
     ) -> XCUIScreenshot? {
         // CI's Gallery AX exposes the preview as a Button with a "Widget,"
         // value. Its page control supplies the size; don't require the preview
@@ -395,7 +407,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     && abs($0.frame.midX - screenFrame.midX) < 20
             }),
                fixturePhotoIsVisible(
-                   in: screenshot, photoFrame: photo.frame, screenFrame: screenFrame
+                   in: screenshot, photoFrame: photo.frame, screenFrame: screenFrame,
+                   expectWhiteFixture: expectWhiteFixture
                ) {
                 if let visibleSince {
                     if Date().timeIntervalSince(visibleSince) >= 0.5 { return screenshot }
@@ -414,7 +427,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     private func fixturePhotoIsVisible(
         in screenshot: XCUIScreenshot,
         photoFrame: CGRect,
-        screenFrame: CGRect
+        screenFrame: CGRect,
+        expectWhiteFixture: Bool = false
     ) -> Bool {
         guard let source = screenshot.image.cgImage,
               screenFrame.width > 0, screenFrame.height > 0,
@@ -445,10 +459,12 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         guard rendered else { return false }
         var lightPixels = 0
         var midtonePixels = 0
+        var whitePixels = 0
         for offset in stride(from: 0, to: pixels.count, by: 4) {
             let red = Int(pixels[offset]), green = Int(pixels[offset + 1])
             let blue = Int(pixels[offset + 2])
             if red > 130 && green > 130 && blue > 110 { lightPixels += 1 }
+            if red >= 245 && green >= 245 && blue >= 245 { whitePixels += 1 }
             let brightness = (red + green + blue) / 3
             if brightness > 40 && brightness < 120 && max(red, green, blue) < 140 {
                 midtonePixels += 1
@@ -459,8 +475,12 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         // canvas is light, and its 60% caption scrim supplies midtones. A uniform
         // skeleton has no such light/midtone pair; sparse copy over the dark
         // missing-image view does not supply the required light area either.
-        // This checks fixture presence, not scenario identity or visual quality.
-        return lightPixels > width * height / 10 && midtonePixels > width * height / 20
+        // The white run must additionally reject a retained normal cat preview.
+        // Allow the maximum-text footer and rounded corners to occupy the rest.
+        // Text layout and contrast still require visual review of the capture.
+        let pixelCount = width * height
+        return lightPixels > pixelCount / 10 && midtonePixels > pixelCount / 20
+            && (!expectWhiteFixture || whitePixels * 100 >= pixelCount * 35)
     }
 
     @MainActor
