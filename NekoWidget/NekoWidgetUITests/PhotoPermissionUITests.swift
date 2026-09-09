@@ -1,5 +1,113 @@
 import XCTest
 
+/// The fixture substitutes only the action boundary and image source. These
+/// are the shipping cat views; no real photo library or account is accessed.
+final class CatProfilePhotoFlowUITests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        executionTimeAllowance = 180
+    }
+
+    @MainActor
+    func testCreateBrowseAddRetryKeepOtherCatAndDelete() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--cat-profile-photo-flow-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+
+        createCat("テスト猫A", photoIndex: 0, app: app)
+        XCTAssertEqual(visiblePhotos(app).count, 1)
+        visiblePhotos(app)[0].tap()
+        XCTAssertTrue(app.buttons["閉じる"].waitForExistence(timeout: 5))
+        app.buttons["閉じる"].tap()
+        backToCatList(app)
+
+        createCat("テスト猫B", photoIndex: 1, app: app)
+        app.buttons["cat-profile-add-photos"].tap()
+        XCTAssertTrue(app.buttons.matching(identifier: "cat-profile-photo").firstMatch.waitForExistence(timeout: 5))
+        guard let firstChoice = visiblePhotos(app).first else {
+            XCTFail("No explicit photo choices appeared.")
+            return
+        }
+        firstChoice.tap()
+        let add = app.buttons["cat-profile-confirm-add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        add.tap()
+        XCTAssertTrue(app.staticTexts["追加できませんでした。選択は残っています。もう一度お試しください。"].waitForExistence(timeout: 5))
+        XCTAssertEqual(add.label, "1枚を追加", "A failed save lost the explicit selection.")
+        add.tap()
+        XCTAssertTrue(app.navigationBars["テスト猫Bの写真"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1枚を追加しました"].waitForExistence(timeout: 5))
+        XCTAssertEqual(visiblePhotos(app).count, 2)
+        capture("multi-cat-photo-page", app: app)
+        backToCatList(app)
+
+        app.buttons.matching(identifier: "cat-profile-open").element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["テスト猫Aの写真"].waitForExistence(timeout: 5))
+        XCTAssertEqual(visiblePhotos(app).count, 1, "Adding to B removed A's photo.")
+        backToCatList(app)
+        app.buttons.matching(identifier: "cat-profile-open").element(boundBy: 1).tap()
+        app.buttons["cat-profile-settings"].tap()
+        let delete = app.buttons["プロフィールを削除"]
+        for _ in 0..<4 {
+            if delete.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(delete.isHittable)
+        delete.tap()
+        XCTAssertTrue(app.staticTexts["テスト猫Bのプロフィールを削除しますか？"].waitForExistence(timeout: 5))
+        delete.tap()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 1)
+        capture("multi-cat-after-delete", app: app)
+
+        app.buttons["cat-profile-add"].tap()
+        XCTAssertTrue(app.buttons["キャンセル"].waitForExistence(timeout: 5))
+        app.buttons["キャンセル"].tap()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "cat-profile-open").count, 1)
+    }
+
+    @MainActor
+    private func createCat(_ name: String, photoIndex: Int, app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["cat-profile-add"].waitForExistence(timeout: 10))
+        app.buttons["cat-profile-add"].tap()
+        XCTAssertTrue(app.buttons.matching(identifier: "cat-profile-photo").firstMatch.waitForExistence(timeout: 5))
+        let choices = visiblePhotos(app)
+        guard choices.indices.contains(photoIndex) else {
+            XCTFail("The generated photo picker did not expose its expected choices.")
+            return
+        }
+        choices[photoIndex].tap()
+        let field = app.textFields["cat-profile-name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["cat-profile-key-photo"].label.contains("別の写真を選ぶ"),
+                      "The selected photo was lost between the picker and naming sheet.")
+        field.tap()
+        field.typeText(name)
+        app.buttons["cat-profile-create"].tap()
+        XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func visiblePhotos(_ app: XCUIApplication) -> [XCUIElement] {
+        app.buttons.matching(identifier: "cat-profile-photo").allElementsBoundByIndex.filter(\.isHittable)
+    }
+
+    @MainActor
+    private func backToCatList(_ app: XCUIApplication) {
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["猫ごとの写真"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func capture(_ name: String, app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}
+
 final class PhotoPermissionUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false

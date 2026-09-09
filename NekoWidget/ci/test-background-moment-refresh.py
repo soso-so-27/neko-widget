@@ -63,6 +63,18 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("BGAppRefreshTaskRequest", self.service)
         self.assertIn("scheduleNextRefresh()", self.service)
 
+    def test_cat_photo_fixture_suppresses_normal_services_and_launch_cleanup(self) -> None:
+        flag = 'CommandLine.arguments.contains("--cat-profile-photo-flow-fixture")'
+        debug_guard = self.service.split(
+            "private static var suppressesNormalServicesForDebugLaunch: Bool {", 1
+        )[1].split("#endif", 1)[0]
+        self.assertIn(flag, debug_guard)
+        launch_debug = self.app.split("init() {", 1)[1].split("#else", 1)[0]
+        self.assertIn("#if DEBUG", launch_debug)
+        self.assertIn("&& !" + flag, launch_debug)
+        onboarding_reset = self.app.split("if !BillingInternalDiagnosticsLaunch.isActive,", 1)[1]
+        self.assertLess(onboarding_reset.index("!" + flag), onboarding_reset.index("defaults.removeObject"))
+
     def test_remote_notification_capability_is_host_only(self) -> None:
         self.assertEqual(self.entitlements["aps-environment"], "$(APS_ENVIRONMENT)")
         self.assertNotIn("aps-environment", self.widget_entitlements)

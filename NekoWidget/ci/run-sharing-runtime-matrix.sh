@@ -373,6 +373,7 @@ PY
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
             -only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests \
+            -only-testing:NekoWidgetUITests/CatProfilePhotoFlowUITests \
             -only-testing:NekoWidgetUITests/SoloMemoriesUITests \
             -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes \
             -parallel-testing-enabled NO \

@@ -326,7 +326,7 @@ struct HomeView: View {
                 )
             } label: {
                 photoLibraryActionRow(
-                    title: "ねこのプロフィール",
+                    title: "猫ごとの写真",
                     detail: profileDetail,
                     systemImage: "cat.fill"
                 )
@@ -378,9 +378,9 @@ struct HomeView: View {
 
     private var profileDetail: String {
         if catProfilesPresentation.profiles.isEmpty {
-            return "名前や写真をあとから設定できます"
+            return "写真から猫を追加できます"
         }
-        return "\(catProfilesPresentation.profiles.count.formatted())匹を登録"
+        return "\(catProfilesPresentation.profiles.count.formatted())匹の写真・プロフィール"
     }
 
     private func detectedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
