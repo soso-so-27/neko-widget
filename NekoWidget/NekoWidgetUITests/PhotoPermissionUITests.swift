@@ -457,6 +457,9 @@ final class SoloMemoriesUITests: XCTestCase {
         capture("solo-memories-seasonal-first-largest-text")
 
         let seasonalCard = app.buttons["2025年7月–9月の季節のムービー、3場面、新着"]
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(seasonalCard.isHittable)
+        capture("solo-memories-seasonal-card-largest-text")
         openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
         assertSection("ふりかえり", in: app, largeText: true)
 
