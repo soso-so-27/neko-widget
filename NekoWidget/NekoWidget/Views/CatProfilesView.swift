@@ -178,6 +178,7 @@ struct CatProfilesView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("cat-profile-open")
                 .accessibilityHint("この子の写真を開きます")
             }
 
@@ -267,6 +268,79 @@ struct CatProfilesView: View {
     }
 
 }
+
+#if DEBUG
+/// In-memory UI fixture using the existing generated screenshot images.
+/// No PhotoKit library, files, accounts, or production membership are changed.
+@MainActor
+struct CatProfilePhotoFlowFixture: View {
+    @State private var names: [String] = []
+    @State private var memberships: [String: Set<String>] = [:]
+    @State private var rejectsNextAdd = true
+
+    private var photos: [CatProfilePhotoPresentation] {
+        AppStoreScreenshotFixture.photos.prefix(3).map {
+            CatProfilePhotoPresentation(
+                localIdentifier: $0.localIdentifier,
+                creationDate: $0.creationDate,
+                catBoundingBox: $0.catBoundingBox,
+                assignedProfileIdentifiers: memberships[$0.localIdentifier] ?? []
+            )
+        }
+    }
+
+    private var presentation: CatProfilesPresentation {
+        CatProfilesPresentation(
+            profiles: names.map { name in
+                let confirmed = photos.filter { $0.assignedProfileIdentifiers.contains(name) }
+                return CatProfilePresentation(
+                    identifier: name, name: name,
+                    coverPhoto: confirmed.first,
+                    confirmedPhotos: confirmed,
+                    manualCandidatePhotos: photos.filter { !$0.assignedProfileIdentifiers.contains(name) }
+                )
+            },
+            unassignedPhotos: photos.filter { $0.assignedProfileIdentifiers.isEmpty }
+        )
+    }
+
+    private var actions: CatProfilesViewActions {
+        var value = CatProfilesViewActions.noOp
+        value.createProfile = { draft in
+            guard !names.contains(draft.name) else { return nil }
+            names.append(draft.name)
+            if let identifier = draft.referencePhotoIdentifier {
+                memberships[identifier, default: []].insert(draft.name)
+            }
+            return draft.name
+        }
+        value.confirmProfileMembership = { name, identifiers in
+            if rejectsNextAdd {
+                rejectsNextAdd = false
+                return false
+            }
+            for identifier in identifiers { memberships[identifier, default: []].insert(name) }
+            return true
+        }
+        value.replacePhotoAssignments = { assignments in
+            for (identifier, names) in assignments { memberships[identifier] = names }
+            return true
+        }
+        value.deleteProfile = { name in
+            names.removeAll { $0 == name }
+            for identifier in Array(memberships.keys) { memberships[identifier]?.remove(name) }
+            return true
+        }
+        return value
+    }
+
+    var body: some View {
+        NavigationStack {
+            CatProfilesView(presentation: presentation, actions: actions)
+        }
+    }
+}
+#endif
 
 
 private struct CatProfileRow: View {

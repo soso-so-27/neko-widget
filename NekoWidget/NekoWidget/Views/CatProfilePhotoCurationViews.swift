@@ -535,6 +535,7 @@ struct CatProfileConfirmedPhotosView: View {
                         Image(systemName: "gearshape")
                     }
                     .accessibilityLabel("\(profile.displayName)のプロフィール設定")
+                    .accessibilityIdentifier("cat-profile-settings")
                     .disabled(isRemoving)
                 }
             }
@@ -810,6 +811,7 @@ struct UnassignedCatPhotosView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityIdentifier("cat-profile-confirm-add")
                 .disabled(!profiles.contains { $0.identifier == profileID })
                 if profiles.count > 1 {
                     Button("ほかの猫も選ぶ", systemImage: "cat") {
@@ -1108,6 +1110,7 @@ private struct CatSelectablePhotoGrid: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("cat-profile-photo")
                     .accessibilityLabel(accessibilityLabel(for: photo))
                     .accessibilityAddTraits(
                         selection.contains(photo.localIdentifier) ? .isSelected : []
