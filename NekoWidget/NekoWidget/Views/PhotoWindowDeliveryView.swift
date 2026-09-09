@@ -78,8 +78,10 @@ struct PhotoWindowDeliveryFixture: View {
                 if CommandLine.arguments.contains("--photo-window-unavailable") {
                     throw MemoryPhotoJPEGExportError.photoUnavailable
                 }
-                let index = selected.localIdentifier.hasSuffix("2") ? 1 : 0
-                let result = try MomentCanonicalPreviewBuilder.build(image: MomentExperiencePhotoFixture.image(index: index))
+                guard let image = AppStoreScreenshotFixture.image(for: selected.localIdentifier) else {
+                    throw MemoryPhotoJPEGExportError.photoUnavailable
+                }
+                let result = try MomentCanonicalPreviewBuilder.build(image: image)
                 return MomentShareIngressPhoto(canonicalJPEG: result.jpeg,
                     capturedAt: selected.creationDate, pixelWidth: result.pixelWidth, pixelHeight: result.pixelHeight)
             },
