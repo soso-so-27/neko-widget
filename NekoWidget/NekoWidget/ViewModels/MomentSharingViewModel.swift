@@ -11,6 +11,7 @@ struct MomentDeliveryDestination: Equatable, Sendable {
     let localWindowID: String
     let bindingSHA256: Data
     let displayName: String
+
 }
 
 @MainActor
@@ -224,6 +225,62 @@ final class MomentSharingViewModel: ObservableObject {
                 manualRefreshMessage = "更新できませんでした。時間をおいて、もう一度確認してください。"
             }
         }
+    }
+
+    /// Local authenticated choices only. Browsing/cancelling this picker never
+    /// changes the active window or stages a photo.
+    static func libraryDeliveryDestinations(
+        configuration: SharingAPIConfiguration = .current
+    ) async throws -> [MomentDeliveryDestination] {
+        guard configuration.isMediaAvailable,
+              configuration.isShareExtensionHandoffAvailable
+        else { throw MomentSharingError.stateUnavailable }
+        return try await Task.detached(priority: .userInitiated) {
+            let bootstrap = try PairingInstallationGuard.bootstrap()
+            return try MomentShareHandoffProcessor().refreshAdmissionCatalog(
+                lifecycleToken: bootstrap.lifecycleToken
+            ).destinations.map {
+                MomentDeliveryDestination(localWindowID: $0.localWindowID,
+                                          bindingSHA256: $0.bindingSHA256,
+                                          displayName: $0.displayName)
+            }
+        }.value
+    }
+
+    /// Called only by the explicit confirmation button. The selected window
+    /// becomes active so the ordinary pipeline can drain that exact handoff.
+    /// Validate the frozen recipient before AND after switching; never fall
+    /// back to whichever window happens to be active.
+    func deliverLibraryPhoto(
+        _ photo: MomentShareIngressPhoto,
+        to destination: MomentDeliveryDestination,
+        caption: String?
+    ) async -> Bool {
+        guard !isWorking, configuration.isMediaAvailable,
+              configuration.isShareExtensionHandoffAvailable else { return false }
+        isPerformingAction = true
+        errorMessage = nil
+        do {
+            let choices = try await Self.libraryDeliveryDestinations(configuration: configuration)
+            guard choices.contains(destination) else {
+                throw MomentSharingError.notPaired
+            }
+            if try PrivateWindowCatalogStore.load()?.activeWindowID != destination.localWindowID {
+                _ = try await PairingInstallationGuard.activatePrivateWindowAsync(
+                    localWindowID: destination.localWindowID
+                )
+                NotificationCenter.default.post(name: .momentSharingPresentationNeedsRefresh, object: nil)
+                Task { await MomentPushSubscriptionService.shared.reconcileRegistration() }
+            }
+            try reload()
+            isShowingLastKnownState = false
+        } catch {
+            isPerformingAction = false
+            errorMessage = "届け先を確認できませんでした。届け先を選び直すか、時間をおいてお試しください。"
+            return false
+        }
+        isPerformingAction = false
+        return await deliverSelectedPhoto(photo, to: destination, caption: caption)
     }
 
     /// Freezes the exact local-window and authenticated admission binding that

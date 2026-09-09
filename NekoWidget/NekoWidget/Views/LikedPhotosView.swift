@@ -1615,7 +1615,7 @@ private struct MemoryPhotoJPEGActivityView: UIViewControllerRepresentable {
 
 /// The destination shared by widget deep links and in-app photo links.
 /// Paging is gesture-only: there is deliberately no "next" button competing
-/// with the single private action, "思い出に残す".
+/// with the primary private action, "思い出に残す".
 struct PhotoBrowserView: View {
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
@@ -1634,6 +1634,7 @@ struct PhotoBrowserView: View {
     let assignmentsByPhotoIdentifier: [String: Set<String>]
     let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
     private let browserPhotos: [PhotoPresentation]
+    private let deliveryActions: PhotoWindowDeliveryActions?
     private let browserPhotoIdentifiers: [String]
     private let browserPhotoByIdentifier: [String: PhotoPresentation]
     private let browserIndexByIdentifier: [String: Int]
@@ -1649,6 +1650,9 @@ struct PhotoBrowserView: View {
     @State private var memoryPhotoExportTask: Task<Void, Never>?
     @State private var memoryPhotoSharePayload: MemoryPhotoJPEGSharePayload?
     @State private var memoryPhotoExportErrorMessage: String?
+    @State private var deliveryPhoto: PhotoPresentation?
+    @State private var deliveryStartedDestination: String?
+    @State private var pendingDeliveryStartedDestination: String?
 
     init(
         photos: [PhotoPresentation],
@@ -1663,7 +1667,8 @@ struct PhotoBrowserView: View {
         restoreCatCandidates: @escaping ([String]) -> Void,
         profiles: [CatProfilePresentation],
         assignmentsByPhotoIdentifier: [String: Set<String>],
-        replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool
+        replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool,
+        deliveryActions: PhotoWindowDeliveryActions? = nil
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -1688,6 +1693,7 @@ struct PhotoBrowserView: View {
         self.profiles = profiles
         self.assignmentsByPhotoIdentifier = assignmentsByPhotoIdentifier
         self.replaceProfileAssignments = replaceProfileAssignments
+        self.deliveryActions = deliveryActions
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
         browserPhotoByIdentifier = Dictionary(
@@ -1796,6 +1802,22 @@ struct PhotoBrowserView: View {
                             .controlSize(.large)
                             .disabled(isExportingMemoryPhoto)
                             .accessibilityHint("自分の思い出一覧に残します")
+                        }
+
+                        if canDeliverToWindow {
+                            Button {
+                                // Capture the visible page, not initialPhoto or
+                                // a mutable selection read after an async load.
+                                deliveryPhoto = selectedPhoto
+                            } label: {
+                                Label("まどへ届ける", systemImage: "paperplane")
+                                    .frame(maxWidth: .infinity, minHeight: 28)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .disabled(isExportingMemoryPhoto)
+                            .accessibilityIdentifier("photo-browser-deliver")
+                            .accessibilityHint("届け先を選んでから、写真とひとことを確認します")
                         }
 
                         if isExportingMemoryPhoto {
@@ -1929,6 +1951,25 @@ struct PhotoBrowserView: View {
             payload in
             MemoryPhotoJPEGActivityView(payload: payload)
         }
+        .sheet(item: $deliveryPhoto, onDismiss: {
+            deliveryStartedDestination = pendingDeliveryStartedDestination
+            pendingDeliveryStartedDestination = nil
+        }) { photo in
+            PhotoWindowDeliveryView(photo: photo, actions: deliveryActions ?? .live,
+                onCancel: { deliveryPhoto = nil },
+                onStaged: { destination in
+                    pendingDeliveryStartedDestination = destination
+                    deliveryPhoto = nil
+                })
+        }
+        .alert("送信を開始しました", isPresented: Binding(
+            get: { deliveryStartedDestination != nil },
+            set: { if !$0 { deliveryStartedDestination = nil } }
+        )) {
+            Button("閉じる", role: .cancel) { deliveryStartedDestination = nil }
+        } message: {
+            Text("「\(deliveryStartedDestination ?? "")」への送信状況は、「まど」の「送った」で確認できます。")
+        }
         .alert(
             "写真を書き出せませんでした",
             isPresented: Binding(
@@ -1985,6 +2026,14 @@ struct PhotoBrowserView: View {
                 explicitlyPreheatedPageCount: preheatedPhotoIdentifiers.count
             )
         }
+    }
+
+    private var canDeliverToWindow: Bool {
+#if DEBUG
+        if deliveryActions != nil { return true }
+#endif
+        return SharingAPIConfiguration.current.isMediaAvailable
+            && SharingAPIConfiguration.current.isShareExtensionHandoffAvailable
     }
 
     private func beginMemoryPhotoExport(_ localIdentifier: String) {

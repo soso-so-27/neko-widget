@@ -358,6 +358,126 @@ final class MomentDeliveryComposerUITests: XCTestCase {
     }
 
     @MainActor
+    func testPhotoBrowserDeliversVisiblePhotoAfterDestinationConfirmation() {
+        for variant in ["standard", "large"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--photo-window-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if variant == "large" { app.launchArguments.append("--photo-window-large") }
+            app.launch()
+            let deliver = app.buttons["photo-browser-deliver"]
+            XCTAssertTrue(deliver.waitForExistence(timeout: 15))
+            // Swipe the actual production pager away from initialPhoto.
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.30))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.30))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
+            for _ in 0..<4 where !deliver.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            XCTAssertTrue(deliver.isHittable)
+            attach(app, name: "photo-window-entry-\(variant)")
+            deliver.tap()
+            let family = app.buttons["photo-window-destination-family"]
+            XCTAssertTrue(family.waitForExistence(timeout: 10))
+            attach(app, name: "photo-window-destinations-\(variant)")
+            family.tap()
+            let edit = app.buttons["family-window-caption-edit"]
+            XCTAssertTrue(edit.waitForExistence(timeout: 10))
+            edit.tap()
+            let input = app.descendants(matching: .any)["family-window-caption-input"].firstMatch
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            input.tap()
+            input.typeText("ねむい")
+            app.buttons["family-window-caption-done-top"].tap()
+            app.buttons["photo-window-change-destination"].tap()
+            let friends = app.buttons["photo-window-destination-friends"]
+            XCTAssertTrue(friends.waitForExistence(timeout: 10))
+            friends.tap()
+            let destination = app.staticTexts["family-window-composer-destination"]
+            XCTAssertTrue(destination.waitForExistence(timeout: 10))
+            XCTAssertTrue(destination.label.contains("猫ともだち"))
+            XCTAssertTrue(app.buttons["family-window-caption-edit"].label.contains("ねむい"))
+            attach(app, name: "photo-window-confirmation-\(variant)")
+            app.buttons["family-window-cancel-delivery"].tap()
+            let result = app.staticTexts["photo-window-fixture-result"]
+            XCTAssertTrue(result.waitForExistence(timeout: 5))
+            XCTAssertTrue(result.label.hasPrefix("0|"), "Choosing and cancelling must not send.")
+            deliver.tap()
+            XCTAssertTrue(friends.waitForExistence(timeout: 10))
+            friends.tap()
+            let confirm = app.buttons["family-window-confirm-delivery"]
+            XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+            confirm.tap()
+            XCTAssertTrue(app.alerts["送信を開始しました"].waitForExistence(timeout: 10))
+            app.alerts.buttons["閉じる"].tap()
+            XCTAssertEqual(result.label, "1|2|friends|", "Send exactly the visible, unsaved photo; a cancelled caption must not leak.")
+            XCTAssertTrue(app.staticTexts["2 / 2"].exists, "Return to the same photo.")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testPhotoWindowRetryPreservesConfirmedPhotoAndCaption() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--photo-window-ui-fixture", "--photo-window-retry", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let deliver = app.buttons["photo-browser-deliver"]
+        XCTAssertTrue(deliver.waitForExistence(timeout: 15))
+        deliver.tap()
+        let family = app.buttons["photo-window-destination-family"]
+        XCTAssertTrue(family.waitForExistence(timeout: 10))
+        family.tap()
+        let edit = app.buttons["family-window-caption-edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        edit.tap()
+        let input = app.descendants(matching: .any)["family-window-caption-input"].firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("おやすみ")
+        app.buttons["family-window-caption-done-top"].tap()
+        let confirm = app.buttons["family-window-confirm-delivery"]
+        confirm.tap()
+        XCTAssertTrue(app.staticTexts["送信を開始できませんでした。もう一度お試しください。"].waitForExistence(timeout: 5))
+        XCTAssertTrue(edit.label.contains("おやすみ"))
+        XCTAssertTrue(app.staticTexts["family-window-composer-destination"].label.contains("マイファミリー"))
+        confirm.tap()
+        XCTAssertTrue(app.alerts["送信を開始しました"].waitForExistence(timeout: 10))
+        app.alerts.buttons["閉じる"].tap()
+        XCTAssertEqual(app.staticTexts["photo-window-fixture-result"].label, "1|1|family|おやすみ")
+    }
+
+    @MainActor
+    func testPhotoWindowCancellationAndUnavailableSourcesDoNotSend() {
+        for variant in ["empty", "unavailable", "slow"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--photo-window-ui-fixture", "--photo-window-\(variant)", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            app.launch()
+            let deliver = app.buttons["photo-browser-deliver"]
+            XCTAssertTrue(deliver.waitForExistence(timeout: 15))
+            deliver.tap()
+            if variant == "empty" {
+                XCTAssertTrue(app.descendants(matching: .any)["photo-window-no-destinations"].firstMatch.waitForExistence(timeout: 10))
+            } else {
+                let family = app.buttons["photo-window-destination-family"]
+                XCTAssertTrue(family.waitForExistence(timeout: 10))
+                family.tap()
+                if variant == "unavailable" {
+                    XCTAssertTrue(app.buttons["もう一度確認"].waitForExistence(timeout: 10))
+                    XCTAssertFalse(app.buttons["family-window-confirm-delivery"].exists)
+                }
+            }
+            attach(app, name: "photo-window-\(variant)")
+            app.buttons["photo-window-cancel"].tap()
+            let result = app.staticTexts["photo-window-fixture-result"]
+            XCTAssertTrue(result.waitForExistence(timeout: 5))
+            XCTAssertTrue(result.label.hasPrefix("0|"))
+            if variant == "slow" {
+                XCTAssertFalse(app.buttons["family-window-confirm-delivery"].waitForExistence(timeout: 4), "A late image must not reopen a cancelled flow.")
+            }
+            XCTAssertTrue(deliver.isHittable)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes() {
         var standardDetailCaptionHeight: CGFloat = 0
         for variant in ["standard", "narrow", "large"] {

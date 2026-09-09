@@ -3549,6 +3549,33 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertIn("MomentShareIngressService.swift in Sources", app_sources)
 
+    def test_photo_browser_delivery_keeps_the_existing_admission_and_photo_boundaries(self) -> None:
+        browser = source("NekoWidget/Views/LikedPhotosView.swift")
+        flow = source("NekoWidget/Views/PhotoWindowDeliveryView.swift")
+        model = source("NekoWidget/ViewModels/MomentSharingViewModel.swift")
+        exporter = source("NekoWidget/Services/PhotoBookPDFExporter.swift")
+        delivery = section(model, "func deliverLibraryPhoto(", "func deliveryDestinationSnapshot()")
+        self.assertIn("deliveryPhoto = selectedPhoto", browser)
+        self.assertIn(".sheet(item: $deliveryPhoto", browser)
+        self.assertIn("PhotoLibraryJPEGExporter().export(", flow)
+        self.assertNotIn("localThumbnailJPEG", flow)
+        self.assertIn("preview = try prepared.previewImage()", flow)
+        self.assertIn("try Task.checkCancellation()", flow)
+        self.assertIn("guard !isSending, !didStage", flow)
+        self.assertIn("choices.contains(destination)", delivery)
+        self.assertLess(delivery.index("choices.contains(destination)"),
+                        delivery.index("activatePrivateWindowAsync"))
+        self.assertIn("activeWindowID != destination.localWindowID", delivery)
+        self.assertIn("deliverSelectedPhoto(photo, to: destination, caption: caption)", delivery)
+        choices = section(model, "static func libraryDeliveryDestinations(", "func deliverLibraryPhoto(")
+        self.assertIn("configuration.isMediaAvailable", choices)
+        self.assertIn("configuration.isShareExtensionHandoffAvailable", choices)
+        self.assertNotIn("activatePrivateWindowAsync", choices)
+        self.assertNotIn("stage(", choices)
+        memory = section(exporter, "struct MemoryPhotoJPEGExporter", "struct PhotoLibraryJPEGExporter")
+        self.assertLess(memory.index("MemoryPhotoExportPolicy.selection"),
+                        memory.index("PhotoLibraryJPEGExporter().export"))
+
     def test_retryable_pairing_bootstrap_is_retried_after_data_protection(self) -> None:
         pairing_model = source("NekoWidget/ViewModels/PairingViewModel.swift")
         pairing_view = source("NekoWidget/Views/PairingView.swift")

@@ -12,6 +12,7 @@ struct MomentDeliveryComposer: View {
     let errorMessage: String?
     let onCancel: () -> Void
     let onSend: (String) -> Void
+    var onChangeDestination: (() -> Void)? = nil
     @FocusState private var isCaptionFocused: Bool
     @State private var isEditingCaption = false
     @State private var showsSharingInformation = false
@@ -59,10 +60,24 @@ struct MomentDeliveryComposer: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 10) {
-                    Text("届け先：\(destinationName)")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("family-window-composer-destination")
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("届け先：\(destinationName)")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("family-window-composer-destination")
+                        if let onChangeDestination {
+                            Button("変更") {
+                                finishCaptionEditing()
+                                onChangeDestination()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.subheadline)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .disabled(isSending)
+                            .accessibilityLabel("届け先を変更")
+                            .accessibilityIdentifier("photo-window-change-destination")
+                        }
+                    }
                     if isEditingCaption {
                         Button {
                             finishCaptionEditing()
