@@ -1241,7 +1241,7 @@ struct FamilyWindowView: View {
 
     private var outgoingStatusSection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if !model.isShowingLastKnownState {
+            if !model.isShowingLastKnownState && !model.outgoingPhotoProgress.isEmpty {
                 MomentPhotoDeliveryProgressView(photos: Array(model.outgoingPhotoProgress.prefix(4))) {
                     showsOutgoingDetails = true
                 }
