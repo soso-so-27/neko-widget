@@ -2805,7 +2805,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("Task.detached(priority: .userInitiated)", main_tab)
         self.assertIn("catalogReloadRevision", main_tab)
         onboarding = source("NekoWidget/Views/OnboardingPresentation.swift")
-        self.assertIn("猫写真のウィジェットをひとつ。", onboarding)
+        self.assertIn("猫写真をひとつ。", onboarding)
         self.assertNotIn("猫写真のまどをひとつ。", onboarding)
 
         self.assertIn('"photo-browser-memory-saved-state"', liked)

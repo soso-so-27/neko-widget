@@ -119,7 +119,7 @@ enum OnboardingPresentationVerifier {
         try require(
             OnboardingPresentationCopy.widgetTitleLines == [
                 "ホーム画面に、",
-                "猫写真のウィジェットをひとつ。"
+                "猫写真をひとつ。"
             ],
             "Widget guide promise changed"
         )

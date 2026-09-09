@@ -948,9 +948,9 @@ jobs:
     needs: [plan, build-without-signing]
     if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
-    # Includes offline sharing/memories UI and three Widget Gallery scenarios.
-    # Leave room for the focused memories cases without repeating a timed-out run.
-    timeout-minutes: 45
+    # Includes offline sharing/profile/memories UI and three Widget Gallery scenarios.
+    # The merged profile suite took 42m42s; leave room for same-day photo navigation.
+    timeout-minutes: 50
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 

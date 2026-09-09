@@ -101,7 +101,7 @@ enum OnboardingPresentationCopy {
 
     static let widgetTitleLines = [
         "ホーム画面に、",
-        "猫写真のウィジェットをひとつ。"
+        "猫写真をひとつ。"
     ]
     static let widgetBody = "見つけた猫写真を、自分のホーム画面でも楽しめます。\n追加はホーム画面で行います。"
     static let widgetModernPlacementSteps = [
