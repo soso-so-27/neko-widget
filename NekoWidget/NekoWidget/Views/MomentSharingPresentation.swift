@@ -857,7 +857,7 @@ enum MomentSharingPresentationPolicy {
             default:
                 if item.phase == .prepared && item.lastErrorCode == "daily-quota-exceeded" {
                     phase = .quotaWaiting
-                } else if isRetryDeferred(item, at: now) {
+                } else if (item.retryAt.map { $0 > now } ?? false) || isRetryDeferred(item, at: now) {
                     phase = .waiting
                 } else if item.phase == .committing {
                     phase = .confirming

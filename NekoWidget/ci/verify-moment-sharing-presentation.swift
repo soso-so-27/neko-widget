@@ -71,7 +71,7 @@ enum MomentSharingPresentationVerifier {
         ]
         for (id, phase) in expectedPhases {
             try require(result.first { $0.id == id }?.phase == phase,
-                "photo progress lost the explicit deferred/failed/unknown state")
+                "photo progress lost the explicit state for \(id): expected \(phase)")
         }
         try require(!result.contains { $0.id == "old-accepted" }, "old receipts replayed progress")
     }
