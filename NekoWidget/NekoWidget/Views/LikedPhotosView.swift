@@ -770,6 +770,40 @@ struct LikedPhotosView: View {
         badge: String? = nil,
         identifier: String
     ) -> some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.headline)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let badge {
+                        Text(badge)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                standardSummarySectionTitle(
+                    title, subtitle: subtitle, systemImage: systemImage, badge: badge
+                )
+            }
+        }
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func standardSummarySectionTitle(
+        _ title: String,
+        subtitle: String,
+        systemImage: String,
+        badge: String?
+    ) -> some View {
         HStack(alignment: .top, spacing: 11) {
             Image(systemName: systemImage)
                 .font(.subheadline.weight(.semibold))
@@ -799,10 +833,6 @@ struct LikedPhotosView: View {
                     .background(Color(.tertiarySystemFill), in: Capsule())
             }
         }
-        .padding(.horizontal, 16)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-        .accessibilityIdentifier(identifier)
     }
 
     private var summarySectionDivider: some View {

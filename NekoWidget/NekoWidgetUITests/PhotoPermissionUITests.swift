@@ -392,7 +392,7 @@ final class SoloMemoriesUITests: XCTestCase {
             // Both sections stay available, independently of the initial one.
             selectSection("ふりかえり", in: app)
             if scenario == "denied" {
-                XCTAssertTrue(element("memories-monthly-window", in: app).exists)
+                XCTAssertTrue(monthlyCard(in: app).exists)
             } else {
                 XCTAssertTrue(app.staticTexts["月の便りはまだありません"].exists)
             }
@@ -408,14 +408,14 @@ final class SoloMemoriesUITests: XCTestCase {
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
         assertSection("残した写真", in: app)
         selectSection("ふりかえり", in: app)
-        XCTAssertTrue(element("memories-monthly-window", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(monthlyCard(in: app).waitForExistence(timeout: 10))
 
         fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスなし")
         assertSection("ふりかえり", in: app)
         XCTAssertTrue(app.staticTexts["写真へのアクセスを許可すると表示されます"].exists)
         fixtureAction("solo-memories-toggle-access", in: app, expectedValue: "写真アクセスあり")
         assertSection("ふりかえり", in: app)
-        XCTAssertTrue(element("memories-monthly-window", in: app).exists)
+        XCTAssertTrue(monthlyCard(in: app).exists)
         visitOtherScreenAndReturn(in: app)
         assertSection("ふりかえり", in: app)
 
@@ -427,9 +427,11 @@ final class SoloMemoriesUITests: XCTestCase {
         // A fresh first display with a completed letter starts on that letter.
         let readyApp = launch("monthly")
         assertSection("ふりかえり", in: readyApp)
-        XCTAssertTrue(element("memories-monthly-window", in: readyApp).waitForExistence(timeout: 10))
+        XCTAssertTrue(monthlyCard(in: readyApp).waitForExistence(timeout: 10))
         XCTAssertTrue(readyApp.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
         capture("solo-memories-monthly-ready")
+        openCardAndReturn(monthlyCard(in: readyApp), expectedRoute: "monthly:2025-08", in: readyApp)
+        assertSection("ふりかえり", in: readyApp)
         readyApp.terminate()
     }
 
@@ -438,11 +440,14 @@ final class SoloMemoriesUITests: XCTestCase {
         let app = launch("seasonal-large")
         assertSection("ふりかえり", in: app, largeText: true)
         XCTAssertTrue(app.staticTexts["solo-memories-loaded-1"].waitForExistence(timeout: 15))
-        let seasonalTitle = element("memories-seasonal-movies-title", in: app)
-        let monthlyTitle = element("memories-latest-summary-title", in: app)
+        // Native AX gives these children their section container's identifier.
+        // Match the actual heading text, retaining the visual order assertion.
+        let seasonalTitle = app.staticTexts["季節のムービー"]
+        let monthlyTitle = app.staticTexts["月の便り"]
         XCTAssertTrue(seasonalTitle.waitForExistence(timeout: 10))
         XCTAssertTrue(monthlyTitle.waitForExistence(timeout: 10))
         XCTAssertGreaterThan(seasonalTitle.frame.height, 0)
+        XCTAssertGreaterThan(monthlyTitle.frame.height, 0)
         XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY)
         let menu = app.buttons["memories-section-menu"]
         XCTAssertTrue(menu.isHittable)
@@ -451,13 +456,15 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertLessThanOrEqual(menu.frame.maxX, app.frame.maxX)
         capture("solo-memories-seasonal-first-largest-text")
 
+        let seasonalCard = app.buttons["2025年7月–9月の季節のムービー、3場面、新着"]
+        openCardAndReturn(seasonalCard, expectedRoute: "seasonal:2025-Q3", in: app)
+        assertSection("ふりかえり", in: app, largeText: true)
+
         fixtureAction("solo-memories-add-letter", in: app, expectedValue: "便りあり")
         assertSection("ふりかえり", in: app, largeText: true)
         XCTAssertLessThan(seasonalTitle.frame.minY, monthlyTitle.frame.minY,
                           "A late monthly letter must not move the seasonal movie below it.")
-        let monthlyCard = element("memories-monthly-window", in: app)
-        for _ in 0..<6 where !monthlyCard.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(monthlyCard.isHittable, "The later monthly letter must remain reachable.")
+        openCardAndReturn(monthlyCard(in: app), expectedRoute: "monthly:2025-08", in: app)
         for _ in 0..<6 where !menu.isHittable { app.scrollViews.firstMatch.swipeDown() }
         XCTAssertTrue(menu.isHittable)
         selectSection("残した写真", in: app, largeText: true)
@@ -481,6 +488,26 @@ final class SoloMemoriesUITests: XCTestCase {
     @MainActor
     private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    @MainActor
+    private func monthlyCard(in app: XCUIApplication) -> XCUIElement {
+        // Native AX identifies both the heading and card as
+        // memories-latest-summary. The card's full spoken name stays distinct.
+        app.buttons["2025年8月の小さな便り、5枚、未読"]
+    }
+
+    @MainActor
+    private func openCardAndReturn(_ card: XCUIElement, expectedRoute: String, in app: XCUIApplication) {
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        for _ in 0..<6 where !card.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(card.isHittable, "The real card must remain reachable at this text size.")
+        XCTAssertTrue(card.isEnabled)
+        card.tap()
+        let destination = app.staticTexts["solo-memories-detail-destination"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 10))
+        XCTAssertEqual(destination.value as? String, expectedRoute)
+        app.buttons["solo-memories-detail-return"].tap()
     }
 
     @MainActor

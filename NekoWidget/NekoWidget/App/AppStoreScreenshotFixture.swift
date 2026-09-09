@@ -496,6 +496,7 @@ private struct SoloMemoriesFixtureView: View {
     @State private var hasPhotoAccess: Bool
     @State private var showsOtherScreen = false
     @State private var otherScreenTitle = "別の画面"
+    @State private var detailPath: [MemoriesRoute] = []
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
     init(scenario: String) {
@@ -507,7 +508,7 @@ private struct SoloMemoriesFixtureView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $detailPath) {
             LikedPhotosView(
                 photos: savedPhotos,
                 hasPhotoAccess: hasPhotoAccess,
@@ -552,6 +553,19 @@ private struct SoloMemoriesFixtureView: View {
                         .accessibilityIdentifier("solo-memories-other-screen")
                     Button("思い出に戻る") { showsOtherScreen = false }
                         .accessibilityIdentifier("solo-memories-return")
+                }
+            }
+            // Match the shipping NavigationStack's registered value type so
+            // its real photo/letter/movie links remain enabled in this fixture.
+            .navigationDestination(for: MemoriesRoute.self) { route in
+                VStack(spacing: 20) {
+                    Text("思い出の詳細")
+                        .accessibilityIdentifier("solo-memories-detail-destination")
+                        .accessibilityValue(detailRouteKey(route))
+                    Button("思い出に戻る") {
+                        if !detailPath.isEmpty { detailPath.removeLast() }
+                    }
+                    .accessibilityIdentifier("solo-memories-detail-return")
                 }
             }
         }
@@ -607,6 +621,14 @@ private struct SoloMemoriesFixtureView: View {
 
     private var loadedCount: Int {
         Set(loadTracker.loadedImages.map(\.localIdentifier)).count
+    }
+
+    private func detailRouteKey(_ route: MemoriesRoute) -> String {
+        switch route {
+        case let .photo(identifier): "photo:\(identifier)"
+        case let .monthlyWindow(presentation): "monthly:\(presentation.periodIdentifier)"
+        case let .seasonalMovie(period): "seasonal:\(period.id)"
+        }
     }
 }
 #endif
