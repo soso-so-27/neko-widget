@@ -46,8 +46,16 @@ struct NekoWidgetApp: App {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
                 AppStoreScreenshotFixtureRootView()
+            } else if CommandLine.arguments.contains("--photo-delivery-progress-ui-fixture") {
+                MomentPhotoDeliveryProgressFixture()
+            } else if CommandLine.arguments.contains("--photo-window-ui-fixture") {
+                PhotoWindowDeliveryFixture()
             } else if CommandLine.arguments.contains("--moment-composer-ui-fixture") {
                 MomentDeliveryComposerFixture()
+            } else if CommandLine.arguments.contains("--moment-history-ui-fixture") {
+                MomentSentHistoryFixture()
+            } else if CommandLine.arguments.contains("--moment-received-ui-fixture") {
+                MomentReceivedLayoutFixture()
             } else if CommandLine.arguments.contains("--sharing-runtime-self-test") {
                 SharingRuntimeSelfTestRootView()
             } else {

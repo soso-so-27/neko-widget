@@ -15,7 +15,8 @@ enum WidgetEmptyStateReason: Equatable, Sendable {
     case sourceUnavailable
 }
 
-/// Timeline entries intentionally carry references only. WidgetKit may render
+/// Timeline entries carry image references and bounded optional text, never
+/// decoded images. WidgetKit may render
 /// every future entry while accepting a timeline, so the provider also bounds
 /// each timeline to two entries instead of relying on lazy view evaluation.
 struct NekoWidgetEntry: TimelineEntry {
@@ -34,6 +35,7 @@ struct NekoWidgetEntry: TimelineEntry {
     let familyHeartStatus: FamilyWidgetHeartStatus
     let familyActionsRequireApp: Bool
     let emptyStateReason: WidgetEmptyStateReason
+    var familyCaption: String? = nil
 
     static func empty(
         at date: Date,

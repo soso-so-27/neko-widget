@@ -201,6 +201,8 @@ run_runtime_body() {
     local report_published="false"
     local poll_attempt=0
     local validator_status=0
+    local app_data_container=""
+    local -a runtime_launch_arguments=("--sharing-runtime-self-test")
 
     mkdir -p "$runtime_artifacts"
     xcrun simctl shutdown "$simulator_udid" >/dev/null 2>&1 || true
@@ -218,9 +220,31 @@ run_runtime_body() {
         return 1
     fi
 
+    if [[ "$label" == "ios-26-2" ]]; then
+        app_data_container="$(xcrun simctl get_app_container "$simulator_udid" "$APP_BUNDLE_ID" data)"
+        if [[ ! -d "$app_data_container/tmp" ]]; then
+            echo "The Widget review fixture container is unavailable." >&2
+            return 1
+        fi
+        # The same fixed public portrait enters the real canonicalization,
+        # decrypted-receipt, Vision and family-cache path in the runtime test.
+        # The app independently verifies this exact hash before using/exporting it.
+        python3 - "$app_data_container/tmp" <<'PY' || return $?
+import hashlib
+import sys
+from pathlib import Path
+
+data = Path("ci/fixtures/cats/cat-gray-portrait.png").read_bytes()
+if hashlib.sha256(data).hexdigest() != "bd5a348e5e6df1b32837c51ab0357505119ea564d13ac4afefe3803b1b8dfbf8":
+    raise SystemExit("The fixed Widget portrait fixture failed its hash check")
+Path(sys.argv[1], "sharing-widget-review-source.png").write_bytes(data)
+PY
+        runtime_launch_arguments+=("--sharing-widget-portrait-review")
+    fi
+
     if ! launch_output="$(
         xcrun simctl launch --terminate-running-process \
-            "$simulator_udid" "$APP_BUNDLE_ID" --sharing-runtime-self-test
+            "$simulator_udid" "$APP_BUNDLE_ID" "${runtime_launch_arguments[@]}"
     )"; then
         echo "$runtime failed to launch the generated-data self-test." >&2
         return 1
@@ -264,8 +288,9 @@ run_runtime_body() {
             --renderer-version "$RENDERER_VERSION" \
             || validator_status=$?
     fi
-    # Reuse the built app and exact iOS 26 runtime for the keyboard regression.
-    # This DEBUG fixture has no accounts, PhotoKit access or network activity.
+    # After ordinary runtime validation, use the same iOS 26 Simulator for UI
+    # review. Only these final test builds enable Widget Gallery fixture pixels.
+    # These DEBUG fixtures have no accounts, PhotoKit access or network activity.
     if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]; then
         local composer_status=0
         local composer_result="$runtime_artifacts/MomentComposer.xcresult"
@@ -273,6 +298,72 @@ run_runtime_body() {
         defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false
         xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
             AppleKeyboards -array ja_JP-Kana en_US
+        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLanguages -array ja
+        xcrun simctl spawn "$simulator_udid" defaults write NSGlobalDomain \
+            AppleLocale -string ja_JP
+        # Export only the three runtime-validated JPEGs derived from the known
+        # portrait. Reuse those exact bytes in normal and no-caption Gallery
+        # builds; the separate white-background comparison remains synthetic.
+        # Normal app builds and the release checkout do not inject these bytes.
+        python3 - "$app_data_container/tmp" "$runtime_artifacts/widget-portrait-cache" <<'PY' || return $?
+import base64
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+cache_output = Path(sys.argv[2])
+cache_output.mkdir(parents=True, exist_ok=True)
+exported = []
+view = Path("NekoWidgetWidget/NekoWidgetView.swift")
+source = view.read_text(encoding="utf-8")
+for size, width, height, byte_cap in [
+    ("small", 500, 500, 100 * 1024),
+    ("medium", 1050, 500, 200 * 1024),
+    ("large", 1050, 1100, 220 * 1024),
+]:
+    marker = f"__W1_WIDGET_{size.upper()}_CACHE_JPEG_BASE64__"
+    if source.count(marker) != 1:
+        raise SystemExit(f"Missing or duplicate Widget fixture marker: {size}")
+    image = Path(sys.argv[1], f"sharing-widget-review-{size}.jpg").read_bytes()
+    if not image.startswith(b"\xff\xd8") or not image.endswith(b"\xff\xd9") or len(image) > byte_cap:
+        raise SystemExit("Widget fixture must be the bounded runtime JPEG")
+    filename = f"{size}.jpg"
+    (cache_output / filename).write_bytes(image)
+    exported.append({
+        "file": filename,
+        "sha256": hashlib.sha256(image).hexdigest(),
+        "bytes": len(image),
+        "expectedWidth": width,
+        "expectedHeight": height,
+    })
+    source = source.replace(marker, base64.b64encode(image).decode("ascii"))
+view.write_text(source, encoding="utf-8")
+(cache_output / "fixture-lineage.json").write_text(json.dumps({
+    "schemaVersion": 1,
+    "source": "cat-gray-portrait.png",
+    "sourceSHA256": "bd5a348e5e6df1b32837c51ab0357505119ea564d13ac4afefe3803b1b8dfbf8",
+    "productionBuilder": "WidgetCacheBuilder.buildFamilyWindow",
+    "outputs": exported,
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+view = Path("NekoWidget/Views/MomentDeliveryComposer.swift")
+source = view.read_text(encoding="utf-8")
+for name, filename in [
+    ("GRAY", "cat-gray-portrait.png"),
+    ("ORANGE", "cat-orange-square.png"),
+    ("TUXEDO", "cat-tuxedo-landscape.png"),
+]:
+    marker = f"__MOMENT_EXPERIENCE_{name}_PNG_BASE64__"
+    if source.count(marker) != 1:
+        raise SystemExit(f"Missing or duplicate photo experience fixture marker: {name}")
+    image = Path("ci/fixtures/cats", filename).read_bytes()
+    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise SystemExit("Photo experience fixture must be a PNG")
+    source = source.replace(marker, base64.b64encode(image).decode("ascii"))
+view.write_text(source, encoding="utf-8")
+PY
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
@@ -282,16 +373,79 @@ run_runtime_body() {
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
             -only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests \
+            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes \
             -parallel-testing-enabled NO \
+            -testLanguage ja \
+            -testRegion JP \
             COMPILER_INDEX_STORE_ENABLE=NO \
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            'WIDGET_SCREENSHOT_FIXTURE_CONDITION=APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE' \
             test || composer_status=$?
         if [[ -d "$composer_result" ]]; then
             xcrun xcresulttool export attachments --path "$composer_result" \
                 --output-path "$runtime_artifacts/composer-screenshots"
         fi
+        # Reuse DerivedData, but reset the disposable Simulator between
+        # fixture builds. WidgetKit can otherwise serve the previous Gallery
+        # snapshot even after Xcode installs the newly compiled extension.
+        # These captures do not install a Home Screen Widget or invoke actions.
+        local widget_review_conditions="APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
+        local widget_scenario=""
+        local widget_scenario_conditions=""
+        local widget_scenario_result=""
+        local widget_scenario_status=0
+        local widget_scenario_test=""
+        for widget_scenario in long-white-large no-caption; do
+            widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
+            case "$widget_scenario" in
+                long-white-large)
+                    widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"
+                    widget_scenario_conditions="WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND WIDGET_VISUAL_REVIEW_LARGE_TEXT"
+                    ;;
+                no-caption)
+                    widget_scenario_conditions="WIDGET_VISUAL_REVIEW_NO_CAPTION"
+                    ;;
+            esac
+            widget_scenario_result="$runtime_artifacts/Widget-$widget_scenario.xcresult"
+            widget_scenario_status=0
+            # Runtime results and cache JPEGs were exported above. These last
+            # builds need no simulator data: erase both extension registrations
+            # and SpringBoard's cached previews before installing each fixture.
+            xcrun simctl shutdown "$simulator_udid" || return $?
+            xcrun simctl erase "$simulator_udid" || return $?
+            xcrun simctl boot "$simulator_udid" || return $?
+            xcrun simctl bootstatus "$simulator_udid" -b || return $?
+            xcodebuild \
+                -project NekoWidget.xcodeproj \
+                -scheme NekoWidget \
+                -configuration Debug \
+                -sdk iphonesimulator \
+                -destination "platform=iOS Simulator,id=$simulator_udid" \
+                -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
+                -resultBundlePath "$widget_scenario_result" \
+                "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/$widget_scenario_test" \
+                -parallel-testing-enabled NO \
+                -testLanguage ja \
+                -testRegion JP \
+                COMPILER_INDEX_STORE_ENABLE=NO \
+                CODE_SIGNING_ALLOWED=YES \
+                CODE_SIGN_IDENTITY=- \
+                AD_HOC_CODE_SIGNING_ALLOWED=YES \
+                "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$widget_review_conditions $widget_scenario_conditions" \
+                test || widget_scenario_status=$?
+            if [[ -d "$widget_scenario_result" ]]; then
+                xcrun xcresulttool export attachments --path "$widget_scenario_result" \
+                    --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots"
+            fi
+            if (( widget_scenario_status != 0 )); then
+                return "$widget_scenario_status"
+            fi
+        done
+        # App UI and Widget contrast/no-caption captures are independent.
+        # Preserve the UI failure, but collect the remaining visual evidence
+        # instead of withholding it because a different screen failed.
         if (( composer_status != 0 )); then
             return "$composer_status"
         fi

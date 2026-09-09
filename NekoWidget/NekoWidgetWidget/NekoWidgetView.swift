@@ -2,11 +2,21 @@ import SwiftUI
 import WidgetKit
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
 import Foundation
+import ImageIO
 import UIKit
 #endif
 
 #if APP_STORE_SCREENSHOT_WIDGET_FIXTURE && !DEBUG
 #error("The App Store Widget screenshot fixture must never compile outside Debug.")
+#endif
+#if WIDGET_VISUAL_REVIEW_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)
+#error("Widget visual review requires Debug and the dedicated screenshot fixture.")
+#endif
+#if (WIDGET_VISUAL_REVIEW_LONG_CAPTION || WIDGET_VISUAL_REVIEW_NO_CAPTION || WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND || WIDGET_VISUAL_REVIEW_LARGE_TEXT) && !WIDGET_VISUAL_REVIEW_FIXTURE
+#error("Widget review scenarios require the dedicated visual review fixture.")
+#endif
+#if WIDGET_VISUAL_REVIEW_LONG_CAPTION && WIDGET_VISUAL_REVIEW_NO_CAPTION
+#error("Choose one Widget caption review scenario per build.")
 #endif
 
 struct NekoWidgetView: View {
@@ -36,65 +46,199 @@ struct NekoWidgetView: View {
                             .resizable()
                             .interpolation(.high)
                             .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                            .frame(
+                                width: proxy.size.width,
+                                height: proxy.size.height
+                            )
                             .clipped()
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
-                            ? "\(entry.windowDisplayName)に届いた写真"
-                            : "このiPhoneで見つけた猫写真"
-                    )
+                    .accessibilityLabel(loadedPhotoAccessibilityLabel)
+                    .overlay(alignment: .bottom) {
+                        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+                            familyPhotoFooter
+                        } else {
+                            photoActionButtons()
+                                .padding(actionButtonInset)
+                        }
+                    }
                 }
             } else {
                 emptyState
             }
         }
-        .overlay(alignment: .bottom) {
-            photoActionButtons
-        }
-        .overlay(alignment: .topLeading) {
-            familySourceLabel
-        }
         .containerBackground(for: .widget) {
             Color(red: 0.12, green: 0.10, blue: 0.09)
         }
+#if WIDGET_VISUAL_REVIEW_LARGE_TEXT
+        // Use the normal shipping text-size limits, with the environment at
+        // its largest setting; this never changes ordinary or Release Widgets.
+        .environment(\.dynamicTypeSize, .accessibility5)
+#endif
         // A photo is always navigation, never an implicit memory action.
-        // Explicit controls below keep the action routes discoverable without
-        // changing what a tap on the image means across widget families.
+        // The photo opens its detail; only the separate heart sends a reaction.
+        // Shared save stays in detail. Personal-library memory stays explicit.
         .widgetURL(entry.photoURL)
     }
 
+    /// Used only inside the successfully decoded photo branch above. The
+    /// optional text never gives an empty or personal-library Widget a caption.
+    private var familyCaption: String? {
+        guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
+              let text = entry.familyCaption?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        return text
+    }
+
+    private var loadedPhotoAccessibilityLabel: String {
+        guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
+        else { return "このiPhoneで見つけた猫写真" }
+        let photo = "\(entry.windowDisplayName)に届いた写真"
+        return familyCaption.map { "\(photo)。ひとこと。\($0)" } ?? photo
+    }
+
+    /// One quiet footer for shared photos. Its background covers the full
+    /// width and fades into the image, without adding separate text panels.
+    private var familyPhotoFooter: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            VStack(spacing: 4) {
+                if let caption = familyCaption {
+                    familyCaptionPreview(caption)
+                }
+                familySourceLabel
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            // Only the text is decorative. Hiding or disabling the entire
+            // footer would also hide the heart from touch and VoiceOver.
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+
+            familyHeartShortcut
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+        .background {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.60)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: familyCaption == nil ? 16 : 26)
+                // Maintain contrast directly under both lines of text, even
+                // on a white photo; only the area above the footer fades out.
+                LinearGradient(
+                    colors: [.black.opacity(0.60), .black.opacity(0.63)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
+            .padding(.top, familyCaption == nil ? -16 : -26)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
     @ViewBuilder
-    private var photoActionButtons: some View {
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
-           let sourceDigest = entry.familySourceDigest,
+    private var familyHeartShortcut: some View {
+        if let sourceDigest = entry.familySourceDigest,
            let localWindowID = WidgetPhotoSource.localWindowID(
                from: entry.photoSourceIdentifier
-           ),
-           entry.isBookmarkInteractionEnabled {
-            actionTray {
-                familyMemoryControl
-                familyHeartControl(
+           ), entry.isBookmarkInteractionEnabled {
+            familyHeartControl(
+                sourceDigest: sourceDigest,
+                localWindowID: localWindowID
+            )
+        } else {
+            // Inactive or legacy sources retain photo navigation but must not
+            // offer a reaction against an unvalidated target.
+            unavailableHeartSlot
+        }
+    }
+
+    @ViewBuilder
+    private func familyHeartControl(
+        sourceDigest: String,
+        localWindowID: String
+    ) -> some View {
+        switch entry.familyHeartStatus {
+        case .ready:
+            Button(
+                intent: SendFamilyWidgetHeartIntent(
                     sourceDigest: sourceDigest,
                     localWindowID: localWindowID
                 )
+            ) {
+                heartMark(status: .ready)
             }
-        } else if WidgetPhotoSource.isFamilyWindowSourceID(
-            entry.photoSourceIdentifier
-        ), entry.familyActionsRequireApp, let photoURL = entry.photoURL {
-            actionTray {
-                Link(destination: photoURL) {
-                    openInAppLabel
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("この写真をアプリで開く")
-                .accessibilityHint("このまどを選び、写真の操作を続けます")
+            .buttonStyle(.plain)
+            .accessibilityLabel("ハートを送る")
+            .accessibilityHint("アプリを開いて送信します")
+        case .pending:
+            heartMark(status: .pending)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("ハートは送信待ちです")
+                .accessibilityHint("アプリの同期で送ります")
+        case .serverAccepted:
+            heartMark(status: .serverAccepted)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("ハートを送りました")
+                .accessibilityHint("相手が確認したことを示す表示ではありません")
+        case .hidden:
+            unavailableHeartSlot
+        }
+    }
+
+    private var unavailableHeartSlot: some View {
+        // Keep the text and action position stable when a heart expires.
+        Color.clear
+            .frame(width: 44, height: 44)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func heartMark(status: FamilyWidgetHeartStatus) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: status == .serverAccepted ? "heart.fill" : "heart")
+                .invalidatableContent()
+
+            if status == .pending {
+                Image(systemName: "clock.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(1.5)
+                    .background(Color.black.opacity(0.82), in: Circle())
+                    .offset(x: 2, y: 2)
             }
-        } else if let localIdentifier = entry.localIdentifier,
-                  entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
-                  entry.isLikeInteractionEnabled {
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.white)
+        .frame(width: 30, height: 30)
+        .background(Color.black.opacity(0.64), in: Circle())
+        .overlay {
+            Circle()
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
+    }
+
+    private func familyCaptionPreview(_ caption: String) -> some View {
+        Text(verbatim: caption)
+            .font(.caption)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .lineLimit(family == .systemLarge ? 2 : 1)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func photoActionButtons() -> some View {
+        if let localIdentifier = entry.localIdentifier,
+           entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
+           entry.isLikeInteractionEnabled {
             actionTray {
                 if entry.isLiked {
                     memoryMark(isSelected: true)
@@ -118,64 +262,6 @@ struct NekoWidgetView: View {
         }
     }
 
-    @ViewBuilder
-    private var familyMemoryControl: some View {
-        if let memoryActionURL = entry.memoryActionURL {
-            Link(destination: memoryActionURL) {
-                memoryMark(isSelected: entry.isBookmarked)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                entry.isBookmarked
-                    ? "思い出に残した写真"
-                    : "写真アプリに取り込んで残す"
-            )
-            .accessibilityHint(
-                entry.isBookmarked
-                    ? "アプリでこの写真を開きます"
-                    : "写真アプリへの取り込みを確認するため、アプリを開きます"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func familyHeartControl(
-        sourceDigest: String,
-        localWindowID: String
-    ) -> some View {
-        switch entry.familyHeartStatus {
-        case .ready:
-            Button(
-                intent: SendFamilyWidgetHeartIntent(
-                    sourceDigest: sourceDigest,
-                    localWindowID: localWindowID
-                )
-            ) {
-                heartMark(status: .ready)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("ハートを送る")
-            .accessibilityHint("アプリを開き、認証済みの同期で送ります")
-        case .pending:
-            heartMark(status: .pending)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートを送っています")
-        case .serverAccepted:
-            heartMark(status: .serverAccepted)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートを送りました")
-            .accessibilityHint("相手が確認したことを示す表示ではありません")
-        case .hidden:
-            // Keep the bookmark in the same position after the reaction
-            // expires. A transparent, noninteractive slot prevents the
-            // controls from jumping without suggesting another action.
-            Color.clear
-                .frame(width: 44, height: 44)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
-    }
-
     private func actionTray<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
@@ -184,8 +270,6 @@ struct NekoWidgetView: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.horizontal, actionButtonInset)
-        .padding(.bottom, actionButtonInset)
     }
 
     /// The private-memory control stays in exactly the same place before and
@@ -203,80 +287,27 @@ struct NekoWidgetView: View {
                 Image(systemName: isSelected ? "bookmark.fill" : "bookmark")
             }
         }
-        .font(.system(size: 14, weight: .semibold))
+        .font(.system(size: 13, weight: .medium))
         .foregroundStyle(.white)
-        .frame(width: 36, height: 36)
+        .frame(width: 30, height: 30)
         .background(Color.black.opacity(0.64), in: Circle())
         .overlay {
             Circle()
-                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
         }
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
 
-    private func heartMark(status: FamilyWidgetHeartStatus) -> some View {
-        ZStack(alignment: .bottomTrailing) {
-            Image(systemName: status == .serverAccepted ? "heart.fill" : "heart")
-                .invalidatableContent()
-
-            if status == .pending {
-                Image(systemName: "clock.fill")
-                    .font(.system(size: 10, weight: .bold))
-                    .padding(1.5)
-                    .background(Color.black.opacity(0.82), in: Circle())
-                    .offset(x: 2, y: 2)
-            }
-        }
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundStyle(.white)
-        .frame(width: 36, height: 36)
-        .background(Color.black.opacity(0.64), in: Circle())
-        .overlay {
-            Circle()
-                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
-        }
-        .frame(width: 44, height: 44)
-        .contentShape(Rectangle())
-    }
-
-    private var openInAppLabel: some View {
-        Label("開く", systemImage: "arrow.up.forward.app")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(Color.black.opacity(0.64), in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
-            }
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
     private var familySourceLabel: some View {
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
-           entry.cacheFilename != nil {
-            Text(entry.windowDisplayName)
-                .font(.caption2.bold())
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                // Keep the visible capsule as wide as the name itself. The
-                // outer frame below only caps long names; it must not make a
-                // short name look like a large empty status banner.
-                .background(.black.opacity(0.64), in: Capsule())
-                .frame(
-                    maxWidth: family == .systemSmall ? 112 : 220,
-                    alignment: .leading
-                )
-                .padding(family == .systemSmall ? 8 : 10)
-                .accessibilityHidden(true)
-        }
+        Text(entry.windowDisplayName)
+            .font(.caption2)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(.white.opacity(0.92))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
     }
 
     private var actionButtonSpacing: CGFloat {
@@ -354,7 +385,8 @@ struct NekoWidgetView: View {
             return "写真を表示できません"
         }
         if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
-            return "まだ届いていません"
+            // Waiting also follows the expiry of a previously displayed photo.
+            return "写真を待っています"
         }
         return "写真を準備しています"
     }
@@ -465,13 +497,78 @@ private struct QuietWindowOpening: Shape {
 
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
 /// A workflow-gated Widget Gallery preview. It is compiled only in Debug and
-/// only when the manual screenshot workflow injects its dedicated compiler
+/// only when a screenshot run injects its dedicated compiler
 /// condition. Ordinary Debug and every Release archive omit these pixels.
 enum AppStoreWidgetPreviewFixture {
     static let cacheFilename = "app-store-widget-gallery-preview.fixture"
 
+    static func image(maximumPixelSize: Int) -> UIImage? {
+#if WIDGET_VISUAL_REVIEW_FIXTURE
+#if WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND
+        // Uniform white is a worst-case text-contrast control, not a cat photo
+        // or resolution evidence. Other scenarios retain the injected photos.
+        let size = CGSize(width: 32, height: 32)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+#else
+        // CI injects the three JPEGs built by production buildFamilyWindow from
+        // one known portrait. This retains its Vision-guided crop and encoding.
+        // Missing injection must show no photo, never a substitute illustration.
+        let encoded: String
+        switch maximumPixelSize {
+        case WidgetImageVariant.small.maximumPixelDimension:
+            encoded = "__W1_WIDGET_SMALL_CACHE_JPEG_BASE64__"
+        case WidgetImageVariant.medium.maximumPixelDimension:
+            encoded = "__W1_WIDGET_MEDIUM_CACHE_JPEG_BASE64__"
+        case WidgetImageVariant.large.maximumPixelDimension:
+            encoded = "__W1_WIDGET_LARGE_CACHE_JPEG_BASE64__"
+        default:
+            return nil
+        }
+        guard let data = Data(base64Encoded: encoded),
+              data.starts(with: [0xff, 0xd8])
+        else { return nil }
+        return WidgetCacheImageLoader.decodedImage(
+            data: data,
+            maximumPixelSize: maximumPixelSize,
+            fileHash: SharedLog.shortHash(cacheFilename)
+        )
+#endif
+#else
+        return image
+#endif
+    }
+
     static func entry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
-        NekoWidgetEntry(
+#if WIDGET_VISUAL_REVIEW_FIXTURE
+        // Fixed display-only identities; no catalog, room key, Photos or relay.
+        // The Gallery capture never invokes these production action controls.
+        return NekoWidgetEntry(
+            date: date,
+            localIdentifier: nil,
+            cacheFilename: cacheFilename,
+            imageVariant: variant,
+            photoSourceIdentifier: WidgetPhotoSource.familyWindowIDPrefix
+                + "00000000-0000-4000-8000-000000000001",
+            familySourceDigest: String(repeating: "a", count: 64),
+            usesFamilySpecificImage: true,
+            windowDisplayName: "みんなのねこと毎日の写真のまど",
+            isLiked: false,
+            isLikeInteractionEnabled: false,
+            isBookmarked: false,
+            isBookmarkInteractionEnabled: true,
+            familyHeartStatus: .ready,
+            familyActionsRequireApp: false,
+            emptyStateReason: .none,
+            familyCaption: caption(for: variant)
+        )
+#else
+        return NekoWidgetEntry(
             date: date,
             localIdentifier: nil,
             cacheFilename: cacheFilename,
@@ -488,7 +585,37 @@ enum AppStoreWidgetPreviewFixture {
             familyActionsRequireApp: false,
             emptyStateReason: .none
         )
+#endif
     }
+
+#if WIDGET_VISUAL_REVIEW_FIXTURE
+    /// Additional flags use the existing Widget-only fixture build setting:
+    /// LONG_CAPTION or NO_CAPTION selects the same case for all three sizes;
+    /// WHITE_BACKGROUND and LARGE_TEXT can be combined with either text case.
+    private static func caption(for variant: WidgetImageVariant) -> String? {
+#if WIDGET_VISUAL_REVIEW_NO_CAPTION
+        return nil
+#elseif WIDGET_VISUAL_REVIEW_LONG_CAPTION
+        return longCaption
+#else
+        switch variant {
+        case .small:
+            return "おひるねのあと 🐾"
+        case .medium:
+            return "窓辺でのんびり。\nきょうもいっしょ 🐈"
+        case .large:
+            return longCaption
+        }
+#endif
+    }
+
+    private static var longCaption: String {
+        // 100 Swift Characters, two line breaks, and emoji; the original text
+        // remains available to VoiceOver even when the small preview truncates.
+        String(repeating: "あたたかい窓辺でのんびり。", count: 6)
+            + "\n今日もいっしょにいようね。\nおやすみ 🐾。"
+    }
+#endif
 
     /// Original code-defined pixels only: no Photos input, account, network,
     /// EXIF/GPS, face, text, logo, or third-party asset lineage.

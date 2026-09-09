@@ -388,7 +388,8 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             familyActionsRequireApp: familyWindowIsInactive(
                 photoSourceIdentifier: photoSourceIdentifier
             ),
-            emptyStateReason: .none
+            emptyStateReason: .none,
+            familyCaption: item.caption
         )
     }
 

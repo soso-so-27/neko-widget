@@ -249,6 +249,11 @@ private struct MomentShareHandoffReportOnlyMarker: Codable, Sendable {
 /// operation. Expiry/retry times are included because omitting them would make
 /// a deferred handoff look like active processing.
 struct MomentShareHandoffStatusSnapshot: Equatable, Sendable {
+    /// Opaque local correlation for a transient host progress row; never shown
+    /// to the user or put in diagnostic logs. No photo bytes cross this snapshot.
+    let stableID: String
+    let createdAt: Date
+    let localWindowID: String?
     let destinationKey: String
     let phase: MomentPendingCapturePhase
     let lastErrorCode: String?
@@ -822,10 +827,9 @@ enum MomentShareHandoffStore {
         }
     }
 
-    /// Returns only fields needed by the host app. Sorting happens before
-    /// capture identifiers are stripped so simultaneous captures remain
-    /// stable; only the local opaque destination grouping key crosses into the
-    /// presentation policy.
+    /// Returns bounded host display metadata. The local capture ID joins the
+    /// same photo across preparation and encrypted outbox promotion; no photo,
+    /// caption, credentials or storage paths cross this snapshot.
     static func presentationSnapshot(
         now: Date = .now
     ) throws -> MomentShareHandoffPresentationSnapshot {
@@ -842,19 +846,25 @@ enum MomentShareHandoffStore {
                 )
             }
             let records = try pruneCapturesWhileLocked(now: now)
+            let admissions = try loadCatalogWhileLocked()?.destinations ?? []
             let statuses = records
                 .sorted {
                     if $0.updatedAt != $1.updatedAt { return $0.updatedAt < $1.updatedAt }
                     return $0.id.uuidString < $1.id.uuidString
                 }
-                .map {
+                .map { record in
                     MomentShareHandoffStatusSnapshot(
-                        destinationKey: $0.admissionID.uuidString.lowercased(),
-                        phase: $0.phase,
-                        lastErrorCode: $0.lastErrorCode,
-                        updatedAt: $0.updatedAt,
-                        expiresAt: $0.expiresAt,
-                        nextRetryAt: $0.nextRetryAt,
+                        stableID: record.id.uuidString.lowercased(),
+                        createdAt: record.createdAt,
+                        localWindowID: admissions.first(where: { admission in
+                            admission.id == record.admissionID
+                        })?.localWindowID,
+                        destinationKey: record.admissionID.uuidString.lowercased(),
+                        phase: record.phase,
+                        lastErrorCode: record.lastErrorCode,
+                        updatedAt: record.updatedAt,
+                        expiresAt: record.expiresAt,
+                        nextRetryAt: record.nextRetryAt,
                         isCancellable: true
                     )
                 }

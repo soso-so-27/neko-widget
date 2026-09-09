@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import struct
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -158,6 +159,108 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertNotIn("AppStoreScreenshots.xcresult", failure_upload)
         self.assertIn("if-no-files-found: error", failure_upload)
         self.assertNotIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS=", self.workflow)
+
+    def test_shared_widget_review_is_gated_after_ordinary_runtime_validation(self) -> None:
+        runtime = source("NekoWidget/ci/run-sharing-runtime-matrix.sh")
+        condition = (
+            "WIDGET_SCREENSHOT_FIXTURE_CONDITION="
+            "APP_STORE_SCREENSHOT_WIDGET_FIXTURE WIDGET_VISUAL_REVIEW_FIXTURE"
+        )
+        self.assertEqual(runtime.count(condition), 1)
+        review = runtime.index('if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]')
+        self.assertLess(runtime.index('python3 "$VALIDATOR"'), review)
+        self.assertGreater(runtime.index(condition), review)
+        self.assertIn("-only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests", runtime)
+        self.assertIn(
+            "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
+            "testCaptureSharedWidgetAllSupportedSizes", runtime,
+        )
+        self.assertIn(
+            "#if WIDGET_VISUAL_REVIEW_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)",
+            self.widget_view,
+        )
+        self.assertNotIn("WIDGET_VISUAL_REVIEW_FIXTURE", self.config)
+        self.assertNotIn("WIDGET_VISUAL_REVIEW_FIXTURE", self.workflow)
+        self.assertIn('["medium", "large"].enumerated()', self.widget_ui_test)
+        self.assertNotIn('springboard.pageIndicators.firstMatch', self.widget_ui_test)
+        self.assertIn('.containing(.pageIndicator, identifier: nil)', self.widget_ui_test)
+        self.assertIn('galleryPage(pages) == [1, 3]', self.widget_ui_test)
+        self.assertIn('galleryPage(pages) == [index + 2, 3]', self.widget_ui_test)
+        self.assertIn('NSPredicate(format: "value != %@", previousPage)', self.widget_ui_test)
+        self.assertNotIn('pixels == previousPixels', self.widget_ui_test)
+        self.assertIn('timeIntervalSince(visibleSince) >= 0.5', self.widget_ui_test)
+        self.assertIn('visibleSince = nil', self.widget_ui_test)
+
+        # Extra comparisons remain independent of app UI failures, reuse only
+        # the Gallery test, and cannot erase a preceding app UI failure.
+        scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
+        normal_failure = runtime.index('if (( composer_status != 0 )); then')
+        self.assertGreater(normal_failure, scenarios)
+        self.assertIn('return "$composer_status"', runtime[normal_failure:])
+        scenario_body = runtime[scenarios:runtime.index('\n        done', scenarios)]
+        self.assertEqual(scenario_body.count('-only-testing:'), 1)
+        self.assertIn(
+            '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'
+            '$widget_scenario_test', scenario_body,
+        )
+        self.assertIn('widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"', scenario_body)
+        self.assertIn('widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"', scenario_body)
+        self.assertIn('func testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes()', self.widget_ui_test)
+        self.assertIn('captureFixtureGallery(captureAllSizes: true, expectWhiteFixture: true)', self.widget_ui_test)
+        for command in ('shutdown', 'erase', 'boot', 'bootstatus'):
+            arguments = ' -b' if command == 'bootstatus' else ''
+            reset = f'xcrun simctl {command} "$simulator_udid"{arguments} || return $?'
+            self.assertIn(reset, scenario_body)
+            self.assertLess(scenario_body.index(reset), scenario_body.index('xcodebuild'))
+        self.assertIn('-derivedDataPath "$DERIVED_DATA_DIRECTORY"', scenario_body)
+        self.assertIn(
+            'WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND '
+            'WIDGET_VISUAL_REVIEW_LARGE_TEXT', scenario_body,
+        )
+        self.assertIn('widget_scenario_conditions="WIDGET_VISUAL_REVIEW_NO_CAPTION"', scenario_body)
+        self.assertIn('Widget-$widget_scenario.xcresult', scenario_body)
+        self.assertIn('widget-$widget_scenario-screenshots', scenario_body)
+        self.assertIn('return "$widget_scenario_status"', scenario_body)
+        workflow = source('.github/workflows/ios-build.yml')
+        runtime_job = workflow[workflow.index('\n  sharing-runtime-matrix:'):]
+        self.assertIn('timeout-minutes: 40', runtime_job)
+
+    def test_widget_portrait_review_reuses_production_cache_and_decoder(self) -> None:
+        runtime = source("NekoWidget/ci/run-sharing-runtime-matrix.sh")
+        app_runtime = source("NekoWidget/NekoWidget/Services/SharingRuntimeSelfTest.swift")
+        portrait_hash = hashlib.sha256(
+            (ROOT / "ci/fixtures/cats/cat-gray-portrait.png").read_bytes()
+        ).hexdigest()
+        self.assertIn(portrait_hash, runtime)
+        self.assertIn(portrait_hash, app_runtime)
+        self.assertTrue(app_runtime.startswith("#if DEBUG\n"))
+        image_helper = app_runtime.split(
+            "private static func widgetPortraitReviewImageIfRequested()", 1
+        )[1].split("private static func exportWidgetPortraitReviewIfRequested", 1)[0]
+        self.assertIn("#if targetEnvironment(simulator)", image_helper)
+        self.assertIn("CommandLine.arguments.contains(launchArgument)", image_helper)
+        self.assertIn("CommandLine.arguments.contains(widgetPortraitReviewArgument)", image_helper)
+        self.assertIn("PairingCrypto.sha256(data)", image_helper)
+        flow = app_runtime.split("private static func testMomentInboundModerationFlow()", 1)[1]
+        self.assertIn("image: widgetPortraitReviewImageIfRequested() ?? generatedImage()", flow)
+        self.assertLess(flow.index("widgetBuilder.buildFamilyWindow("),
+                        flow.index("exportWidgetPortraitReviewIfRequested("))
+        self.assertIn("filenames: publishedPhoto.cacheFilenames", flow)
+        self.assertIn("image.width == variant.pixelWidth", app_runtime)
+        self.assertIn("image.height == variant.pixelHeight", app_runtime)
+        self.assertIn("data.count <= variant.maximumJPEGByteCount", app_runtime)
+        self.assertIn('runtime_launch_arguments+=("--sharing-widget-portrait-review")', runtime)
+        self.assertIn('"${runtime_launch_arguments[@]}"', runtime)
+        self.assertIn('f"sharing-widget-review-{size}.jpg"', runtime)
+        self.assertIn('"$runtime_artifacts/widget-portrait-cache"', runtime)
+        self.assertIn('"productionBuilder": "WidgetCacheBuilder.buildFamilyWindow"', runtime)
+        for size in ("SMALL", "MEDIUM", "LARGE"):
+            self.assertEqual(self.widget_view.count(f"__W1_WIDGET_{size}_CACHE_JPEG_BASE64__"), 1)
+        self.assertNotIn("__W1_WIDGET_SMALL_PNG_BASE64__", self.widget_view)
+        self.assertIn("WidgetCacheImageLoader.decodedImage(", self.widget_view)
+        self.assertNotIn("CGImageSourceCreateThumbnailAtIndex", self.widget_view)
+        self.assertEqual(self.widget_loader.count("CGImageSourceCreateThumbnailAtIndex("), 1)
+        self.assertIn("return decodedImage(data: data,", self.widget_loader)
 
     def test_ui_test_and_exporter_agree_on_five_ordered_names(self) -> None:
         names = [

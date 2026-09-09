@@ -395,8 +395,8 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
                 "送信の準備期限が切れました。保存済みの続きから再試行します。"
             case "report_window_closed":
                 "このまどの通報受付期間は終了しました。"
-            case "moment_daily_quota_exceeded", "daily_limit_exceeded":
-                "今日届けられる枚数に達しました。明日、もう一度お試しください。"
+            case "moment_daily_quota_exceeded" where status == 429:
+                "1日の送信上限に達しました。上限更新後に同じ写真の送信を再試行します。"
             case "report_daily_quota_exceeded":
                 "今日受け付けられる通報数に達しました。緊急の場合はサポートへ連絡してください。"
             default:
@@ -409,6 +409,32 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
                 }
             }
         }
+    }
+}
+
+enum MomentOutboxRetryPolicy {
+    static let dailyQuotaErrorCode = "daily-quota-exceeded"
+
+    static func isDailyQuotaExceeded(_ error: Error) -> Bool {
+        guard case let MomentSharingError.requestRejected(status, code, _) = error
+        else { return false }
+        return status == 429 && code == "moment_daily_quota_exceeded"
+    }
+
+    static func nextRetryAt(
+        for error: Error,
+        awaitingReservation: Bool,
+        attemptCount: Int,
+        now: Date
+    ) -> Date {
+        if awaitingReservation && isDailyQuotaExceeded(error) {
+            // The relay's quota day is floor(Unix seconds / 86400), not the
+            // device's calendar day. A Japanese device resets at 09:00 JST.
+            let nextDay = floor(now.timeIntervalSince1970 / 86_400) + 1
+            return Date(timeIntervalSince1970: nextDay * 86_400)
+        }
+        let exponent = min(max(attemptCount - 1, 0), 6)
+        return now.addingTimeInterval(min(3_600, 30 * pow(2, Double(exponent))))
     }
 }
 

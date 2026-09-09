@@ -948,7 +948,8 @@ jobs:
     needs: [plan, build-without-signing]
     if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
-    timeout-minutes: 20
+    # Includes offline UI and three Widget Gallery scenarios after the runtime checks.
+    timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 

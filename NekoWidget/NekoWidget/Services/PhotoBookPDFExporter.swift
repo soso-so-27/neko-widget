@@ -54,16 +54,28 @@ struct MemoryPhotoJPEGExporter {
             throw MemoryPhotoJPEGExportError.photoNotInMemories
         }
 
+        return try await PhotoLibraryJPEGExporter().export(
+            localIdentifier: selected.localIdentifier
+        )
+    }
+}
+
+/// Shared full-quality, metadata-free image boundary. The caller owns the
+/// explicit selection; memory export still enforces its saved-photo policy.
+struct PhotoLibraryJPEGExporter {
+    @MainActor
+    func export(localIdentifier: String) async throws -> MemoryPhotoJPEGExport {
+
         try Task.checkCancellation()
         let result = PHAsset.fetchAssets(
-            withLocalIdentifiers: [selected.localIdentifier],
+            withLocalIdentifiers: [localIdentifier],
             options: nil
         )
         guard result.count == 1 else {
             throw MemoryPhotoJPEGExportError.photoUnavailable
         }
         let asset = result.object(at: 0)
-        guard asset.localIdentifier == selected.localIdentifier,
+        guard asset.localIdentifier == localIdentifier,
               let targetSize = Self.targetSize(for: asset) else {
             throw MemoryPhotoJPEGExportError.photoUnavailable
         }

@@ -19,13 +19,9 @@ enum WidgetCacheImageLoader {
     ) -> UIImage? {
 #if DEBUG && APP_STORE_SCREENSHOT_WIDGET_FIXTURE
         if cacheFilename == AppStoreWidgetPreviewFixture.cacheFilename {
-            return AppStoreWidgetPreviewFixture.image
+            return AppStoreWidgetPreviewFixture.image(maximumPixelSize: maximumPixelSize)
         }
 #endif
-        let requestedMaximumPixelSize = min(
-            absoluteMaximumPixelSize,
-            max(1, maximumPixelSize)
-        )
         let fileHash = SharedLog.shortHash(cacheFilename)
         guard let fileURL = WidgetManifestReader.cacheURL(
             for: cacheFilename,
@@ -38,8 +34,25 @@ enum WidgetCacheImageLoader {
             )
             return nil
         }
-        guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
-              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+        guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
+            SharedLog.widget.error(
+                "image",
+                "Widget cache image could not be opened",
+                metadata: ["file": fileHash]
+            )
+            return nil
+        }
+        return decodedImage(data: data, maximumPixelSize: maximumPixelSize, fileHash: fileHash)
+    }
+
+    /// Both real cache files and explicitly injected Gallery cache JPEGs use
+    /// the same orientation, pixel-size and decoded-memory checks.
+    static func decodedImage(data: Data, maximumPixelSize: Int, fileHash: String) -> UIImage? {
+        let requestedMaximumPixelSize = min(
+            absoluteMaximumPixelSize,
+            max(1, maximumPixelSize)
+        )
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             SharedLog.widget.error(
                 "image",
                 "Widget cache image could not be opened",

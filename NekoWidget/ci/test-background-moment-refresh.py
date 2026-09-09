@@ -514,8 +514,8 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         self.assertIn("expectedSpaceID: target.spaceID", handler)
         self.assertIn("pendingFamilyNotificationRoute = route", handler)
         self.assertIn("isFamilyWindowPresented = true", handler)
-        self.assertIn("この通知のまどを開けませんでした", handler)
-        self.assertIn("この通知のまどを特定できませんでした", handler)
+        self.assertIn("この写真のまどを開けませんでした", handler)
+        self.assertIn("この写真のまどを特定できませんでした", handler)
         self.assertNotIn("withoutTarget()", handler)
         self.assertLess(
             handler.index("PairingInstallationGuard.activatePrivateWindowAsync"),
@@ -634,12 +634,12 @@ class BackgroundMomentRefreshTests(unittest.TestCase):
         )[1].split("private var canManageOutgoingPresentation", 1)[0]
         self.assertIn("focusedSentMomentID", visible_sent)
         self.assertIn("$0.momentID == focusedSentMomentID", visible_sent)
-        self.assertIn("通知の写真を開いています…", self.family_window)
+        self.assertIn("選んだ写真を開いています…", self.family_window)
         self.assertIn("family-window-notification-route-progress", self.family_window)
         self.assertIn("family-window-notification-route-retry", self.family_window)
         self.assertIn("family-window-notification-route-dismiss", self.family_window)
-        self.assertIn("通知の写真を表示できません", self.family_window)
-        self.assertIn("通知の写真を確認できません", self.family_window)
+        self.assertIn("選んだ写真を表示できません", self.family_window)
+        self.assertIn("選んだ写真を確認できません", self.family_window)
         self.assertIn("resolvePendingNotificationRoute()", self.family_window)
         self.assertIn("finishPendingNotificationResolutionIfNeeded()", self.family_window)
         self.assertIn("consumePendingNotificationRoute()", self.family_window)

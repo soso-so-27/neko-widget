@@ -18,6 +18,11 @@ enum MomentOutboxPhase: String, Codable, Sendable {
     case failed
 }
 
+struct MomentLocalDetailReference: Codable, Equatable, Sendable {
+    let fileName: String
+    let sha256: Data
+}
+
 struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     static let schemaVersion = 1
     var schemaVersion: Int = Self.schemaVersion
@@ -35,6 +40,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     var attemptCount: Int
     var nextRetryAt: Date? = nil
     var lastErrorCode: String? = nil
+    /// New records already use precise quota classification. Missing in older
+    /// JSON: allow one recheck of an ambiguous prepared rejection after upgrade.
+    var hasCurrentRetryClassification: Bool = true
     var commitStartedAt: Date? = nil
     /// Relay acknowledgement metadata. These fields prove only that the relay
     /// accepted the idempotent commit; they do not mean that a recipient has
@@ -56,6 +64,8 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
     var localThumbnailFileName: String? = nil
     /// Protected local display metadata; never part of a relay request.
     var localCaption: String? = nil
+    /// Optional normalized photo for opened detail, never embedded in JSON.
+    var localDetail: MomentLocalDetailReference? = nil
     /// Decode-only compatibility for the short-lived Build 92 inline format.
     /// `encode(to:)` deliberately omits it; `loadWhileLocked()` migrates it to
     /// the protected file before returning state to callers.
@@ -77,6 +87,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         case attemptCount
         case nextRetryAt
         case lastErrorCode
+        case hasCurrentRetryClassification
         case commitStartedAt
         case committedAt
         case unreceivedExpiresAt
@@ -86,6 +97,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         case updatedAt
         case localThumbnailFileName
         case localCaption
+        case localDetail
         case localThumbnailJPEG
     }
 
@@ -163,6 +175,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         attemptCount = try container.decode(Int.self, forKey: .attemptCount)
         nextRetryAt = try container.decodeIfPresent(Date.self, forKey: .nextRetryAt)
         lastErrorCode = try container.decodeIfPresent(String.self, forKey: .lastErrorCode)
+        hasCurrentRetryClassification = try container.decodeIfPresent(
+            Bool.self, forKey: .hasCurrentRetryClassification
+        ) ?? false
         commitStartedAt = try container.decodeIfPresent(Date.self, forKey: .commitStartedAt)
         committedAt = try container.decodeIfPresent(Date.self, forKey: .committedAt)
         unreceivedExpiresAt = try container.decodeIfPresent(
@@ -185,6 +200,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
             forKey: .localThumbnailJPEG
         )
         localCaption = try container.decodeIfPresent(String.self, forKey: .localCaption)
+        localDetail = try container.decodeIfPresent(MomentLocalDetailReference.self, forKey: .localDetail)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -204,6 +220,7 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         try container.encode(attemptCount, forKey: .attemptCount)
         try container.encodeIfPresent(nextRetryAt, forKey: .nextRetryAt)
         try container.encodeIfPresent(lastErrorCode, forKey: .lastErrorCode)
+        try container.encode(hasCurrentRetryClassification, forKey: .hasCurrentRetryClassification)
         try container.encodeIfPresent(commitStartedAt, forKey: .commitStartedAt)
         try container.encodeIfPresent(committedAt, forKey: .committedAt)
         try container.encodeIfPresent(unreceivedExpiresAt, forKey: .unreceivedExpiresAt)
@@ -216,7 +233,20 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(localThumbnailFileName, forKey: .localThumbnailFileName)
         try container.encodeIfPresent(localCaption, forKey: .localCaption)
+        try container.encodeIfPresent(localDetail, forKey: .localDetail)
         // Never re-encode legacyInlineLocalThumbnailJPEG.
+    }
+
+    /// Mark every legacy row, even when its current error is not eligible, so
+    /// later ordinary failures cannot repeatedly bypass their normal backoff.
+    @discardableResult
+    mutating func applyLegacyRetryClassificationUpgrade() -> Bool {
+        guard !hasCurrentRetryClassification else { return false }
+        hasCurrentRetryClassification = true
+        if phase == .prepared && lastErrorCode == "request-rejected" {
+            nextRetryAt = nil
+        }
+        return true
     }
 
     func validated() throws -> Self {
@@ -252,6 +282,9 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
                 || localThumbnailFileName == Self.localThumbnailFileName(for: id),
               legacyInlineLocalThumbnailJPEG.map(Self.isValidLocalThumbnail) ?? true,
               localThumbnailFileName == nil || legacyInlineLocalThumbnailJPEG == nil,
+              localDetail.map({
+                  $0.fileName == Self.localDetailFileName(for: id) && $0.sha256.count == 32
+              }) ?? true,
               Self.hasValidCommitMetadata(
                   phase: phase,
                   commitStartedAt: commitStartedAt,
@@ -303,6 +336,10 @@ struct MomentOutboxItem: Codable, Equatable, Identifiable, Sendable {
 
     static func localThumbnailFileName(for id: UUID) -> String {
         "sent-thumbnail-\(id.uuidString.lowercased()).jpg"
+    }
+
+    static func localDetailFileName(for id: UUID) -> String {
+        "sent-detail-\(id.uuidString.lowercased()).jpg"
     }
 
     static func isValidLocalThumbnail(_ data: Data) -> Bool {
@@ -964,11 +1001,37 @@ enum MomentSharingStateStore {
     /// stable sent records. A bounded margin keeps every still-live photo's
     /// delivery and heart status addressable without unbounded local growth.
     static let maximumTerminalOutboxMetadataCount = 200
+    static let maximumLocalDetailBytes = 256 * 1_024 * 1_024
     private static let reportedMetadataSeconds: TimeInterval = 90 * 24 * 60 * 60
 
     static func load() throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
             try loadWhileLocked()
+        }
+    }
+
+    /// Commit the one-time marker and eligible retry deadline together before
+    /// any request is sent. A failed write must not return an accelerated row.
+    static func prepareOutboxForRetryClassification(
+        validating lifecycleToken: SharingLifecycleGate.Token
+    ) throws -> MomentSharingState {
+        try withLifecycleLock(validating: lifecycleToken) {
+            guard !SharingLifecycleGate.isCleanupRequired else {
+                throw MomentSharingError.stateUnavailable
+            }
+            var state = try loadWhileLocked()
+            var changed = false
+            for index in state.outbox.indices {
+                if state.outbox[index].applyLegacyRetryClassificationUpgrade() {
+                    changed = true
+                }
+            }
+            if changed {
+                state.storageRevision += 1
+                state = try state.validated()
+                try writeWhileLocked(state)
+            }
+            return state
         }
     }
 
@@ -1793,6 +1856,7 @@ enum MomentSharingStateStore {
         senderPolicyAcceptedAt: Date,
         localThumbnailJPEG: Data? = nil,
         localCaption: String? = nil,
+        localDetailJPEG: Data? = nil,
         validating lifecycleToken: SharingLifecycleGate.Token? = nil,
         now: Date = .now
     ) throws -> MomentOutboxItem {
@@ -1803,6 +1867,7 @@ enum MomentSharingStateStore {
                 senderPolicyAcceptedAt: senderPolicyAcceptedAt,
                 localThumbnailJPEG: localThumbnailJPEG,
                 localCaption: localCaption,
+                localDetailJPEG: localDetailJPEG,
                 now: now
             )
         }
@@ -1819,6 +1884,7 @@ enum MomentSharingStateStore {
         senderPolicyAcceptedAt: Date,
         localThumbnailJPEG: Data? = nil,
         localCaption: String? = nil,
+        localDetailJPEG: Data? = nil,
         now: Date = .now
     ) throws -> MomentOutboxItem {
         let payload = try payload.validated()
@@ -1901,6 +1967,20 @@ enum MomentSharingStateStore {
                     )
                     try? removeLocalThumbnail(fileName: thumbnailFileName)
                     item.localThumbnailFileName = nil
+                }
+            }
+            if let localDetailJPEG {
+                let name = MomentOutboxItem.localDetailFileName(for: item.id)
+                do {
+                    try writeLocalDetail(localDetailJPEG, fileName: name)
+                    item.localDetail = MomentLocalDetailReference(
+                        fileName: name, sha256: PairingCrypto.sha256(localDetailJPEG)
+                    )
+                } catch {
+                    try? removeLocalThumbnail(fileName: name)
+                    // This optional local copy must never turn a valid send
+                    // into a failure or advertise unavailable detail pixels.
+                    item.localDetail = nil
                 }
             }
             state.outbox.append(item)
@@ -2112,6 +2192,91 @@ enum MomentSharingStateStore {
         }
     }
 
+    /// Resolve an opened sent photo from current state, never from a retained
+    /// presentation snapshot. No network or PhotoKit fallback is performed.
+    static func localDetailURL(
+        itemID: UUID,
+        expectedSpaceID: String,
+        validating lifecycleToken: SharingLifecycleGate.Token,
+        now: Date = .now
+    ) throws -> URL? {
+        try withLifecycleLock(validating: lifecycleToken) {
+            guard !SharingLifecycleGate.isCleanupRequired else { return nil }
+            let state = try loadWhileLocked()
+            guard state.reportOnlyUntil == nil,
+                  let item = state.outbox.first(where: { $0.id == itemID }),
+                  item.phase == .committed,
+                  item.context.spaceID == expectedSpaceID,
+                  item.createdAt >= now.addingTimeInterval(-completedOutboxMetadataSeconds),
+                  let reference = item.localDetail,
+                  let url = try? localThumbnailURL(fileName: reference.fileName),
+                  SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url),
+                  let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let size = (attributes[.size] as? NSNumber)?.intValue,
+                  (4...maximumLocalDetailPhotoBytes).contains(size),
+                  let handle = try? FileHandle(forReadingFrom: url)
+            else { return nil }
+            defer { try? handle.close() }
+            guard let data = try? handle.read(upToCount: maximumLocalDetailPhotoBytes + 1),
+                  PairingCrypto.sha256(data) == reference.sha256,
+                  isValidLocalDetail(data)
+            else { return nil }
+            return url
+        }
+    }
+
+    private static let maximumLocalDetailPhotoBytes =
+        MomentSharingProtocol.maximumMediaCiphertextBytes - 28
+
+    private static func isValidLocalDetail(_ data: Data) -> Bool {
+        guard (4...maximumLocalDetailPhotoBytes).contains(data.count),
+              let source = CGImageSourceCreateWithData(data as CFData,
+                [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) == 1,
+              CGImageSourceGetType(source) as String? == "public.jpeg",
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(width),
+              (1...MomentSharingProtocol.maximumCanonicalPixelDimension).contains(height),
+              properties[kCGImagePropertyExifDictionary] == nil,
+              properties[kCGImagePropertyGPSDictionary] == nil,
+              properties[kCGImagePropertyTIFFDictionary] == nil
+        else { return false }
+        return true
+    }
+
+    private static func writeLocalDetail(_ data: Data, fileName: String) throws {
+        guard isValidLocalDetail(data) else { throw MomentSharingError.invalidPayload }
+        let url = try localThumbnailURL(fileName: fileName)
+        let directory = url.deletingLastPathComponent()
+        let names = boundedThumbnailDirectoryEntryNames(at: directory, fallback: [])
+        let maximumFiles = maximumTerminalOutboxMetadataCount + maximumPendingOutboxCount
+        guard names.count < maximumFiles * 2 + 64 else {
+            throw MomentSharingError.stateUnavailable
+        }
+        var count = 0
+        var bytes = 0
+        for name in names where name.hasPrefix("sent-detail-") {
+            let existing = try localThumbnailURL(fileName: name)
+            let size = try existing.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size >= 0, size <= maximumLocalDetailBytes - bytes else {
+                throw MomentSharingError.stateUnavailable
+            }
+            count += 1
+            bytes += size
+        }
+        guard count < maximumFiles, data.count <= maximumLocalDetailBytes - bytes else {
+            throw MomentSharingError.stateUnavailable
+        }
+        try SharingSecureFile.write(data, to: url)
+        let committed = try localThumbnailURL(fileName: fileName)
+        guard SharingSecureFile.hasRequiredProtectionAndBackupExclusion(committed),
+              try isSafeThumbnailDirectory(directory, requireExisting: true)
+        else { throw MomentSharingError.stateUnavailable }
+    }
+
     /// Returns only a small, protected JPEG referenced by this exact local
     /// outbox row. Corrupt, oversized, unprotected, missing, or replaced files
     /// are presentation misses rather than state failures.
@@ -2138,8 +2303,9 @@ enum MomentSharingStateStore {
     }
 
     static func removeLocalThumbnail(for item: MomentOutboxItem) throws {
-        guard let fileName = item.localThumbnailFileName else { return }
-        try removeLocalThumbnail(fileName: fileName)
+        // Historical callers use this for all local sent-photo cleanup.
+        if let detail = item.localDetail { try removeLocalThumbnail(fileName: detail.fileName) }
+        if let fileName = item.localThumbnailFileName { try removeLocalThumbnail(fileName: fileName) }
     }
 
     private static func removeLocalThumbnail(fileName: String) throws {
@@ -2201,7 +2367,8 @@ enum MomentSharingStateStore {
                 .split(separator: ".")
                 .first,
               let id = UUID(uuidString: String(idText)),
-              fileName == MomentOutboxItem.localThumbnailFileName(for: id),
+              (fileName == MomentOutboxItem.localThumbnailFileName(for: id)
+                || fileName == MomentOutboxItem.localDetailFileName(for: id)),
               let directory = SharedContainer.momentSharingSentThumbnailDirectoryURL
         else { throw MomentSharingError.stateUnavailable }
         guard try isSafeThumbnailDirectory(directory, requireExisting: false)
@@ -2358,6 +2525,14 @@ enum MomentSharingStateStore {
             $0.phase == .prepared || $0.phase == .reserved
                 || $0.phase == .uploaded || $0.phase == .failed
         }
+        // Committed metadata may remain for safety history, but withdrawing
+        // sharing does not retain an additional full-detail presentation copy.
+        for index in state.outbox.indices {
+            if let detail = state.outbox[index].localDetail {
+                try? removeLocalThumbnail(fileName: detail.fileName)
+                state.outbox[index].localDetail = nil
+            }
+        }
         state.pawOutbox.removeAll()
         state.receivedPaws.removeAll()
         state.reactionCursor = nil
@@ -2466,6 +2641,14 @@ enum MomentSharingStateStore {
         let outboxMetadataCutoff = now.addingTimeInterval(
             -completedOutboxMetadataSeconds
         )
+        // Photo retention has an immutable origin. A late delivery receipt or
+        // heart may update metadata but must never extend full-detail storage.
+        let expiredDetailNames = state.outbox.filter {
+            $0.createdAt < outboxMetadataCutoff
+        }.compactMap { $0.localDetail?.fileName }
+        for index in state.outbox.indices where state.outbox[index].createdAt < outboxMetadataCutoff {
+            state.outbox[index].localDetail = nil
+        }
         let reportMetadataCutoff = now.addingTimeInterval(-reportedMetadataSeconds)
         pruneOutgoingOutcomes(&state, now: now)
         if let reportOnlyUntil = state.reportOnlyUntil {
@@ -2684,8 +2867,12 @@ enum MomentSharingStateStore {
                    thumbnailDirectory,
                    requireExisting: true
                )) == true {
-                let retainedNames = Set(state.outbox.compactMap(\.localThumbnailFileName))
-                let fallbackNames = removedOutbox.compactMap(\.localThumbnailFileName)
+                let retainedNames = Set(state.outbox.flatMap {
+                    [$0.localThumbnailFileName, $0.localDetail?.fileName].compactMap { $0 }
+                })
+                let fallbackNames = removedOutbox.flatMap {
+                    [$0.localThumbnailFileName, $0.localDetail?.fileName].compactMap { $0 }
+                } + expiredDetailNames
                 let names = boundedThumbnailDirectoryEntryNames(
                     at: thumbnailDirectory,
                     fallback: fallbackNames
@@ -2797,8 +2984,8 @@ enum MomentSharingStateStore {
         at directory: URL,
         fallback: [String]
     ) -> [String] {
-        let maximumEntries = maximumTerminalOutboxMetadataCount
-            + maximumPendingOutboxCount + 64
+        let maximumEntries = (maximumTerminalOutboxMetadataCount
+            + maximumPendingOutboxCount) * 2 + 64
         guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: nil,

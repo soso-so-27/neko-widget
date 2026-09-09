@@ -194,6 +194,13 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
                 metadata: ["source": SharedLog.shortHash(sourceDigest)]
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+#if NEKO_HOST_APP
+            await MainActor.run {
+                MomentNotificationTapMailbox.shared.enqueueWidgetFeedback(
+                    "この写真へのハートは送れませんでした。表示期間やまどの接続状態が変わった可能性があります。"
+                )
+            }
+#endif
             return .result()
         }
 
@@ -213,6 +220,13 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
                 ]
             )
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+#if NEKO_HOST_APP
+            await presentQueuedHeart(
+                momentID: momentID,
+                localWindowID: localWindowID,
+                phase: item.phase
+            )
+#endif
         } catch {
             SharedLog.widget.error(
                 "reaction",
@@ -223,10 +237,51 @@ struct SendFamilyWidgetHeartIntent: AppIntent {
                     additional: ["source": SharedLog.shortHash(sourceDigest)]
                 )
             )
+#if NEKO_HOST_APP
+            await MainActor.run {
+                MomentNotificationTapMailbox.shared.enqueueWidgetFeedback(
+                    "ハートの送信待ちへの追加を確認できませんでした。まどで送信状況を確認してください。"
+                )
+            }
+#endif
             throw error
         }
         return .result()
     }
+
+#if NEKO_HOST_APP
+    /// openAppWhenRun executes this intent in the host process. Reuse its
+    /// existing cold-launch mailbox rather than a custom-scheme OpenURLIntent
+    /// (which only supports universal links) or a second persisted route.
+    private func presentQueuedHeart(
+        momentID: String,
+        localWindowID: String,
+        phase: MomentPawOutboxPhase
+    ) async {
+        guard let window = PrivateWindowCatalogStore.widgetEntries().first(where: {
+            $0.localWindowID == localWindowID
+        }), let spaceID = window.spaceID,
+        PairingValidation.isOpaqueIdentifier(spaceID) else {
+            let message = phase == .sent
+                ? "ハートは送信済みです。この写真を開けなかったため、まどで確認してください。"
+                : "ハートは送信待ちです。この写真を開けなかったため、まどで送信状況を確認してください。"
+            await MainActor.run {
+                MomentNotificationTapMailbox.shared.enqueueWidgetFeedback(message)
+            }
+            return
+        }
+        let route = MomentNotificationRoute(
+            kind: .newMoment,
+            target: MomentNotificationRouteTarget(
+                spaceID: spaceID,
+                momentID: momentID
+            )
+        )
+        await MainActor.run {
+            MomentNotificationTapMailbox.shared.enqueue(route)
+        }
+    }
+#endif
 }
 
 /// Resolves the exact received image rendered by WidgetKit. The active manifest

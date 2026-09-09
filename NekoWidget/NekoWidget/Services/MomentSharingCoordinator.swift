@@ -5,6 +5,13 @@ enum MomentSynchronizationNotice: Equatable, Sendable {
     case inboundModerationUnavailable
 }
 
+/// A completed photo synchronization for one authenticated window. This is
+/// distinct from a delivery receipt: pending photos may still be waiting.
+struct MomentSynchronizationSuccess: Sendable {
+    let spaceID: String
+    let completedAt: Date
+}
+
 private struct MomentSynchronizationRunResult: Sendable {
     let notice: MomentSynchronizationNotice?
     let succeeded: Bool
@@ -620,6 +627,18 @@ actor MomentSharingCoordinator {
                     "windowNameChanged": "\(windowNameChanged)"
                 ]
             )
+            if let spaceID = loadedAuthorization.state.spaceID {
+                let completion = MomentSynchronizationSuccess(
+                    spaceID: spaceID,
+                    completedAt: .now
+                )
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: .momentSharingSynchronizationSucceeded,
+                        object: completion
+                    )
+                }
+            }
             return true
         } catch {
             latestSynchronizationNotice = Self.synchronizationNotice(for: error)
@@ -1851,7 +1870,9 @@ actor MomentSharingCoordinator {
     ) async throws -> Int {
         try SharingLifecycleGate.validate(lifecycleToken)
         var sentCount = 0
-        let snapshot = try MomentSharingStateStore.load()
+        let snapshot = try MomentSharingStateStore.prepareOutboxForRetryClassification(
+            validating: lifecycleToken
+        )
         for candidate in snapshot.outbox where
             candidate.phase != .committed
                 && candidate.phase != .deliveryResultUnknown
@@ -2522,9 +2543,12 @@ actor MomentSharingCoordinator {
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
             guard let index = state.outbox.firstIndex(where: { $0.id == id }) else { return }
             state.outbox[index].attemptCount += 1
-            let exponent = min(state.outbox[index].attemptCount - 1, 6)
-            state.outbox[index].nextRetryAt = Date().addingTimeInterval(
-                min(3_600, 30 * pow(2, Double(exponent)))
+            let now = Date()
+            state.outbox[index].nextRetryAt = MomentOutboxRetryPolicy.nextRetryAt(
+                for: error,
+                awaitingReservation: state.outbox[index].phase == .prepared,
+                attemptCount: state.outbox[index].attemptCount,
+                now: now
             )
             state.outbox[index].lastErrorCode = Self.safeErrorCode(error)
             state.outbox[index].updatedAt = .now
@@ -2552,6 +2576,9 @@ actor MomentSharingCoordinator {
     }
 
     private nonisolated static func safeErrorCode(_ error: Error) -> String {
+        if MomentOutboxRetryPolicy.isDailyQuotaExceeded(error) {
+            return MomentOutboxRetryPolicy.dailyQuotaErrorCode
+        }
         if let error = error as? MomentSharingError {
             switch error {
             case .featureDisabled: return "feature-disabled"
@@ -2700,6 +2727,14 @@ actor MomentSharingCoordinator {
               case .requestRejected = momentError,
               !requiresLocalRevocationReset(error)
         else { return }
+        if MomentOutboxRetryPolicy.isDailyQuotaExceeded(error) {
+            SharedLog.app.warning(
+                "moment-sharing",
+                "Relay daily photo quota reached; encrypted photo retained for retry",
+                metadata: SharedLog.errorMetadata(error, category: .momentSharing)
+            )
+            return
+        }
         SharedLog.app.warning(
             "moment-sharing",
             "Relay request was rejected without changing pairing credentials",

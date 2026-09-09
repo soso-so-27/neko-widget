@@ -518,13 +518,16 @@ actor WidgetCacheBuilder {
                       current.sourceDigest == source.sourceDigest,
                       var refreshedItem = active.item
                 else { return nil as FamilyWidgetManifest? }
+                let currentCaption = try MomentCaption.normalized(current.item.caption)
                 let requiresManifestRefresh = active.windowDisplayName
                     != resolvedWindowDisplayName
                     || refreshedItem.heartExpiresAt != current.item.accessExpiresAt
+                    || refreshedItem.caption != currentCaption
                 guard requiresManifestRefresh else {
                     return active
                 }
                 refreshedItem.heartExpiresAt = current.item.accessExpiresAt
+                refreshedItem.caption = currentCaption
                 var refreshed = active
                 refreshed.item = refreshedItem
                 refreshed.windowDisplayName = resolvedWindowDisplayName
@@ -615,7 +618,8 @@ actor WidgetCacheBuilder {
                     cacheFilenames: filenames,
                     receivedAt: current.item.receivedAt,
                     freshUntil: freshUntil,
-                    heartExpiresAt: current.item.accessExpiresAt
+                    heartExpiresAt: current.item.accessExpiresAt,
+                    caption: try MomentCaption.normalized(current.item.caption)
                 ),
                 windowDisplayName: resolvedWindowDisplayName,
                 generatedAt: now

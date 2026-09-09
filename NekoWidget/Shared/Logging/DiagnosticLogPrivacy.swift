@@ -32,6 +32,7 @@ enum DiagnosticLogPrivacy {
     private static let allowedMomentOutboxErrorCodes: Set<String> = [
         "commit-result-expired",
         "consent-required",
+        "daily-quota-exceeded",
         "feature-disabled",
         "invalid-payload",
         "moderation-disabled",

@@ -169,6 +169,10 @@ struct FamilyWidgetManifestItem: Codable, Equatable, Sendable {
     /// Optional keeps manifests written before Widget heart-expiry scheduling
     /// decodable. New manifests copy the relay access deadline exactly.
     var heartExpiresAt: Date?
+    /// Optional, device-local text for this exact received photo. Older
+    /// extensions ignore it; older manifests decode it as nil. Never put this
+    /// text in a URL, App Intent parameter, notification, or diagnostic log.
+    var caption: String? = nil
 
     var displayUntil: Date {
         receivedAt.addingTimeInterval(Self.maximumDisplayDuration)

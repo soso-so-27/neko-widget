@@ -370,6 +370,7 @@ actor SharingRuntimeSelfTestRunner {
     static let shared = SharingRuntimeSelfTestRunner()
 
     private static let launchArgument = "--sharing-runtime-self-test"
+    private static let widgetPortraitReviewArgument = "--sharing-widget-portrait-review"
     private static let reportFilename = "sharing-runtime-self-test.json"
     private static let progressFilename = "sharing-runtime-self-test-progress.json"
     private static let thumbnailProgressFilename =
@@ -4541,6 +4542,58 @@ actor SharingRuntimeSelfTestRunner {
         }
     }
 
+    /// The disposable Simulator may opt into one repository-owned portrait for
+    /// Gallery review. Its fixed hash excludes arbitrary Photos or user files;
+    /// ordinary runtime tests continue to use the generated image below.
+    private static func widgetPortraitReviewImageIfRequested() throws -> UIImage? {
+        guard CommandLine.arguments.contains(launchArgument),
+              CommandLine.arguments.contains(widgetPortraitReviewArgument)
+        else { return nil }
+#if targetEnvironment(simulator)
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sharing-widget-review-source.png", isDirectory: false)
+        let data = try Data(contentsOf: sourceURL)
+        let hash = PairingCrypto.sha256(data)
+            .map { String(format: "%02x", $0) }.joined()
+        guard hash == "bd5a348e5e6df1b32837c51ab0357505119ea564d13ac4afefe3803b1b8dfbf8",
+              let image = UIImage(data: data),
+              image.imageOrientation == .up,
+              image.cgImage?.width == 1_024,
+              image.cgImage?.height == 1_536
+        else { throw MomentSharingError.invalidPayload }
+        return image
+#else
+        throw MomentSharingError.stateUnavailable
+#endif
+    }
+
+    /// Preserve the actual production JPEGs before the receipt/purge test
+    /// removes its App Group cache. Only the fixed public portrait may export;
+    /// no catalog, account, keys, paths, or arbitrary image data are exported.
+    private static func exportWidgetPortraitReviewIfRequested(
+        filenames: WidgetCacheFilenames,
+        cacheDirectory: URL
+    ) throws {
+        guard try widgetPortraitReviewImageIfRequested() != nil else { return }
+        for variant in WidgetImageVariant.allCases {
+            let fileURL = cacheDirectory.appendingPathComponent(
+                filenames.filename(for: variant), isDirectory: false
+            )
+            let data = try Data(contentsOf: fileURL)
+            guard data.starts(with: [0xff, 0xd8]),
+                  data.count <= variant.maximumJPEGByteCount,
+                  let image = UIImage(data: data)?.cgImage,
+                  image.width == variant.pixelWidth,
+                  image.height == variant.pixelHeight
+            else { throw MomentSharingError.invalidPayload }
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "sharing-widget-review-\(variant.rawValue).jpg", isDirectory: false
+                )
+            try data.write(to: outputURL, options: .atomic)
+        }
+    }
+
     private static func testMomentInboundModerationFlow() async throws {
         try clearMomentSharingFixture()
         let moderationDirectory = FileManager.default.temporaryDirectory
@@ -4555,7 +4608,9 @@ actor SharingRuntimeSelfTestRunner {
         }
 
         let lifecycleToken = try SharingLifecycleGate.issueToken()
-        let preview = try MomentCanonicalPreviewBuilder.build(image: generatedImage())
+        let preview = try MomentCanonicalPreviewBuilder.build(
+            image: widgetPortraitReviewImageIfRequested() ?? generatedImage()
+        )
         let roomKey = Data(repeating: 0x71, count: 32)
         let installationMarker = UUID().uuidString.lowercased()
         let spaceID = "space_inbound_moderation_flow"
@@ -4697,6 +4752,55 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
         try requireNoModerationResidue()
 
+        // Follow the real decrypted receipt into the App Group publication.
+        // A reused JPEG must still refresh optional text, including its removal.
+        let widgetBuilder = WidgetCacheBuilder()
+        let widgetPhoto = recoveredState.inbox[0]
+        let widgetFreshUntil = widgetPhoto.receivedAt.addingTimeInterval(3_600)
+        let captionedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard let widgetManifestURL = SharedContainer.familyWidgetManifestURL,
+              let widgetCacheURL = SharedContainer.familyWidgetCacheDirectoryURL,
+              let publishedPhoto = captionedWidget.item,
+              publishedPhoto.momentID == widgetPhoto.id,
+              publishedPhoto.caption == widgetPhoto.caption
+        else { throw MomentSharingError.stateUnavailable }
+        try exportWidgetPortraitReviewIfRequested(
+            filenames: publishedPhoto.cacheFilenames,
+            cacheDirectory: widgetCacheURL
+        )
+        let widgetJPEGURL = widgetCacheURL.appendingPathComponent(publishedPhoto.cacheFilenames.small)
+        let firstWidgetBytes = try Data(contentsOf: widgetJPEGURL)
+        // Model an old app/extension handoff with no caption in the cache.
+        var oldWidget = captionedWidget
+        oldWidget.item?.caption = nil
+        try AtomicJSON.write(oldWidget, to: widgetManifestURL)
+        let repairedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard repairedWidget.item == captionedWidget.item,
+              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox[0].caption = nil
+        }
+        // Pass the older snapshot deliberately: publication must use current
+        // lifecycle-locked state, never the stale caller's caption.
+        let photoOnlyWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        guard photoOnlyWidget.item?.caption == nil,
+              photoOnlyWidget.item?.sourceDigest == publishedPhoto.sourceDigest,
+              try Data(contentsOf: widgetJPEGURL) == firstWidgetBytes
+        else { throw MomentSharingError.stateUnavailable }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.inbox[0].caption = widgetPhoto.caption
+        }
+
         // A normal visible receipt can be removed without blocking the peer.
         // Its fileless tombstone prevents an older relay page from restoring
         // the photo, and local memory/reaction state is removed atomically.
@@ -4728,6 +4832,15 @@ actor SharingRuntimeSelfTestRunner {
                   credential: credential,
                   lifecycleToken: lifecycleToken
               ) == 0
+        else { throw MomentSharingError.stateUnavailable }
+
+        let deletedWidget = try await widgetBuilder.buildFamilyWindow(
+            from: widgetPhoto, freshUntil: widgetFreshUntil,
+            windowDisplayName: "受信テストのまど", validating: lifecycleToken
+        )
+        let deletedWidgetOnDisk = try AtomicJSON.read(FamilyWidgetManifest.self, from: widgetManifestURL)
+        guard deletedWidget.item == nil, deletedWidgetOnDisk.item == nil,
+              !FileManager.default.fileExists(atPath: widgetJPEGURL.path)
         else { throw MomentSharingError.stateUnavailable }
 
         try clearMomentSharingFixture()
@@ -4868,6 +4981,84 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
     }
 
+    private static func verifyLegacyRejectionRecheck(
+        item: MomentOutboxItem,
+        lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        guard item.hasCurrentRetryClassification else {
+            throw MomentSharingError.stateUnavailable
+        }
+        guard var legacyJSON = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(item)
+        ) as? [String: Any] else { throw MomentSharingError.stateUnavailable }
+        legacyJSON.removeValue(forKey: "hasCurrentRetryClassification")
+        var legacy = try JSONDecoder().decode(
+            MomentOutboxItem.self,
+            from: JSONSerialization.data(withJSONObject: legacyJSON)
+        )
+        guard !legacy.hasCurrentRetryClassification else {
+            throw MomentSharingError.stateUnavailable
+        }
+        // Match the store's ISO8601 second precision before comparing the
+        // in-memory mutation result with the value loaded back from disk.
+        let retryAt = Date(
+            timeIntervalSince1970: floor(Date().timeIntervalSince1970) + 1_920
+        )
+        legacy.lastErrorCode = "request-rejected"
+        legacy.nextRetryAt = retryAt
+        legacy.attemptCount = 7
+        for code in [MomentOutboxRetryPolicy.dailyQuotaErrorCode, "retryable-server", "unknown"] {
+            var protected = legacy
+            protected.lastErrorCode = code
+            var expected = protected
+            expected.hasCurrentRetryClassification = true
+            guard protected.applyLegacyRetryClassificationUpgrade(), protected == expected else {
+                throw MomentSharingError.stateUnavailable
+            }
+        }
+        for phase in [MomentOutboxPhase.reserved, .uploaded, .committing, .committed, .deliveryResultUnknown, .failed] {
+            var protected = legacy
+            protected.phase = phase
+            var expected = protected
+            expected.hasCurrentRetryClassification = true
+            guard protected.applyLegacyRetryClassificationUpgrade(), protected == expected else {
+                throw MomentSharingError.stateUnavailable
+            }
+        }
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == item.id }) else {
+                throw MomentSharingError.stateUnavailable
+            }
+            state.outbox[index] = legacy
+        }
+        let before = try MomentSharingStateStore.load()
+        let ciphertextBefore = try MomentSharingStateStore.readCiphertext(for: item)
+        var expected = before
+        guard let index = expected.outbox.firstIndex(where: { $0.id == item.id }) else {
+            throw MomentSharingError.stateUnavailable
+        }
+        expected.outbox[index].hasCurrentRetryClassification = true
+        expected.outbox[index].nextRetryAt = nil
+        expected.storageRevision += 1
+        let upgraded = try MomentSharingStateStore.prepareOutboxForRetryClassification(
+            validating: lifecycleToken
+        )
+        guard upgraded == expected,
+              try MomentSharingStateStore.load() == expected,
+              try MomentSharingStateStore.readCiphertext(for: upgraded.outbox[index])
+                == ciphertextBefore
+        else { throw MomentSharingError.stateUnavailable }
+        // Simulate a new generic rejection after recheck, then reload from disk.
+        // Neither another poll nor a restart may accelerate that new backoff.
+        let retried = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            state.outbox[index].nextRetryAt = retryAt
+            state.outbox[index].attemptCount += 1
+        }
+        guard try MomentSharingStateStore.prepareOutboxForRetryClassification(
+            validating: lifecycleToken
+        ) == retried else { throw MomentSharingError.stateUnavailable }
+    }
+
     private static func testMomentOutboxBoundsAndExpiry() throws {
         try clearMomentSharingFixture()
         defer { try? clearMomentSharingFixture() }
@@ -4961,6 +5152,9 @@ actor SharingRuntimeSelfTestRunner {
         guard initialOutbox.count == 10 else {
             throw MomentSharingError.stateUnavailable
         }
+        try verifyLegacyRejectionRecheck(
+            item: initialOutbox[0], lifecycleToken: lifecycleToken
+        )
         writeThumbnailProgress(
             caseID: .outboxBounds,
             phase: .outboxLoaded
@@ -5922,7 +6116,11 @@ actor SharingRuntimeSelfTestRunner {
         )
         guard let expectedThumbnail = MomentShareHandoffProcessor.sentHistoryThumbnail(
             from: preview.jpeg
-        ), MomentOutboxItem.isValidLocalThumbnail(expectedThumbnail)
+        ), MomentOutboxItem.isValidLocalThumbnail(expectedThumbnail),
+           let thumbnailSource = CGImageSourceCreateWithData(expectedThumbnail as CFData, nil),
+           let thumbnailImage = CGImageSourceCreateImageAtIndex(thumbnailSource, 0, nil),
+           max(thumbnailImage.width, thumbnailImage.height) == 512,
+           expectedThumbnail.count <= MomentOutboxItem.maximumLocalThumbnailBytes
         else { throw MomentSharingError.stateUnavailable }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailValidated)
         let admissions = try processor.refreshAdmissionCatalog(lifecycleToken: lifecycleToken)
@@ -5954,8 +6152,47 @@ actor SharingRuntimeSelfTestRunner {
         else { throw MomentSharingError.stateUnavailable }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .outboxLoaded)
         guard prepared.localThumbnailFileName
-                == MomentOutboxItem.localThumbnailFileName(for: staged.id)
+                == MomentOutboxItem.localThumbnailFileName(for: staged.id),
+              let detail = prepared.localDetail,
+              detail.fileName == MomentOutboxItem.localDetailFileName(for: staged.id),
+              detail.sha256 == PairingCrypto.sha256(preview.jpeg),
+              let detailDirectory = SharedContainer.momentSharingSentThumbnailDirectoryURL
         else { throw MomentSharingError.stateUnavailable }
+        let detailURL = detailDirectory.appendingPathComponent(detail.fileName)
+        guard try Data(contentsOf: detailURL) == preview.jpeg,
+              preview.jpeg != expectedThumbnail,
+              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(detailURL),
+              try MomentSharingStateStore.localDetailURL(
+                itemID: prepared.id, expectedSpaceID: prepared.context.spaceID,
+                validating: lifecycleToken
+              ) == nil
+        else { throw MomentSharingError.stateUnavailable }
+        let durableJSON = try JSONEncoder().encode(prepared)
+        guard var legacyJSON = try JSONSerialization.jsonObject(with: durableJSON) as? [String: Any],
+              legacyJSON["localDetailJPEG"] == nil
+        else { throw MomentSharingError.stateUnavailable }
+        legacyJSON.removeValue(forKey: "localDetail")
+        guard try JSONDecoder().decode(MomentOutboxItem.self,
+            from: JSONSerialization.data(withJSONObject: legacyJSON)).localDetail == nil
+        else { throw MomentSharingError.stateUnavailable }
+        // Reconciliation retains this exact photo, even if a stale caller
+        // supplies different optional presentation bytes on an idempotent retry.
+        let replay = try MomentSharingStateStore.enqueue(
+            payload: MomentPreparedPayload(
+                context: prepared.context,
+                ciphertext: MomentSharingStateStore.readCiphertext(for: prepared),
+                ciphertextSHA256: prepared.ciphertextSHA256,
+                moderationVersion: prepared.moderationVersion
+            ),
+            senderPolicyVersion: prepared.senderPolicyVersion,
+            senderPolicyAcceptedAt: prepared.senderPolicyAcceptedAt,
+            localCaption: prepared.localCaption,
+            localDetailJPEG: expectedThumbnail,
+            validating: lifecycleToken
+        )
+        guard replay == prepared, try Data(contentsOf: detailURL) == preview.jpeg else {
+            throw MomentSharingError.stateUnavailable
+        }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .thumbnailReferencesValidated)
         guard MomentSharingStateStore.readLocalThumbnail(for: prepared) == expectedThumbnail
         else { throw MomentSharingError.stateUnavailable }
@@ -5983,6 +6220,104 @@ actor SharingRuntimeSelfTestRunner {
         MomentSharingStateStore.readLocalThumbnail(for: committed) == expectedThumbnail
         else { throw MomentSharingError.stateUnavailable }
         writeThumbnailProgress(caseID: .handoffPreview, phase: .committedThumbnailReadable)
+        guard let resolved = try MomentSharingStateStore.localDetailURL(
+            itemID: committed.id, expectedSpaceID: committed.context.spaceID,
+            validating: lifecycleToken
+        ), try Data(contentsOf: resolved) == preview.jpeg,
+        try MomentSharingStateStore.localDetailURL(
+            itemID: committed.id, expectedSpaceID: "another_space",
+            validating: lifecycleToken
+        ) == nil else { throw MomentSharingError.stateUnavailable }
+        try SharingSecureFile.write(expectedThumbnail, to: resolved)
+        guard try MomentSharingStateStore.localDetailURL(
+            itemID: committed.id, expectedSpaceID: committed.context.spaceID,
+            validating: lifecycleToken
+        ) == nil else { throw MomentSharingError.stateUnavailable }
+        try SharingSecureFile.write(preview.jpeg, to: resolved)
+        let expiry = committed.createdAt.addingTimeInterval(30 * 24 * 60 * 60 + 1)
+        // A late status update keeps the ledger, not the full-detail photo.
+        _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+            guard let index = state.outbox.firstIndex(where: { $0.id == committed.id }) else {
+                throw MomentSharingError.stateUnavailable
+            }
+            state.outbox[index].updatedAt = expiry
+        }
+        guard try MomentSharingStateStore.localDetailURL(
+            itemID: committed.id, expectedSpaceID: committed.context.spaceID,
+            validating: lifecycleToken, now: expiry
+        ) == nil else { throw MomentSharingError.stateUnavailable }
+        try MomentSharingStateStore.pruneLocalHistory(now: expiry)
+        guard !FileManager.default.fileExists(atPath: resolved.path),
+              let retained = try MomentSharingStateStore.load().outbox.first(where: { $0.id == committed.id }),
+              retained.localDetail == nil,
+              retained.localThumbnailFileName == committed.localThumbnailFileName
+        else {
+            throw MomentSharingError.stateUnavailable
+        }
+        try verifySentDetailDeletion(jpeg: preview.jpeg, lifecycleToken: lifecycleToken)
+    }
+
+    private static func verifySentDetailDeletion(
+        jpeg: Data, lifecycleToken: SharingLifecycleGate.Token
+    ) throws {
+        func enqueue(detailJPEG: Data? = nil) throws -> MomentOutboxItem {
+            let payload = try MomentCrypto.prepare(
+                canonicalJPEG: jpeg, capturedAt: nil, pixelWidth: 1_536, pixelHeight: 2_048,
+                context: MomentRequestContext(
+                    spaceID: "detail_cleanup_fixture", senderParticipantID: "sender_fixture",
+                    senderDeviceID: "device_fixture", clientRequestID: UUID(),
+                    clientMomentID: UUID(), kind: .live, keyEpoch: 1
+                ), spaceGenerationKey: Data(repeating: 0x41, count: 32)
+            )
+            return try MomentSharingStateStore.enqueue(
+                payload: payload, senderPolicyVersion: 1, senderPolicyAcceptedAt: .now,
+                localDetailJPEG: detailJPEG ?? jpeg, validating: lifecycleToken
+            )
+        }
+        let withoutDetail = try enqueue(detailJPEG: Data([0xff, 0xd8]))
+        guard withoutDetail.phase == .prepared, withoutDetail.localDetail == nil,
+              try MomentSharingStateStore.readCiphertext(for: withoutDetail).count > 100
+        else { throw MomentSharingError.stateUnavailable }
+        try MomentSharingStateStore.discardPendingOutbox(validating: lifecycleToken)
+        for action in 0..<3 {
+            let item = try enqueue()
+            guard let detail = item.localDetail,
+                  let directory = SharedContainer.momentSharingSentThumbnailDirectoryURL
+            else { throw MomentSharingError.stateUnavailable }
+            let url = directory.appendingPathComponent(detail.fileName)
+            switch action {
+            case 0:
+                try MomentSharingStateStore.discardPendingOutbox(validating: lifecycleToken)
+            case 1:
+                try MomentSharingStateStore.markOutboxFailed(
+                    itemID: item.id, code: "invalid-payload", validating: lifecycleToken
+                )
+                try MomentSharingStateStore.discardFailedOutbox(validating: lifecycleToken)
+            default:
+                let acceptedAt = Date()
+                _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in
+                    guard let index = state.outbox.firstIndex(where: { $0.id == item.id }) else {
+                        throw MomentSharingError.stateUnavailable
+                    }
+                    state.outbox[index].phase = .committed
+                    state.outbox[index].serverMomentID = "detail_committed_fixture"
+                    state.outbox[index].commitStartedAt = acceptedAt
+                    state.outbox[index].committedAt = acceptedAt
+                    state.outbox[index].unreceivedExpiresAt = acceptedAt.addingTimeInterval(3_600)
+                    state.outbox[index].recipientCount = 1
+                    state.outbox[index].updatedAt = acceptedAt
+                }
+                try MomentSharingStateStore.enterReportOnlyMode(
+                    until: Date().addingTimeInterval(3_600), validating: lifecycleToken
+                )
+            }
+            guard !FileManager.default.fileExists(atPath: url.path),
+                  try MomentSharingStateStore.localDetailURL(
+                    itemID: item.id, expectedSpaceID: item.context.spaceID,
+                    validating: lifecycleToken
+                  ) == nil
+            else { throw MomentSharingError.stateUnavailable }
+        }
     }
 
     private static func clearMomentSharingFixture() throws {

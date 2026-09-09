@@ -135,9 +135,15 @@ struct MomentNotificationTap: Equatable, Identifiable, Sendable {
 /// launch tap that arrives before AppRootView subscribes.
 @MainActor
 final class MomentNotificationTapMailbox: ObservableObject {
+    struct Feedback: Equatable, Identifiable {
+        let id: UUID
+        let message: String
+    }
+
     static let shared = MomentNotificationTapMailbox()
 
     @Published private(set) var pendingTap: MomentNotificationTap?
+    @Published private(set) var pendingWidgetFeedback: Feedback?
 
     private init() {}
 
@@ -148,6 +154,18 @@ final class MomentNotificationTapMailbox: ObservableObject {
     func consume(id: UUID) {
         guard pendingTap?.id == id else { return }
         pendingTap = nil
+    }
+
+    // Widget intents also run before the root view can observe a cold launch.
+    // Keep their latest feedback in this same in-memory mailbox; it neither
+    // replaces a pending photo route nor writes another persistent store.
+    func enqueueWidgetFeedback(_ message: String) {
+        pendingWidgetFeedback = Feedback(id: UUID(), message: message)
+    }
+
+    func consumeWidgetFeedback(id: UUID) {
+        guard pendingWidgetFeedback?.id == id else { return }
+        pendingWidgetFeedback = nil
     }
 }
 

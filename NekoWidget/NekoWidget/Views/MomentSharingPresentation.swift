@@ -1,5 +1,98 @@
 import Foundation
 
+/// A photo-bound display state. It neither advances the outbox nor schedules I/O.
+struct MomentPhotoDeliveryProgress: Equatable, Identifiable, Sendable {
+    enum Phase: Equatable, Sendable {
+        case preparing, sending, confirming, waiting, quotaWaiting, attention, resultUnknown, accepted
+    }
+    let id: String
+    let thumbnailJPEG: Data?
+    let startedAt: Date
+    let phase: Phase
+
+    func title(at now: Date) -> String {
+        switch phase {
+        case .accepted: return "送信しました"
+        case .quotaWaiting: return "送信できる時刻を待っています"
+        case .attention: return "確認が必要です"
+        case .resultUnknown: return "送信結果を確認できません"
+        case .waiting: return "時間がかかっています"
+        default:
+            if now.timeIntervalSince(startedAt) >= 10 { return "時間がかかっています" }
+            return phase == .preparing ? "写真を準備中" : "送信中"
+        }
+    }
+
+    func detail(at now: Date) -> String? {
+        switch phase {
+        case .accepted: return nil
+        case .attention: return "送信状況から、必要な操作を確認できます。"
+        case .resultUnknown: return "届いている可能性があるため、送り直す前に送信状況を確認してください。"
+        case .quotaWaiting: return "写真は保持しています。送り直しは不要です。"
+        case .waiting: return "写真は保持しています。送り直しは不要です。"
+        default:
+            return now.timeIntervalSince(startedAt) >= 10
+                ? "写真は保持しています。送り直しは不要です。" : nil
+        }
+    }
+
+    func animates(at now: Date) -> Bool {
+        (phase == .preparing || phase == .sending || phase == .confirming)
+            && now.timeIntervalSince(startedAt) < 10
+    }
+
+    func withThumbnail(_ jpeg: Data?) -> Self {
+        Self(id: id, thumbnailJPEG: jpeg, startedAt: startedAt, phase: phase)
+    }
+}
+
+/// Success is shown only for a photo observed pending in this presentation
+/// session and then found in the committed ledger. Disappearance alone is not
+/// success (cancel, expiry, revocation and a failed snapshot can also remove it).
+struct MomentPhotoDeliveryProgressTracker {
+    private var previous: [String: MomentPhotoDeliveryProgress] = [:]
+    private var completions: [String: (photo: MomentPhotoDeliveryProgress, until: Date)] = [:]
+
+    mutating func update(
+        photos: [MomentPhotoDeliveryProgress], acceptedIDs: Set<String>, now: Date
+    ) -> [MomentPhotoDeliveryProgress] {
+        let current = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for (id, photo) in previous where current[id] == nil && acceptedIDs.contains(id) {
+            completions[id] = (MomentPhotoDeliveryProgress(id: id,
+                thumbnailJPEG: photo.thumbnailJPEG, startedAt: photo.startedAt, phase: .accepted),
+                now.addingTimeInterval(2))
+        }
+        previous = current
+        completions = completions.filter {
+            $0.value.until > now && acceptedIDs.contains($0.key) && current[$0.key] == nil
+        }
+        return (photos + completions.values.map(\.photo)).sorted {
+            if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
+            return $0.id < $1.id
+        }
+    }
+
+    var nextCompletionExpiry: Date? { completions.values.map(\.until).min() }
+}
+
+struct MomentSynchronizationFailure: Equatable, Sendable {
+    let spaceID: String
+    let message: String
+    let occurredAt: Date
+
+    func canRecover(
+        after completedAt: Date,
+        synchronizedSpaceID: String,
+        currentSpaceID: String?,
+        currentMessage: String?
+    ) -> Bool {
+        synchronizedSpaceID == spaceID
+            && currentSpaceID == spaceID
+            && completedAt >= occurredAt
+            && currentMessage == message
+    }
+}
+
 /// Foreground polling is deliberately bounded to an active, paired and
 /// consented app session. It never depends on Photos authorization, and it
 /// makes no background-delivery promise when the app is locked or terminated.
@@ -129,6 +222,9 @@ struct MomentPreparationPresentationInput: Equatable, Sendable {
     let expiresAt: Date
     let nextRetryAt: Date?
     let isCancellable: Bool
+    /// Local correlation only; never rendered or exported to diagnostics.
+    var stableID: String? = nil
+    var createdAt: Date? = nil
 }
 
 /// Persistence-independent input for one encrypted outbound item. Keeping the
@@ -169,6 +265,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
     let localThumbnailJPEG: Data?
     /// User-authored text for the matching local photograph; never diagnostic metadata.
     let localCaption: String?
+    let createdAt: Date
 
     init(
         stableID: String,
@@ -184,7 +281,8 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         hasReceivedHeart: Bool = false,
         serverMomentID: String? = nil,
         localThumbnailJPEG: Data? = nil,
-        localCaption: String? = nil
+        localCaption: String? = nil,
+        createdAt: Date? = nil
     ) {
         self.stableID = stableID
         self.destinationKey = destinationKey
@@ -200,6 +298,7 @@ struct MomentDeliveryPresentationInput: Equatable, Sendable {
         self.serverMomentID = serverMomentID
         self.localThumbnailJPEG = localThumbnailJPEG
         self.localCaption = localCaption
+        self.createdAt = createdAt ?? updatedAt
     }
 }
 
@@ -256,6 +355,7 @@ enum MomentOutgoingStatusKind: Int, CaseIterable, Identifiable, Sendable, Hashab
     case preparing
     case preparationRetryWaiting
     case waiting
+    case dailyQuotaWaiting
     case sending
     case confirming
     case resultUnknown
@@ -278,6 +378,7 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
     let isServerRuntimeUnavailable: Bool
     let isOutboxCapacityBlocked: Bool
     let hasOtherRetryReason: Bool
+    var quotaResetAt: Date? = nil
 
     var id: MomentOutgoingStatusKind { kind }
 
@@ -286,7 +387,11 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
         case .safetyCheckWaiting: "安全確認待ち \(count)枚"
         case .preparing: "写真を準備中 \(count)枚"
         case .preparationRetryWaiting: "準備の再試行待ち \(count)枚"
-        case .waiting: "送信待ち \(count)枚"
+        case .waiting:
+            hasOtherRetryReason || isServerRuntimeUnavailable
+                ? "送信できていません（\(count)枚）"
+                : "送信待ち \(count)枚"
+        case .dailyQuotaWaiting: "1日の送信上限に達しました（\(count)枚待機）"
         case .sending: "送信処理中 \(count)枚"
         case .confirming: "配信結果を確認中 \(count)枚"
         case .resultUnknown: "送信結果を確認できない写真 \(count)枚"
@@ -321,13 +426,15 @@ struct MomentOutgoingStatusPresentation: Equatable, Identifiable, Sendable {
                 reasons.append("この中には、共有サーバーの準備待ちで配信受付をまだ確認できていない写真があります。")
             }
             if hasOtherRetryReason {
-                reasons.append("この中には、通信状態に応じて同じ送信を重複なく再試行する写真があります。")
+                reasons.append("送信を完了できなかった写真があります。同じ写真を保持して、時間をおいて再試行します。")
             }
             if reasons.isEmpty {
                 return "暗号化済みの写真が、送信開始を待っています。"
             }
             reasons.append("配信完了ではありません。")
             return reasons.joined(separator: " ")
+        case .dailyQuotaWaiting:
+            return "この写真はまだ送信していません。送信できる時刻まで、このiPhoneに保存して待ちます。時刻を過ぎた後の更新で再試行するので、送り直す必要はありません。"
         case .sending:
             var reasons: [String] = []
             if isServerRuntimeUnavailable {
@@ -434,6 +541,7 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
     let outcomes: [MomentOutgoingOutcomeGroupPresentation]
     let latestServerAcceptance: MomentLatestServerAcceptancePresentation?
     let sentRecords: [MomentSentRecordPresentation]
+    var photoProgress: [MomentPhotoDeliveryProgress] = []
 
     static let empty = Self(
         statuses: [],
@@ -447,7 +555,7 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
     /// implies that a relay upload and a local handoff have the same boundary.
     var cancellableEncryptedDeliveryCount: Int {
         statuses
-            .filter { $0.kind == .waiting || $0.kind == .sending }
+            .filter { $0.kind == .waiting || $0.kind == .dailyQuotaWaiting || $0.kind == .sending }
             .reduce(0) { $0 + $1.cancellableCount }
     }
 
@@ -476,6 +584,55 @@ struct MomentOutgoingPresentation: Equatable, Sendable {
         statuses
             .filter { $0.kind == .failed || $0.kind == .resultUnknown }
             .reduce(0) { $0 + $1.count }
+    }
+
+    /// One entry into delivery details, without putting the entire ledger in
+    /// front of the photographs. An unknown result is never called unsent.
+    var activitySummary: String? {
+        guard !statuses.isEmpty || !outcomes.isEmpty else { return nil }
+        if statuses.count == 1, outcomes.isEmpty,
+           let status = statuses.first, status.kind == .dailyQuotaWaiting {
+            return "送信上限で待機 \(status.count)枚"
+        }
+        let unknown = statuses.filter { $0.kind == .resultUnknown }.reduce(0) { $0 + $1.count }
+        let failed = statuses.filter { $0.kind == .failed }.reduce(0) { $0 + $1.count }
+        let settings = statuses.filter {
+            $0.kind != .failed && $0.kind != .resultUnknown && $0.requiresSensitiveContentWarning
+        }.reduce(0) { $0 + $1.count }
+        let retrying = statuses.reduce(0) { $0 + Self.automaticRetryCount($1) }
+        let waiting = statuses.filter {
+            $0.kind == .waiting && !Self.needsAttention($0)
+        }.reduce(0) { $0 + $1.count - Self.automaticRetryCount($1) }
+        let progressing = statuses.filter {
+            $0.kind != .waiting && !Self.needsAttention($0)
+        }.reduce(0) { $0 + $1.count - Self.automaticRetryCount($1) }
+        var parts: [String] = []
+        if unknown > 0 { parts.append("結果不明 \(unknown)枚") }
+        if failed > 0 { parts.append("送信できなかった \(failed)枚") }
+        if outcomeCount > 0 { parts.append("送信しなかった \(outcomeCount)枚") }
+        if settings > 0 { parts.append("準備待ち \(settings)枚（設定の確認あり）") }
+        if retrying > 0 { parts.append("再試行待ち \(retrying)枚") }
+        if waiting > 0 { parts.append("送信待ち \(waiting)枚") }
+        if progressing > 0 { parts.append("送信・準備中 \(progressing)枚") }
+        return parts.joined(separator: "・")
+    }
+
+    var activityNeedsAttention: Bool {
+        !outcomes.isEmpty || statuses.contains(where: Self.needsAttention)
+    }
+
+    private static func needsAttention(_ status: MomentOutgoingStatusPresentation) -> Bool {
+        status.kind == .failed || status.kind == .resultUnknown
+            || status.requiresSensitiveContentWarning
+    }
+
+    private static func automaticRetryCount(_ status: MomentOutgoingStatusPresentation) -> Int {
+        guard !needsAttention(status) else { return 0 }
+        if status.kind == .dailyQuotaWaiting || status.kind == .preparationRetryWaiting { return status.count }
+        // Error flags describe a whole group and may apply to only one photo.
+        // Use the actual deferred count instead of calling every queued photo
+        // a retry when new and previously attempted sends share a group.
+        return min(status.count, max(0, status.retryDeferredCount))
     }
 }
 
@@ -523,7 +680,14 @@ enum MomentSharingPresentationPolicy {
         }
 
         for delivery in deliveries {
-            guard let kind = statusKind(for: delivery.phase) else { continue }
+            let kind: MomentOutgoingStatusKind
+            if delivery.phase == .prepared,
+               delivery.lastErrorCode == "daily-quota-exceeded" {
+                kind = .dailyQuotaWaiting
+            } else {
+                guard let phaseKind = statusKind(for: delivery.phase) else { continue }
+                kind = phaseKind
+            }
             var accumulator = groups[kind] ?? Accumulator()
             accumulator.count += 1
             accumulator.destinationKeys.insert(delivery.destinationKey)
@@ -538,6 +702,9 @@ enum MomentSharingPresentationPolicy {
             )
             if let retryAt = delivery.retryAt, retryAt > now {
                 accumulator.nextRetryAt = min(accumulator.nextRetryAt ?? retryAt, retryAt)
+            }
+            if kind == .dailyQuotaWaiting, let resetAt = delivery.retryAt {
+                accumulator.quotaResetAt = min(accumulator.quotaResetAt ?? resetAt, resetAt)
             }
             groups[kind] = accumulator
         }
@@ -568,7 +735,9 @@ enum MomentSharingPresentationPolicy {
                         $0 != "moderation-disabled"
                             && $0 != "outbox-full"
                             && $0 != "moment-runtime-disabled"
-                    })
+                            && $0 != "daily-quota-exceeded"
+                    }),
+                    quotaResetAt: value.quotaResetAt
                 )
             }
 
@@ -659,8 +828,45 @@ enum MomentSharingPresentationPolicy {
             statuses: statuses,
             outcomes: outcomeGroups,
             latestServerAcceptance: latestServerAcceptance,
-            sentRecords: sentRecords
+            sentRecords: sentRecords,
+            photoProgress: photoProgress(preparations: preparations, deliveries: deliveries, now: now)
         )
+    }
+
+    private static func photoProgress(
+        preparations: [MomentPreparationPresentationInput],
+        deliveries: [MomentDeliveryPresentationInput],
+        now: Date
+    ) -> [MomentPhotoDeliveryProgress] {
+        let deliveryIDs = Set(deliveries.map(\.stableID))
+        let preparing = preparations.compactMap { item -> MomentPhotoDeliveryProgress? in
+            guard let id = item.stableID, !deliveryIDs.contains(id) else { return nil }
+            let phase: MomentPhotoDeliveryProgress.Phase
+            if item.lastErrorCode == "moderation-disabled" { phase = .attention }
+            else if item.lastErrorCode != nil || (item.nextRetryAt.map { $0 > now } ?? false) { phase = .waiting }
+            else { phase = .preparing }
+            return MomentPhotoDeliveryProgress(id: id, thumbnailJPEG: nil,
+                startedAt: item.createdAt ?? item.updatedAt, phase: phase)
+        }
+        let sending = deliveries.compactMap { item -> MomentPhotoDeliveryProgress? in
+            let phase: MomentPhotoDeliveryProgress.Phase
+            switch item.phase {
+            case .committed: return nil
+            case .failed: phase = .attention
+            case .deliveryResultUnknown: phase = .resultUnknown
+            default:
+                if item.phase == .prepared && item.lastErrorCode == "daily-quota-exceeded" {
+                    phase = .quotaWaiting
+                } else if (item.retryAt.map { $0 > now } ?? false) || isRetryDeferred(item, at: now) {
+                    phase = .waiting
+                } else if item.phase == .committing {
+                    phase = .confirming
+                } else { phase = .sending }
+            }
+            return MomentPhotoDeliveryProgress(id: item.stableID,
+                thumbnailJPEG: item.localThumbnailJPEG, startedAt: item.createdAt, phase: phase)
+        }
+        return (preparing + sending).sorted { $0.startedAt > $1.startedAt }
     }
 
     private static func preparationStatusKind(
@@ -700,6 +906,7 @@ enum MomentSharingPresentationPolicy {
     }
 
     private struct Accumulator {
+        var quotaResetAt: Date?
         var count = 0
         var destinationKeys: Set<String> = []
         var processingCount = 0

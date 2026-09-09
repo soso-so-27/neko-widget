@@ -2,8 +2,8 @@ import XCTest
 import UIKit
 
 /// Captures privacy-safe, real SpringBoard screenshots for the in-app Widget
-/// placement guide. This test is intentionally excluded from the normal smoke
-/// path and is run only by the manual screenshot-capture workflow.
+/// placement guide and explicitly enabled Widget visual review. Ordinary smoke
+/// runs do not enable the Widget screenshot compiler conditions.
 ///
 /// The workflow erases its Simulator before and after the test. No Photos are
 /// imported, and the final "Add Widget" button is deliberately not tapped.
@@ -138,6 +138,26 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
 
     @MainActor
     func testCaptureJapaneseLocalOnlyWidgetPreviewForAppStore() {
+        captureFixtureGallery(captureAllSizes: false)
+    }
+
+    @MainActor
+    func testCaptureSharedWidgetAllSupportedSizes() {
+        executionTimeAllowance = 180
+        captureFixtureGallery(captureAllSizes: true)
+    }
+
+    @MainActor
+    func testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes() {
+        executionTimeAllowance = 180
+        captureFixtureGallery(captureAllSizes: true, expectWhiteFixture: true)
+    }
+
+    @MainActor
+    private func captureFixtureGallery(
+        captureAllSizes: Bool,
+        expectWhiteFixture: Bool = false
+    ) {
         let app = XCUIApplication()
         app.launchArguments += [
             "-AppleLanguages", "(ja)",
@@ -230,15 +250,57 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             )
             return
         }
-        guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {
-            fail(
-                "The Widget gallery did not render the deterministic local cat preview.",
-                application: springboard
-            )
-            return
+        if captureAllSizes {
+            // SpringBoard also exposes the obscured Home Screen page control.
+            // Only the Gallery's scroll view contains the size picker control.
+            let gallery = springboard.scrollViews
+                .containing(.pageIndicator, identifier: nil)
+                .firstMatch
+            let pages = gallery.pageIndicators.firstMatch
+            guard pages.waitForExistence(timeout: 10),
+                  galleryPage(pages) == [1, 3],
+                  let fixtureScreenshot = waitForFixturePhoto(
+                      in: gallery, springboard: springboard, timeout: 15,
+                      expectWhiteFixture: expectWhiteFixture
+                  ) else {
+                fail("The small Widget page did not display its fixture photo.", application: springboard)
+                return
+            }
+            captureScreenshot(named: "widget-family-small", screenshot: fixtureScreenshot)
+            for (index, size) in ["medium", "large"].enumerated() {
+                guard let previousPage = pages.value as? String, !previousPage.isEmpty else {
+                    fail("The Widget size page cannot be identified.", application: springboard)
+                    return
+                }
+                let start = springboard.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.85, dy: 0.57)
+                )
+                let end = springboard.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.15, dy: 0.57)
+                )
+                start.press(forDuration: 0.1, thenDragTo: end)
+                let changedPage = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "value != %@", previousPage),
+                    object: pages
+                )
+                guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
+                      let screenshot = waitForFixturePhoto(
+                          in: gallery, springboard: springboard, timeout: 10,
+                          expectWhiteFixture: expectWhiteFixture
+                      ),
+                      galleryPage(pages) == [index + 2, 3] else {
+                    fail("The Widget size did not advance to a rendered photo.", application: springboard)
+                    return
+                }
+                captureScreenshot(named: "widget-family-\(size)", screenshot: screenshot)
+            }
+        } else {
+            guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {
+                fail("The Widget gallery did not render the deterministic local cat preview.", application: springboard)
+                return
+            }
+            captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
         }
-
-        captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
         // Do not tap Add Widget. The disposable Simulator is erased after the
         // run, but the capture itself remains read-only SpringBoard review.
     }
@@ -317,12 +379,128 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    private func galleryPage(_ indicator: XCUIElement) -> [Int] {
+        guard let value = indicator.value as? String else { return [] }
+        return value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+    }
+
+    @MainActor
+    private func waitForFixturePhoto(
+        in gallery: XCUIElement,
+        springboard: XCUIApplication,
+        timeout: TimeInterval,
+        expectWhiteFixture: Bool = false
+    ) -> XCUIScreenshot? {
+        // CI's Gallery AX exposes the preview as a Button with a "Widget,"
+        // value. Its page control supplies the size; don't require the preview
+        // to be interactive or depend on unobserved localized size suffixes.
+        let photos = gallery.buttons.matching(
+            NSPredicate(format: "value BEGINSWITH %@", "Widget,")
+        )
+        let deadline = Date().addingTimeInterval(timeout)
+        var visibleSince: Date?
+        repeat {
+            let screenshot = XCUIScreen.main.screenshot()
+            let screenFrame = springboard.frame
+            if let photo = photos.allElementsBoundByIndex.first(where: {
+                $0.exists && screenFrame.contains($0.frame)
+                    && abs($0.frame.midX - screenFrame.midX) < 20
+            }),
+               fixturePhotoIsVisible(
+                   in: screenshot, photoFrame: photo.frame, screenFrame: screenFrame,
+                   expectWhiteFixture: expectWhiteFixture
+               ) {
+                if let visibleSince {
+                    if Date().timeIntervalSince(visibleSince) >= 0.5 { return screenshot }
+                } else {
+                    visibleSince = Date()
+                }
+            } else {
+                visibleSince = nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return nil
+    }
+
+    @MainActor
+    private func fixturePhotoIsVisible(
+        in screenshot: XCUIScreenshot,
+        photoFrame: CGRect,
+        screenFrame: CGRect,
+        expectWhiteFixture: Bool = false
+    ) -> Bool {
+        guard let source = screenshot.image.cgImage,
+              screenFrame.width > 0, screenFrame.height > 0,
+              screenFrame.contains(photoFrame), !photoFrame.isEmpty else { return false }
+        let scaleX = CGFloat(source.width) / screenFrame.width
+        let scaleY = CGFloat(source.height) / screenFrame.height
+        let crop = CGRect(
+            x: (photoFrame.minX - screenFrame.minX) * scaleX,
+            y: (photoFrame.minY - screenFrame.minY) * scaleY,
+            width: photoFrame.width * scaleX, height: photoFrame.height * scaleY
+        )
+        guard let photo = source.cropping(to: crop) else { return false }
+        let width = 100
+        let height = max(1, Int(Double(photo.height) / Double(photo.width) * Double(width)))
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var rendered = false
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(
+                data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue
+                    | CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return }
+            context.draw(photo, in: CGRect(x: 0, y: 0, width: width, height: height))
+            rendered = true
+        }
+        guard rendered else { return false }
+        var lightPixels = 0
+        var midtonePixels = 0
+        var whitePixels = 0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[offset]), green = Int(pixels[offset + 1])
+            let blue = Int(pixels[offset + 2])
+            if red > 130 && green > 130 && blue > 110 { lightPixels += 1 }
+            if red >= 245 && green >= 245 && blue >= 245 { whitePixels += 1 }
+            let brightness = (red + green + blue) / 3
+            if brightness > 40 && brightness < 120 && max(red, green, blue) < 140 {
+                midtonePixels += 1
+            }
+        }
+        // All three committed cat photos contain light surroundings and darker
+        // fur. The white contrast fixture also satisfies this gate: its white
+        // canvas is light, and its 60% caption scrim supplies midtones. A uniform
+        // skeleton has no such light/midtone pair; sparse copy over the dark
+        // missing-image view does not supply the required light area either.
+        // The white run must additionally reject a retained normal cat preview.
+        // Allow the maximum-text footer and rounded corners to occupy the rest.
+        // Text layout and contrast still require visual review of the capture.
+        let pixelCount = width * height
+        return lightPixels > pixelCount / 10 && midtonePixels > pixelCount / 20
+            && (!expectWhiteFixture || whitePixels * 100 >= pixelCount * 35)
+    }
+
+    @MainActor
     private func waitForFixturePalette(timeout: TimeInterval) -> XCUIScreenshot? {
         let deadline = Date().addingTimeInterval(timeout)
+        var visibleSince: Date?
         repeat {
             let screenshot = XCUIScreen.main.screenshot()
             if fixturePaletteIsVisible(in: screenshot) {
-                return screenshot
+                // Gallery previews keep gently moving. Require sustained photo
+                // visibility, not identical pixels, within the same deadline.
+                if let visibleSince {
+                    if Date().timeIntervalSince(visibleSince) >= 0.5 {
+                        return screenshot
+                    }
+                } else {
+                    visibleSince = Date()
+                }
+            } else {
+                visibleSince = nil
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
