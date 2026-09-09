@@ -90,13 +90,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         searchField.tap()
         searchField.typeText("ねこのまど")
 
-        guard let widgetSearchResult = waitForElement(
+        guard let widgetSearchResult = waitForWidgetGalleryResult(
             in: springboard,
-            labels: [
-                "ねこのまど",
-                "NekoWidget",
-            ],
-            elementTypes: [.button, .cell, .staticText, .other],
             timeout: 20
         ) else {
             fail(
@@ -107,13 +102,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         }
         captureScreenshot(named: "onboarding-widget-step-3")
 
-        if widgetSearchResult.isHittable {
-            widgetSearchResult.tap()
-        } else {
-            widgetSearchResult
-                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                .tap()
-        }
+        widgetSearchResult.tap()
 
         guard waitForElement(
             in: springboard,
@@ -218,10 +207,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         searchField.tap()
         searchField.typeText("ねこのまど")
 
-        guard let widgetSearchResult = waitForElement(
+        guard let widgetSearchResult = waitForWidgetGalleryResult(
             in: springboard,
-            labels: ["ねこのまど", "NekoWidget"],
-            elementTypes: [.button, .cell, .staticText, .other],
             timeout: 20
         ) else {
             fail(
@@ -230,13 +217,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             )
             return
         }
-        if widgetSearchResult.isHittable {
-            widgetSearchResult.tap()
-        } else {
-            widgetSearchResult
-                .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                .tap()
-        }
+        widgetSearchResult.tap()
 
         guard waitForElement(
             in: springboard,
@@ -334,6 +315,28 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 .coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.78))
                 .tap()
         }
+        return nil
+    }
+
+    @MainActor
+    private func waitForWidgetGalleryResult(
+        in springboard: XCUIApplication,
+        timeout: TimeInterval
+    ) -> XCUIElement? {
+        // Gallery results are cells. A substring search also matches SpringBoard's
+        // "No Results for this app" message before an app result appears.
+        // Exact, hittable cells exclude that message and obscured Home icons.
+        let names = ["ねこのまど", "NekoWidget"]
+        let candidates = springboard.cells.matching(NSPredicate(
+            format: "label IN %@ OR identifier IN %@", names, names
+        ))
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let result = candidates.allElementsBoundByIndex.first(where: { $0.isHittable }) {
+                return result
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
         return nil
     }
 
