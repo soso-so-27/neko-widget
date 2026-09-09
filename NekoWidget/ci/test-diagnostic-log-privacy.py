@@ -981,6 +981,16 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         self.assertLess(retry.index("snapshot = try MomentSharingStateStore.mutate"), retry.index("Self.logDeliveryWait"))
         self.assertIn('if item.phase == .committed', retry)
         self.assertIn('"Accepted photo local cleanup failed"', retry)
+        send = section(coordinator, "    private func sendOutbox(", "    private func sendPawOutbox(")
+        for phase, stage in (("reserved", "readCiphertext"), ("uploaded", "beginCommit"), ("committing", "commit")):
+            branch = section(send, f"if item.phase == .{phase} {{", "guard let momentID")
+            self.assertIn(f"stage = .{stage}", branch)
+        recovery = section(send, "if Self.isExpiredReservation(error) {", "if Self.isNonterminalAuthenticationFailure(error)")
+        self.assertIn("try? currentOutboxItem(candidate.id)", recovery)
+        self.assertIn("priorFailures: recoveredItem.attemptCount", recovery)
+        self.assertIn("let retryAt = recoveredItem.nextRetryAt", recovery)
+        self.assertNotIn("addingTimeInterval", recovery)
+        self.assertNotIn("candidate.attemptCount + 1", recovery)
 
     def test_ios_build_runs_privacy_test_before_build(self) -> None:
         workflow = (REPOSITORY / ".github/workflows/ios-build.yml").read_text(

@@ -1913,10 +1913,10 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .reserved {
+                    stage = .readCiphertext
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
-                    stage = .readCiphertext
                     let ciphertext = try MomentSharingStateStore.readCiphertext(for: item)
                     try SharingLifecycleGate.validate(lifecycleToken)
                     stage = .upload
@@ -1939,10 +1939,10 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .uploaded {
+                    stage = .beginCommit
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
-                    stage = .beginCommit
                     item = try mutateOutbox(
                         item.id,
                         expected: .uploaded,
@@ -1955,11 +1955,11 @@ actor MomentSharingCoordinator {
                     }
                 }
                 if item.phase == .committing {
+                    stage = .commit
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
                     try SharingLifecycleGate.validate(lifecycleToken)
-                    stage = .commit
                     let commit = try await api.commit(
                         momentID: momentID,
                         clientRequestID: item.context.clientRequestID,
@@ -1999,16 +1999,16 @@ actor MomentSharingCoordinator {
                 // even when the durable local phase had already become
                 // `.committing` before a crash or long suspension.
                 if Self.isExpiredReservation(error) {
-                    let recoveryTime = Date()
                     let recovered = try MomentSharingStateStore.recoverExpiredReservation(
                         itemID: candidate.id,
-                        validating: lifecycleToken,
-                        now: recoveryTime
+                        validating: lifecycleToken
                     )
-                    if recovered {
+                    if recovered,
+                       let recoveredItem = try? currentOutboxItem(candidate.id),
+                       let retryAt = recoveredItem.nextRetryAt {
                         Self.logDeliveryWait(trace: trace, stage: stage, error: error,
-                            priorFailures: candidate.attemptCount + 1,
-                            retryAt: recoveryTime.addingTimeInterval(30))
+                            priorFailures: recoveredItem.attemptCount,
+                            retryAt: retryAt)
                     }
                     continue
                 }
