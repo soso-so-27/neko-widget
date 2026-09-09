@@ -201,8 +201,17 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertEqual(scenario_body.count('-only-testing:'), 1)
         self.assertIn(
             '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'
-            'testCaptureSharedWidgetAllSupportedSizes', scenario_body,
+            '$widget_scenario_test', scenario_body,
         )
+        self.assertIn('widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"', scenario_body)
+        self.assertIn('widget_scenario_test="testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes"', scenario_body)
+        self.assertIn('func testCaptureSharedWidgetWhiteBackgroundAllSupportedSizes()', self.widget_ui_test)
+        self.assertIn('captureFixtureGallery(captureAllSizes: true, expectWhiteFixture: true)', self.widget_ui_test)
+        for command in ('shutdown', 'erase', 'boot', 'bootstatus'):
+            arguments = ' -b' if command == 'bootstatus' else ''
+            reset = f'xcrun simctl {command} "$simulator_udid"{arguments} || return $?'
+            self.assertIn(reset, scenario_body)
+            self.assertLess(scenario_body.index(reset), scenario_body.index('xcodebuild'))
         self.assertIn('-derivedDataPath "$DERIVED_DATA_DIRECTORY"', scenario_body)
         self.assertIn(
             'WIDGET_VISUAL_REVIEW_LONG_CAPTION WIDGET_VISUAL_REVIEW_WHITE_BACKGROUND '
