@@ -9,6 +9,7 @@ struct NekoWidgetApp: App {
     init() {
 #if DEBUG
         let shouldRunLaunchCleanup = !BillingInternalDiagnosticsLaunch.isActive
+            && !CommandLine.arguments.contains("--cat-profile-photo-flow-fixture")
 #else
         let shouldRunLaunchCleanup = true
 #endif
@@ -26,6 +27,7 @@ struct NekoWidgetApp: App {
         }
 #if DEBUG
         if !BillingInternalDiagnosticsLaunch.isActive,
+           !CommandLine.arguments.contains("--cat-profile-photo-flow-fixture"),
            ProcessInfo.processInfo.environment["NEKO_RESET_ONBOARDING_FOR_UI_TESTS"] == "1" {
             let defaults = UserDefaults.standard
             defaults.removeObject(

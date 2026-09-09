@@ -180,6 +180,7 @@ final class NekoWidgetAppDelegate: NSObject, UIApplicationDelegate,
 #if DEBUG
     private static var suppressesNormalServicesForDebugLaunch: Bool {
         CommandLine.arguments.contains("--sharing-runtime-self-test")
+            || CommandLine.arguments.contains("--cat-profile-photo-flow-fixture")
             || CommandLine.arguments.contains(
                 AppStoreScreenshotFixture.launchArgument
             )
