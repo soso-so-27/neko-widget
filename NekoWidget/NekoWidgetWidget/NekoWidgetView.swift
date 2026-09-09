@@ -56,17 +56,11 @@ struct NekoWidgetView: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(loadedPhotoAccessibilityLabel)
                     .overlay(alignment: .bottom) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            if let caption = familyCaption {
-                                familyCaptionPreview(caption)
-                            }
-                            photoFooter
-                        }
-                        .padding(actionButtonInset)
-                    }
-                    .overlay(alignment: .topLeading) {
-                        if family == .systemSmall {
-                            familySourceLabel.padding(8)
+                        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+                            familyPhotoFooter
+                        } else {
+                            photoActionButtons()
+                                .padding(actionButtonInset)
                         }
                     }
                 }
@@ -83,8 +77,8 @@ struct NekoWidgetView: View {
         .environment(\.dynamicTypeSize, .accessibility5)
 #endif
         // A photo is always navigation, never an implicit memory action.
-        // Explicit controls below keep the action routes discoverable without
-        // changing what a tap on the image means across widget families.
+        // Shared photos have one tap destination; save and heart live in the
+        // photo detail. The personal-library memory action remains explicit.
         .widgetURL(entry.photoURL)
     }
 
@@ -104,103 +98,55 @@ struct NekoWidgetView: View {
         return familyCaption.map { "\(photo)。ひとこと。\($0)" } ?? photo
     }
 
+    /// One quiet footer for shared photos. Its background covers the full
+    /// width and fades into the image, without adding separate text panels.
+    private var familyPhotoFooter: some View {
+        VStack(spacing: 4) {
+            if let caption = familyCaption {
+                familyCaptionPreview(caption)
+            }
+            familySourceLabel
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+        .background {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.60)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: familyCaption == nil ? 16 : 26)
+                // Maintain contrast directly under both lines of text, even
+                // on a white photo; only the area above the footer fades out.
+                LinearGradient(
+                    colors: [.black.opacity(0.60), .black.opacity(0.63)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
+            .padding(.top, familyCaption == nil ? -16 : -26)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
     private func familyCaptionPreview(_ caption: String) -> some View {
         Text(verbatim: caption)
             .font(.caption)
             .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .foregroundStyle(.white)
-            .multilineTextAlignment(.leading)
-            .lineLimit(family == .systemSmall ? 1 : 2)
+            .multilineTextAlignment(.center)
+            .lineLimit(family == .systemLarge ? 2 : 1)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
-            .background {
-                // Keep 60% black directly behind the text (about 5.7:1 for
-                // white on a white photo). Short fades surround only the
-                // caption; the action row keeps its individual backgrounds.
-                VStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [.clear, .black.opacity(0.60)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .frame(height: 10)
-                    Color.black.opacity(0.60)
-                    LinearGradient(
-                        colors: [.black.opacity(0.60), .clear],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .frame(height: 6)
-                }
-                .mask {
-                    HStack(spacing: 0) {
-                        Color.black
-                        LinearGradient(
-                            colors: [.black, .clear],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: actionButtonInset)
-                    }
-                }
-                .padding(.horizontal, -actionButtonInset)
-                .padding(.top, -10)
-                .padding(.bottom, -6)
-                .allowsHitTesting(false)
-            }
-            // Expand alignment after drawing the scrim, so a short caption
-            // does not darken photo pixels beyond its actual text width.
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // The photo owns its deep link and reads the full text once.
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private var photoFooter: some View {
-        if family == .systemSmall {
-            photoActionButtons()
-        } else {
-            ZStack(alignment: .leading) {
-                photoActionButtons()
-                // Keep the name away from the top crop boundary. Its allotted
-                // width stays clear of both 44pt controls, including when a
-                // stale entry hides one or both actions. Caption changes never
-                // move this row or alter the name's available width.
-                familySourceLabel
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.trailing, 88 + actionButtonSpacing + 8)
-            }
-            .frame(minHeight: 44)
-        }
+            .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
     private func photoActionButtons() -> some View {
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
-           let sourceDigest = entry.familySourceDigest,
-           let localWindowID = WidgetPhotoSource.localWindowID(
-               from: entry.photoSourceIdentifier
-           ),
-           entry.isBookmarkInteractionEnabled {
-            actionTray {
-                familyMemoryControl
-                familyHeartControl(
-                    sourceDigest: sourceDigest,
-                    localWindowID: localWindowID
-                )
-            }
-        } else if WidgetPhotoSource.isFamilyWindowSourceID(
-            entry.photoSourceIdentifier
-        ), entry.familyActionsRequireApp, let photoURL = entry.photoURL {
-            actionTray {
-                Link(destination: photoURL) {
-                    openInAppLabel
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("この写真をアプリで開く")
-                .accessibilityHint("このまどを選び、写真の操作を続けます")
-            }
-        } else if let localIdentifier = entry.localIdentifier,
-                  entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
-                  entry.isLikeInteractionEnabled {
+        if let localIdentifier = entry.localIdentifier,
+           entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID,
+           entry.isLikeInteractionEnabled {
             actionTray {
                 if entry.isLiked {
                     memoryMark(isSelected: true)
@@ -221,65 +167,6 @@ struct NekoWidgetView: View {
                     .accessibilityHint("アプリを開かず、自分の思い出一覧に追加します")
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var familyMemoryControl: some View {
-        if let memoryActionURL = entry.memoryActionURL {
-            Link(destination: memoryActionURL) {
-                memoryMark(isSelected: entry.isBookmarked)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                entry.isBookmarked
-                    ? "思い出に残した写真"
-                    : "写真アプリに取り込んで残す"
-            )
-            .accessibilityHint(
-                entry.isBookmarked
-                    ? "アプリでこの写真を開きます"
-                    : "写真アプリへの取り込みを確認するため、アプリを開きます"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func familyHeartControl(
-        sourceDigest: String,
-        localWindowID: String
-    ) -> some View {
-        switch entry.familyHeartStatus {
-        case .ready:
-            Button(
-                intent: SendFamilyWidgetHeartIntent(
-                    sourceDigest: sourceDigest,
-                    localWindowID: localWindowID
-                )
-            ) {
-                heartMark(status: .ready)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("ハートを送る")
-            .accessibilityHint("アプリを開き、認証済みの同期で送ります")
-        case .pending:
-            heartMark(status: .pending)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートは送信待ちです")
-            .accessibilityHint("アプリの同期で送ります")
-        case .serverAccepted:
-            heartMark(status: .serverAccepted)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("ハートを送りました")
-            .accessibilityHint("相手が確認したことを示す表示ではありません")
-        case .hidden:
-            // Keep the bookmark in the same position after the reaction
-            // expires. A transparent, noninteractive slot prevents the
-            // controls from jumping without suggesting another action.
-            Color.clear
-                .frame(width: 44, height: 44)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
         }
     }
 
@@ -320,72 +207,15 @@ struct NekoWidgetView: View {
         .contentShape(Rectangle())
     }
 
-    private func heartMark(status: FamilyWidgetHeartStatus) -> some View {
-        ZStack(alignment: .bottomTrailing) {
-            Image(systemName: status == .serverAccepted ? "heart.fill" : "heart")
-                .invalidatableContent()
-
-            if status == .pending {
-                Image(systemName: "clock.fill")
-                    .font(.system(size: 10, weight: .bold))
-                    .padding(1.5)
-                    .background(Color.black.opacity(0.82), in: Circle())
-                    .offset(x: 2, y: 2)
-            }
-        }
-        .font(.system(size: 13, weight: .medium))
-        .foregroundStyle(.white)
-        .frame(width: 30, height: 30)
-        .background(Color.black.opacity(0.64), in: Circle())
-        .overlay {
-            Circle()
-                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
-        }
-        .frame(width: 44, height: 44)
-        .contentShape(Rectangle())
-    }
-
-    private var openInAppLabel: some View {
-        Label("開く", systemImage: "arrow.up.forward.app")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(Color.black.opacity(0.64), in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
-            }
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
     private var familySourceLabel: some View {
-        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier),
-           entry.cacheFilename != nil {
-            Text(entry.windowDisplayName)
-                .font(.caption2)
-                // The footer reserves the controls' space before proposing a
-                // width. The full name remains in the photo accessibility label.
-                .dynamicTypeSize(...(family == .systemSmall
-                    ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility5))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                // Keep the visible capsule as wide as the name itself. The
-                // outer frame below only caps long names; it must not make a
-                // short name look like a large empty status banner.
-                .background(.black.opacity(0.64), in: Capsule())
-                .frame(
-                    maxWidth: family == .systemSmall ? 112 : 220,
-                    alignment: .leading
-                )
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
+        Text(entry.windowDisplayName)
+            .font(.caption2)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(.white.opacity(0.92))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
     }
 
     private var actionButtonSpacing: CGFloat {

@@ -290,39 +290,45 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("familyActionsRequireApp: familyWindowIsInactive", family_entry)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn(
-            "entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID",
-            view,
-        )
-        self.assertIn("Link(destination: memoryActionURL)", view)
-        self.assertNotIn("ToggleFamilyWidgetBookmarkIntent", view)
-        self.assertNotIn('entry.isBookmarked ? "残した" : "残す"', view)
-        self.assertIn('isSelected ? "bookmark.fill" : "bookmark"', view)
-        self.assertIn('private func memoryMark(', view)
-        self.assertIn('.frame(width: 44, height: 44)', view)
-        self.assertNotIn('title: "残す"', view)
-        self.assertNotIn('title: "取り込む"', view)
-        self.assertNotIn('title: "残した"', view)
-        self.assertIn('if entry.isLiked {', view)
-        self.assertIn('fallbackIsLiked: false', view)
-        self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
-        self.assertNotIn('directActionLabel(', view)
-        self.assertNotIn('statusBadge(', view)
-        self.assertIn('"写真アプリに取り込んで残す"', view)
-        self.assertIn("写真アプリへの取り込みを確認するため、アプリを開きます", view)
-        self.assertIn("SendFamilyWidgetHeartIntent", view)
+        # Shared photos have one navigation surface. Legacy action routes and
+        # intents remain covered below, but are no longer controls on the photo.
+        self.assertEqual(view.count(".widgetURL(entry.photoURL)"), 1)
+        for removed_control in (
+            "familyMemoryControl", "familyHeartControl", "heartMark(",
+            "openInAppLabel", "SendFamilyWidgetHeartIntent",
+            "ToggleFamilyWidgetBookmarkIntent", "Link(destination:",
+        ):
+            self.assertNotIn(removed_control, view)
 
         photo_actions = section(
             view,
             "private func photoActionButtons() -> some View",
-            "@ViewBuilder\n    private var familyMemoryControl",
+            "private func actionTray<Content: View>(",
         )
-        self.assertNotIn("if family == .systemSmall", photo_actions)
-        self.assertIn("familyMemoryControl", photo_actions)
-        self.assertIn("sourceDigest: sourceDigest", photo_actions)
-        self.assertIn("localWindowID: localWindowID", photo_actions)
-        self.assertIn("entry.familyActionsRequireApp", photo_actions)
-        self.assertIn("openInAppLabel", photo_actions)
+        self.assertIn(
+            "entry.photoSourceIdentifier == WidgetPhotoSource.personalLibraryID",
+            photo_actions,
+        )
+        self.assertIn("let localIdentifier = entry.localIdentifier", photo_actions)
+        self.assertIn("entry.isLikeInteractionEnabled", photo_actions)
+        self.assertIn("if entry.isLiked {", photo_actions)
+        self.assertIn("memoryMark(isSelected: true)", photo_actions)
+        self.assertIn("ToggleWidgetLikeIntent(", photo_actions)
+        self.assertIn("fallbackIsLiked: false", photo_actions)
+        self.assertIn("memoryMark(isSelected: false, invalidatesContent: true)", photo_actions)
+        self.assertIn('"思い出に残した写真"', photo_actions)
+        self.assertIn('"思い出に残す"', photo_actions)
+        self.assertNotIn("isFamilyWindowSourceID", photo_actions)
+        self.assertNotIn("familyActionsRequireApp", photo_actions)
+
+        memory_mark = section(
+            view, "private func memoryMark(", "private var actionButtonSpacing: CGFloat",
+        )
+        self.assertIn('isSelected ? "bookmark.fill" : "bookmark"', memory_mark)
+        self.assertIn(".frame(width: 44, height: 44)", memory_mark)
+        self.assertIn(".contentShape(Rectangle())", memory_mark)
+        self.assertIn(".buttonStyle(.plain)", photo_actions)
+        self.assertNotIn('entry.isLiked ? "思い出から外す"', view)
 
         action_tray = section(
             view,
@@ -342,46 +348,50 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("SharedLikeStore.set(", personal_intent)
         self.assertIn("isLiked: true", personal_intent)
         self.assertNotIn("SharedLikeStore.toggle(", personal_intent)
-        self.assertIn('status == .serverAccepted ? "heart.fill" : "heart"', view)
-        self.assertIn('systemName: "clock.fill"', view)
-        self.assertNotIn('Label("ハート"', view)
-        self.assertNotIn('Text("待機中")', view)
-        self.assertNotIn('Text("受付済み")', view)
-        self.assertIn("アプリを開き、認証済みの同期で送ります", view)
-        self.assertIn("相手が確認したことを示す表示ではありません", view)
-        self.assertNotIn("foregroundStyle(.pink)", view)
-        self.assertNotIn("Color.accentColor.opacity(0.92)", view)
-        self.assertNotIn("private enum WidgetStatusBadgeStyle", view)
-        self.assertIn("actionButtonSpacing", view)
 
-        open_action = section(
-            view,
-            "private var openInAppLabel: some View",
-            "@ViewBuilder\n    private var familySourceLabel",
+        # Supplementary text belongs only to a successfully decoded shared
+        # photo; the image alone owns navigation and full-text accessibility.
+        loaded = section(view, "let image = WidgetCacheImageLoader.image(", "                emptyState")
+        self.assertIn("if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)", loaded)
+        self.assertIn("familyPhotoFooter", loaded)
+        self.assertIn("} else {\n                            photoActionButtons()", loaded)
+        self.assertEqual(view.count("                            familyPhotoFooter"), 1)
+        self.assertEqual(view.count(".accessibilityLabel(loadedPhotoAccessibilityLabel)"), 1)
+        accessibility_label = section(
+            view, "private var loadedPhotoAccessibilityLabel: String", "private var familyPhotoFooter: some View",
         )
-        self.assertIn("Capsule()", open_action)
-        self.assertIn(".frame(minWidth: 44, minHeight: 44)", open_action)
-        self.assertIn(".contentShape(Rectangle())", open_action)
+        self.assertIn("entry.windowDisplayName", accessibility_label)
+        self.assertIn("familyCaption.map", accessibility_label)
+        self.assertNotIn(".prefix(", accessibility_label)
 
-        heart_control = section(
-            view,
-            "private func familyHeartControl(",
-            "private func actionTray<Content: View>(",
-        )
-        pending = section(heart_control, "case .pending:", "case .serverAccepted:")
-        accepted = section(heart_control, "case .serverAccepted:", "case .hidden:")
-        hidden = heart_control.split("case .hidden:", 1)[1]
-        self.assertIn("heartMark(status: .pending)", pending)
-        self.assertIn("ハートは送信待ちです", pending)
-        self.assertIn("heartMark(status: .serverAccepted)", accepted)
-        self.assertIn("Color.clear", hidden)
-        self.assertIn(".frame(width: 44, height: 44)", hidden)
-        self.assertIn(".allowsHitTesting(false)", hidden)
-        self.assertNotIn("EmptyView()", hidden)
-        for noninteractive_status in (pending, accepted):
-            self.assertNotIn("Button(", noninteractive_status)
-            self.assertNotIn("Link(", noninteractive_status)
-        self.assertIn(".buttonStyle(.plain)", view)
+        footer = section(view, "private var familyPhotoFooter: some View", "private func familyCaptionPreview(")
+        self.assertIn("VStack(spacing: 4)", footer)
+        self.assertIn("if let caption = familyCaption", footer)
+        self.assertLess(footer.index("familyCaptionPreview(caption)"), footer.index("familySourceLabel"))
+        self.assertIn(".padding(.horizontal, 12)", footer)
+        self.assertIn(".padding(.bottom, 12)", footer)
+        self.assertEqual(footer.count(".background {"), 1)
+        self.assertIn(".frame(height: familyCaption == nil ? 16 : 26)", footer)
+        self.assertIn(".padding(.top, familyCaption == nil ? -16 : -26)", footer)
+        self.assertIn("colors: [.clear, .black.opacity(0.60)]", footer)
+        self.assertIn("colors: [.black.opacity(0.60), .black.opacity(0.63)]", footer)
+        self.assertIn(".allowsHitTesting(false)", footer)
+        self.assertIn(".accessibilityHidden(true)", footer)
+        self.assertNotIn("Button(", footer)
+        self.assertNotIn("Link(", footer)
+
+        caption = section(view, "private func familyCaptionPreview(", "private func photoActionButtons()")
+        name = section(view, "private var familySourceLabel: some View", "private var actionButtonSpacing: CGFloat")
+        self.assertIn(".font(.caption)", caption)
+        self.assertIn(".lineLimit(family == .systemLarge ? 2 : 1)", caption)
+        self.assertIn("Text(entry.windowDisplayName)", name)
+        self.assertIn(".font(.caption2)", name)
+        self.assertIn(".lineLimit(1)", name)
+        for text_view in (caption, name):
+            self.assertIn(".multilineTextAlignment(.center)", text_view)
+            self.assertIn(".truncationMode(.tail)", text_view)
+            self.assertNotIn(".background", text_view)
+            self.assertNotIn(".accessibilityLabel", text_view)
 
         heart_intent = source("NekoWidgetWidget/ToggleWidgetLikeIntent.swift")
         self.assertIn("var localWindowID: String?", heart_intent)
@@ -554,8 +564,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
         self.assertIn('return "写真を表示できません"', view)
         self.assertIn('return "アプリを開いて更新"', view)
-        self.assertIn("entry.cacheFilename != nil", view)
-        self.assertIn(".background(.black.opacity(0.64), in: Capsule())", view)
+        self.assertIn("let image = WidgetCacheImageLoader.image(", view)
+        empty = section(view, "private var emptyState: some View", "private var emptyStateTitle: String")
+        self.assertNotIn("familyPhotoFooter", empty)
+        self.assertNotIn("familySourceLabel", empty)
+        self.assertNotIn("familyCaptionPreview", empty)
 
         configuration = source(
             "NekoWidgetWidget/NekoWidgetConfigurationIntent.swift"
@@ -623,7 +636,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
 
         widget_view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        self.assertIn("Link(destination: memoryActionURL)", widget_view)
+        self.assertNotIn("Link(destination: memoryActionURL)", widget_view)
         self.assertIn(".widgetURL(entry.photoURL)", widget_view)
         self.assertNotIn(".widgetURL(entry.memoryActionURL)", widget_view)
         self.assertNotIn("photoDestinationURL", widget_view)
