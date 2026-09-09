@@ -152,17 +152,28 @@ struct CandidateReviewReport: Encodable {
 
 enum CandidateReviewSelection {
     static let limit = 24
-    static func validate(_ ids: [String], saved: [IdentityPhotoSlot: [String]]) throws {
+
+    // Only the currently saved selection is known; this is not an all-time history.
+    static func excludingSaved(_ ids: [String], saved: [IdentityPhotoSlot: [String]]) -> [String] {
+        let known = Set(saved.values.flatMap { $0 })
+        return ids.filter { !known.contains($0) }
+    }
+
+    static func filteringKnownPhotos(_ ids: [String], saved: [IdentityPhotoSlot: [String]]) throws -> [String] {
         try IdentityRecoveryComparisonCore.validateSelection(saved)
         guard saved[.referenceA]?.count == 5, saved[.referenceB]?.count == 5 else {
             throw IdentityPhotoFailure(message: "保存済みの猫A/Bの見本が各5枚必要です。「猫の検出を確認する」で不足分だけ追加できます。")
         }
         guard (1...limit).contains(ids.count), ids.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 4096 }),
               Set(ids).count == ids.count else {
-            throw IdentityPhotoFailure(message: "新しい写真を1〜24枚選んでください。選択は消していません。")
+            throw IdentityPhotoFailure(message: "写真を1〜24枚選んでください。選択は消していません。")
         }
-        guard Set(saved.values.flatMap { $0 }).isDisjoint(with: ids) else {
-            throw IdentityPhotoFailure(message: "見本や以前の判定と同じ写真が含まれています。今回は別の写真を選んでください。元の選択は残しています。")
+        return excludingSaved(ids, saved: saved)
+    }
+
+    static func validate(_ ids: [String], saved: [IdentityPhotoSlot: [String]]) throws {
+        guard try filteringKnownPhotos(ids, saved: saved).count == ids.count else {
+            throw IdentityPhotoFailure(message: "保存済みの見本・判定写真との重なりを確認できませんでした。この画面を開き直すと自動で外します。選択は消していません。")
         }
     }
 }

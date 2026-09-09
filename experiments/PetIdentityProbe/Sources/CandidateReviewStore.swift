@@ -8,13 +8,13 @@ final class CandidateReviewStore: ObservableObject {
     @Published private(set) var selected: [String] = []
     @Published private(set) var saved: [IdentityPhotoSlot: [String]] = [:]
     @Published var picker: CandidatePickerRequest?
-    @Published var differentScenes = false
     @Published private(set) var running = false
     @Published private(set) var progress = 0
     @Published var session: CandidateReviewSession?
     @Published private(set) var message: String?
     @Published private(set) var storageWarning: String?
     @Published private(set) var candidateReadFailed = false
+    @Published private(set) var hasArchivedSelection = false
     private var referenceReadFailed = false
     private var blocked: Bool { referenceReadFailed || candidateReadFailed }
     private let referenceArchive: IdentitySelectionArchive
@@ -35,16 +35,29 @@ final class CandidateReviewStore: ObservableObject {
             referenceReadFailed = true
             message = "保存した見本を読み出せません。上書きしていません。「猫の検出を確認する」で保存状態を確認してください。"
         }
-        do { selected = try candidateArchive.load() }
+        do {
+            selected = try candidateArchive.load()
+            hasArchivedSelection = !selected.isEmpty
+        }
         catch {
             candidateReadFailed = true
             message = "今回の写真選択を読み出せません。上書きしていません。「今回の写真選択を消去」で、この選択だけをやり直せます。見本は残ります。"
+        }
+        if !blocked {
+            let eligible = CandidateReviewSelection.excludingSaved(selected, saved: saved)
+            let excludedCount = selected.count - eligible.count
+            if excludedCount > 0 {
+                // References may have changed since the candidate selection was saved.
+                // Filter in memory without rewriting either archive during restoration.
+                selected = eligible
+                message = "保存済みの見本・判定写真と重なる\(excludedCount)枚を自動で外しました。"
+            }
         }
     }
 
     var hasReferences: Bool { saved[.referenceA]?.count == 5 && saved[.referenceB]?.count == 5 }
     var canChoose: Bool { !blocked && !running && hasReferences }
-    var canRun: Bool { canChoose && !selected.isEmpty && differentScenes }
+    var canRun: Bool { canChoose && !selected.isEmpty }
     var total: Int { saved.values.reduce(0) { $0 + $1.count } + selected.count }
 
     func choose() {
@@ -73,13 +86,18 @@ final class CandidateReviewStore: ObservableObject {
         }
         let values = ids.compactMap { $0 }
         do {
-            try CandidateReviewSelection.validate(values, saved: saved)
-            guard values != selected else { return }
-            selected = values
+            let eligible = try CandidateReviewSelection.filteringKnownPhotos(values, saved: saved)
+            let excludedCount = values.count - eligible.count
+            guard !eligible.isEmpty else {
+                message = "選んだ\(excludedCount)枚は保存済みの見本・判定写真なので、自動で外しました。"
+                    + (selected.isEmpty ? "ほかの写真を追加できます。" : "元の\(selected.count)枚は残しています。そのまま候補を見られます。")
+                return
+            }
+            message = excludedCount > 0 ? "保存済みの見本・判定写真と重なる\(excludedCount)枚を自動で外しました。残りの\(eligible.count)枚で進められます。" : nil
+            guard eligible != selected else { return }
+            selected = eligible
             session = nil
-            differentScenes = false
-            message = nil
-            do { try candidateArchive.save(values); storageWarning = nil }
+            do { try candidateArchive.save(eligible); hasArchivedSelection = true; storageWarning = nil }
             catch { storageWarning = "選択の保存に失敗しました。この画面では使えますが、閉じると再選択が必要な場合があります。" }
         } catch let failure as IdentityPhotoFailure { message = failure.message }
         catch { message = "選択を確認できません。元の選択は残しています。" }
@@ -130,14 +148,14 @@ final class CandidateReviewStore: ObservableObject {
 
     func suspend() {
         generation = UUID(); task?.cancel(); task = nil
-        running = false; session = nil; picker = nil; differentScenes = false
+        running = false; session = nil; picker = nil
     }
 
     func clearCandidateSelection() {
         guard !running else { return }
         do {
             try candidateArchive.save([]) // Exact candidate file only; legacy references are untouched.
-            suspend(); selected = []; candidateReadFailed = false; storageWarning = nil
+            suspend(); selected = []; candidateReadFailed = false; hasArchivedSelection = false; storageWarning = nil
             if !referenceReadFailed { message = nil }
         } catch { storageWarning = "選択を消去できませんでした。保存内容は残しています。" }
     }
