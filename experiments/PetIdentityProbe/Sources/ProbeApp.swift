@@ -31,6 +31,13 @@ private struct ProbeView: View {
         NavigationStack {
             Form {
                 Section {
+                    NavigationLink { CandidateReviewView() } label: {
+                        Label("猫の候補をまとめて確認", systemImage: "rectangle.stack.badge.person.crop")
+                    }.disabled(runningMode != nil)
+                    Text("保存した見本を再利用。新しい写真をまとめて選び、候補を確認する試作です。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
                     NavigationLink("猫の検出を確認する") { IdentityEvaluationView() }
                         .disabled(runningMode != nil)
                     Text("基準画像と保存した写真をまとめて比較できます。")

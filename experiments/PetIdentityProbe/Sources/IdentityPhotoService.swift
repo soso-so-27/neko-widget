@@ -135,6 +135,98 @@ enum ProbeModelFile {
 actor IdentityPhotoService {
     private var busy = false
 
+    func reviewCandidates(saved: [IdentityPhotoSlot: [String]], selected: [String],
+                          progress: @Sendable (Int) async -> Void) async throws -> CandidateReviewRun {
+        guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
+        busy = true
+        defer { busy = false }
+        try Task.checkCancellation()
+        try CandidateReviewSelection.validate(selected, saved: saved)
+        guard ORTVersion() == IdentityEvaluationCore.expectedRuntimeVersion else {
+            throw IdentityEvaluationError.unsupportedRuntime
+        }
+        try Self.checkAuthorization()
+        let savedIDs = IdentityPhotoSlot.allCases.flatMap { saved[$0] ?? [] }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: savedIDs + selected, options: nil)
+        var assets: [String: PHAsset] = [:]
+        fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
+        var engine: IdentityCPUSession?
+        var vectors: [IdentityPhotoSlot: [[Float]?]] = [:]
+        var previews: [IdentityPhotoSlot: CGImage] = [:]
+        var hashes: [UInt64] = []
+        var bursts = Set(savedIDs.compactMap { assets[$0]?.burstIdentifier })
+        var done = 0
+
+        func thumbnail(_ image: CGImage?) -> CGImage? {
+            guard let image else { return nil }
+            let factor = min(1, 640.0 / Double(max(image.width, image.height)))
+            return IdentityImagePipeline.resized(image, width: max(1, Int(Double(image.width) * factor)),
+                                                height: max(1, Int(Double(image.height) * factor)))
+        }
+        func recovered(_ prepared: IdentityPreparedPhoto) throws -> CGImage? {
+            if let crop = prepared.crop { return crop }
+            return try IdentityRecoveryInputProbe.attempt(image: prepared.image, original: prepared.animalDetection).crop
+        }
+        func embed(_ crop: CGImage) throws -> [Float] {
+            if engine == nil { engine = try IdentityCPUSession() }
+            return try engine!.embedding(crop)
+        }
+        // Known saved evaluations are used only for duplicate checks, never as references.
+        for slot in IdentityPhotoSlot.allCases {
+            for (index, id) in (saved[slot] ?? []).enumerated() {
+                try Task.checkCancellation()
+                try autoreleasepool {
+                    let prepared = Self.preparePhoto(assets[id])
+                    let crop = try recovered(prepared)
+                    hashes += [prepared.image, crop].compactMap { $0.flatMap(IdentityImagePipeline.fingerprint) }
+                    if slot.isReference {
+                        guard let crop else {
+                            throw IdentityPhotoFailure(message: "猫\(slot.cat == 0 ? "A" : "B")の見本\(index + 1)枚目を読み取れません。「猫の検出を確認する」でこの見本だけ確認してください。新しい写真の選択は残しています。")
+                        }
+                        vectors[slot, default: []].append(try embed(crop))
+                        if previews[slot] == nil { previews[slot] = thumbnail(prepared.image) }
+                    }
+                }
+                done += 1
+                await progress(done)
+            }
+        }
+        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?)] = []
+        for id in selected {
+            try Task.checkCancellation()
+            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?) in
+                let asset = assets[id]
+                let prepared = Self.preparePhoto(asset)
+                let crop = try recovered(prepared)
+                let image = thumbnail(prepared.image)
+                let candidateHashes = [prepared.image, crop].compactMap { $0.flatMap(IdentityImagePipeline.fingerprint) }
+                let repeatedBurst = asset?.burstIdentifier.map { bursts.contains($0) } ?? false
+                let similar = candidateHashes.contains { hash in hashes.contains { (hash ^ $0).nonzeroBitCount <= 2 } }
+                hashes += candidateHashes
+                if let burst = asset?.burstIdentifier { bursts.insert(burst) }
+                guard image != nil else { return (nil, nil, .unavailable) }
+                if repeatedBurst { return (image, nil, .repeatedBurst) }
+                if similar { return (image, nil, .similarPhoto) }
+                guard let crop else { return (image, nil, .noSingleCat) }
+                return (image, try embed(crop), nil)
+            }
+            candidates.append(next)
+            done += 1
+            await progress(done)
+        }
+        try Task.checkCancellation()
+        let rankings = try IdentityEvaluationCore.reviewSuggestions(registrationA: vectors[.referenceA] ?? [],
+            registrationB: vectors[.referenceB] ?? [], inputs: candidates.map(\.vector))
+        let photos = zip(candidates, rankings).enumerated().map { index, pair in
+            let (candidate, ranking) = pair
+            let suggestion: CandidateReviewChoice? = ranking == .a ? .a : ranking == .b ? .b : nil
+            let issue = candidate.issue ?? (ranking == .equalScores ? .equalScores : ranking == .invalidEmbedding ? .invalidEmbedding : nil)
+            return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: suggestion, issue: issue)
+        }
+        try Task.checkCancellation()
+        return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])
+    }
+
     func compareIdentityRecovery(selections: [IdentityPhotoSlot: [String]],
                                  progress: @Sendable (Int) async -> Void) async throws -> IdentityRecoveryRun {
         guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }

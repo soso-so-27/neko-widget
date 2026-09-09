@@ -1,7 +1,7 @@
 import Foundation
 
 // Ranking is not identity acceptance. These per-input values never leave the core.
-enum IdentityRankingOutcome {
+enum IdentityRankingOutcome: Equatable {
     case a, b, equalScores, missingEmbedding, invalidEmbedding
 }
 
