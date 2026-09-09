@@ -387,10 +387,6 @@ PY
             xcrun xcresulttool export attachments --path "$composer_result" \
                 --output-path "$runtime_artifacts/composer-screenshots"
         fi
-        if (( composer_status != 0 )); then
-            return "$composer_status"
-        fi
-
         # Reuse the same three-family Gallery test and DerivedData. Rebuilding
         # the Widget with each condition keeps these comparisons on the real
         # component while leaving ordinary runtime and release builds unchanged.
@@ -438,6 +434,12 @@ PY
                 return "$widget_scenario_status"
             fi
         done
+        # App UI and Widget contrast/no-caption captures are independent.
+        # Preserve the UI failure, but collect the remaining visual evidence
+        # instead of withholding it because a different screen failed.
+        if (( composer_status != 0 )); then
+            return "$composer_status"
+        fi
     fi
     return "$validator_status"
 }

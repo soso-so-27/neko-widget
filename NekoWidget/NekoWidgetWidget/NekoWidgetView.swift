@@ -60,12 +60,14 @@ struct NekoWidgetView: View {
                             if let caption = familyCaption {
                                 familyCaptionPreview(caption)
                             }
-                            photoActionButtons()
+                            photoFooter
                         }
                         .padding(actionButtonInset)
                     }
                     .overlay(alignment: .topLeading) {
-                        familySourceLabel
+                        if family == .systemSmall {
+                            familySourceLabel.padding(8)
+                        }
                     }
                 }
             } else {
@@ -111,7 +113,6 @@ struct NekoWidgetView: View {
             .lineLimit(family == .systemSmall ? 1 : 2)
             .truncationMode(.tail)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 // Keep 60% black directly behind the text (about 5.7:1 for
                 // white on a white photo). Short fades surround only the
@@ -129,14 +130,46 @@ struct NekoWidgetView: View {
                     )
                     .frame(height: 6)
                 }
+                .mask {
+                    HStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(
+                            colors: [.black, .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: actionButtonInset)
+                    }
+                }
                 .padding(.horizontal, -actionButtonInset)
                 .padding(.top, -10)
                 .padding(.bottom, -6)
                 .allowsHitTesting(false)
             }
+            // Expand alignment after drawing the scrim, so a short caption
+            // does not darken photo pixels beyond its actual text width.
+            .frame(maxWidth: .infinity, alignment: .leading)
             // The photo owns its deep link and reads the full text once.
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var photoFooter: some View {
+        if family == .systemSmall {
+            photoActionButtons()
+        } else {
+            ZStack(alignment: .leading) {
+                photoActionButtons()
+                // Keep the name away from the top crop boundary. Its allotted
+                // width stays clear of both 44pt controls, including when a
+                // stale entry hides one or both actions. Caption changes never
+                // move this row or alter the name's available width.
+                familySourceLabel
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, 88 + actionButtonSpacing + 8)
+            }
+            .frame(minHeight: 44)
+        }
     }
 
     @ViewBuilder
@@ -333,8 +366,8 @@ struct NekoWidgetView: View {
            entry.cacheFilename != nil {
             Text(entry.windowDisplayName)
                 .font(.caption2)
-                // The source owns this width independently of the controls.
-                // The full name remains in the photo's accessibility label.
+                // The footer reserves the controls' space before proposing a
+                // width. The full name remains in the photo accessibility label.
                 .dynamicTypeSize(...(family == .systemSmall
                     ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility5))
                 .lineLimit(1)
@@ -350,7 +383,7 @@ struct NekoWidgetView: View {
                     maxWidth: family == .systemSmall ? 112 : 220,
                     alignment: .leading
                 )
-                .padding(family == .systemSmall ? 8 : 10)
+                .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
     }

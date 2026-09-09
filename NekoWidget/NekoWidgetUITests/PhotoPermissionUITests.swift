@@ -359,6 +359,7 @@ final class MomentDeliveryComposerUITests: XCTestCase {
 
     @MainActor
     func testReceivedPhotosKeepTheirFramesAcrossAspectRatiosAndTextSizes() {
+        var standardDetailCaptionHeight: CGFloat = 0
         for variant in ["standard", "narrow", "large"] {
             let app = XCUIApplication()
             app.launchArguments = ["--moment-received-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -384,6 +385,17 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             attach(app, name: "received-layout-\(variant)")
             latest.tap()
             verifySharpDetail(app, name: "received-detail-\(variant)")
+            let detailCaption = app.buttons["photo-detail-read-caption"]
+            XCTAssertTrue(detailCaption.exists)
+            if variant == "standard" { standardDetailCaptionHeight = detailCaption.frame.height }
+            if variant == "large" {
+                XCTAssertGreaterThan(detailCaption.frame.height, standardDetailCaptionHeight * 1.4,
+                                     "The maximum text size must reach the full-screen detail, not just its presenting list.")
+            }
+            if variant == "narrow" {
+                XCTAssertLessThanOrEqual(app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.frame.width, 290,
+                                         "The narrow fixture must also constrain the opened photo.")
+            }
             let firstPhotoPixels = Self.detailValue(
                 app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.value as? String,
                 field: "pixels")
@@ -392,6 +404,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 expected: String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3))
             for action in ["save", "heart"] {
                 let control = app.buttons["received-fixture-detail-\(action)"]
+                let footer = app.scrollViews["photo-detail-actions-scroll"]
+                for _ in 0..<4 where !control.isHittable && footer.exists { footer.swipeUp() }
                 XCTAssertTrue(control.isHittable)
                 control.tap()
                 XCTAssertTrue(app.staticTexts["received-fixture-detail-\(action)-result"].waitForExistence(timeout: 5))
@@ -654,6 +668,13 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             let photo = app.descendants(matching: .any)["family-window-composer-photo"].firstMatch
             XCTAssertTrue(photo.exists)
             XCTAssertTrue(photo.frame.insetBy(dx: -1, dy: -1).contains(edit.frame), "The caption belongs inside the photo preview.")
+            let navigation = app.navigationBars["写真を確認"]
+            let destination = app.staticTexts["family-window-composer-destination"]
+            XCTAssertGreaterThanOrEqual(photo.frame.minY, navigation.frame.maxY - 2,
+                                       "Finishing input must return the complete photo below the navigation bar.")
+            XCTAssertLessThanOrEqual(photo.frame.maxY, destination.frame.minY + 2,
+                                    "The photo and its recipient must remain visible together after finishing input.")
+            XCTAssertTrue(destination.isHittable)
             let send = app.buttons["family-window-confirm-delivery"]
             XCTAssertTrue(send.isHittable, "Sending must be reachable without scrolling after input.")
             attach(app, name: "caption-preview-\(variant)")

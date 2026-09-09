@@ -3,6 +3,7 @@ import UIKit
 
 /// The shipping confirmation screen, also exercised by the offline UI fixture.
 struct MomentDeliveryComposer: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let preview: UIImage
     let destinationName: String
     @Binding var caption: String
@@ -12,15 +13,18 @@ struct MomentDeliveryComposer: View {
     let onCancel: () -> Void
     let onSend: (String) -> Void
     @FocusState private var isCaptionFocused: Bool
-    @ScaledMetric(relativeTo: .callout) private var minimumPhotoHeight = 150.0
+    @State private var isEditingCaption = false
+    @State private var showsSharingInformation = false
 
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
+              ScrollViewReader { scroll in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         photo(height: photoHeight(in: geometry.size))
-                        if isCaptionFocused {
+                            .id("composer-photo-top")
+                        if isEditingCaption {
                             HStack {
                                 Text("残り\(max(0, MomentCaption.maximumCharacters - caption.count))文字")
                                 Spacer()
@@ -36,11 +40,6 @@ struct MomentDeliveryComposer: View {
                                 .foregroundStyle(.orange)
                                 .accessibilityIdentifier("family-window-caption-validation")
                         }
-                        if !isCaptionFocused {
-                            Label("写真の位置情報を除いて届けます", systemImage: "lock.shield")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
                         if let errorMessage {
                             Label(errorMessage, systemImage: "exclamationmark.circle")
                                 .font(.footnote)
@@ -50,6 +49,13 @@ struct MomentDeliveryComposer: View {
                     .padding(16)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .onChange(of: isEditingCaption) { _, editing in
+                    if !editing { scroll.scrollTo("composer-photo-top", anchor: .top) }
+                }
+                .onChange(of: geometry.size.height) { _, _ in
+                    if !isEditingCaption { scroll.scrollTo("composer-photo-top", anchor: .top) }
+                }
+              }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 10) {
@@ -57,11 +63,16 @@ struct MomentDeliveryComposer: View {
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("family-window-composer-destination")
-                    if isCaptionFocused {
+                    if isEditingCaption {
                         Button {
-                            isCaptionFocused = false
+                            finishCaptionEditing()
                         } label: {
-                            Label("写真を確認", systemImage: "keyboard.chevron.compact.down")
+                            HStack {
+                                if !dynamicTypeSize.isAccessibilitySize {
+                                    Image(systemName: "keyboard.chevron.compact.down")
+                                }
+                                Text("写真を確認")
+                            }
                                 .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .accessibilityIdentifier("family-window-caption-done")
@@ -72,14 +83,15 @@ struct MomentDeliveryComposer: View {
                         } label: {
                             HStack {
                                 if isSending { ProgressView().tint(.white) }
-                                else { Image(systemName: "paperplane.fill") }
-                                Text(isSending ? "届けています…" : "この1枚を届ける")
+                                else if !dynamicTypeSize.isAccessibilitySize { Image(systemName: "paperplane.fill") }
+                                Text(isSending ? "届けています…" : "届ける")
                             }
                             .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .disabled(isSending || !canSend
                             || MomentCaption.validationMessage(for: caption) != nil)
                         .accessibilityIdentifier("family-window-confirm-delivery")
+                        .accessibilityLabel(isSending ? "届けています" : "この1枚を届ける")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -94,7 +106,7 @@ struct MomentDeliveryComposer: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("やめる") {
-                        isCaptionFocused = false
+                        finishCaptionEditing()
                         onCancel()
                     }
                     .disabled(isSending)
@@ -103,13 +115,32 @@ struct MomentDeliveryComposer: View {
                 // A navigation action remains reachable even when an IME omits
                 // SwiftUI's keyboard toolbar (observed on the user's iPhone).
                 ToolbarItem(placement: .topBarTrailing) {
-                    if isCaptionFocused {
-                        Button("完了") { isCaptionFocused = false }
+                    if isEditingCaption {
+                        Button("完了") { finishCaptionEditing() }
                             .accessibilityIdentifier("family-window-caption-done-top")
+                    } else {
+                        Button { showsSharingInformation = true } label: {
+                            Image(systemName: "info.circle")
+                        }
+                        .accessibilityLabel("写真の共有について")
                     }
                 }
             }
+            .alert("写真の共有について", isPresented: $showsSharingInformation) {
+                Button("閉じる", role: .cancel) {}
+            } message: {
+                Text("写真の位置情報を除いて届けます。ひとことの入力は任意です。")
+            }
+            .onChange(of: isCaptionFocused) { _, focused in
+                // Interactive keyboard dismissal also finishes editing.
+                if !focused { isEditingCaption = false }
+            }
         }
+    }
+
+    private func finishCaptionEditing() {
+        isCaptionFocused = false
+        isEditingCaption = false
     }
 
     private func photoHeight(in size: CGSize) -> CGFloat {
@@ -117,7 +148,8 @@ struct MomentDeliveryComposer: View {
         let aspect = preview.size.height / max(1, preview.size.width)
         // Panoramas still need room for an editable caption. The footer stays
         // outside the scroll view if a large font needs more vertical space.
-        return max(minimumPhotoHeight, min(width * aspect, 420, size.height - 96))
+        let available = max(1, size.height - 32)
+        return min(available, max(min(150, available), min(width * aspect, 420)))
     }
 
     private func photo(height: CGFloat) -> some View {
@@ -131,9 +163,10 @@ struct MomentDeliveryComposer: View {
                 .frame(height: height)
                 .background(Color.black)
                 .contentShape(Rectangle())
-                .onTapGesture { isCaptionFocused = false }
+                .onTapGesture { finishCaptionEditing() }
                 .accessibilityLabel("届ける写真")
             ZStack(alignment: .bottom) {
+              if isEditingCaption {
                 TextField("ひとこと（任意）", text: $caption, axis: .vertical)
                     .lineLimit(1...3)
                     .textFieldStyle(.plain)
@@ -146,15 +179,13 @@ struct MomentDeliveryComposer: View {
                     .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 16))
                     .padding(12)
                     .focused($isCaptionFocused)
+                    .onAppear { isCaptionFocused = true }
                     .accessibilityLabel("ひとこと（任意）")
                     .accessibilityHint("100文字まで。上の完了で写真の確認へ戻れます")
                     .accessibilityIdentifier("family-window-caption-input")
                     .disabled(isSending)
-                    .opacity(isCaptionFocused ? 1 : 0)
-                    .allowsHitTesting(isCaptionFocused)
-                    .accessibilityHidden(!isCaptionFocused)
-                if !isCaptionFocused {
-                    Button { isCaptionFocused = true } label: {
+              } else {
+                    Button { isEditingCaption = true } label: {
                         if caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             Text("ひとことを添える")
                                 .font(.subheadline)
@@ -261,8 +292,9 @@ struct MomentSentRecordCard: View {
                         GeometryReader { geometry in
                             Image(uiImage: thumbnail)
                                 .resizable()
-                                .scaledToFill()
+                                .aspectRatio(contentMode: MomentPhotoThumbnailLayout.contentMode(for: thumbnail.size))
                                 .frame(width: geometry.size.width, height: geometry.size.height)
+                                .accessibilityHidden(true)
                         }
                     }
                     .clipped()
@@ -286,7 +318,7 @@ struct MomentSentRecordCard: View {
                     Image(systemName: "photo")
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("写真の控えがない送信")
+                        Text("写真を表示できない履歴")
                             .font(.caption)
                         Text(record.serverAcceptedAt.formatted(.dateTime.month().day()))
                             .font(.caption2)
@@ -303,6 +335,16 @@ struct MomentSentRecordCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+/// Preserve recognisable subjects when a square thumbnail would discard most
+/// of a panorama or a very tall photo. Ordinary photos keep the filled grid.
+enum MomentPhotoThumbnailLayout {
+    static func contentMode(for size: CGSize) -> ContentMode {
+        let ratio = size.width / max(1, size.height)
+        return ratio >= 2.5 || ratio <= 0.4 ? .fit : .fill
     }
 }
 
@@ -320,10 +362,10 @@ struct MomentSentHistoryFixture: View {
                 ) { record in
                     Button { selectedRecord = record } label: {
                         MomentSentRecordCard(record: record)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(record.localCaption ?? "写真のみ")
                     }
                     .buttonStyle(.plain)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(record.localCaption ?? "写真のみ")
                     .accessibilityIdentifier("history-fixture-\(record.id)")
                 }
                 .frame(maxWidth: CommandLine.arguments.contains("--history-narrow") ? 288 : .infinity)

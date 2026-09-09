@@ -191,12 +191,12 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('timeIntervalSince(visibleSince) >= 0.5', self.widget_ui_test)
         self.assertIn('visibleSince = nil', self.widget_ui_test)
 
-        # Extra comparisons run only after the ordinary UI pass succeeds, and
-        # reuse just the existing Gallery test with independent result bundles.
+        # Extra comparisons remain independent of app UI failures, reuse only
+        # the Gallery test, and cannot erase a preceding app UI failure.
         scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
         normal_failure = runtime.index('if (( composer_status != 0 )); then')
-        self.assertLess(normal_failure, scenarios)
-        self.assertIn('return "$composer_status"', runtime[normal_failure:scenarios])
+        self.assertGreater(normal_failure, scenarios)
+        self.assertIn('return "$composer_status"', runtime[normal_failure:])
         scenario_body = runtime[scenarios:runtime.index('\n        done', scenarios)]
         self.assertEqual(scenario_body.count('-only-testing:'), 1)
         self.assertIn(

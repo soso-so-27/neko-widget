@@ -2334,7 +2334,8 @@ struct MomentReceivedPhotoSurface: View {
                             MomentLocalImageView(
                                 url: url,
                                 contentMode: contentMode,
-                                hidesImageAccessibility: true
+                                hidesImageAccessibility: true,
+                                fitsExtremeAspectRatios: aspectRatio == 1
                             )
                         } else {
                             Image(systemName: "photo")
@@ -2478,6 +2479,7 @@ struct MomentReceivedLayoutFixture: View {
                             }
                         }
                     }
+                    .frame(maxWidth: CommandLine.arguments.contains("--received-narrow") ? 288 : .infinity)
                     .navigationTitle("届いた写真").navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
@@ -2486,6 +2488,7 @@ struct MomentReceivedLayoutFixture: View {
                         }
                     }
                 }
+                .environment(\.dynamicTypeSize, largeText ? .accessibility5 : .large)
             }
         }
         .environment(\.dynamicTypeSize, largeText ? .accessibility5 : .large)
@@ -2555,6 +2558,7 @@ struct MomentPhotoDetailBody<Actions: View>: View {
             ViewThatFits(in: .vertical) {
                 footer.fixedSize(horizontal: false, vertical: true)
                 ScrollView { footer }
+                    .accessibilityIdentifier("photo-detail-actions-scroll")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2701,12 +2705,14 @@ struct MomentLocalImageView: View {
     let hidesImageAccessibility: Bool
     let maximumPixelSize: Int
     let allowsZoom: Bool
+    let fitsExtremeAspectRatios: Bool
     @State private var image: UIImage?
     @State private var loadFailed = false
     @State private var retryCount = 0
 
     init(url: URL, contentMode: ContentMode = .fill, hidesImageAccessibility: Bool = false,
-         maximumPixelSize: Int? = nil, allowsZoom: Bool = false) {
+         maximumPixelSize: Int? = nil, allowsZoom: Bool = false,
+         fitsExtremeAspectRatios: Bool = false) {
         self.url = url
         self.contentMode = contentMode
         self.hidesImageAccessibility = hidesImageAccessibility
@@ -2714,6 +2720,7 @@ struct MomentLocalImageView: View {
             MomentSharingProtocol.maximumCanonicalPixelDimension,
             max(900, Int(UIScreen.main.bounds.width * UIScreen.main.scale)))
         self.allowsZoom = allowsZoom
+        self.fitsExtremeAspectRatios = fitsExtremeAspectRatios
     }
 
     @ViewBuilder
@@ -2725,7 +2732,7 @@ struct MomentLocalImageView: View {
                 } else {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: contentMode)
+                    .aspectRatio(contentMode: thumbnailContentMode(for: image))
                     .frame(maxWidth: .infinity)
                     .background(Color(uiColor: .tertiarySystemFill))
                     // Cropped pixels are decorative when the containing photo
@@ -2793,6 +2800,11 @@ struct MomentLocalImageView: View {
             image = nil
             loadFailed = false
         }
+    }
+
+    private func thumbnailContentMode(for image: UIImage) -> ContentMode {
+        guard fitsExtremeAspectRatios, contentMode == .fill else { return contentMode }
+        return MomentPhotoThumbnailLayout.contentMode(for: image.size)
     }
 }
 
