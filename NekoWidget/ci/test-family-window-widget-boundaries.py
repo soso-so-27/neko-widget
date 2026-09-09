@@ -290,15 +290,39 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("familyActionsRequireApp: familyWindowIsInactive", family_entry)
 
         view = source("NekoWidgetWidget/NekoWidgetView.swift")
-        # Shared photos have one navigation surface. Legacy action routes and
-        # intents remain covered below, but are no longer controls on the photo.
+        # Photo navigation and the explicit heart remain separate. Shared save
+        # and a redundant open control are still confined to the app detail.
         self.assertEqual(view.count(".widgetURL(entry.photoURL)"), 1)
         for removed_control in (
-            "familyMemoryControl", "familyHeartControl", "heartMark(",
-            "openInAppLabel", "SendFamilyWidgetHeartIntent",
+            "familyMemoryControl", "openInAppLabel",
             "ToggleFamilyWidgetBookmarkIntent", "Link(destination:",
         ):
             self.assertNotIn(removed_control, view)
+
+        shortcut = section(view, "private var familyHeartShortcut: some View", "private func familyHeartControl(")
+        self.assertIn("let sourceDigest = entry.familySourceDigest", shortcut)
+        self.assertIn("let localWindowID = WidgetPhotoSource.localWindowID(", shortcut)
+        self.assertIn("entry.isBookmarkInteractionEnabled", shortcut)
+        self.assertIn("unavailableHeartSlot", shortcut)
+        heart_control = section(view, "private func familyHeartControl(", "private var unavailableHeartSlot: some View")
+        ready = section(heart_control, "case .ready:", "case .pending:")
+        self.assertIn("SendFamilyWidgetHeartIntent(", ready)
+        self.assertIn("sourceDigest: sourceDigest", ready)
+        self.assertIn("localWindowID: localWindowID", ready)
+        self.assertEqual(heart_control.count("Button("), 1)
+        self.assertNotIn("Button(", heart_control.split("case .pending:", 1)[1])
+        self.assertIn('"ハートは送信待ちです"', heart_control)
+        self.assertIn('"相手が確認したことを示す表示ではありません"', heart_control)
+        self.assertIn("case .hidden:\n            unavailableHeartSlot", heart_control)
+        unavailable = section(view, "private var unavailableHeartSlot: some View", "private func heartMark(")
+        self.assertIn(".frame(width: 44, height: 44)", unavailable)
+        self.assertIn(".allowsHitTesting(false)", unavailable)
+        self.assertIn(".accessibilityHidden(true)", unavailable)
+        heart_mark = section(view, "private func heartMark(", "private func familyCaptionPreview(")
+        self.assertIn('status == .serverAccepted ? "heart.fill" : "heart"', heart_mark)
+        self.assertIn('Image(systemName: "clock.fill")', heart_mark)
+        self.assertIn(".frame(width: 44, height: 44)", heart_mark)
+        self.assertIn(".contentShape(Rectangle())", heart_mark)
 
         photo_actions = section(
             view,
@@ -364,7 +388,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("familyCaption.map", accessibility_label)
         self.assertNotIn(".prefix(", accessibility_label)
 
-        footer = section(view, "private var familyPhotoFooter: some View", "private func familyCaptionPreview(")
+        footer = section(view, "private var familyPhotoFooter: some View", "private var familyHeartShortcut: some View")
         self.assertIn("VStack(spacing: 4)", footer)
         self.assertIn("if let caption = familyCaption", footer)
         self.assertLess(footer.index("familyCaptionPreview(caption)"), footer.index("familySourceLabel"))
@@ -377,6 +401,11 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("colors: [.black.opacity(0.60), .black.opacity(0.63)]", footer)
         self.assertIn(".allowsHitTesting(false)", footer)
         self.assertIn(".accessibilityHidden(true)", footer)
+        self.assertIn("HStack(alignment: .bottom, spacing: 6)", footer)
+        self.assertLess(footer.index(".accessibilityHidden(true)"), footer.index("            familyHeartShortcut"))
+        # Hit testing and AX exclusion must end at the decorative text or
+        # background, never at the footer that contains the heart Button.
+        self.assertTrue(footer.rstrip().endswith("}\n    }\n\n    @ViewBuilder"))
         self.assertNotIn("Button(", footer)
         self.assertNotIn("Link(", footer)
 

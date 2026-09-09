@@ -77,8 +77,8 @@ struct NekoWidgetView: View {
         .environment(\.dynamicTypeSize, .accessibility5)
 #endif
         // A photo is always navigation, never an implicit memory action.
-        // Shared photos have one tap destination; save and heart live in the
-        // photo detail. The personal-library memory action remains explicit.
+        // The photo opens its detail; only the separate heart sends a reaction.
+        // Shared save stays in detail. Personal-library memory stays explicit.
         .widgetURL(entry.photoURL)
     }
 
@@ -101,11 +101,20 @@ struct NekoWidgetView: View {
     /// One quiet footer for shared photos. Its background covers the full
     /// width and fades into the image, without adding separate text panels.
     private var familyPhotoFooter: some View {
-        VStack(spacing: 4) {
-            if let caption = familyCaption {
-                familyCaptionPreview(caption)
+        HStack(alignment: .bottom, spacing: 6) {
+            VStack(spacing: 4) {
+                if let caption = familyCaption {
+                    familyCaptionPreview(caption)
+                }
+                familySourceLabel
             }
-            familySourceLabel
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            // Only the text is decorative. Hiding or disabling the entire
+            // footer would also hide the heart from touch and VoiceOver.
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+
+            familyHeartShortcut
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 12)
@@ -125,9 +134,92 @@ struct NekoWidgetView: View {
                 )
             }
             .padding(.top, familyCaption == nil ? -16 : -26)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var familyHeartShortcut: some View {
+        if let sourceDigest = entry.familySourceDigest,
+           let localWindowID = WidgetPhotoSource.localWindowID(
+               from: entry.photoSourceIdentifier
+           ), entry.isBookmarkInteractionEnabled {
+            familyHeartControl(
+                sourceDigest: sourceDigest,
+                localWindowID: localWindowID
+            )
+        } else {
+            // Inactive or legacy sources retain photo navigation but must not
+            // offer a reaction against an unvalidated target.
+            unavailableHeartSlot
+        }
+    }
+
+    @ViewBuilder
+    private func familyHeartControl(
+        sourceDigest: String,
+        localWindowID: String
+    ) -> some View {
+        switch entry.familyHeartStatus {
+        case .ready:
+            Button(
+                intent: SendFamilyWidgetHeartIntent(
+                    sourceDigest: sourceDigest,
+                    localWindowID: localWindowID
+                )
+            ) {
+                heartMark(status: .ready)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("ハートを送る")
+            .accessibilityHint("アプリを開いて送信します")
+        case .pending:
+            heartMark(status: .pending)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("ハートは送信待ちです")
+                .accessibilityHint("アプリの同期で送ります")
+        case .serverAccepted:
+            heartMark(status: .serverAccepted)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("ハートを送りました")
+                .accessibilityHint("相手が確認したことを示す表示ではありません")
+        case .hidden:
+            unavailableHeartSlot
+        }
+    }
+
+    private var unavailableHeartSlot: some View {
+        // Keep the text and action position stable when a heart expires.
+        Color.clear
+            .frame(width: 44, height: 44)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func heartMark(status: FamilyWidgetHeartStatus) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: status == .serverAccepted ? "heart.fill" : "heart")
+                .invalidatableContent()
+
+            if status == .pending {
+                Image(systemName: "clock.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .padding(1.5)
+                    .background(Color.black.opacity(0.82), in: Circle())
+                    .offset(x: 2, y: 2)
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(.white)
+        .frame(width: 30, height: 30)
+        .background(Color.black.opacity(0.64), in: Circle())
+        .overlay {
+            Circle()
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
+        }
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
 
     private func familyCaptionPreview(_ caption: String) -> some View {
