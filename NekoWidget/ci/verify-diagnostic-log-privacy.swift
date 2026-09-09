@@ -11,6 +11,26 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) thr
 @main
 private struct DiagnosticLogPrivacyVerifier {
     static func main() throws {
+        let deliveryMetadata = [
+            "deliveryTrace": "abcdef123456",
+            "deliveryStage": "save-reservation",
+            "deliveryReason": "transport-unclassified",
+            "deliveryPriorFailures": "2",
+            "deliveryRetryAt": "2026-09-09T07:39:00Z",
+        ]
+        try expect(DiagnosticLogPrivacy.sanitizeMetadata(deliveryMetadata) == deliveryMetadata,
+            "safe delivery diagnostics were discarded")
+        for key in deliveryMetadata.keys {
+            for unsafe in ["private caption", "https://private.invalid/photo", "/private/photo.jpg",
+                "Bearer secret", "12345678-1234-4123-8123-123456789abc"] {
+                try expect(DiagnosticLogPrivacy.sanitizeMetadata([key: unsafe]).isEmpty,
+                    "delivery metadata admitted arbitrary text or an identifier")
+            }
+        }
+        for count in ["-1", "1.5", "NaN", "1e3"] {
+            try expect(DiagnosticLogPrivacy.sanitizeMetadata(["deliveryPriorFailures": count]).isEmpty,
+                "delivery failure count admitted a non-count")
+        }
         let sensitiveTextPayloads = [
             "/private/var/mobile/Containers/Data/Application/ABC/private.json",
             "https://example.invalid/callback?token=SUPERSECRET",

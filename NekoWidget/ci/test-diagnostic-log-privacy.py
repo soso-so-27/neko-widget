@@ -524,7 +524,7 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             swift_set(privacy, "private static let pixelRangeMetadataKeys"),
             swift_set(privacy, "private static let timestampMetadataKeys"),
             finite_metadata_keys(privacy),
-            {"album", "group", "version"},
+            {"album", "group", "version", "deliveryPriorFailures"},
         )
         dynamic_classifications = {
             f"{prefix}{suffix}"
@@ -865,7 +865,8 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
                     key
                     for label in ("metadata:", "additional:")
                     for key in dictionary_argument_keys(value, label)
-                    if key != "sharingFailureReason" and sensitive_metadata_key(key)
+                    if key not in {"sharingFailureReason", "deliveryReason"}
+                    and sensitive_metadata_key(key)
                 })
                 if unsafe_keys:
                     violations.append(
@@ -949,6 +950,37 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
             "/// Values known to the Server",
         )
         self.assertIn("case let .requestRejected(status, code, _):", moment_error)
+
+    def test_delivery_trace_uses_closed_categories_and_ephemeral_correlation(self) -> None:
+        core = source("Shared/Sharing/MomentSharingCore.swift")
+        privacy = source("Shared/Logging/DiagnosticLogPrivacy.swift")
+        diagnostic = section(core, "enum MomentDeliveryDiagnostic {", "enum MomentOutboxRetryPolicy {")
+        for enum_name, key in (("Stage", "deliveryStage"), ("Reason", "deliveryReason")):
+            enum_body = balanced_block(diagnostic, diagnostic.index("{", diagnostic.index(f"enum {enum_name}:")), "{", "}")
+            enum_values = {
+                raw or name for name, raw in re.findall(
+                    r'case\s+(\w+)(?:\s*=\s*"([^"]+)")?', enum_body
+                )
+            }
+            allowed_body = section(privacy, f'"{key}": [', "]")
+            allowed_values = set(re.findall(r'"([^"\n]+)"', allowed_body)) - {key}
+            self.assertEqual(enum_values, allowed_values)
+        self.assertIn('case "deliveryPriorFailures":\n                value = validatedUnsignedInteger(rawValue)', privacy)
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        self.assertIn("private static let deliveryDiagnosticNonce = UUID()", coordinator)
+        self.assertIn("processNonce: Self.deliveryDiagnosticNonce", coordinator)
+        self.assertIn("processNonce.uuidString", diagnostic)
+        self.assertNotIn("localizedDescription", diagnostic)
+        self.assertNotIn("userInfo", diagnostic)
+        for call in shared_log_call_bodies(coordinator):
+            if '"moment-delivery"' not in call:
+                continue
+            for forbidden in ("candidate.id", "item.id", "clientRequestID", "serverMomentID", "caption", "baseURL"):
+                self.assertNotIn(forbidden, call)
+        retry = section(coordinator, "    private func recordRetry(", "    private nonisolated static func logDeliveryWait(")
+        self.assertLess(retry.index("snapshot = try MomentSharingStateStore.mutate"), retry.index("Self.logDeliveryWait"))
+        self.assertIn('if item.phase == .committed', retry)
+        self.assertIn('"Accepted photo local cleanup failed"', retry)
 
     def test_ios_build_runs_privacy_test_before_build(self) -> None:
         workflow = (REPOSITORY / ".github/workflows/ios-build.yml").read_text(

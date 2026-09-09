@@ -233,9 +233,11 @@ enum DiagnosticLogPrivacy {
         "scanDurationMs",
     ]
 
-    /// Correlation values produced only by `SharedLog.shortHash(_:)`.
+    /// Short correlation digests. Delivery correlation additionally uses a
+    /// process-random nonce, so it cannot identify a photo across launches.
     private static let shortHashMetadataKeys: Set<String> = [
         "asset",
+        "deliveryTrace",
         "file",
     ]
 
@@ -293,6 +295,16 @@ enum DiagnosticLogPrivacy {
     /// A caller-controlled value using one of these keys is still discarded
     /// unless it is exactly one of the values below.
     private static let finiteMetadataValues: [String: Set<String>] = [
+        "deliveryStage": [
+            "load-outbox", "reserve", "save-reservation", "read-ciphertext",
+            "upload", "save-upload", "begin-commit", "commit", "save-commit", "cleanup",
+        ],
+        "deliveryReason": [
+            "transport-unclassified", "authentication-rejected", "daily-quota",
+            "rate-limited", "server-error", "http-transient", "http-other",
+            "reservation-expired", "local-state", "local-file-io", "cancelled",
+            "invalid-payload", "unavailable", "unknown",
+        ],
         "action": ["liked", "removed", "saved", "unliked"],
         "algorithm": ["cat-aware-full-bleed-v6"],
         "authorization": [
@@ -498,6 +510,7 @@ enum DiagnosticLogPrivacy {
 
     private static let timestampMetadataKeys: Set<String> = [
         "changedAt",
+        "deliveryRetryAt",
         "nextReload",
         "shownAt",
     ]
@@ -555,6 +568,8 @@ enum DiagnosticLogPrivacy {
                 value = rawValue == "none" ? rawValue : validatedInteger(rawValue)
             case "failureDomain":
                 value = stableErrorDomain(rawValue)
+            case "deliveryPriorFailures":
+                value = validatedUnsignedInteger(rawValue)
             case let key where numericMetadataKeys.contains(key):
                 value = validatedNumber(rawValue)
             case let key where numericOrUnknownMetadataKeys.contains(key):
