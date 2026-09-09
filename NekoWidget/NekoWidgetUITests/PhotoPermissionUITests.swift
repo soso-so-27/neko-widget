@@ -255,6 +255,9 @@ final class PhotoPermissionUITests: XCTestCase {
                 next.tap()
                 let skipWidget = app.buttons["widget-placement-skip"]
                 XCTAssertTrue(skipWidget.waitForExistence(timeout: 15))
+                if scenario == "one" {
+                    captureMainlineScreen("widget-guide")
+                }
                 skipWidget.tap()
                 XCTAssertTrue(app.staticTexts["mainline-fixture-finished"].waitForExistence(timeout: 10))
             case "limited-zero":

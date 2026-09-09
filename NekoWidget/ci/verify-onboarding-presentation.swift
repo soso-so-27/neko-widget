@@ -125,7 +125,7 @@ enum OnboardingPresentationVerifier {
         )
         try require(
             OnboardingPresentationCopy.widgetBody
-                == "追加はホーム画面で行います。",
+                == "見つけた猫写真を、自分のホーム画面でも楽しめます。\n追加はホーム画面で行います。",
             "Widget guide stopped explaining the Home Screen handoff"
         )
         try require(

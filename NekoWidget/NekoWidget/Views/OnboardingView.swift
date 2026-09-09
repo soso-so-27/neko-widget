@@ -107,7 +107,9 @@ struct OnboardingView: View {
                 isLimitedAccess: isLimitedAccess,
                 chooseMorePhotos: chooseMorePhotos,
                 rescan: rescan,
-                continueButtonTitleOverride: "次へ",
+                continueButtonTitleOverride: scan.displayedCatCount > 0
+                    ? "ウィジェットの置き方へ"
+                    : "次へ",
                 continueToApp: {
                     if scan.displayedCatCount > 0 {
                         page = .widgetGuide
