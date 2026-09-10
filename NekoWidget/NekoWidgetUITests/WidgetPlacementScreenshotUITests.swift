@@ -507,7 +507,14 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     @MainActor
     private func galleryPage(_ indicator: XCUIElement) -> [Int] {
         guard let value = indicator.value as? String else { return [] }
-        return value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        let numbers = value.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard numbers.count == 2 else { return [] }
+        // Japanese AX reports total first: "全3ページ中の1ページ目".
+        // Keep the existing [current, total] order for English "Page 1 of 3".
+        if value.hasPrefix("全"), value.contains("ページ中の"), value.hasSuffix("ページ目") {
+            return [numbers[1], numbers[0]]
+        }
+        return numbers
     }
 
     @MainActor
@@ -517,11 +524,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         timeout: TimeInterval,
         expectWhiteFixture: Bool = false
     ) -> XCUIScreenshot? {
-        // CI's Gallery AX exposes the preview as a Button with a "Widget,"
-        // value. Its page control supplies the size; don't require the preview
-        // to be interactive or depend on unobserved localized size suffixes.
+        // Observed Gallery AX uses "Widget," in English and "ウィジェット,"
+        // in Japanese. The page control supplies the size; don't require the
+        // preview to be interactive or depend on localized size suffixes.
         let photos = gallery.buttons.matching(
-            NSPredicate(format: "value BEGINSWITH %@", "Widget,")
+            NSPredicate(format: "value BEGINSWITH %@ OR value BEGINSWITH %@", "Widget,", "ウィジェット,")
         )
         let deadline = Date().addingTimeInterval(timeout)
         var visibleSince: Date?
