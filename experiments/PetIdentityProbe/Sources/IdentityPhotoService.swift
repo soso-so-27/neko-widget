@@ -192,10 +192,10 @@ actor IdentityPhotoService {
                 await progress(done)
             }
         }
-        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?, regions: CandidateRegionReview?)] = []
+        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?, regions: CandidateRegionReview?, tileCheck: CandidateTileCheck?)] = []
         for id in selected {
             try Task.checkCancellation()
-            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?, CandidateRegionReview?) in
+            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?, CandidateRegionReview?, CandidateTileCheck?) in
                 let asset = assets[id]
                 let prepared = Self.preparePhoto(asset)
                 let recovery = try recovered(prepared)
@@ -206,9 +206,9 @@ actor IdentityPhotoService {
                 let similar = candidateHashes.contains { hash in hashes.contains { (hash ^ $0).nonzeroBitCount <= 2 } }
                 hashes += candidateHashes
                 if let burst = asset?.burstIdentifier { bursts.insert(burst) }
-                guard image != nil else { return (nil, nil, .unavailable, nil, nil) }
-                if repeatedBurst { return (image, nil, .repeatedBurst, nil, nil) }
-                if similar { return (image, nil, .similarPhoto, nil, nil) }
+                guard image != nil else { return (nil, nil, .unavailable, nil, nil, nil) }
+                if repeatedBurst { return (image, nil, .repeatedBurst, nil, nil, nil) }
+                if similar { return (image, nil, .similarPhoto, nil, nil, nil) }
                 guard let crop else {
                     let regions = try CandidateRegionProbe.review(image: prepared.image,
                         originalIssue: prepared.issue, recoveryStatus: recovery.status,
@@ -216,9 +216,20 @@ actor IdentityPhotoService {
                         registrationA: vectors[.referenceA] ?? [], registrationB: vectors[.referenceB] ?? [],
                         embed: embed)
                     return (image, nil, .noSingleCat,
-                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status), regions)
+                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status), regions, nil)
                 }
-                return (image, try embed(crop), nil, nil, nil)
+                let vector = try embed(crop)
+                var tileCheck: CandidateTileCheck?
+                if prepared.crop != nil, let original = prepared.image {
+                    // Evaluate the same pure distance rule before releasing this
+                    // raster. No photo refetch or additional identity inference.
+                    let current = try IdentityEvaluationCore.filteredReviewSuggestions(
+                        registrationA: vectors[.referenceA] ?? [], registrationB: vectors[.referenceB] ?? [], inputs: [vector])
+                    if current.first?.suggestedCat != nil {
+                        tileCheck = try CandidateTileProbe.check(original)
+                    }
+                }
+                return (image, vector, nil, nil, nil, tileCheck)
             }
             candidates.append(next)
             done += 1
@@ -233,7 +244,7 @@ actor IdentityPhotoService {
             let issue = candidate.issue ?? (ranking == .equalScores ? .equalScores : ranking == .invalidEmbedding ? .invalidEmbedding : nil)
             return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: assessment.suggestedCat, issue: issue,
                                         cropDiagnostic: candidate.diagnostic, regionReview: candidate.regions,
-                                        distanceAssessment: assessment)
+                                        distanceAssessment: assessment, tileCheck: candidate.tileCheck)
         }
         try Task.checkCancellation()
         return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])

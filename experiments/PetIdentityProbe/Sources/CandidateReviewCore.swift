@@ -70,9 +70,15 @@ struct CandidateReviewPhoto: Identifiable {
     var cropDiagnostic: CandidateCropDiagnostic? = nil
     var regionReview: CandidateRegionReview? = nil
     var distanceAssessment: CandidateDistanceAssessment? = nil
+    var tileCheck: CandidateTileCheck? = nil
 
     // Region-level suggestions must never enter a photo-level bulk confirmation.
     var batchSuggestion: CandidateReviewChoice? {
+        guard tileCheck?.withholdsCandidate != true else { return nil }
+        return batchSuggestionBeforeTileCheck
+    }
+
+    var batchSuggestionBeforeTileCheck: CandidateReviewChoice? {
         guard image != nil, issue == nil, regionReview == nil,
               distanceAssessment.map({ $0.suggestedCat == suggestion }) ?? true,
               suggestion == .a || suggestion == .b else { return nil }
@@ -80,6 +86,7 @@ struct CandidateReviewPhoto: Identifiable {
     }
 
     var issueTitle: String? {
+        if tileCheck?.withholdsCandidate == true { return "離れた検出範囲があるため、写真全体で確認" }
         if let regionReview { return regionReview.title }
         if let title = distanceAssessment?.withheldTitle { return title }
         return issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
@@ -183,10 +190,10 @@ struct CandidateCropFailureCount: Encodable {
 }
 
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v6"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v7"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
-    let method = "second-nearest-of-five-per-cat;registration-radius-filter1.25;no-ratio-gate-or-identity-acceptance-or-online-learning"
+    let method = "second-nearest-of-five-per-cat;registration-radius-filter1.25;raw-single-distance-passed-four-tile-withholding;no-ratio-gate-or-identity-acceptance-or-online-learning"
     let scope = "self-reviewed-selected-photos;confirmation-bias-possible;not-independent-accuracy-or-manual-ab-test"
     let selected: Int
     let proposed: Int
@@ -203,6 +210,7 @@ struct CandidateReviewReport: Encodable {
     let multiRegionReview: CandidateRegionReviewCounts
     let distanceFiltering: CandidateDistanceFilterCounts
     let qualityComparison: CandidateQualityComparison
+    let tileComparison: CandidateTileComparison
     let reviewActions: [String: Int]
     let totalReviewActions: Int
     let hypotheticalManualLabelTaps: Int
@@ -248,6 +256,7 @@ struct CandidateReviewReport: Encodable {
         multiRegionReview = .init(session: session)
         distanceFiltering = .init(session: session)
         qualityComparison = .init(session: session)
+        tileComparison = .init(session: session)
         reviewActions = session.actions
         totalReviewActions = session.actions.values.reduce(0, +)
         hypotheticalManualLabelTaps = photos.count
