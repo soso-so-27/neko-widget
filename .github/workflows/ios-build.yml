@@ -371,6 +371,19 @@ jobs:
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj
 
+      - name: Verify personal Widget photo rotation
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun --sdk macosx swiftc \
+            -parse-as-library \
+            Shared/Models/WidgetManifest.swift \
+            Shared/Models/WidgetRenderPlan.swift \
+            ci/verify-personal-widget-rotation.swift \
+            -o "$RUNNER_TEMP/verify-personal-widget-rotation"
+          "$RUNNER_TEMP/verify-personal-widget-rotation"
+
       - name: Verify disabled Plus purchase foundation
         working-directory: NekoWidget
         shell: bash

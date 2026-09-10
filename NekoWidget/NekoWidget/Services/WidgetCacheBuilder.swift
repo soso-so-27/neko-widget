@@ -44,7 +44,7 @@ actor WidgetCacheBuilder {
     /// Local cache-only revision. Keep this separate from the encrypted sharing
     /// geometry version: changing the visual fallback must rebuild existing
     /// personal JPEGs without making otherwise compatible peers disagree.
-    private static let cacheRenderingRevision = "edge-to-edge-v1"
+    private static let cacheRenderingRevision = "cat-focused-fallback-v2"
     /// The migration-safe maximum is 380 distinct files: new manifest 60,
     /// previous active manifest 60, grace generation 60, three pre-Build-8
     /// family leases of up to 60 each, and the Build-4 legacy lease of 20.
@@ -365,24 +365,25 @@ actor WidgetCacheBuilder {
             return WidgetCacheBuildResult(manifest: .empty, selectedIdentifiers: [])
         }
 
-        // Limited access or iCloud offloading can leave fewer local images than
-        // requested. Repeat the successful subset so the manifest still holds
-        // the configured 15–20 future entries without network access.
-        let items = (0..<settings.widgetEntryCount).map { offset in
-            let item = available[offset % available.count]
-            return WidgetManifestItem(
-                localIdentifier: item.record.localIdentifier,
-                cacheFilename: item.filenames.small,
-                cacheFilenames: item.filenames,
-                scheduledDate: now.addingTimeInterval(
-                    TimeInterval(offset * settings.widgetEntryIntervalMinutes * 60)
-                ),
-                rendererVersion: item.renderPlans == nil ? nil : WidgetRenderPlanner.rendererVersion,
-                sourcePixelSize: item.sourcePixelSize,
-                renderPlans: item.renderPlans,
-                sourceModificationDate: item.renderPlans == nil ? nil : item.record.sourceModificationDate
-            )
-        }
+        // Keep each locally available photo once, even for a short library.
+        // The provider loops this rotation itself; padding to the target count
+        // repeats photos at the cycle boundary and inflates selection history.
+        let items = PersonalWidgetRotationPolicy.orderedUniqueItems(
+            from: available.enumerated().map { offset, item in
+                WidgetManifestItem(
+                    localIdentifier: item.record.localIdentifier,
+                    cacheFilename: item.filenames.small,
+                    cacheFilenames: item.filenames,
+                    scheduledDate: now.addingTimeInterval(
+                        TimeInterval(offset * settings.widgetEntryIntervalMinutes * 60)
+                    ),
+                    rendererVersion: item.renderPlans == nil ? nil : WidgetRenderPlanner.rendererVersion,
+                    sourcePixelSize: item.sourcePixelSize,
+                    renderPlans: item.renderPlans,
+                    sourceModificationDate: item.renderPlans == nil ? nil : item.record.sourceModificationDate
+                )
+            }
+        )
 
         let manifest = WidgetManifest(items: items, generatedAt: now)
         let historyURL = containerURL.appendingPathComponent(
@@ -1141,6 +1142,22 @@ actor WidgetCacheBuilder {
     ) -> WidgetCacheFilenames {
         cacheFilenames(for: record)
     }
+
+    /// Exercises the production JPEG path without PhotoKit or cache publication.
+    /// The supplied plan remains the manifest's canonical sharing geometry.
+    static func runtimeSelfTestPersonalWidgetJPEG(
+        image: UIImage,
+        renderPlan: WidgetFamilyRenderPlan,
+        catBoundingBox: CGRect?,
+        variant: WidgetImageVariant
+    ) -> Data? {
+        widgetJPEG(
+            normalizedImage: image,
+            renderPlan: renderPlan,
+            catBoundingBox: catBoundingBox,
+            spec: RenderSpec.spec(for: variant)
+        )?.data
+    }
 #endif
 
     private static func cacheFilenames(for record: AssetRecord) -> WidgetCacheFilenames {
@@ -1217,7 +1234,8 @@ actor WidgetCacheBuilder {
 
     /// Produces a family-sized JPEG that fills the canvas with a sharp crop
     /// guided only by the existing cat union. Small and Large preserve the cat
-    /// plus margin when possible and otherwise use a centered sharp fill.
+    /// plus margin when possible and otherwise keep the detected cat centered.
+    /// Missing or invalid cat geometry keeps the centered sharp fill.
     /// Medium remains full-bleed and favors the upper
     /// part of an oversized cat union. No face detection, subject lifting, or
     /// semantic composition runs here or in the Widget extension.
@@ -1232,9 +1250,28 @@ actor WidgetCacheBuilder {
         renderScale: CGFloat,
         legacy18WouldFallback: Bool?
     )? {
+        // The persisted plan is canonical sharing metadata; the existing local
+        // fallback already renders a sharp fill instead of its legacy wire mode.
+        // Resolve only that local display crop here. Never replace renderPlan or
+        // the manifest metadata consumed by DailyManifestFreezer/canonical binding.
+        // Received-photo plans already specify full bleed and do not enter this.
+        let displayPlan: WidgetFamilyRenderPlan
+        if (spec.variant == .small || spec.variant == .large),
+           renderPlan.compositionMode == .blurredFitFallback {
+            displayPlan = WidgetRenderPlanner.focusedFullBleedPlan(
+                visionBoundingBox: catBoundingBox,
+                sourcePixelSize: WidgetSourcePixelSize(
+                    width: max(1, Int(image.size.width.rounded())),
+                    height: max(1, Int(image.size.height.rounded()))
+                ),
+                variant: spec.variant
+            )
+        } else {
+            displayPlan = renderPlan
+        }
         let rendered = renderedWidgetImage(
             image: image,
-            renderPlan: renderPlan,
+            renderPlan: displayPlan,
             size: spec.size
         )
         guard let data = jpegData(
@@ -1259,7 +1296,9 @@ actor WidgetCacheBuilder {
         }
         return (
             data,
-            rendered.compositionMode,
+            // Preserve the canonical fallback classification used by existing
+            // diagnostics; renderScale describes the actual local display crop.
+            renderPlan.compositionMode,
             rendered.renderScale,
             legacy18WouldFallback
         )

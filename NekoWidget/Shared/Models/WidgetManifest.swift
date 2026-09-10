@@ -148,6 +148,22 @@ struct WidgetManifest: Codable, Equatable, Sendable {
     static let empty = WidgetManifest(items: [], generatedAt: .distantPast)
 }
 
+/// A personal rotation contains each available photo once. In particular,
+/// manifests from older apps may pad a short library out to 20 slots: keeping
+/// those copies can repeat the first photo at the cycle boundary and give
+/// some photos more time than others. Keep the first scheduled copy, including
+/// its exact cache files and date; the provider owns the time-based looping.
+enum PersonalWidgetRotationPolicy {
+    static func orderedUniqueItems(
+        from items: [WidgetManifestItem]
+    ) -> [WidgetManifestItem] {
+        var identifiers = Set<String>()
+        return Array(items.sorted { $0.scheduledDate < $1.scheduledDate }
+            .filter { identifiers.insert($0.localIdentifier).inserted }
+            .prefix(20))
+    }
+}
+
 /// One privacy-minimized family Widget publication. `momentID` is the opaque
 /// local lookup key required by the private-memory and heart controls. It never
 /// leaves the App Group container and is not a participant, room, PhotoKit, or
