@@ -20,6 +20,7 @@ struct OfficialWindowState: Codable, Sendable {
     var endpoint: URL?
     var catalog: OfficialWindowCatalog?
     var checkedAt: Date?
+    var imageRevision: UUID?
 
     static let empty = Self()
     var isSubscribed: Bool {
@@ -98,7 +99,7 @@ struct OfficialWindowStore: Sendable {
               properties[kCGImagePropertyPixelHeight] as? Int == photo.height
         else { throw OfficialWindowError.invalidImage }
         try locked { root in
-            let state = try read(root)
+            var state = try read(root)
             guard state.isSubscribed, state.subscriptionID == request.subscriptionID,
                   state.photos.contains(photo) else { throw OfficialWindowError.subscriptionChanged }
             let url = root.appendingPathComponent(photo.imageFilename)
@@ -106,6 +107,8 @@ struct OfficialWindowStore: Sendable {
             try? FileManager.default.setAttributes(
                 [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: url.path
             )
+            state.imageRevision = UUID()
+            try AtomicJSON.write(state, to: root.appendingPathComponent("state.json"))
         }
     }
 

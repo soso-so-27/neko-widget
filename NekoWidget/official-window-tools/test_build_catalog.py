@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+from unittest.mock import patch
 
 from PIL import Image, ImageCms
 from PIL.PngImagePlugin import PngInfo
@@ -212,6 +213,28 @@ class CatalogTests(unittest.TestCase):
         output = self.build([row])["photos"][0]
         self.assertNotIn("caption", output)
         self.assertNotIn("photographedOn", output)
+
+    def test_blank_captions_are_omitted_and_nonblank_captions_are_trimmed(self):
+        rows = [self.photo(f"blank-{number}", caption=value)
+                for number, value in enumerate(("", " ", "\n \t\r\n", "\u3000"))]
+        rows.append(self.photo("trimmed", caption=" \n一行目\n二行目 \n"))
+        result = self.build(rows)
+        for row in result["photos"]:
+            if row["id"] == "trimmed":
+                self.assertEqual(row["caption"], "一行目\n二行目")
+            else:
+                self.assertNotIn("caption", row)
+
+    def test_encoded_jpeg_byte_limit_is_checked_before_output(self):
+        data, _, _ = catalog.jpeg_bytes(self.images / "sample.png")
+        self.assertLessEqual(len(data), 4 * 1024 * 1024)
+        # Exercise both sides with real encoded bytes, without allocating a
+        # huge fixture or relying on quality settings to imply a byte bound.
+        with patch.object(catalog, "MAX_JPEG_BYTES", len(data) - 1):
+            self.assert_rejected([self.photo()], "client download limit")
+        with patch.object(catalog, "MAX_JPEG_BYTES", len(data)):
+            result = self.build()
+        self.assertEqual((self.output / result["photos"][0]["imageFilename"]).read_bytes(), data)
 
     def test_item_limit(self):
         rows = [self.photo(f"photo-{number}") for number in range(61)]

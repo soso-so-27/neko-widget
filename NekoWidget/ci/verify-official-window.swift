@@ -27,7 +27,7 @@ struct OfficialWindowChecks {
     }
 
     static func main() throws {
-        let now = Date().addingTimeInterval(-10)
+        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 10)
         let bytes = NSMutableData()
         let context = CGContext(data: nil, width: 64, height: 48, bitsPerComponent: 8,
                                 bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -74,7 +74,9 @@ struct OfficialWindowChecks {
         try store.setSubscribed(true)
         let captured = store.snapshot()
         try store.accept(active, for: captured)
+        let revisionBeforeDownload = store.snapshot().imageRevision
         try store.saveImage(image, photo: photo, for: captured)
+        check(store.snapshot().imageRevision != revisionBeforeDownload, "Photo download did not invalidate image presentation")
         check(store.imageURL(for: photo) != nil, "Valid JPEG not readable")
         rejects("wrong image bytes") { try store.saveImage(Data([1, 2, 3]), photo: photo, for: captured) }
         try store.setSubscribed(false)
@@ -90,6 +92,7 @@ struct OfficialWindowChecks {
         try store.accept(catalog(now.addingTimeInterval(1), enabled: false, photos: []), for: resubscribed)
         check(store.snapshot().photos.isEmpty && store.imageURL(for: photo) == nil, "Pause retained display")
         rejects("old catalog undoing pause") { try store.accept(active, for: resubscribed) }
+        rejects("conflicting edition at same publication time") { try store.accept(catalog(now.addingTimeInterval(1)), for: resubscribed) }
         rejects("old image undoing pause") { try store.saveImage(image, photo: photo, for: resubscribed) }
         let otherEndpoint = OfficialWindowStore(directory: root, endpoint: URL(string: "https://other.invalid/catalog.json"))
         check(!otherEndpoint.snapshot().isSubscribed, "Environment change reused old subscription")

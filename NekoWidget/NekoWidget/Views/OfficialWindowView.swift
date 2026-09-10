@@ -138,7 +138,7 @@ struct OfficialWindowView: View {
             }
         }
         .sheet(item: $selectedPhoto) { photo in
-            NavigationStack { OfficialPhotoDetailView(photo: photo, store: store) }
+            NavigationStack { OfficialPhotoDetailView(photo: photo, store: store, imageRevision: state.imageRevision) }
         }
         .sheet(isPresented: $showsWidgetGuide) {
             NavigationStack {
@@ -189,7 +189,7 @@ struct OfficialWindowView: View {
         Button { selectedPhoto = photo } label: {
             VStack(alignment: .leading, spacing: 10) {
                 OfficialPhotoImage(photo: photo, maximumPixelSize: latest ? 1100 : 650, store: store)
-                    .id("\(photo.imageFilename)-\(state.checkedAt?.timeIntervalSince1970 ?? 0)")
+                    .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "")")
                     .aspectRatio(CGFloat(photo.width) / CGFloat(photo.height), contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
                 HStack {
@@ -267,11 +267,13 @@ private struct OfficialPhotoDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let photo: OfficialCatPhoto
     let store: OfficialWindowStore
+    let imageRevision: UUID?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store)
+                    .id(imageRevision)
                     .aspectRatio(CGFloat(photo.width) / CGFloat(photo.height), contentMode: .fit)
                 VStack(alignment: .leading, spacing: 10) {
                     if let caption = photo.caption { Text(caption).font(.body) }
@@ -343,7 +345,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let image = MomentExperiencePhotoFixture.image(index: 0)
         guard let data = image.jpegData(compressionQuality: 0.88), let cgImage = image.cgImage else { return }
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let now = Date().addingTimeInterval(-2)
+        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) - 2)
         let photo = OfficialCatPhoto(
             id: "fixture-photo", catID: "fixture-cat", catName: "確認用の猫", credit: "画面確認用の合成画像",
             caption: "窓辺でひと休み。", photographedOn: "2026-09-01", publishedAt: now,

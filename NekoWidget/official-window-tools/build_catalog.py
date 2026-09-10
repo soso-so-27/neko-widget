@@ -18,6 +18,7 @@ from PIL import Image, ImageCms, ImageOps
 
 MAX_PHOTOS = 60
 MAX_DIMENSION = 2048
+MAX_JPEG_BYTES = 4 * 1024 * 1024
 UTC_SECONDS = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 SLUG = re.compile(r"[a-z0-9-]{1,64}")
 REQUIRED = {
@@ -138,7 +139,12 @@ def validated_photos(document: object, root: Path) -> list[tuple[dict, Path, dat
             "expiresAt": item["expiresAt"],
         }
         if "caption" in item:
-            public["caption"] = checked_text(item["caption"], "caption", 100, caption=True)
+            caption = item["caption"]
+            if not isinstance(caption, str):
+                raise CatalogError("caption must be a string when present")
+            caption = caption.strip()
+            if caption:
+                public["caption"] = checked_text(caption, "caption", 100, caption=True)
         if "photographedOn" in item:
             value = item["photographedOn"]
             try:
@@ -185,7 +191,10 @@ def jpeg_bytes(path: Path) -> tuple[bytes, int, int]:
                 clean.paste(colors)
                 encoded = BytesIO()
                 clean.save(encoded, format="JPEG", quality=88, optimize=True)
-                return encoded.getvalue(), clean.width, clean.height
+                data = encoded.getvalue()
+                if len(data) > MAX_JPEG_BYTES:
+                    raise CatalogError("encoded JPEG exceeds the 4 MiB client download limit")
+                return data, clean.width, clean.height
     except CatalogError:
         raise
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError,
