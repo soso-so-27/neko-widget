@@ -250,7 +250,7 @@ struct OfficialWindowView: View {
             return
         } catch {
             if store.snapshot().subscriptionID == requestedSubscription {
-                message = "新しい写真を確認できませんでした。通信が戻ったら、もう一度更新できます。"
+                message = "新しい写真を確認できませんでした。少し時間をおいて、もう一度更新できます。"
             }
         }
         state = store.snapshot()

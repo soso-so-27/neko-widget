@@ -152,23 +152,25 @@ struct MainTabView: View {
             .badge(hasUnreadMemoriesSummary ? 1 : 0)
             .tag(AppTab.memories)
 
-            NavigationStack {
-                if SharingAPIConfiguration.current.isReviewVisible {
-                    WindowListView(
-                        opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
-                        pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                        pendingFamilyNotificationRoute:
-                            $pendingFamilyNotificationRoute
-                    )
-                } else {
-                    OfficialWindowView()
+            if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.feedURL != nil {
+                NavigationStack {
+                    if SharingAPIConfiguration.current.isReviewVisible {
+                        WindowListView(
+                            opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
+                            pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
+                            pendingFamilyNotificationRoute:
+                                $pendingFamilyNotificationRoute
+                        )
+                    } else {
+                        OfficialWindowView()
+                    }
                 }
+                .tabItem {
+                    Label("まど", systemImage: "rectangle.split.2x2")
+                        .accessibilityIdentifier("main-tab-windows")
+                }
+                .tag(AppTab.windows)
             }
-            .tabItem {
-                Label("まど", systemImage: "rectangle.split.2x2")
-                    .accessibilityIdentifier("main-tab-windows")
-            }
-            .tag(AppTab.windows)
         }
         .sheet(isPresented: $showsSettings, onDismiss: presentDeferredWidgetGuide) {
             settingsSheet
@@ -1034,7 +1036,7 @@ private struct WindowListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                OfficialWindowEntryCard()
+                if windows.isEmpty { OfficialWindowEntryCard() }
                 if isLoading, windows.isEmpty {
                     ProgressView("まどを確認しています…")
                         .frame(maxWidth: .infinity, minHeight: 240)
@@ -1093,6 +1095,7 @@ private struct WindowListView: View {
                     }
 
                 }
+                if !windows.isEmpty { OfficialWindowEntryCard() }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
