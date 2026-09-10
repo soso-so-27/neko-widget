@@ -313,10 +313,12 @@ struct CandidatePhotoReview: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
+            GeometryReader { available in
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     CandidateImage(image: photo.image, regions: photo.regionReview?.regions ?? [])
-                        .frame(height: photo.regionReview == nil ? 330 : 240)
+                        .frame(height: min(photo.regionReview == nil ? 330 : 240,
+                                           max(100, available.size.height * (available.size.height < 360 ? 0.65 : 0.40))))
                     Text("この写真に写っているのは？").font(.title3.bold())
                     if restoredChoice, let choice {
                         Text("保存済みの確認：\(choice.title)。以前の選択をそのまま表示しています。変更がある写真だけ訂正できます。")
@@ -337,6 +339,7 @@ struct CandidatePhotoReview: View {
                             }
                         }
                     }
+                    if available.size.height < 360 { confirmationPanel }
                     Text("確認はこの試作の中だけ。本アプリの写真所属は変わりません。")
                         .font(.footnote).foregroundStyle(.secondary)
                     if choice != nil, let unconfirm {
@@ -345,19 +348,26 @@ struct CandidatePhotoReview: View {
                 }.padding(20)
             }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 8) {
-                        Text("写真全体に写っている猫を選ぶ").font(.caption).foregroundStyle(.secondary)
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                            ForEach([CandidateReviewChoice.a, .b, .both, .other], id: \.self) { choiceButton($0) }
-                        }
-                        choiceButton(.unsure)
-                    }.padding(12).background(.regularMaterial)
+                    if available.size.height >= 360 {
+                        confirmationPanel.padding(12).background(.regularMaterial)
+                    }
                 }
                 .navigationTitle("写真を確認").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
                 .alert("確認結果を保存できませんでした", isPresented: $saveFailed) {
                     Button("閉じる", role: .cancel) {}
                 } message: { Text("確認内容は変更していません。空き容量や見本の状態を確認して、もう一度お試しください。") }
+            }
+        }
+    }
+
+    private var confirmationPanel: some View {
+        VStack(spacing: 8) {
+            Text("写真全体に写っている猫を選ぶ").font(.caption).foregroundStyle(.secondary)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                ForEach([CandidateReviewChoice.a, .b, .both, .other], id: \.self) { choiceButton($0) }
+            }
+            choiceButton(.unsure)
         }
     }
 

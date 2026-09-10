@@ -110,7 +110,7 @@ final class CandidateQualityComparisonTests: XCTestCase {
         // A generated single-cat image stands in for the single-box UI path; this is not a detector accuracy test.
         let photo = try XCTUnwrap(fixture().photos.first)
         let previous = scene.windows.first(where: \.isKeyWindow)
-        for size in [CGSize(width: 320, height: 568), CGSize(width: 390, height: 844)] {
+        for size in [CGSize(width: 320, height: 568), CGSize(width: 390, height: 844), CGSize(width: 844, height: 390)] {
             let window = UIWindow(windowScene: scene)
             window.frame = CGRect(origin: .zero, size: size)
             let host = UIHostingController(rootView: CandidatePhotoReview(photo: photo, choice: size.width == 320 ? .a : nil,
@@ -126,6 +126,24 @@ final class CandidateQualityComparisonTests: XCTestCase {
             let attachment = XCTAttachment(image: raster)
             attachment.name = "candidate-quality-single-path-generated-\(Int(size.width))"
             attachment.lifetime = .keepAlways; add(attachment)
+            if size.width > size.height {
+                func findScroll(_ view: UIView) -> UIScrollView? {
+                    if let scroll = view as? UIScrollView { return scroll }
+                    return view.subviews.lazy.compactMap { findScroll($0) }.first
+                }
+                let scroll = try XCTUnwrap(findScroll(host.view))
+                let bottom = max(-scroll.adjustedContentInset.top,
+                    scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+                scroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(200))
+                let detail = UIGraphicsImageRenderer(size: size).image { _ in
+                    XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+                }
+                let bottomAttachment = XCTAttachment(image: detail)
+                bottomAttachment.name = "candidate-quality-landscape-choices-generated"
+                bottomAttachment.lifetime = .keepAlways; add(bottomAttachment)
+            }
         }
     }
 }
