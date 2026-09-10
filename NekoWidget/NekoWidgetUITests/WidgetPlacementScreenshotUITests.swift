@@ -6,7 +6,8 @@ import UIKit
 /// runs do not enable the Widget screenshot compiler conditions.
 ///
 /// The workflow erases its Simulator before and after the test. No Photos are
-/// imported, and the final "Add Widget" button is deliberately not tapped.
+/// imported. Only the dedicated official-photo test adds a Widget to that
+/// disposable Home Screen; existing guide and private-window captures do not.
 final class WidgetPlacementScreenshotUITests: XCTestCase {
     private let springboardBundleIdentifier = "com.apple.springboard"
 
@@ -143,9 +144,16 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureOfficialWidgetAllSupportedSizesAndHomeScreen() {
+        executionTimeAllowance = 240
+        captureFixtureGallery(captureAllSizes: true, officialWindow: true)
+    }
+
+    @MainActor
     private func captureFixtureGallery(
         captureAllSizes: Bool,
-        expectWhiteFixture: Bool = false
+        expectWhiteFixture: Bool = false,
+        officialWindow: Bool = false
     ) {
         let app = XCUIApplication()
         app.launchArguments += [
@@ -244,7 +252,11 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 fail("The small Widget page did not display its fixture photo.", application: springboard)
                 return
             }
-            captureScreenshot(named: "widget-family-small", screenshot: fixtureScreenshot)
+            if officialWindow { assertNoOfficialPhotoActions(in: gallery) }
+            captureScreenshot(
+                named: officialWindow ? "widget-official-small" : "widget-family-small",
+                screenshot: fixtureScreenshot
+            )
             for (index, size) in ["medium", "large"].enumerated() {
                 guard let previousPage = pages.value as? String, !previousPage.isEmpty else {
                     fail("The Widget size page cannot be identified.", application: springboard)
@@ -270,7 +282,14 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     fail("The Widget size did not advance to a rendered photo.", application: springboard)
                     return
                 }
-                captureScreenshot(named: "widget-family-\(size)", screenshot: screenshot)
+                if officialWindow { assertNoOfficialPhotoActions(in: gallery) }
+                captureScreenshot(
+                    named: officialWindow ? "widget-official-\(size)" : "widget-family-\(size)",
+                    screenshot: screenshot
+                )
+            }
+            if officialWindow {
+                installSmallOfficialWidget(in: springboard, gallery: gallery, pages: pages)
             }
         } else {
             guard let fixtureScreenshot = waitForFixturePalette(timeout: 15) else {
@@ -279,8 +298,71 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
             }
             captureScreenshot(named: "01-local-cat-widget", screenshot: fixtureScreenshot)
         }
-        // Do not tap Add Widget. The disposable Simulator is erased after the
-        // run, but the capture itself remains read-only SpringBoard review.
+        // Existing guide/private captures never add a Widget. Only the
+        // explicit official scenario installs one before Simulator cleanup.
+    }
+
+    @MainActor
+    private func installSmallOfficialWidget(
+        in springboard: XCUIApplication,
+        gallery: XCUIElement,
+        pages: XCUIElement
+    ) {
+        // The all-size capture finishes on Large. Return through Medium to
+        // Small and verify the Gallery's page indicator before installing.
+        for index in 0..<2 {
+            guard let previousPage = pages.value as? String else {
+                fail("The official Widget size cannot be identified.", application: springboard)
+                return
+            }
+            let start = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.57))
+            let end = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.57))
+            start.press(forDuration: 0.1, thenDragTo: end)
+            let changedPage = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value != %@", previousPage), object: pages
+            )
+            guard XCTWaiter.wait(for: [changedPage], timeout: 8) == .completed,
+                  galleryPage(pages) == [2 - index, 3],
+                  waitForFixturePhoto(in: gallery, springboard: springboard, timeout: 10) != nil else {
+                fail("Could not return to the small official Widget.", application: springboard)
+                return
+            }
+        }
+        guard waitForFixturePhoto(in: gallery, springboard: springboard, timeout: 10) != nil,
+              let addButton = waitForElement(
+                  in: springboard, labels: ["ウィジェットを追加", "Add Widget"],
+                  elementTypes: [.button], timeout: 8
+              ) else {
+            fail("The small official Widget was not ready to install.", application: springboard)
+            return
+        }
+        addButton.tap()
+        let galleryDismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: gallery
+        )
+        guard XCTWaiter.wait(for: [galleryDismissed], timeout: 15) == .completed else {
+            fail("The Widget Gallery did not close after installation.", application: springboard)
+            return
+        }
+        XCUIDevice.shared.press(.home)
+        guard let screenshot = waitForFixturePalette(timeout: 15) else {
+            fail("The installed official Widget did not render on Home Screen.", application: springboard)
+            return
+        }
+        assertNoOfficialPhotoActions(in: springboard)
+        captureScreenshot(named: "widget-official-home-small", screenshot: screenshot)
+        let hierarchy = XCTAttachment(string: springboard.debugDescription)
+        hierarchy.name = "Official Widget Home Screen hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+    }
+
+    @MainActor
+    private func assertNoOfficialPhotoActions(in surface: XCUIElement) {
+        // Assert exposed controls; reviewers also inspect the captured pixels
+        // for the short cat-name footer and absence of overlaid action icons.
+        XCTAssertFalse(surface.buttons["ハートを送る"].exists)
+        XCTAssertFalse(surface.buttons["思い出に残す"].exists)
     }
 
     @MainActor

@@ -2,6 +2,15 @@ name: Capture real Widget guide screenshots
 
 on:
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: Guide flow or official Widget Gallery and Home Screen
+        type: choice
+        required: true
+        default: guide
+        options:
+          - guide
+          - official
 
 permissions:
   contents: read
@@ -19,12 +28,60 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       # Match the current beta devices and the Liquid Glass SpringBoard flow.
       CAPTURE_IOS_RUNTIME: com.apple.CoreSimulator.SimRuntime.iOS-26-2
+      CAPTURE_SCENARIO: ${{ inputs.scenario || 'guide' }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+
+      - name: Check synthetic feed with Foundation URLSession
+        if: inputs.scenario == 'official'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifact_directory="$RUNNER_TEMP/neko-widget-guide-screenshots"
+          mkdir -p "$artifact_directory"
+          probe="$RUNNER_TEMP/OfficialFeedFoundationProbe"
+          cat > "$probe.swift" <<'SWIFT'
+          import Foundation
+          import CryptoKit
+
+          @main
+          struct OfficialFeedFoundationProbe {
+              static func get(_ url: URL) async throws -> Data {
+                  let (data, response) = try await URLSession.shared.data(from: url)
+                  guard let http = response as? HTTPURLResponse,
+                        http.statusCode == 200, http.url == url, !data.isEmpty else {
+                      throw NSError(domain: "OfficialFeedFoundationProbe", code: 1,
+                                    userInfo: [NSLocalizedDescriptionKey: "Unexpected HTTP response: \(response)"])
+                  }
+                  print("\(url.lastPathComponent): HTTP 200, \(data.count) bytes")
+                  return data
+              }
+
+              static func main() async throws {
+                  let endpoint = URL(string: "https://neko-widget-official-cats-preview.nakanishisoya.workers.dev/catalog.json")!
+                  let catalogData = try await get(endpoint)
+                  guard let catalog = try JSONSerialization.jsonObject(with: catalogData) as? [String: Any],
+                        let photos = catalog["photos"] as? [[String: Any]], let photo = photos.first,
+                        let hash = photo["sha256"] as? String,
+                        hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                        photo["imageFilename"] as? String == hash + ".jpg" else {
+                      throw NSError(domain: "OfficialFeedFoundationProbe", code: 2)
+                  }
+                  let image = try await get(endpoint.deletingLastPathComponent().appendingPathComponent(hash + ".jpg"))
+                  let digest = SHA256.hash(data: image).map { String(format: "%02x", $0) }.joined()
+                  guard image.starts(with: [0xff, 0xd8]), digest == hash else {
+                      throw NSError(domain: "OfficialFeedFoundationProbe", code: 3)
+                  }
+                  print("JPEG SHA-256 matches. Synthetic assets only; macOS HTTP reachability is not an iOS receiving test.")
+              }
+          }
+          SWIFT
+          xcrun swiftc -parse-as-library "$probe.swift" -o "$probe"
+          "$probe" 2>&1 | tee "$artifact_directory/foundation-feed-probe.txt"
 
       - name: Capture privacy-safe SpringBoard screenshots
         working-directory: NekoWidget
@@ -36,6 +93,47 @@ jobs:
           derived_data_directory="$RUNNER_TEMP/NekoWidgetGuideDerivedData"
           result_bundle="$artifact_directory/WidgetPlacementScreenshots.xcresult"
           mkdir -p "$artifact_directory"
+
+          fixture_condition=""
+          case "$CAPTURE_SCENARIO" in
+            guide)
+              test_selector="NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureJapaneseCurrentWidgetPlacementGuide"
+              ;;
+            official)
+              test_selector="NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureOfficialWidgetAllSupportedSizesAndHomeScreen"
+              fixture_condition="APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE"
+              ;;
+            *) echo "Unknown capture scenario." >&2; exit 1 ;;
+          esac
+          printf 'scenario=%s\n' "$CAPTURE_SCENARIO" > "$artifact_directory/capture-context.txt"
+          if [[ "$CAPTURE_SCENARIO" == official ]]; then
+            printf '%s\n' \
+              'Production NekoWidgetView with an officialPhoto entry and the existing synthetic cat illustration.' \
+              'Capture small/medium/large in Widget Gallery and install Small on the erased Simulator Home Screen.' \
+              'Review the cat-name footer and absence of photo-action icons. Not real-photo quality, subscription, or on-device receiving evidence.' \
+              >> "$artifact_directory/capture-context.txt"
+            widget_conditions() {
+              xcodebuild -project NekoWidget.xcodeproj -target NekoWidgetWidgetExtension \
+                -configuration "$1" -sdk iphonesimulator -showBuildSettings \
+                "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$2" 2>/dev/null \
+                | awk -F ' = ' '/^[[:space:]]*SWIFT_ACTIVE_COMPILATION_CONDITIONS = / {print $2; exit}'
+            }
+            capture_conditions="$(widget_conditions Debug "$fixture_condition")"
+            ordinary_conditions="$(widget_conditions Debug '')"
+            release_conditions="$(widget_conditions Release "$fixture_condition")"
+            printf 'capture-debug=%s\nordinary-debug=%s\nrelease=%s\n' \
+              "$capture_conditions" "$ordinary_conditions" "$release_conditions" \
+              > "$artifact_directory/widget-fixture-build-conditions.txt"
+            for condition in DEBUG APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE; do
+              [[ " $capture_conditions " == *" $condition "* ]] || { echo "Missing $condition" >&2; exit 1; }
+            done
+            for condition in APP_STORE_SCREENSHOT_WIDGET_FIXTURE OFFICIAL_WINDOW_WIDGET_FIXTURE; do
+              if [[ " $ordinary_conditions " == *" $condition "* || " $release_conditions " == *" $condition "* ]]; then
+                echo "Widget fixture leaked outside the capture Debug target." >&2
+                exit 1
+              fi
+            done
+          fi
 
           xcodebuild -version | tee "$artifact_directory/xcode-version.txt"
           xcrun simctl list devices available --json \
@@ -118,7 +216,7 @@ jobs:
             -destination "platform=iOS Simulator,id=$simulator_udid" \
             -derivedDataPath "$derived_data_directory" \
             -resultBundlePath "$result_bundle" \
-            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureJapaneseCurrentWidgetPlacementGuide \
+            "-only-testing:$test_selector" \
             -parallel-testing-enabled NO \
             -testLanguage ja \
             -testRegion JP \
@@ -126,13 +224,14 @@ jobs:
             CODE_SIGNING_ALLOWED=YES \
             CODE_SIGN_IDENTITY=- \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$fixture_condition" \
             test 2>&1 | tee "$artifact_directory/xcodebuild-test.log"
           test_status=${PIPESTATUS[0]}
           set -e
           printf '%s\n' "$test_status" > "$artifact_directory/test-exit-code.txt"
           exit "$test_status"
 
-      - name: Export four named PNGs
+      - name: Export capture PNGs and attachment manifest
         if: always()
         working-directory: NekoWidget
         shell: bash
@@ -140,14 +239,20 @@ jobs:
           set -Eeuo pipefail
           result_bundle="$RUNNER_TEMP/neko-widget-guide-screenshots/WidgetPlacementScreenshots.xcresult"
           output_directory="$RUNNER_TEMP/neko-widget-guide-screenshots/exported"
-          bash ci/export-widget-guide-screenshots.sh \
-            "$result_bundle" "$output_directory"
+          if [[ "$CAPTURE_SCENARIO" == official ]]; then
+            mkdir -p "$output_directory"
+            xcrun xcresulttool export attachments \
+              --path "$result_bundle" --output-path "$output_directory"
+          else
+            bash ci/export-widget-guide-screenshots.sh \
+              "$result_bundle" "$output_directory"
+          fi
 
       - name: Upload screenshots and raw result
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: widget-guide-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
+          name: widget-${{ inputs.scenario || 'guide' }}-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/neko-widget-guide-screenshots
           if-no-files-found: warn
           retention-days: 14

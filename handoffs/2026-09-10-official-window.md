@@ -13,7 +13,7 @@
 - 初回は利用者自身の猫写真で表示・更新を試す方針を、2026-09-10に利用者が選択。対象の写真原本と猫の公開名はまだ未指定。過去の不具合確認用スクリーンショットは掲載写真に流用していない。
 - `OFFICIAL_WINDOW_FEED_URL` は空。現状のアプリは「公式まどを準備しています」と表示し、受信したように装わず、購読ボタンやネットワーク通信を有効にしない。
 - CIの確認画像は既存の合成fixture。実際に暮らす猫の新着写真・正式掲載写真として扱わない。
-- 公開サーバーへの配備、外部公開、main統合、TestFlight配布、App Store提出、課金開始はこの実装とは別。
+- 2026-09-11、既存TestFlight試験用の専用HTTPS配信先に、明示した合成テスト画像のみ配備。実写真の掲載・一般向け公開・App Store提出・課金開始は行わない。main統合とTestFlight更新は以下の準備バッチで進める。
 - 朝夕1枚ずつは議論上の頻度案。コードや紹介文で1日2回・定時更新を約束しない。
 
 ## 配信データ
@@ -41,8 +41,8 @@
 ## 配信開始までに残ること
 
 1. 最初の掲載写真・猫の公開名・提供者名・掲載許可を決める。毎月継続できる供給量を確認する。
-2. 静的配信先は専用Cloudflare Worker + Static Assetsに決定。ローカルで差し替え・停止まで成功済み。実写真の版を作り、公開する段階で配備する。詳細は `OfficialWindowService/README.md`。
-3. アプリとWidgetへ同じcatalog URLを設定する。非公開の共有機能のON/OFFとは独立した設定にする。
+2. 静的配信先は専用Cloudflare Worker + Static Assets。ローカルの差し替え・停止と、HTTPS確認先の合成画像A→B更新まで成功。実写真への差し替えは未実施。詳細は `OfficialWindowService/README.md`。
+3. アプリとWidgetへ同じcatalog URLを設定する。既定の空設定は維持し、当面はTestFlightのmedia-stagingだけで確認用URLを明示指定する。
 4. 実機で初回受信、Widget表示・写真タップ、受け取り停止を確認して、既に許可された配布範囲を判断する。
 
 実装の完了と、写真を継続配信できる運営状態の成立を別々に記録する。
@@ -70,6 +70,18 @@
 - 証拠は `C:/dev/neko-widget-official-local-proof-20260910/http-drill-final/result.json` と `deploy-dry-run-final.log`。元のiOSコードやworkflowを変更していないため、全iOS CIを再実行しない。
 
 実際の猫写真への差し替え、公開先での取得、実機Widgetの見え方は未確認として残す。外部公開・審査提出・課金開始をまだ行わないという既存の依頼は維持する。
+
+## 2026-09-11のTestFlight準備バッチ
+
+利用者の継続依頼に基づき、既に許可されたTestFlight試験を進める。写真原本の未指定で技術作業を止めず、実写真の掲載と区別できる合成テスト画像を使う。
+
+- 確認用URL: `https://neko-widget-official-cats-preview.nakanishisoya.workers.dev/catalog.json`。URL自体はアクセス可能なHTTPSエンドポイント。配信内容はコード生成の図形A/Bと「合成テスト画像」の表示のみで、本人の写真・氏名・入力記録は含まない。
+- 同じURLでAのみ→BとAの2版を配備し、catalog/JPEGのHTTP取得・SHA-256一致・入力JSONの404を確認。Worker versionは初期 `0d793d80-6931-4764-ac29-cb3c79eaae52`、更新 `086c7e87-1d58-4aea-948f-c7682e7948ba`。
+- この版の期限は2026-09-13 07:34 JST。期限後は空表示になり、継続する場合は新しい生成時刻で版を作る。定時・自動の猫写真配信が稼働したという意味ではない。
+- 証拠: `C:/dev/neko-widget-official-local-proof-20260910/preview-20260911-first/http-result.json` と `preview-20260911-updated/http-result.json`。Python-urllibの標準User-AgentはCloudflare 1010で拒否、curlは200。Apple URLSessionの到達性はWidget撮影CIで別に確認する。
+- 対象: TestFlightの明示URL入力、App/Widgetの設定一致と通常Releaseへの混入防止、実WidgetKitの小・中・大の描画確認。通常の写真・非公開共有・課金は変更しない。
+- リリース設定は実装と独立レビューを分け、対象・関連25テスト成功。Widget確認は既存Debug専用fixtureを拡張し、通常Debug/全Releaseへの混入を防ぐ。既存の撮影境界12テスト成功。署名archiveと描画はCI実行後に判定する。
+- 直近配布はBuild 149、run `34433884525`。App Store Connectでも「自分用」1人への配布とインストールを確認。このバッチをまとめて候補CI→main CI→Build 150のTestFlightへ進める。実機の切り取り、タップ、停止と実写真の画質は実機確認として残す。
 
 ## 確認記録
 

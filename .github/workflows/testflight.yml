@@ -17,6 +17,11 @@ on:
           - review-preview
           - pairing-only
           - media-staging
+      official_window_feed_url:
+        description: "公式まど確認用feed。空欄が既定。media-stagingで固定のpreview Worker URLだけ指定可能"
+        required: false
+        default: ""
+        type: string
       upload_to_testflight:
         description: "署名・IPA export後にApp Store Connectへ検証・アップロードする"
         required: true
@@ -59,6 +64,16 @@ jobs:
           test -d "$DEVELOPER_DIR"
           xcodebuild -version
           xcodebuild -showsdks
+
+      - name: Validate official window feed input
+        shell: bash
+        env:
+          SELECTED_RELEASE_MODE: ${{ inputs.release_mode }}
+          SELECTED_OFFICIAL_WINDOW_FEED_URL: ${{ inputs.official_window_feed_url }}
+        run: |
+          set -euo pipefail
+          python3 "$PROJECT_DIRECTORY/ci/test-official-window-release.py"
+          python3 "$PROJECT_DIRECTORY/ci/validate-official-window-release.py" input
 
       - name: Select fail-closed release mode
         shell: bash
@@ -1095,6 +1110,7 @@ jobs:
             WIDGET_PROVISIONING_PROFILE_SPECIFIER="$WIDGET_PROFILE_SPECIFIER" \
             SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER="$SHARE_PROFILE_SPECIFIER" \
             SHARING_RELEASE_MODE="$RELEASE_SHARING_RELEASE_MODE" \
+            OFFICIAL_WINDOW_FEED_URL="$RELEASE_OFFICIAL_WINDOW_FEED_URL" \
             SHARING_FEATURE_ENABLED="$RELEASE_SHARING_FEATURE_ENABLED" \
             SHARING_MEDIA_ENABLED="$RELEASE_SHARING_MEDIA_ENABLED" \
             SHARING_SHARE_EXTENSION_HANDOFF_ENABLED="$RELEASE_SHARING_HANDOFF_ENABLED" \
@@ -1123,6 +1139,9 @@ jobs:
           app_path="$RUNNER_TEMP/NekoWidget.xcarchive/Products/Applications/NekoWidget.app"
           widget_path="$app_path/PlugIns/NekoWidgetWidgetExtension.appex"
           share_path="$app_path/PlugIns/NekoWidgetShareExtension.appex"
+          python3 "$PROJECT_DIRECTORY/ci/validate-official-window-release.py" archive \
+            --app-info-plist "$app_path/Info.plist" \
+            --widget-info-plist "$widget_path/Info.plist"
           test -f "$widget_path/PrivacyInfo.xcprivacy"
           test -f "$share_path/PrivacyInfo.xcprivacy"
           python3 "$PROJECT_DIRECTORY/ci/validate-sharing-release.py" \

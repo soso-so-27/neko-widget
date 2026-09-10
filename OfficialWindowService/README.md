@@ -57,9 +57,9 @@ $env:WRANGLER_SEND_METRICS='false'
 node node_modules/wrangler/bin/wrangler.js deploy --dry-run --config C:/official-window-review/deployment-001/wrangler.jsonc --outdir C:/official-window-review/dry-run-001
 ```
 
-このdry-runはバンドル確認までで、アセットのアップロードと配備は行わない。公開を行う段階の実コマンドは同じ `deploy` から `--dry-run` と `--outdir` を外したもの。現在は実行していない。
+このdry-runはバンドル確認までで、アセットのアップロードと配備は行わない。実配備のコマンドは同じ `deploy` から `--dry-run` と `--outdir` を外したもの。2026-09-11には、下記の合成テスト画像の確認先だけに実行した。
 
-実際に割り当てられたHTTPSの `/catalog.json` URLが確定したら、bundle生成に `--feed-url` を加えると `OfficialWindow.xcconfig` も生成する。アプリとWidgetへ同じ `OFFICIAL_WINDOW_FEED_URL` を設定するためのもので、URL未確定のいまアプリ設定を偽のURLへ変更しない。
+bundle生成に `--feed-url` を加えると `OfficialWindow.xcconfig` も生成する。アプリとWidgetへ同じ `OFFICIAL_WINDOW_FEED_URL` を設定するためのもの。確認先は `https://neko-widget-official-cats-preview.nakanishisoya.workers.dev/catalog.json`。通常ビルドの既定値は空のまま、TestFlightでは明示指定した確認用URLを使う。
 
 ## 更新・取り下げ・停止
 
@@ -75,3 +75,10 @@ node node_modules/wrangler/bin/wrangler.js deploy --dry-run --config C:/official
 - 配備dry-run成功。実アップロード・公開なし。
 - Wranglerの既存Cloudflareログインと対象アカウントをread-onlyで確認。実配備の権限や公開URLはdry-runでは確認できていない。
 - 元のiOSアプリコードとCI workflowには変更なし。アプリ・Widgetの実装検証は既存の成功した `81e3aff` の記録を保持する。
+
+## 2026-09-11のHTTPS確認
+
+- TestFlight試験用Workerへ、合成画像Aだけの版→Bを追加した版を配備。同一URLで新しいcatalogとJPEGを取得し、SHA-256一致を確認。内部の `source.json` は404。
+- 配信中の内容は明示したテスト図形だけ。実際の猫写真の掲載、一般向けの紹介・募集は行っていない。
+- 現在の版は2026-09-13 07:34 JSTで期限切れになる。自動更新は設定していない。
+- `C:/dev/neko-widget-official-local-proof-20260910/preview-20260911-{first,updated}/http-result.json` に記録。実機Widgetで取得・更新したという証拠ではない。

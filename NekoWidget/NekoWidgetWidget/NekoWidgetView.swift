@@ -18,6 +18,12 @@ import UIKit
 #if WIDGET_VISUAL_REVIEW_LONG_CAPTION && WIDGET_VISUAL_REVIEW_NO_CAPTION
 #error("Choose one Widget caption review scenario per build.")
 #endif
+#if OFFICIAL_WINDOW_WIDGET_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)
+#error("Official Widget review requires Debug and the dedicated screenshot fixture.")
+#endif
+#if OFFICIAL_WINDOW_WIDGET_FIXTURE && WIDGET_VISUAL_REVIEW_FIXTURE
+#error("Choose either the official or private-window Widget review fixture.")
+#endif
 
 struct NekoWidgetView: View {
     @Environment(\.widgetFamily) private var family
@@ -564,7 +570,30 @@ enum AppStoreWidgetPreviewFixture {
     }
 
     static func entry(at date: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
-#if WIDGET_VISUAL_REVIEW_FIXTURE
+#if OFFICIAL_WINDOW_WIDGET_FIXTURE
+        // Exercise the shipping official-photo footer and hidden-action branch.
+        // These existing illustration pixels bypass feed/cache I/O only in this
+        // explicit Debug capture; they are not evidence of real-photo quality.
+        let photo = OfficialCatPhoto(
+            id: "widget-review-photo", catID: "widget-review-cat",
+            catName: "確認用の猫", credit: "コードで描いた確認用イラスト",
+            caption: nil, photographedOn: nil,
+            publishedAt: date.addingTimeInterval(-60),
+            expiresAt: date.addingTimeInterval(86400),
+            imageFilename: String(repeating: "a", count: 64) + ".jpg",
+            sha256: String(repeating: "a", count: 64), width: 1000, height: 1000
+        )
+        return NekoWidgetEntry(
+            date: date, localIdentifier: nil, cacheFilename: cacheFilename,
+            imageVariant: variant, photoSourceIdentifier: OfficialWindowCatalog.sourceID,
+            familySourceDigest: nil, usesFamilySpecificImage: false,
+            windowDisplayName: OfficialWindowCatalog.displayName,
+            isLiked: false, isLikeInteractionEnabled: false,
+            isBookmarked: false, isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden, familyActionsRequireApp: false,
+            emptyStateReason: .none, officialPhoto: photo
+        )
+#elseif WIDGET_VISUAL_REVIEW_FIXTURE
         // Fixed display-only identities; no catalog, room key, Photos or relay.
         // The Gallery capture never invokes these production action controls.
         return NekoWidgetEntry(
