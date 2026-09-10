@@ -26,10 +26,15 @@ struct CandidateReviewView: View {
                         open: { id in closedByChoice = false; store.record("openPhoto"); focus = .init(id: id) },
                         undo: { store.undo() })
                     if let json = session.report.json {
-                        ShareLink(session.decisions.isEmpty ? "候補と検出結果を共有" : "確認結果を共有", item: json)
-                            .buttonStyle(.borderedProminent)
+                        if session.decisions.isEmpty {
+                            Text("まだ確認結果はありません。一覧の下の「この○枚は猫Aだけ／猫Bだけ」で確定できます。")
+                                .font(.subheadline)
+                            ShareLink("未確認の検出ログを共有", item: json).buttonStyle(.bordered)
+                        } else {
+                            ShareLink("確認結果を共有", item: json).buttonStyle(.borderedProminent)
+                        }
                     }
-                    Text("理由の確認だけなら、写真を分類し直さずに共有できます。")
+                    Text("保存済みの確認があれば、分類し直さずそのまま共有できます。")
                         .font(.footnote).foregroundStyle(.secondary)
                     Text("保存済みと今回の確認から、候補の取り違え・2匹写り・保留を集計します。未確認の写真は正解に数えません。")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -134,7 +139,9 @@ struct CandidateReviewView: View {
                              value: Double(store.progress), total: Double(max(1, store.total)))
                 Button("中止（選択は残す）") { store.suspend() }
             } else {
-                Button(store.savedConfirmationCount > 0 ? "保存した\(store.selected.count)枚の続きから" : "\(store.selected.count)枚の候補を見る") { store.start() }
+                Button(!store.selected.isEmpty && store.savedConfirmationCount == store.selected.count ? "保存した\(store.selected.count)枚で比較する"
+                       : store.savedConfirmationCount > 0 ? "保存した\(store.selected.count)枚の続きから"
+                       : "\(store.selected.count)枚の候補を見る") { store.start() }
                     .buttonStyle(.borderedProminent).controlSize(.large)
                     .disabled(!store.canRun).frame(maxWidth: .infinity)
                     .accessibilityIdentifier("candidate-review-start")
@@ -206,6 +213,20 @@ struct CandidateReviewBoard: View {
                 Text("候補と同じ \(summary.matchingProposals)枚 / 確認した候補 \(summary.reviewedProposals)枚")
                 Text("取り違え \(summary.differentCatProposals)枚・2匹写り \(summary.bothInSingleCatProposals)枚・ほかの猫 \(summary.otherCatProposals)枚")
                 Text("保留した写真の確認：A/B \(summary.withheldAOrBChoices)枚・両方/ほかの猫 \(summary.withheldBothOrOtherPhotos)枚")
+                let objects = session.report.objectComparison
+                if objects.attemptedPhotos > 0 {
+                    Divider()
+                    Text("追加検出：\(objects.attemptedPhotos)枚を比較・\(objects.withheldPhotos)枚を個別確認へ")
+                    Text("個別確認へ移した写真：両方 \(objects.withheldBothPhotos)枚・候補と同じA/B選択 \(objects.withheldMatchingAOrBChoices)枚・違うA/B選択 \(objects.withheldDifferentCatProposals)枚")
+                    Text("複数の範囲は頭数の確定ではありません。保存済みの判断は変えていません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    let unverified = (objects.statuses["failed"] ?? 0) + (objects.statuses["unusableRegions"] ?? 0)
+                        + (objects.statuses["noCatRegion"] ?? 0)
+                    if unverified > 0 {
+                        Text("追加検出だけでは確認できない写真が\(unverified)枚あります。元の候補を維持していますが、1匹と確認できた意味ではありません。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 if summary.restoredChoices > 0 {
                     Text("保存済みの確認\(summary.restoredChoices)枚も含みます。以前のA/B選択を「1匹だけ確認済み」とは扱いません。")
                         .font(.footnote).foregroundStyle(.secondary)

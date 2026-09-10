@@ -9,6 +9,7 @@ SOURCES = [
     ("ONNX Runtime upstream third-party notices", "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/ThirdPartyNotices.txt", "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"),
     ("Apache License 2.0 (pet recognition model)", "https://www.apache.org/licenses/LICENSE-2.0.txt", "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
     ("DINOv2 upstream license (Apache 2.0)", "https://raw.githubusercontent.com/facebookresearch/dinov2/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE", "600cc67cc4cb2f5ea317dcfc687ad1c74dc4bec8782bbe9db0afd83513b935b7"),
+    ("YOLOX-Nano model and inference processing (Apache 2.0)", "https://raw.githubusercontent.com/Megvii-BaseDetection/YOLOX/e1052df71842031413f6030723c3607b839c80ce/LICENSE", "577c03d505ec80f667ebf96ebd0cc4f6825c817ca1088ee348c48aaabd51bd92"),
 ]
 
 ORIGIN = """猫識別・動作確認 — Internal engineering evaluation only
@@ -32,6 +33,17 @@ Modified model-fixed.onnx SHA256: 32adffda4e65f790ae624d828b79db7a18f7fdb1facdce
 Modification: input batch dimension fixed to 1 using the official ONNX Runtime
 make_dynamic_shape_fixed helper. Other model parameters were not retrained.
 No Gallery application source (AGPL) is included.
+
+Additional object detector: YOLOX-Nano, official ONNX release 0.1.1rc0.
+Copyright (c) Megvii, Inc. and its affiliates. Apache License 2.0 below.
+https://github.com/Megvii-BaseDetection/YOLOX/releases/tag/0.1.1rc0
+Model SHA256: c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d
+The distributed model is unmodified. Official preprocessing, stride decoding
+and class-agnostic NMS were adapted to Swift for a bounded local comparison.
+https://github.com/Megvii-BaseDetection/YOLOX/tree/e1052df71842031413f6030723c3607b839c80ce
+This is general cat-region detection, not individual cat identification.
+It does not assign photos, train from human decisions or replace the identity model.
+Training-data provenance and commercial product adoption remain separate reviews.
 
 The model author describes a DINOv2-small backbone. The DINOv2 license below
 was checked at commit 7764ea0f912e53c92e82eb78a2a1631e92725fc8; this does not
@@ -60,7 +72,7 @@ def main():
     target = Path(__file__).resolve().parent / "Generated" / "ThirdPartyNotices.txt"
     target.parent.mkdir(exist_ok=True)
     target.write_text("".join(parts), encoding="utf-8", newline="\n")
-    print("Five pinned upstream license/notice files assembled")
+    print("Six pinned upstream license/notice files assembled")
 
 
 if __name__ == "__main__":

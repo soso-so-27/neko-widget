@@ -52,7 +52,7 @@ struct CandidateDistanceFilterCounts: Encodable {
         let ranked = eligible.filter { $0.distanceAssessment?.ranking == .a || $0.distanceAssessment?.ranking == .b }
         photoStatusCounts = counts(photos.map(\.distanceAssessment))
         rankedPhotosBeforeFilter = ranked.count
-        suggestedPhotosAfterFilter = ranked.filter { $0.batchSuggestion != nil }.count
+        suggestedPhotosAfterFilter = ranked.filter { $0.batchSuggestionBeforeObjectCheck != nil }.count
         withheldPhotos = ranked.filter { $0.distanceAssessment?.isWithheld == true }.count
         let regions = photos.flatMap { $0.regionReview?.regions ?? [] }
         regionStatusCounts = counts(regions.map { $0.assessment })

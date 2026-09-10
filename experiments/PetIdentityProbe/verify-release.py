@@ -24,6 +24,10 @@ BUNDLE = "jp.nekowidget.petidentityprobe"
 VERSION = "0.1"
 PHOTO_PURPOSE = "選んだ猫写真だけを端末内で識別精度の検証に使います。写真の送信や原本の変更はしません。"
 MODEL_SHA256 = "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b"
+MODEL_DIGESTS = {
+    "model-fixed.onnx": MODEL_SHA256,
+    "yolox-nano.onnx": "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d",
+}
 ENTITLEMENTS = {
     "application-identifier", "com.apple.developer.team-identifier",
     "get-task-allow", "beta-reports-active", "keychain-access-groups",
@@ -203,6 +207,14 @@ def check_privacy_manifest(manifest):
     require(actual == expected, "Probe required-reason API categories or reasons changed.")
 
 
+def check_model_inventory(app):
+    models = [path for path in app.rglob("*") if path.is_file() and path.suffix.lower() == ".onnx"]
+    require(set(models) == {app / name for name in MODEL_DIGESTS}
+            and not any(path.is_symlink() for path in models),
+            "Only the two pinned probe models may be packaged.")
+    return models
+
+
 def check_app(app, work, team, build):
     require(app.is_dir() and not app.is_symlink(), "Expected app bundle is missing.")
     check_info(load_plist(app / "Info.plist"), build)
@@ -214,9 +226,8 @@ def check_app(app, work, team, build):
         require(minimum(load_plist(ort_info)["MinimumOSVersion"])
                 == minimum(load_plist(app / "Info.plist")["MinimumOSVersion"]),
                 "ORT copied framework and app minimum OS differ.")
-    models = [path for path in app.rglob("*") if path.is_file() and path.suffix.lower() == ".onnx"]
-    require(models == [app / "model-fixed.onnx"], "Only the fixed probe model may be packaged.")
-    require(digest(app / "model-fixed.onnx") == MODEL_SHA256, "Packaged model digest changed.")
+    for model in check_model_inventory(app):
+        require(digest(model) == MODEL_DIGESTS[model.name], "Packaged model digest changed.")
     check_privacy_manifest(load_plist(app / "PrivacyInfo.xcprivacy"))
     generated_notices = Path(__file__).resolve().parent / "Generated/ThirdPartyNotices.txt"
     require(generated_notices.stat().st_size > 0
@@ -432,6 +443,28 @@ def cleanup(work):
 
 
 def self_test():
+    from unittest.mock import patch
+    app = Path("fixture-only/PetIdentityProbe.app")
+    expected_models = [app / name for name in MODEL_DIGESTS]
+    with patch.object(Path, "rglob", return_value=iter(expected_models)), \
+            patch.object(Path, "is_file", return_value=True), \
+            patch.object(Path, "is_symlink", return_value=False):
+        require(set(check_model_inventory(app)) == set(expected_models), "Pinned model inventory failed.")
+    for inventory, symlink in (
+        (expected_models[:1], False),
+        (expected_models + [app / "unexpected.onnx"], False),
+        (expected_models + [app / "nested/model.ONNX"], False),
+        ([app / "nested" / path.name for path in expected_models], False),
+        (expected_models, True),
+    ):
+        with patch.object(Path, "rglob", return_value=iter(inventory)), \
+                patch.object(Path, "is_file", return_value=True), \
+                patch.object(Path, "is_symlink", return_value=symlink):
+            try:
+                check_model_inventory(app)
+            except InvalidRelease:
+                continue
+            raise InvalidRelease("A forbidden model inventory fixture passed.")
     team, certificate = "ABCDEFGHIJ", b"test-certificate"
     now = dt.datetime.now(dt.timezone.utc)
     profile = {

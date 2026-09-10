@@ -152,6 +152,8 @@ actor IdentityPhotoService {
         var assets: [String: PHAsset] = [:]
         fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
         var engine: IdentityCPUSession?
+        var objectEngine: CandidateObjectDetector?
+        var objectEngineUnavailable = false
         var vectors: [IdentityPhotoSlot: [[Float]?]] = [:]
         var previews: [IdentityPhotoSlot: CGImage] = [:]
         var hashes: [UInt64] = []
@@ -192,10 +194,10 @@ actor IdentityPhotoService {
                 await progress(done)
             }
         }
-        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?, regions: CandidateRegionReview?)] = []
+        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?, regions: CandidateRegionReview?, objectCheck: CandidateObjectCheck?)] = []
         for id in selected {
             try Task.checkCancellation()
-            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?, CandidateRegionReview?) in
+            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?, CandidateRegionReview?, CandidateObjectCheck?) in
                 let asset = assets[id]
                 let prepared = Self.preparePhoto(asset)
                 let recovery = try recovered(prepared)
@@ -206,9 +208,9 @@ actor IdentityPhotoService {
                 let similar = candidateHashes.contains { hash in hashes.contains { (hash ^ $0).nonzeroBitCount <= 2 } }
                 hashes += candidateHashes
                 if let burst = asset?.burstIdentifier { bursts.insert(burst) }
-                guard image != nil else { return (nil, nil, .unavailable, nil, nil) }
-                if repeatedBurst { return (image, nil, .repeatedBurst, nil, nil) }
-                if similar { return (image, nil, .similarPhoto, nil, nil) }
+                guard image != nil else { return (nil, nil, .unavailable, nil, nil, nil) }
+                if repeatedBurst { return (image, nil, .repeatedBurst, nil, nil, nil) }
+                if similar { return (image, nil, .similarPhoto, nil, nil, nil) }
                 guard let crop else {
                     let regions = try CandidateRegionProbe.review(image: prepared.image,
                         originalIssue: prepared.issue, recoveryStatus: recovery.status,
@@ -216,9 +218,26 @@ actor IdentityPhotoService {
                         registrationA: vectors[.referenceA] ?? [], registrationB: vectors[.referenceB] ?? [],
                         embed: embed)
                     return (image, nil, .noSingleCat,
-                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status), regions)
+                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status), regions, nil)
                 }
-                return (image, try embed(crop), nil, nil, nil)
+                let vector = try embed(crop)
+                var objectCheck: CandidateObjectCheck?
+                // Same fetched original raster; no extra identity inference/reference training.
+                if prepared.crop != nil, let original = prepared.image {
+                    let before = try IdentityEvaluationCore.filteredReviewSuggestions(
+                        registrationA: vectors[.referenceA] ?? [], registrationB: vectors[.referenceB] ?? [], inputs: [vector])
+                    if before.first?.suggestedCat != nil {
+                        if objectEngine == nil && !objectEngineUnavailable {
+                            do { objectEngine = try CandidateObjectDetector() }
+                            catch is CancellationError { throw CancellationError() }
+                            catch { objectEngineUnavailable = true }
+                        }
+                        if let objectEngine {
+                            objectCheck = try CandidateObjectProbe.check(original, detect: objectEngine.detect)
+                        } else { objectCheck = .failed }
+                    }
+                }
+                return (image, vector, nil, nil, nil, objectCheck)
             }
             candidates.append(next)
             done += 1
@@ -233,7 +252,7 @@ actor IdentityPhotoService {
             let issue = candidate.issue ?? (ranking == .equalScores ? .equalScores : ranking == .invalidEmbedding ? .invalidEmbedding : nil)
             return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: assessment.suggestedCat, issue: issue,
                                         cropDiagnostic: candidate.diagnostic, regionReview: candidate.regions,
-                                        distanceAssessment: assessment)
+                                        distanceAssessment: assessment, objectCheck: candidate.objectCheck)
         }
         try Task.checkCancellation()
         return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])
