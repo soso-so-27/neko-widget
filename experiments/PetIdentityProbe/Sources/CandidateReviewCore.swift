@@ -59,16 +59,19 @@ struct CandidateReviewPhoto: Identifiable {
     let issue: CandidateReviewIssue?
     var cropDiagnostic: CandidateCropDiagnostic? = nil
     var regionReview: CandidateRegionReview? = nil
+    var distanceAssessment: CandidateDistanceAssessment? = nil
 
     // Region-level suggestions must never enter a photo-level bulk confirmation.
     var batchSuggestion: CandidateReviewChoice? {
         guard image != nil, issue == nil, regionReview == nil,
+              distanceAssessment.map({ $0.suggestedCat == suggestion }) ?? true,
               suggestion == .a || suggestion == .b else { return nil }
         return suggestion
     }
 
     var issueTitle: String? {
         if let regionReview { return regionReview.title }
+        if let title = distanceAssessment?.withheldTitle { return title }
         return issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
     }
 }
@@ -170,10 +173,10 @@ struct CandidateCropFailureCount: Encodable {
 }
 
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v4"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v5"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
-    let method = "second-nearest-of-five-per-cat;ranking-only;no-acceptance-or-online-learning"
+    let method = "second-nearest-of-five-per-cat;registration-radius-filter1.25;no-ratio-gate-or-identity-acceptance-or-online-learning"
     let scope = "self-reviewed-selected-photos;confirmation-bias-possible;not-independent-accuracy-or-manual-ab-test"
     let selected: Int
     let proposed: Int
@@ -188,6 +191,7 @@ struct CandidateReviewReport: Encodable {
     let noSingleCatBreakdown: [CandidateCropFailureCount]
     let noSingleCatBreakdownScope = "existing-detector-and-crop-status-only;multiple-regions-not-confirmed-cat-count;no-additional-detection-or-identity-accuracy-claim"
     let multiRegionReview: CandidateRegionReviewCounts
+    let distanceFiltering: CandidateDistanceFilterCounts
     let reviewActions: [String: Int]
     let totalReviewActions: Int
     let hypotheticalManualLabelTaps: Int
@@ -231,6 +235,7 @@ struct CandidateReviewReport: Encodable {
                 count: group.count)
         }
         multiRegionReview = .init(session: session)
+        distanceFiltering = .init(session: session)
         reviewActions = session.actions
         totalReviewActions = session.actions.values.reduce(0, +)
         hypotheticalManualLabelTaps = photos.count

@@ -225,14 +225,15 @@ actor IdentityPhotoService {
             await progress(done)
         }
         try Task.checkCancellation()
-        let rankings = try IdentityEvaluationCore.reviewSuggestions(registrationA: vectors[.referenceA] ?? [],
+        let assessments = try IdentityEvaluationCore.filteredReviewSuggestions(registrationA: vectors[.referenceA] ?? [],
             registrationB: vectors[.referenceB] ?? [], inputs: candidates.map(\.vector))
-        let photos = zip(candidates, rankings).enumerated().map { index, pair in
-            let (candidate, ranking) = pair
-            let suggestion: CandidateReviewChoice? = ranking == .a ? .a : ranking == .b ? .b : nil
+        let photos = zip(candidates, assessments).enumerated().map { index, pair in
+            let (candidate, assessment) = pair
+            let ranking = assessment.ranking
             let issue = candidate.issue ?? (ranking == .equalScores ? .equalScores : ranking == .invalidEmbedding ? .invalidEmbedding : nil)
-            return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: suggestion, issue: issue,
-                                        cropDiagnostic: candidate.diagnostic, regionReview: candidate.regions)
+            return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: assessment.suggestedCat, issue: issue,
+                                        cropDiagnostic: candidate.diagnostic, regionReview: candidate.regions,
+                                        distanceAssessment: assessment)
         }
         try Task.checkCancellation()
         return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])

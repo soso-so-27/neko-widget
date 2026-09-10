@@ -6,18 +6,14 @@ struct CandidateReviewRegion: Identifiable {
     let id: Int
     let box: CGRect // Actual crop, normalized in Vision's bottom-left coordinates.
     let image: CGImage
-    let ranking: IdentityRankingOutcome
+    let assessment: CandidateDistanceAssessment
 
     var suggestion: CandidateReviewChoice? {
-        switch ranking {
-        case .a: .a
-        case .b: .b
-        default: nil
-        }
+        assessment.suggestedCat
     }
     var title: String {
         if let suggestion { return "\(suggestion.title)の候補" }
-        return ranking == .equalScores ? "候補が同点" : "候補を出せません"
+        return assessment.withheldTitle ?? (assessment.ranking == .equalScores ? "候補が同点" : "候補を出せません")
     }
 }
 
@@ -76,11 +72,11 @@ enum CandidateRegionProbe {
             try Task.checkCancellation()
             return try embed(item.crop)
         }
-        let rankings = try IdentityEvaluationCore.reviewSuggestions(
+        let assessments = try IdentityEvaluationCore.filteredReviewSuggestions(
             registrationA: registrationA, registrationB: registrationB, inputs: vectors)
         try Task.checkCancellation()
-        return .init(status: .prepared, regions: zip(crops, rankings).enumerated().map { index, item in
-            .init(id: index, box: item.0.box, image: item.0.preview, ranking: item.1)
+        return .init(status: .prepared, regions: zip(crops, assessments).enumerated().map { index, item in
+            .init(id: index, box: item.0.box, image: item.0.preview, assessment: item.1)
         })
     }
 

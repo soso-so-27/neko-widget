@@ -393,6 +393,41 @@ enum IdentityEvaluationCore {
         }
     }
 
+    /// Candidate-only distance filter. Uses the existing registration-only radius and
+    /// multiplier, NOT the classifier's ratio gate. Feedback is never an input.
+    static func filteredReviewSuggestions(registrationA: [[Float]?], registrationB: [[Float]?],
+                                          inputs: [[Float]?]) throws -> [CandidateDistanceAssessment] {
+        guard registrationA.count == 5, registrationB.count == 5 else {
+            throw IdentityEvaluationError.invalidRegistrationCount
+        }
+        guard (1...CandidateReviewSelection.limit).contains(inputs.count) else {
+            throw IdentityEvaluationError.invalidDiagnosticEvaluationCount
+        }
+        let a = try validateRegistration(registrationA), b = try validateRegistration(registrationB)
+        let radiusA = radius(a), radiusB = radius(b)
+        return inputs.map { input in
+            guard let input else { return .init(ranking: .missingEmbedding, status: .notRanked) }
+            guard let vector = normalized(input) else { return .init(ranking: .invalidEmbedding, status: .notRanked) }
+            return assessCandidateDistance(scoreA: score(vector, against: a), scoreB: score(vector, against: b),
+                                           radiusA: radiusA, radiusB: radiusB)
+        }
+    }
+
+    // Internal numeric seam for boundary tests. These distances are never exported.
+    static func assessCandidateDistance(scoreA: Double, scoreB: Double, radiusA: Double,
+                                        radiusB: Double) -> CandidateDistanceAssessment {
+        guard [scoreA, scoreB, radiusA, radiusB].allSatisfy({ $0.isFinite && (0...2).contains($0) }) else {
+            return .init(ranking: .invalidEmbedding, status: .notRanked)
+        }
+        guard scoreA != scoreB else { return .init(ranking: .equalScores, status: .notRanked) }
+        let isA = scoreA < scoreB, best = min(scoreA, scoreB)
+        let winnerRadius = isA ? radiusA : radiusB
+        let ranking: IdentityRankingOutcome = isA ? .a : .b
+        guard winnerRadius > 0 else { return .init(ranking: ranking, status: .referenceRangeUnavailable) }
+        return .init(ranking: ranking,
+                     status: best <= winnerRadius * radiusMultiplier ? .withinReferenceRange : .outsideReferenceRange)
+    }
+
     private static func validateRegistration(_ inputs: [[Float]?]) throws -> [[Double]] {
         try inputs.map { input in
             guard let input else { throw IdentityEvaluationError.missingRegistration }

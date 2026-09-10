@@ -31,6 +31,8 @@ struct CandidateReviewView: View {
                     }
                     Text("理由の確認だけなら、写真を分類し直さずに共有できます。")
                         .font(.footnote).foregroundStyle(.secondary)
+                    Text("候補を出した／控えた件数と、保存済みの確認との照合も含めます。これは精度評価ではありません。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Text("共有するのは件数・操作数・検出結果の集計です。写真・写真ID・枠の位置は含めません。候補を見た後の本人確認なので、正解率や精度合格とは扱いません。少数の集計から1枚の結果が分かる場合があります。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
@@ -155,6 +157,8 @@ struct CandidateReviewBoard: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text("未確認\(session.remaining)枚 · 確認済み\(session.decisions.count)枚").font(.headline).monospacedDigit()
                 Text("確認は保存されます。途中で閉じても続きから再開できます。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Text("見本から離れた写真は、猫A/Bを決めず個別に確認します。別の猫と判別できたわけではありません。")
                     .font(.footnote).foregroundStyle(.secondary)
                 if session.canUndo { Button("直前の確認を取り消す", action: undo).font(.subheadline) }
             }

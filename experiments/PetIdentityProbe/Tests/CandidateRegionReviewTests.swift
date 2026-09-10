@@ -124,8 +124,8 @@ final class CandidateRegionReviewTests: XCTestCase {
     func testRegionSuggestionsNeverBulkConfirmAndBothIsASeparateUndoableChoice() throws {
         let raster = try image()
         let ready = CandidateRegionReview(status: .prepared, regions: [
-            .init(id: 0, box: boxes[0], image: raster, ranking: .a),
-            .init(id: 1, box: boxes[1], image: raster, ranking: .b)
+            .init(id: 0, box: boxes[0], image: raster, assessment: .init(ranking: .a, status: .withinReferenceRange)),
+            .init(id: 1, box: boxes[1], image: raster, assessment: .init(ranking: .b, status: .withinReferenceRange))
         ])
         let run = CandidateReviewRun(photos: [
             .init(id: 0, image: raster, suggestion: .a, issue: nil),
@@ -175,7 +175,10 @@ final class CandidateRegionReviewTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let raster = try image()
-        let ready = try XCTUnwrap(review(raster, boxes: boxes) { _ in self.vector(0.02) })
+        var calls = 0
+        let ready = try XCTUnwrap(review(raster, boxes: boxes) { _ in
+            calls += 1; return self.vector(calls == 1 ? 0.02 : 0.5)
+        })
         let photo = CandidateReviewPhoto(id: 0, image: raster, suggestion: nil, issue: .noSingleCat, regionReview: ready)
         let previous = scene.windows.first(where: \.isKeyWindow)
         for size in [CGSize(width: 390, height: 844), CGSize(width: 320, height: 568)] {
