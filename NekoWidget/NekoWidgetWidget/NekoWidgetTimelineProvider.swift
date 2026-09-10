@@ -264,8 +264,11 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             windowDisplayName: OfficialWindowCatalog.displayName,
             emptyStateReason: state.isSubscribed ? .waiting : .needsApp
         )
-        guard let photo = state.photos.first,
-              OfficialWindowStore.shared.imageURL(for: photo) != nil else { return entry }
+        // A failed new-image download need not blank a valid older photo that
+        // the current catalog still permits. The entry keeps that photo's ID.
+        guard let photo = state.photos.first(where: {
+            OfficialWindowStore.shared.imageURL(for: $0) != nil
+        }) else { return entry }
         entry = NekoWidgetEntry(
             date: now, localIdentifier: nil, cacheFilename: photo.imageFilename,
             imageVariant: variant, photoSourceIdentifier: OfficialWindowCatalog.sourceID,

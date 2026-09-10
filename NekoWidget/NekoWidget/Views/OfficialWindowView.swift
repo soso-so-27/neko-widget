@@ -62,7 +62,7 @@ struct OfficialWindowView: View {
                 }
 
                 if let message {
-                    Label(message, systemImage: "wifi.exclamationmark")
+                    Text(message)
                         .font(.footnote).foregroundStyle(.secondary)
                         .accessibilityIdentifier("official-window-feedback")
                 }
@@ -219,7 +219,14 @@ struct OfficialWindowView: View {
                 else { Task { await refresh() } }
             }
         } catch {
-            message = "受け取りの設定を保存できませんでした。もう一度お試しください。"
+            state = store.snapshot()
+            WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
+            if !subscribed, !state.isSubscribed {
+                selectedPhoto = nil
+                message = "受け取りをやめました。一部の写真データは削除できませんでした。"
+            } else {
+                message = "受け取りの設定を保存できませんでした。もう一度お試しください。"
+            }
         }
     }
 
