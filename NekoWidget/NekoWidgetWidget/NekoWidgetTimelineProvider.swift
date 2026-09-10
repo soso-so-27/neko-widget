@@ -458,7 +458,7 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
     }
 
     private func sortedItems(_ items: [WidgetManifestItem]) -> [WidgetManifestItem] {
-        Array(items.sorted { $0.scheduledDate < $1.scheduledDate }.prefix(20))
+        PersonalWidgetRotationPolicy.orderedUniqueItems(from: items)
     }
 
     private func readLikeState() -> SharedLikeStateSnapshot {

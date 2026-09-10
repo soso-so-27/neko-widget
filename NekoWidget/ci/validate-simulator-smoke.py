@@ -585,10 +585,15 @@ def main() -> int:
         except (json.JSONDecodeError, OSError) as error:
             failures.append(f"widget-manifest.json is invalid: {error}")
 
-    if not 15 <= len(manifest_items) <= 20:
+    if not 1 <= len(manifest_items) <= 20:
         failures.append(
-            f"Widget manifest contains {len(manifest_items)} entries; expected 15-20."
+            f"Widget manifest contains {len(manifest_items)} entries; expected 1-20 unique photos."
         )
+    photo_identifiers = [item.get("localIdentifier") for item in manifest_items]
+    if not all(isinstance(value, str) and value for value in photo_identifiers):
+        failures.append("Widget manifest contains a missing photo identifier.")
+    elif len(set(photo_identifiers)) != len(photo_identifiers):
+        failures.append("Widget manifest pads the rotation with duplicate photos.")
 
     cache_directory = group_container / "widget-cache"
     referenced_cache_files: set[Path] = set()

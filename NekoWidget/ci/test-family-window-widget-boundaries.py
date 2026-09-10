@@ -1659,7 +1659,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("aspectFillScale(imageSize: image.size, canvasSize: size)", rendered)
         self.assertNotIn("gaussianBlurredImage(", rendered)
         self.assertNotIn("aspectFitRect(", rendered)
-        self.assertIn('cacheRenderingRevision = "edge-to-edge-v1"', builder)
+        self.assertIn('cacheRenderingRevision = "cat-focused-fallback-v2"', builder)
 
         action_tray = section(
             view,

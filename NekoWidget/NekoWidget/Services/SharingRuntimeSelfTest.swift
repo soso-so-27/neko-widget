@@ -6689,6 +6689,92 @@ actor SharingRuntimeSelfTestRunner {
         } catch DailySharingError.invalidLocalManifest {
             // Personal v5 bytes remain active; sharing keeps its prior day.
         }
+        try testPersonalWidgetFallbackRendering()
+    }
+
+    private static func testPersonalWidgetFallbackRendering() throws {
+        // The right half stands in for an off-center cat. A centered crop shows
+        // red at its first quarter; the cat-focused crop shows green there.
+        // These are generated pixels, not claims about real-photo composition.
+        let sourceSize = WidgetSourcePixelSize(width: 2_000, height: 1_000)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(
+            size: CGSize(width: CGFloat(sourceSize.width), height: CGFloat(sourceSize.height)),
+            format: format
+        ).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1_000, height: 1_000))
+            UIColor.green.setFill()
+            context.fill(CGRect(x: 1_000, y: 0, width: 1_000, height: 1_000))
+        }
+        let cases: [(box: CGRect?, focusesCat: Bool)] = [
+            (CGRect(x: 0.51, y: 0.30, width: 0.46, height: 0.40), true), // Margin only exceeds.
+            (CGRect(x: 0.45, y: 0.20, width: 0.55, height: 0.60), true), // Cat itself exceeds.
+            (nil, false),
+            (CGRect(x: CGFloat.nan, y: 0.20, width: 0.40, height: 0.40), false),
+        ]
+        for testCase in cases {
+            try autoreleasepool {
+                let plans = WidgetRenderPlanner.plans(
+                    visionBoundingBox: testCase.box,
+                    sourcePixelSize: sourceSize
+                )
+                for variant in WidgetImageVariant.allCases {
+                    let plan = plans.plan(for: variant)
+                    if variant != .medium {
+                        guard plan.compositionMode == .blurredFitFallback,
+                              plan.sourceRect == .fullSource
+                        else { throw DailySharingError.invalidLocalManifest }
+                    }
+                    guard let jpeg = WidgetCacheBuilder.runtimeSelfTestPersonalWidgetJPEG(
+                        image: image,
+                        renderPlan: plan,
+                        catBoundingBox: testCase.box,
+                        variant: variant
+                    ), jpeg.count <= variant.maximumJPEGByteCount,
+                          let decoded = UIImage(data: jpeg)
+                    else { throw DailySharingError.canonicalEncodingFailed }
+                    let (width, height, pixels) = try rgba(decoded)
+                    guard width == variant.pixelWidth, height == variant.pixelHeight else {
+                        throw DailySharingError.canonicalEncodingFailed
+                    }
+                    let left = ((height / 2) * width + width / 4) * 4
+                    let right = ((height / 2) * width + width * 3 / 4) * 4
+                    let shouldFocus = testCase.focusesCat && variant != .medium
+                    let leftDifference = Int(pixels[left + 1]) - Int(pixels[left])
+                    guard (shouldFocus ? leftDifference > 100 : leftDifference < -100),
+                          Int(pixels[right + 1]) - Int(pixels[right]) > 100
+                    else { throw DailySharingError.canonicalEncodingFailed }
+                    for (x, y) in [(1, 1), (width - 2, 1), (1, height - 2), (width - 2, height - 2)] {
+                        let pixel = (y * width + x) * 4
+                        guard Int(pixels[pixel]) + Int(pixels[pixel + 1]) > 200,
+                              pixels[pixel + 3] == 255
+                        else { throw DailySharingError.canonicalEncodingFailed }
+                    }
+                }
+
+                // Local display resolution must not leak into the persisted
+                // canonical plan or the existing sharing freezer's geometry.
+                let date = Date(timeIntervalSince1970: 1_700_000_000)
+                let manifest = WidgetManifest(items: [WidgetManifestItem(
+                    localIdentifier: "runtime-personal-crop",
+                    cacheFilename: "runtime-personal-crop.jpg",
+                    scheduledDate: date,
+                    rendererVersion: WidgetRenderPlanner.rendererVersion,
+                    sourcePixelSize: sourceSize,
+                    renderPlans: plans,
+                    sourceModificationDate: date
+                )], generatedAt: date)
+                let frozen = try DailyManifestFreezer.freeze(manifest, localDayKey: 20_682, now: date)
+                guard frozen.media.count == 1,
+                      frozen.media[0].frozen.renderPlans == plans,
+                      frozen.media[0].frozen.sourcePixelSize == sourceSize,
+                      manifest.items[0].renderPlans == plans
+                else { throw DailySharingError.invalidLocalManifest }
+            }
+        }
     }
 
     private static func testDayBoundaryConvergence() throws {
