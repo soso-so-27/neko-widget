@@ -57,7 +57,9 @@ enum CandidateRegionProbe {
         var crops: [(box: CGRect, crop: CGImage, preview: CGImage)] = []
         for box in boxes {
             try Task.checkCancellation()
-            guard let rect = IdentityImagePipeline.cropRect(box, width: image.width, height: image.height),
+            // CGRect.infinite can use finite sentinel components; numeric checks alone are insufficient.
+            guard !box.isNull, !box.isInfinite,
+                  let rect = IdentityImagePipeline.cropRect(box, width: image.width, height: image.height),
                   let crop = image.cropping(to: rect) else { return .init(status: .invalidRegions) }
             let scale = min(1, 160.0 / Double(max(crop.width, crop.height)))
             guard let preview = IdentityImagePipeline.resized(crop,
@@ -83,7 +85,8 @@ enum CandidateRegionProbe {
     }
 
     static func displayRect(_ box: CGRect, image: CGSize, container: CGSize) -> CGRect? {
-        guard [image.width, image.height, container.width, container.height,
+        guard !box.isNull, !box.isInfinite,
+              [image.width, image.height, container.width, container.height,
                box.minX, box.minY, box.width, box.height].allSatisfy(\.isFinite),
               image.width > 0, image.height > 0, container.width > 0, container.height > 0,
               box.width > 0, box.height > 0 else { return nil }
