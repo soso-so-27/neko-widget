@@ -28,7 +28,7 @@ enum CandidateObjectProbe {
         let bounds = CGRect(x: 0, y: 0, width: width, height: height)
         var usable = 0
         for box in boxes {
-            guard !box.isNull, !box.isInfinite, box.width > 0, box.height > 0,
+            guard !box.isNull, !box.isInfinite, box.size.width > 0, box.size.height > 0,
                   [box.minX, box.minY, box.maxX, box.maxY, box.width, box.height].allSatisfy(\.isFinite) else { return .failed }
             // Object detectors may predict beyond the original edge. Keep their raw
             // output unchanged; count only regions centered inside the real photo

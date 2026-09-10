@@ -21,7 +21,8 @@ final class CandidateObjectIntegrationTests: XCTestCase {
             let result = CandidateObjectProbe.assess([a, bad], width: 128, height: 128)
             XCTAssertEqual(result.status, .unusableRegions); XCTAssertFalse(result.withholdsCandidate)
         }
-        for bad in [CGRect.null, CGRect.infinite, CGRect.zero, CGRect(x: CGFloat.nan, y: 1, width: 10, height: 10)] {
+        for bad in [CGRect.null, CGRect.infinite, CGRect.zero, CGRect(x: CGFloat.nan, y: 1, width: 10, height: 10),
+                    CGRect(x: 80, y: 10, width: -40, height: 40), CGRect(x: 10, y: 80, width: 40, height: -40)] {
             XCTAssertEqual(CandidateObjectProbe.assess([bad], width: 128, height: 128).status, .failed)
         }
         XCTAssertEqual(CandidateObjectProbe.assess([], width: 1025, height: 128).status, .failed)
