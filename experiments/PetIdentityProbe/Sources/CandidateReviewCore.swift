@@ -95,6 +95,7 @@ struct CandidateReviewRun {
     let photos: [CandidateReviewPhoto]
     let referenceA: CGImage?
     let referenceB: CGImage?
+    var duplicateSourcesUnavailable = 0
 }
 
 struct CandidateReviewSession {

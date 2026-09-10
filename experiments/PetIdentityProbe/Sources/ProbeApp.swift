@@ -38,6 +38,12 @@ private struct ProbeView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
+                    NavigationLink("別の写真で確かめる") { CandidateValidationView() }
+                        .disabled(runningMode != nil)
+                    Text("候補確認の次の段階。前の選択を残し、別写真を候補なしで確認します。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section {
                     NavigationLink("猫の検出を確認する") { IdentityEvaluationView() }
                         .disabled(runningMode != nil)
                     Text("基準画像と保存した写真をまとめて比較できます。")

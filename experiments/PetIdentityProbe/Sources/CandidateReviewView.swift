@@ -401,13 +401,14 @@ struct CandidatePhotoReview: View {
     }
 }
 
-private struct CandidatePhotoPicker: UIViewControllerRepresentable {
+struct CandidatePhotoPicker: UIViewControllerRepresentable {
     let selected: [String]
+    var limit = CandidateReviewSelection.limit
     let completion: ([String?]) -> Void
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
-        configuration.selectionLimit = CandidateReviewSelection.limit
+        configuration.selectionLimit = max(1, min(CandidateReviewSelection.limit, limit))
         configuration.selection = .ordered
         configuration.preselectedAssetIdentifiers = selected
         let picker = PHPickerViewController(configuration: configuration)

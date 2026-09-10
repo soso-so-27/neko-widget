@@ -137,18 +137,25 @@ actor IdentityPhotoService {
     private var busy = false
 
     func reviewCandidates(saved: [IdentityPhotoSlot: [String]], selected: [String],
+                          duplicateOnlyIDs: [String] = [],
                           progress: @Sendable (Int) async -> Void) async throws -> CandidateReviewRun {
         guard !busy else { throw IdentityPhotoFailure(message: "前の処理の終了を待ってください。") }
         busy = true
         defer { busy = false }
         try Task.checkCancellation()
         try CandidateReviewSelection.validate(selected, saved: saved)
+        guard duplicateOnlyIDs.count <= 124, Set(duplicateOnlyIDs).count == duplicateOnlyIDs.count,
+              Set(duplicateOnlyIDs).isDisjoint(with: Set(selected)),
+              duplicateOnlyIDs.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 4096 }) else {
+            throw IdentityPhotoFailure(message: "重複確認の対象を照合できません。保存内容は変更していません。")
+        }
         guard ORTVersion() == IdentityEvaluationCore.expectedRuntimeVersion else {
             throw IdentityEvaluationError.unsupportedRuntime
         }
         try Self.checkAuthorization()
         let savedIDs = IdentityPhotoSlot.allCases.flatMap { saved[$0] ?? [] }
-        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: savedIDs + selected, options: nil)
+        let extraIDs = duplicateOnlyIDs.filter { !Set(savedIDs).contains($0) }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: savedIDs + extraIDs + selected, options: nil)
         var assets: [String: PHAsset] = [:]
         fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
         var engine: IdentityCPUSession?
@@ -157,7 +164,8 @@ actor IdentityPhotoService {
         var vectors: [IdentityPhotoSlot: [[Float]?]] = [:]
         var previews: [IdentityPhotoSlot: CGImage] = [:]
         var hashes: [UInt64] = []
-        var bursts = Set(savedIDs.compactMap { assets[$0]?.burstIdentifier })
+        var bursts = Set((savedIDs + extraIDs).compactMap { assets[$0]?.burstIdentifier })
+        var duplicateSourcesUnavailable = 0
         var done = 0
 
         func thumbnail(_ image: CGImage?) -> CGImage? {
@@ -180,6 +188,7 @@ actor IdentityPhotoService {
                 try Task.checkCancellation()
                 try autoreleasepool {
                     let prepared = Self.preparePhoto(assets[id])
+                    if prepared.image == nil { duplicateSourcesUnavailable += 1 }
                     let crop = try recovered(prepared).crop
                     hashes += [prepared.image, crop].compactMap { $0.flatMap(IdentityImagePipeline.fingerprint) }
                     if slot.isReference {
@@ -192,6 +201,16 @@ actor IdentityPhotoService {
                 }
                 done += 1
                 await progress(done)
+            }
+        }
+        // Only the new held-out study passes these bounded IDs. Never use them for calibration/identity.
+        for id in extraIDs {
+            try Task.checkCancellation()
+            try autoreleasepool {
+                let prepared = Self.preparePhoto(assets[id])
+                if prepared.image == nil { duplicateSourcesUnavailable += 1 }
+                let crop = try recovered(prepared).crop
+                hashes += [prepared.image, crop].compactMap { $0.flatMap(IdentityImagePipeline.fingerprint) }
             }
         }
         var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?, regions: CandidateRegionReview?, objectCheck: CandidateObjectCheck?)] = []
@@ -255,7 +274,32 @@ actor IdentityPhotoService {
                                         distanceAssessment: assessment, objectCheck: candidate.objectCheck)
         }
         try Task.checkCancellation()
-        return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])
+        return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB],
+                                  duplicateSourcesUnavailable: duplicateSourcesUnavailable)
+    }
+
+    // No detection, model inference or candidate information in the blind-label phase.
+    func validationPhoto(id: String) throws -> CGImage? {
+        try Task.checkCancellation(); try Self.checkAuthorization()
+        guard !id.isEmpty, id.utf8.count <= 4096 else { throw CocoaError(.fileReadCorruptFile) }
+        let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+        return asset.flatMap(Self.localImage)
+    }
+
+    // Metadata change guard, not a guarantee of identical image bytes. Digest stays on device.
+    func validationAssetState(ids: [String]) throws -> String {
+        try Task.checkCancellation(); try Self.checkAuthorization()
+        guard ids.count <= 124, Set(ids).count == ids.count,
+              ids.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 4096 }) else { throw CocoaError(.fileReadCorruptFile) }
+        let fetched = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+        var assets: [String: PHAsset] = [:]
+        fetched.enumerateObjects { asset, _, _ in assets[asset.localIdentifier] = asset }
+        let states = ids.map { id -> [String] in
+            guard let asset = assets[id] else { return [id, "unavailable"] }
+            return [id, String(asset.pixelWidth), String(asset.pixelHeight), String(asset.mediaType.rawValue),
+                    asset.modificationDate.map { String($0.timeIntervalSince1970) } ?? "no-modification-date"]
+        }
+        return CandidateValidationStudy.digest(try JSONEncoder().encode(states))
     }
 
     func compareIdentityRecovery(selections: [IdentityPhotoSlot: [String]],
