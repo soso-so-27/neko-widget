@@ -163,9 +163,9 @@ actor IdentityPhotoService {
             return IdentityImagePipeline.resized(image, width: max(1, Int(Double(image.width) * factor)),
                                                 height: max(1, Int(Double(image.height) * factor)))
         }
-        func recovered(_ prepared: IdentityPreparedPhoto) throws -> CGImage? {
-            if let crop = prepared.crop { return crop }
-            return try IdentityRecoveryInputProbe.attempt(image: prepared.image, original: prepared.animalDetection).crop
+        func recovered(_ prepared: IdentityPreparedPhoto) throws -> (crop: CGImage?, status: IdentityRecoveryStatus) {
+            if let crop = prepared.crop { return (crop, .originalReused) }
+            return try IdentityRecoveryInputProbe.attempt(image: prepared.image, original: prepared.animalDetection)
         }
         func embed(_ crop: CGImage) throws -> [Float] {
             if engine == nil { engine = try IdentityCPUSession() }
@@ -177,7 +177,7 @@ actor IdentityPhotoService {
                 try Task.checkCancellation()
                 try autoreleasepool {
                     let prepared = Self.preparePhoto(assets[id])
-                    let crop = try recovered(prepared)
+                    let crop = try recovered(prepared).crop
                     hashes += [prepared.image, crop].compactMap { $0.flatMap(IdentityImagePipeline.fingerprint) }
                     if slot.isReference {
                         guard let crop else {
@@ -191,24 +191,28 @@ actor IdentityPhotoService {
                 await progress(done)
             }
         }
-        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?)] = []
+        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?)] = []
         for id in selected {
             try Task.checkCancellation()
-            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?) in
+            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?) in
                 let asset = assets[id]
                 let prepared = Self.preparePhoto(asset)
-                let crop = try recovered(prepared)
+                let recovery = try recovered(prepared)
+                let crop = recovery.crop
                 let image = thumbnail(prepared.image)
                 let candidateHashes = [prepared.image, crop].compactMap { $0.flatMap(IdentityImagePipeline.fingerprint) }
                 let repeatedBurst = asset?.burstIdentifier.map { bursts.contains($0) } ?? false
                 let similar = candidateHashes.contains { hash in hashes.contains { (hash ^ $0).nonzeroBitCount <= 2 } }
                 hashes += candidateHashes
                 if let burst = asset?.burstIdentifier { bursts.insert(burst) }
-                guard image != nil else { return (nil, nil, .unavailable) }
-                if repeatedBurst { return (image, nil, .repeatedBurst) }
-                if similar { return (image, nil, .similarPhoto) }
-                guard let crop else { return (image, nil, .noSingleCat) }
-                return (image, try embed(crop), nil)
+                guard image != nil else { return (nil, nil, .unavailable, nil) }
+                if repeatedBurst { return (image, nil, .repeatedBurst, nil) }
+                if similar { return (image, nil, .similarPhoto, nil) }
+                guard let crop else {
+                    return (image, nil, .noSingleCat,
+                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status))
+                }
+                return (image, try embed(crop), nil, nil)
             }
             candidates.append(next)
             done += 1
@@ -221,7 +225,8 @@ actor IdentityPhotoService {
             let (candidate, ranking) = pair
             let suggestion: CandidateReviewChoice? = ranking == .a ? .a : ranking == .b ? .b : nil
             let issue = candidate.issue ?? (ranking == .equalScores ? .equalScores : ranking == .invalidEmbedding ? .invalidEmbedding : nil)
-            return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: suggestion, issue: issue)
+            return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: suggestion, issue: issue,
+                                        cropDiagnostic: candidate.diagnostic)
         }
         try Task.checkCancellation()
         return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])

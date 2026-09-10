@@ -27,12 +27,40 @@ enum CandidateReviewIssue: String, CaseIterable {
     }
 }
 
+// Existing detector/crop outcomes, not a claim about how many cats are actually pictured.
+// Kept on-screen only; the report exports counts grouped by these fixed categories.
+struct CandidateCropDiagnostic {
+    let originalIssue: IdentityInputIssue?
+    let recoveryStatus: IdentityRecoveryStatus
+
+    var title: String {
+        switch recoveryStatus {
+        case .noCandidate: "追加検出でも猫が見つかりません"
+        case .multipleCandidates: "検出範囲が複数あります"
+        case .invalidCrop: "検出した範囲を切り抜けません"
+        case .conversionFailed: "検出用の画像を作れません"
+        case .detectionFailed: "追加の検出処理でエラー"
+        case .resultsUnavailable: "追加の検出結果がありません"
+        case .noImage: "画像を読み出せません"
+        case .originalIneligible:
+            if originalIssue == .multipleCats { "検出範囲が複数あります" }
+            else { originalIssue?.title ?? "検出の詳細を確認できません" }
+        case .originalReused, .recovered: "検出の詳細を確認できません"
+        }
+    }
+}
+
 // Local-only, deliberately not Codable. No photo identifier leaves the service.
 struct CandidateReviewPhoto: Identifiable {
     let id: Int
     let image: CGImage?
     let suggestion: CandidateReviewChoice?
     let issue: CandidateReviewIssue?
+    var cropDiagnostic: CandidateCropDiagnostic? = nil
+
+    var issueTitle: String? {
+        issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
+    }
 }
 
 struct CandidateReviewRun {
@@ -95,8 +123,14 @@ struct CandidateReviewSession {
     var report: CandidateReviewReport { .init(session: self) }
 }
 
+struct CandidateCropFailureCount: Encodable {
+    let originalIssue: String
+    let recoveryStatus: String
+    let count: Int
+}
+
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v1"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v2"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let method = "second-nearest-of-five-per-cat;ranking-only;no-acceptance-or-online-learning"
@@ -109,6 +143,8 @@ struct CandidateReviewReport: Encodable {
     let unsure: Int
     let remaining: Int
     let inputIssues: [String: Int]
+    let noSingleCatBreakdown: [CandidateCropFailureCount]
+    let noSingleCatBreakdownScope = "existing-detector-and-crop-status-only;multiple-regions-not-confirmed-cat-count;no-additional-detection-or-identity-accuracy-claim"
     let reviewActions: [String: Int]
     let totalReviewActions: Int
     let hypotheticalManualLabelTaps: Int
@@ -138,6 +174,18 @@ struct CandidateReviewReport: Encodable {
         inputIssues = Dictionary(uniqueKeysWithValues: CandidateReviewIssue.allCases.map { issue in
             (issue.rawValue, photos.filter { $0.issue == issue }.count)
         })
+        // Each noSingleCat photo appears in exactly one row, including missing diagnostics.
+        let grouped = Dictionary(grouping: photos.filter { $0.issue == .noSingleCat }) { photo in
+            (photo.cropDiagnostic?.originalIssue?.rawValue ?? "unrecorded") + "|"
+                + (photo.cropDiagnostic?.recoveryStatus.rawValue ?? "unrecorded")
+        }
+        noSingleCatBreakdown = grouped.keys.sorted().compactMap { key in
+            guard let group = grouped[key], let photo = group.first else { return nil }
+            return CandidateCropFailureCount(
+                originalIssue: photo.cropDiagnostic?.originalIssue?.rawValue ?? "unrecorded",
+                recoveryStatus: photo.cropDiagnostic?.recoveryStatus.rawValue ?? "unrecorded",
+                count: group.count)
+        }
         reviewActions = session.actions
         totalReviewActions = session.actions.values.reduce(0, +)
         hypotheticalManualLabelTaps = photos.count

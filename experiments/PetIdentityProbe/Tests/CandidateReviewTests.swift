@@ -19,7 +19,8 @@ final class CandidateReviewTests: XCTestCase {
             .init(id: 0, image: raster, suggestion: .a, issue: nil),
             .init(id: 1, image: raster, suggestion: .a, issue: nil),
             .init(id: 2, image: raster, suggestion: .b, issue: nil),
-            .init(id: 3, image: raster, suggestion: nil, issue: .similarPhoto),
+            .init(id: 3, image: raster, suggestion: nil, issue: .noSingleCat,
+                  cropDiagnostic: .init(originalIssue: .multipleCats, recoveryStatus: .originalIneligible)),
             .init(id: 4, image: nil, suggestion: nil, issue: .unavailable)
         ], referenceA: raster, referenceB: raster)
     }
@@ -99,16 +100,78 @@ final class CandidateReviewTests: XCTestCase {
         XCTAssertThrowsError(try CandidateReviewSelection.filteringKnownPhotos(["new"], saved: [:]))
     }
 
+    func testCropReasonsDistinguishExistingDetectionAndProcessingOutcomes() {
+        let examples: [(IdentityInputIssue?, IdentityRecoveryStatus, String)] = [
+            (.catNotDetected, .noCandidate, "追加検出でも猫が見つかりません"),
+            (.multipleCats, .originalIneligible, "検出範囲が複数あります"),
+            (.catNotDetected, .multipleCandidates, "検出範囲が複数あります"),
+            (.invalidCrop, .originalIneligible, IdentityInputIssue.invalidCrop.title),
+            (.catNotDetected, .invalidCrop, "検出した範囲を切り抜けません"),
+            (.detectionFailed, .originalIneligible, IdentityInputIssue.detectionFailed.title),
+            (.catNotDetected, .detectionFailed, "追加の検出処理でエラー"),
+            (.catNotDetected, .conversionFailed, "検出用の画像を作れません"),
+            (.catNotDetected, .resultsUnavailable, "追加の検出結果がありません"),
+            (.catNotDetected, .originalIneligible, IdentityInputIssue.catNotDetected.title),
+            (nil, .originalIneligible, "検出の詳細を確認できません")
+        ]
+        for (original, recovery, title) in examples {
+            let diagnostic = CandidateCropDiagnostic(originalIssue: original, recoveryStatus: recovery)
+            let photo = CandidateReviewPhoto(id: 0, image: nil, suggestion: nil, issue: .noSingleCat, cropDiagnostic: diagnostic)
+            XCTAssertEqual(photo.issueTitle, title)
+            XCTAssertFalse(title.contains("複数匹")) // Multiple boxes do not prove multiple animals.
+        }
+        let unrelated = CandidateReviewPhoto(id: 0, image: nil, suggestion: nil, issue: .similarPhoto,
+            cropDiagnostic: .init(originalIssue: .catNotDetected, recoveryStatus: .noCandidate))
+        XCTAssertEqual(unrelated.issueTitle, CandidateReviewIssue.similarPhoto.title)
+        let missing = CandidateReviewPhoto(id: 1, image: nil, suggestion: nil, issue: .noSingleCat)
+        XCTAssertEqual(missing.issueTitle, CandidateReviewIssue.noSingleCat.title)
+    }
+
+    func testCropBreakdownPartitionsFailuresAndIsShareableWithoutReclassifying() throws {
+        let raster = try image()
+        let missed = CandidateCropDiagnostic(originalIssue: .catNotDetected, recoveryStatus: .noCandidate)
+        let photos: [CandidateReviewPhoto] = [
+            .init(id: 0, image: raster, suggestion: nil, issue: .noSingleCat, cropDiagnostic: missed),
+            .init(id: 1, image: raster, suggestion: nil, issue: .noSingleCat, cropDiagnostic: missed),
+            .init(id: 2, image: raster, suggestion: nil, issue: .noSingleCat,
+                  cropDiagnostic: .init(originalIssue: .multipleCats, recoveryStatus: .originalIneligible)),
+            .init(id: 3, image: raster, suggestion: nil, issue: .noSingleCat,
+                  cropDiagnostic: .init(originalIssue: .catNotDetected, recoveryStatus: .multipleCandidates)),
+            .init(id: 4, image: raster, suggestion: nil, issue: .noSingleCat,
+                  cropDiagnostic: .init(originalIssue: .catNotDetected, recoveryStatus: .invalidCrop)),
+            .init(id: 5, image: raster, suggestion: nil, issue: .noSingleCat),
+            .init(id: 6, image: raster, suggestion: .a, issue: nil),
+            .init(id: 7, image: nil, suggestion: nil, issue: .unavailable, cropDiagnostic: missed)
+        ]
+        var session = CandidateReviewSession(run: .init(photos: photos, referenceA: nil, referenceB: nil))
+        let report = session.report
+        XCTAssertTrue(session.decisions.isEmpty); XCTAssertNotNil(report.json)
+        XCTAssertEqual(report.selected, 8); XCTAssertEqual(report.remaining, 8); XCTAssertEqual(report.proposed, 1)
+        XCTAssertEqual(report.inputIssues["noSingleCat"], 6)
+        XCTAssertEqual(report.noSingleCatBreakdown.reduce(0) { $0 + $1.count }, 6)
+        XCTAssertEqual(report.noSingleCatBreakdown.count, 5)
+        XCTAssertEqual(report.noSingleCatBreakdown.first { $0.originalIssue == "catNotDetected" && $0.recoveryStatus == "noCandidate" }?.count, 2)
+        XCTAssertEqual(report.noSingleCatBreakdown.first { $0.originalIssue == "unrecorded" && $0.recoveryStatus == "unrecorded" }?.count, 1)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(report.json).utf8)) as? [String: Any])
+        let rows = try XCTUnwrap(object["noSingleCatBreakdown"] as? [[String: Any]])
+        for row in rows { XCTAssertEqual(Set(row.keys), ["originalIssue", "recoveryStatus", "count"]) }
+        XCTAssertTrue(report.noSingleCatBreakdownScope.contains("not-confirmed-cat-count"))
+        XCTAssertFalse(report.accuracyEvaluated); XCTAssertFalse(report.productionDataChanged)
+        session.choose(.a, for: 0)
+        XCTAssertEqual(session.report.noSingleCatBreakdown.map(\.count), report.noSingleCatBreakdown.map(\.count))
+    }
+
     func testExportIsAggregateOnlyAndNeverCallsUserConfirmationAccuracy() throws {
         var session = CandidateReviewSession(run: try makeReviewFixture())
         session.confirmGroup(.a)
         let json = try XCTUnwrap(session.report.json)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["protocolIdentifier", "appBuild", "modelSHA256", "method", "scope", "selected", "proposed",
-            "confirmedAsSuggested", "changedSuggestion", "individuallyLabeledUnranked", "unsure", "remaining", "inputIssues", "reviewActions",
+            "confirmedAsSuggested", "changedSuggestion", "individuallyLabeledUnranked", "unsure", "remaining", "inputIssues", "noSingleCatBreakdown", "noSingleCatBreakdownScope", "reviewActions",
             "totalReviewActions", "hypotheticalManualLabelTaps", "manualComparison", "photosIncluded", "identifiersIncluded", "embeddingsIncluded",
             "individualPredictionsIncluded", "productionDataChanged", "accuracyEvaluated", "productValidated"])
         XCTAssertFalse(session.report.accuracyEvaluated); XCTAssertFalse(session.report.productValidated)
+        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v2")
         XCTAssertTrue(session.report.manualComparison.contains("not-measured"))
         for key in ["decisions", "suggestion", "image", "assetIdentifier", "distance", "vector"] {
             XCTAssertFalse(json.contains("\"\(key)\""))

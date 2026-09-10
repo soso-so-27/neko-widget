@@ -20,9 +20,12 @@ struct CandidateReviewView: View {
                         open: { id in closedByChoice = false; store.session?.record("openPhoto"); focus = .init(id: id) },
                         undo: { store.session?.undo() })
                     if let json = session.report.json {
-                        ShareLink("確認結果を共有", item: json).buttonStyle(.borderedProminent)
+                        ShareLink(session.decisions.isEmpty ? "候補と検出結果を共有" : "確認結果を共有", item: json)
+                            .buttonStyle(.borderedProminent)
                     }
-                    Text("共有するのは件数と操作数だけです。写真・写真IDは含めません。候補を見た後の本人確認なので、正解率や精度合格とは扱いません。少数の集計から1枚の結果が分かる場合があります。")
+                    Text("理由の確認だけなら、写真を分類し直さずに共有できます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Text("共有するのは件数・操作数・候補が出なかった理由の集計です。写真・写真IDは含めません。候補を見た後の本人確認なので、正解率や精度合格とは扱いません。少数の集計から1枚の結果が分かる場合があります。")
                         .font(.footnote).foregroundStyle(.secondary)
                 } else {
                     setup
@@ -33,6 +36,7 @@ struct CandidateReviewView: View {
                     Text("選択した写真だけを端末内で処理し、ネットワークから取得しません。本アプリの所属・写真アプリの原本は変更しません。")
                     Text("選択IDのみをこの検証アプリに保存し、画像・特徴量・候補・確認結果は画面終了やバックグラウンドで破棄します。戻っても同じ選択から再開できますが、確認操作はやり直しになります。")
                     Text("現在保存している見本・判定写真との重なりは自動で外します。保存が残っていない以前の選択までは判別できませんが、覚えていなくても進められます。この試作は独立した精度評価には使いません。")
+                    Text("「検出範囲が複数」は、同じ猫を重複検出した場合も含みます。複数匹が写っていると断定する表示ではありません。")
                 }.font(.footnote).foregroundStyle(.secondary)
                 if store.session == nil && (!store.selected.isEmpty || store.hasArchivedSelection || store.candidateReadFailed) {
                     Button("今回の写真選択を消去", role: .destructive) { confirmsClear = true }
@@ -190,8 +194,8 @@ struct CandidateReviewBoard: View {
                         }.disabled(photo.image == nil)
                     } else if let choice = session.decisions[photo.id] {
                         Text(choice.title).font(.caption).foregroundStyle(.secondary)
-                    } else if let issue = photo.issue {
-                        Text(issue.title).font(.caption).foregroundStyle(.secondary)
+                    } else if let title = photo.issueTitle {
+                        Text(title).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -225,7 +229,7 @@ private struct CandidatePhotoReview: View {
                 VStack(alignment: .leading, spacing: 18) {
                     CandidateImage(image: photo.image).frame(height: 330)
                     Text("この写真に写っているのは？").font(.title3.bold())
-                    if let issue = photo.issue { Text(issue.title).font(.subheadline).foregroundStyle(.secondary) }
+                    if let title = photo.issueTitle { Text(title).font(.subheadline).foregroundStyle(.secondary) }
                     ForEach(CandidateReviewChoice.allCases, id: \.self) { item in
                         Button { choose(item) } label: {
                             HStack { Text(item.title); Spacer(); if choice == item { Image(systemName: "checkmark") } }
