@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "neko-widget-official-cats-preview",
+  "account_id": "829a34ef925a39d81b0e9e08800d7c7f",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-27",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "assets": {
+    "directory": "./.generated/selected-batch",
+    "binding": "OFFICIAL_ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "dev": { "ip": "127.0.0.1", "port": 8795 }
+}
