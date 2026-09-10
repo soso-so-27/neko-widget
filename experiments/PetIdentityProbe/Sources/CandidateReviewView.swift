@@ -31,7 +31,7 @@ struct CandidateReviewView: View {
                     }
                     Text("理由の確認だけなら、写真を分類し直さずに共有できます。")
                         .font(.footnote).foregroundStyle(.secondary)
-                    Text("候補を出した／控えた件数と、保存済みの確認との照合も含めます。これは精度評価ではありません。")
+                    Text("保存済みと今回の確認から、候補の取り違え・2匹写り・保留を集計します。未確認の写真は正解に数えません。")
                         .font(.footnote).foregroundStyle(.secondary)
                     Text("共有するのは件数・操作数・検出結果の集計です。写真・写真ID・枠の位置は含めません。候補を見た後の本人確認なので、正解率や精度合格とは扱いません。少数の集計から1枚の結果が分かる場合があります。")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -63,7 +63,8 @@ struct CandidateReviewView: View {
             if !closedByChoice { store.record("closePhoto") }
         }) { value in
             if let photo = store.session?.run.photos.first(where: { $0.id == value.id }) {
-                CandidatePhotoReview(photo: photo, choice: store.session?.decisions[photo.id], choose: { choice in
+                CandidatePhotoReview(photo: photo, choice: store.session?.decisions[photo.id],
+                                     restoredChoice: store.session?.restoredIDs.contains(photo.id) == true, choose: { choice in
                     guard store.choose(choice, for: photo.id) else { return false }
                     closedByChoice = true; focus = nil; return true
                 }, unconfirm: {
@@ -97,7 +98,7 @@ struct CandidateReviewView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("猫の写真をまとめて確認").font(.title2.bold())
             Label("先行テスト · 対象の猫は2匹", systemImage: "flask").font(.headline)
-            Text("猫A/Bの候補を探す試作です。別の猫が混ざることもあるため、ご自身で確認します。3匹以上の見分けや自動振り分けには対応していません。")
+            Text("猫A/Bの候補を探す試作です。2匹写りや別の猫が混ざることもあるため、写真全体を確認します。3匹以上の見分けや自動振り分けには対応していません。")
                 .font(.subheadline).foregroundStyle(.secondary)
             Text("写真は一度に24枚まで。確認はこの検証アプリ内だけに保存し、本アプリの猫別写真へは追加しません。")
                 .font(.footnote).foregroundStyle(.secondary)
@@ -153,15 +154,14 @@ struct CandidateReviewBoard: View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("違う写真を外して、まとめて確認").font(.title2.bold())
-                Text("別の猫にも候補が出ます。写真を押すと全体を見て、猫A・猫B・両方・別の猫・わからないを選べます。")
+                Text("2匹写りや別の猫も混ざることがあります。「2匹・別の猫」から写真全体を確認して変更できます。")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Text("未確認\(session.remaining)枚 · 確認済み\(session.decisions.count)枚").font(.headline).monospacedDigit()
                 Text("確認は保存されます。途中で閉じても続きから再開できます。")
                     .font(.footnote).foregroundStyle(.secondary)
-                Text("見本から離れた写真は、猫A/Bを決めず個別に確認します。別の猫と判別できたわけではありません。")
-                    .font(.footnote).foregroundStyle(.secondary)
                 if session.canUndo { Button("直前の確認を取り消す", action: undo).font(.subheadline) }
             }
+            comparisonSummary
             group(.a, reference: session.run.referenceA)
             group(.b, reference: session.run.referenceB)
             let unranked = session.pending(nil)
@@ -199,6 +199,25 @@ struct CandidateReviewBoard: View {
         }
     }
 
+    private var comparisonSummary: some View {
+        let summary = session.report.qualityComparison
+        return DisclosureGroup("改善の確認 · \(summary.reviewedWithKnownChoice)/\(summary.selected)枚") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("候補と同じ \(summary.matchingProposals)枚 / 確認した候補 \(summary.reviewedProposals)枚")
+                Text("取り違え \(summary.differentCatProposals)枚・2匹写り \(summary.bothInSingleCatProposals)枚・ほかの猫 \(summary.otherCatProposals)枚")
+                Text("保留した写真の確認：A/B \(summary.withheldAOrBChoices)枚・両方/ほかの猫 \(summary.withheldBothOrOtherPhotos)枚")
+                if summary.restoredChoices > 0 {
+                    Text("保存済みの確認\(summary.restoredChoices)枚も含みます。以前のA/B選択を「1匹だけ確認済み」とは扱いません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Text("未確認 \(summary.unreviewed)枚・わからない \(summary.unsure)枚。候補を見た後の確認であり、精度の合格判定ではありません。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Text("確認は一度保存すれば再入力不要です。目標は候補の正しさ95％以上、A/Bが1匹で写る写真の70％以上に役立つ候補を出すこと。採用は別写真と確認負担も含めて判断します。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }.font(.subheadline).padding(.top, 8)
+        }.font(.subheadline)
+    }
+
     private func group(_ choice: CandidateReviewChoice, reference: CGImage?) -> some View {
         let photos = session.pending(choice)
         let included = photos.filter { !session.excluded.contains($0.id) && $0.image != nil }.count
@@ -215,7 +234,7 @@ struct CandidateReviewBoard: View {
             } else {
                 grid(photos, batch: true)
                 Button { confirm(choice) } label: {
-                    Text("この\(included)枚を\(choice.title)として確認")
+                    Text("この\(included)枚は\(choice.confirmationTitle)")
                         .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 8)
                 }.buttonStyle(.borderedProminent).disabled(included == 0)
                     .accessibilityIdentifier("candidate-confirm-\(choice.rawValue)")
@@ -241,6 +260,11 @@ struct CandidateReviewBoard: View {
                                   systemImage: session.excluded.contains(photo.id) ? "circle" : "checkmark.circle.fill")
                                 .font(.caption).frame(minHeight: 44, alignment: .leading)
                         }.disabled(photo.image == nil)
+                        Button("2匹・別の猫") { open(photo.id) }
+                            .font(.subheadline).frame(minHeight: 44, alignment: .leading)
+                            .disabled(photo.image == nil)
+                            .accessibilityLabel("写真\(photo.id + 1)：2匹写りや別の猫を確認")
+                            .accessibilityIdentifier("candidate-correct-\(photo.id)")
                     } else if let choice = session.decisions[photo.id] {
                         Text(choice.title).font(.caption).foregroundStyle(.secondary)
                     } else if let title = photo.issueTitle {
@@ -282,6 +306,7 @@ private struct CandidateImage: View {
 struct CandidatePhotoReview: View {
     let photo: CandidateReviewPhoto
     let choice: CandidateReviewChoice?
+    var restoredChoice = false
     let choose: (CandidateReviewChoice) -> Bool
     var unconfirm: (() -> Bool)? = nil
     @State private var saveFailed = false
@@ -293,6 +318,10 @@ struct CandidatePhotoReview: View {
                     CandidateImage(image: photo.image, regions: photo.regionReview?.regions ?? [])
                         .frame(height: photo.regionReview == nil ? 330 : 240)
                     Text("この写真に写っているのは？").font(.title3.bold())
+                    if restoredChoice, let choice {
+                        Text("保存済みの確認：\(choice.title)。以前の選択をそのまま表示しています。変更がある写真だけ訂正できます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                     if let title = photo.issueTitle { Text(title).font(.subheadline).foregroundStyle(.secondary) }
                     if let review = photo.regionReview, !review.regions.isEmpty {
                         Text("枠ごとの参考候補です。同じ猫に複数の枠が付くこともあります。別の猫にもA/Bの候補が出るため、写真全体を見て選んでください。")
@@ -308,9 +337,6 @@ struct CandidatePhotoReview: View {
                             }
                         }
                     }
-                    if photo.regionReview == nil {
-                        ForEach(CandidateReviewChoice.allCases, id: \.self) { choiceButton($0) }
-                    }
                     Text("確認はこの試作の中だけ。本アプリの写真所属は変わりません。")
                         .font(.footnote).foregroundStyle(.secondary)
                     if choice != nil, let unconfirm {
@@ -319,15 +345,13 @@ struct CandidatePhotoReview: View {
                 }.padding(20)
             }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if photo.regionReview != nil {
-                        VStack(spacing: 8) {
-                            Text("写真全体に写っている猫を選ぶ").font(.caption).foregroundStyle(.secondary)
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                                ForEach([CandidateReviewChoice.a, .b, .both, .other], id: \.self) { choiceButton($0) }
-                            }
-                            choiceButton(.unsure)
-                        }.padding(12).background(.regularMaterial)
-                    }
+                    VStack(spacing: 8) {
+                        Text("写真全体に写っている猫を選ぶ").font(.caption).foregroundStyle(.secondary)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                            ForEach([CandidateReviewChoice.a, .b, .both, .other], id: \.self) { choiceButton($0) }
+                        }
+                        choiceButton(.unsure)
+                    }.padding(12).background(.regularMaterial)
                 }
                 .navigationTitle("写真を確認").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
@@ -339,7 +363,7 @@ struct CandidatePhotoReview: View {
 
     private func choiceButton(_ item: CandidateReviewChoice) -> some View {
         Button { saveFailed = !choose(item) } label: {
-            HStack { Text(item.title); Spacer(); if choice == item { Image(systemName: "checkmark") } }
+            HStack { Text(item.confirmationTitle); Spacer(); if !restoredChoice && choice == item { Image(systemName: "checkmark") } }
                 .frame(minHeight: 38)
         }.buttonStyle(.bordered).disabled(photo.image == nil && item != .unsure)
             .accessibilityIdentifier("candidate-choice-\(item.rawValue)")

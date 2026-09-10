@@ -12,6 +12,16 @@ enum CandidateReviewChoice: String, CaseIterable, Hashable, Codable {
         case .unsure: "わからない"
         }
     }
+    // Explicit photo-wide choices; stored enum values and old decisions are unchanged.
+    var confirmationTitle: String {
+        switch self {
+        case .a: "猫Aだけ"
+        case .b: "猫Bだけ"
+        case .both: "猫Aと猫B"
+        case .other: "ほかの猫がいる"
+        case .unsure: "わからない"
+        }
+    }
 }
 
 enum CandidateReviewIssue: String, CaseIterable {
@@ -173,7 +183,7 @@ struct CandidateCropFailureCount: Encodable {
 }
 
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v5"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v6"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let method = "second-nearest-of-five-per-cat;registration-radius-filter1.25;no-ratio-gate-or-identity-acceptance-or-online-learning"
@@ -192,6 +202,7 @@ struct CandidateReviewReport: Encodable {
     let noSingleCatBreakdownScope = "existing-detector-and-crop-status-only;multiple-regions-not-confirmed-cat-count;no-additional-detection-or-identity-accuracy-claim"
     let multiRegionReview: CandidateRegionReviewCounts
     let distanceFiltering: CandidateDistanceFilterCounts
+    let qualityComparison: CandidateQualityComparison
     let reviewActions: [String: Int]
     let totalReviewActions: Int
     let hypotheticalManualLabelTaps: Int
@@ -236,6 +247,7 @@ struct CandidateReviewReport: Encodable {
         }
         multiRegionReview = .init(session: session)
         distanceFiltering = .init(session: session)
+        qualityComparison = .init(session: session)
         reviewActions = session.actions
         totalReviewActions = session.actions.values.reduce(0, +)
         hypotheticalManualLabelTaps = photos.count
