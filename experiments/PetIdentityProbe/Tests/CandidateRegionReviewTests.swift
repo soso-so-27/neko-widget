@@ -195,6 +195,21 @@ final class CandidateRegionReviewTests: XCTestCase {
             let attachment = XCTAttachment(image: image)
             attachment.name = "candidate-regions-generated-\(Int(size.width))"
             attachment.lifetime = .keepAlways; add(attachment)
+            // Also inspect the below-the-fold reason, not only the pinned controls.
+            func findScroll(_ view: UIView) -> UIScrollView? {
+                if let scroll = view as? UIScrollView { return scroll }
+                return view.subviews.lazy.compactMap { findScroll($0) }.first
+            }
+            let scroll = try XCTUnwrap(findScroll(host.view))
+            let bottom = max(-scroll.adjustedContentInset.top,
+                             scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+            scroll.setContentOffset(CGPoint(x: 0, y: bottom), animated: false)
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            let detail = renderer.image { _ in XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)) }
+            let detailAttachment = XCTAttachment(image: detail)
+            detailAttachment.name = "candidate-distance-reason-\(Int(size.width))"
+            detailAttachment.lifetime = .keepAlways; add(detailAttachment)
         }
     }
 }
