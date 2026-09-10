@@ -2,12 +2,13 @@ import CoreGraphics
 import Foundation
 
 enum CandidateReviewChoice: String, CaseIterable, Hashable {
-    case a, b, other, unsure
+    case a, b, both, other, unsure
     var title: String {
         switch self {
         case .a: "猫A"
         case .b: "猫B"
-        case .other: "別の猫・両方"
+        case .both: "猫Aと猫B"
+        case .other: "別の猫"
         case .unsure: "わからない"
         }
     }
@@ -27,12 +28,49 @@ enum CandidateReviewIssue: String, CaseIterable {
     }
 }
 
+// Existing detector/crop outcomes, not a claim about how many cats are actually pictured.
+// Kept on-screen only; the report exports counts grouped by these fixed categories.
+struct CandidateCropDiagnostic {
+    let originalIssue: IdentityInputIssue?
+    let recoveryStatus: IdentityRecoveryStatus
+
+    var title: String {
+        switch recoveryStatus {
+        case .noCandidate: "追加検出でも猫が見つかりません"
+        case .multipleCandidates: "検出範囲が複数あります"
+        case .invalidCrop: "検出した範囲を切り抜けません"
+        case .conversionFailed: "検出用の画像を作れません"
+        case .detectionFailed: "追加の検出処理でエラー"
+        case .resultsUnavailable: "追加の検出結果がありません"
+        case .noImage: "画像を読み出せません"
+        case .originalIneligible:
+            if originalIssue == .multipleCats { "検出範囲が複数あります" }
+            else { originalIssue?.title ?? "検出の詳細を確認できません" }
+        case .originalReused, .recovered: "検出の詳細を確認できません"
+        }
+    }
+}
+
 // Local-only, deliberately not Codable. No photo identifier leaves the service.
 struct CandidateReviewPhoto: Identifiable {
     let id: Int
     let image: CGImage?
     let suggestion: CandidateReviewChoice?
     let issue: CandidateReviewIssue?
+    var cropDiagnostic: CandidateCropDiagnostic? = nil
+    var regionReview: CandidateRegionReview? = nil
+
+    // Region-level suggestions must never enter a photo-level bulk confirmation.
+    var batchSuggestion: CandidateReviewChoice? {
+        guard image != nil, issue == nil, regionReview == nil,
+              suggestion == .a || suggestion == .b else { return nil }
+        return suggestion
+    }
+
+    var issueTitle: String? {
+        if let regionReview { return regionReview.title }
+        return issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
+    }
 }
 
 struct CandidateReviewRun {
@@ -52,11 +90,11 @@ struct CandidateReviewSession {
     var remaining: Int { run.photos.filter { decisions[$0.id] == nil }.count }
 
     func pending(_ group: CandidateReviewChoice?) -> [CandidateReviewPhoto] {
-        run.photos.filter { decisions[$0.id] == nil && $0.suggestion == group }
+        run.photos.filter { decisions[$0.id] == nil && $0.batchSuggestion == group }
     }
 
     mutating func toggleExcluded(_ id: Int) {
-        guard let photo = run.photos.first(where: { $0.id == id }), photo.suggestion != nil,
+        guard let photo = run.photos.first(where: { $0.id == id }), photo.batchSuggestion != nil,
               photo.image != nil, decisions[id] == nil else { return }
         if !excluded.insert(id).inserted { excluded.remove(id) }
         record("excludeToggle")
@@ -95,8 +133,14 @@ struct CandidateReviewSession {
     var report: CandidateReviewReport { .init(session: self) }
 }
 
+struct CandidateCropFailureCount: Encodable {
+    let originalIssue: String
+    let recoveryStatus: String
+    let count: Int
+}
+
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v1"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v3"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let method = "second-nearest-of-five-per-cat;ranking-only;no-acceptance-or-online-learning"
@@ -109,6 +153,9 @@ struct CandidateReviewReport: Encodable {
     let unsure: Int
     let remaining: Int
     let inputIssues: [String: Int]
+    let noSingleCatBreakdown: [CandidateCropFailureCount]
+    let noSingleCatBreakdownScope = "existing-detector-and-crop-status-only;multiple-regions-not-confirmed-cat-count;no-additional-detection-or-identity-accuracy-claim"
+    let multiRegionReview: CandidateRegionReviewCounts
     let reviewActions: [String: Int]
     let totalReviewActions: Int
     let hypotheticalManualLabelTaps: Int
@@ -124,20 +171,33 @@ struct CandidateReviewReport: Encodable {
     init(session: CandidateReviewSession) {
         let photos = session.run.photos
         selected = photos.count
-        proposed = photos.filter { $0.suggestion != nil }.count
-        confirmedAsSuggested = photos.filter { $0.suggestion != nil && session.decisions[$0.id] == $0.suggestion }.count
+        proposed = photos.filter { $0.batchSuggestion != nil }.count
+        confirmedAsSuggested = photos.filter { $0.batchSuggestion != nil && session.decisions[$0.id] == $0.batchSuggestion }.count
         changedSuggestion = photos.filter {
-            guard let suggestion = $0.suggestion, let choice = session.decisions[$0.id] else { return false }
+            guard let suggestion = $0.batchSuggestion, let choice = session.decisions[$0.id] else { return false }
             return choice != .unsure && choice != suggestion
         }.count
         individuallyLabeledUnranked = photos.filter {
-            $0.suggestion == nil && session.decisions[$0.id] != nil && session.decisions[$0.id] != .unsure
+            $0.batchSuggestion == nil && session.decisions[$0.id] != nil && session.decisions[$0.id] != .unsure
         }.count
         unsure = session.decisions.values.filter { $0 == .unsure }.count
         remaining = session.remaining
         inputIssues = Dictionary(uniqueKeysWithValues: CandidateReviewIssue.allCases.map { issue in
             (issue.rawValue, photos.filter { $0.issue == issue }.count)
         })
+        // Each noSingleCat photo appears in exactly one row, including missing diagnostics.
+        let grouped = Dictionary(grouping: photos.filter { $0.issue == .noSingleCat }) { photo in
+            (photo.cropDiagnostic?.originalIssue?.rawValue ?? "unrecorded") + "|"
+                + (photo.cropDiagnostic?.recoveryStatus.rawValue ?? "unrecorded")
+        }
+        noSingleCatBreakdown = grouped.keys.sorted().compactMap { key in
+            guard let group = grouped[key], let photo = group.first else { return nil }
+            return CandidateCropFailureCount(
+                originalIssue: photo.cropDiagnostic?.originalIssue?.rawValue ?? "unrecorded",
+                recoveryStatus: photo.cropDiagnostic?.recoveryStatus.rawValue ?? "unrecorded",
+                count: group.count)
+        }
+        multiRegionReview = .init(session: session)
         reviewActions = session.actions
         totalReviewActions = session.actions.values.reduce(0, +)
         hypotheticalManualLabelTaps = photos.count
