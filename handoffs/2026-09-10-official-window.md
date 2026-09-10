@@ -46,3 +46,23 @@
 4. 実機で初回受信、Widget表示・写真タップ、受け取り停止を確認して、既に許可された配布範囲を判断する。
 
 実装の完了と、写真を継続配信できる運営状態の成立を別々に記録する。
+
+## 確認記録
+
+実装ブランチは `codex/official-window-20260910`、最終コードは `81e3aff2c4dfd898281a6c18570e213b379c87c3`。
+
+| 対象 | 確認結果と限界 |
+| --- | --- |
+| 公開ファイル生成 | Python 27件中26件成功、Windowsのsymlink権限を要する1件のみskip。metadata除去、サイズ上限、掲載許可フラグ、掲載期間、停止catalogを確認。 |
+| Swiftのcatalog・購読・cache | 最終コードでmacOSの実行テスト31項目成功。停止・再購読後に古い通信を保存しないこと、hash・画像寸法・期限・取り下げを確認。 |
+| アプリとWidgetのコンパイル | 最終コード `81e3aff` でアプリ・Widget・拡張機能のReleaseビルド成功。 |
+| 公式まどの画面操作 | 最終コードのiOS Simulatorで2テスト成功。初回画像失敗→再試行→写真表示→詳細→戻る→受け取り停止、配信未設定の準備中表示を確認。 |
+| 既存画面への影響 | 直前コードでローカル専用ビルドに「まど」タブを出す回帰を1件検出。共有・公式配信先の両方が無効ならタブを出さない条件に修正し、最終コードの既存PhotoPermissionUITestも成功。Simulator smoke job全体も成功。 |
+| 既存の共有機能 | 最終コードでiOS 18.5 / 26.2のsharing runtime matrixが成功。公開の公式まどとは別に、既存共有の回帰確認として実行。 |
+| 見た目 | Simulatorの受け取り前・写真一覧・写真詳細・停止後・準備中の5画面を画像で確認。確認画像は合成fixture。正式写真、実機ホーム画面の公式Widget、更新頻度の実測は未確認。 |
+
+- 最終コードのCI: https://github.com/soso-so-27/neko-widget/actions/runs/34480800864 （全4 job成功。2026-09-10確認）
+- 直前コードの確認結果: https://github.com/soso-so-27/neko-widget/actions/runs/34477706539
+- 確認画像: `C:/dev/neko-widget-official-window-evidence-20260910/34477706539/mainline-screen-attachments/`。`manifest.json`に画面名と画像の対応を保持。
+
+上の確認をもって、正式写真の継続配信や実機でのWidget体験まで確認済みとはしない。
