@@ -222,6 +222,8 @@ final class CandidateTileProbeTests: XCTestCase {
         let requests: Int
         let validRegions: Int
         let withheld: Bool
+        let failureReasons: [String: Int]
+        let maximumBoxBoundaryExcursion: Double
         let identityDistanceEvaluated = false
     }
 
@@ -259,10 +261,38 @@ final class CandidateTileProbeTests: XCTestCase {
                 guard case .success = original.result else {
                     return Observation(fixture: fixture.name, expectedCats: fixture.cats,
                         rawAccepted: original.acceptedBoxes.count, originalCropUsable: false,
-                        tileStatus: "notEligibleOriginal", requests: 0, validRegions: 0, withheld: false)
+                        tileStatus: "notEligibleOriginal", requests: 0, validRegions: 0, withheld: false,
+                        failureReasons: [:], maximumBoxBoundaryExcursion: 0)
                 }
                 // This isolates the detector hypothesis; no identity vectors/references are evaluated.
-                let check = try CandidateTileProbe.check(image)
+                // Test-only observability: do not change the detector, coordinates, gate or fixtures.
+                var failures: [String: Int] = [:]
+                var maximumExcursion = 0.0
+                let check = try CandidateTileProbe.check(image) { tile in
+                    let inspected: (result: Result<CGImage, IdentityInputIssue>, diagnostic: IdentityAnimalDetectionDiagnostic, acceptedBoxes: [CGRect])
+                    do { inspected = try IdentityImagePipeline.inspectCatCrop(tile) }
+                    catch {
+                        failures["detectorThrown", default: 0] += 1
+                        throw error
+                    }
+                    if !inspected.diagnostic.resultsAvailable { failures["resultsUnavailable", default: 0] += 1 }
+                    if inspected.diagnostic.acceptedCatObservationCount != inspected.acceptedBoxes.count {
+                        failures["countMismatch", default: 0] += 1
+                    }
+                    if inspected.acceptedBoxes.count > 4 { failures["excessBoxes", default: 0] += 1 }
+                    for box in inspected.acceptedBoxes {
+                        let coordinates = [box.minX, box.minY, box.width, box.height, box.maxX, box.maxY]
+                        if box.isNull || box.isInfinite || !coordinates.allSatisfy(\.isFinite) {
+                            failures["nonfiniteBox", default: 0] += 1
+                        } else if box.width <= 0 || box.height <= 0 {
+                            failures["emptyBox", default: 0] += 1
+                        } else if box.minX < 0 || box.minY < 0 || box.maxX > 1 || box.maxY > 1 {
+                            failures["outOfBoundsBox", default: 0] += 1
+                            maximumExcursion = max(maximumExcursion, Double(max(-box.minX, -box.minY, box.maxX - 1, box.maxY - 1)))
+                        }
+                    }
+                    return (inspected.diagnostic, inspected.acceptedBoxes)
+                }
                 XCTAssertTrue((0...4).contains(check.requests))
                 XCTAssertTrue((0...16).contains(check.validRegions))
                 if check.status != .incomplete { XCTAssertEqual(check.requests, 4) }
@@ -270,7 +300,8 @@ final class CandidateTileProbeTests: XCTestCase {
                 return Observation(fixture: fixture.name, expectedCats: fixture.cats,
                     rawAccepted: original.acceptedBoxes.count, originalCropUsable: true,
                     tileStatus: check.status.rawValue, requests: check.requests,
-                    validRegions: check.validRegions, withheld: check.withholdsCandidate)
+                    validRegions: check.validRegions, withheld: check.withholdsCandidate,
+                    failureReasons: failures, maximumBoxBoundaryExcursion: maximumExcursion)
             }
             rows.append(row)
         }
