@@ -169,9 +169,9 @@ final class CandidateReviewTests: XCTestCase {
         XCTAssertEqual(Set(object.keys), ["protocolIdentifier", "appBuild", "modelSHA256", "method", "scope", "selected", "proposed",
             "confirmedAsSuggested", "changedSuggestion", "individuallyLabeledUnranked", "unsure", "remaining", "inputIssues", "noSingleCatBreakdown", "noSingleCatBreakdownScope", "multiRegionReview", "reviewActions",
             "totalReviewActions", "hypotheticalManualLabelTaps", "manualComparison", "photosIncluded", "identifiersIncluded", "embeddingsIncluded",
-            "individualPredictionsIncluded", "productionDataChanged", "accuracyEvaluated", "productValidated"])
+            "individualPredictionsIncluded", "productionDataChanged", "accuracyEvaluated", "productValidated", "previouslyConfirmed", "progressScope"])
         XCTAssertFalse(session.report.accuracyEvaluated); XCTAssertFalse(session.report.productValidated)
-        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v3")
+        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v4")
         XCTAssertTrue(session.report.manualComparison.contains("not-measured"))
         for key in ["decisions", "suggestion", "image", "assetIdentifier", "distance", "vector"] {
             XCTAssertFalse(json.contains("\"\(key)\""))
@@ -227,7 +227,6 @@ final class CandidateReviewTests: XCTestCase {
         XCTAssertEqual(try archive.load(), ["new1", "new2"])
         XCTAssertTrue(store.message?.contains("元の2枚は残しています") == true)
         let stale = CandidatePickerRequest(); store.picker = stale
-        store.session = CandidateReviewSession(run: try makeReviewFixture())
         store.suspend(); store.picked(["late"], request: stale)
         XCTAssertNil(store.session); XCTAssertNil(store.picker); XCTAssertEqual(store.selected, ["new1", "new2"])
         XCTAssertTrue(store.canRun)

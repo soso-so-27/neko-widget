@@ -181,7 +181,7 @@ final class CandidateRegionReviewTests: XCTestCase {
         for size in [CGSize(width: 390, height: 844), CGSize(width: 320, height: 568)] {
             let window = UIWindow(windowScene: scene)
             window.frame = CGRect(origin: .zero, size: size)
-            let host = UIHostingController(rootView: CandidatePhotoReview(photo: photo, choice: nil, choose: { _ in })
+            let host = UIHostingController(rootView: CandidatePhotoReview(photo: photo, choice: nil, choose: { _ in true })
                 .environment(\.colorScheme, .dark))
             window.rootViewController = host; window.makeKeyAndVisible()
             defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
