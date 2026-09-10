@@ -207,10 +207,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         searchField.tap()
         searchField.typeText("ねこのまど")
 
-        guard let widgetSearchResult = waitForWidgetGalleryResult(
-            in: springboard,
-            timeout: 20
-        ) else {
+        guard let widgetSearchResult = findFixtureGalleryResult(in: springboard) else {
             fail(
                 "The Widget gallery did not return ねこのまど.",
                 application: springboard
@@ -316,6 +313,50 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                 .tap()
         }
         return nil
+    }
+
+    @MainActor
+    private func findFixtureGalleryResult(in springboard: XCUIApplication) -> XCUIElement? {
+        if let result = waitForWidgetGalleryResult(in: springboard, timeout: 20) {
+            return result
+        }
+
+        // A freshly installed extension may be absent from the first catalog.
+        // Preserve that evidence, then reopen the catalog once. This prepares
+        // the visual fixture; it does not prove immediate install availability.
+        let hierarchy = XCTAttachment(string: springboard.debugDescription)
+        hierarchy.name = "Widget Gallery before single reopen"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        captureScreenshot(named: "widget-gallery-before-single-reopen")
+
+        guard let close = waitForElement(
+            in: springboard, labels: ["Close", "閉じる"], elementTypes: [.button], timeout: 5
+        ) else { return nil }
+        close.tap()
+        guard let edit = waitForElement(
+            in: springboard, labels: ["Edit", "編集"], elementTypes: [.button], timeout: 5
+        ) else { return nil }
+        edit.tap()
+        guard let addWidget = waitForElement(
+            in: springboard, labels: ["Add Widget", "ウィジェットを追加"],
+            elementTypes: [.button, .staticText, .menuItem], timeout: 5
+        ) else { return nil }
+        addWidget.tap()
+        guard let search = waitForFirstElement(springboard.searchFields, timeout: 5) else { return nil }
+        search.tap()
+        if let value = search.value as? String, value != search.placeholderValue, !value.isEmpty {
+            let clear = search.buttons.matching(NSPredicate(
+                format: "label IN %@", ["Clear text", "テキストを消去"]
+            )).firstMatch
+            guard clear.waitForExistence(timeout: 5), clear.isHittable else { return nil }
+            clear.tap()
+            guard let cleared = search.value as? String,
+                  cleared.isEmpty || cleared == search.placeholderValue else { return nil }
+        }
+        search.typeText("ねこのまど")
+        guard search.value as? String == "ねこのまど" else { return nil }
+        return waitForWidgetGalleryResult(in: springboard, timeout: 20)
     }
 
     @MainActor
