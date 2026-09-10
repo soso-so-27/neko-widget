@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-enum CandidateReviewChoice: String, CaseIterable, Hashable {
+enum CandidateReviewChoice: String, CaseIterable, Hashable, Codable {
     case a, b, both, other, unsure
     var title: String {
         switch self {
@@ -84,8 +84,29 @@ struct CandidateReviewSession {
     private(set) var decisions: [Int: CandidateReviewChoice] = [:]
     private(set) var excluded: Set<Int> = []
     private(set) var actions: [String: Int] = [:]
-    private var previous: [Int: CandidateReviewChoice]?
-    init(run: CandidateReviewRun) { self.run = run }
+    struct UndoState {
+        let decisions: [Int: CandidateReviewChoice]
+        let restoredIDs: Set<Int>
+    }
+    private(set) var restoredIDs: Set<Int> = []
+    private(set) var previous: UndoState?
+    init(run: CandidateReviewRun, progress: CandidateSavedProgress? = nil, identifiers: [String] = []) {
+        self.run = run
+        if let progress {
+            func mapped(_ values: [String: CandidateReviewChoice]) -> [Int: CandidateReviewChoice] {
+                Dictionary(uniqueKeysWithValues: identifiers.enumerated().compactMap { index, id in
+                    values[id].map { (index, $0) }
+                })
+            }
+            decisions = mapped(progress.decisions)
+            restoredIDs = Set(decisions.keys)
+            excluded = Set(identifiers.enumerated().compactMap { progress.excluded.contains($0.element) ? $0.offset : nil })
+            previous = progress.previousDecisions.map { values in
+                let choices = mapped(values)
+                return UndoState(decisions: choices, restoredIDs: Set(choices.keys))
+            }
+        }
+    }
     var canUndo: Bool { previous != nil }
     var remaining: Int { run.photos.filter { decisions[$0.id] == nil }.count }
 
@@ -104,7 +125,7 @@ struct CandidateReviewSession {
         guard group == .a || group == .b else { return }
         let values = pending(group).filter { !excluded.contains($0.id) && $0.image != nil }
         guard !values.isEmpty else { return }
-        previous = decisions
+        previous = .init(decisions: decisions, restoredIDs: restoredIDs)
         for photo in values { decisions[photo.id] = group }
         record("batchConfirmation")
     }
@@ -114,19 +135,28 @@ struct CandidateReviewSession {
               photo.image != nil || choice == .unsure else { return }
         record("individualChoice")
         guard decisions[id] != choice else { return }
-        previous = decisions
+        previous = .init(decisions: decisions, restoredIDs: restoredIDs)
+        restoredIDs.remove(id)
         decisions[id] = choice
     }
 
     mutating func undo() {
         guard let previous else { return }
-        decisions = previous
+        decisions = previous.decisions
+        restoredIDs = previous.restoredIDs
         self.previous = nil
         record("undo")
     }
 
+    mutating func unconfirm(_ id: Int) {
+        guard decisions[id] != nil else { return }
+        previous = .init(decisions: decisions, restoredIDs: restoredIDs)
+        decisions.removeValue(forKey: id); restoredIDs.remove(id)
+        record("individualRemoval")
+    }
+
     mutating func record(_ action: String) {
-        guard ["excludeToggle", "batchConfirmation", "individualChoice", "undo", "openPhoto", "closePhoto"].contains(action) else { return }
+        guard ["excludeToggle", "batchConfirmation", "individualChoice", "individualRemoval", "undo", "openPhoto", "closePhoto"].contains(action) else { return }
         actions[action, default: 0] += 1
     }
 
@@ -140,7 +170,7 @@ struct CandidateCropFailureCount: Encodable {
 }
 
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v3"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v4"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let method = "second-nearest-of-five-per-cat;ranking-only;no-acceptance-or-online-learning"
@@ -152,6 +182,8 @@ struct CandidateReviewReport: Encodable {
     let individuallyLabeledUnranked: Int
     let unsure: Int
     let remaining: Int
+    let previouslyConfirmed: Int
+    let progressScope = "human-decisions-restored-only;restored-excluded-from-current-suggestion-comparison;actions-since-open;not-accuracy"
     let inputIssues: [String: Int]
     let noSingleCatBreakdown: [CandidateCropFailureCount]
     let noSingleCatBreakdownScope = "existing-detector-and-crop-status-only;multiple-regions-not-confirmed-cat-count;no-additional-detection-or-identity-accuracy-claim"
@@ -172,15 +204,16 @@ struct CandidateReviewReport: Encodable {
         let photos = session.run.photos
         selected = photos.count
         proposed = photos.filter { $0.batchSuggestion != nil }.count
-        confirmedAsSuggested = photos.filter { $0.batchSuggestion != nil && session.decisions[$0.id] == $0.batchSuggestion }.count
+        previouslyConfirmed = session.restoredIDs.count
+        confirmedAsSuggested = photos.filter { !session.restoredIDs.contains($0.id) && $0.batchSuggestion != nil && session.decisions[$0.id] == $0.batchSuggestion }.count
         changedSuggestion = photos.filter {
-            guard let suggestion = $0.batchSuggestion, let choice = session.decisions[$0.id] else { return false }
+            guard !session.restoredIDs.contains($0.id), let suggestion = $0.batchSuggestion, let choice = session.decisions[$0.id] else { return false }
             return choice != .unsure && choice != suggestion
         }.count
         individuallyLabeledUnranked = photos.filter {
-            $0.batchSuggestion == nil && session.decisions[$0.id] != nil && session.decisions[$0.id] != .unsure
+            !session.restoredIDs.contains($0.id) && $0.batchSuggestion == nil && session.decisions[$0.id] != nil && session.decisions[$0.id] != .unsure
         }.count
-        unsure = session.decisions.values.filter { $0 == .unsure }.count
+        unsure = session.decisions.filter { !session.restoredIDs.contains($0.key) && $0.value == .unsure }.count
         remaining = session.remaining
         inputIssues = Dictionary(uniqueKeysWithValues: CandidateReviewIssue.allCases.map { issue in
             (issue.rawValue, photos.filter { $0.issue == issue }.count)

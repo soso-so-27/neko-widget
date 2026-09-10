@@ -34,7 +34,7 @@ private struct ProbeView: View {
                     NavigationLink { CandidateReviewView() } label: {
                         Label("猫の候補をまとめて確認", systemImage: "rectangle.stack.badge.person.crop")
                     }.disabled(runningMode != nil)
-                    Text("保存した見本を再利用。写真をまとめて選び、候補を確認する試作です。")
+                    Text("猫A/Bの2匹を対象にした先行テスト。確認結果を保存し、続きから再開できます。本アプリには反映しません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
