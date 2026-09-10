@@ -24,7 +24,7 @@ targets:
         buildPhase: resources
       - path: Resources/model-fixed.onnx
         buildPhase: resources
-      - path: Resources/yolox-nano.onnx
+      - path: Resources/yolox-s.onnx
         buildPhase: resources
       # Fixed generated controls for same-device diagnosis. No user photos.
       - path: ../../NekoWidget/ci/fixtures/cats/cat-orange-square.png

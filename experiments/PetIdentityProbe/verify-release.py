@@ -26,7 +26,7 @@ PHOTO_PURPOSE = "選んだ猫写真だけを端末内で識別精度の検証に
 MODEL_SHA256 = "32adffda4e65f790ae624d828b79db7a18f7fdb1facdce1cc91bb9951d948c0b"
 MODEL_DIGESTS = {
     "model-fixed.onnx": MODEL_SHA256,
-    "yolox-nano.onnx": "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d",
+    "yolox-s.onnx": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
 }
 ENTITLEMENTS = {
     "application-identifier", "com.apple.developer.team-identifier",

@@ -171,7 +171,7 @@ final class CandidateReviewTests: XCTestCase {
             "totalReviewActions", "hypotheticalManualLabelTaps", "manualComparison", "photosIncluded", "identifiersIncluded", "embeddingsIncluded",
             "individualPredictionsIncluded", "productionDataChanged", "accuracyEvaluated", "productValidated", "previouslyConfirmed", "progressScope", "distanceFiltering", "qualityComparison", "objectComparison"])
         XCTAssertFalse(session.report.accuracyEvaluated); XCTAssertFalse(session.report.productValidated)
-        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v8")
+        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v9")
         XCTAssertTrue(session.report.manualComparison.contains("not-measured"))
         for key in ["decisions", "suggestion", "image", "assetIdentifier", "distance", "vector"] {
             XCTAssertFalse(json.contains("\"\(key)\""))

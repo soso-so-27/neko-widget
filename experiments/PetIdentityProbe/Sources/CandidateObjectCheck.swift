@@ -1,14 +1,16 @@
 import CoreGraphics
 import Foundation
 
-enum CandidateObjectStatus: String, CaseIterable { case noCatRegion, oneRegion, multipleRegions, unusableRegions, failed }
+enum CandidateObjectStatus: String, CaseIterable {
+    case noCatRegion, oneRegion, multipleSeparatedRegions, overlappingRegions, unusableRegions, failed
+}
 
 // Only counts leave the per-photo processing scope. Not Codable/persisted.
 struct CandidateObjectCheck {
     let status: CandidateObjectStatus
     let detectedRegions: Int
     let usableRegions: Int
-    var withholdsCandidate: Bool { status == .multipleRegions }
+    var withholdsCandidate: Bool { status == .multipleSeparatedRegions }
     static let failed = Self(status: .failed, detectedRegions: 0, usableRegions: 0)
 }
 
@@ -24,9 +26,11 @@ enum CandidateObjectProbe {
     }
 
     static func assess(_ boxes: [CGRect], width: Int, height: Int) -> CandidateObjectCheck {
-        guard (32...1024).contains(width), (32...1024).contains(height), boxes.count <= 3549 else { return .failed }
+        guard (32...1024).contains(width), (32...1024).contains(height), boxes.count <= CandidateObjectDetector.outputRows else { return .failed }
         let bounds = CGRect(x: 0, y: 0, width: width, height: height)
         var usable = 0
+        var minimumRight = CGFloat.infinity, maximumLeft = -CGFloat.infinity
+        var minimumBottom = CGFloat.infinity, maximumTop = -CGFloat.infinity
         for box in boxes {
             guard !box.isNull, !box.isInfinite, box.size.width > 0, box.size.height > 0,
                   [box.minX, box.minY, box.maxX, box.maxY, box.width, box.height].allSatisfy(\.isFinite) else { return .failed }
@@ -35,10 +39,18 @@ enum CandidateObjectProbe {
             // and with >=32px visible extent on each axis. Never alter identity crops.
             let visible = box.intersection(bounds)
             if bounds.contains(CGPoint(x: box.midX, y: box.midY)),
-               !visible.isNull, visible.width >= 32, visible.height >= 32 { usable += 1 }
+               !visible.isNull, visible.width >= 32, visible.height >= 32 {
+                usable += 1
+                minimumRight = min(minimumRight, visible.maxX); maximumLeft = max(maximumLeft, visible.minX)
+                minimumBottom = min(minimumBottom, visible.maxY); maximumTop = max(maximumTop, visible.minY)
+            }
         }
         let status: CandidateObjectStatus
-        if usable >= 2 { status = .multipleRegions }
+        // A strict positive gap on either axis proves a separated pair of boxes,
+        // NOT two cats. Touching edges, overlapping face/body boxes are unresolved.
+        // Extrema give the same pair-existence check in O(n), without retaining boxes.
+        if usable >= 2 && (minimumRight < maximumLeft || minimumBottom < maximumTop) { status = .multipleSeparatedRegions }
+        else if usable >= 2 { status = .overlappingRegions }
         else if usable != boxes.count { status = .unusableRegions }
         else if usable == 1 { status = .oneRegion }
         else { status = .noCatRegion }
@@ -47,15 +59,18 @@ enum CandidateObjectProbe {
 }
 
 struct CandidateObjectComparison: Encodable {
-    let detector = "YOLOX-Nano-0.1.1rc0"
+    let detector = "YOLOX-S-0.1.1rc0"
     let detectorSHA256 = CandidateObjectDetector.modelSHA256
-    let method = "raw-single-distance-passed-only;whole-photo-416-BGR;score0.3;class-agnostic-nms0.45;center-inside-and-visible32px;two-regions-withhold-only"
+    let method = "raw-single-distance-passed-only;whole-photo-640-BGR;score0.3;class-agnostic-nms0.45;center-inside-and-visible32px;strictly-separated-visible-pair-withhold-only;touching-or-overlap-unresolved"
     let scope = "fixed-saved-human-choices-not-training;no-cat-or-failure-keeps-baseline-not-single-cat-proof;no-new-identity-inference;not-independent-accuracy"
     let baselineProposals: Int
     let baselineMatchingProposals: Int
     let baselineBothInSingleProposals: Int
     let attemptedPhotos: Int
     let statuses: [String: Int]
+    let humanChoiceColumns = ["a", "b", "both", "other", "unsure", "unreviewed"]
+    let statusRows: [String]
+    let statusByHumanChoice: [[Int]]
     let withheldPhotos: Int
     let withheldMatchingAOrBChoices: Int
     let withheldDifferentCatProposals: Int
@@ -76,6 +91,13 @@ struct CandidateObjectComparison: Encodable {
         statuses = Dictionary(uniqueKeysWithValues: CandidateObjectStatus.allCases.map { status in
             (status.rawValue, checked.filter { $0.objectCheck?.status == status }.count)
         })
+        statusRows = CandidateObjectStatus.allCases.map(\.rawValue)
+        let choices: [CandidateReviewChoice?] = [.a, .b, .both, .other, .unsure, nil]
+        statusByHumanChoice = CandidateObjectStatus.allCases.map { status in
+            choices.map { choice in
+                checked.filter { $0.objectCheck?.status == status && session.decisions[$0.id] == choice }.count
+            }
+        }
         withheldPhotos = withheld.count
         withheldMatchingAOrBChoices = withheld.filter { session.decisions[$0.id] == $0.batchSuggestionBeforeObjectCheck }.count
         withheldDifferentCatProposals = withheld.filter {

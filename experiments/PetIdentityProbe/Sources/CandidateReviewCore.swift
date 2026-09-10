@@ -84,7 +84,7 @@ struct CandidateReviewPhoto: Identifiable {
     }
 
     var issueTitle: String? {
-        if objectCheck?.withholdsCandidate == true { return "複数の検出範囲があるため、写真全体で確認" }
+        if objectCheck?.withholdsCandidate == true { return "離れた検出範囲があるため、写真全体で確認" }
         if let regionReview { return regionReview.title }
         if let title = distanceAssessment?.withheldTitle { return title }
         return issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
@@ -188,7 +188,7 @@ struct CandidateCropFailureCount: Encodable {
 }
 
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v8"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v9"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let method = "second-nearest-of-five-per-cat;registration-radius-filter1.25;yolox-multiregion-withholding;no-ratio-gate-or-identity-acceptance-or-online-learning"

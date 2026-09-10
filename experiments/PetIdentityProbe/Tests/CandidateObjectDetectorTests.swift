@@ -30,20 +30,20 @@ final class CandidateObjectDetectorTests: XCTestCase {
 
     func testSRGBRasterBecomesUnflippedUnnormalizedBGRWithHalfPixelSampling() throws {
         let input = try Detector.preprocess(try image())
-        let side = 416, plane = side * side
+        let side = 640, plane = side * side
         XCTAssertEqual(input.values.count, plane * 3)
         XCTAssertEqual(input.resizedWidth, side); XCTAssertEqual(input.resizedHeight, side)
         func pixel(_ x: Int, _ y: Int) -> [Float] {
             (0..<3).map { input.values[$0 * plane + y * side + x] }
         }
         XCTAssertEqual(pixel(0, 0), [0, 0, 255])
-        XCTAssertEqual(pixel(415, 0), [0, 255, 0])
-        XCTAssertEqual(pixel(0, 415), [255, 0, 0])
-        XCTAssertEqual(pixel(415, 415), [255, 255, 255])
-        // Destination center -> source (i + .5) * (2 / 416) - .5, not align-corners.
-        let fraction = (Double(156) + 0.5) * 2 / 416 - 0.5
-        XCTAssertEqual(pixel(156, 0)[1], Float((255 * fraction).rounded()))
-        XCTAssertEqual(pixel(156, 0)[2], Float((255 * (1 - fraction)).rounded()))
+        XCTAssertEqual(pixel(639, 0), [0, 255, 0])
+        XCTAssertEqual(pixel(0, 639), [255, 0, 0])
+        XCTAssertEqual(pixel(639, 639), [255, 255, 255])
+        // Destination center -> source (i + .5) * (2 / 640) - .5, not align-corners.
+        let fraction = (Double(240) + 0.5) * 2 / 640 - 0.5
+        XCTAssertEqual(pixel(240, 0)[1], Float((255 * fraction).rounded()))
+        XCTAssertEqual(pixel(240, 0)[2], Float((255 * (1 - fraction)).rounded()))
         XCTAssertTrue(input.values.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 255 && $0.rounded() == $0 })
     }
 
@@ -51,12 +51,12 @@ final class CandidateObjectDetectorTests: XCTestCase {
         let width = 1_001, height = 701
         let rgba = [UInt8](repeating: 255, count: width * height * 4)
         let input = try Detector.tensor(rgba: rgba, width: width, height: height)
-        XCTAssertEqual(input.resizedWidth, 416); XCTAssertEqual(input.resizedHeight, 291)
+        XCTAssertEqual(input.resizedWidth, 640); XCTAssertEqual(input.resizedHeight, 448)
         for channel in 0..<3 {
-            let offset = channel * 416 * 416
-            XCTAssertEqual(input.values[offset + 290 * 416 + 415], 255)
-            XCTAssertEqual(input.values[offset + 291 * 416], 114)
-            XCTAssertEqual(input.values[offset + 415 * 416 + 415], 114)
+            let offset = channel * 640 * 640
+            XCTAssertEqual(input.values[offset + 447 * 640 + 639], 255)
+            XCTAssertEqual(input.values[offset + 448 * 640], 114)
+            XCTAssertEqual(input.values[offset + 639 * 640 + 639], 114)
         }
         XCTAssertThrowsError(try Detector.tensor(rgba: [], width: 0, height: 4))
         XCTAssertThrowsError(try Detector.tensor(rgba: [], width: 1_025, height: 4))
@@ -67,53 +67,53 @@ final class CandidateObjectDetectorTests: XCTestCase {
     func testDecodeAllThreeStridesAndPreserveRawTopLeftCoordinates() throws {
         var output = emptyOutput()
         put(&output, row: 0)
-        put(&output, row: 52 * 52)
-        put(&output, row: 52 * 52 + 26 * 26)
-        let decoded = try Detector.decodedBoxes(output, shape: [1, 3549, 85], width: 832, height: 416)
+        put(&output, row: 80 * 80)
+        put(&output, row: 80 * 80 + 40 * 40)
+        let decoded = try Detector.decodedBoxes(output, shape: [1, 8400, 85], width: 640, height: 640)
         XCTAssertEqual(decoded.map(\.box), [
+            CGRect(x: 4, y: 12, width: 8, height: 8),
             CGRect(x: 8, y: 24, width: 16, height: 16),
-            CGRect(x: 16, y: 48, width: 32, height: 32),
-            CGRect(x: 32, y: 96, width: 64, height: 64)
+            CGRect(x: 16, y: 48, width: 32, height: 32)
         ])
         output = emptyOutput()
         put(&output, row: 0, x: 0, y: 0)
-        XCTAssertEqual(try Detector.catBoxes(output, shape: [1, 3549, 85], width: 416, height: 416),
+        XCTAssertEqual(try Detector.catBoxes(output, shape: [1, 8400, 85], width: 640, height: 640),
             [CGRect(x: -4, y: -4, width: 8, height: 8)]) // No clipping or Vision bottom-left conversion.
         output = emptyOutput()
-        put(&output, row: 53, x: 0, y: 0)
-        XCTAssertEqual(try Detector.decodedBoxes(output, shape: [1, 3549, 85], width: 416, height: 416).first?.box,
+        put(&output, row: 81, x: 0, y: 0)
+        XCTAssertEqual(try Detector.decodedBoxes(output, shape: [1, 8400, 85], width: 640, height: 640).first?.box,
             CGRect(x: 4, y: 4, width: 8, height: 8)) // x grid varies first.
     }
 
     func testDecodeRejectsWrongShapeNonfiniteAndInvalidDimensionsEvenAtLowScore() throws {
-        let shape = [1, 3549, 85]
+        let shape = [1, 8400, 85]
         let empty = emptyOutput()
-        XCTAssertThrowsError(try Detector.decodedBoxes(empty, shape: [3549, 85], width: 416, height: 416))
-        XCTAssertThrowsError(try Detector.decodedBoxes(Array(empty.dropLast()), shape: shape, width: 416, height: 416))
+        XCTAssertThrowsError(try Detector.decodedBoxes(empty, shape: [8400, 85], width: 640, height: 640))
+        XCTAssertThrowsError(try Detector.decodedBoxes(Array(empty.dropLast()), shape: shape, width: 640, height: 640))
         for (column, value) in [(0, Float.nan), (84, Float.infinity), (2, Float(1_000)),
                                 (3, Float(-1_000)), (4, Float(-0.1)), (5, Float(1.1))] {
             var broken = empty
             broken[column] = value
-            XCTAssertThrowsError(try Detector.decodedBoxes(broken, shape: shape, width: 416, height: 416), "column \(column)")
+            XCTAssertThrowsError(try Detector.decodedBoxes(broken, shape: shape, width: 640, height: 640), "column \(column)")
         }
         var valid = empty
         put(&valid, row: 0, logWidth: -1, logHeight: -1)
-        XCTAssertEqual(try Detector.decodedBoxes(valid, shape: shape, width: 416, height: 416).count, 1)
+        XCTAssertEqual(try Detector.decodedBoxes(valid, shape: shape, width: 640, height: 640).count, 1)
         // Negative log-width is valid; zero/negative decoded dimensions are not.
     }
 
     func testScoresMultiplyAndCatFilterFollowsClassAgnosticNMS() throws {
-        let shape = [1, 3549, 85]
+        let shape = [1, 8400, 85]
         var output = emptyOutput()
         put(&output, row: 0, probability: 0.1)
         put(&output, row: 10, probability: 0.3)
         put(&output, row: 20, objectness: 0.5, probability: 0.5)
-        XCTAssertEqual(try Detector.decodedBoxes(output, shape: shape, width: 416, height: 416).count, 2)
-        XCTAssertEqual(try Detector.catBoxes(output, shape: shape, width: 416, height: 416).count, 1)
+        XCTAssertEqual(try Detector.decodedBoxes(output, shape: shape, width: 640, height: 640).count, 2)
+        XCTAssertEqual(try Detector.catBoxes(output, shape: shape, width: 640, height: 640).count, 1)
         output = emptyOutput()
         put(&output, row: 0, x: 2, classIndex: 16, probability: 0.9)
         put(&output, row: 1, x: 1, probability: 0.8) // Same rectangle as higher-score dog.
-        XCTAssertEqual(try Detector.catBoxes(output, shape: shape, width: 416, height: 416), [])
+        XCTAssertEqual(try Detector.catBoxes(output, shape: shape, width: 640, height: 640), [])
     }
 
     func testNMSInclusiveIoUBoundaryAndBoundedMalformedInputs() throws {
@@ -132,7 +132,7 @@ final class CandidateObjectDetectorTests: XCTestCase {
             XCTAssertThrowsError(try Detector.suppressOverlaps([box(rect)]))
         }
         XCTAssertThrowsError(try Detector.suppressOverlaps([box(large.box, .nan)]))
-        XCTAssertThrowsError(try Detector.suppressOverlaps(Array(repeating: large, count: 3550)))
+        XCTAssertThrowsError(try Detector.suppressOverlaps(Array(repeating: large, count: 8401)))
     }
 
     func testCancellationThrowsRatherThanReturningEmptyDetections() async throws {

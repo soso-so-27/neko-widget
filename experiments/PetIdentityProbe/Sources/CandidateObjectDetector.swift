@@ -9,10 +9,10 @@ import OnnxRuntimeBindings
 /// https://github.com/Megvii-BaseDetection/YOLOX/blob/main/yolox/utils/demo_utils.py
 /// Call serially on the photo worker. No image, tensor or result is retained by this object.
 final class CandidateObjectDetector {
-    static let modelSHA256 = "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d"
-    static let modelByteCount = 3_659_407
-    static let inputSide = 416
-    static let outputRows = 3_549
+    static let modelSHA256 = "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063"
+    static let modelByteCount = 35_858_002
+    static let inputSide = 640
+    static let outputRows = 8_400
     static let outputColumns = 85
 
     enum Failure: Error, Equatable {
@@ -37,7 +37,7 @@ final class CandidateObjectDetector {
 
     init(bundle: Bundle = .main) throws {
         try Task.checkCancellation()
-        guard let url = bundle.url(forResource: "yolox-nano", withExtension: "onnx") else {
+        guard let url = bundle.url(forResource: "yolox-s", withExtension: "onnx") else {
             throw Failure.missingModel
         }
         let model = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -64,7 +64,7 @@ final class CandidateObjectDetector {
         try Task.checkCancellation()
         let input = try Self.preprocess(image)
         let bytes = input.values.withUnsafeBytes { NSMutableData(bytes: $0.baseAddress!, length: $0.count) }
-        let tensor = try ORTValue(tensorData: bytes, elementType: .float, shape: [1, 3, 416, 416])
+        let tensor = try ORTValue(tensorData: bytes, elementType: .float, shape: [1, 3, 640, 640])
         try Task.checkCancellation()
         let result = try session.run(withInputs: ["images": tensor], outputNames: ["output"], runOptions: nil)
         // A synchronous ORT call may finish after cancellation; never publish its result.

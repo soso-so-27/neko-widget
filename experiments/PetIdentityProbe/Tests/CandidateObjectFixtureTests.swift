@@ -20,7 +20,7 @@ final class CandidateObjectFixtureTests: XCTestCase {
         let identityEvaluated = false
     }
 
-    func testFixedThreeSinglesTwelvePlacementsAndSixPairsBeforeInternalDistribution() throws {
+    func testFixedSinglesPairsAndIsolatedSidesBeforeInternalDistribution() throws {
         let detector = try CandidateObjectDetector()
         let controls = try IdentityDetectorControlID.allCases.map { control -> (String, CGImage) in
             let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: control.rawValue, withExtension: "png"))
@@ -53,9 +53,23 @@ final class CandidateObjectFixtureTests: XCTestCase {
                         }
                     }
                 }))
+                // Remove either cat but preserve the other's exact scale/position.
+                // These dependent counterfactuals are not independent accuracy samples.
+                for remaining in 0..<2 {
+                    let image = [a.1, b.1][remaining]
+                    fixtures.append(.init(name: "\(a.0)+\(b.0)-\(vertical ? "vertical" : "horizontal")-isolated-\(remaining)", expectedCats: 1, image: {
+                        try self.canvas {
+                            let slot = vertical ? CGRect(x: 0, y: remaining*512, width: 1024, height: 512)
+                                                : CGRect(x: remaining*512, y: 0, width: 512, height: 1024)
+                            let scale = min(slot.width/CGFloat(image.width), slot.height/CGFloat(image.height))
+                            let w = CGFloat(image.width)*scale, h = CGFloat(image.height)*scale
+                            UIImage(cgImage: image).draw(in: CGRect(x: slot.midX-w/2, y: slot.midY-h/2, width: w, height: h))
+                        }
+                    }))
+                }
             }
         } }
-        XCTAssertEqual(fixtures.count, 21)
+        XCTAssertEqual(fixtures.count, 33); XCTAssertEqual(Set(fixtures.map(\.name)).count, 33)
         var rows: [Row] = []
         for fixture in fixtures {
             let row = try autoreleasepool { () throws -> Row in
@@ -68,7 +82,7 @@ final class CandidateObjectFixtureTests: XCTestCase {
                 let boxes = try detector.detect(image)
                 let checked = CandidateObjectProbe.assess(boxes, width: image.width, height: image.height)
                 XCTAssertNotEqual(checked.status, .failed)
-                if fixture.expectedCats == 2 {
+                if fixture.expectedCats == 2 || fixture.name == "cat-orange-square+cat-gray-portrait-vertical-isolated-1" {
                     let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
                     let rendered = UIGraphicsImageRenderer(size: CGSize(width: 512, height: 512), format: format).image { context in
                         UIImage(cgImage: image).draw(in: CGRect(x: 0, y: 0, width: 512, height: 512))
@@ -88,10 +102,12 @@ final class CandidateObjectFixtureTests: XCTestCase {
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         print("CANDIDATE_OBJECT_FIXED_FIXTURES_JSON=\(try XCTUnwrap(String(data: encoder.encode(rows), encoding: .utf8)))")
-        // Mechanism gate, not 95% identity accuracy: improve at least one missed pair,
-        // and do not withhold a single-cat fixed control. Never tune to pass these inputs.
-        XCTAssertGreaterThan(rows.filter { $0.expectedCats == 2 && $0.additionalWithholding }.count, 0)
+        // Development/regression gate, not 95% identity accuracy. Cover the four
+        // originally missed fixed pairs and ALL single controls, including isolated sides.
+        XCTAssertEqual(rows.filter { $0.expectedCats == 2 && $0.additionalWithholding }.count, 4)
+        XCTAssertEqual(rows.filter { $0.expectedCats == 2 && $0.detectorStatus == "multipleSeparatedRegions" }.count, 6)
         XCTAssertEqual(rows.filter { $0.expectedCats == 1 && $0.additionalWithholding }.count, 0)
+        XCTAssertEqual(rows.filter { $0.expectedCats == 1 && $0.detectorStatus == "multipleSeparatedRegions" }.count, 0)
     }
 
     private func canvas(draw: () -> Void) throws -> CGImage {

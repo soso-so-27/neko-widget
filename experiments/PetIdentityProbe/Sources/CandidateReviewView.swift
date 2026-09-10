@@ -218,9 +218,9 @@ struct CandidateReviewBoard: View {
                     Divider()
                     Text("追加検出：\(objects.attemptedPhotos)枚を比較・\(objects.withheldPhotos)枚を個別確認へ")
                     Text("個別確認へ移した写真：両方 \(objects.withheldBothPhotos)枚・候補と同じA/B選択 \(objects.withheldMatchingAOrBChoices)枚・違うA/B選択 \(objects.withheldDifferentCatProposals)枚")
-                    Text("複数の範囲は頭数の確定ではありません。保存済みの判断は変えていません。")
+                    Text("離れた枠があっても頭数の確定ではありません。重なる枠だけでは区別できないため、元の候補を維持します。保存済みの判断は変えていません。")
                         .font(.footnote).foregroundStyle(.secondary)
-                    let unverified = (objects.statuses["failed"] ?? 0) + (objects.statuses["unusableRegions"] ?? 0)
+                    let unverified = (objects.statuses["failed"] ?? 0) + (objects.statuses["unusableRegions"] ?? 0) + (objects.statuses["overlappingRegions"] ?? 0)
                         + (objects.statuses["noCatRegion"] ?? 0)
                     if unverified > 0 {
                         Text("追加検出だけでは確認できない写真が\(unverified)枚あります。元の候補を維持していますが、1匹と確認できた意味ではありません。")

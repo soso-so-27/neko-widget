@@ -7,9 +7,9 @@ REVISION = "9dd4c915be29a81b116b3e30eb996c59d0e7ede0"
 SHA256 = "6a5e2373ab348bed588cef4072f3914ca9c8bacde3e8d0651019e8dad86b24ba"
 SIZE = 89_227_604
 URL = f"https://huggingface.co/open-noodle/pet-recognition-small/resolve/{REVISION}/recognition/model.onnx"
-DETECTOR_SHA256 = "c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d"
-DETECTOR_SIZE = 3_659_407
-DETECTOR_URL = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx"
+DETECTOR_SHA256 = "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063"
+DETECTOR_SIZE = 35_858_002
+DETECTOR_URL = "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.onnx"
 
 
 def verify(path, size=SIZE, sha256=SHA256):
@@ -44,7 +44,7 @@ def main():
     resources = Path(__file__).resolve().parent / "Resources"
     resources.mkdir(exist_ok=True)
     fetch(resources, "model.onnx", URL, SIZE, SHA256)
-    fetch(resources, "yolox-nano.onnx", DETECTOR_URL, DETECTOR_SIZE, DETECTOR_SHA256)
+    fetch(resources, "yolox-s.onnx", DETECTOR_URL, DETECTOR_SIZE, DETECTOR_SHA256)
 
 
 if __name__ == "__main__":

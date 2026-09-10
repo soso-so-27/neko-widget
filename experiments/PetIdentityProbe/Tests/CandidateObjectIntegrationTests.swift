@@ -13,7 +13,7 @@ final class CandidateObjectIntegrationTests: XCTestCase {
         let a = CGRect(x: -4, y: 4, width: 44, height: 60)
         let b = CGRect(x: 70, y: 4, width: 48, height: 60)
         let two = CandidateObjectProbe.assess([a, b], width: 128, height: 128)
-        XCTAssertEqual(two.status, .multipleRegions); XCTAssertTrue(two.withholdsCandidate)
+        XCTAssertEqual(two.status, .multipleSeparatedRegions); XCTAssertTrue(two.withholdsCandidate)
         XCTAssertEqual(two.usableRegions, 2); XCTAssertEqual(a.minX, -4)
         XCTAssertEqual(CandidateObjectProbe.assess([], width: 128, height: 128).status, .noCatRegion)
         XCTAssertEqual(CandidateObjectProbe.assess([a], width: 128, height: 128).status, .oneRegion)
@@ -37,11 +37,26 @@ final class CandidateObjectIntegrationTests: XCTestCase {
         }
     }
 
+    func testOverlappingFaceBodyAndTouchingEdgesStayUnresolved() throws {
+        let body = CGRect(x: 10, y: 20, width: 60, height: 100)
+        for other in [CGRect(x: 10, y: 0, width: 70, height: 50),
+                      CGRect(x: 20, y: 40, width: 40, height: 40),
+                      CGRect(x: 70, y: 20, width: 40, height: 80), body] {
+            let checked = CandidateObjectProbe.assess([body, other], width: 128, height: 128)
+            XCTAssertEqual(checked.status, .overlappingRegions); XCTAssertFalse(checked.withholdsCandidate)
+        }
+        let gap = CandidateObjectProbe.assess([body, CGRect(x: 71, y: 20, width: 40, height: 80)], width: 128, height: 128)
+        XCTAssertTrue(gap.withholdsCandidate)
+        let vertical = CandidateObjectProbe.assess([CGRect(x: 20, y: 0, width: 70, height: 40),
+                                                    CGRect(x: 20, y: 41, width: 70, height: 70)], width: 128, height: 128)
+        XCTAssertTrue(vertical.withholdsCandidate)
+    }
+
     private func fixture(restored: Bool) throws -> CandidateReviewSession {
         let image = try raster()
         let keptA = CandidateDistanceAssessment(ranking: .a, status: .withinReferenceRange)
         let keptB = CandidateDistanceAssessment(ranking: .b, status: .withinReferenceRange)
-        let two = CandidateObjectCheck(status: .multipleRegions, detectedRegions: 2, usableRegions: 2)
+        let two = CandidateObjectCheck(status: .multipleSeparatedRegions, detectedRegions: 2, usableRegions: 2)
         let run = CandidateReviewRun(photos: [
             .init(id: 0, image: image, suggestion: .a, issue: nil, distanceAssessment: keptA, objectCheck: two),
             .init(id: 1, image: image, suggestion: .a, issue: nil, distanceAssessment: keptA, objectCheck: two),
@@ -87,6 +102,13 @@ final class CandidateObjectIntegrationTests: XCTestCase {
         XCTAssertEqual(comparison.withheldMatchingAOrBChoices, 1)
         XCTAssertEqual(comparison.withheldDifferentCatProposals, 1)
         XCTAssertEqual(comparison.withheldBothPhotos, 1)
+        XCTAssertEqual(comparison.humanChoiceColumns, ["a", "b", "both", "other", "unsure", "unreviewed"])
+        XCTAssertEqual(comparison.statusByHumanChoice.flatMap { $0 }.reduce(0, +), comparison.attemptedPhotos)
+        for (index, status) in comparison.statusRows.enumerated() {
+            XCTAssertEqual(comparison.statusByHumanChoice[index].reduce(0, +), comparison.statuses[status])
+        }
+        let separated = try XCTUnwrap(comparison.statusRows.firstIndex(of: "multipleSeparatedRegions"))
+        XCTAssertEqual(comparison.statusByHumanChoice[separated], [2, 0, 1, 0, 0, 0])
         XCTAssertEqual(comparison.withheldPhotos, comparison.withheldMatchingAOrBChoices + comparison.withheldDifferentCatProposals
             + comparison.withheldBothPhotos + comparison.withheldOtherPhotos + comparison.withheldUnreviewedOrUnsurePhotos)
         let json = try XCTUnwrap(report.json)
@@ -94,7 +116,7 @@ final class CandidateObjectIntegrationTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let fields = try XCTUnwrap(object["objectComparison"] as? [String: Any])
         XCTAssertEqual(Set(fields.keys), ["detector", "detectorSHA256", "method", "scope", "baselineProposals", "baselineMatchingProposals",
-            "baselineBothInSingleProposals", "attemptedPhotos", "statuses", "withheldPhotos", "withheldMatchingAOrBChoices",
+            "baselineBothInSingleProposals", "attemptedPhotos", "statuses", "humanChoiceColumns", "statusRows", "statusByHumanChoice", "withheldPhotos", "withheldMatchingAOrBChoices",
             "withheldDifferentCatProposals", "withheldBothPhotos", "withheldOtherPhotos", "withheldUnreviewedOrUnsurePhotos", "savedChoicesCompared", "goalValidated"])
         XCTAssertFalse(comparison.goalValidated); XCTAssertFalse(report.productValidated)
         XCTAssertFalse(report.productionDataChanged); XCTAssertFalse(report.photosIncluded); XCTAssertFalse(report.identifiersIncluded)
