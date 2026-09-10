@@ -167,11 +167,11 @@ final class CandidateReviewTests: XCTestCase {
         let json = try XCTUnwrap(session.report.json)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["protocolIdentifier", "appBuild", "modelSHA256", "method", "scope", "selected", "proposed",
-            "confirmedAsSuggested", "changedSuggestion", "individuallyLabeledUnranked", "unsure", "remaining", "inputIssues", "noSingleCatBreakdown", "noSingleCatBreakdownScope", "reviewActions",
+            "confirmedAsSuggested", "changedSuggestion", "individuallyLabeledUnranked", "unsure", "remaining", "inputIssues", "noSingleCatBreakdown", "noSingleCatBreakdownScope", "multiRegionReview", "reviewActions",
             "totalReviewActions", "hypotheticalManualLabelTaps", "manualComparison", "photosIncluded", "identifiersIncluded", "embeddingsIncluded",
             "individualPredictionsIncluded", "productionDataChanged", "accuracyEvaluated", "productValidated"])
         XCTAssertFalse(session.report.accuracyEvaluated); XCTAssertFalse(session.report.productValidated)
-        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v2")
+        XCTAssertEqual(session.report.protocolIdentifier, "pet-candidate-confirmation-usability-v3")
         XCTAssertTrue(session.report.manualComparison.contains("not-measured"))
         for key in ["decisions", "suggestion", "image", "assetIdentifier", "distance", "vector"] {
             XCTAssertFalse(json.contains("\"\(key)\""))

@@ -2,12 +2,13 @@ import CoreGraphics
 import Foundation
 
 enum CandidateReviewChoice: String, CaseIterable, Hashable {
-    case a, b, other, unsure
+    case a, b, both, other, unsure
     var title: String {
         switch self {
         case .a: "猫A"
         case .b: "猫B"
-        case .other: "別の猫・両方"
+        case .both: "猫Aと猫B"
+        case .other: "別の猫"
         case .unsure: "わからない"
         }
     }
@@ -57,9 +58,18 @@ struct CandidateReviewPhoto: Identifiable {
     let suggestion: CandidateReviewChoice?
     let issue: CandidateReviewIssue?
     var cropDiagnostic: CandidateCropDiagnostic? = nil
+    var regionReview: CandidateRegionReview? = nil
+
+    // Region-level suggestions must never enter a photo-level bulk confirmation.
+    var batchSuggestion: CandidateReviewChoice? {
+        guard image != nil, issue == nil, regionReview == nil,
+              suggestion == .a || suggestion == .b else { return nil }
+        return suggestion
+    }
 
     var issueTitle: String? {
-        issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
+        if let regionReview { return regionReview.title }
+        return issue == .noSingleCat ? (cropDiagnostic?.title ?? issue?.title) : issue?.title
     }
 }
 
@@ -80,11 +90,11 @@ struct CandidateReviewSession {
     var remaining: Int { run.photos.filter { decisions[$0.id] == nil }.count }
 
     func pending(_ group: CandidateReviewChoice?) -> [CandidateReviewPhoto] {
-        run.photos.filter { decisions[$0.id] == nil && $0.suggestion == group }
+        run.photos.filter { decisions[$0.id] == nil && $0.batchSuggestion == group }
     }
 
     mutating func toggleExcluded(_ id: Int) {
-        guard let photo = run.photos.first(where: { $0.id == id }), photo.suggestion != nil,
+        guard let photo = run.photos.first(where: { $0.id == id }), photo.batchSuggestion != nil,
               photo.image != nil, decisions[id] == nil else { return }
         if !excluded.insert(id).inserted { excluded.remove(id) }
         record("excludeToggle")
@@ -130,7 +140,7 @@ struct CandidateCropFailureCount: Encodable {
 }
 
 struct CandidateReviewReport: Encodable {
-    let protocolIdentifier = "pet-candidate-confirmation-usability-v2"
+    let protocolIdentifier = "pet-candidate-confirmation-usability-v3"
     let appBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
     let modelSHA256 = ProbeModelFile.sha256
     let method = "second-nearest-of-five-per-cat;ranking-only;no-acceptance-or-online-learning"
@@ -145,6 +155,7 @@ struct CandidateReviewReport: Encodable {
     let inputIssues: [String: Int]
     let noSingleCatBreakdown: [CandidateCropFailureCount]
     let noSingleCatBreakdownScope = "existing-detector-and-crop-status-only;multiple-regions-not-confirmed-cat-count;no-additional-detection-or-identity-accuracy-claim"
+    let multiRegionReview: CandidateRegionReviewCounts
     let reviewActions: [String: Int]
     let totalReviewActions: Int
     let hypotheticalManualLabelTaps: Int
@@ -160,14 +171,14 @@ struct CandidateReviewReport: Encodable {
     init(session: CandidateReviewSession) {
         let photos = session.run.photos
         selected = photos.count
-        proposed = photos.filter { $0.suggestion != nil }.count
-        confirmedAsSuggested = photos.filter { $0.suggestion != nil && session.decisions[$0.id] == $0.suggestion }.count
+        proposed = photos.filter { $0.batchSuggestion != nil }.count
+        confirmedAsSuggested = photos.filter { $0.batchSuggestion != nil && session.decisions[$0.id] == $0.batchSuggestion }.count
         changedSuggestion = photos.filter {
-            guard let suggestion = $0.suggestion, let choice = session.decisions[$0.id] else { return false }
+            guard let suggestion = $0.batchSuggestion, let choice = session.decisions[$0.id] else { return false }
             return choice != .unsure && choice != suggestion
         }.count
         individuallyLabeledUnranked = photos.filter {
-            $0.suggestion == nil && session.decisions[$0.id] != nil && session.decisions[$0.id] != .unsure
+            $0.batchSuggestion == nil && session.decisions[$0.id] != nil && session.decisions[$0.id] != .unsure
         }.count
         unsure = session.decisions.values.filter { $0 == .unsure }.count
         remaining = session.remaining
@@ -186,6 +197,7 @@ struct CandidateReviewReport: Encodable {
                 recoveryStatus: photo.cropDiagnostic?.recoveryStatus.rawValue ?? "unrecorded",
                 count: group.count)
         }
+        multiRegionReview = .init(session: session)
         reviewActions = session.actions
         totalReviewActions = session.actions.values.reduce(0, +)
         hypotheticalManualLabelTaps = photos.count

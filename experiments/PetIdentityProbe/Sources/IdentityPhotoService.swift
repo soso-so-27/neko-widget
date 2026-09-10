@@ -103,6 +103,7 @@ private struct IdentityPreparedPhoto {
     let crop: CGImage?
     let issue: IdentityInputIssue?
     var animalDetection: IdentityAnimalDetectionDiagnostic? = nil
+    var acceptedBoxes: [CGRect] = [] // Local-only; reused by candidate-region review, never exported.
 }
 
 struct IdentityPhotoFailure: LocalizedError {
@@ -191,10 +192,10 @@ actor IdentityPhotoService {
                 await progress(done)
             }
         }
-        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?)] = []
+        var candidates: [(image: CGImage?, vector: [Float]?, issue: CandidateReviewIssue?, diagnostic: CandidateCropDiagnostic?, regions: CandidateRegionReview?)] = []
         for id in selected {
             try Task.checkCancellation()
-            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?) in
+            let next = try autoreleasepool { () throws -> (CGImage?, [Float]?, CandidateReviewIssue?, CandidateCropDiagnostic?, CandidateRegionReview?) in
                 let asset = assets[id]
                 let prepared = Self.preparePhoto(asset)
                 let recovery = try recovered(prepared)
@@ -205,14 +206,19 @@ actor IdentityPhotoService {
                 let similar = candidateHashes.contains { hash in hashes.contains { (hash ^ $0).nonzeroBitCount <= 2 } }
                 hashes += candidateHashes
                 if let burst = asset?.burstIdentifier { bursts.insert(burst) }
-                guard image != nil else { return (nil, nil, .unavailable, nil) }
-                if repeatedBurst { return (image, nil, .repeatedBurst, nil) }
-                if similar { return (image, nil, .similarPhoto, nil) }
+                guard image != nil else { return (nil, nil, .unavailable, nil, nil) }
+                if repeatedBurst { return (image, nil, .repeatedBurst, nil, nil) }
+                if similar { return (image, nil, .similarPhoto, nil, nil) }
                 guard let crop else {
+                    let regions = try CandidateRegionProbe.review(image: prepared.image,
+                        originalIssue: prepared.issue, recoveryStatus: recovery.status,
+                        diagnostic: prepared.animalDetection, boxes: prepared.acceptedBoxes,
+                        registrationA: vectors[.referenceA] ?? [], registrationB: vectors[.referenceB] ?? [],
+                        embed: embed)
                     return (image, nil, .noSingleCat,
-                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status))
+                            CandidateCropDiagnostic(originalIssue: prepared.issue, recoveryStatus: recovery.status), regions)
                 }
-                return (image, try embed(crop), nil, nil)
+                return (image, try embed(crop), nil, nil, nil)
             }
             candidates.append(next)
             done += 1
@@ -226,7 +232,7 @@ actor IdentityPhotoService {
             let suggestion: CandidateReviewChoice? = ranking == .a ? .a : ranking == .b ? .b : nil
             let issue = candidate.issue ?? (ranking == .equalScores ? .equalScores : ranking == .invalidEmbedding ? .invalidEmbedding : nil)
             return CandidateReviewPhoto(id: index, image: candidate.image, suggestion: suggestion, issue: issue,
-                                        cropDiagnostic: candidate.diagnostic)
+                                        cropDiagnostic: candidate.diagnostic, regionReview: candidate.regions)
         }
         try Task.checkCancellation()
         return CandidateReviewRun(photos: photos, referenceA: previews[.referenceA], referenceB: previews[.referenceB])
@@ -496,7 +502,8 @@ actor IdentityPhotoService {
             case .success(let crop):
                 return IdentityPreparedPhoto(image: image, crop: crop, issue: nil, animalDetection: inspected.diagnostic)
             case .failure(let issue):
-                return IdentityPreparedPhoto(image: image, crop: nil, issue: issue, animalDetection: inspected.diagnostic)
+                return IdentityPreparedPhoto(image: image, crop: nil, issue: issue,
+                    animalDetection: inspected.diagnostic, acceptedBoxes: inspected.acceptedBoxes)
             }
         } catch { return IdentityPreparedPhoto(image: image, crop: nil, issue: .detectionFailed) }
     }
