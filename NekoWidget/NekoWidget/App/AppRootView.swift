@@ -18,6 +18,7 @@ struct AppRootView: View {
     @StateObject private var momentNotificationTapMailbox = MomentNotificationTapMailbox.shared
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
+    @State private var officialWindowRoute: OfficialWindowRoute?
     @State private var onboardingScanErrorMessage: String?
 
     var body: some View {
@@ -53,6 +54,10 @@ struct AppRootView: View {
             UIApplication.shared.isIdleTimerDisabled = isScanning && scenePhase == .active
         }
         .onOpenURL { url in
+            if let route = OfficialWindowRoute(url: url) {
+                officialWindowRoute = route
+                return
+            }
             Task { @MainActor in
                 // App Intent state lives in the App Group. Apply it before
                 // routing so the opened photo and the global total cannot show
@@ -125,6 +130,16 @@ struct AppRootView: View {
                 onComplete: dismissWidgetPlacementGuide,
                 onSkip: dismissWidgetPlacementGuide
             )
+        }
+        .sheet(item: $officialWindowRoute) { route in
+            NavigationStack {
+                OfficialWindowView(initialPhotoID: route.photoID)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("閉じる") { officialWindowRoute = nil }
+                        }
+                    }
+            }
         }
     }
 

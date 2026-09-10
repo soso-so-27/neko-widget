@@ -12,6 +12,11 @@ struct WidgetPhotoSource: AppEntity {
     static let defaultQuery = WidgetPhotoSourceQuery()
 
     static let personalLibraryID = "personal-library"
+    static let officialWindow = WidgetPhotoSource(
+        id: OfficialWindowCatalog.sourceID,
+        name: "どこかの猫 · 公式まど",
+        detail: "公開用に提供された猫の一枚"
+    )
     static let familyWindowIDPrefix = "family-window:"
     static let personalLibrary = WidgetPhotoSource(
         id: personalLibraryID,
@@ -59,6 +64,7 @@ struct WidgetPhotoSource: AppEntity {
     }
 
     static func resolvedSource(id: String) -> WidgetPhotoSource? {
+        if id == OfficialWindowCatalog.sourceID { return .officialWindow }
         if id == personalLibraryID { return .personalLibrary }
         if id == familyWindowID { return .familyWindow }
         guard let localWindowID = localWindowID(from: id) else { return nil }
@@ -95,7 +101,7 @@ struct WidgetPhotoSource: AppEntity {
     /// Add future selectable sources here, or replace this with App Group data.
     /// Existing widget instances continue to resolve by their stable `id`.
     static var availableSources: [WidgetPhotoSource] {
-        var sources: [WidgetPhotoSource] = [.personalLibrary]
+        var sources: [WidgetPhotoSource] = [.personalLibrary, .officialWindow]
         if familyWindowSourceIsEnabled {
             let windows = PrivateWindowCatalogStore.widgetEntries()
             if windows.isEmpty {
@@ -153,7 +159,7 @@ struct WidgetPhotoSourceQuery: EntityQuery {
 struct NekoWidgetConfigurationIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "表示する写真を選ぶ"
     static var description = IntentDescription(
-        "このiPhoneの猫写真、またはまどに届いた一枚を選びます。"
+        "このiPhoneの猫写真、公式まど、またはまどに届いた一枚を選びます。"
     )
     // This intent belongs to WidgetKit's edit UI, not Siri or Shortcuts.
     static var isDiscoverable = false

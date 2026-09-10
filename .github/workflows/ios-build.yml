@@ -89,6 +89,19 @@ jobs:
           python3 ci/test-app-store-screenshot-workflow.py
           python3 ci/test-background-moment-refresh.py
 
+      - name: Verify official window catalog, cache and subscription boundaries
+        working-directory: NekoWidget
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library \
+            Shared/Models/OfficialWindowCatalog.swift \
+            Shared/Storage/AtomicJSON.swift \
+            Shared/Storage/OfficialWindowStore.swift \
+            ci/verify-official-window.swift \
+            -o "$RUNNER_TEMP/verify-official-window"
+          "$RUNNER_TEMP/verify-official-window"
+
       - name: Verify Swift pairing protocol vectors
         working-directory: NekoWidget
         shell: bash

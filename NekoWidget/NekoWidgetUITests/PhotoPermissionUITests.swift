@@ -1,5 +1,57 @@
 import XCTest
 
+final class OfficialWindowUITests: XCTestCase {
+    @MainActor
+    func testReceiveRetryOpenAndStopWithoutPhotoPermission() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["--official-window-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let subscribe = app.buttons["official-window-subscribe"]
+        XCTAssertTrue(subscribe.waitForExistence(timeout: 15))
+        capture("official-window-before-receiving", app)
+        subscribe.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-unavailable"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["公式まどを更新"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10), "Same-file retry did not reload the photo")
+        capture("official-window-photo", app)
+        app.buttons["確認用の猫の写真を開く"].tap()
+        XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
+        capture("official-window-photo-detail", app)
+        app.buttons["閉じる"].tap()
+        let stop = app.buttons["official-window-stop"]
+        for _ in 0..<5 {
+            if stop.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(stop.isHittable)
+        stop.tap()
+        XCTAssertTrue(subscribe.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
+        capture("official-window-receiving-stopped", app)
+    }
+
+    @MainActor
+    func testUnconfiguredFeedIsPreparationNotFakeDelivery() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--official-window-ui-fixture", "--official-window-unconfigured", "-AppleLanguages", "(ja)"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["公式まどを準備しています"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["official-window-subscribe"].exists)
+        capture("official-window-preparing", app)
+    }
+
+    @MainActor
+    private func capture(_ name: String, _ app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}
+
 /// The fixture substitutes only the action boundary and image source. These
 /// are the shipping cat views; no real photo library or account is accessed.
 final class CatProfilePhotoFlowUITests: XCTestCase {

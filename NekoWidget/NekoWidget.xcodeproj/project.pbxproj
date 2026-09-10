@@ -180,6 +180,11 @@
 		720000000000000000000003 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000507 /* CoreGraphics.framework */; };
 		730000000000000000000002 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000355 /* PrivacyInfo.xcprivacy */; };
 		740000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000303 /* PrivacyInfo.xcprivacy */; };
+		D02609100000000000000101 /* OfficialWindowCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000100 /* OfficialWindowCatalog.swift */; };
+		D02609100000000000000102 /* OfficialWindowCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000100 /* OfficialWindowCatalog.swift */; };
+		D02609100000000000000201 /* OfficialWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000200 /* OfficialWindowStore.swift */; };
+		D02609100000000000000202 /* OfficialWindowStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000200 /* OfficialWindowStore.swift */; };
+		D02609100000000000000301 /* OfficialWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02609100000000000000300 /* OfficialWindowView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -375,6 +380,9 @@
 		F00000000000000000000603 /* WidgetPlacementScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPlacementScreenshotUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000604 /* AppStoreScreenshotUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotUITests.swift; sourceTree = "<group>"; };
 		F00000000000000000000602 /* NekoWidgetUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NekoWidgetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D02609100000000000000100 /* OfficialWindowCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowCatalog.swift; sourceTree = "<group>"; };
+		D02609100000000000000200 /* OfficialWindowStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowStore.swift; sourceTree = "<group>"; };
+		D02609100000000000000300 /* OfficialWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficialWindowView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -493,6 +501,7 @@
 		B00000000000000000000003 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				D02609100000000000000100 /* OfficialWindowCatalog.swift */,
 				F00000000000000000000102 /* AppSettings.swift */,
 				F00000000000000000000103 /* AssetRecord.swift */,
 				F00000000000000000000104 /* CatDetection.swift */,
@@ -521,6 +530,7 @@
 		B00000000000000000000005 /* Storage */ = {
 			isa = PBXGroup;
 			children = (
+				D02609100000000000000200 /* OfficialWindowStore.swift */,
 				F0000000000000000000010C /* AtomicJSON.swift */,
 				F0000000000000000000010E /* SharedLikeStore.swift */,
 			);
@@ -648,6 +658,7 @@
 		C00000000000000000000005 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				D02609100000000000000300 /* OfficialWindowView.swift */,
 				F00000000000000000000230 /* AppPresentationModels.swift */,
 				F0000000000000000000025B /* MonthlyWindowPresentation.swift */,
 				F0000000000000000000025C /* MonthlyWindowView.swift */,
@@ -906,6 +917,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D02609100000000000000301 /* OfficialWindowView.swift in Sources */,
+				D02609100000000000000201 /* OfficialWindowStore.swift in Sources */,
+				D02609100000000000000101 /* OfficialWindowCatalog.swift in Sources */,
 				100000000000000000000001 /* SharedContainer.swift in Sources */,
 				100000000000000000000002 /* AppSettings.swift in Sources */,
 				100000000000000000000003 /* AssetRecord.swift in Sources */,
@@ -1029,6 +1043,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D02609100000000000000202 /* OfficialWindowStore.swift in Sources */,
+				D02609100000000000000102 /* OfficialWindowCatalog.swift in Sources */,
 				200000000000000000000001 /* SharedContainer.swift in Sources */,
 				200000000000000000000002 /* WidgetManifest.swift in Sources */,
 				20000000000000000000001B /* WidgetRenderPlan.swift in Sources */,

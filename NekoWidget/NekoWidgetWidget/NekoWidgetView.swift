@@ -56,7 +56,20 @@ struct NekoWidgetView: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(loadedPhotoAccessibilityLabel)
                     .overlay(alignment: .bottom) {
-                        if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
+                        if let photo = entry.officialPhoto {
+                            Text(photo.catName)
+                                .font(.caption.weight(.medium))
+                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                                .lineLimit(1)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.top, 20)
+                                .padding(.bottom, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        } else if WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier) {
                             familyPhotoFooter
                         } else {
                             photoActionButtons()
@@ -92,6 +105,7 @@ struct NekoWidgetView: View {
     }
 
     private var loadedPhotoAccessibilityLabel: String {
+        if let photo = entry.officialPhoto { return "公式まど。\(photo.catName)の写真。タップして開く" }
         guard WidgetPhotoSource.isFamilyWindowSourceID(entry.photoSourceIdentifier)
         else { return "このiPhoneで見つけた猫写真" }
         let photo = "\(entry.windowDisplayName)に届いた写真"
@@ -378,6 +392,10 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateTitle: String {
+        if entry.photoSourceIdentifier == OfficialWindowCatalog.sourceID {
+            if OfficialWindowConfiguration.feedURL == nil { return "公式まどを準備中" }
+            return OfficialWindowStore.shared.snapshot().isSubscribed ? "いま届いている写真はありません" : "どこかの猫に会えるまど"
+        }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "このまどは利用できません"
         }
@@ -392,6 +410,7 @@ struct NekoWidgetView: View {
     }
 
     private var emptyStateSubtitle: String {
+        if entry.photoSourceIdentifier == OfficialWindowCatalog.sourceID { return "タップして公式まどを開く" }
         if effectiveEmptyStateReason == .sourceUnavailable {
             return "ウィジェットを編集してください"
         }

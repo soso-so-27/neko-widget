@@ -29,6 +29,9 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         return AppStoreWidgetPreviewFixture.entry(at: now, variant: variant)
 #endif
         let source = configuration.photoSource ?? .personalLibrary
+        if source.id == OfficialWindowCatalog.sourceID {
+            return officialEntry(now: now, variant: variant)
+        }
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled,
                   WidgetPhotoSource.familyWindowExists(for: source.id) else {
@@ -121,6 +124,24 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
         )
 #endif
         let source = configuration.photoSource ?? .personalLibrary
+        if source.id == OfficialWindowCatalog.sourceID {
+            if !context.isPreview {
+                try? await OfficialWindowClient.shared.refresh()
+            }
+            let date = Date()
+            let entry = officialEntry(now: date, variant: variant)
+            let state = OfficialWindowStore.shared.snapshot()
+            var entries = [entry]
+            if let photo = entry.officialPhoto, let catalog = state.catalog {
+                // A terminal empty entry bounds the photo even when iOS delays
+                // the next network refresh. Never loop expired public photos.
+                let expiry = min(photo.expiresAt, catalog.validUntil)
+                entries.append(.empty(at: expiry, imageVariant: variant,
+                                      photoSourceIdentifier: OfficialWindowCatalog.sourceID,
+                                      windowDisplayName: OfficialWindowCatalog.displayName))
+            }
+            return Timeline(entries: entries, policy: .after(date.addingTimeInterval(60 * 60)))
+        }
         if WidgetPhotoSource.isFamilyWindowSourceID(source.id) {
             guard WidgetPhotoSource.familyWindowSourceIsEnabled,
                   WidgetPhotoSource.familyWindowExists(for: source.id) else {
@@ -233,6 +254,29 @@ struct NekoWidgetTimelineProvider: AppIntentTimelineProvider {
             ]
         )
         return Timeline(entries: entries, policy: .after(reloadDate))
+    }
+
+    private func officialEntry(now: Date, variant: WidgetImageVariant) -> NekoWidgetEntry {
+        let state = OfficialWindowStore.shared.snapshot()
+        var entry = NekoWidgetEntry.empty(
+            at: now, imageVariant: variant,
+            photoSourceIdentifier: OfficialWindowCatalog.sourceID,
+            windowDisplayName: OfficialWindowCatalog.displayName,
+            emptyStateReason: state.isSubscribed ? .waiting : .needsApp
+        )
+        guard let photo = state.photos.first,
+              OfficialWindowStore.shared.imageURL(for: photo) != nil else { return entry }
+        entry = NekoWidgetEntry(
+            date: now, localIdentifier: nil, cacheFilename: photo.imageFilename,
+            imageVariant: variant, photoSourceIdentifier: OfficialWindowCatalog.sourceID,
+            familySourceDigest: nil, usesFamilySpecificImage: false,
+            windowDisplayName: OfficialWindowCatalog.displayName,
+            isLiked: false, isLikeInteractionEnabled: false,
+            isBookmarked: false, isBookmarkInteractionEnabled: false,
+            familyHeartStatus: .hidden, familyActionsRequireApp: false, emptyStateReason: .none
+        )
+        entry.officialPhoto = photo
+        return entry
     }
 
     private func familySnapshot(

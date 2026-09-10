@@ -36,6 +36,7 @@ struct NekoWidgetEntry: TimelineEntry {
     let familyActionsRequireApp: Bool
     let emptyStateReason: WidgetEmptyStateReason
     var familyCaption: String? = nil
+    var officialPhoto: OfficialCatPhoto? = nil
 
     static func empty(
         at date: Date,
@@ -64,6 +65,9 @@ struct NekoWidgetEntry: TimelineEntry {
     }
 
     var photoURL: URL? {
+        if photoSourceIdentifier == OfficialWindowCatalog.sourceID {
+            return OfficialWindowRoute(photoID: officialPhoto?.id).url
+        }
         guard emptyStateReason != .sourceUnavailable else { return nil }
         if WidgetPhotoSource.isFamilyWindowSourceID(photoSourceIdentifier) {
             guard let localWindowID = WidgetPhotoSource.localWindowID(
