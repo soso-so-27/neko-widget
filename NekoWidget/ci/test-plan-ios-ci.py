@@ -164,6 +164,9 @@ class PlanTests(unittest.TestCase):
                 git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
                 return git("rev-parse", "HEAD")
             git("init", "-q")
+            # The mode case below changes the index deliberately; do not let
+            # host filesystem permissions create an unrelated dirty checkout.
+            git("config", "core.filemode", "false")
             app = "NekoWidget/NekoWidget/App.swift"
             research = planner.INDEPENDENT_RESEARCH + "Sources/Probe.swift"
             workflow = ".github/workflows/ios-build.yml"
