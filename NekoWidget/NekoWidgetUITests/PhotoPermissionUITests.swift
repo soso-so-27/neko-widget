@@ -59,7 +59,10 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
         card.tap()
-        XCTAssertTrue(app.buttons["official-window-manage"].isHittable)
+        let manage = app.buttons["official-window-manage"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 5))
+        let manageReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: manage)
+        XCTAssertEqual(XCTWaiter.wait(for: [manageReady], timeout: 5), .completed)
         capture("official-window-overview-large-text", app)
         let photo = app.buttons["official-window-photo-fixture-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))

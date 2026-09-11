@@ -269,12 +269,7 @@ struct OfficialWindowView: View {
     private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    Text("写真を受け取る · 公式")
-                    Spacer(minLength: 8)
-                    if state.isSubscribed { Label("受け取り中", systemImage: "checkmark") }
-                }
-                .font(.caption).foregroundStyle(.secondary)
+                roleSummary
                 if let latest = photos.first {
                     photoButton(latest, latest: true)
                 } else {
@@ -355,6 +350,24 @@ struct OfficialWindowView: View {
                 .accessibilityIdentifier("official-window-manage")
             }
         }
+    }
+
+    private var roleSummary: some View {
+        Group {
+            if dynamicTypeSize >= .xxxLarge {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("写真を受け取る · 公式")
+                    if state.isSubscribed { Label("受け取り中", systemImage: "checkmark") }
+                }
+            } else {
+                HStack {
+                    Text("写真を受け取る · 公式")
+                    Spacer(minLength: 8)
+                    if state.isSubscribed { Label("受け取り中", systemImage: "checkmark") }
+                }
+            }
+        }
+        .font(.caption).foregroundStyle(.secondary)
     }
 
     private var about: some View {
