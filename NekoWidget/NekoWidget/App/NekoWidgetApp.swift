@@ -50,6 +50,8 @@ struct NekoWidgetApp: App {
                 BillingInternalDiagnosticsRootView()
             } else if CommandLine.arguments.contains("--official-window-ui-fixture") {
                 OfficialWindowUIFixture()
+            } else if CommandLine.arguments.contains("--window-list-ui-fixture") {
+                WindowListNavigationFixture()
             } else if CommandLine.arguments.contains(AppStoreScreenshotFixture.launchArgument) {
                 AppStoreScreenshotFixtureRootView()
             } else if CommandLine.arguments.contains("--cat-profile-photo-flow-fixture") {

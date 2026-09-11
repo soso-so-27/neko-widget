@@ -1040,6 +1040,13 @@ enum MomentSharingStateStore {
     /// an inactive room's outbox/inbox become the process-wide store.
     static func load(localWindowID: String) throws -> MomentSharingState {
         try SharingLifecycleGate.withExclusive {
+            try loadWhileLifecycleLocked(localWindowID: localWindowID)
+        }
+    }
+
+    /// Used by short read-only presentation transactions that already hold
+    /// SharingLifecycleGate. This never changes the active window or writes.
+    static func loadWhileLifecycleLocked(localWindowID: String) throws -> MomentSharingState {
             guard let catalog = try PrivateWindowCatalogStore.load(),
                   catalog.windows.contains(where: {
                       $0.localWindowID == localWindowID
@@ -1062,7 +1069,6 @@ enum MomentSharingStateStore {
             } catch {
                 throw MomentSharingError.stateUnavailable
             }
-        }
     }
 
     static func load(

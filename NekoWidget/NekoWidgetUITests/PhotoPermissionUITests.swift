@@ -2,6 +2,73 @@ import XCTest
 
 final class OfficialWindowUITests: XCTestCase {
     @MainActor
+    func testDiscoverReceiveGuideAndStopUpdatesWindowList() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.resetAuthorizationStatus(for: .photos)
+        app.launchArguments = ["--window-list-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let discover = app.buttons["window-list-discover"]
+        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["official-window-entry"].exists, "Unsubscribed windows belong in discovery")
+        discover.tap()
+        app.buttons["official-window-entry"].tap()
+        XCTAssertTrue(app.tabBars.buttons["写真"].exists)
+        XCTAssertTrue(app.tabBars.buttons["思い出"].exists)
+        app.buttons["official-window-subscribe"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-subscription-confirmation"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["どこかの猫"].exists, "Receiving must not send the user back to the list")
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-unavailable"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["公式まどを更新"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10))
+        let guide = app.buttons["official-window-widget-guide"]
+        for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
+        guide.tap()
+        XCTAssertTrue(app.navigationBars["ホーム画面に置く"].waitForExistence(timeout: 5))
+        app.segmentedControls["official-window-widget-placement"].buttons["すでに置いている"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-widget-source"].firstMatch.exists)
+        capture("window-widget-guide-existing", app)
+        app.buttons["閉じる"].tap()
+        app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5))
+        capture("window-list-after-receiving", app)
+        app.buttons["official-window-entry"].tap()
+        let stop = app.buttons["official-window-stop"]
+        for _ in 0..<5 { if stop.isHittable { break }; app.swipeUp() }
+        stop.tap()
+        XCTAssertTrue(app.buttons["official-window-subscribe"].waitForExistence(timeout: 5))
+        app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(discover.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["official-window-entry"].exists)
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
+    }
+
+    @MainActor
+    func testWindowListLargeTextKeepsDiscoveryAndPhotoReachable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-subscribed",
+                               "--window-list-large-text", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let card = app.buttons["official-window-entry"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(card.isHittable)
+        XCTAssertTrue(app.buttons["window-list-discover"].isHittable)
+        XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
+        capture("window-list-large-text", app)
+        card.tap()
+        let photo = app.buttons["確認用の猫の写真を開く"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5))
+        photo.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.waitForExistence(timeout: 5))
+        capture("official-photo-large-text-zoom", app)
+        XCTAssertTrue(app.buttons["閉じる"].isHittable)
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(app.navigationBars["どこかの猫"].exists)
+    }
+
+    @MainActor
     func testReceiveRetryOpenAndStopWithoutPhotoPermission() {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import ImageIO
 
 enum PhotosRoute: Hashable {
     case photo(String)
@@ -154,16 +156,11 @@ struct MainTabView: View {
 
             if SharingAPIConfiguration.current.isReviewVisible || OfficialWindowConfiguration.feedURL != nil {
                 NavigationStack {
-                    if SharingAPIConfiguration.current.isReviewVisible {
-                        WindowListView(
-                            opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
-                            pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
-                            pendingFamilyNotificationRoute:
-                                $pendingFamilyNotificationRoute
-                        )
-                    } else {
-                        OfficialWindowView()
-                    }
+                    WindowListView(
+                        opensActiveWindow: $deepLinkedFamilyWindowIsPresented,
+                        pendingFamilyMomentSourceDigest: $deepLinkedFamilyMomentSourceDigest,
+                        pendingFamilyNotificationRoute: $pendingFamilyNotificationRoute
+                    )
                 }
                 .tabItem {
                     Label("まど", systemImage: "rectangle.split.2x2")
@@ -1032,11 +1029,73 @@ private struct WindowListView: View {
     @State private var catalogReloadRevision = 0
     @State private var showsAddWindowConfirmation = false
     @State private var requestedSetupPath: PairingSetupPath?
+    @State private var officialState: OfficialWindowState
+    @State private var coverPhotos: [String: WindowListCoverPhoto] = [:]
+
+    let supportsPrivateWindows: Bool
+    let officialStore: OfficialWindowStore
+    let refreshOfficialFeed: () async throws -> Void
+
+    init(opensActiveWindow: Binding<Bool>,
+         pendingFamilyMomentSourceDigest: Binding<String?>,
+         pendingFamilyNotificationRoute: Binding<MomentNotificationRoute?>,
+         supportsPrivateWindows: Bool = SharingAPIConfiguration.current.isReviewVisible,
+         officialStore: OfficialWindowStore = .shared,
+         refreshOfficialFeed: @escaping () async throws -> Void = {
+             try await OfficialWindowClient.shared.refresh(maximumImages: 6)
+         }) {
+        _opensActiveWindow = opensActiveWindow
+        _pendingFamilyMomentSourceDigest = pendingFamilyMomentSourceDigest
+        _pendingFamilyNotificationRoute = pendingFamilyNotificationRoute
+        self.supportsPrivateWindows = supportsPrivateWindows
+        self.officialStore = officialStore
+        self.refreshOfficialFeed = refreshOfficialFeed
+        _officialState = State(initialValue: officialStore.snapshot())
+    }
+
+    private var cardColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), alignment: .top),
+              count: dynamicTypeSize >= .xxxLarge ? 1 : 2)
+    }
+
+    private var officialCard: some View {
+        OfficialWindowEntryCard(state: officialState, store: officialStore,
+                                refreshFeed: refreshOfficialFeed)
+    }
+
+    private var discovery: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("写真を投稿しなくても、猫の一枚を楽しめます。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                officialCard
+                if officialState.isSubscribed {
+                    Label("受け取り中", systemImage: "checkmark")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
+        }
+        .navigationTitle("まどを探す")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .accessibilityIdentifier("window-discovery")
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 22) {
-                if windows.isEmpty { OfficialWindowEntryCard() }
+                if !connectedWindows.isEmpty || officialState.isSubscribed {
+                    LazyVGrid(columns: cardColumns, spacing: 14) {
+                        ForEach(connectedWindows) { window in
+                            windowCard(window)
+                        }
+                        if officialState.isSubscribed { officialCard }
+                    }
+                    .accessibilityIdentifier("window-list-receiving")
+                }
                 if isLoading, windows.isEmpty {
                     ProgressView("まどを確認しています…")
                         .frame(maxWidth: .infinity, minHeight: 240)
@@ -1050,17 +1109,9 @@ private struct WindowListView: View {
                         cachedWindowWarning(message: message)
                     }
 
-                    if windows.isEmpty {
+                    if windows.isEmpty, !officialState.isSubscribed {
                         emptyWindowCard
                     } else {
-                        if !connectedWindows.isEmpty {
-                            VStack(alignment: .leading, spacing: 10) {
-                                windowSectionTitle("接続済みのまど")
-                                ForEach(connectedWindows) { window in
-                                    windowCard(window)
-                                }
-                            }
-                        }
                         if !setupWindows.isEmpty {
                             VStack(alignment: .leading, spacing: 10) {
                                 windowSectionTitle("設定中のまど")
@@ -1068,12 +1119,6 @@ private struct WindowListView: View {
                                     windowCard(window)
                                 }
                             }
-                        }
-                        if !connectedWindows.isEmpty {
-                            Text("まどの名前は、作成した人の最初のiPhoneから変更できます。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
 
@@ -1090,18 +1135,28 @@ private struct WindowListView: View {
                             )
                     }
 
-                    if !windows.isEmpty {
+                    if supportsPrivateWindows {
                         windowAdditionControl
                     }
 
                 }
-                if !windows.isEmpty { OfficialWindowEntryCard() }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .navigationTitle("まど")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink { discovery } label: { Text("探す") }
+                    .accessibilityLabel("まどを探す")
+                    .accessibilityIdentifier("window-list-discover")
+            }
+        }
         .background(Color(.systemGroupedBackground))
+        .onAppear { officialState = officialStore.snapshot() }
+        .onReceive(NotificationCenter.default.publisher(for: .officialWindowPresentationDidChange)) { _ in
+            officialState = officialStore.snapshot()
+        }
         .confirmationDialog(
             "このiPhoneですることを選んでください",
             isPresented: $showsAddWindowConfirmation,
@@ -1133,6 +1188,8 @@ private struct WindowListView: View {
                 for: .momentSharingPresentationNeedsRefresh
             )
         ) { _ in
+            catalogReloadRevision += 1
+            coverPhotos = [:]
             Task { await reloadCatalogPresentation() }
         }
         .onReceive(
@@ -1140,7 +1197,10 @@ private struct WindowListView: View {
                 for: .momentSharingContentNeedsReload
             )
         ) { _ in
+            catalogReloadRevision += 1
+            coverPhotos = [:]
             reloadPreparationCounts()
+            Task { await reloadCatalogPresentation() }
         }
     }
 
@@ -1155,7 +1215,7 @@ private struct WindowListView: View {
     private func unavailableWindowContent(message: String) -> some View {
         VStack(spacing: 16) {
             ContentUnavailableView(
-                "まどを一時的に確認できません",
+                "身近な人とのまどを確認できません",
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text(message)
             )
@@ -1181,7 +1241,7 @@ private struct WindowListView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            Text("更新が完了するまで、まどの切り替えや追加は行いません。")
+            Text("更新が完了するまで、身近な人とのまどの切り替えや追加は行いません。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1198,16 +1258,14 @@ private struct WindowListView: View {
 
     private var emptyWindowCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("まだまどがありません", systemImage: "rectangle.on.rectangle.slash")
-                .font(.headline)
+            Label("暮らしの中に、猫の一枚を。", systemImage: "pawprint.fill")
+                .font(.title2)
 
-            Text("新しく作るか、招待・機種変更のコードを使います。")
+            Text("公開まどから写真を受け取れます。写真の投稿や、友だちの招待は必要ありません。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button("まどをはじめる") {
-                showsAddWindowConfirmation = true
-            }
+            NavigationLink { discovery } label: { Text("まどを探す") }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("window-list-start")
         }
@@ -1223,7 +1281,7 @@ private struct WindowListView: View {
         Button {
             showsAddWindowConfirmation = true
         } label: {
-            Label("別のまどを追加", systemImage: "rectangle.stack.badge.plus")
+            Label("身近な人とつなぐ", systemImage: "person.badge.plus")
                 .font(.headline)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
@@ -1240,7 +1298,7 @@ private struct WindowListView: View {
     private var windowAdditionControl: some View {
         if !setupWindows.isEmpty {
             Label(
-                "設定中のまどは同時に1個です。先に開いて設定を続けてください",
+                "身近な人とのまどを設定中です。先に開いて設定を続けてください",
                 systemImage: "arrow.up.left.square"
             )
             .font(.footnote)
@@ -1251,7 +1309,7 @@ private struct WindowListView: View {
             Label(
                 windows.count > PrivateWindowCatalogState.maximumProductWindowCount
                     ? "現在は新しいまどを追加できません。既存のまどはそのまま使えます"
-                    : "初期版では、まどは合計3個までです",
+                    : "身近な人とのまどは、合計3個までです",
                 systemImage: "rectangle.stack"
             )
             .font(.footnote)
@@ -1314,19 +1372,36 @@ private struct WindowListView: View {
         return Button {
             open(window)
         } label: {
-            HStack(spacing: 12) {
-                windowThumbnail(for: window)
-
+            VStack(alignment: .leading, spacing: 0) {
+                if !isSetup {
+                    TimelineView(.explicit([Date.now, coverPhotos[window.localWindowID]?.displayUntil].compactMap { $0 })) { context in
+                        Color(.tertiarySystemFill)
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                if let cover = coverPhotos[window.localWindowID],
+                                   context.date < cover.displayUntil,
+                                   let image = UIImage(data: cover.jpeg) {
+                                    Image(uiImage: image).resizable().scaledToFill()
+                                } else {
+                                    SubtleWindowThumbnail(showsSetupMark: false)
+                                }
+                            }
+                            .clipped()
+                            .accessibilityHidden(true)
+                    }
+                }
+                HStack(alignment: .top, spacing: 8) {
+                    if isSetup { windowThumbnail(for: window) }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(window.displayName)
                         .font(.headline)
                         .foregroundStyle(.primary)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                         .layoutPriority(1)
 
                     Text(windowPrimaryStatusLabel(for: window))
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
 
                     if let pendingCount = pendingPreparationCounts[window.localWindowID],
@@ -1341,30 +1416,16 @@ private struct WindowListView: View {
 
                 }
 
-                Spacer(minLength: 6)
-
                 if isSwitching {
                     ProgressView()
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.tertiary)
                 }
+                }
+                .padding(12)
             }
-            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 18)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(
-                        Color.primary.opacity(0.05),
-                        lineWidth: 1
-                    )
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 18))
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .contentShape(RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
         .disabled(
@@ -1412,6 +1473,17 @@ private struct WindowListView: View {
     }
 
     private func reload() async {
+        officialState = officialStore.snapshot()
+        if officialState.isSubscribed {
+            Task {
+                try? await refreshOfficialFeed()
+                officialState = officialStore.snapshot()
+            }
+        }
+        guard supportsPrivateWindows else {
+            isLoading = false
+            return
+        }
         isLoading = true
         await model.bootstrap()
         // Render the authenticated local catalog immediately. Network name
@@ -1427,9 +1499,11 @@ private struct WindowListView: View {
         let windows: [PrivateWindowCatalogEntry]
         let activeWindowID: String
         let pairingPhases: [String: PairingPhase]
+        let coverPhotos: [String: WindowListCoverPhoto]
     }
 
     private func reloadCatalogPresentation() async {
+        guard supportsPrivateWindows else { return }
         catalogReloadRevision += 1
         let revision = catalogReloadRevision
         do {
@@ -1443,15 +1517,18 @@ private struct WindowListView: View {
                 pendingPreparationCounts = [:]
                 pairingPhases = [:]
                 catalogLoadMessage = nil
+                coverPhotos = [:]
                 return
             }
             windows = snapshot.windows
             activeWindowID = snapshot.activeWindowID
             pairingPhases = snapshot.pairingPhases
+            coverPhotos = snapshot.coverPhotos
             catalogLoadMessage = nil
             reloadPreparationCounts()
         } catch {
             guard revision == catalogReloadRevision else { return }
+            coverPhotos = [:]
             catalogLoadMessage = windows.isEmpty
                 ? "保存済みのまどを読み込めませんでした。時間をおいて、もう一度お試しください。"
                 : "まどの一覧を更新できませんでした。保存済みの一覧は変更していません。"
@@ -1475,7 +1552,10 @@ private struct WindowListView: View {
                 return $0.localWindowID < $1.localWindowID
             },
             activeWindowID: catalog.activeWindowID,
-            pairingPhases: Dictionary(uniqueKeysWithValues: phasePairs)
+            pairingPhases: Dictionary(uniqueKeysWithValues: phasePairs),
+            coverPhotos: Dictionary(uniqueKeysWithValues: catalog.windows.compactMap { window in
+                WindowListCoverPhoto.load(for: window).map { (window.localWindowID, $0) }
+            })
         )
     }
 
@@ -1569,6 +1649,67 @@ private struct WindowListView: View {
     }
 }
 
+private struct WindowListCoverPhoto: Sendable {
+    let jpeg: Data
+    let displayUntil: Date
+
+    /// Read only the exact window's already-published, safety-filtered Widget
+    /// image. Never change the active window to obtain a decorative cover.
+    static func load(for window: PrivateWindowCatalogEntry, now: Date = .now) -> Self? {
+        try? SharingLifecycleGate.withExclusive {
+            guard !SharingLifecycleGate.isCleanupRequired,
+                  let state = try PairingStateStore.load(localWindowID: window.localWindowID),
+                  state.phase == .paired, let spaceID = window.spaceID,
+                  state.spaceID == spaceID,
+                  let manifestURL = SharedContainer.familyWidgetManifestURL(localWindowID: window.localWindowID),
+                  let directory = SharedContainer.familyWidgetCacheDirectoryURL(localWindowID: window.localWindowID),
+                  let manifestSize = try manifestURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  (1...64 * 1024).contains(manifestSize)
+            else { return nil }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let manifest = try decoder.decode(FamilyWidgetManifest.self, from: Data(contentsOf: manifestURL))
+            guard manifest.schemaVersion == FamilyWidgetManifest.schemaVersion,
+                  let item = manifest.item,
+                  OfficialWindowCatalog.isSHA256(item.sourceDigest),
+                  item.receivedAt <= now, item.freshUntil > item.receivedAt,
+                  item.freshUntil.timeIntervalSince(item.receivedAt) <= 2 * 60 * 60 + 1,
+                  now < item.displayUntil else { return nil }
+            // A removal updates the inbox before Widget rebuilding finishes.
+            // Never revive the old Widget pixels during that interval.
+            let sharing = try MomentSharingStateStore.loadWhileLifecycleLocked(localWindowID: window.localWindowID)
+            guard sharing.reportOnlyUntil == nil,
+                  let momentID = item.momentID,
+                  let inbox = sharing.inbox.first(where: { $0.id == momentID }),
+                  inbox.state == .available || inbox.state == .acknowledged,
+                  inbox.localJPEGFileName != nil,
+                  inbox.receivedAt == item.receivedAt,
+                  inbox.receivedAt.addingTimeInterval(FamilyWidgetManifestItem.maximumDisplayDuration) > now
+            else { return nil }
+            let filename = item.cacheFilenames.small
+            guard !filename.isEmpty, filename == (filename as NSString).lastPathComponent,
+                  !filename.contains("\\"), filename.lowercased().hasSuffix(".jpg")
+            else { return nil }
+            let file = directory.appendingPathComponent(filename)
+            guard let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  (1...WidgetImageVariant.small.maximumJPEGByteCount).contains(size)
+            else { return nil }
+            let jpeg = try Data(contentsOf: file)
+            guard jpeg.count <= WidgetImageVariant.small.maximumJPEGByteCount,
+                  let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
+                  CGImageSourceGetType(source) as String? == "public.jpeg",
+                  CGImageSourceGetCount(source) == 1,
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                  (1...WidgetImageVariant.small.pixelWidth).contains(width),
+                  (1...WidgetImageVariant.small.pixelHeight).contains(height)
+            else { return nil }
+            return Self(jpeg: jpeg, displayUntil: item.displayUntil)
+        }
+    }
+}
+
 private struct SubtleWindowThumbnail: View {
     let showsSetupMark: Bool
 
@@ -1601,6 +1742,33 @@ private struct SubtleWindowThumbnail: View {
         .frame(width: 38, height: 38)
     }
 }
+
+#if DEBUG
+/// The shipping list and navigation with an isolated public store. Private
+/// account bootstrap and the real public network are not used by this fixture.
+struct WindowListNavigationFixture: View {
+    @StateObject private var model = OfficialWindowFixtureModel()
+    @State private var selectedTab = 2
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            Text("写真").tabItem { Label("写真", systemImage: "photo") }.tag(0)
+            Text("思い出").tabItem { Label("思い出", systemImage: "photo.stack") }.tag(1)
+            NavigationStack {
+                WindowListView(opensActiveWindow: .constant(false),
+                               pendingFamilyMomentSourceDigest: .constant(nil),
+                               pendingFamilyNotificationRoute: .constant(nil),
+                               supportsPrivateWindows: false,
+                               officialStore: model.store,
+                               refreshOfficialFeed: { try await model.refresh() })
+            }
+            .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
+        }
+        .environment(\.dynamicTypeSize,
+                     CommandLine.arguments.contains("--window-list-large-text") ? .accessibility3 : .large)
+    }
+}
+#endif
 
 private struct DeepLinkSelection: Equatable {
     let identifier: String?

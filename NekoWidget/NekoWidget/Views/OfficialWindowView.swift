@@ -5,33 +5,66 @@ import UIKit
 import WidgetKit
 
 struct OfficialWindowEntryCard: View {
+    var state: OfficialWindowState = OfficialWindowStore.shared.snapshot()
+    var store: OfficialWindowStore = .shared
+    var refreshFeed: () async throws -> Void = {
+        try await OfficialWindowClient.shared.refresh(maximumImages: 6)
+    }
+
+    private var photoDeadlines: [Date] {
+        ([Date.now] + [state.catalog?.validUntil].compactMap { $0 }
+         + (state.catalog?.photos.map(\.expiresAt) ?? [])).sorted()
+    }
+
     var body: some View {
         NavigationLink {
-            OfficialWindowView()
+            OfficialWindowView(store: store, refreshFeed: refreshFeed)
         } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "pawprint.fill")
-                    .font(.title2)
-                    .foregroundStyle(.orange)
-                    .frame(width: 52, height: 60)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(OfficialWindowCatalog.displayName).font(.headline)
-                    Text("ホーム画面に、どこかで暮らす猫の一枚を。")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    Text("公式まど · 写真の投稿や友だちの招待は不要")
+            VStack(alignment: .leading, spacing: 0) {
+                Color(.tertiarySystemFill)
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        TimelineView(.explicit(photoDeadlines)) { _ in
+                        if let photo = state.photos.first,
+                           let url = store.imageURL(for: photo) {
+                            MomentLocalImageView(url: url, hidesImageAccessibility: true,
+                                                 maximumPixelSize: 650)
+                                .id(state.imageRevision)
+                        } else {
+                            Image(systemName: "pawprint.fill")
+                                .font(.largeTitle).foregroundStyle(.orange)
+                                .accessibilityHidden(true)
+                        }
+                        }
+                    }
+                    .clipped()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(OfficialWindowCatalog.displayName)
+                        .font(.headline).foregroundStyle(.primary)
+                    Text("公式 · いろいろな猫との出会い")
                         .font(.caption).foregroundStyle(.secondary)
+                    if !state.isSubscribed {
+                        Text("写真の投稿や友だちの招待は不要")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
-            .contentShape(RoundedRectangle(cornerRadius: 22))
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .contentShape(RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("official-window-entry")
+        .accessibilityLabel("\(OfficialWindowCatalog.displayName)、公式まど")
+        .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
     }
+}
+
+extension Notification.Name {
+    static let officialWindowPresentationDidChange = Notification.Name("officialWindowPresentationDidChange")
 }
 
 @MainActor
@@ -43,11 +76,18 @@ struct OfficialWindowView: View {
     @State private var message: String?
     @State private var selectedPhoto: OfficialCatPhoto?
     @State private var showsWidgetGuide = false
+    @State private var offersWidgetSetup = false
+    @State private var widgetPlacement = WidgetPlacement.first
     @State private var showsOverview = false
     @State private var hasCheckedFeed = false
     let initialPhotoID: String?
     let store: OfficialWindowStore
     let refreshFeed: () async throws -> Void
+
+    private enum WidgetPlacement: String, CaseIterable {
+        case first = "初めて置く"
+        case existing = "すでに置いている"
+    }
 
     init(initialPhotoID: String? = nil, store: OfficialWindowStore = .shared,
          refreshFeed: @escaping () async throws -> Void = {
@@ -69,6 +109,7 @@ struct OfficialWindowView: View {
                 if let photo = photos.first(where: { $0.id == initialPhotoID }) {
                     OfficialPhotoDetailView(photo: photo, store: store,
                                             imageRevision: state.imageRevision,
+                                            isRefreshing: isRefreshing,
                                             showsCloseButton: false)
                 } else {
                     unavailableLinkedPhoto
@@ -90,10 +131,22 @@ struct OfficialWindowView: View {
             }
         }
         .sheet(item: $selectedPhoto) { photo in
-            NavigationStack { OfficialPhotoDetailView(photo: photo, store: store, imageRevision: state.imageRevision) }
+            NavigationStack {
+                OfficialPhotoDetailView(photo: photo, store: store,
+                                        imageRevision: state.imageRevision, isRefreshing: isRefreshing)
+            }
         }
         .sheet(isPresented: $showsWidgetGuide) {
             widgetGuide
+        }
+        .onChange(of: state.subscriptionID) { _, _ in
+            NotificationCenter.default.post(name: .officialWindowPresentationDidChange, object: nil)
+        }
+        .onChange(of: state.imageRevision) { _, _ in
+            NotificationCenter.default.post(name: .officialWindowPresentationDidChange, object: nil)
+        }
+        .onChange(of: state.catalog?.generatedAt) { _, _ in
+            NotificationCenter.default.post(name: .officialWindowPresentationDidChange, object: nil)
         }
     }
 
@@ -130,14 +183,7 @@ struct OfficialWindowView: View {
                 }
 
                 if state.isSubscribed {
-                    Button {
-                        showsWidgetGuide = true
-                    } label: {
-                        Label("ホーム画面に置く", systemImage: "plus.rectangle.on.rectangle")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("official-window-widget-guide")
+                    widgetSetupOffer
 
                     if photos.count > 1 {
                         VStack(alignment: .leading, spacing: 14) {
@@ -162,7 +208,7 @@ struct OfficialWindowView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("ねこのまどが選んで届ける、公式まどです。")
-                    Text("公開用に提供された写真を紹介します。猫の名前や撮影時期、提供者は写真を開くと確認できます。")
+                    Text("写真の提供元や掲載日は、写真を開くと確認できます。AI生成の画像には、その旨を表示します。")
                     if state.isSubscribed {
                         Text("写真が追加されると更新します。ホーム画面への反映には時間がかかることがあります。")
                     }
@@ -188,14 +234,63 @@ struct OfficialWindowView: View {
         }
     }
 
+    private var widgetSetupOffer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if offersWidgetSetup {
+                Label("受け取りを始めました", systemImage: "checkmark.circle")
+                    .font(.subheadline)
+                    .accessibilityIdentifier("official-window-subscription-confirmation")
+                Text("ホーム画面でも、このまどを楽しめます。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button {
+                    offersWidgetSetup = false
+                    showsWidgetGuide = true
+                } label: {
+                    Label("ホーム画面に置く方法", systemImage: "plus.rectangle.on.rectangle")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("official-window-widget-guide")
+                Button("あとで") { offersWidgetSetup = false }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier("official-window-widget-later")
+            } else {
+                Button { showsWidgetGuide = true } label: {
+                    Label("ホーム画面に置く方法", systemImage: "plus.rectangle.on.rectangle")
+                        .font(.subheadline)
+                        .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("official-window-widget-guide")
+            }
+        }
+    }
+
     private var widgetGuide: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Label("ホーム画面にも、このまどを。", systemImage: "pawprint.fill").font(.title2)
-                    Text("1. ホーム画面の何もないところを長押しします。")
-                    Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
-                    Text("3. 置いたウィジェットを長押しして「ウィジェットを編集」を開き、「表示する写真」を「どこかの猫 · 公式まど」にします。")
+                    Picker("ウィジェットの設置状況", selection: $widgetPlacement) {
+                        ForEach(WidgetPlacement.allCases, id: \.self) { placement in
+                            Text(placement.rawValue).tag(placement)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("official-window-widget-placement")
+                    VStack(alignment: .leading, spacing: 16) {
+                        if widgetPlacement == .first {
+                            Text("1. ホーム画面の何もないところを長押しします。")
+                            Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
+                            Text("3. 置いたウィジェットを長押しして、「ウィジェットを編集」を開きます。")
+                            Text("4. 「表示する写真」で、次の表示元を選びます。")
+                        } else {
+                            Text("1. ホーム画面にある「ねこのまど」のウィジェットを長押しして、「ウィジェットを編集」を開きます。")
+                            Text("2. 「表示する写真」で、次の表示元を選びます。")
+                        }
+                        Label("どこかの猫 · 公式まど", systemImage: "pawprint.fill")
+                            .font(.headline)
+                            .accessibilityIdentifier("official-window-widget-source")
+                    }
                     Text("写真ライブラリの許可や、猫の登録は必要ありません。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.padding(24)
@@ -235,7 +330,8 @@ struct OfficialWindowView: View {
     private func photoButton(_ photo: OfficialCatPhoto, latest: Bool) -> some View {
         Button { selectedPhoto = photo } label: {
             VStack(alignment: .leading, spacing: 10) {
-                OfficialPhotoImage(photo: photo, maximumPixelSize: latest ? 1100 : 650, store: store)
+                OfficialPhotoImage(photo: photo, maximumPixelSize: latest ? 1100 : 650,
+                                   store: store, isRefreshing: isRefreshing)
                     .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "")")
                     .aspectRatio(CGFloat(photo.width) / CGFloat(photo.height), contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
@@ -260,6 +356,8 @@ struct OfficialWindowView: View {
             state = store.snapshot()
             message = nil
             selectedPhoto = nil
+            // This acknowledges the saved setting, not a successful image fetch.
+            offersWidgetSetup = subscribed && state.isSubscribed
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             if subscribed {
                 if isRefreshing { refreshAgain = true }
@@ -270,6 +368,7 @@ struct OfficialWindowView: View {
             WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
             if !subscribed, !state.isSubscribed {
                 selectedPhoto = nil
+                offersWidgetSetup = false
                 message = "受け取りをやめました。一部の写真データは削除できませんでした。"
             } else {
                 message = "受け取りの設定を保存できませんでした。もう一度お試しください。"
@@ -318,22 +417,33 @@ private struct OfficialPhotoDetailView: View {
     let photo: OfficialCatPhoto
     let store: OfficialWindowStore
     let imageRevision: UUID?
+    var isRefreshing = false
     var showsCloseButton = true
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store)
-                    .id(imageRevision)
-                    .aspectRatio(CGFloat(photo.width) / CGFloat(photo.height), contentMode: .fit)
-                VStack(alignment: .leading, spacing: 10) {
-                    if let caption = photo.caption { Text(caption).font(.body) }
-                    Text("写真提供：\(photo.credit)")
-                    if let date = photo.photographedOn { Text("撮影日：\(date)") }
-                    Text("掲載：\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store,
+                                       isRefreshing: isRefreshing, allowsZoom: true)
+                        .id("\(photo.imageFilename)-\(imageRevision?.uuidString ?? "")")
+                        .frame(width: geometry.size.width, height: max(280, geometry.size.height * 0.72))
+                        .clipped()
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("指で広げるか、ダブルタップすると拡大できます。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if let caption = photo.caption { Text(caption).font(.body) }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("提供元：\(photo.credit)")
+                            if let date = photo.photographedOn { Text("撮影日：\(date)") }
+                            Text("掲載日：\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
+                        }
+                        .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 20)
                 }
-                .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 20)
-            }.padding(.bottom, 24)
+                .padding(.bottom, 24)
+            }
         }
         .navigationTitle(photo.catName)
         .navigationBarTitleDisplayMode(.inline)
@@ -349,21 +459,39 @@ private struct OfficialPhotoImage: View {
     let photo: OfficialCatPhoto
     let maximumPixelSize: Int
     let store: OfficialWindowStore
+    var isRefreshing = false
+    var allowsZoom = false
     @State private var image: UIImage?
+    @State private var loadedImageFilename: String?
+    @State private var loadFailed = false
+
+    private var isLoading: Bool { image == nil && (!loadFailed || isRefreshing) }
 
     var body: some View {
         ZStack {
             Color(.secondarySystemGroupedBackground)
             if let image {
-                Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
+                if allowsZoom {
+                    MomentZoomablePhoto(image: image)
+                } else {
+                    Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
+                }
+            } else if isLoading {
+                ProgressView("写真を読み込んでいます…").padding()
             } else {
                 Label("写真を読み込めませんでした", systemImage: "photo")
                     .font(.footnote).foregroundStyle(.secondary).padding()
             }
         }
         .accessibilityLabel("\(photo.catName)の写真")
-        .accessibilityIdentifier(image == nil ? "official-window-image-unavailable" : "official-window-image-loaded")
-        .task(id: photo.imageFilename) {
+        .accessibilityIdentifier(image != nil ? "official-window-image-loaded"
+                                 : isLoading ? "official-window-image-loading" : "official-window-image-unavailable")
+        .task(id: "\(photo.imageFilename)-\(isRefreshing)") {
+            // A feed check must not replace an already displayed UIImage and
+            // reset its zoom. A new cache revision recreates this view instead.
+            guard image == nil || loadedImageFilename != photo.imageFilename else { return }
+            image = nil
+            loadFailed = false
             guard let url = store.imageURL(for: photo),
                   let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -371,8 +499,13 @@ private struct OfficialPhotoImage: View {
                     kCGImageSourceCreateThumbnailWithTransform: true,
                     kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
                     kCGImageSourceShouldCacheImmediately: true
-                  ] as CFDictionary) else { image = nil; return }
+                  ] as CFDictionary) else {
+                image = nil
+                loadFailed = true
+                return
+            }
             image = UIImage(cgImage: cgImage)
+            loadedImageFilename = photo.imageFilename
         }
     }
 }
@@ -405,6 +538,14 @@ final class OfficialWindowFixtureModel: ObservableObject {
             }
         } else {
             linkedPhotoID = nil
+            if CommandLine.arguments.contains("--window-list-subscribed") {
+                do {
+                    try store.setSubscribed(true)
+                    try seedPhoto(failImage: false)
+                } catch {
+                    assertionFailure("Could not seed the window list fixture")
+                }
+            }
         }
     }
 

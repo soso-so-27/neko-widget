@@ -2866,7 +2866,7 @@ private final class MomentLocalImageCache {
 }
 
 /// Zoom changes only the viewed pixels; closing never writes or crops a photo.
-private struct MomentZoomablePhoto: UIViewRepresentable {
+struct MomentZoomablePhoto: UIViewRepresentable {
     let image: UIImage
     func makeUIView(context: Context) -> PhotoScrollView { PhotoScrollView() }
     func updateUIView(_ view: PhotoScrollView, context: Context) { view.setImage(image) }
