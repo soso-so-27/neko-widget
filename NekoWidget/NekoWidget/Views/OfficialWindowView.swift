@@ -401,7 +401,7 @@ final class OfficialWindowFixtureModel: ObservableObject {
                 try store.setSubscribed(true)
                 try seedPhoto(failImage: false)
             } catch {
-                assertionFailure("Could not seed the official route fixture: \(error)")
+                assertionFailure("Could not seed the official route fixture")
             }
         } else {
             linkedPhotoID = nil
