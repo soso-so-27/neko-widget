@@ -42,6 +42,7 @@ class PrivateWindowCoverTests(unittest.TestCase):
     def test_shipping_reader_with_two_window_histories(self):
         store = source("Shared/Sharing/MomentSharingStore.swift")
         processor = source("NekoWidget/Services/MomentShareHandoffProcessor.swift")
+        canonical_builder = source("NekoWidget/Services/MomentCanonicalPreviewBuilder.swift")
         # Compile the shipping service, JPEG validation, thumbnail conversion,
         # scoped sender reader and path helpers. Only persistence/authorization
         # adapters and model fixtures are substituted; no selection is copied.
@@ -50,6 +51,7 @@ class PrivateWindowCoverTests(unittest.TestCase):
         sender_reader = section(store, "    static func readLocalThumbnail(for item: MomentOutboxItem) -> Data?", "    static func removeLocalThumbnail(for item:")
         path_helpers = section(store, "    private static func localThumbnailURL(fileName: String)", "    /// A reservation is only an upload lease.")
         converter = section(processor, "    static func sentHistoryThumbnail", "    private func existingOutbox")
+        metadata_stripper = section(canonical_builder, "    private static func strippingPrivateMetadata", "#if DEBUG")
         swift = r'''
 import Foundation
 import Darwin
@@ -134,6 +136,10 @@ enum MomentSharingStateStore {
         return state
     }
 ''' + detail_checks + sender_reader + path_helpers + "\n}\n" + "enum MomentShareHandoffProcessor {\n" + converter + "\n}\n"
+        swift += "enum FixtureCanonicalJPEG {\n" + metadata_stripper + r'''
+    static func normalize(_ data: Data) -> Data? { strippingPrivateMetadata(from: data) }
+}
+'''
         swift += source("NekoWidget/Services/PrivateWindowCoverPhotoService.swift")
         swift += r'''
 func jpeg(red: CGFloat) -> Data {
@@ -145,7 +151,15 @@ func jpeg(red: CGFloat) -> Data {
     let destination = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil)!
     CGImageDestinationAddImage(destination, context.makeImage()!, nil)
     precondition(CGImageDestinationFinalize(destination))
-    return data as Data
+    // ImageIO can synthesize EXIF even from this fresh CGImage. Received and
+    // full sent copies come from the shipping canonical encoder, which strips
+    // APP/COM before storage; a raw ImageIO JPEG is not that fixture format.
+    let raw = data as Data
+    let normalized = FixtureCanonicalJPEG.normalize(raw)!
+    precondition(MomentSharingStateStore.isValidLocalDetail(normalized),
+                 "Canonical photo fixture must pass the shipping privacy validator")
+    print("cover-fixture: raw-detail-valid=\(MomentSharingStateStore.isValidLocalDetail(raw)), canonical-detail-valid=true")
+    return normalized
 }
 let now = Date(timeIntervalSince1970: 1_800_000_000)
 let window = PrivateWindowCatalogEntry(localWindowID: "target-window", spaceID: "target-space")
@@ -191,7 +205,10 @@ func load(_ inbox: [MomentInboxItem] = [], _ outbox: [MomentOutboxItem] = []) ->
     return PrivateWindowCoverPhotoService.load(for: window, now: now)
 }
 precondition(load().status == .noPhotos)
-precondition(load([inbox]).photo?.jpeg == redCover, "Received photo must not require a Widget manifest")
+let receivedCover = load([inbox])
+precondition(receivedCover.status == .photo,
+             "Received photo must not require a Widget manifest; status=\(receivedCover.status)")
+precondition(receivedCover.photo?.jpeg == redCover, "Received cover must use the target photo's bounded bytes")
 precondition(load([inbox]).photo!.displayUntil == inbox.receivedAt.addingTimeInterval(90 * 86400))
 precondition(load([inbox], [sent]).photo?.origin == .sent, "Newest committed photo wins")
 precondition(load([], [sent]).photo?.jpeg == blueCover, "Read target scope, not active window")
