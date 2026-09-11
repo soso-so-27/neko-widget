@@ -19,6 +19,7 @@ struct AppRootView: View {
     @State private var presentedError: PresentedError?
     @State private var showsWidgetPlacementGuide = false
     @State private var officialWindowRoute: OfficialWindowRoute?
+    @State private var officialWindowPresentationID = UUID()
     @State private var onboardingScanErrorMessage: String?
 
     var body: some View {
@@ -55,6 +56,7 @@ struct AppRootView: View {
         }
         .onOpenURL { url in
             if let route = OfficialWindowRoute(url: url) {
+                officialWindowPresentationID = UUID()
                 officialWindowRoute = route
                 return
             }
@@ -134,6 +136,7 @@ struct AppRootView: View {
         .sheet(item: $officialWindowRoute) { route in
             NavigationStack {
                 OfficialWindowView(initialPhotoID: route.photoID)
+                    .id(officialWindowPresentationID)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("閉じる") { officialWindowRoute = nil }

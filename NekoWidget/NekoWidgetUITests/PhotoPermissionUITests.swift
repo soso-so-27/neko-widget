@@ -44,6 +44,57 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    func testWidgetPhotoOpensBeforeRefreshAndClosesInOneStep() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--official-window-ui-fixture", "--official-window-linked-photo", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let launcher = app.buttons["official-window-fixture-launch"]
+        XCTAssertTrue(launcher.waitForExistence(timeout: 10))
+        launcher.tap()
+        let failRefresh = app.buttons["確認用：通信を失敗させる"]
+        XCTAssertTrue(failRefresh.waitForExistence(timeout: 5))
+        // The refresh cannot finish until this test permits it. The old
+        // overview -> refresh -> second sheet flow fails these assertions.
+        XCTAssertTrue(app.navigationBars["確認用の猫"].exists)
+        XCTAssertFalse(app.navigationBars["どこかの猫"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "閉じる").count, 1)
+        capture("official-widget-direct-photo-before-refresh", app)
+        failRefresh.tap()
+        XCTAssertTrue(app.buttons["確認用：通信失敗済み"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["確認用の猫"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(launcher.waitForExistence(timeout: 5))
+        XCTAssertTrue(launcher.isHittable)
+        XCTAssertFalse(app.navigationBars["どこかの猫"].exists)
+    }
+
+    @MainActor
+    func testMissingWidgetPhotoDoesNotOpenAnotherPhoto() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--official-window-ui-fixture", "--official-window-linked-photo",
+                               "--official-window-missing-photo", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let launcher = app.buttons["official-window-fixture-launch"]
+        XCTAssertTrue(launcher.waitForExistence(timeout: 10))
+        launcher.tap()
+        let failRefresh = app.buttons["確認用：通信を失敗させる"]
+        XCTAssertTrue(failRefresh.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["確認用の猫"].exists)
+        failRefresh.tap()
+        let overview = app.buttons["official-window-show-overview"]
+        XCTAssertTrue(overview.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+        capture("official-widget-unavailable-photo", app)
+        overview.tap()
+        XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["確認用の猫の写真を開く"].exists)
+    }
+
+    @MainActor
     private func capture(_ name: String, _ app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

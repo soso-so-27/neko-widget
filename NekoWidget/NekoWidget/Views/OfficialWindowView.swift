@@ -37,22 +37,84 @@ struct OfficialWindowEntryCard: View {
 @MainActor
 struct OfficialWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @State private var state = OfficialWindowState.empty
+    @State private var state: OfficialWindowState
     @State private var isRefreshing = false
     @State private var refreshAgain = false
     @State private var message: String?
     @State private var selectedPhoto: OfficialCatPhoto?
     @State private var showsWidgetGuide = false
-    @State private var hasHandledInitialPhoto = false
-    var initialPhotoID: String? = nil
-    var store: OfficialWindowStore = .shared
-    var refreshFeed: () async throws -> Void = {
-        try await OfficialWindowClient.shared.refresh(maximumImages: 6)
+    @State private var showsOverview = false
+    @State private var hasCheckedFeed = false
+    let initialPhotoID: String?
+    let store: OfficialWindowStore
+    let refreshFeed: () async throws -> Void
+
+    init(initialPhotoID: String? = nil, store: OfficialWindowStore = .shared,
+         refreshFeed: @escaping () async throws -> Void = {
+             try await OfficialWindowClient.shared.refresh(maximumImages: 6)
+         }) {
+        self.initialPhotoID = initialPhotoID
+        self.store = store
+        self.refreshFeed = refreshFeed
+        // The Widget already cached this photo. Resolve it before the first
+        // frame, rather than opening the overview and then another sheet.
+        _state = State(initialValue: store.snapshot())
     }
 
     private var photos: [OfficialCatPhoto] { state.photos }
 
     var body: some View {
+        Group {
+            if let initialPhotoID, !showsOverview {
+                if let photo = photos.first(where: { $0.id == initialPhotoID }) {
+                    OfficialPhotoDetailView(photo: photo, store: store,
+                                            imageRevision: state.imageRevision,
+                                            showsCloseButton: false)
+                } else {
+                    unavailableLinkedPhoto
+                }
+            } else {
+                overview
+            }
+        }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await refresh()
+        }
+        .task(id: state.catalog?.validUntil) {
+            // Expiry also applies while the detail remains open offline.
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                state = store.snapshot()
+                dismissUnavailablePhoto()
+            }
+        }
+        .sheet(item: $selectedPhoto) { photo in
+            NavigationStack { OfficialPhotoDetailView(photo: photo, store: store, imageRevision: state.imageRevision) }
+        }
+        .sheet(isPresented: $showsWidgetGuide) {
+            widgetGuide
+        }
+    }
+
+    private var unavailableLinkedPhoto: some View {
+        VStack(spacing: 20) {
+            if state.isSubscribed && !hasCheckedFeed {
+                ProgressView("写真を確認しています…")
+            } else {
+                ContentUnavailableView("この写真は表示できません", systemImage: "photo",
+                                       description: Text(message ?? "公式まどで、いま届いている写真を確認できます。"))
+                Button("公式まどを見る") { showsOverview = true }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("official-window-show-overview")
+            }
+        }
+        .padding(20)
+        .navigationTitle("写真")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if let latest = photos.first {
@@ -124,38 +186,23 @@ struct OfficialWindowView: View {
                 }
             }
         }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            await refresh()
-        }
-        .task(id: state.catalog?.validUntil) {
-            // Also retire a photo while its detail is open and the phone stays
-            // offline. Expiry is not dependent on another successful request.
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                state = store.snapshot()
-                dismissUnavailablePhoto()
+    }
+
+    private var widgetGuide: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Label("ホーム画面にも、このまどを。", systemImage: "pawprint.fill").font(.title2)
+                    Text("1. ホーム画面の何もないところを長押しします。")
+                    Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
+                    Text("3. 置いたウィジェットを長押しして「ウィジェットを編集」を開き、「表示する写真」を「どこかの猫 · 公式まど」にします。")
+                    Text("写真ライブラリの許可や、猫の登録は必要ありません。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }.padding(24)
             }
-        }
-        .sheet(item: $selectedPhoto) { photo in
-            NavigationStack { OfficialPhotoDetailView(photo: photo, store: store, imageRevision: state.imageRevision) }
-        }
-        .sheet(isPresented: $showsWidgetGuide) {
-            NavigationStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        Label("ホーム画面にも、このまどを。", systemImage: "pawprint.fill").font(.title2)
-                        Text("1. ホーム画面の何もないところを長押しします。")
-                        Text("2. 「編集」または「＋」からウィジェットを追加し、「ねこのまど」を選びます。")
-                        Text("3. 置いたウィジェットを長押しして「ウィジェットを編集」を開き、「表示する写真」を「どこかの猫 · 公式まど」にします。")
-                        Text("写真ライブラリの許可や、猫の登録は必要ありません。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }.padding(24)
-                }
-                .navigationTitle("ホーム画面に置く")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsWidgetGuide = false } } }
-            }
+            .navigationTitle("ホーム画面に置く")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsWidgetGuide = false } } }
         }
     }
 
@@ -237,6 +284,7 @@ struct OfficialWindowView: View {
         isRefreshing = true
         defer {
             isRefreshing = false
+            hasCheckedFeed = true
             if refreshAgain {
                 refreshAgain = false
                 Task { await refresh() }
@@ -256,11 +304,6 @@ struct OfficialWindowView: View {
         state = store.snapshot()
         dismissUnavailablePhoto()
         WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
-        if !hasHandledInitialPhoto, let initialPhotoID {
-            hasHandledInitialPhoto = true
-            selectedPhoto = photos.first { $0.id == initialPhotoID }
-            if selectedPhoto == nil { message = "この写真の掲載は終了しました。いま届いている写真をご覧ください。" }
-        }
     }
 
     private func dismissUnavailablePhoto() {
@@ -275,6 +318,7 @@ private struct OfficialPhotoDetailView: View {
     let photo: OfficialCatPhoto
     let store: OfficialWindowStore
     let imageRevision: UUID?
+    var showsCloseButton = true
 
     var body: some View {
         ScrollView {
@@ -293,7 +337,11 @@ private struct OfficialPhotoDetailView: View {
         }
         .navigationTitle(photo.catName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } } }
+        .toolbar {
+            if showsCloseButton {
+                ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } }
+            }
+        }
     }
 }
 
@@ -336,6 +384,10 @@ private struct OfficialPhotoImage: View {
 final class OfficialWindowFixtureModel: ObservableObject {
     let store: OfficialWindowStore
     private var attempts = 0
+    let linkedPhotoID: String?
+    @Published var linkedRefreshStarted = false
+    @Published var finishLinkedRefresh = false
+    @Published var linkedRefreshFailed = false
 
     init() {
         let unavailable = CommandLine.arguments.contains("--official-window-unconfigured")
@@ -343,10 +395,35 @@ final class OfficialWindowFixtureModel: ObservableObject {
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("official-fixture-" + UUID().uuidString),
             endpoint: unavailable ? nil : URL(string: "https://official.invalid/catalog.json")
         )
+        if CommandLine.arguments.contains("--official-window-linked-photo") {
+            linkedPhotoID = CommandLine.arguments.contains("--official-window-missing-photo") ? "removed-photo" : "fixture-photo"
+            do {
+                try store.setSubscribed(true)
+                try seedPhoto(failImage: false)
+            } catch {
+                assertionFailure("Could not seed the official route fixture: \(error)")
+            }
+        } else {
+            linkedPhotoID = nil
+        }
     }
 
     func refresh() async throws {
+        if linkedPhotoID != nil {
+            linkedRefreshStarted = true
+            // Hold only the network boundary; the test releases it after
+            // asserting that the shipping screen has already opened the photo.
+            while !finishLinkedRefresh {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            linkedRefreshFailed = true
+            throw URLError(.notConnectedToInternet)
+        }
         attempts += 1
+        try seedPhoto(failImage: attempts == 1)
+    }
+
+    private func seedPhoto(failImage: Bool) throws {
         let request = store.snapshot()
         guard request.isSubscribed else { return }
         let image = MomentExperiencePhotoFixture.image(index: 0)
@@ -362,16 +439,40 @@ final class OfficialWindowFixtureModel: ObservableObject {
         let catalog = OfficialWindowCatalog(schemaVersion: 1, channelID: "official-cats", enabled: true,
                                            generatedAt: now, validUntil: now.addingTimeInterval(86400), photos: [photo])
         try store.accept(catalog, for: request)
-        if attempts == 1 { throw URLError(.networkConnectionLost) }
+        if failImage { throw URLError(.networkConnectionLost) }
         try store.saveImage(data, photo: photo, for: request)
     }
 }
 
 struct OfficialWindowUIFixture: View {
     @StateObject private var model = OfficialWindowFixtureModel()
+    @State private var presentsLinkedPhoto = false
     var body: some View {
-        NavigationStack {
-            OfficialWindowView(store: model.store, refreshFeed: { try await model.refresh() })
+        if let photoID = model.linkedPhotoID {
+            Button("Widgetの写真を開く") { presentsLinkedPhoto = true }
+                .accessibilityIdentifier("official-window-fixture-launch")
+                .sheet(isPresented: $presentsLinkedPhoto) {
+                    NavigationStack {
+                        OfficialWindowView(initialPhotoID: photoID, store: model.store,
+                                           refreshFeed: { try await model.refresh() })
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("閉じる") { presentsLinkedPhoto = false }
+                                }
+                                ToolbarItem(placement: .bottomBar) {
+                                    if model.linkedRefreshStarted {
+                                        Button(model.linkedRefreshFailed ? "確認用：通信失敗済み" : "確認用：通信を失敗させる") {
+                                            model.finishLinkedRefresh = true
+                                        }
+                                    }
+                                }
+                            }
+                    }
+                }
+        } else {
+            NavigationStack {
+                OfficialWindowView(store: model.store, refreshFeed: { try await model.refresh() })
+            }
         }
     }
 }
