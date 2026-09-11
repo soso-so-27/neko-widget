@@ -234,7 +234,7 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         self.assertIn('return "$widget_scenario_status"', scenario_body)
         workflow = source('.github/workflows/ios-build.yml')
         runtime_job = workflow[workflow.index('\n  sharing-runtime-matrix:'):]
-        self.assertIn('timeout-minutes: 50', runtime_job)
+        self.assertIn('timeout-minutes: 60', runtime_job)
 
     def test_widget_portrait_review_reuses_production_cache_and_decoder(self) -> None:
         runtime = source("NekoWidget/ci/run-sharing-runtime-matrix.sh")
