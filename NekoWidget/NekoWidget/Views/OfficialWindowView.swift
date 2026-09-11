@@ -70,6 +70,7 @@ extension Notification.Name {
 @MainActor
 struct OfficialWindowView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var state: OfficialWindowState
     @State private var isRefreshing = false
     @State private var refreshAgain = false
@@ -135,9 +136,11 @@ struct OfficialWindowView: View {
                 OfficialPhotoDetailView(photo: photo, store: store,
                                         imageRevision: state.imageRevision, isRefreshing: isRefreshing)
             }
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .sheet(isPresented: $showsWidgetGuide) {
             widgetGuide
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .onChange(of: state.subscriptionID) { _, _ in
             NotificationCenter.default.post(name: .officialWindowPresentationDidChange, object: nil)

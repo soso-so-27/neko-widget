@@ -61,7 +61,24 @@ final class OfficialWindowUITests: XCTestCase {
         let photo = app.buttons["確認用の猫の写真を開く"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))
         photo.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["photo-detail-zoom-surface"].firstMatch.waitForExistence(timeout: 5))
+        // SwiftUI exposes the zoomable UIView under the surrounding photo's
+        // identifier. Its metrics distinguish it from the overview thumbnail.
+        let zoomSurface = app.images.matching(NSPredicate(
+            format: "identifier == %@ AND value CONTAINS %@",
+            "official-window-image-loaded", "zoom="
+        )).firstMatch
+        XCTAssertTrue(zoomSurface.waitForExistence(timeout: 5))
+        func metric(_ field: String) -> Double {
+            let value = zoomSurface.value as? String ?? ""
+            let part = value.split(separator: ";").first { $0.hasPrefix(field + "=") }
+            return part.flatMap { Double($0.dropFirst(field.count + 1)) } ?? 0
+        }
+        XCTAssertGreaterThanOrEqual(metric("pixels"), 1_000)
+        XCTAssertEqual(metric("zoom"), 1, accuracy: 0.05)
+        capture("official-photo-large-text", app)
+        zoomSurface.doubleTap()
+        expectation(for: NSPredicate { _, _ in metric("zoom") > 1.1 }, evaluatedWith: zoomSurface)
+        waitForExpectations(timeout: 5)
         capture("official-photo-large-text-zoom", app)
         XCTAssertTrue(app.buttons["閉じる"].isHittable)
         app.buttons["閉じる"].tap()
