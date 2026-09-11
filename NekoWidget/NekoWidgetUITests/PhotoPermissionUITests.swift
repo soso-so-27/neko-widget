@@ -139,7 +139,10 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["official-window-stop"].exists, "Management must stay out of the photo list")
         app.buttons["official-window-manage"].tap()
         app.buttons["official-window-stop"].tap()
-        app.buttons["受け取りを続ける"].tap()
+        let cancelStop = app.alerts["「どこかの猫」の受け取りをやめますか？"].buttons["official-window-stop-cancel"]
+        XCTAssertTrue(cancelStop.waitForExistence(timeout: 5))
+        capture("official-window-stop-confirmation", app)
+        cancelStop.tap()
         XCTAssertFalse(subscribe.exists, "Canceling stop keeps the subscription")
         stopReceiving(app)
         XCTAssertTrue(subscribe.waitForExistence(timeout: 5))
@@ -204,7 +207,7 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(manage.waitForExistence(timeout: 5))
         manage.tap()
         app.buttons["official-window-stop"].tap()
-        let confirm = app.buttons["official-window-stop-confirm"]
+        let confirm = app.alerts["「どこかの猫」の受け取りをやめますか？"].buttons["official-window-stop-confirm"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Stopping needs a deliberate confirmation")
         confirm.tap()
     }

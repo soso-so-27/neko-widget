@@ -219,11 +219,12 @@ struct OfficialWindowView: View {
                 .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .sheet(isPresented: $showsAbout) { about.environment(\.dynamicTypeSize, dynamicTypeSize) }
-        .confirmationDialog("「\(OfficialWindowCatalog.displayName)」の受け取りをやめますか？",
-                            isPresented: $confirmsStop, titleVisibility: .visible) {
+        .alert("「\(OfficialWindowCatalog.displayName)」の受け取りをやめますか？",
+               isPresented: $confirmsStop) {
             Button("受け取りをやめる", role: .destructive) { changeSubscription(false) }
                 .accessibilityIdentifier("official-window-stop-confirm")
             Button("受け取りを続ける", role: .cancel) {}
+                .accessibilityIdentifier("official-window-stop-cancel")
         } message: {
             Text("このまどからの受け取りと、Widgetへの表示を止めます。あとで受け取りを再開できます。")
         }
