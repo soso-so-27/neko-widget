@@ -412,17 +412,27 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         add(hierarchy)
         captureScreenshot(named: "widget-gallery-before-single-reopen")
 
-        let previousSearch = springboard.searchFields.firstMatch
+        let gallery = springboard.collectionViews["add-sheet-collection-view"]
+        guard gallery.exists else { return nil }
         guard let close = waitForElement(
             in: springboard, labels: ["Close", "閉じる"], elementTypes: [.button], timeout: 5,
             requireHittable: true
         ) else { return nil }
         close.tap()
-        // SpringBoard exposes the Home Screen's Edit button behind the Gallery.
-        // Its existence does not mean the Gallery has closed or the button can
-        // receive a tap. A failed {-1, -1} tap otherwise consumes this only retry.
+        // Close can cancel only the search, leaving the Gallery sheet open.
+        // Dismiss that sheet from its actual grabber before using the Home
+        // Screen's Edit button, which is also exposed behind the Gallery.
+        if gallery.exists {
+            guard let grabber = waitForElement(
+                in: springboard, labels: ["Sheet Grabber"], elementTypes: [.button], timeout: 5,
+                requireHittable: true
+            ) else { return nil }
+            let start = grabber.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let end = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+            start.press(forDuration: 0.1, thenDragTo: end)
+        }
         let galleryClosed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "exists == false"), object: previousSearch
+            predicate: NSPredicate(format: "exists == false"), object: gallery
         )
         guard XCTWaiter.wait(for: [galleryClosed], timeout: 5) == .completed else { return nil }
         guard let edit = waitForElement(
