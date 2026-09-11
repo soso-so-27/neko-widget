@@ -61,8 +61,16 @@ final class OfficialWindowUITests: XCTestCase {
         card.tap()
         let manage = app.buttons["official-window-manage"]
         XCTAssertTrue(manage.waitForExistence(timeout: 5))
-        let manageReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: manage)
-        XCTAssertEqual(XCTWaiter.wait(for: [manageReady], timeout: 5), .completed)
+        // A toolbar Menu exposes both its labelled accessibility button and an
+        // underlying button at the same frame. Verify the user's operation and
+        // destination instead of relying on the labelled node's hit-test flag.
+        manage.tap()
+        let about = app.buttons["official-window-about"]
+        XCTAssertTrue(about.waitForExistence(timeout: 5))
+        about.tap()
+        XCTAssertTrue(app.navigationBars["このまどについて"].waitForExistence(timeout: 5))
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5))
         capture("official-window-overview-large-text", app)
         let photo = app.buttons["official-window-photo-fixture-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))
