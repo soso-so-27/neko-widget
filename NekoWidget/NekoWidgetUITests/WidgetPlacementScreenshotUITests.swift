@@ -412,20 +412,32 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         add(hierarchy)
         captureScreenshot(named: "widget-gallery-before-single-reopen")
 
+        let previousSearch = springboard.searchFields.firstMatch
         guard let close = waitForElement(
-            in: springboard, labels: ["Close", "閉じる"], elementTypes: [.button], timeout: 5
+            in: springboard, labels: ["Close", "閉じる"], elementTypes: [.button], timeout: 5,
+            requireHittable: true
         ) else { return nil }
         close.tap()
+        // SpringBoard exposes the Home Screen's Edit button behind the Gallery.
+        // Its existence does not mean the Gallery has closed or the button can
+        // receive a tap. A failed {-1, -1} tap otherwise consumes this only retry.
+        let galleryClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: previousSearch
+        )
+        guard XCTWaiter.wait(for: [galleryClosed], timeout: 5) == .completed else { return nil }
         guard let edit = waitForElement(
-            in: springboard, labels: ["Edit", "編集"], elementTypes: [.button], timeout: 5
+            in: springboard, labels: ["Edit", "編集"], elementTypes: [.button], timeout: 5,
+            requireHittable: true
         ) else { return nil }
         edit.tap()
         guard let addWidget = waitForElement(
             in: springboard, labels: ["Add Widget", "ウィジェットを追加"],
-            elementTypes: [.button, .staticText, .menuItem], timeout: 5
+            elementTypes: [.button, .staticText, .menuItem], timeout: 5, requireHittable: true
         ) else { return nil }
         addWidget.tap()
         guard let search = waitForFirstElement(springboard.searchFields, timeout: 5) else { return nil }
+        let searchReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: search)
+        guard XCTWaiter.wait(for: [searchReady], timeout: 5) == .completed else { return nil }
         search.tap()
         if let value = search.value as? String, value != search.placeholderValue, !value.isEmpty {
             let clear = search.buttons.matching(NSPredicate(
@@ -468,7 +480,8 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
         in application: XCUIApplication,
         labels: [String],
         elementTypes: [XCUIElement.ElementType],
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        requireHittable: Bool = false
     ) -> XCUIElement? {
         let deadline = Date().addingTimeInterval(timeout)
 
@@ -484,7 +497,7 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                         label
                     )
                     let matches = candidates.matching(predicate).allElementsBoundByIndex
-                    if let match = matches.first(where: \.exists) {
+                    if let match = matches.first(where: { $0.exists && (!requireHittable || $0.isHittable) }) {
                         return match
                     }
                 }

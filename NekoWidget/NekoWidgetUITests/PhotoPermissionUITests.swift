@@ -139,7 +139,7 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["official-window-stop"].exists, "Management must stay out of the photo list")
         app.buttons["official-window-manage"].tap()
         app.buttons["official-window-stop"].tap()
-        let cancelStop = app.alerts["「どこかの猫」の受け取りをやめますか？"].buttons["official-window-stop-cancel"]
+        let cancelStop = receivingConfirmationButton("official-window-stop-cancel", in: app)
         XCTAssertTrue(cancelStop.waitForExistence(timeout: 5))
         capture("official-window-stop-confirmation", app)
         cancelStop.tap()
@@ -207,9 +207,18 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(manage.waitForExistence(timeout: 5))
         manage.tap()
         app.buttons["official-window-stop"].tap()
-        let confirm = app.alerts["「どこかの猫」の受け取りをやめますか？"].buttons["official-window-stop-confirm"]
+        let confirm = receivingConfirmationButton("official-window-stop-confirm", in: app)
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Stopping needs a deliberate confirmation")
         confirm.tap()
+    }
+
+    @MainActor
+    private func receivingConfirmationButton(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        // iOS 26's recorded AX tree exposes a parent and child Button with
+        // the same ID/label for one alert action. Scope to this exact alert
+        // before selecting that action; the post-tap subscription checks stay.
+        app.alerts["「どこかの猫」の受け取りをやめますか？"]
+            .buttons.matching(identifier: identifier).firstMatch
     }
 
     @MainActor
