@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */; };
 		E02609080000000000000001 /* MomentDeliveryComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609080000000000000002 /* MomentDeliveryComposer.swift */; };
 		E02609090000000000000011 /* PhotoWindowDeliveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000012 /* PhotoWindowDeliveryView.swift */; };
 		E02609090000000000000021 /* MomentPhotoDeliveryProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */; };
@@ -227,6 +228,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateWindowCoverPhotoService.swift; sourceTree = "<group>"; };
 		E02609080000000000000002 /* MomentDeliveryComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentDeliveryComposer.swift; sourceTree = "<group>"; };
 		E02609090000000000000012 /* PhotoWindowDeliveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoWindowDeliveryView.swift; sourceTree = "<group>"; };
 		E02609090000000000000022 /* MomentPhotoDeliveryProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MomentPhotoDeliveryProgressView.swift; sourceTree = "<group>"; };
@@ -608,6 +610,7 @@
 				F0000000000000000000022C /* HomeLocationClassifier.swift */,
 				F00000000000000000000217 /* PhotoSelectors.swift */,
 				F00000000000000000000218 /* WidgetCacheBuilder.swift */,
+				E02609110000000000000032 /* PrivateWindowCoverPhotoService.swift */,
 				F00000000000000000000219 /* AppLogStore.swift */,
 				F0000000000000000000021A /* PairingInstallationGuard.swift */,
 				F0000000000000000000021B /* PairingAPIClient.swift */,
@@ -959,6 +962,7 @@
 				10000000000000000000014E /* HomeLocationClassifier.swift in Sources */,
 				100000000000000000000117 /* PhotoSelectors.swift in Sources */,
 				100000000000000000000118 /* WidgetCacheBuilder.swift in Sources */,
+				E02609110000000000000031 /* PrivateWindowCoverPhotoService.swift in Sources */,
 				100000000000000000000119 /* AppLogStore.swift in Sources */,
 				100000000000000000000120 /* AppViewModel.swift in Sources */,
 				100000000000000000000142 /* PairingInstallationGuard.swift in Sources */,

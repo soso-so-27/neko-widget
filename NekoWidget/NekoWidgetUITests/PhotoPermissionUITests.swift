@@ -8,38 +8,39 @@ final class OfficialWindowUITests: XCTestCase {
         app.resetAuthorizationStatus(for: .photos)
         app.launchArguments = ["--window-list-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        let discover = app.buttons["window-list-discover"]
-        XCTAssertTrue(discover.waitForExistence(timeout: 10))
+        let addition = app.buttons["window-list-addition"]
+        XCTAssertTrue(addition.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["official-window-entry"].exists, "Unsubscribed windows belong in discovery")
-        discover.tap()
+        addition.tap()
+        app.buttons["window-list-discover"].tap()
         app.buttons["official-window-entry"].tap()
         XCTAssertTrue(app.tabBars.buttons["写真"].exists)
         XCTAssertTrue(app.tabBars.buttons["思い出"].exists)
+        for _ in 0..<5 { if app.buttons["official-window-subscribe"].isHittable { break }; app.swipeUp() }
         app.buttons["official-window-subscribe"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-subscription-confirmation"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["どこかの猫"].exists, "Receiving must not send the user back to the list")
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-unavailable"].firstMatch.waitForExistence(timeout: 10))
-        app.buttons["公式まどを更新"].tap()
+        app.buttons["official-window-refresh"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10))
         let guide = app.buttons["official-window-widget-guide"]
         for _ in 0..<5 { if guide.isHittable { break }; app.swipeUp() }
         guide.tap()
         XCTAssertTrue(app.navigationBars["ホーム画面に置く"].waitForExistence(timeout: 5))
-        app.segmentedControls["official-window-widget-placement"].buttons["すでに置いている"].tap()
+        app.buttons["すでに置いている"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-widget-source"].firstMatch.exists)
         capture("window-widget-guide-existing", app)
         app.buttons["閉じる"].tap()
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
         app.navigationBars["まどを探す"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["まどを追加"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5))
         capture("window-list-after-receiving", app)
         app.buttons["official-window-entry"].tap()
-        let stop = app.buttons["official-window-stop"]
-        for _ in 0..<5 { if stop.isHittable { break }; app.swipeUp() }
-        stop.tap()
+        stopReceiving(app)
         XCTAssertTrue(app.buttons["official-window-subscribe"].waitForExistence(timeout: 5))
         app.navigationBars["どこかの猫"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(discover.waitForExistence(timeout: 5))
+        XCTAssertTrue(addition.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["official-window-entry"].exists)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
     }
@@ -54,11 +55,11 @@ final class OfficialWindowUITests: XCTestCase {
         let card = app.buttons["official-window-entry"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(card.isHittable)
-        XCTAssertTrue(app.buttons["window-list-discover"].isHittable)
+        XCTAssertTrue(app.buttons["window-list-addition"].isHittable)
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
         card.tap()
-        let photo = app.buttons["確認用の猫の写真を開く"]
+        let photo = app.buttons["official-window-photo-fixture-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))
         photo.tap()
         // SwiftUI exposes the zoomable UIView under the surrounding photo's
@@ -90,31 +91,105 @@ final class OfficialWindowUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.resetAuthorizationStatus(for: .photos)
-        app.launchArguments = ["--official-window-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchArguments = ["--official-window-ui-fixture", "--official-window-recent-photos", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
         let subscribe = app.buttons["official-window-subscribe"]
         XCTAssertTrue(subscribe.waitForExistence(timeout: 15))
+        let preview = app.buttons["official-window-photo-fixture-photo"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
+        preview.tap()
+        XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
+        capture("official-window-preview-detail", app)
+        app.buttons["閉じる"].tap()
+        XCTAssertTrue(subscribe.exists, "Previewing must not subscribe")
+        XCTAssertFalse(app.buttons["official-window-widget-guide"].exists)
         capture("official-window-before-receiving", app)
+        for _ in 0..<5 { if subscribe.isHittable { break }; app.swipeUp() }
         subscribe.tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-unavailable"].firstMatch.waitForExistence(timeout: 10))
-        app.buttons["公式まどを更新"].tap()
+        app.buttons["official-window-refresh"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10), "Same-file retry did not reload the photo")
+        for _ in 0..<5 { if preview.isHittable { break }; app.swipeDown() }
         capture("official-window-photo", app)
-        app.buttons["確認用の猫の写真を開く"].tap()
+        app.buttons["official-window-photo-fixture-photo"].tap()
         XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
         capture("official-window-photo-detail", app)
         app.buttons["閉じる"].tap()
-        let stop = app.buttons["official-window-stop"]
-        for _ in 0..<5 {
-            if stop.isHittable { break }
-            app.swipeUp()
-        }
-        XCTAssertTrue(stop.isHittable)
-        stop.tap()
+        let recent = app.buttons["official-window-photo-fixture-photo-1"]
+        for _ in 0..<6 { if recent.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(recent.isHittable)
+        capture("official-window-recent-photos", app)
+        recent.tap()
+        XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
+        app.buttons["閉じる"].tap()
+        XCTAssertFalse(app.buttons["official-window-stop"].exists, "Management must stay out of the photo list")
+        app.buttons["official-window-manage"].tap()
+        app.buttons["official-window-stop"].tap()
+        app.buttons["受け取りを続ける"].tap()
+        XCTAssertFalse(subscribe.exists, "Canceling stop keeps the subscription")
+        stopReceiving(app)
         XCTAssertTrue(subscribe.waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
         capture("official-window-receiving-stopped", app)
+    }
+
+    @MainActor
+    func testMixedWindowsKeepAdditionAndScopedRecoveryReachable() {
+        continueAfterFailure = false
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--window-list-ui-fixture", "--window-list-mixed", "--window-list-subscribed",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if largeText { app.launchArguments.append("--window-list-large-text") }
+            app.launch()
+            let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
+            XCTAssertTrue(family.waitForExistence(timeout: 10))
+            XCTAssertEqual(family.value as? String, "写真あり")
+            XCTAssertFalse(family.label.contains("確認"), "Another window's error must not label this window")
+            let setup = app.buttons["window-list-row-10000000-0000-0000-0000-000000000002"]
+            for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(setup.isHittable)
+            XCTAssertTrue(setup.label.contains("設定を開いて確認"))
+            capture(largeText ? "window-mixed-large-text" : "window-mixed-standard", app)
+            let addition = app.buttons["window-list-addition"]
+            XCTAssertTrue(addition.isHittable)
+            addition.tap()
+            let discover = app.buttons["window-list-discover"]
+            XCTAssertTrue(discover.waitForExistence(timeout: 5))
+            let resume = app.buttons["window-list-resume-setup"]
+            for _ in 0..<5 { if resume.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(resume.isHittable)
+            XCTAssertTrue(resume.label.contains("ねことも"))
+            XCTAssertFalse(app.buttons["window-list-create"].exists, "Resume the existing setup slot")
+            capture(largeText ? "window-addition-large-text" : "window-addition-standard", app)
+            resume.tap()
+            XCTAssertTrue(app.navigationBars["ねことも"].waitForExistence(timeout: 5))
+            let restart = app.buttons["設定をやり直す"]
+            for _ in 0..<6 { if restart.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(restart.isHittable, "Failed setup must have a recovery action")
+            restart.tap()
+            let create = app.buttons["新しいまどを作る"]
+            for _ in 0..<6 { if create.isHittable { break }; app.swipeDown() }
+            XCTAssertTrue(create.waitForExistence(timeout: 5), "Recovery reuses the slot for the setup choices")
+            app.navigationBars["ねことも"].buttons.element(boundBy: 0).tap()
+            for _ in 0..<5 { if discover.isHittable { break }; app.swipeDown() }
+            discover.tap()
+            XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5),
+                          "Private setup must not block public discovery")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    private func stopReceiving(_ app: XCUIApplication) {
+        let manage = app.buttons["official-window-manage"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 5))
+        manage.tap()
+        app.buttons["official-window-stop"].tap()
+        let confirm = app.buttons["official-window-stop-confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "Stopping needs a deliberate confirmation")
+        confirm.tap()
     }
 
     @MainActor
@@ -175,7 +250,7 @@ final class OfficialWindowUITests: XCTestCase {
         capture("official-widget-unavailable-photo", app)
         overview.tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["確認用の猫の写真を開く"].exists)
+        XCTAssertTrue(app.buttons["official-window-photo-fixture-photo"].exists)
     }
 
     @MainActor

@@ -474,6 +474,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(run("pairing-bootstrap-transient-preservation") {
             try Self.testPairingBootstrapTransientPreservation()
         })
+        results.append(await runAsync("failed-pairing-draft-reuses-local-window") {
+            try await Self.testFailedPairingDraftRecovery()
+        })
         results.append(run("private-window-catalog-authority-uniqueness") {
             try Self.testPrivateWindowCatalogAuthorityUniqueness()
         })
@@ -651,6 +654,26 @@ actor SharingRuntimeSelfTestRunner {
             Self.writeProgress(caseID: id, phase: "failed")
             return CaseResult(id: id, status: "failed")
         }
+    }
+
+    @MainActor
+    private static func testFailedPairingDraftRecovery() async throws {
+        _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
+        defer { _ = try? PairingInstallationGuard.resetLocalSharingForDisabledConfiguration() }
+        let initial = try PairingInstallationGuard.bootstrap()
+        guard let before = try PrivateWindowCatalogStore.load() else { throw PairingError.stateUnavailable }
+        var failed = initial.state
+        failed.phase = .failed
+        failed.lastError = "fixture-setup-failure"
+        _ = try PairingStateStore.save(failed, expected: initial.state, lifecycleToken: initial.lifecycleToken)
+        let model = PairingViewModel()
+        await model.resumeFailedSetup()
+        guard let current = try PairingStateStore.load(), current.phase == .unpaired,
+              current.lastError == nil,
+              let after = try PrivateWindowCatalogStore.load(),
+              after.activeWindowID == before.activeWindowID,
+              after.windows.map(\.localWindowID) == before.windows.map(\.localWindowID)
+        else { throw PairingError.stateUnavailable }
     }
 
     private static func testPairingBootstrapTransientPreservation() throws {

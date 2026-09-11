@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcrun swiftc -parse-as-library \
+          xcrun swiftc -parse-as-library -D OFFICIAL_WINDOW_CHECKS \
             Shared/Models/OfficialWindowCatalog.swift \
             Shared/Storage/AtomicJSON.swift \
             Shared/Storage/OfficialWindowStore.swift \
@@ -381,6 +381,7 @@ jobs:
           "$RUNNER_TEMP/verify-private-window-display-name"
           python3 ci/test-inactive-window-name-sync.py
           python3 ci/test-family-window-widget-boundaries.py
+          python3 ci/test-private-window-cover.py
           grep -Fq 'MomentSharingPresentation.swift in Sources' \
             NekoWidget.xcodeproj/project.pbxproj
 

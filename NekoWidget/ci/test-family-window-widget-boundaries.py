@@ -1703,7 +1703,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("opensActiveWindow = true", main_tab)
         self.assertIn("model.activatePrivateWindow", main_tab)
         self.assertIn("FamilyWindowView(", main_tab)
-        self.assertIn('Label("身近な人とつなぐ"', main_tab)
+        self.assertIn('Label("身近な人と送り合う"', main_tab)
 
         window_list = section(
             main_tab,
@@ -1735,23 +1735,23 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         add_window = section(
             window_list,
-            "private var addWindowButton: some View",
+            "private var windowAdditionControl: some View",
             "private func windowCard(",
         )
         self.assertIn("let previousActiveWindowID = activeWindowID", add_window)
         self.assertIn("createdWindowID != previousActiveWindowID", add_window)
-        self.assertIn("createAndOpenWindow(setupPath: .create)", main_tab)
-        self.assertIn("createAndOpenWindow(setupPath: .join)", main_tab)
-        self.assertIn("createAndOpenWindow(setupPath: .recover)", main_tab)
+        self.assertIn('path: .create, identifier: "window-list-create"', main_tab)
+        self.assertIn('path: .join, identifier: "window-list-join"', main_tab)
+        self.assertIn('path: .recover, identifier: "window-list-recover"', main_tab)
         self.assertIn("initialSetupPath: requestedSetupPath", main_tab)
         empty_window = section(
             window_list,
             "private var emptyWindowCard: some View",
-            "private var addWindowButton: some View",
+            "private var windowAdditionControl: some View",
         )
-        self.assertIn("NavigationLink { discovery }", empty_window)
+        self.assertIn("NavigationLink { addition }", empty_window)
         self.assertNotIn("opensActiveWindow = true", empty_window)
-        self.assertIn('Text("まどを探す")', empty_window)
+        self.assertIn('Text("まどを追加")', empty_window)
         pairing_view = source("NekoWidget/Views/PairingView.swift")
         self.assertIn("init(initialSetupPath: PairingSetupPath? = nil)", pairing_view)
         self.assertIn("if setupPath == .create", pairing_view)
@@ -2789,7 +2789,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("ForEach(connectedWindows)", main_tab)
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn("model.activatePrivateWindow", main_tab)
-        self.assertIn('Label("身近な人とつなぐ"', main_tab)
+        self.assertIn('Label("身近な人と送り合う"', main_tab)
         self.assertIn("selectedTab = .photos", main_tab)
         self.assertIn("photosPath.append(PhotosRoute.photo(identifier))", main_tab)
         self.assertIn("selectedTab = .windows", main_tab)

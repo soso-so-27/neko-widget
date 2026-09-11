@@ -24,6 +24,12 @@ struct PairingView: View {
         _setupPath = State(initialValue: initialSetupPath)
     }
 
+#if DEBUG
+    init(fixtureModel: PairingViewModel) {
+        _model = StateObject(wrappedValue: fixtureModel)
+    }
+#endif
+
     var body: some View {
         Form {
             if let retryMessage = model.bootstrapRetryMessage {
@@ -374,8 +380,20 @@ struct PairingView: View {
             Section {
                 Label("まどの設定を完了できませんでした", systemImage: "xmark.circle")
             }
-            if state.memberID != nil {
+            switch FailedPairingRecoveryAction.resolve(state) {
+            case .cancelRemote:
                 cancelSection
+            case .restartLocalDraft:
+                retrySection("設定をやり直す") { await model.resumeFailedSetup() }
+            case .resumeCreate:
+                retrySection("招待作成を再試行") { await model.resumeFailedSetup() }
+            case .resumeJoin:
+                retrySection("参加を再試行") { await model.resumeFailedSetup() }
+            case .unavailable:
+                Section {
+                    Text("設定の復元情報を確認できません。写真画面の設定から診断情報を確認できます。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
     }

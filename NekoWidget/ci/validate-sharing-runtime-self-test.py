@@ -41,6 +41,7 @@ REQUIRED_CASES = {
     "own-source-local-promotion",
     "partial-download-resume-tamper",
     "pairing-bootstrap-transient-preservation",
+    "failed-pairing-draft-reuses-local-window",
     "private-window-catalog-authority-uniqueness",
     "private-window-catalog-protected-storage-migration",
     "private-window-legacy-conflict-quarantine-policy",

@@ -1,5 +1,37 @@
 import Foundation
 
+/// Recovery follows durable evidence, never just the visible error message.
+enum FailedPairingRecoveryAction: Equatable, Sendable {
+    case restartLocalDraft, resumeCreate, resumeJoin, cancelRemote, unavailable
+
+    static func resolve(_ state: PairingState) -> Self {
+        guard state.phase == .failed else { return .unavailable }
+        if state.credentialAccount != nil, state.participantID != nil,
+           state.pendingClientRequestID.flatMap(UUID.init(uuidString:)) != nil {
+            if state.pendingOperation == "create", state.role == .inviter,
+               state.dailyBoundaryMinuteUTC.map({ (0...1439).contains($0) }) == true {
+                return .resumeCreate
+            }
+            if state.pendingOperation == "enroll", state.role == .invitee,
+               state.invitationID.map(PairingValidation.isOpaqueIdentifier) == true {
+                return .resumeJoin
+            }
+        }
+        if state.role != nil, state.credentialAccount != nil,
+           state.memberID != nil, state.spaceID != nil {
+            return .cancelRemote
+        }
+        if state.credentialAccount == nil, state.participantID == nil,
+           state.memberID == nil, state.spaceID == nil,
+           state.invitationID == nil, state.enrollmentID == nil,
+           state.recoveryID == nil, state.localMomentDeviceID == nil,
+           state.pendingOperation == nil, state.pendingClientRequestID == nil {
+            return .restartLocalDraft
+        }
+        return .unavailable
+    }
+}
+
 struct PairingBuildPresentation {
     static var currentText: String {
         make(

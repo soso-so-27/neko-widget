@@ -996,7 +996,7 @@ enum MomentSharingStateStore {
     private static let maximumPendingOutboxBytes = 10 * 1_024 * 1_024
     private static let maximumPendingReportCount = 10
     private static let maximumPendingReportBytes = 10 * 1_024 * 1_024
-    private static let completedOutboxMetadataSeconds: TimeInterval = 30 * 24 * 60 * 60
+    static let completedOutboxMetadataSeconds: TimeInterval = 30 * 24 * 60 * 60
     /// Five photos per day over the 30-day delivery/heart window need 150
     /// stable sent records. A bounded margin keeps every still-live photo's
     /// delivery and heart status addressable without unbounded local growth.
@@ -2234,7 +2234,7 @@ enum MomentSharingStateStore {
     private static let maximumLocalDetailPhotoBytes =
         MomentSharingProtocol.maximumMediaCiphertextBytes - 28
 
-    private static func isValidLocalDetail(_ data: Data) -> Bool {
+    static func isValidLocalDetail(_ data: Data) -> Bool {
         guard (4...maximumLocalDetailPhotoBytes).contains(data.count),
               let source = CGImageSourceCreateWithData(data as CFData,
                 [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -2287,9 +2287,38 @@ enum MomentSharingStateStore {
     /// outbox row. Corrupt, oversized, unprotected, missing, or replaced files
     /// are presentation misses rather than state failures.
     static func readLocalThumbnail(for item: MomentOutboxItem) -> Data? {
+        readLocalThumbnail(for: item, directory: SharedContainer.momentSharingSentThumbnailDirectoryURL)
+    }
+
+    /// A read-only cover lookup for a caller holding SharingLifecycleGate and
+    /// validating the current, committed row. Never resolves the active window.
+    static func readLocalCoverImage(for item: MomentOutboxItem, localWindowID: String) -> Data? {
+        guard let sharing = SharedContainer.windowSharingDirectoryURL(localWindowID: localWindowID)
+        else { return nil }
+        let directory = sharing.appendingPathComponent("sent-moment-thumbnails", isDirectory: true)
+        if let thumbnail = readLocalThumbnail(for: item, directory: directory) { return thumbnail }
+        guard let reference = item.localDetail,
+              reference.fileName == MomentOutboxItem.localDetailFileName(for: item.id),
+              let url = try? localThumbnailURL(fileName: reference.fileName, directory: directory),
+              SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.intValue,
+              (4...maximumLocalDetailPhotoBytes).contains(size),
+              let handle = try? FileHandle(forReadingFrom: url)
+        else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maximumLocalDetailPhotoBytes + 1),
+              PairingCrypto.sha256(data) == reference.sha256,
+              isValidLocalDetail(data)
+        else { return nil }
+        return data
+    }
+
+    private static func readLocalThumbnail(for item: MomentOutboxItem, directory: URL?) -> Data? {
         guard let fileName = item.localThumbnailFileName,
               fileName == MomentOutboxItem.localThumbnailFileName(for: item.id),
-              let url = try? localThumbnailURL(fileName: fileName),
+              let directory,
+              let url = try? localThumbnailURL(fileName: fileName, directory: directory),
               SharingSecureFile.hasRequiredProtectionAndBackupExclusion(url),
               let attributes = try? FileManager.default.attributesOfItem(
                 atPath: url.path
@@ -2366,6 +2395,12 @@ enum MomentSharingStateStore {
     }
 
     private static func localThumbnailURL(fileName: String) throws -> URL {
+        guard let directory = SharedContainer.momentSharingSentThumbnailDirectoryURL
+        else { throw MomentSharingError.stateUnavailable }
+        return try localThumbnailURL(fileName: fileName, directory: directory)
+    }
+
+    private static func localThumbnailURL(fileName: String, directory: URL) throws -> URL {
         guard let idText = fileName
                 .split(separator: "-")
                 .dropFirst(2)
@@ -2374,8 +2409,7 @@ enum MomentSharingStateStore {
                 .first,
               let id = UUID(uuidString: String(idText)),
               (fileName == MomentOutboxItem.localThumbnailFileName(for: id)
-                || fileName == MomentOutboxItem.localDetailFileName(for: id)),
-              let directory = SharedContainer.momentSharingSentThumbnailDirectoryURL
+                || fileName == MomentOutboxItem.localDetailFileName(for: id))
         else { throw MomentSharingError.stateUnavailable }
         guard try isSafeThumbnailDirectory(directory, requireExisting: false)
         else { throw MomentSharingError.stateUnavailable }

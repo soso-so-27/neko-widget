@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Combine
 import ImageIO
 
 enum OfficialWindowConfiguration {
@@ -89,15 +90,7 @@ struct OfficialWindowStore: Sendable {
     }
 
     func saveImage(_ data: Data, photo: OfficialCatPhoto, for request: OfficialWindowState) throws {
-        guard data.count <= 4 * 1024 * 1024,
-              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == photo.sha256,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              CGImageSourceGetType(source) as String? == "public.jpeg",
-              CGImageSourceGetCount(source) == 1,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              properties[kCGImagePropertyPixelWidth] as? Int == photo.width,
-              properties[kCGImagePropertyPixelHeight] as? Int == photo.height
-        else { throw OfficialWindowError.invalidImage }
+        try OfficialWindowImageValidator.validate(data, photo: photo)
         try locked { root in
             var state = try read(root)
             guard state.isSubscribed, state.subscriptionID == request.subscriptionID,
@@ -145,6 +138,91 @@ struct OfficialWindowStore: Sendable {
     }
 }
 
+enum OfficialWindowImageValidator {
+    static func validate(_ data: Data, photo: OfficialCatPhoto) throws {
+        guard data.count <= 4 * 1024 * 1024,
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == photo.sha256,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetType(source) as String? == "public.jpeg",
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              properties[kCGImagePropertyPixelWidth] as? Int == photo.width,
+              properties[kCGImagePropertyPixelHeight] as? Int == photo.height
+        else { throw OfficialWindowError.invalidImage }
+    }
+}
+
+/// A single public preview lives only in the browsing screen's memory. It is
+/// never accepted by the subscription store or exposed to a Widget timeline.
+struct OfficialWindowPreview: Sendable {
+    let catalog: OfficialWindowCatalog
+    let photo: OfficialCatPhoto?
+    let imageData: Data?
+
+    func availablePhoto(at date: Date = Date()) -> OfficialCatPhoto? {
+        guard let photo, imageData != nil,
+              catalog.availablePhotos(at: date).contains(photo) else { return nil }
+        return photo
+    }
+}
+
+@MainActor
+final class OfficialWindowPreviewModel: ObservableObject {
+    @Published private(set) var content: OfficialWindowPreview?
+    @Published private(set) var isLoading = false
+    @Published private(set) var hasChecked = false
+    @Published private(set) var failed = false
+    private var generation = UUID()
+    private var loadingTask: Task<Void, Never>?
+
+    func load(force: Bool = false, using fetch: @escaping () async throws -> OfficialWindowPreview) async {
+        if let loadingTask { await loadingTask.value; return }
+        guard force || !hasChecked else { return }
+        let request = generation
+        isLoading = true
+        // Moving from discovery into the photo must not cancel its preview or
+        // start a second download. Both screens await this one memory-only task.
+        let task = Task { await self.performLoad(request: request, using: fetch) }
+        loadingTask = task
+        await task.value
+    }
+
+    private func performLoad(request: UUID, using fetch: () async throws -> OfficialWindowPreview) async {
+        defer {
+            if request == generation {
+                isLoading = false
+                hasChecked = true
+                loadingTask = nil
+            }
+        }
+        do {
+            let next = try await fetch()
+            try Task.checkCancellation()
+            guard request == generation else { return }
+            try next.catalog.validate(at: Date())
+            guard content.map({ $0.catalog.generatedAt < next.catalog.generatedAt || $0.catalog == next.catalog }) ?? true else {
+                throw OfficialWindowError.invalidCatalog
+            }
+            content = next
+            failed = next.availablePhoto() == nil && !next.catalog.availablePhotos(at: Date()).isEmpty
+        } catch is CancellationError {
+            return
+        } catch {
+            if request == generation { failed = true }
+        }
+    }
+
+    func clear() {
+        generation = UUID()
+        loadingTask?.cancel()
+        loadingTask = nil
+        content = nil
+        isLoading = false
+        hasChecked = false
+        failed = false
+    }
+}
+
 private final class OfficialWindowRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
@@ -158,6 +236,21 @@ private final class OfficialWindowRedirectPolicy: NSObject, URLSessionTaskDelega
 actor OfficialWindowClient {
     static let shared = OfficialWindowClient()
     private var pending: (id: UUID, subscription: UUID, imageCount: Int, task: Task<Void, Error>)?
+    private let previewEndpoint: URL?
+    #if OFFICIAL_WINDOW_CHECKS
+    private var previewProtocolClasses: [AnyClass]? = nil
+    #endif
+
+    init() { previewEndpoint = OfficialWindowConfiguration.feedURL }
+
+    #if OFFICIAL_WINDOW_CHECKS
+    // The standalone boundary runner supplies only an in-process URLProtocol.
+    // Release builds cannot override the configured endpoint or transport.
+    init(previewEndpoint: URL, protocolClasses: [AnyClass]) {
+        self.previewEndpoint = previewEndpoint
+        self.previewProtocolClasses = protocolClasses
+    }
+    #endif
 
     func refresh(maximumImages: Int = 1) async throws {
         let request = OfficialWindowStore.shared.snapshot()
@@ -179,8 +272,7 @@ actor OfficialWindowClient {
         try await task.value
     }
 
-    private func performRefresh(request: OfficialWindowState, maximumImages: Int) async throws {
-        guard let endpoint = request.endpoint else { return }
+    private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieStorage = nil
@@ -188,12 +280,51 @@ actor OfficialWindowClient {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 20
-        let session = URLSession(configuration: configuration, delegate: OfficialWindowRedirectPolicy(), delegateQueue: nil)
+        #if OFFICIAL_WINDOW_CHECKS
+        if let previewProtocolClasses { configuration.protocolClasses = previewProtocolClasses }
+        #endif
+        return URLSession(configuration: configuration, delegate: OfficialWindowRedirectPolicy(), delegateQueue: nil)
+    }
+
+    /// Read only the build-configured public endpoint. Browsing does not create
+    /// a subscription, write a cache, or change any existing received content.
+    func preview() async throws -> OfficialWindowPreview {
+        guard let endpoint = previewEndpoint else { throw OfficialWindowError.notConfigured }
+        let session = makeSession()
         defer { session.invalidateAndCancel() }
+        let catalog = try await fetchCatalog(endpoint, session: session)
+        try catalog.validate(at: Date())
+        guard let photo = catalog.availablePhotos(at: Date()).first else {
+            return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
+        }
+        let url = endpoint.deletingLastPathComponent().appendingPathComponent(photo.imageFilename)
+        do {
+            let data = try await fetch(url, session: session, limit: 4 * 1024 * 1024, contentType: "image/jpeg")
+            try OfficialWindowImageValidator.validate(data, photo: photo)
+            try catalog.validate(at: Date())
+            return OfficialWindowPreview(catalog: catalog, photo: photo, imageData: data)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // A known new allowlist must replace the preview even if its image
+            // fails. Never keep showing a photo removed by this catalog.
+            try catalog.validate(at: Date())
+            return OfficialWindowPreview(catalog: catalog, photo: nil, imageData: nil)
+        }
+    }
+
+    private func fetchCatalog(_ endpoint: URL, session: URLSession) async throws -> OfficialWindowCatalog {
         let data = try await fetch(endpoint, session: session, limit: 256 * 1024, contentType: "application/json")
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let catalog = try decoder.decode(OfficialWindowCatalog.self, from: data)
+        return try decoder.decode(OfficialWindowCatalog.self, from: data)
+    }
+
+    private func performRefresh(request: OfficialWindowState, maximumImages: Int) async throws {
+        guard let endpoint = request.endpoint else { return }
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+        let catalog = try await fetchCatalog(endpoint, session: session)
         // Persist the new allowlist before media downloads: removal/pause works
         // even when a new photo subsequently fails to download.
         try OfficialWindowStore.shared.accept(catalog, for: request)

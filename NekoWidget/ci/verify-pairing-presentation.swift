@@ -7,6 +7,7 @@ enum PairingPresentationVerificationError: Error {
 @main
 enum PairingPresentationVerifier {
     static func main() throws {
+        try verifyFailedSetupRecovery()
         try verify(
             phase: .unpaired,
             role: nil,
@@ -218,6 +219,44 @@ enum PairingPresentationVerifier {
                 "Unexpected guidance for the partner iPhone"
             )
         }
+    }
+
+    private static func verifyFailedSetupRecovery() throws {
+        var state = PairingState.unpaired(installationMarker: UUID().uuidString)
+        state.phase = .failed
+        func expect(_ expected: FailedPairingRecoveryAction) throws {
+            guard FailedPairingRecoveryAction.resolve(state) == expected else {
+                throw PairingPresentationVerificationError.failed("Unsafe failed-setup recovery choice")
+            }
+        }
+        try expect(.restartLocalDraft)
+        state.role = .inviter
+        state.credentialAccount = UUID().uuidString
+        state.participantID = "fixture-participant"
+        state.pendingOperation = "create"
+        state.pendingClientRequestID = UUID().uuidString
+        try expect(.unavailable)
+        state.dailyBoundaryMinuteUTC = 240
+        try expect(.resumeCreate)
+        state.role = .invitee
+        state.pendingOperation = "enroll"
+        try expect(.unavailable)
+        state.invitationID = "fixture-invitation"
+        try expect(.resumeJoin)
+        state.pendingOperation = nil
+        state.pendingClientRequestID = nil
+        try expect(.unavailable)
+        state.spaceID = "fixture-space"
+        try expect(.unavailable) // Missing remote member is not a local draft.
+        state.memberID = "fixture-member"
+        try expect(.cancelRemote)
+        state.phase = .paired
+        try expect(.unavailable)
+        state = PairingState.unpaired(installationMarker: UUID().uuidString)
+        state.phase = .failed
+        state.pendingOperation = "cancel"
+        state.pendingClientRequestID = UUID().uuidString
+        try expect(.unavailable) // Never discard a cancellation awaiting a response.
     }
 
     private static func verify(

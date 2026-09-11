@@ -31,6 +31,21 @@ final class PairingViewModel: ObservableObject {
     private var api: (any PairingAPIClientProtocol)?
     private var didBootstrap = false
     private var bootstrapRetryRequested = false
+#if DEBUG
+    private var usesIsolatedPresentationState = false
+
+    static func failedSetupFixture() -> PairingViewModel {
+        let model = PairingViewModel()
+        var state = PairingState.unpaired(installationMarker: UUID().uuidString)
+        state.phase = .failed
+        state.lastError = "fixture-setup-failure"
+        model.state = state
+        model.windowDisplayName = "ねことも"
+        model.didBootstrap = true
+        model.usesIsolatedPresentationState = true
+        return model
+    }
+#endif
 
     init(configuration: SharingAPIConfiguration = .current) {
         self.configuration = configuration
@@ -46,7 +61,12 @@ final class PairingViewModel: ObservableObject {
         }
     }
 
-    var isConfigured: Bool { api != nil }
+    var isConfigured: Bool {
+#if DEBUG
+        if usesIsolatedPresentationState { return true }
+#endif
+        return api != nil
+    }
     var isMediaSyncEnabled: Bool { configuration.isMediaAvailable }
     var canEditWindowDisplayName: Bool {
         state?.role != .invitee && state?.localDeviceIsAdditional != true
@@ -1596,6 +1616,54 @@ final class PairingViewModel: ObservableObject {
                 "このiPhoneの追加を取り消しました。接続済みのまどや既存のiPhoneは解除されていません。"
         } catch {
             record(error, operation: operation)
+        }
+    }
+
+    func resumeFailedSetup() async {
+        guard !isWorking else { return }
+        clearTransientOperationFeedback()
+#if DEBUG
+        if usesIsolatedPresentationState {
+            if let current = state, FailedPairingRecoveryAction.resolve(current) == .restartLocalDraft {
+                state = PairingState.unpaired(installationMarker: current.installationMarker)
+            }
+            return
+        }
+#endif
+        do {
+            let operation = try beginOperation()
+            var current = operation.expectedState
+            guard current.phase == .failed else { return }
+            switch FailedPairingRecoveryAction.resolve(current) {
+            case .restartLocalDraft:
+                isWorking = true
+                defer { isWorking = false }
+                // No server identity, credential, or in-flight request exists.
+                // The existing scoped cleanup/CAS preserves other windows.
+                try await resetLocalPairing(operation: operation)
+            case .resumeCreate, .resumeJoin:
+                let action = FailedPairingRecoveryAction.resolve(current)
+                guard let account = current.credentialAccount else { throw PairingError.stateUnavailable }
+                let credential = try PairingKeychainStore.load(account: account, installationMarker: current.installationMarker)
+                guard credential.enrollmentSecret != nil else { throw PairingError.malformedCredential }
+                current.phase = action == .resumeCreate ? .creatingInvitation : .joining
+                current.lastError = nil
+                current.lastUpdatedAt = .now
+                current = try persist(current, operation: operation)
+                // Resume the exact saved key and request, not a new enrollment.
+                if action == .resumeCreate {
+                    guard let boundary = current.dailyBoundaryMinuteUTC else { throw PairingError.stateUnavailable }
+                    await createInvitation(dailyBoundaryMinuteUTC: boundary)
+                } else {
+                    await joinInvitation()
+                }
+            case .cancelRemote:
+                await refresh()
+            case .unavailable:
+                operationErrorMessage = "設定の復元情報を確認できませんでした。写真画面の設定から診断情報を確認できます。"
+            }
+        } catch {
+            record(error)
         }
     }
 
