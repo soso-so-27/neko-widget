@@ -4,6 +4,49 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
+/// The window shelf uses one photo crop and one title row for every window.
+@MainActor
+struct WindowPhotoCard<Photo: View>: View {
+    enum Kind: Equatable { case shared, official }
+    let title: String
+    let kind: Kind
+    let photo: Photo
+
+    init(title: String, kind: Kind, @ViewBuilder photo: () -> Photo) {
+        self.title = title
+        self.kind = kind
+        self.photo = photo()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color(.tertiarySystemFill)
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    GeometryReader { geometry in
+                        photo.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                    }
+                }
+            HStack(spacing: 8) {
+                Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if kind == .shared {
+                    Image(systemName: "lock").font(.caption).accessibilityHidden(true)
+                } else {
+                    Text("公式").font(.caption2).fixedSize()
+                }
+            }
+            .foregroundStyle(.secondary)
+            .frame(minHeight: 24)
+            .padding(12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .contentShape(RoundedRectangle(cornerRadius: 20))
+    }
+}
+
 @MainActor
 struct OfficialWindowEntryCard: View {
     enum Presentation: Equatable { case list, discovery }
@@ -40,63 +83,62 @@ struct OfficialWindowEntryCard: View {
             OfficialWindowView(store: store, refreshFeed: refreshFeed,
                                previewFeed: previewFeed, preview: preview)
         } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                Color(.tertiarySystemFill)
-                    .aspectRatio(presentation == .discovery ? 16.0 / 9.0 : 1, contentMode: .fit)
-                    .overlay {
-                        TimelineView(.explicit(photoDeadlines)) { _ in
-                            if let photo = state.isSubscribed ? state.photos.first : preview.content?.availablePhoto() {
-                                OfficialPhotoImage(photo: photo, maximumPixelSize: 650, store: store,
-                                                   previewImageData: state.isSubscribed ? nil : preview.content?.imageData)
-                                    .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "preview")")
-                                    .accessibilityHidden(true)
-                            } else if preview.isLoading {
-                                ProgressView("写真を確認しています…").padding()
-                            } else {
-                                VStack(spacing: 10) {
-                                    Image(systemName: "pawprint.fill").font(.largeTitle).foregroundStyle(.orange)
-                                    Text(preview.failed ? "写真を確認できませんでした" : "公開中の写真をここで紹介します")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                        .multilineTextAlignment(.center)
-                                }.padding(12)
-                            }
+            if presentation == .list {
+                WindowPhotoCard(title: OfficialWindowCatalog.displayName, kind: .official) { cover }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    Color(.tertiarySystemFill).aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        .overlay { GeometryReader { geometry in
+                            cover.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        } }
+                    HStack {
+                        Text(OfficialWindowCatalog.displayName).font(.headline)
+                        Spacer()
+                        if state.isSubscribed {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
+                                .accessibilityLabel("受け取り中")
                         }
-                    }
-                    .clipped()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(OfficialWindowCatalog.displayName)
-                        .font(.headline).foregroundStyle(.primary)
-                    Text("写真を受け取る · 公式")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let photo = state.isSubscribed ? state.photos.first : preview.content?.availablePhoto() {
-                        Text(presentation == .list ? photo.credit : "提供元：\(photo.credit)")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                    if presentation == .discovery {
-                        Text("運営が選ぶ猫の写真を、見るだけで楽しめます。")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if presentation == .discovery, state.isSubscribed {
-                        Label("受け取り中", systemImage: "checkmark")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                    }.padding(12)
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .contentShape(RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("official-window-entry")
         .accessibilityLabel("\(OfficialWindowCatalog.displayName)、写真を受け取るまど、公式")
-        .accessibilityValue(state.isSubscribed ? "受け取り中" : "まだ受け取っていません")
+        .accessibilityValue([state.isSubscribed ? "受け取り中" : "まだ受け取っていません",
+                             (state.isSubscribed ? state.photos.first : preview.content?.availablePhoto())?.credit]
+            .compactMap { $0 }.joined(separator: "。"))
         .accessibilityHint(state.isSubscribed ? "受け取っている写真を開きます" : "まどの内容を確認します")
         .task {
             guard presentation == .discovery, !state.isSubscribed, store.endpoint != nil else { return }
             await preview.load(using: previewFeed)
+        }
+    }
+
+    private var cover: some View {
+        TimelineView(.explicit(photoDeadlines)) { _ in
+            if let photo = state.isSubscribed ? state.photos.first : preview.content?.availablePhoto() {
+                OfficialPhotoImage(photo: photo, maximumPixelSize: 650, store: store,
+                                   previewImageData: state.isSubscribed ? nil : preview.content?.imageData,
+                                   fillsFrame: true)
+                    .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "preview")")
+                    .overlay(alignment: .bottomTrailing) {
+                        if photo.credit.contains("AI生成") {
+                            Text("AI").font(.caption2.weight(.medium))
+                                .padding(.horizontal, 7).padding(.vertical, 4)
+                                .background(.thinMaterial, in: Capsule()).padding(8)
+                                .accessibilityLabel("AI生成画像")
+                        }
+                    }
+                    .accessibilityHidden(true)
+            } else if preview.isLoading {
+                ProgressView().accessibilityLabel("写真を確認しています")
+            } else {
+                Image(systemName: preview.failed ? "photo.badge.exclamationmark" : "pawprint")
+                    .font(.largeTitle).foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -270,7 +312,6 @@ struct OfficialWindowView: View {
     private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                roleSummary
                 if let latest = photos.first {
                     photoButton(latest, latest: true)
                 } else {
@@ -296,7 +337,7 @@ struct OfficialWindowView: View {
 
                     if photos.count > 1 {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text("最近の掲載写真").font(.headline)
+                            Text("最近の写真").font(.headline)
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top),
                                                      count: dynamicTypeSize >= .xxxLarge ? 1 : 2),
                                       alignment: .leading, spacing: 18) {
@@ -331,7 +372,7 @@ struct OfficialWindowView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await refresh(interactive: true) } } label: {
                         if isChecking { ProgressView() }
-                        else { Text(state.isSubscribed ? "新着を確認" : "写真を確認") }
+                        else { Image(systemName: "arrow.clockwise").frame(minWidth: 44, minHeight: 44) }
                     }
                     .disabled(isChecking)
                     .accessibilityLabel(state.isSubscribed ? "新着を確認" : "写真を確認")
@@ -340,35 +381,18 @@ struct OfficialWindowView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu("管理") {
+                Menu {
                     Button("このまどについて") { showsAbout = true }
                         .accessibilityIdentifier("official-window-about")
                     if state.isSubscribed {
                         Button("受け取りをやめる", role: .destructive) { confirmsStop = true }
                             .accessibilityIdentifier("official-window-stop")
                     }
-                }
+                } label: { Image(systemName: "ellipsis").frame(minWidth: 44, minHeight: 44) }
+                .accessibilityLabel("管理")
                 .accessibilityIdentifier("official-window-manage")
             }
         }
-    }
-
-    private var roleSummary: some View {
-        Group {
-            if dynamicTypeSize >= .xxxLarge {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("写真を受け取る · 公式")
-                    if state.isSubscribed { Label("受け取り中", systemImage: "checkmark") }
-                }
-            } else {
-                HStack {
-                    Text("写真を受け取る · 公式")
-                    Spacer(minLength: 8)
-                    if state.isSubscribed { Label("受け取り中", systemImage: "checkmark") }
-                }
-            }
-        }
-        .font(.caption).foregroundStyle(.secondary)
     }
 
     private var about: some View {
@@ -376,16 +400,18 @@ struct OfficialWindowView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("写真を受け取るまど").font(.title2.weight(.semibold))
-                    Text("ねこのまどが選んで公開する猫の写真を、見るだけで楽しめます。写真の投稿や、友だちの招待は必要ありません。")
-                    Text("写真の提供元と掲載日は、写真の下に表示します。AI生成の画像は提供元にもその旨を記載します。撮影日が分かる写真は、拡大して確認できます。")
-                    Text("新しい掲載があると写真を更新します。ホーム画面への反映には時間がかかることがあります。")
-                    Text("最近の掲載写真は、いま公開されている写真です。Widgetに表示された履歴ではありません。")
+                    Text("運営が選んだ猫の写真が届きます。投稿や友だちの招待は不要です。")
+                    Text("提供元・掲載日は写真で確認できます。AI生成画像はその旨を表示します。")
+                    Text("新しい写真が届くと更新します。Widgetへの反映には時間がかかる場合があります。")
                 }
                 .padding(24)
             }
             .navigationTitle("このまどについて")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("閉じる") { showsAbout = false } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button { showsAbout = false } label: { Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44) }
+                    .accessibilityLabel("閉じる")
+            } }
         }
     }
 
@@ -395,13 +421,11 @@ struct OfficialWindowView: View {
                 Label("受け取りを始めました", systemImage: "checkmark.circle")
                     .font(.subheadline)
                     .accessibilityIdentifier("official-window-subscription-confirmation")
-                Text("ホーム画面でも、このまどを楽しめます。")
-                    .font(.footnote).foregroundStyle(.secondary)
                 Button {
                     offersWidgetSetup = false
                     showsWidgetGuide = true
                 } label: {
-                    Label("ホーム画面に置く方法", systemImage: "plus.rectangle.on.rectangle")
+                    Label("Widgetの置き方", systemImage: "plus.rectangle.on.rectangle")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .buttonStyle(.bordered)
@@ -411,7 +435,7 @@ struct OfficialWindowView: View {
                     .accessibilityIdentifier("official-window-widget-later")
             } else {
                 Button { showsWidgetGuide = true } label: {
-                    Label("ホーム画面に置く方法", systemImage: "plus.rectangle.on.rectangle")
+                    Label("Widgetの置き方", systemImage: "plus.rectangle.on.rectangle")
                         .font(.subheadline)
                         .frame(minHeight: 44)
                 }
@@ -524,22 +548,21 @@ struct OfficialWindowView: View {
             VStack(alignment: .leading, spacing: 10) {
                 OfficialPhotoImage(photo: photo, maximumPixelSize: latest ? 1100 : 650,
                                    store: store, isRefreshing: isChecking,
-                                   previewImageData: previewData(for: photo))
+                                   previewImageData: previewData(for: photo), fillsFrame: !latest)
                     .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "")")
                     .aspectRatio(latest ? CGFloat(photo.width) / CGFloat(photo.height) : 1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-                let informationLayout = dynamicTypeSize >= .xxxLarge || !latest
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
-                informationLayout {
-                    Text(photo.catName).font(.headline)
-                    if dynamicTypeSize < .xxxLarge, latest { Spacer(minLength: 0) }
-                    Text("掲載日 \(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Text("提供元：\(photo.credit)").font(.caption).foregroundStyle(.secondary)
-                if let caption = photo.caption {
-                    Text(caption).font(.subheadline).foregroundStyle(.secondary).lineLimit(latest ? 3 : 2)
+                    .overlay(alignment: .bottomTrailing) {
+                        if photo.credit.contains("AI生成") {
+                            Text("AI").font(.caption2.weight(.medium))
+                                .padding(.horizontal, 7).padding(.vertical, 4)
+                                .background(.thinMaterial, in: Capsule()).padding(8)
+                                .accessibilityLabel("AI生成画像")
+                        }
+                    }
+                Text(photo.catName).font(.headline)
+                if latest, let caption = photo.caption {
+                    Text(caption).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
                 }
             }
             .contentShape(Rectangle())
@@ -666,8 +689,6 @@ private struct OfficialPhotoDetailView: View {
                         .frame(width: geometry.size.width, height: max(280, geometry.size.height * 0.72))
                         .clipped()
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("指で広げるか、ダブルタップすると拡大できます。")
-                            .font(.footnote).foregroundStyle(.secondary)
                         if let caption = photo.caption { Text(caption).font(.body) }
                         VStack(alignment: .leading, spacing: 8) {
                             Text("提供元：\(photo.credit)")
@@ -685,7 +706,10 @@ private struct OfficialPhotoDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsCloseButton {
-                ToolbarItem(placement: .confirmationAction) { Button("閉じる") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44) }
+                        .accessibilityLabel("閉じる")
+                }
             }
         }
     }
@@ -698,6 +722,7 @@ private struct OfficialPhotoImage: View {
     var isRefreshing = false
     var previewImageData: Data? = nil
     var allowsZoom = false
+    var fillsFrame = false
     @State private var image: UIImage?
     @State private var loadedImageFilename: String?
     @State private var loadFailed = false
@@ -710,11 +735,16 @@ private struct OfficialPhotoImage: View {
             if let image {
                 if allowsZoom {
                     MomentZoomablePhoto(image: image)
+                } else if fillsFrame {
+                    GeometryReader { geometry in
+                        Image(uiImage: image).resizable().interpolation(.high).scaledToFill()
+                            .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                    }
                 } else {
                     Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
                 }
             } else if isLoading {
-                ProgressView("写真を読み込んでいます…").padding()
+                ProgressView().padding().accessibilityLabel("写真を読み込んでいます")
             } else {
                 Label("写真を読み込めませんでした", systemImage: "photo")
                     .font(.footnote).foregroundStyle(.secondary).padding()
@@ -830,14 +860,31 @@ final class OfficialWindowFixtureModel: ObservableObject {
     }
 
     private func fixturePhoto(index: Int) throws -> (photo: OfficialCatPhoto, data: Data) {
-        let image = MomentExperiencePhotoFixture.image(index: index)
+        let original = MomentExperiencePhotoFixture.image(index: index)
+        // Match the reported shelf: a portrait official photo beside a private
+        // photo, with an AI credit that must not change the card's height.
+        let isMixedShelf = CommandLine.arguments.contains("--window-list-mixed")
+        let image: UIImage
+        if isMixedShelf {
+            let size = CGSize(width: 900, height: 1200)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                let scale = max(size.width / original.size.width, size.height / original.size.height)
+                let drawnSize = CGSize(width: original.size.width * scale, height: original.size.height * scale)
+                original.draw(in: CGRect(x: (size.width - drawnSize.width) / 2, y: (size.height - drawnSize.height) / 2,
+                                         width: drawnSize.width, height: drawnSize.height))
+            }
+        } else {
+            image = original
+        }
         guard let data = image.jpegData(compressionQuality: 0.88), let cgImage = image.cgImage else {
             throw OfficialWindowError.invalidImage
         }
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         let photo = OfficialCatPhoto(
             id: index == 0 ? "fixture-photo" : "fixture-photo-\(index)",
-            catID: "fixture-cat", catName: "確認用の猫", credit: "画面確認用の合成画像",
+            catID: "fixture-cat", catName: "確認用の猫", credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
             caption: "窓辺でひと休み。", photographedOn: "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),
             expiresAt: fixtureDate.addingTimeInterval(86400), imageFilename: hash + ".jpg", sha256: hash,

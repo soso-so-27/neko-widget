@@ -165,10 +165,19 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertTrue(family.waitForExistence(timeout: 10))
             XCTAssertEqual(family.value as? String, "写真あり")
             XCTAssertFalse(family.label.contains("確認"), "Another window's error must not label this window")
+            if !largeText {
+                let official = app.buttons["official-window-entry"]
+                XCTAssertTrue(official.waitForExistence(timeout: 10))
+                XCTAssertEqual(family.frame.width, official.frame.width, accuracy: 1)
+                XCTAssertEqual(family.frame.height, official.frame.height, accuracy: 1,
+                               "A portrait photo and its credit must not make one window taller")
+                XCTAssertEqual(family.frame.minY, official.frame.minY, accuracy: 1)
+                XCTAssertTrue((official.value as? String ?? "").contains("AI生成"))
+            }
             let setup = app.buttons["window-list-row-10000000-0000-0000-0000-000000000002"]
             for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(setup.isHittable)
-            XCTAssertTrue(setup.label.contains("設定を開いて確認"))
+            XCTAssertTrue((setup.value as? String ?? "").contains("設定を開いて確認"))
             capture(largeText ? "window-mixed-large-text" : "window-mixed-standard", app)
             let addition = app.buttons["window-list-addition"]
             XCTAssertTrue(addition.isHittable)

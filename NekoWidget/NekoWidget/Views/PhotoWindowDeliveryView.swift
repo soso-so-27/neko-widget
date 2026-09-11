@@ -189,7 +189,7 @@ struct PhotoWindowDeliveryView: View {
                         ProgressView(isPreparing ? "写真を準備しています…" : "届け先を確認しています…")
                     } else if destinations.isEmpty && errorMessage == nil {
                         ContentUnavailableView("届け先のまどがありません", systemImage: "rectangle.grid.2x2",
-                            description: Text("「まど」で共有相手との接続を済ませると、この写真を届けられます。"))
+                            description: Text("「まど」で共有相手と接続してください。"))
                             .accessibilityIdentifier("photo-window-no-destinations")
                     } else {
                         VStack(spacing: 10) {
@@ -227,7 +227,9 @@ struct PhotoWindowDeliveryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("やめる", action: cancel)
+                    Button("やめる", systemImage: "xmark", action: cancel)
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("やめる")
                         .accessibilityIdentifier("photo-window-cancel")
                 }
             }

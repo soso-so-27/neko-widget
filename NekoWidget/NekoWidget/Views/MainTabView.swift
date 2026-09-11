@@ -269,9 +269,12 @@ struct MainTabView: View {
             )
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("閉じる") {
+                    Button {
                         showsSettings = false
+                    } label: {
+                        Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
                     }
+                    .accessibilityLabel("閉じる")
                 }
             }
         }
@@ -1071,8 +1074,6 @@ private struct WindowListView: View {
     private var discovery: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("公開されている猫の写真を、見るだけで楽しめます。")
-                    .font(.subheadline).foregroundStyle(.secondary)
                 OfficialWindowEntryCard(state: officialState, store: officialStore,
                                         refreshFeed: refreshOfficialFeed, presentation: .discovery,
                                         previewFeed: previewOfficialFeed)
@@ -1092,8 +1093,6 @@ private struct WindowListView: View {
             VStack(alignment: .leading, spacing: 28) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("猫の写真を受け取る").font(.headline)
-                    Text("公開まどから、いろいろな猫の写真が届きます。")
-                        .font(.subheadline).foregroundStyle(.secondary)
                     NavigationLink { discovery } label: {
                         Label("公開まどを探す", systemImage: "magnifyingglass")
                             .frame(maxWidth: .infinity, minHeight: 44)
@@ -1105,8 +1104,6 @@ private struct WindowListView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("身近な人と送り合う", systemImage: "lock")
                             .font(.headline)
-                        Text("招待した相手と、ふたりだけで写真を送り合えます。")
-                            .font(.subheadline).foregroundStyle(.secondary)
                         windowAdditionControl
                         if let message = model.operationErrorMessage {
                             Text(message).font(.footnote).foregroundStyle(.orange)
@@ -1155,7 +1152,7 @@ private struct WindowListView: View {
                     } else {
                         if !setupWindows.isEmpty {
                             VStack(alignment: .leading, spacing: 10) {
-                                windowSectionTitle("設定中のまど")
+                                windowSectionTitle("設定中")
                                 ForEach(setupWindows) { window in
                                     windowCard(window)
                                 }
@@ -1176,7 +1173,7 @@ private struct WindowListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink { addition } label: {
-                    HStack(spacing: 6) { Image(systemName: "plus"); Text("追加") }
+                    Image(systemName: "plus")
                         .frame(minWidth: 44, minHeight: 44)
                 }
                     .accessibilityLabel("まどを追加")
@@ -1390,73 +1387,53 @@ private struct WindowListView: View {
         return Button {
             open(window)
         } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                if !isSetup {
-                    TimelineView(.explicit([Date.now, coverPhotos[window.localWindowID]?.photo?.displayUntil].compactMap { $0 })) { context in
-                        Color(.tertiarySystemFill)
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay {
-                                if let cover = coverPhotos[window.localWindowID]?.photo,
-                                   context.date < cover.displayUntil,
-                                   let image = UIImage(data: cover.jpeg) {
-                                    Image(uiImage: image).resizable().scaledToFill()
-                                } else {
-                                    VStack(spacing: 12) {
-                                        SubtleWindowThumbnail(showsSetupMark: false)
-                                        Text(coverPlaceholder(for: window))
-                                            .font(.caption).foregroundStyle(.secondary)
-                                            .multilineTextAlignment(.center)
-                                    }.padding(12)
-                                }
-                            }
-                            .clipped()
-                            .accessibilityHidden(true)
+            if isSetup {
+                HStack(spacing: 12) {
+                    windowThumbnail(for: window)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(window.displayName)
+                            .font(.headline).foregroundStyle(.primary)
+                        if windowErrors.contains(window.localWindowID) {
+                            Label("設定を開く", systemImage: "exclamationmark.circle")
+                                .font(.caption).foregroundStyle(.orange)
+                        } else {
+                            Text(windowPrimaryStatusLabel(for: window))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                }
-                HStack(alignment: .top, spacing: 8) {
-                    if isSetup { windowThumbnail(for: window) }
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(window.displayName)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .layoutPriority(1)
-
-                    Label(windowPrimaryStatusLabel(for: window), systemImage: isSetup ? "person.crop.circle.badge.clock" : "lock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if windowErrors.contains(window.localWindowID) {
-                        Label(isSetup ? "設定を開いて確認" : "開いて共有の状態を確認",
-                              systemImage: "exclamationmark.circle")
-                            .font(.caption).foregroundStyle(.orange)
-                    } else if isSetup {
-                        Text("設定を開く").font(.caption).foregroundStyle(Color.accentColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if isSwitching {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                     }
-
-                    if let pendingCount = pendingPreparationCounts[window.localWindowID],
-                       pendingCount > 0 {
-                        Label(
-                            "送信準備中 \(pendingCount.formatted())枚",
-                            systemImage: "clock.fill"
-                        )
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-                    }
-
-                }
-
-                if isSwitching {
-                    ProgressView()
-                }
                 }
                 .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .contentShape(RoundedRectangle(cornerRadius: 20))
+            } else {
+                WindowPhotoCard(title: window.displayName, kind: .shared) {
+                    windowCover(for: window)
+                        .overlay(alignment: .topTrailing) {
+                            if isSwitching {
+                                ProgressView().padding(8).background(.thinMaterial, in: Capsule()).padding(8)
+                            } else if windowErrors.contains(window.localWindowID) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.orange)
+                                    .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
+                            }
+                        }
+                        .overlay(alignment: .bottomLeading) {
+                            if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
+                                Label("\(pendingCount.formatted())", systemImage: "clock")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(8).background(.thinMaterial, in: Capsule()).padding(8)
+                            }
+                        }
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .contentShape(RoundedRectangle(cornerRadius: 20))
         }
         .buttonStyle(.plain)
         .disabled(
@@ -1465,12 +1442,48 @@ private struct WindowListView: View {
                 || (pausesWindowChanges && !isActive)
         )
         .accessibilityIdentifier("window-list-row-\(window.localWindowID)")
-        .accessibilityValue(isSetup ? "設定中" : coverPhotos[window.localWindowID]?.photo != nil ? "写真あり" : coverPlaceholder(for: window))
+        .accessibilityLabel(isSetup ? window.displayName : "\(window.displayName)、相手と送り合うまど")
+        .accessibilityValue(windowAccessibilityStatus(for: window, isSetup: isSetup))
         .accessibilityHint(
             pausesWindowChanges && !isActive
                 ? "更新が完了すると、このまどを開けます"
                 : "このまどを開きます"
         )
+    }
+
+    private func windowCover(for window: PrivateWindowCatalogEntry) -> some View {
+        GeometryReader { geometry in
+            TimelineView(.explicit([Date.now, coverPhotos[window.localWindowID]?.photo?.displayUntil].compactMap { $0 })) { context in
+                if let cover = coverPhotos[window.localWindowID]?.photo,
+                   context.date < cover.displayUntil,
+                   let image = UIImage(data: cover.jpeg) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                } else {
+                    VStack(spacing: 12) {
+                        SubtleWindowThumbnail(showsSetupMark: false)
+                        Text(coverPlaceholder(for: window))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func windowAccessibilityStatus(for window: PrivateWindowCatalogEntry, isSetup: Bool) -> String {
+        var parts = [isSetup ? windowPrimaryStatusLabel(for: window)
+                     : coverPhotos[window.localWindowID]?.photo != nil ? "写真あり" : coverPlaceholder(for: window)]
+        if windowErrors.contains(window.localWindowID) {
+            parts.append(isSetup ? "設定を開いて確認" : "開いて共有の状態を確認")
+        }
+        if let pendingCount = pendingPreparationCounts[window.localWindowID], pendingCount > 0 {
+            parts.append("送信準備中 \(pendingCount.formatted())枚")
+        }
+        return parts.joined(separator: "、")
     }
 
     private func coverPlaceholder(for window: PrivateWindowCatalogEntry) -> String {

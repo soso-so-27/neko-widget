@@ -67,13 +67,8 @@ struct MonthlyWindowView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 if index == 0 {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(presentation.title)
-                            .font(.largeTitle.bold())
-                        Text("猫と過ごした、小さな時間。")
-                            .font(.title3)
-                            .foregroundStyle(.white.opacity(0.84))
-                    }
+                    Text(presentation.title)
+                        .font(.largeTitle.bold())
                 }
 
                 Spacer()
@@ -135,14 +130,14 @@ struct MonthlyWindowView: View {
             HStack {
                 Spacer()
 
-                Button("閉じる") {
+                Button("閉じる", systemImage: "xmark") {
                     dismiss()
                 }
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("閉じる")
                 .font(.headline)
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .frame(minHeight: 44)
+                .frame(width: 44, height: 44)
                 .background(.black.opacity(0.55), in: Capsule())
                 .accessibilityIdentifier("monthly-window-close")
             }

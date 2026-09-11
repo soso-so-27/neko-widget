@@ -595,7 +595,9 @@ struct FamilyWindowView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる") { selectedMomentForDetail = nil }
+                    Button("閉じる", systemImage: "xmark") { selectedMomentForDetail = nil }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("閉じる")
                         .accessibilityIdentifier("photo-detail-close")
                 }
             }
@@ -676,8 +678,7 @@ struct FamilyWindowView: View {
         } else {
             ContentUnavailableView(
                 "まだ写真は届いていません",
-                systemImage: "photo.on.rectangle.angled",
-                description: Text("相手から届くと、ここに表示されます。")
+                systemImage: "photo.on.rectangle.angled"
             )
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
@@ -722,8 +723,7 @@ struct FamilyWindowView: View {
         } else {
             ContentUnavailableView(
                 "送った写真はまだありません",
-                systemImage: "paperplane",
-                description: Text("届けた写真を、ここで見返せます。")
+                systemImage: "paperplane"
             )
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
@@ -1340,7 +1340,9 @@ struct FamilyWindowView: View {
             .navigationTitle("送信状況").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる") { showsOutgoingDetails = false }
+                    Button("閉じる", systemImage: "xmark") { showsOutgoingDetails = false }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("閉じる")
                         .accessibilityIdentifier("family-window-outgoing-details-close")
                 }
             }
@@ -1802,11 +1804,14 @@ struct FamilyWindowView: View {
                         heart,
                         canRetry: model.canSendHeart(for: item)
                     ))
+                    .font(.body)
                 }
-                Text(heartActionTitle(
-                    heart,
-                    canRetry: model.canSendHeart(for: item)
-                ))
+                if let heart, heart.phase != .sent {
+                    Text(heartActionTitle(
+                        heart,
+                        canRetry: model.canSendHeart(for: item)
+                    ))
+                }
             }
             .font(.caption.weight(.semibold))
             .multilineTextAlignment(.center)
@@ -2579,7 +2584,9 @@ struct MomentPhotoDetailBody<Actions: View>: View {
                 }
                 .navigationTitle("ひとこと").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる") { showsFullCaption = false }
+                    Button("閉じる", systemImage: "xmark") { showsFullCaption = false }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("閉じる")
                 } }
             }
         }
@@ -2665,7 +2672,10 @@ private struct MomentSentPhotoDetail: View {
                         .accessibilityLabel("送信の詳細").disabled(record == nil)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("閉じる", action: onClose).accessibilityIdentifier("photo-detail-close")
+                    Button("閉じる", systemImage: "xmark", action: onClose)
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("閉じる")
+                        .accessibilityIdentifier("photo-detail-close")
                 }
             }
             .task(id: model.sentDetailReference(recordID: recordID)) {
@@ -2697,7 +2707,9 @@ private struct MomentSentPhotoDetail: View {
                     }
                     .navigationTitle("送信の詳細").navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .topBarTrailing) {
-                        Button("閉じる") { showsInformation = false }
+                        Button("閉じる", systemImage: "xmark") { showsInformation = false }
+                            .labelStyle(.iconOnly)
+                            .accessibilityLabel("閉じる")
                     } }
                 }
             }

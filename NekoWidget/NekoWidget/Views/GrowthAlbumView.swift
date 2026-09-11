@@ -149,21 +149,15 @@ struct GrowthAlbumDetailView: View {
     }
 
     private func automaticSelectionNote() -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text("写真から、時期ごとに一枚ずつ選びました。")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Button {
-                showsAboutSelection = true
-            } label: {
-                Image(systemName: "info.circle")
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("このまとめについて")
+        Button {
+            showsAboutSelection = true
+        } label: {
+            Image(systemName: "info.circle")
+                .frame(width: 44, height: 44)
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("このまとめについて")
     }
 
     @ViewBuilder
@@ -406,7 +400,9 @@ private struct GrowthPhotoReplacementSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button("閉じる", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("閉じる")
                 }
             }
         }

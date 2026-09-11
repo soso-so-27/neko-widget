@@ -1190,7 +1190,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("return ordered", ordering)
         self.assertNotIn(".sorted", ordering)
 
-        self.assertIn("写真は時間とともに変わります。", home)
+        self.assertIn('Text("ウィジェットを置く")', home)
+        self.assertIn("showWidgetPlacementGuide", home)
         self.assertIn("撮りためた猫写真が、", onboarding)
         self.assertIn("自動アルバムとホーム画面へ。", onboarding)
         self.assertIn("TodayPhotoSelectionPolicy.resolve(", model)
@@ -1692,7 +1693,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("ForEach(connectedWindows)", main_tab)
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn('"window-list-receiving"', main_tab)
-        self.assertIn('windowSectionTitle("設定中のまど")', main_tab)
+        self.assertIn('windowSectionTitle("設定中")', main_tab)
         self.assertIn("PrivateWindowListPresentationPolicy.make", main_tab)
         self.assertIn("if $0.createdAt != $1.createdAt", main_tab)
         self.assertNotIn("if $0.updatedAt != $1.updatedAt", main_tab)
@@ -1785,7 +1786,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             "pairingPhases[window.localWindowID] == .unpaired",
             window_list,
         )
-        self.assertIn("dynamicTypeSize.isAccessibilitySize ? nil : 2", window_list)
+        self.assertIn("dynamicTypeSize >= .xxxLarge", window_list)
 
     def test_settings_prioritizes_daily_safety_and_about_tasks(self) -> None:
         settings = source("NekoWidget/Views/SettingsView.swift")
@@ -2861,7 +2862,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
     def test_growth_album_opens_as_a_photo_story_before_editing(self) -> None:
         growth = source("NekoWidget/Views/GrowthAlbumView.swift")
 
-        self.assertIn('Text("写真から、時期ごとに一枚ずつ選びました。")', growth)
+        self.assertIn('.accessibilityLabel("このまとめについて")', growth)
+        self.assertIn('Text(aboutSelectionMessage)', growth)
         self.assertIn('scrapbookTimeline(items: resolvedItems)', growth)
         self.assertIn('Label("選び直す"', growth)
         self.assertIn('.alert("このまとめについて"', growth)

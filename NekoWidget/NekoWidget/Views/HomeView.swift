@@ -140,15 +140,9 @@ struct HomeView: View {
                     .frame(width: 48, height: 48)
                     .background(Color.accentColor.gradient, in: RoundedRectangle(cornerRadius: 14))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("ウィジェットを置く")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    Text("写真は時間とともに変わります。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
+                Text("ウィジェットを置く")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
 
                 Spacer(minLength: 4)
 
@@ -502,9 +496,6 @@ struct PhotoShuffleGuideView: View {
                     .padding(16)
                     .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
 
-                    Text("アプリとウィジェットは、検出した猫のまわりに余白を残して写真を切り取り、画面いっぱいに表示します。Small / Largeで猫全体を収められない場合だけ、同じ写真のぼかし背景で全体を残します。Mediumは猫の上側を優先します。写真シャッフル内のトリミングはOSによる表示です。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
                 .padding(20)
             }
@@ -512,7 +503,9 @@ struct PhotoShuffleGuideView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完了") { dismiss() }
+                    Button("完了", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("完了")
                 }
             }
         }
