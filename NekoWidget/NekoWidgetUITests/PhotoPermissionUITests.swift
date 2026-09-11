@@ -59,6 +59,8 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["写真"].isHittable)
         capture("window-list-large-text", app)
         card.tap()
+        XCTAssertTrue(app.buttons["official-window-manage"].isHittable)
+        capture("official-window-overview-large-text", app)
         let photo = app.buttons["official-window-photo-fixture-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))
         photo.tap()
@@ -118,6 +120,7 @@ final class OfficialWindowUITests: XCTestCase {
         let recent = app.buttons["official-window-photo-fixture-photo-1"]
         for _ in 0..<6 { if recent.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(recent.isHittable)
+        if recent.frame.maxY > app.frame.height * 0.85 { app.swipeUp() }
         capture("official-window-recent-photos", app)
         recent.tap()
         XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
@@ -142,6 +145,7 @@ final class OfficialWindowUITests: XCTestCase {
             app.launchArguments = ["--window-list-ui-fixture", "--window-list-mixed", "--window-list-subscribed",
                                    "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
             if largeText { app.launchArguments.append("--window-list-large-text") }
+            else { app.launchArguments.append("--window-list-dark") }
             app.launch()
             let family = app.buttons["window-list-row-10000000-0000-0000-0000-000000000001"]
             XCTAssertTrue(family.waitForExistence(timeout: 10))
@@ -173,7 +177,9 @@ final class OfficialWindowUITests: XCTestCase {
             for _ in 0..<6 { if create.isHittable { break }; app.swipeDown() }
             XCTAssertTrue(create.waitForExistence(timeout: 5), "Recovery reuses the slot for the setup choices")
             app.navigationBars["ねことも"].buttons.element(boundBy: 0).tap()
-            for _ in 0..<5 { if discover.isHittable { break }; app.swipeDown() }
+            XCTAssertTrue(addition.waitForExistence(timeout: 5), "Closing setup returns to the window list")
+            addition.tap()
+            XCTAssertTrue(discover.waitForExistence(timeout: 5))
             discover.tap()
             XCTAssertTrue(app.buttons["official-window-entry"].waitForExistence(timeout: 5),
                           "Private setup must not block public discovery")

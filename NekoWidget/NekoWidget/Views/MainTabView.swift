@@ -1175,7 +1175,10 @@ private struct WindowListView: View {
         .navigationTitle("まど")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink { addition } label: { Label("追加", systemImage: "plus") }
+                NavigationLink { addition } label: {
+                    HStack(spacing: 6) { Image(systemName: "plus"); Text("追加") }
+                        .frame(minWidth: 44, minHeight: 44)
+                }
                     .accessibilityLabel("まどを追加")
                     .accessibilityIdentifier("window-list-addition")
             }
@@ -1803,6 +1806,7 @@ struct WindowListNavigationFixture: View {
         }
         .environment(\.dynamicTypeSize,
                      CommandLine.arguments.contains("--window-list-large-text") ? .accessibility3 : .large)
+        .preferredColorScheme(CommandLine.arguments.contains("--window-list-dark") ? .dark : nil)
     }
 }
 #endif
