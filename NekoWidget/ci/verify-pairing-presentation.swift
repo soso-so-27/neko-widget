@@ -257,7 +257,24 @@ enum PairingPresentationVerifier {
         state.spaceID = "fixture-space"
         try expect(.unavailable) // Missing remote member is not a local draft.
         state.memberID = "fixture-member"
-        try expect(.cancelRemote)
+        try expect(.checkConnection)
+        state.pendingOperation = "complete"
+        state.pendingClientRequestID = UUID().uuidString
+        try expect(.checkConnection)
+        state.pendingOperation = "approve"
+        try expect(.unavailable) // Wrong role cannot replace a pending operation.
+        state.pendingOperation = "cancel"
+        try expect(.unavailable)
+        state.pendingCancelRevokesWholeSpace = false
+        try expect(.resumeCancellation)
+        state.pendingOperation = "recoveryComplete"
+        state.pendingCancelRevokesWholeSpace = nil
+        try expect(.unavailable)
+        state.pendingOperation = nil
+        state.pendingClientRequestID = nil
+        state.recoveryID = "fixture-recovery"
+        try expect(.unavailable)
+        state.recoveryID = nil
         state.phase = .paired
         try expect(.unavailable)
         state = PairingState.unpaired(installationMarker: UUID().uuidString)

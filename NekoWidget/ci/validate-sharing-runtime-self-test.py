@@ -42,6 +42,7 @@ REQUIRED_CASES = {
     "partial-download-resume-tamper",
     "pairing-bootstrap-transient-preservation",
     "failed-pairing-draft-reuses-local-window",
+    "failed-pairing-connection-preserves-state-and-keys",
     "private-window-catalog-authority-uniqueness",
     "private-window-catalog-protected-storage-migration",
     "private-window-legacy-conflict-quarantine-policy",

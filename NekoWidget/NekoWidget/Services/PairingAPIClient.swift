@@ -431,7 +431,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
               pending.expiresAt > pending.createdAt
         else { throw PairingError.invalidServerResponse }
         _ = try pending.member.identity.validated()
-        try validateTranscriptEcho(
+        try Self.validateTranscriptEcho(
             transcript,
             echoedTranscript: pending.transcript,
             echoedHash: pending.transcriptHash
@@ -457,7 +457,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             method: "GET",
             authentication: Authentication(memberID: memberID, credential: credential)
         )
-        return try validatedStatus(response, localState: state, credential: credential)
+        return try Self.validatedStatus(response, localState: state, credential: credential)
     }
 
     func approve(
@@ -1083,7 +1083,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         )
     }
 
-    private func validatedStatus(
+    fileprivate nonisolated static func validatedStatus(
         _ response: StatusResponse,
         localState: PairingState,
         credential: PairingCredential
@@ -1107,6 +1107,17 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
                 .contains(response.pairing.state)
         else { throw PairingError.invalidServerResponse }
 
+        let peerIdentity: PairingMemberIdentity?
+        if let peer = response.pairing.peer {
+            let expectedPeerRole = localState.role == .inviter ? "invitee" : "owner"
+            guard peer.role == expectedPeerRole else { throw PairingError.invalidServerResponse }
+            peerIdentity = try peer.identity.validated()
+        } else {
+            peerIdentity = try savedOwnerPeer(
+                response, localState: localState, credential: credential
+            )
+        }
+
         switch response.pairing.state {
         case "awaitingInvitee":
             guard response.pairing.enrollment == nil,
@@ -1115,12 +1126,12 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             else { throw PairingError.invalidServerResponse }
         case "pendingApproval":
             guard response.pairing.enrollment != nil,
-                  response.pairing.peer != nil,
+                  peerIdentity != nil,
                   response.pairing.keyEnvelope == nil
             else { throw PairingError.invalidServerResponse }
         case "approvedAwaitingCompletion":
             guard response.pairing.enrollment != nil,
-                  response.pairing.peer != nil,
+                  peerIdentity != nil,
                   (localState.role == .invitee
                     ? response.pairing.keyEnvelope != nil
                     : response.pairing.keyEnvelope == nil)
@@ -1131,7 +1142,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
             else { throw PairingError.invalidServerResponse }
         case "cancelled":
             guard response.pairing.enrollment != nil,
-                  response.pairing.peer != nil,
+                  peerIdentity != nil,
                   response.pairing.keyEnvelope == nil
             else { throw PairingError.invalidServerResponse }
         case "expired":
@@ -1141,19 +1152,14 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         default:
             throw PairingError.invalidServerResponse
         }
-        if let peer = response.pairing.peer {
-            let expectedPeerRole = localState.role == .inviter ? "invitee" : "owner"
-            guard peer.role == expectedPeerRole else { throw PairingError.invalidServerResponse }
-            _ = try peer.identity.validated()
-        }
         let transcript: PairingVerificationTranscript?
         if let enrollment = response.pairing.enrollment,
-           let peer = response.pairing.peer,
+           let peer = peerIdentity,
            let invitationID = localState.invitationID {
             let local = response.member.identity
             let identities = localState.role == .inviter
-                ? (inviter: local, invitee: peer.identity)
-                : (inviter: peer.identity, invitee: local)
+                ? (inviter: local, invitee: peer)
+                : (inviter: peer, invitee: local)
             let builtTranscript = PairingVerificationTranscript(
                 spaceID: response.spaceId,
                 invitationID: invitationID,
@@ -1179,7 +1185,7 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         }
         return PairingStatusResult(
             state: response.pairing.state,
-            peer: response.pairing.peer?.identity,
+            peer: peerIdentity,
             transcript: transcript,
             transcriptHash: response.pairing.enrollment?.transcriptHash,
             envelopeAlgorithm: response.pairing.keyEnvelope?.algorithm,
@@ -1188,7 +1194,57 @@ actor URLSessionPairingAPIClient: PairingAPIClientProtocol {
         )
     }
 
-    private func validateTranscriptEcho(
+    /// The relay omits a non-active invitee from the owner's status response.
+    /// Reuse only the exact peer already bound to a saved, verified ceremony;
+    /// this does not discover a peer or authorize a new approval. Active and
+    /// invitee responses still require the relay's peer identity.
+    private nonisolated static func savedOwnerPeer(
+        _ response: StatusResponse,
+        localState: PairingState,
+        credential: PairingCredential
+    ) throws -> PairingMemberIdentity? {
+        guard localState.role == .inviter,
+              ["pendingApproval", "approvedAwaitingCompletion", "cancelled"]
+                .contains(response.pairing.state)
+        else { return nil }
+        _ = try localState.validated()
+        guard localState.credentialAccount == credential.account,
+              localState.installationMarker == credential.installationMarker,
+              localState.participantID == credential.participantIDString,
+              let enrollment = response.pairing.enrollment,
+              enrollment.id == localState.enrollmentID,
+              let invitationID = localState.invitationID,
+              let memberID = localState.peerMemberID,
+              let participantID = localState.peerParticipantID,
+              let agreementKey = localState.peerAgreementPublicKey,
+              let signingKey = localState.peerSigningPublicKey,
+              let storedTranscript = localState.transcript.flatMap({ Data(base64URLString: $0) }),
+              let storedHash = localState.transcriptHash
+        else { throw PairingError.invalidServerResponse }
+        let peer = try PairingMemberIdentity(
+            memberID: memberID, participantID: participantID,
+            agreementPublicKey: agreementKey, signingPublicKey: signingKey
+        ).validated()
+        let transcript = PairingVerificationTranscript(
+            spaceID: response.spaceId, invitationID: invitationID,
+            enrollmentID: enrollment.id,
+            dailyBoundaryMinuteUTC: response.dailyBoundaryMinuteUTC,
+            inviter: response.member.identity, invitee: peer
+        )
+        let canonical = try transcript.canonicalData()
+        let hash = PairingCrypto.sha256(canonical)
+        guard storedTranscript == canonical,
+              storedHash == hash.base64URLEncodedString(),
+              localState.verificationPhrase == PairingCrypto.verificationPhrase(for: hash)
+        else { throw PairingError.transcriptMismatch }
+        try validateTranscriptEcho(
+            transcript, echoedTranscript: enrollment.transcript,
+            echoedHash: enrollment.transcriptHash
+        )
+        return peer
+    }
+
+    private nonisolated static func validateTranscriptEcho(
         _ transcript: PairingVerificationTranscript,
         echoedTranscript: String,
         echoedHash: String
@@ -1684,6 +1740,15 @@ private struct APIErrorResponse: Decodable {
 /// CI entry point for decoding the Worker-owned golden response fixture with
 /// the exact DTOs used by the production client.
 enum PairingAPIContractVerifier {
+    static func verifyStatusResponse(
+        _ data: Data, localState: PairingState, credential: PairingCredential
+    ) throws -> PairingStatusResult {
+        try URLSessionPairingAPIClient.validatedStatus(
+            JSONDecoder().decode(StatusResponse.self, from: data),
+            localState: localState, credential: credential
+        )
+    }
+
     static func verifyGoldenResponses(_ data: Data) throws {
         struct Fixture: Decodable {
             let schemaVersion: Int

@@ -2,7 +2,7 @@ import Foundation
 
 /// Recovery follows durable evidence, never just the visible error message.
 enum FailedPairingRecoveryAction: Equatable, Sendable {
-    case restartLocalDraft, resumeCreate, resumeJoin, cancelRemote, unavailable
+    case restartLocalDraft, resumeCreate, resumeJoin, checkConnection, resumeCancellation, unavailable
 
     static func resolve(_ state: PairingState) -> Self {
         guard state.phase == .failed else { return .unavailable }
@@ -19,7 +19,22 @@ enum FailedPairingRecoveryAction: Equatable, Sendable {
         }
         if state.role != nil, state.credentialAccount != nil,
            state.memberID != nil, state.spaceID != nil {
-            return .cancelRemote
+            if state.pendingOperation == "cancel" {
+                return state.pendingClientRequestID.flatMap(UUID.init(uuidString:)) != nil
+                    && state.pendingCancelRevokesWholeSpace != nil ? .resumeCancellation : .unavailable
+            }
+            // Device enrollment and unknown in-flight operations must not be
+            // overwritten by an initial-pairing status response.
+            guard state.recoveryID == nil, state.localDeviceIsAdditional != true else { return .unavailable }
+            if let pending = state.pendingOperation {
+                guard state.pendingClientRequestID.flatMap(UUID.init(uuidString:)) != nil,
+                      (pending == "approve" && state.role == .inviter)
+                        || (pending == "complete" && state.role == .invitee)
+                else { return .unavailable }
+            } else if state.pendingClientRequestID != nil {
+                return .unavailable
+            }
+            return .checkConnection
         }
         if state.credentialAccount == nil, state.participantID == nil,
            state.memberID == nil, state.spaceID == nil,
@@ -29,6 +44,29 @@ enum FailedPairingRecoveryAction: Equatable, Sendable {
             return .restartLocalDraft
         }
         return .unavailable
+    }
+}
+
+/// A result of a fresh check, never inferred from legacy lastError text.
+enum FailedPairingConnectionIssue: Equatable {
+    case invitationExpired, invitationUnavailable, approvalExpired, sharingEnded
+
+    var title: String {
+        switch self {
+        case .invitationExpired: "招待の期限が切れています"
+        case .invitationUnavailable: "招待コードを表示できません"
+        case .approvalExpired: "参加の手続きが終了しています"
+        case .sharingEnded: "このまどの接続は終了しています"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .invitationExpired: "相手の参加は確認できませんでした。新しい招待から設定できます。"
+        case .invitationUnavailable: "このiPhoneに招待コードが残っていません。新しい招待から設定できます。"
+        case .approvalExpired: "この参加手続きは続けられません。新しい招待から設定できます。"
+        case .sharingEnded: "接続先で終了を確認しました。新しい招待から設定できます。"
+        }
     }
 }
 
@@ -56,10 +94,14 @@ struct FailedPairingRecoveryPresentation: Equatable, Sendable {
             return Self(action: action, title: title,
                         detail: "入力済みの招待で、参加をもう一度試せます。",
                         buttonTitle: "参加を再開")
-        case .cancelRemote:
+        case .checkConnection:
             return Self(action: action, title: title,
-                        detail: "今の設定を取り消して、新しい招待でつなぎ直せます。",
-                        buttonTitle: "つなぎ直す")
+                        detail: "設定を残したまま、続きから接続できるか確認します。",
+                        buttonTitle: "接続を確認")
+        case .resumeCancellation:
+            return Self(action: action, title: "設定の終了を確認できていません",
+                        detail: "前回選んだ終了の手続きが残っています。同じ手続きをもう一度確認できます。",
+                        buttonTitle: "終了の手続きを再開")
         case .unavailable:
             return Self(action: action, title: title,
                         detail: "再開に必要な情報を確認できません。調査に使う診断情報を開けます。",

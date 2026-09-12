@@ -286,6 +286,22 @@ class PlanTests(unittest.TestCase):
         self.assertIn("runtime_scope: ${{ steps.scope.outputs.runtime_scope }}", workflow)
         self.assertIn("NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}", workflow)
 
+    def test_independent_jobs_start_after_plan_without_removing_release_evidence(self):
+        project = Path(__file__).resolve().parents[1]
+        workflow = (project.parent / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+        for identifier, output in (("build-without-signing", "build"),
+                                   ("simulator-smoke-test", "smoke"),
+                                   ("sharing-runtime-matrix", "sharing")):
+            body = re.split(r"\n  (?=\S)", workflow.split("\n  " + identifier + ":", 1)[1], maxsplit=1)[0]
+            self.assertIn("    needs: plan\n", body)
+            self.assertIn("    if: needs.plan.outputs." + output + " == 'true'", body)
+            self.assertNotIn("continue-on-error:", body)
+        # Parallel runtime success cannot stand in for a failed/skipped Release.
+        for result in ("failure", "skipped", "cancelled"):
+            jobs = copy.deepcopy(self.jobs)
+            jobs[0]["conclusion"] = result
+            self.assertFalse(planner.covers_jobs(jobs, planner.FULL, self.sha))
+
     def test_real_git_ui_selection_rejects_moves_additions_deletions_and_mode_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -242,12 +242,12 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
-    func testFailedRemoteSetupHasOneRecoveryPathAndPreservesItAfterFailure() {
+    func testFailedRemoteSetupChecksConnectionWithoutResetting() {
         continueAfterFailure = false
         for largeText in [false, true] {
             let app = launchFailedSetup("remote", largestText: largeText)
             let title = app.staticTexts["pairing-failure-title"]
-            let restart = app.buttons["pairing-recovery-action"]
+            let check = app.buttons["pairing-recovery-action"]
             XCTAssertTrue(title.waitForExistence(timeout: 10))
             XCTAssertEqual(app.staticTexts.matching(identifier: "pairing-failure-title").count, 1)
             XCTAssertEqual(app.textFields.count, 0, "A failed connection must not offer name sharing")
@@ -255,34 +255,61 @@ final class OfficialWindowUITests: XCTestCase {
                            "The isolated fixture must reproduce the user's photo-sharing presentation")
             XCTAssertFalse(app.staticTexts["画面の案内を確認してください"].exists)
             XCTAssertFalse(app.staticTexts["まどの設定を完了できませんでした"].exists)
-            capture(largeText ? "pairing-failed-remote-largest-initial" : "pairing-failed-remote", app)
-            if largeText && !restart.isHittable { app.swipeUp() }
-            XCTAssertTrue(restart.isHittable, "Recovery comes before secondary settings and explanation")
-            XCTAssertEqual(restart.label, "つなぎ直す")
-            XCTAssertGreaterThanOrEqual(restart.frame.height + 0.001, 44)
-            capture(largeText ? "pairing-failed-remote-largest-action" : "pairing-failed-remote-action", app)
-            restart.tap()
-            let cancel = pairingConfirmationButton("pairing-reset-cancel", title: "戻る", in: app)
-            XCTAssertTrue(cancel.waitForExistence(timeout: 5))
-            capture(largeText ? "pairing-reset-confirmation-largest" : "pairing-reset-confirmation", app)
-            cancel.tap()
-            XCTAssertTrue(restart.waitForExistence(timeout: 5), "Cancel must keep the failed setup")
-            restart.tap()
-            pairingConfirmationButton("pairing-reset-confirm", title: "取り消してつなぎ直す", in: app).tap()
             let error = app.staticTexts["pairing-recovery-error"]
             XCTAssertTrue(error.waitForExistence(timeout: 5))
             XCTAssertEqual(app.staticTexts.matching(identifier: "pairing-recovery-error").count, 1)
-            XCTAssertFalse(app.buttons["新しいまどを作る"].exists,
-                           "A cancellation failure must not show fresh setup as if it succeeded")
-            for _ in 0..<2 where !restart.isHittable { app.swipeUp() }
-            XCTAssertTrue(restart.isHittable)
-            capture(largeText ? "pairing-reset-kept-after-failure-largest" : "pairing-reset-kept-after-failure", app)
-            restart.tap()
-            pairingConfirmationButton("pairing-reset-confirm", title: "取り消してつなぎ直す", in: app).tap()
-            let create = app.buttons["新しいまどを作る"]
-            for _ in 0..<5 where !create.isHittable { app.swipeUp() }
-            XCTAssertTrue(create.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.alerts.firstMatch.exists, "A connection check must never ask to delete settings")
+            XCTAssertFalse(app.buttons["pairing-recheck-connection"].exists)
+            if largeText && !check.isHittable { app.swipeUp() }
+            XCTAssertTrue(check.isHittable)
+            XCTAssertEqual(check.label, "接続を確認")
+            XCTAssertGreaterThanOrEqual(check.frame.height + 0.001, 44)
+            capture(largeText ? "pairing-check-retained-largest" : "pairing-check-retained", app)
+            check.tap()
+            XCTAssertTrue(app.staticTexts["相手と接続済み"].waitForExistence(timeout: 5))
             XCTAssertFalse(title.exists)
+            XCTAssertFalse(app.alerts.firstMatch.exists)
+            capture(largeText ? "pairing-check-resumed-largest" : "pairing-check-resumed", app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testExpiredInvitationExplainsNextStepAndRetainsFailedCancellation() {
+        continueAfterFailure = false
+        for largeText in [false, true] {
+            let app = launchFailedSetup("expired", largestText: largeText)
+            let action = app.buttons["pairing-recovery-action"]
+            XCTAssertTrue(app.staticTexts["招待の期限が切れています"].waitForExistence(timeout: 10))
+            XCTAssertEqual(action.label, "新しい招待で設定")
+            for _ in 0..<2 where !action.isHittable { app.swipeUp() }
+            XCTAssertTrue(action.isHittable)
+            capture(largeText ? "pairing-expired-largest" : "pairing-expired", app)
+            action.tap()
+            let cancel = pairingConfirmationButton("pairing-reset-cancel", title: "戻る", in: app)
+            capture(largeText ? "pairing-new-invitation-confirmation-largest" : "pairing-new-invitation-confirmation", app)
+            cancel.tap()
+            XCTAssertEqual(action.label, "新しい招待で設定")
+            action.tap()
+            pairingConfirmationButton("pairing-reset-confirm", title: "設定を終了して進む", in: app).tap()
+            XCTAssertTrue(app.staticTexts["pairing-recovery-error"].waitForExistence(timeout: 5))
+            XCTAssertEqual(action.label, "終了の手続きを再開")
+            XCTAssertFalse(app.staticTexts["招待の期限が切れています"].exists,
+                           "The previous expiry result cannot override an in-flight cancellation")
+            XCTAssertFalse(app.buttons["pairing-recheck-connection"].exists,
+                           "Checking status must not replace the saved cancellation")
+            for _ in 0..<2 where !action.isHittable { app.swipeUp() }
+            capture(largeText ? "pairing-ending-retained-largest" : "pairing-ending-retained", app)
+            action.tap()
+            pairingConfirmationButton("pairing-reset-confirm", title: "設定を終了して進む", in: app).tap()
+            expectation(for: NSPredicate(format: "exists == false"),
+                        evaluatedWith: app.staticTexts["pairing-failure-title"])
+            waitForExpectations(timeout: 5)
+            let creation = app.buttons["この名前でまどを作る"]
+            for _ in 0..<5 where !creation.exists { app.swipeUp() }
+            XCTAssertTrue(creation.exists, "Successful explicit reset proceeds to invitation creation")
+            XCTAssertFalse(app.buttons["招待されたまどに参加"].exists,
+                           "Do not ask an inviter to choose their role again after an explicit restart")
             app.terminate()
         }
     }

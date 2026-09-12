@@ -20,6 +20,7 @@ struct PairingView: View {
     @State private var windowDisplayNameDraft = PrivateWindowDisplayName.fallback
     @State private var setupPath: PairingSetupPath?
     @State private var showsDeviceChangeFlow = false
+    @State private var setupPathAfterReset: PairingSetupPath?
 
     init(initialSetupPath: PairingSetupPath? = nil) {
         _setupPath = State(initialValue: initialSetupPath)
@@ -105,6 +106,7 @@ struct PairingView: View {
         .task {
             await model.bootstrap()
             windowDisplayNameDraft = model.windowDisplayName
+            await model.checkFailedConnectionOnOpen()
         }
         .onReceive(
             NotificationCenter.default.publisher(
@@ -130,7 +132,8 @@ struct PairingView: View {
             if currentPhase == .unpaired,
                let previousPhase,
                previousPhase != .unpaired {
-                setupPath = nil
+                setupPath = setupPathAfterReset
+                setupPathAfterReset = nil
                 hasAcceptedPairingTerms = false
                 showsDeviceChangeFlow = false
             }
@@ -160,15 +163,19 @@ struct PairingView: View {
         } message: {
             Text(cancelConfirmationMessage)
         }
-        .alert("つなぎ直しますか？", isPresented: $showsFailedResetConfirmation) {
-            Button("取り消してつなぎ直す", role: .destructive) {
-                Task { await model.cancelAndReset() }
+        .alert("新しい招待で設定し直しますか？", isPresented: $showsFailedResetConfirmation) {
+            Button("設定を終了して進む", role: .destructive) {
+                setupPathAfterReset = model.state?.role == .inviter ? .create : .join
+                Task {
+                    await model.cancelAndReset()
+                    if model.state?.phase != .unpaired { setupPathAfterReset = nil }
+                }
             }
             .accessibilityIdentifier("pairing-reset-confirm")
             Button("戻る", role: .cancel) {}
                 .accessibilityIdentifier("pairing-reset-cancel")
         } message: {
-            Text("このまどの共有を終了し、このiPhoneの接続情報と一時的な写真を削除します。写真アプリに保存した写真は残ります。通信に失敗した場合は設定を残します。")
+            Text("このまどの接続を終了して、招待から設定し直します。このまど内の写真と接続情報は、このiPhoneから削除されます。写真アプリの写真や、ほかのまどは残ります。")
         }
         .confirmationDialog(
             "このiPhoneの追加をやめますか？",
@@ -419,13 +426,31 @@ struct PairingView: View {
 
     private func failedSetupSection(_ state: PairingState) -> some View {
         let presentation = FailedPairingRecoveryPresentation.make(state)
+        let issue = presentation.action == .checkConnection ? model.failedConnectionIssue : nil
         return Section {
             VStack(alignment: .leading, spacing: 16) {
-                Text(presentation.title)
-                    .font(.headline)
-                    .accessibilityIdentifier("pairing-failure-title")
-                Text(presentation.detail)
-                    .foregroundStyle(.secondary)
+                HStack(alignment: .top) {
+                    Text(issue?.title ?? presentation.title)
+                        .font(.headline)
+                        .accessibilityIdentifier("pairing-failure-title")
+                    if presentation.action == .checkConnection && issue == nil {
+                        Spacer(minLength: 4)
+                        Menu {
+                            Button("新しい招待で設定し直す", role: .destructive) {
+                                showsFailedResetConfirmation = true
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                        .accessibilityLabel("設定のほかの操作")
+                        .disabled(model.isWorking)
+                    }
+                }
+                if model.operationErrorMessage == nil || issue != nil {
+                    Text(issue?.detail ?? presentation.detail)
+                        .foregroundStyle(.secondary)
+                }
                 // Fresh errors are sanitized by the model. Do not repeat an
                 // unknown, persisted error as a second generic warning.
                 if let message = model.operationErrorMessage {
@@ -444,7 +469,7 @@ struct PairingView: View {
                     .accessibilityIdentifier("pairing-recovery-diagnostics")
                 } else {
                     Button {
-                        if presentation.action == .cancelRemote {
+                        if presentation.action == .resumeCancellation || issue != nil {
                             showsFailedResetConfirmation = true
                         } else {
                             Task { await model.resumeFailedSetup() }
@@ -457,12 +482,19 @@ struct PairingView: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 44)
                         } else {
-                            recoveryButtonTitle(presentation.buttonTitle)
+                            recoveryButtonTitle(issue == nil ? presentation.buttonTitle : "新しい招待で設定")
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("pairing-recovery-action")
+                    if issue != nil {
+                        Button("接続をもう一度確認") {
+                            Task { await model.resumeFailedSetup() }
+                        }
+                        .disabled(model.isWorking)
+                        .accessibilityIdentifier("pairing-recheck-connection")
+                    }
                 }
             }
             .fixedSize(horizontal: false, vertical: true)

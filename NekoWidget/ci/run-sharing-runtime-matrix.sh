@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 PROJECT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$PROJECT_DIRECTORY/ci/prepare-simulator-and-build.sh"
 VALIDATOR="$PROJECT_DIRECTORY/ci/validate-sharing-runtime-self-test.py"
 REPORT_FILENAME="sharing-runtime-self-test.json"
 RENDERER_VERSION="cat-aware-full-bleed-v6"
@@ -416,6 +417,7 @@ PY
         local widget_scenario_result=""
         local widget_scenario_status=0
         local widget_scenario_test=""
+        local -a widget_test_arguments=()
         for widget_scenario in long-white-large no-caption; do
             if [[ "$RUN_WIDGET_GALLERY" != true ]]; then
                 break
@@ -435,28 +437,32 @@ PY
             # Runtime results and cache JPEGs were exported above. These last
             # builds need no simulator data: erase both extension registrations
             # and SpringBoard's cached previews before installing each fixture.
-            xcrun simctl shutdown "$simulator_udid" || return $?
-            xcrun simctl erase "$simulator_udid" || return $?
-            xcrun simctl boot "$simulator_udid" || return $?
-            xcrun simctl bootstatus "$simulator_udid" -b || return $?
-            xcodebuild \
-                -project NekoWidget.xcodeproj \
-                -scheme NekoWidget \
-                -configuration Debug \
-                -sdk iphonesimulator \
-                -destination "platform=iOS Simulator,id=$simulator_udid" \
-                -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
+            # Compile while this fresh Simulator boots, then test the exact
+            # prepared products. No test runs if either preparation fails.
+            widget_test_arguments=(
+                -project NekoWidget.xcodeproj
+                -scheme NekoWidget
+                -configuration Debug
+                -sdk iphonesimulator
+                -destination "platform=iOS Simulator,id=$simulator_udid"
+                -derivedDataPath "$DERIVED_DATA_DIRECTORY"
+                "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/$widget_scenario_test"
+                -parallel-testing-enabled NO
+                -testLanguage ja
+                -testRegion JP
+                COMPILER_INDEX_STORE_ENABLE=NO
+                CODE_SIGNING_ALLOWED=YES
+                CODE_SIGN_IDENTITY=-
+                AD_HOC_CODE_SIGNING_ALLOWED=YES
+                "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$widget_review_conditions $widget_scenario_conditions"
+            )
+            prepare_simulator_and_build "$simulator_udid" \
+                xcodebuild "${widget_test_arguments[@]}" \
+                -resultBundlePath "$runtime_artifacts/Widget-$widget_scenario-build.xcresult" \
+                build-for-testing || return $?
+            xcodebuild "${widget_test_arguments[@]}" \
                 -resultBundlePath "$widget_scenario_result" \
-                "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/$widget_scenario_test" \
-                -parallel-testing-enabled NO \
-                -testLanguage ja \
-                -testRegion JP \
-                COMPILER_INDEX_STORE_ENABLE=NO \
-                CODE_SIGNING_ALLOWED=YES \
-                CODE_SIGN_IDENTITY=- \
-                AD_HOC_CODE_SIGNING_ALLOWED=YES \
-                "WIDGET_SCREENSHOT_FIXTURE_CONDITION=$widget_review_conditions $widget_scenario_conditions" \
-                test || widget_scenario_status=$?
+                test-without-building || widget_scenario_status=$?
             if [[ -d "$widget_scenario_result" ]]; then
                 xcrun xcresulttool export attachments --path "$widget_scenario_result" \
                     --output-path "$runtime_artifacts/widget-$widget_scenario-screenshots"

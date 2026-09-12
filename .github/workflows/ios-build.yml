@@ -88,6 +88,7 @@ jobs:
           python3 ci/test-photo-permission-bootstrap.py
           python3 ci/test-diagnostic-log-privacy.py
           python3 ci/test-app-store-screenshot-workflow.py
+          python3 ci/test-runtime-preparation.py
           python3 ci/test-background-moment-refresh.py
 
       - name: Verify official window catalog, cache and subscription boundaries
@@ -942,7 +943,9 @@ jobs:
 
   simulator-smoke-test:
     name: Launch app and scan fixtures in Simulator
-    needs: [plan, build-without-signing]
+    # This runner builds and signs its own Simulator products. Release build
+    # remains a separate required job in the same-SHA evidence policy.
+    needs: plan
     if: needs.plan.outputs.smoke == 'true'
     runs-on: macos-15
     # A cold hosted Simulator can spend several minutes in first-boot data
@@ -977,7 +980,9 @@ jobs:
 
   sharing-runtime-matrix:
     name: Sharing runtime self-test (iOS 18.5 / 26.2) [scope ${{ needs.plan.outputs.runtime_scope }}]
-    needs: [plan, build-without-signing]
+    # No Release products are consumed here; do not serialize independent
+    # builds. Evidence reuse still requires BUILD, SMOKE and this exact scope.
+    needs: plan
     if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
     # Both sharing runtimes always execute. A mapped app-view scope limits

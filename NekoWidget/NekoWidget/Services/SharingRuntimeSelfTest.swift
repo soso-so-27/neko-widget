@@ -477,6 +477,9 @@ actor SharingRuntimeSelfTestRunner {
         results.append(await runAsync("failed-pairing-draft-reuses-local-window") {
             try await Self.testFailedPairingDraftRecovery()
         })
+        results.append(await runAsync("failed-pairing-connection-preserves-state-and-keys") {
+            try await Self.testFailedPairingConnectionRecovery()
+        })
         results.append(run("private-window-catalog-authority-uniqueness") {
             try Self.testPrivateWindowCatalogAuthorityUniqueness()
         })
@@ -674,6 +677,147 @@ actor SharingRuntimeSelfTestRunner {
               after.activeWindowID == before.activeWindowID,
               after.windows.map(\.localWindowID) == before.windows.map(\.localWindowID)
         else { throw PairingError.stateUnavailable }
+    }
+
+    @MainActor
+    private static func testFailedPairingConnectionRecovery() async throws {
+        defer { _ = try? PairingInstallationGuard.resetLocalSharingForDisabledConfiguration() }
+        for scenario in ["active", "invitee-active", "pending", "approved", "awaiting-valid", "expired", "gone",
+                         "network", "malformed", "missing-key", "cancel", "stale"] {
+            _ = try PairingInstallationGuard.resetLocalSharingForDisabledConfiguration()
+            let initial = try PairingInstallationGuard.bootstrap()
+            var credential = PairingCrypto.makeCredential(
+                installationMarker: initial.state.installationMarker,
+                includesInvitationSecret: scenario == "awaiting-valid", includesRoomKey: scenario != "missing-key"
+            )
+            credential.deviceID = opaque(0xe1)
+            let peerCredential = PairingCrypto.makeCredential(
+                installationMarker: initial.state.installationMarker,
+                includesInvitationSecret: false, includesRoomKey: false
+            )
+            let local = PairingMemberIdentity(
+                memberID: opaque(0xe1), participantID: credential.participantIDString,
+                agreementPublicKey: try PairingCrypto.agreementPublicKey(for: credential).base64URLEncodedString(),
+                signingPublicKey: try PairingCrypto.signingPublicKey(for: credential).base64URLEncodedString()
+            )
+            let peer = PairingMemberIdentity(
+                memberID: opaque(0xe2), participantID: peerCredential.participantIDString,
+                agreementPublicKey: try PairingCrypto.agreementPublicKey(for: peerCredential).base64URLEncodedString(),
+                signingPublicKey: try PairingCrypto.signingPublicKey(for: peerCredential).base64URLEncodedString()
+            )
+            var creating = initial.state
+            creating.phase = .creatingInvitation
+            creating.role = .inviter
+            creating.credentialAccount = credential.account
+            creating.participantID = credential.participantIDString
+            creating.pendingOperation = "create"
+            creating.pendingClientRequestID = UUID().uuidString
+            creating = try PairingStateStore.saveInitialCredentialAndState(
+                credential: credential, state: creating, expected: initial.state,
+                lifecycleToken: initial.lifecycleToken
+            )
+            var failed = creating
+            failed.phase = .failed
+            failed.role = scenario == "invitee-active" ? .invitee : .inviter
+            failed.spaceID = opaque(0xe3)
+            failed.memberID = local.memberID
+            failed.invitationID = opaque(0xe4)
+            failed.enrollmentID = opaque(0xe5)
+            failed.invitationExpiresAt = Date().addingTimeInterval(scenario == "awaiting-valid" ? 600 : -600)
+            failed.dailyBoundaryMinuteUTC = 240
+            failed.peerMemberID = peer.memberID
+            failed.peerParticipantID = peer.participantID
+            failed.peerAgreementPublicKey = peer.agreementPublicKey
+            failed.peerSigningPublicKey = peer.signingPublicKey
+            let transcript = PairingVerificationTranscript(
+                spaceID: failed.spaceID!, invitationID: failed.invitationID!,
+                enrollmentID: failed.enrollmentID!, dailyBoundaryMinuteUTC: 240,
+                inviter: failed.role == .inviter ? local : peer,
+                invitee: failed.role == .invitee ? local : peer
+            )
+            let canonical = try transcript.canonicalData()
+            let hash = PairingCrypto.sha256(canonical)
+            failed.transcript = canonical.base64URLEncodedString()
+            failed.transcriptHash = hash.base64URLEncodedString()
+            failed.verificationPhrase = PairingCrypto.verificationPhrase(for: hash)
+            if ["expired", "awaiting-valid"].contains(scenario) {
+                failed.enrollmentID = nil
+                failed.peerMemberID = nil
+                failed.peerParticipantID = nil
+                failed.peerAgreementPublicKey = nil
+                failed.peerSigningPublicKey = nil
+                failed.transcript = nil
+                failed.transcriptHash = nil
+                failed.verificationPhrase = nil
+            }
+            failed.pendingOperation = ["expired", "awaiting-valid"].contains(scenario) ? nil
+                : scenario == "cancel" ? "cancel"
+                : scenario == "invitee-active" ? "complete" : "approve"
+            failed.pendingClientRequestID = failed.pendingOperation == nil ? nil : UUID().uuidString
+            failed.pendingCancelRevokesWholeSpace = scenario == "cancel" ? true : nil
+            failed.lastError = "legacy-error-does-not-establish-a-cause"
+            failed = try PairingStateStore.save(failed, expected: creating, lifecycleToken: initial.lifecycleToken)
+            let before = failed
+            let catalogBefore = try PrivateWindowCatalogStore.load()
+            let keyBefore = try PairingKeychainStore.load(account: credential.account, installationMarker: credential.installationMarker)
+            var reads = 0
+            let model = PairingViewModel()
+            model.runtimeSetFailedConnectionReader { isPending, _ in
+                reads += 1
+                if scenario == "network" { throw URLError(.timedOut) }
+                if scenario == "malformed" { throw PairingError.invalidServerResponse }
+                if scenario == "gone" {
+                    throw PairingError.requestRejected(status: 410, code: "sharing_revoked", message: "fixture")
+                }
+                if isPending && scenario != "pending" {
+                    return PairingStatusResult(state: "awaitingInvitee", peer: nil, transcript: nil,
+                        transcriptHash: nil, envelopeAlgorithm: nil, keyEnvelope: nil, approvalSignature: nil)
+                }
+                if scenario == "stale" {
+                    var changed = before
+                    changed.lastError = "newer-operation-must-survive"
+                    _ = try PairingStateStore.save(changed, expected: before, lifecycleToken: initial.lifecycleToken)
+                }
+                let status = scenario == "pending" ? "pendingApproval"
+                    : scenario == "approved" ? "approvedAwaitingCompletion"
+                    : ["expired", "awaiting-valid"].contains(scenario) ? "awaitingInvitee" : "active"
+                return PairingStatusResult(state: status, peer: peer, transcript: transcript,
+                    transcriptHash: hash.base64URLEncodedString(), envelopeAlgorithm: nil,
+                    keyEnvelope: nil, approvalSignature: nil)
+            }
+            if scenario == "awaiting-valid" { await model.bootstrap() }
+            await model.resumeFailedSetup()
+            guard let after = try PairingStateStore.load(),
+                  try PairingKeychainStore.load(account: credential.account, installationMarker: credential.installationMarker) == keyBefore,
+                  after.spaceID == before.spaceID,
+                  after.credentialAccount == before.credentialAccount,
+                  try PrivateWindowCatalogStore.load()?.activeWindowID == catalogBefore?.activeWindowID
+            else { throw PairingError.stateUnavailable }
+            switch scenario {
+            case "active", "invitee-active":
+                guard after.phase == .paired, after.pendingOperation == nil,
+                      after.pendingClientRequestID == nil else { throw PairingError.stateUnavailable }
+            case "pending":
+                guard after.phase == .approvalRequired,
+                      after.pendingClientRequestID == before.pendingClientRequestID else { throw PairingError.stateUnavailable }
+            case "approved":
+                guard after.phase == .awaitingCompletion, after.pendingOperation == nil else { throw PairingError.stateUnavailable }
+            case "awaiting-valid":
+                guard after.phase == .awaitingInvitee, model.invitationCode != nil else { throw PairingError.stateUnavailable }
+            case "expired":
+                guard after == before, model.failedConnectionIssue == .invitationExpired else { throw PairingError.stateUnavailable }
+            case "gone":
+                guard after == before, model.failedConnectionIssue == .sharingEnded else { throw PairingError.stateUnavailable }
+            case "cancel":
+                guard reads == 0, after == before else { throw PairingError.stateUnavailable }
+            case "stale":
+                guard after.lastError == "newer-operation-must-survive", after.phase == .failed else { throw PairingError.stateUnavailable }
+            default:
+                guard after.phase == .failed, after.pendingOperation == before.pendingOperation,
+                      after.pendingClientRequestID == before.pendingClientRequestID,
+                      model.failedConnectionIssue == nil, model.operationErrorMessage != nil else { throw PairingError.stateUnavailable }
+            }
+        }
     }
 
     private static func testPairingBootstrapTransientPreservation() throws {

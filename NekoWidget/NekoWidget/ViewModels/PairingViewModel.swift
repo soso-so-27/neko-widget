@@ -19,6 +19,7 @@ final class PairingViewModel: ObservableObject {
     @Published private(set) var manualCheckSucceeded: Bool?
     @Published private(set) var operationCompletionMessage: String?
     @Published private(set) var operationErrorMessage: String?
+    @Published private(set) var failedConnectionIssue: FailedPairingConnectionIssue?
     @Published private(set) var bootstrapRetryMessage: String?
     @Published private(set) var isBootstrapping = false
     @Published var enteredInvitationCode = ""
@@ -31,9 +32,12 @@ final class PairingViewModel: ObservableObject {
     private var api: (any PairingAPIClientProtocol)?
     private var didBootstrap = false
     private var bootstrapRetryRequested = false
+    private var didCheckFailedConnectionOnOpen = false
 #if DEBUG
     private var usesIsolatedPresentationState = false
     private var isolatedCancellationAttempts = 0
+    private var isolatedConnectionChecks = 0
+    private var runtimeFailedConnectionReader: ((Bool, PairingState) async throws -> PairingStatusResult)?
 
     static func failedSetupFixture() -> PairingViewModel {
         let model = PairingViewModel()
@@ -41,7 +45,7 @@ final class PairingViewModel: ObservableObject {
         state.phase = .failed
         state.lastError = "fixture-setup-failure"
         switch ProcessInfo.processInfo.environment["NEKO_PAIRING_FAILURE_FIXTURE"] {
-        case "remote":
+        case "remote", "expired", "cancelling":
             // Match the user's failed setup with an existing remote identity.
             // These placeholders must never reach a real API or Keychain.
             state.role = .inviter
@@ -49,6 +53,11 @@ final class PairingViewModel: ObservableObject {
             state.participantID = "fixture-participant"
             state.memberID = "fixture-member"
             state.spaceID = "fixture-space"
+            if ProcessInfo.processInfo.environment["NEKO_PAIRING_FAILURE_FIXTURE"] == "cancelling" {
+                state.pendingOperation = "cancel"
+                state.pendingClientRequestID = UUID().uuidString
+                state.pendingCancelRevokesWholeSpace = true
+            }
         case "unavailable":
             state.credentialAccount = "fixture-incomplete-account"
         default:
@@ -1648,8 +1657,25 @@ final class PairingViewModel: ObservableObject {
         clearTransientOperationFeedback()
 #if DEBUG
         if usesIsolatedPresentationState {
-            if let current = state, FailedPairingRecoveryAction.resolve(current) == .restartLocalDraft {
-                state = PairingState.unpaired(installationMarker: current.installationMarker)
+            if let current = state {
+                switch FailedPairingRecoveryAction.resolve(current) {
+                case .restartLocalDraft:
+                    state = PairingState.unpaired(installationMarker: current.installationMarker)
+                case .checkConnection:
+                    isolatedConnectionChecks += 1
+                    if ProcessInfo.processInfo.environment["NEKO_PAIRING_FAILURE_FIXTURE"] == "expired" {
+                        failedConnectionIssue = .invitationExpired
+                    } else if isolatedConnectionChecks == 1 {
+                        operationErrorMessage = "接続を確認できませんでした。設定は残っています。時間をおいて、もう一度お試しください。"
+                    } else {
+                        var resumed = current
+                        resumed.phase = .paired
+                        resumed.lastError = nil
+                        resumed.verificationPhrase = "あさ いえ うみ えき おと かさ きく くも けし こめ さけ しお"
+                        state = resumed
+                    }
+                default: break
+                }
             }
             return
         }
@@ -1681,8 +1707,12 @@ final class PairingViewModel: ObservableObject {
                 } else {
                     await joinInvitation()
                 }
-            case .cancelRemote:
-                await refresh()
+            case .checkConnection:
+                await checkFailedConnection()
+            case .resumeCancellation:
+                // An earlier destructive choice needs an explicit user action;
+                // a status read must never erase or replace that request.
+                break
             case .unavailable:
                 operationErrorMessage = "設定の復元情報を確認できませんでした。写真画面の設定から診断情報を確認できます。"
             }
@@ -1691,17 +1721,172 @@ final class PairingViewModel: ObservableObject {
         }
     }
 
+    func checkFailedConnectionOnOpen() async {
+        guard !didCheckFailedConnectionOnOpen, let state,
+              FailedPairingRecoveryAction.resolve(state) == .checkConnection else { return }
+        didCheckFailedConnectionOnOpen = true
+        await resumeFailedSetup()
+    }
+
+    private func readFailedConnectionStatus(
+        pending: Bool,
+        state: PairingState,
+        credential: PairingCredential
+    ) async throws -> PairingStatusResult {
+#if DEBUG
+        if let runtimeFailedConnectionReader {
+            return try await runtimeFailedConnectionReader(pending, state)
+        }
+#endif
+        guard let api else { throw PairingError.apiNotConfigured }
+        if pending { return try await api.pending(state: state, credential: credential) }
+        return try await api.status(state: state, credential: credential)
+    }
+
+    private func checkFailedConnection() async {
+        guard !isWorking else { return }
+        let operation: PairingOperation
+        do { operation = try beginOperation() }
+        catch { record(error); return }
+        var current = operation.expectedState
+        guard FailedPairingRecoveryAction.resolve(current) == .checkConnection,
+              let account = current.credentialAccount else { return }
+        isWorking = true
+        failedConnectionIssue = nil
+        defer { isWorking = false }
+        do {
+            let credential = try PairingKeychainStore.load(
+                account: account, installationMarker: current.installationMarker
+            )
+            try SharingLifecycleGate.validate(operation.lifecycleToken)
+            let result: PairingStatusResult
+            if current.role == .inviter {
+                let pending = try await readFailedConnectionStatus(
+                    pending: true, state: current, credential: credential
+                )
+                try SharingLifecycleGate.validate(operation.lifecycleToken)
+                if pending.state == "pendingApproval" {
+                    result = pending
+                } else {
+                    guard pending.state == "awaitingInvitee" else { throw PairingError.invalidServerResponse }
+                    result = try await readFailedConnectionStatus(pending: false, state: current, credential: credential)
+                }
+            } else {
+                result = try await readFailedConnectionStatus(pending: false, state: current, credential: credential)
+            }
+            try validateConnectionCheckSnapshot(operation)
+            switch result.state {
+            case "active":
+                // A server membership alone cannot restore a missing room key
+                // or authorize a previously unverified peer.
+                guard credential.roomKey != nil, let peer = result.peer,
+                      peer.memberID == current.peerMemberID,
+                      peer.participantID == current.peerParticipantID else {
+                    throw PairingError.stateUnavailable
+                }
+                try applyCurrentPeer(peer, to: &current)
+                current.phase = .paired
+                clearAcceptedFailedSetupRequest(in: &current)
+            case "pendingApproval":
+                if current.role == .inviter {
+                    guard let transcript = result.transcript, let hash = result.transcriptHash else {
+                        throw PairingError.invalidServerResponse
+                    }
+                    try applyTranscript(transcript, hash: hash, to: &current)
+                    current.phase = .approvalRequired
+                } else {
+                    current.phase = .pendingApproval
+                }
+            case "approvedAwaitingCompletion":
+                if current.role == .inviter {
+                    guard credential.roomKey != nil else { throw PairingError.stateUnavailable }
+                    try applyOwnerStatus(result, to: &current)
+                    clearAcceptedFailedSetupRequest(in: &current)
+                } else {
+                    guard let api else { throw PairingError.apiNotConfigured }
+                    try await finishInviteePairing(
+                        result, state: &current, credential: credential, api: api, operation: operation
+                    )
+                }
+            case "awaitingInvitee":
+                guard current.role == .inviter, current.pendingOperation == nil else {
+                    throw PairingError.invalidServerResponse
+                }
+                if let expiry = current.invitationExpiresAt, expiry <= .now {
+                    failedConnectionIssue = .invitationExpired
+                    return
+                }
+                guard let secret = credential.enrollmentSecret, let invitationID = current.invitationID else {
+                    failedConnectionIssue = .invitationUnavailable
+                    return
+                }
+                invitationCode = try PairingInvitationCode(invitationID: invitationID, enrollmentSecret: secret).code
+                current.phase = .awaitingInvitee
+            case "expired", "cancelled":
+                failedConnectionIssue = .approvalExpired
+                return
+            default:
+                throw PairingError.invalidServerResponse
+            }
+            current.lastError = nil
+            current.lastUpdatedAt = .now
+            current = try persist(current, operation: operation)
+        } catch {
+            // Neither a timeout nor a missing/malformed response authorizes
+            // cleanup. Even confirmed expiry is presented before any reset.
+            if let pairingError = error as? PairingError,
+               Self.serverConfirmsPairingIsGone(pairingError),
+               (try? validateConnectionCheckSnapshot(operation)) != nil {
+                failedConnectionIssue = .sharingEnded
+                return
+            }
+            record(error, operation: operation)
+        }
+    }
+
+    private func validateConnectionCheckSnapshot(_ operation: PairingOperation) throws {
+        try SharingLifecycleGate.validate(operation.lifecycleToken)
+        guard try PairingStateStore.beginOperation().state == operation.expectedState else {
+            throw PairingError.stateUnavailable
+        }
+    }
+
+    private func clearAcceptedFailedSetupRequest(in current: inout PairingState) {
+        guard current.pendingOperation == "approve" || current.pendingOperation == "complete" else { return }
+        current.pendingOperation = nil
+        current.pendingClientRequestID = nil
+        current.pendingKeyEnvelope = nil
+        current.pendingApprovalSignature = nil
+        current.pendingCancelRevokesWholeSpace = nil
+    }
+
+#if DEBUG
+    func runtimeSetFailedConnectionReader(
+        _ reader: @escaping (Bool, PairingState) async throws -> PairingStatusResult
+    ) {
+        runtimeFailedConnectionReader = reader
+    }
+#endif
+
     func cancelAndReset() async {
         clearTransientOperationFeedback()
 #if DEBUG
         if usesIsolatedPresentationState {
-            guard let current = state,
-                  FailedPairingRecoveryAction.resolve(current) == .cancelRemote else { return }
+            guard var current = state,
+                  [.checkConnection, .resumeCancellation].contains(FailedPairingRecoveryAction.resolve(current)) else { return }
             isolatedCancellationAttempts += 1
+            failedConnectionIssue = nil
+            if current.pendingOperation != "cancel" {
+                current.pendingOperation = "cancel"
+                current.pendingClientRequestID = UUID().uuidString
+                current.pendingCancelRevokesWholeSpace = true
+                state = current
+            }
             if isolatedCancellationAttempts == 1 {
                 operationErrorMessage = "取り消しを確認できませんでした。設定は残っています。時間をおいて、もう一度お試しください。"
             } else {
                 state = PairingState.unpaired(installationMarker: current.installationMarker)
+                failedConnectionIssue = nil
             }
             return
         }
@@ -1763,6 +1948,7 @@ final class PairingViewModel: ObservableObject {
                 operation: operation
             )
             try await resetLocalPairing(operation: operation)
+            failedConnectionIssue = nil
             operationCompletionMessage = wasFailedSetup
                 ? "設定を取り消しました。つなぎ方を選び直せます。"
                 : "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した思い出は残ります。"
@@ -2422,7 +2608,17 @@ final class PairingViewModel: ObservableObject {
         case .claimingRecovery, .pendingRecoveryApproval, .recoveryAwaitingCompletion:
             isConsumedPhase = false
         case .failed:
-            isConsumedPhase = state.memberID != nil
+            // A created invitation already has a member ID. A failed UI state
+            // alone does not prove its one-time code was consumed.
+            if state.pendingOperation != "create", state.pendingOperation != "enroll",
+               state.enrollmentID != nil,
+               let transcript = state.transcript.flatMap({ Data(base64URLString: $0) }) {
+                let hash = PairingCrypto.sha256(transcript)
+                isConsumedPhase = state.transcriptHash == hash.base64URLEncodedString()
+                    && state.verificationPhrase == PairingCrypto.verificationPhrase(for: hash)
+            } else {
+                isConsumedPhase = false
+            }
         default:
             isConsumedPhase = false
         }

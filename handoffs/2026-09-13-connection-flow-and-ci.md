@@ -1,0 +1,38 @@
+# 接続の再開フローとCI待ち時間
+
+## 目的・範囲
+
+Build158の「接続するために設定を取り消すのが分かりにくい、不安」という指摘を受け、接続確認を先に行い、続けられる設定を保持する。並行してCIの実測から待ち時間を短縮する。研究worktreeは編集しない。起点main `3d9b9ec`、worktree `C:/dev/neko-connection-flow-20260913`、branch `codex/connection-flow-ci-20260913`。
+
+完了条件：
+
+- 未完了画面を開いたら一度だけ状態確認。続けられる場合は承認・接続待ち・接続済みへ戻る。
+- 通信失敗・不正応答・不足情報で写真・鍵・接続設定を削除しない。保存した取消要求を再接続処理で上書きしない。
+- 新しい招待が必要と確認できた場合は理由を表示する。任意の終了→新規設定は確認を残し、主な復旧操作と混同させない。
+- 取消に成功した場合だけ、元の役割に合う招待作成／参加へ進む。失敗したら終了手続きを再開する表示へ切り替える。
+- iOS18/26、通常／大きい文字の画面、保存データ・鍵保持・遅延応答の境界を確認する。
+- CIは既存必須検証と同一SHA証拠を維持し、直列待ちを減らす。期待値と実測は区別する。
+
+## 実装と確認の根拠
+
+接続側：failedを保存操作で分類し、通常の状態確認と取消の再開を分離。招待側はpending→空ならstatusを読み、サーバー状態に応じて復帰する。新たな承認は自動作成しない。active復帰には既存roomKeyと既知peerが必要。状態照合が失敗しても鍵と同じ要求を保持する。
+
+サーバーstatusは接続完了前の参加者をpeerに含めないため、招待側の保存済み・検証済みceremonyがサーバーechoと完全一致する場合だけそのpeerを利用する。active／参加側のpeer必須は維持。既存Swift API verifierへ正負29ケースを追加。
+
+failed＋memberIDだけでは招待コードの消費を証明しないため、bootstrapのsecret削除条件を保存ceremonyの整合が確認できる場合へ限定。有効な未使用招待のbootstrap→再開を含め、runtimeは実Keychain・状態保存・CASを使う12シナリオを追加。ネットワーク応答は隔離stubであり、本番サーバーの復旧成功とは扱わない。
+
+独立レビューの指摘（取消失敗後の古い期限案内、UIテストの遷移先、fixtureのdeviceID正規化、未使用secretの保持）を反映。製品実装とAPI契約実装は担当を分け、rootへ結果を集約した。
+
+## CI短縮
+
+前回run34701760451の実測：Release build 8分52秒の終了後にSMOKE／sharingが開始。sharingは50分47秒、SMOKE12分50秒（同時）。sharing内のUIは約25分、追加Widget条件では起動と再buildが直列だった。
+
+- Release・SMOKE・sharingはそれぞれ自分の成果物を作るため、plan後から別runnerで並行開始。Releaseを必須成功証拠から外さない。
+- 追加Widget条件ごとに、fresh Simulatorの起動とbuild-for-testingを並行化。両方成功した場合だけtest-without-buildingを実行。試験・条件別再build・署名・artifactは維持。
+- 期待短縮は約11〜13分（runner待ち・混雑を除く推測）。実測は候補CIで記録する。OS分割は約2分短縮に対して共通build複製が約2分37秒増えるため不採用。
+
+## 検証・配布
+
+cheap checks：共有Widget境界61件（既存skip1）、pairing-only7件、disabled11件、runtime報告validator6件、CI scope/evidence21件、並行準備4件、Gallery境界12件が成功。WindowsにSwift/Xcodeはないため、Swiftのコンパイル・実行および画面確認は候補CIが必要。
+
+現時点で候補CIと配布は未実施。候補→main→既存内部TestFlightの順。外部テスター追加・公開・審査提出・課金開始は行わない。元の「ねことも」が失敗した原因・発生頻度は未確定。
