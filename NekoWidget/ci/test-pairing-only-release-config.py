@@ -183,7 +183,8 @@ class PairingOnlyReleaseConfigTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("まどの設定", family_window)
-        self.assertIn("相手と接続済み", family_window)
+        self.assertIn("名前・相手・iPhone", family_window)
+        self.assertIn("if !model.isPaired", family_window)
         self.assertIn("PairingView()", family_window)
         share_extension = (
             ROOT / "NekoWidgetShareExtension/ShareViewController.swift"
