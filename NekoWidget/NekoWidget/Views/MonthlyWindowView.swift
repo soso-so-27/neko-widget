@@ -9,7 +9,11 @@ struct MonthlyWindowView: View {
     let presentation: MonthlyWindowPresentation
     let setMemorySaved: (String, Bool) -> Void
 
-    @State private var savedIdentifiers = Set<String>()
+    // The parent refreshes these presentation values after the shared save
+    // ledger succeeds. A void request callback alone is not a saved result.
+    private var savedIdentifiers: Set<String> {
+        Set(presentation.photos.lazy.filter(\.isLiked).map(\.localIdentifier))
+    }
 
     var body: some View {
         ZStack {
@@ -31,13 +35,6 @@ struct MonthlyWindowView: View {
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden()
-        .onAppear {
-            savedIdentifiers = Set(
-                presentation.photos.lazy
-                    .filter(\.isLiked)
-                    .map(\.localIdentifier)
-            )
-        }
     }
 
     private func photoSection(
@@ -64,6 +61,7 @@ struct MonthlyWindowView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+            .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 14) {
                 if index == 0 {
@@ -164,26 +162,40 @@ struct MonthlyWindowView: View {
         for photo: PhotoPresentation
     ) -> some View {
         let isSaved = savedIdentifiers.contains(photo.localIdentifier)
-        return Button {
-            guard !isSaved else { return }
-            savedIdentifiers.insert(photo.localIdentifier)
-            setMemorySaved(photo.localIdentifier, true)
-        } label: {
-            Label(
-                isSaved ? "思い出に残した" : "思い出に残す",
-                systemImage: isSaved ? "bookmark.fill" : "bookmark"
-            )
-            .font(.subheadline.bold())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(minHeight: 44)
-            .background(.black.opacity(0.52), in: Capsule())
+        return Group {
+            if isSaved {
+                Menu {
+                    Button("思い出から外す", role: .destructive) {
+                        setMemorySaved(photo.localIdentifier, false)
+                    }
+                } label: {
+                    memoryButtonLabel(isSaved: true)
+                }
+                .accessibilityHint("思い出から外す操作を開きます")
+            } else {
+                Button {
+                    setMemorySaved(photo.localIdentifier, true)
+                } label: {
+                    memoryButtonLabel(isSaved: false)
+                }
+            }
         }
         .buttonStyle(.plain)
-        .disabled(isSaved)
         .accessibilityIdentifier(
             "monthly-window-memory-\(photo.localIdentifier)"
         )
+    }
+
+    private func memoryButtonLabel(isSaved: Bool) -> some View {
+        Label(
+            isSaved ? "思い出に残した" : "思い出に残す",
+            systemImage: isSaved ? "bookmark.fill" : "bookmark"
+        )
+        .font(.subheadline.bold())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .background(.black.opacity(0.52), in: Capsule())
     }
 
     private func photoAccessibilityLabel(

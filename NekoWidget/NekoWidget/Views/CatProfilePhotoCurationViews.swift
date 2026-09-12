@@ -480,7 +480,6 @@ struct CatProfileConfirmedPhotosView: View {
     @State private var isSelecting = false
     @State private var previewPhoto: CatProfilePhotoPresentation?
     @State private var showsAddPhotos = false
-    @State private var addedPhotoCount = 0
     @State private var showsAssignmentSheet = false
     @State private var showsRemoveConfirmation = false
     @State private var showsGlobalExclusionConfirmation = false
@@ -521,6 +520,17 @@ struct CatProfileConfirmedPhotosView: View {
                         isSelecting.toggle()
                     }
                     .disabled(isRemoving)
+                    .accessibilityIdentifier("cat-profile-select")
+                }
+                if !isSelecting && !profile.confirmedPhotos.isEmpty {
+                    Button {
+                        showsAddPhotos = true
+                    } label: {
+                        Image(systemName: "photo.badge.plus")
+                    }
+                    .accessibilityLabel("この子の写真を追加")
+                    .accessibilityIdentifier("cat-profile-add-photos")
+                    .disabled(profile.manualCandidatePhotos.isEmpty || isRemoving)
                 }
                 if let albums = profileSettingsAlbumOptions {
                     NavigationLink {
@@ -543,17 +553,6 @@ struct CatProfileConfirmedPhotosView: View {
         .safeAreaInset(edge: .bottom) {
             if isSelecting && !selection.isEmpty {
                 actionBar
-            } else if !isSelecting && !profile.confirmedPhotos.isEmpty {
-                VStack(spacing: 8) {
-                    if addedPhotoCount > 0 {
-                        Text("\(addedPhotoCount.formatted())枚を追加しました")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    addPhotosButton
-                }
-                .padding(12)
-                .background(.regularMaterial)
             }
         }
         .sheet(isPresented: $showsAddPhotos) {
@@ -564,8 +563,7 @@ struct CatProfileConfirmedPhotosView: View {
                     actions: actions,
                     navigationTitle: "\(profile.displayName)の写真を追加",
                     preselectedProfileIdentifier: profile.identifier,
-                    dismissAfterSaving: true,
-                    onPhotosAdded: { addedPhotoCount = $0 }
+                    dismissAfterSaving: true
                 )
             }
         }
@@ -621,7 +619,6 @@ struct CatProfileConfirmedPhotosView: View {
 
     private var addPhotosButton: some View {
         Button {
-            addedPhotoCount = 0
             showsAddPhotos = true
         } label: {
             Label("この子の写真を追加", systemImage: "photo.badge.plus")
@@ -685,7 +682,8 @@ private struct CatProfilePhotoPreview: View {
                 PhotoAssetImageView(
                     localIdentifier: photo.localIdentifier,
                     targetPixelSize: CGSize(width: 1600, height: 1600),
-                    showsFullImage: true
+                    showsFullImage: true,
+                    allowsZoom: true
                 )
                 .frame(width: geometry.size.width, height: geometry.size.height)
             }
@@ -693,7 +691,9 @@ private struct CatProfilePhotoPreview: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("閉じる") { dismiss() }
+                    Button("閉じる", systemImage: "xmark") { dismiss() }
+                        .labelStyle(.iconOnly)
+                        .accessibilityLabel("閉じる")
                 }
             }
         }

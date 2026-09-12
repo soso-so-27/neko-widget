@@ -199,6 +199,10 @@ final class OfficialWindowUITests: XCTestCase {
             for _ in 0..<6 { if setup.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(setup.isHittable)
             XCTAssertTrue((setup.value as? String ?? "").contains("設定を開いて確認"))
+            if !largeText {
+                XCTAssertLessThan(setup.frame.height, family.frame.height / 2,
+                                  "Unfinished setup is a compact resume row, not another photo card")
+            }
             capture(largeText ? "window-mixed-large-text" : "window-mixed-standard", app)
             let addition = app.buttons["window-list-addition"]
             XCTAssertTrue(addition.isHittable)
@@ -381,7 +385,6 @@ final class CatProfilePhotoFlowUITests: XCTestCase {
         XCTAssertEqual(add.label, "1枚を追加", "A failed save lost the explicit selection.")
         add.tap()
         XCTAssertTrue(app.navigationBars["テスト猫Bの写真"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["1枚を追加しました"].waitForExistence(timeout: 5))
         XCTAssertEqual(visiblePhotos(app).count, 2)
         capture("multi-cat-photo-page", app: app)
         backToCatList(app)
@@ -820,6 +823,232 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testPhotosOpenEachCatsPhotosDirectlyAndKeepManagementInSettings() {
+        for largeText in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            if largeText { app.launchArguments.append("--ux-large-text") }
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "cats"
+            app.launch()
+            XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
+            XCTAssertFalse(app.buttons["photo-hub-source-recovery"].exists)
+            XCTAssertFalse(app.staticTexts["写真の対象と整理"].exists)
+            capture(largeText ? "photo-hub-cats-largest-text" : "photo-hub-cats")
+            for (index, name) in ["ミケ", "ソラ"].enumerated() {
+                let shortcut = app.buttons["photo-hub-cat-fixture-cat-\(index)"]
+                XCTAssertTrue(shortcut.isHittable)
+                shortcut.tap()
+                XCTAssertTrue(app.navigationBars["\(name)の写真"].waitForExistence(timeout: 5))
+                let photos = app.buttons.matching(identifier: "cat-profile-photo")
+                XCTAssertEqual(photos.count, 1, "The shortcut must retain the selected cat")
+                XCTAssertTrue(app.buttons["cat-profile-add-photos"].isHittable)
+                XCTAssertTrue(app.buttons["cat-profile-settings"].isHittable)
+                if index == 0 {
+                    capture(largeText ? "cat-photo-page-largest-text" : "cat-photo-page")
+                    photos.firstMatch.tap()
+                    XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+                    app.buttons["閉じる"].tap()
+                }
+                app.navigationBars["\(name)の写真"].buttons.element(boundBy: 0).tap()
+                XCTAssertTrue(shortcut.waitForExistence(timeout: 5))
+            }
+            if !largeText {
+                app.buttons["window-settings-button"].tap()
+                let photoSettings = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "写真の表示と整理")).firstMatch
+                XCTAssertTrue(photoSettings.waitForExistence(timeout: 5))
+                photoSettings.tap()
+                let curation = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "対象と除外")).firstMatch
+                for _ in 0..<5 where !curation.isHittable { app.swipeUp() }
+                XCTAssertTrue(curation.isHittable)
+                curation.tap()
+                XCTAssertTrue(app.navigationBars["写真の整理"].waitForExistence(timeout: 5))
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testPhotosStayUsableWithoutCatRegistrationAndOfferSourceRecoveryOnlyWhenNeeded() {
+        for scenario in ["no-cats", "source-unavailable"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture", "-AppleLanguages", "(ja)"]
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = scenario
+            app.launch()
+            XCTAssertTrue(app.buttons["photo-hub-cat-profiles"].waitForExistence(timeout: 15))
+            let recovery = app.buttons["photo-hub-source-recovery"]
+            if scenario == "source-unavailable" {
+                XCTAssertTrue(recovery.isHittable)
+                capture("photo-source-recovery")
+                recovery.tap()
+                XCTAssertTrue(app.navigationBars["写真の整理"].waitForExistence(timeout: 5))
+            } else {
+                XCTAssertFalse(recovery.exists)
+                let photo = app.buttons["photo-hub-photo-app-store-screenshot-fixture-1"]
+                for _ in 0..<6 where !photo.isHittable { app.swipeUp() }
+                XCTAssertTrue(photo.isHittable)
+                photo.tap()
+                XCTAssertTrue(app.images["photo-detail-zoom-surface"].waitForExistence(timeout: 10))
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testWindowSettingsPrioritizeDisplayAndKeepSafetyReachable() {
+        for largeText in [false, true] {
+            var arguments = ["--family-window-settings-fixture"]
+            if largeText { arguments.append("--family-window-settings-large-text") }
+            let app = launch("family-settings", arguments: arguments)
+            let widget = app.buttons["family-window-widget-guide"]
+            XCTAssertTrue(widget.waitForExistence(timeout: 10))
+            XCTAssertTrue(widget.isHittable)
+            let notification = app.buttons["family-window-notification-open-settings"]
+            for _ in 0..<5 where !notification.isHittable { app.swipeUp() }
+            XCTAssertTrue(notification.isHittable)
+            XCTAssertGreaterThanOrEqual(notification.frame.height, 44)
+            capture(largeText ? "window-settings-largest-text" : "window-settings")
+            let management = app.buttons["family-window-sharing-settings"]
+            for _ in 0..<5 where !management.isHittable { app.swipeUp() }
+            XCTAssertTrue(management.isHittable)
+            let privacy = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "安全とプライバシー")).firstMatch
+            for _ in 0..<5 where !privacy.isHittable { app.swipeUp() }
+            XCTAssertTrue(privacy.isHittable)
+            privacy.tap()
+            capture(largeText ? "window-settings-safety-largest-text" : "window-settings-safety")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testLocalPhotoFailureCanReloadTheSamePhoto() {
+        let app = launch("rediscovery", arguments: ["--photo-load-fails-once"])
+        let retry = app.buttons["local-photo-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 15))
+        XCTAssertEqual(retry.label, "写真をもう一度読み込む")
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+        capture("local-photo-load-failed")
+        retry.tap()
+        let image = app.images["photo-detail-zoom-surface"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertTrue(image.isHittable)
+        XCTAssertFalse(retry.exists)
+        app.buttons["思い出に残す"].tap()
+        let saved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|true"),
+            object: app.staticTexts["solo-rediscovery-memory-request"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
+        capture("local-photo-reloaded-same-id")
+        app.terminate()
+    }
+
+    @MainActor
+    func testWidgetPhotoOutsideCurrentScopeOffersAPathBack() {
+        for scenario in ["excluded", "scoped", "available"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = scenario
+            app.launch()
+            if scenario == "available" {
+                let photo = app.images["photo-detail-zoom-surface"]
+                XCTAssertTrue(photo.waitForExistence(timeout: 15))
+                XCTAssertTrue(photo.isHittable)
+                XCTAssertTrue((app.buttons["photo-browser-same-day"].value as? String ?? "")
+                    .contains("2025年12月18日"))
+                XCTAssertFalse(app.buttons["unavailable-widget-open-photos"].exists)
+            } else {
+                let openPhotos = app.buttons["unavailable-widget-open-photos"]
+                XCTAssertTrue(openPhotos.waitForExistence(timeout: 15))
+                XCTAssertTrue(openPhotos.isHittable)
+                XCTAssertFalse(app.images["photo-detail-zoom-surface"].exists,
+                               "A rejected Widget link must never substitute another photo")
+                if scenario == "excluded" { capture("widget-photo-unavailable-return") }
+                openPhotos.tap()
+                let gridPhoto = app.buttons["photo-hub-photo-app-store-screenshot-fixture-2"]
+                XCTAssertTrue(gridPhoto.waitForExistence(timeout: 10))
+                XCTAssertFalse(openPhotos.exists)
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testPhotoGridRevealsFollowingBatchesAndKeepsReturnPosition() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--app-store-screenshot-fixture",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchEnvironment["NEKO_UX_RECOVERY_CASE"] = "paging"
+        app.launch()
+        let grid = element("photo-hub-detected-grid", in: app)
+        XCTAssertTrue(grid.waitForExistence(timeout: 15))
+        for number in [25, 49] {
+            let target = app.buttons["photo-hub-photo-app-store-screenshot-fixture-page-\(number)"]
+            for _ in 0..<14 where !target.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            XCTAssertTrue(target.isHittable, "Scrolling alone reaches photo \(number)")
+            XCTAssertEqual(app.buttons.matching(identifier: target.identifier).count, 1)
+            target.tap()
+            XCTAssertTrue(app.staticTexts["\(number) / 50"].waitForExistence(timeout: 10))
+            app.navigationBars["写真"].buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(target.waitForExistence(timeout: 10))
+            XCTAssertTrue(target.isHittable, "Returning preserves the opened row")
+        }
+        XCTAssertFalse(app.buttons["もっと見る"].exists)
+        capture("photo-grid-scrolled-to-last-batch")
+        app.terminate()
+    }
+
+    @MainActor
+    func testMonthlySaveUsesConfirmedStateAndCanBeRemoved() {
+        for scenario in ["monthly-save", "monthly-save-unconfirmed"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--app-store-screenshot-fixture", "--photo-load-fails-once",
+                                   "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = scenario
+            app.launch()
+            let retry = app.buttons["local-photo-retry"]
+            XCTAssertTrue(retry.waitForExistence(timeout: 15))
+            XCTAssertTrue(retry.isHittable, "The letter decoration must not cover retry")
+            retry.tap()
+            let save = app.buttons["monthly-window-memory-app-store-screenshot-fixture-1"]
+            XCTAssertTrue(save.waitForExistence(timeout: 10))
+            XCTAssertEqual(save.label, "思い出に残す")
+            save.tap()
+            let request = app.staticTexts["monthly-fixture-memory-request"]
+            let requested = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|true"),
+                object: request
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [requested], timeout: 5), .completed)
+            if scenario == "monthly-save-unconfirmed" {
+                XCTAssertEqual(save.label, "思い出に残す", "A request alone is not a saved result")
+            } else {
+                let saved = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "思い出に残した"), object: save
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
+                save.tap()
+                app.buttons["思い出から外す"].tap()
+                let removed = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|false"),
+                    object: request
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
+                XCTAssertEqual(save.label, "思い出に残す")
+                XCTAssertEqual(app.alerts.count, 0)
+                save.tap()
+                XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "思い出に残した"), object: save
+                )], timeout: 5), .completed)
+                capture("monthly-memory-resaved")
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testSameDayRediscoveryOpensAndSavesTheTappedPhoto() {
         let app = launch("rediscovery")
         let sameDay = app.buttons["この日の写真をすべて見る"]
@@ -850,6 +1079,17 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [requested], timeout: 10), .completed)
         XCTAssertTrue(element("photo-browser-memory-saved-state", in: app).waitForExistence(timeout: 10))
         capture("solo-rediscovery-same-day-second-photo-saved")
+
+        app.buttons["photo-browser-memory-saved-state"].tap()
+        app.buttons["思い出から外す"].tap()
+        let removed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-2|false"),
+            object: app.staticTexts["solo-rediscovery-memory-request"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
+        XCTAssertEqual(app.alerts.count, 0)
+        app.buttons["思い出に残す"].tap()
+        XCTAssertTrue(element("photo-browser-memory-saved-state", in: app).waitForExistence(timeout: 5))
 
         let backToDay = app.navigationBars["写真"].buttons.element(boundBy: 0)
         XCTAssertTrue(backToDay.isHittable)
@@ -986,11 +1226,13 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(_ scenario: String) -> XCUIApplication {
+    private func launch(_ scenario: String, arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--app-store-screenshot-fixture",
-                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
-        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] = "solo-memories-\(scenario)"
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"] + arguments
+        app.launchEnvironment["NEKO_MAINLINE_ACCEPTANCE_CASE"] =
+            ["family-settings", "monthly-save", "monthly-save-unconfirmed"].contains(scenario)
+                ? scenario : "solo-memories-\(scenario)"
         app.launch()
         return app
     }
@@ -1323,11 +1565,16 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             waitForExpectations(timeout: 10)
             XCTAssertEqual(latest.frame.height, initialFrame.height, accuracy: 2,
                            "Decoded pixels must not resize the surrounding screen.")
-            let actions = app.buttons["received-fixture-actions"]
+            let actions = app.buttons["family-window-save-memory"].firstMatch
             XCTAssertGreaterThanOrEqual(actions.frame.minY, latest.frame.maxY)
             actions.tap()
-            XCTAssertTrue(app.staticTexts["received-fixture-action-result"].exists,
-                          "The cropped photo must not intercept adjacent controls.")
+            XCTAssertEqual(app.staticTexts["received-fixture-action-request"].label, "save|0",
+                           "The cropped photo must not intercept adjacent controls.")
+            let cancel = app.buttons["received-fixture-cancel-action"]
+            for _ in 0..<4 where !cancel.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            XCTAssertTrue(cancel.isHittable)
+            cancel.tap()
+            for _ in 0..<4 where !latest.isHittable { app.scrollViews.firstMatch.swipeDown() }
             attach(app, name: "received-layout-\(variant)")
             latest.tap()
             verifySharpDetail(app, name: "received-detail-\(variant)")
@@ -1349,12 +1596,10 @@ final class MomentDeliveryComposerUITests: XCTestCase {
                 identifier: "received-fixture-full-caption",
                 expected: String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3))
             for action in ["save", "heart"] {
-                let control = app.buttons["received-fixture-detail-\(action)"]
-                let footer = app.scrollViews["photo-detail-actions-scroll"]
-                for _ in 0..<4 where !control.isHittable && footer.exists { footer.swipeUp() }
-                XCTAssertTrue(control.isHittable)
-                control.tap()
-                XCTAssertTrue(app.staticTexts["received-fixture-detail-\(action)-result"].waitForExistence(timeout: 5))
+                tapReceivedDetailControl(app, identifier: action == "save"
+                    ? "family-window-save-memory" : "family-window-send-paw")
+                XCTAssertEqual(app.staticTexts["received-fixture-action-request"].label, "\(action)|0")
+                tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
             }
             closePhotoDetail(app)
             XCTAssertTrue(latest.isHittable)
@@ -1406,6 +1651,82 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             attach(app, name: "received-grid-\(variant)")
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testReceivedProductControlsBindRequestsAndPendingStateToTheVisiblePhoto() {
+        // This exercises the shipping controls with an explicit offline state
+        // driver. It does not prove PhotoKit import, confirmation dialogs, or delivery.
+        let app = XCUIApplication()
+        app.launchArguments = ["--moment-received-ui-fixture", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        let latest = app.buttons["received-fixture-latest"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 15))
+        latest.tap()
+        let save = app.buttons["family-window-save-memory"].firstMatch
+        let heart = app.buttons["family-window-send-paw"].firstMatch
+        let saved = app.descendants(matching: .any)["family-window-saved-memory-state"].firstMatch
+        let request = app.staticTexts["received-fixture-action-request"]
+
+        tapReceivedDetailControl(app, identifier: "family-window-save-memory")
+        XCTAssertEqual(request.label, "save|0")
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertFalse(heart.isEnabled, "A pending action must prevent another request.")
+        XCTAssertFalse(saved.exists, "Requesting a save alone must not display the saved state.")
+        tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        tapReceivedDetailControl(app, identifier: "family-window-send-paw")
+        XCTAssertEqual(request.label, "heart|0")
+        XCTAssertFalse(heart.isEnabled)
+        XCTAssertNotEqual(heart.label, "ハートを送信済みです")
+        tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
+        XCTAssertEqual(heart.label, "ハートを送信済みです")
+        XCTAssertFalse(heart.isEnabled)
+        closePhotoDetail(app)
+
+        let second = app.buttons["received-fixture-tile-1"]
+        for _ in 0..<6 where !second.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(second.isHittable)
+        second.tap()
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertFalse(saved.exists, "Another photo must not inherit the saved state.")
+        XCTAssertEqual(save.label, "取り込んで残す")
+        XCTAssertEqual(heart.label, "写真を届けた相手にハートを送る")
+        XCTAssertTrue(heart.isEnabled)
+        tapReceivedDetailControl(app, identifier: "family-window-save-memory")
+        XCTAssertEqual(request.label, "save|1", "The callback must name the currently displayed photo.")
+        tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
+        tapReceivedDetailControl(app, identifier: "思い出の操作")
+        let remove = app.buttons["思い出から外す"].firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        remove.tap()
+        XCTAssertEqual(request.label, "remove|1")
+        tapReceivedDetailControl(app, identifier: "received-fixture-complete-action")
+        XCTAssertFalse(saved.exists)
+        XCTAssertEqual(save.label, "もう一度思い出に加える",
+                       "Removing the saved state must retain the already-imported distinction.")
+        closePhotoDetail(app)
+        for _ in 0..<6 where !latest.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(latest.isHittable)
+        latest.tap()
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertEqual(heart.label, "ハートを送信済みです",
+                       "Changing photo 1 must not change photo 0's reaction.")
+        attach(app, name: "received-product-controls-offline-state")
+    }
+
+    @MainActor
+    private func tapReceivedDetailControl(_ app: XCUIApplication, identifier: String) {
+        let control = app.buttons[identifier].firstMatch
+        XCTAssertTrue(control.waitForExistence(timeout: 5))
+        let footer = app.scrollViews["photo-detail-actions-scroll"]
+        for _ in 0..<6 where !control.isHittable && footer.exists {
+            if control.frame.minY < footer.frame.minY { footer.swipeDown() }
+            else { footer.swipeUp() }
+        }
+        XCTAssertTrue(control.isHittable)
+        XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        control.tap()
     }
 
     @MainActor

@@ -124,14 +124,6 @@ struct OfficialWindowEntryCard: View {
                                    previewImageData: state.isSubscribed ? nil : preview.content?.imageData,
                                    fillsFrame: true)
                     .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "preview")")
-                    .overlay(alignment: .bottomTrailing) {
-                        if photo.credit.contains("AI生成") {
-                            Text("AI").font(.caption2.weight(.medium))
-                                .padding(.horizontal, 7).padding(.vertical, 4)
-                                .background(.thinMaterial, in: Capsule()).padding(8)
-                                .accessibilityLabel("AI生成画像")
-                        }
-                    }
                     .accessibilityHidden(true)
             } else if preview.isLoading {
                 ProgressView().accessibilityLabel("写真を確認しています")
@@ -551,14 +543,6 @@ struct OfficialWindowView: View {
                     .id("\(photo.imageFilename)-\(state.imageRevision?.uuidString ?? "")")
                     .aspectRatio(latest ? CGFloat(photo.width) / CGFloat(photo.height) : 1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .overlay(alignment: .bottomTrailing) {
-                        if photo.credit.contains("AI生成") {
-                            Text("AI").font(.caption2.weight(.medium))
-                                .padding(.horizontal, 7).padding(.vertical, 4)
-                                .background(.thinMaterial, in: Capsule()).padding(8)
-                                .accessibilityLabel("AI生成画像")
-                        }
-                    }
                 Text(photo.catName).font(.headline)
                 if latest, let caption = photo.caption {
                     Text(caption).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)

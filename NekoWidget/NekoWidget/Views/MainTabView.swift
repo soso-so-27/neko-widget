@@ -6,6 +6,7 @@ enum PhotosRoute: Hashable {
     case photo(String)
     case collectionPhoto(String)
     case automaticAlbums
+    case unavailableWidgetPhoto
 }
 
 enum MemoriesRoute: Hashable {
@@ -180,6 +181,12 @@ struct MainTabView: View {
                 })
             guard !excludedCatCandidateIdentifiers.contains(identifier),
                   !isOutsideScopedSource else {
+                widgetOpenedPhotoIdentifier = nil
+                widgetShownAt = nil
+                showsSettings = false
+                selectedTab = .photos
+                photosPath = NavigationPath()
+                photosPath.append(PhotosRoute.unavailableWidgetPhoto)
                 deepLinkedPhotoIdentifier = nil
                 deepLinkedPhotoShownAt = nil
                 return
@@ -290,6 +297,22 @@ struct MainTabView: View {
             collectionDetailView(for: localIdentifier)
         case .automaticAlbums:
             automaticAlbumsView
+        case .unavailableWidgetPhoto:
+            ContentUnavailableView {
+                Label("この写真は開けません", systemImage: "photo")
+                    .accessibilityIdentifier("unavailable-widget-photo")
+            } description: {
+                Text("現在、表示する写真の範囲から外れています。")
+            } actions: {
+                Button {
+                    photosPath = NavigationPath()
+                } label: {
+                    Text("写真を見る").frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("unavailable-widget-open-photos")
+            }
+            .navigationTitle("写真")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 
@@ -1151,12 +1174,12 @@ private struct WindowListView: View {
                         emptyWindowCard
                     } else {
                         if !setupWindows.isEmpty {
-                            VStack(alignment: .leading, spacing: 10) {
-                                windowSectionTitle("設定中")
+                            VStack(spacing: 8) {
                                 ForEach(setupWindows) { window in
                                     windowCard(window)
                                 }
                             }
+                            .accessibilityIdentifier("window-list-setup")
                         }
                     }
 
@@ -1354,14 +1377,6 @@ private struct WindowListView: View {
         windows.first { $0.localWindowID == id }
     }
 
-    private func windowSectionTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityAddTraits(.isHeader)
-    }
-
     private func createAndOpenWindow(setupPath: PairingSetupPath) {
         guard !model.isWorking, !pausesWindowChanges else { return }
         Task {
@@ -1386,10 +1401,10 @@ private struct WindowListView: View {
         } label: {
             if isSetup {
                 HStack(spacing: 12) {
-                    windowThumbnail(for: window)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(window.displayName)
-                            .font(.headline).foregroundStyle(.primary)
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
                         if windowErrors.contains(window.localWindowID) {
                             Label("設定を開く", systemImage: "exclamationmark.circle")
                                 .font(.caption).foregroundStyle(.orange)
@@ -1399,6 +1414,7 @@ private struct WindowListView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     if isSwitching {
                         ProgressView()
                     } else {
@@ -1406,10 +1422,12 @@ private struct WindowListView: View {
                             .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                     }
                 }
-                .padding(12)
+                .frame(minHeight: 44)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
                 .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 20))
-                .contentShape(RoundedRectangle(cornerRadius: 20))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .contentShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 WindowPhotoCard(title: window.displayName, kind: .shared) {
                     windowCover(for: window)
@@ -1494,17 +1512,6 @@ private struct WindowListView: View {
         case .notConnected: return "接続を確認してください"
         case .photo: return "写真の保存期間が過ぎました"
         }
-    }
-
-    @ViewBuilder
-    private func windowThumbnail(for window: PrivateWindowCatalogEntry) -> some View {
-        SubtleWindowThumbnail(showsSetupMark: window.spaceID == nil)
-            .frame(width: 56, height: 56)
-            .background(
-                Color.accentColor.opacity(0.07),
-                in: RoundedRectangle(cornerRadius: 13)
-            )
-            .accessibilityHidden(true)
     }
 
     private func open(_ window: PrivateWindowCatalogEntry) {

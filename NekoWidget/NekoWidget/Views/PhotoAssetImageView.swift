@@ -92,6 +92,7 @@ struct PhotoAssetImageView: View {
     var onZoomChange: (Bool) -> Void
 
     @StateObject private var loader = PhotoAssetImageLoader()
+    @State private var retryRevision = 0
 
     init(
         localIdentifier: String,
@@ -127,6 +128,7 @@ struct PhotoAssetImageView: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
+                        .accessibilityLabel("猫の写真")
                 } else {
                     // Every thumbnail fills its fixed frame. If a cat union is
                     // wider than the frame, the best centred crop is preferred
@@ -135,39 +137,55 @@ struct PhotoAssetImageView: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
+                        .accessibilityLabel("猫の写真")
                 }
 
             case .failed:
                 if showsFullImage {
-                    ContentUnavailableView(
-                        "写真を表示できません",
-                        systemImage: "photo",
-                        description: Text(
+                    ContentUnavailableView {
+                        Label("写真を表示できません", systemImage: "photo")
+                    } description: {
+                        Text(
                             networkAccessAllowed
-                                ? "iCloud上の写真は、通信できるときに再度読み込みます。"
+                                ? "写真へのアクセスや通信を確認してください。"
                                 : "この計測では、端末内にある写真だけを使います。"
                         )
-                    )
+                    } actions: {
+                        Button {
+                            // Invalidate callbacks immediately, before SwiftUI
+                            // schedules the task for this same photo again.
+                            loader.cancel()
+                            retryRevision &+= 1
+                        } label: {
+                            Label("再読み込み", systemImage: "arrow.clockwise")
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .accessibilityLabel("写真をもう一度読み込む")
+                        .accessibilityIdentifier("local-photo-retry")
+                    }
                 } else {
                     Image(systemName: "photo")
                         .font(.title3)
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("写真を表示できません")
                 }
 
             case .loading:
                 ProgressView()
                     .controlSize(.small)
+                    .accessibilityLabel("写真を読み込み中")
             }
         }
         .clipped()
-        .task(id: LoadKey(
+        .task(id: PhotoAssetLoadRequest(key: LoadKey(
             localIdentifier: localIdentifier,
             boundingBox: catBoundingBox,
             targetSize: targetPixelSize,
             targetAspectRatio: targetAspectRatio,
             showsFullImage: showsFullImage,
             networkAccessAllowed: networkAccessAllowed
-        )) {
+        ), retryRevision: retryRevision)) {
             await loader.load(
                 localIdentifier: localIdentifier,
                 catBoundingBox: catBoundingBox,
@@ -189,16 +207,6 @@ struct PhotoAssetImageView: View {
             case .failed:
                 onLoadResult(false)
             }
-        }
-        .accessibilityLabel(imageAccessibilityLabel)
-    }
-
-    private var imageAccessibilityLabel: String {
-        switch loader.state {
-        case .failed:
-            return "写真を表示できません"
-        case .loading, .loaded:
-            return "猫の写真"
         }
     }
 }
@@ -269,6 +277,12 @@ private struct LoadKey: Hashable {
     let targetAspectRatio: CGFloat
     let showsFullImage: Bool
     let networkAccessAllowed: Bool
+}
+
+// Retry identity belongs to the request, not the shared thumbnail cache key.
+private struct PhotoAssetLoadRequest: Hashable {
+    let key: LoadKey
+    let retryRevision: Int
 }
 
 private enum PhotoAssetImageLoadState {
@@ -402,6 +416,7 @@ private final class PhotoAssetImageLoader: ObservableObject {
     private var displayedImageGeneration: Int?
 #if DEBUG
     private let screenshotFixtureLoaderIdentifier = UUID()
+    private var injectedFixtureFailure = false
 #endif
 
     func load(
@@ -429,6 +444,14 @@ private final class PhotoAssetImageLoader: ObservableObject {
         // never enter Photos. The launch route and identifiers are DEBUG-only,
         // so Release archives continue to resolve every image through PhotoKit.
         if let fixture = AppStoreScreenshotFixture.image(for: localIdentifier) {
+            if showsFullImage,
+               ProcessInfo.processInfo.arguments.contains("--photo-load-fails-once"),
+               localIdentifier == "app-store-screenshot-fixture-1",
+               !injectedFixtureFailure {
+                injectedFixtureFailure = true
+                state = .failed
+                return
+            }
             state = .loaded(fixture)
             AppStoreScreenshotFixture.loadTracker.record(
                 localIdentifier: localIdentifier,

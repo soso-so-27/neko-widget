@@ -95,6 +95,12 @@ struct FamilyWindowView: View {
     @State private var photoSelectionMessage: String?
     @State private var selectedDeliveryMessage: String?
     @State private var showsUnavailableSupportDetails = false
+#if DEBUG
+    @State private var showsSettingsFixtureExplanation = false
+    private static var isSettingsFixture: Bool {
+        CommandLine.arguments.contains("--family-window-settings-fixture")
+    }
+#endif
 
     private enum OutgoingConfirmation { case preparations, deliveries, terminalResults }
 
@@ -108,10 +114,33 @@ struct FamilyWindowView: View {
         self.initialSetupPath = initialSetupPath
         _pendingMemorySourceDigest = pendingMemorySourceDigest
         _pendingNotificationRoute = pendingNotificationRoute
+#if DEBUG
+        if Self.isSettingsFixture {
+            _notificationAuthorizationState = State(initialValue: .denied)
+        }
+#endif
     }
 
     var body: some View {
+#if DEBUG
+        if Self.isSettingsFixture {
+            // The shipping settings view, without baseContent's bootstrap,
+            // notification queries, or subscriptions. No account is loaded.
+            windowSettingsContent
+                .environment(\.dynamicTypeSize,
+                    CommandLine.arguments.contains("--family-window-settings-large-text") ? .accessibility5 : .large)
+                .environment(\.openURL, OpenURLAction { _ in .discarded })
+                .alert("表示確認用の画面です", isPresented: $showsSettingsFixtureExplanation) {
+                    Button("閉じる", role: .cancel) {}
+                } message: {
+                    Text("この入口ではiPhoneの設定や接続状態を変更しません。")
+                }
+        } else {
+            guidanceDialogs
+        }
+#else
         guidanceDialogs
+#endif
     }
 
     private var baseContent: some View {
@@ -481,11 +510,6 @@ struct FamilyWindowView: View {
 
     private var guidanceDialogs: some View {
         cleanupDialogs
-        .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
-            Button("閉じる", role: .cancel) {}
-        } message: {
-            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「写真源」で「\(model.windowDisplayName)」を選びます。")
-        }
         .alert("この写真は更新されました", isPresented: $showsStaleWidgetPhotoAlert) {
             Button("閉じる", role: .cancel) {}
         } message: {
@@ -1027,42 +1051,27 @@ struct FamilyWindowView: View {
 
     private var windowSettingsContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                sharingManagementLink
-                notificationSettingsCard
+            LazyVStack(alignment: .leading, spacing: 24) {
+                Text(model.windowDisplayName)
+                    .font(.title2.bold())
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("family-window-settings-title")
 
-                Button {
-                    showsWidgetGuide = true
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "rectangle.on.rectangle")
-                            .font(.title3)
-                            .foregroundStyle(.tint)
-                            .frame(width: 40, height: 40)
-                            .background(
-                                Color.accentColor.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 12)
-                            )
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("ウィジェットの表示")
-                                .font(.subheadline.weight(.semibold))
-                            Text("このまどをホーム画面に表示")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(14)
-                    .background(
-                        Color(uiColor: .secondarySystemGroupedBackground),
-                        in: RoundedRectangle(cornerRadius: 16)
-                    )
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("表示と通知")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                    widgetDisplaySettingsButton
+                    notificationSettingsCard
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("family-window-widget-guide")
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("まどの管理")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.isHeader)
+                    sharingManagementLink
+                }
 
                 privacyDisclosure
             }
@@ -1071,28 +1080,77 @@ struct FamilyWindowView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle("まどの設定")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("ウィジェットの表示設定", isPresented: $showsWidgetGuide) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text("ホーム画面のウィジェットを長押しし、「ウィジェットを編集」→「写真源」で「\(model.windowDisplayName)」を選びます。")
+        }
+    }
+
+    private var widgetDisplaySettingsButton: some View {
+        Button {
+            showsWidgetGuide = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "rectangle.on.rectangle")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        Color.accentColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 12)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ウィジェットの表示")
+                        .font(.subheadline.weight(.semibold))
+                    Text(model.isReportOnly
+                        ? "共有が終了したため、写真は表示されません"
+                        : "ホーム画面に表示するまどを選ぶ")
+                        .font(.caption)
+                        .foregroundStyle(model.isReportOnly ? Color.orange : .secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .background(
+                Color(uiColor: .secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: 16)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("family-window-widget-guide")
     }
 
     private var notificationSettingsCard: some View {
-        HStack(spacing: 12) {
-            Image(systemName: notificationAuthorizationState == .enabled
-                ? "bell.fill"
-                : "bell")
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 40, height: 40)
-                .background(
-                    Color.accentColor.opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
-            VStack(alignment: .leading, spacing: 2) {
-                Text("写真とハートの通知")
-                    .font(.subheadline.weight(.semibold))
-                Text(notificationStatusText)
-                    .font(.caption)
-                    .foregroundStyle(notificationStatusColor)
+        let layout = usesVerticalNotificationLayout
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            HStack(spacing: 12) {
+                Image(systemName: notificationAuthorizationState == .enabled
+                    ? "bell.fill"
+                    : "bell")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        Color.accentColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 12)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("写真とハートの通知")
+                        .font(.subheadline.weight(.semibold))
+                    Text(notificationStatusText)
+                        .font(.caption)
+                        .foregroundStyle(notificationStatusColor)
+                }
             }
-            Spacer()
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("family-window-notification-settings")
+            if !usesVerticalNotificationLayout { Spacer(minLength: 0) }
             notificationAction
         }
         .padding(14)
@@ -1100,7 +1158,17 @@ struct FamilyWindowView: View {
             Color(uiColor: .secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 16)
         )
-        .accessibilityIdentifier("family-window-notification-settings")
+    }
+
+    private var usesVerticalNotificationLayout: Bool {
+#if DEBUG
+        if Self.isSettingsFixture {
+            // The fixture applies the text environment to settings content;
+            // the containing FamilyWindowView still owns this layout choice.
+            return CommandLine.arguments.contains("--family-window-settings-large-text")
+        }
+#endif
+        return dynamicTypeSize.isAccessibilitySize
     }
 
     @ViewBuilder
@@ -1110,20 +1178,26 @@ struct FamilyWindowView: View {
             ProgressView()
                 .controlSize(.small)
         case .notRequested:
-            Button("オンにする") {
+            Button {
                 Task { await requestVisibleNotificationAuthorization() }
+            } label: {
+                Text("オンにする").frame(minHeight: 44)
             }
             .font(.subheadline.weight(.semibold))
             .accessibilityIdentifier("family-window-notification-enable")
         case .quiet:
-            Button("目立つ通知にする") {
+            Button {
                 Task { await requestVisibleNotificationAuthorization() }
+            } label: {
+                Text("目立つ通知にする").frame(minHeight: 44)
             }
             .font(.caption.weight(.semibold))
             .accessibilityIdentifier("family-window-notification-enable")
         case .denied:
-            Button("設定を開く") {
+            Button {
                 openSystemSettings()
+            } label: {
+                Text("設定を開く").frame(minHeight: 44)
             }
             .font(.subheadline.weight(.semibold))
             .accessibilityIdentifier("family-window-notification-open-settings")
@@ -1154,11 +1228,23 @@ struct FamilyWindowView: View {
     }
 
     private func requestVisibleNotificationAuthorization() async {
+#if DEBUG
+        if Self.isSettingsFixture {
+            showsSettingsFixtureExplanation = true
+            return
+        }
+#endif
         notificationAuthorizationState = await MomentBackgroundRefreshService.shared
             .requestVisibleNotificationAuthorization()
     }
 
     private func openSystemSettings() {
+#if DEBUG
+        if Self.isSettingsFixture {
+            showsSettingsFixtureExplanation = true
+            return
+        }
+#endif
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
     }
@@ -1168,7 +1254,16 @@ struct FamilyWindowView: View {
             $0.role != .invitee && $0.localDeviceIsAdditional != true
         } ?? false
         return NavigationLink {
+#if DEBUG
+            if Self.isSettingsFixture {
+                ContentUnavailableView("表示確認用の画面です", systemImage: "person.2",
+                    description: Text("この入口では接続・解除・iPhoneの追加を行いません。"))
+            } else {
+                PairingView()
+            }
+#else
             PairingView()
+#endif
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "person.2.fill")
@@ -1180,18 +1275,22 @@ struct FamilyWindowView: View {
                     Text("名前・相手・iPhone")
                         .font(.subheadline.weight(.semibold))
                     Label(
-                        model.isShowingLastKnownState
+                        model.isReportOnly
+                            ? "共有は終了しています"
+                            : model.isShowingLastKnownState
                             ? "接続状態を確認できません"
                             : (canEditWindowName
-                                ? "相手と接続済み・まど名を変更できます"
-                                : "相手と接続済み・iPhoneを確認"),
-                        systemImage: model.isShowingLastKnownState
+                                ? "まど名の変更・参加中のiPhoneを確認"
+                                : "接続相手・参加中のiPhoneを確認"),
+                        systemImage: model.isReportOnly
+                            ? "hand.raised.fill"
+                            : model.isShowingLastKnownState
                             ? "exclamationmark.triangle.fill"
                             : (canEditWindowName ? "pencil" : "checkmark.circle.fill")
                     )
                         .font(.caption)
                         .foregroundStyle(
-                            model.isShowingLastKnownState
+                            model.isReportOnly || model.isShowingLastKnownState
                                 ? Color.orange
                                 : Color.secondary
                         )
@@ -1768,132 +1867,40 @@ struct FamilyWindowView: View {
 
     private func receivedPhotoActionControls(_ item: MomentInboxItem) -> some View {
         let heart = model.heartOutboxItem(for: item)
-        return MomentPhotoActionsLayout {
-            memoryActionControl(item)
-            if model.canSendHeart(for: item) || heart != nil {
-                heartActionControl(item, heart: heart)
-            }
-        }
-    }
-
-    private func heartActionControl(
-        _ item: MomentInboxItem,
-        heart: MomentPawOutboxItem?
-    ) -> some View {
-        Button {
-            memoryActionMomentID = nil
-            memoryResultMomentID = nil
-            heartResultMomentID = nil
-            heartActionMomentID = item.id
-            Task {
-                await model.sendHeart(item)
-                heartActionMomentID = nil
-                heartResultMessage = model.heartActionMessage ?? model.errorMessage
-                heartResultFailed = model.heartActionMessage == nil
-                heartResultMomentID = item.id
-            }
-        } label: {
-            HStack(spacing: 6) {
-                if heartActionMomentID == item.id,
-                   model.isPerformingAction {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: heartActionIcon(
-                        heart,
-                        canRetry: model.canSendHeart(for: item)
-                    ))
-                    .font(.body)
-                }
-                if let heart, heart.phase != .sent {
-                    Text(heartActionTitle(
-                        heart,
-                        canRetry: model.canSendHeart(for: item)
-                    ))
-                }
-            }
-            .font(.caption.weight(.semibold))
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .tint(.accentColor)
-        .disabled(
-            model.isPerformingAction
-                || heart?.phase == .sent
-                || (heart != nil && !model.canSendHeart(for: item))
-        )
-        .accessibilityLabel(
-            heartAccessibilityLabel(
-                heart,
-                canRetry: model.canSendHeart(for: item)
-            )
-        )
-        .accessibilityIdentifier("family-window-send-paw")
-    }
-
-    @ViewBuilder
-    private func memoryActionControl(_ item: MomentInboxItem) -> some View {
-        if model.isSavedMemory(item) {
-            HStack(spacing: 6) {
-                Label("思い出に残した", systemImage: "bookmark.fill")
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                Menu {
-                    Button("思い出から外す", role: .destructive) {
-                        memoryRemovalTarget = item
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                        .accessibilityLabel("思い出の操作")
-                }
-                .disabled(
-                    model.isPerformingAction
-                        || model.isShowingLastKnownState
-                        || model.isReportOnly
-                )
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(
-                Color(uiColor: .tertiarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: 8)
-            )
-            .accessibilityIdentifier("family-window-saved-memory-state")
+        let canSendHeart = model.canSendHeart(for: item)
+        let heartState: MomentReceivedPhotoActions.HeartState? = if let heart {
+            heart.phase == .sent ? .sent : (canSendHeart ? .retry : .unavailable)
         } else {
-            Button {
+            canSendHeart ? .ready : nil
+        }
+        return MomentReceivedPhotoActions(
+            isSaved: model.isSavedMemory(item),
+            hasImportedMemory: model.hasImportedMemory(item),
+            memoryIsPending: memoryActionMomentID == item.id && model.isPerformingAction,
+            memoryIsDisabled: model.isPerformingAction || model.isShowingLastKnownState || model.isReportOnly,
+            memorySaveHint: memorySaveConfirmationMessage(for: item),
+            heartState: heartState,
+            heartIsPending: heartActionMomentID == item.id && model.isPerformingAction,
+            isPerformingAction: model.isPerformingAction,
+            requestMemorySave: {
                 clearsWidgetFocusAfterMemorySave = false
                 widgetMemoryTarget = item
-            } label: {
-                HStack(spacing: 6) {
-                    if memoryActionMomentID == item.id,
-                       model.isPerformingAction {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "bookmark")
-                    }
-                    Text(model.hasImportedMemory(item)
-                        ? "もう一度思い出に加える"
-                        : "取り込んで残す")
+            },
+            requestMemoryRemoval: { memoryRemovalTarget = item },
+            sendHeart: {
+                memoryActionMomentID = nil
+                memoryResultMomentID = nil
+                heartResultMomentID = nil
+                heartActionMomentID = item.id
+                Task {
+                    await model.sendHeart(item)
+                    heartActionMomentID = nil
+                    heartResultMessage = model.heartActionMessage ?? model.errorMessage
+                    heartResultFailed = model.heartActionMessage == nil
+                    heartResultMomentID = item.id
                 }
-                .font(.caption.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .buttonStyle(.bordered)
-            .disabled(
-                model.isPerformingAction
-                    || model.isShowingLastKnownState
-                    || model.isReportOnly
-            )
-            .accessibilityHint(memorySaveConfirmationMessage(for: item))
-            .accessibilityIdentifier("family-window-save-memory")
-        }
+        )
     }
 
     private var memorySaveDialogTitle: String {
@@ -2131,35 +2138,6 @@ struct FamilyWindowView: View {
         showsStaleWidgetPhotoAlert = true
     }
 
-    private func heartActionTitle(
-        _ heart: MomentPawOutboxItem?,
-        canRetry: Bool
-    ) -> String {
-        guard let heart else { return "ハートを送る" }
-        if heart.phase == .sent { return "ハート送信済み" }
-        return canRetry ? "ハートを再送" : "ハートを送れません"
-    }
-
-    private func heartActionIcon(
-        _ heart: MomentPawOutboxItem?,
-        canRetry: Bool
-    ) -> String {
-        guard let heart else { return "heart" }
-        if heart.phase == .sent { return "heart.fill" }
-        return canRetry ? "arrow.clockwise" : "exclamationmark.circle"
-    }
-
-    private func heartAccessibilityLabel(
-        _ heart: MomentPawOutboxItem?,
-        canRetry: Bool
-    ) -> String {
-        guard let heart else { return "写真を届けた相手にハートを送る" }
-        if heart.phase == .sent { return "ハートを送信済みです" }
-        return canRetry
-            ? "送信待ちのハートをもう一度送る"
-            : "この写真にはハートを送れません"
-    }
-
     private func heartResultIcon(for item: MomentInboxItem) -> String {
         guard !heartResultFailed else {
             return "exclamationmark.circle"
@@ -2327,6 +2305,126 @@ struct MomentPhotoActionsLayout<Content: View>: View {
     }
 }
 
+/// The shipping received-photo controls. Owners supply presentation state and
+/// callbacks; this view never changes a subscription, PhotoKit, or the outbox.
+struct MomentReceivedPhotoActions: View {
+    enum HeartState {
+        case ready, retry, unavailable, sent
+
+        var title: String {
+            switch self {
+            case .ready: "ハートを送る"
+            case .retry: "ハートを再送"
+            case .unavailable: "ハートを送れません"
+            case .sent: "ハート送信済み"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .ready: "heart"
+            case .retry: "arrow.clockwise"
+            case .unavailable: "exclamationmark.circle"
+            case .sent: "heart.fill"
+            }
+        }
+
+        var accessibilityLabel: String {
+            switch self {
+            case .ready: "写真を届けた相手にハートを送る"
+            case .retry: "送信待ちのハートをもう一度送る"
+            case .unavailable: "この写真にはハートを送れません"
+            case .sent: "ハートを送信済みです"
+            }
+        }
+    }
+
+    let isSaved: Bool
+    let hasImportedMemory: Bool
+    let memoryIsPending: Bool
+    let memoryIsDisabled: Bool
+    let memorySaveHint: String
+    let heartState: HeartState?
+    let heartIsPending: Bool
+    let isPerformingAction: Bool
+    let requestMemorySave: () -> Void
+    let requestMemoryRemoval: () -> Void
+    let sendHeart: () -> Void
+
+    var body: some View {
+        MomentPhotoActionsLayout {
+            memoryControl
+            if let heartState {
+                Button(action: sendHeart) {
+                    HStack(spacing: 6) {
+                        if heartIsPending {
+                            ProgressView().controlSize(.small)
+                                .accessibilityIdentifier("family-window-heart-pending")
+                        } else {
+                            Image(systemName: heartState.icon).font(.body)
+                        }
+                        if heartState == .retry || heartState == .unavailable {
+                            Text(heartState.title)
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)
+                .accessibilityLabel(heartState.accessibilityLabel)
+                .accessibilityIdentifier("family-window-send-paw")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var memoryControl: some View {
+        if isSaved {
+            HStack(spacing: 6) {
+                Label("思い出に残した", systemImage: "bookmark.fill").lineLimit(1)
+                Spacer(minLength: 2)
+                Menu {
+                    Button("思い出から外す", role: .destructive, action: requestMemoryRemoval)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                        .accessibilityLabel("思い出の操作")
+                }
+                .disabled(memoryIsDisabled)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier("family-window-saved-memory-state")
+        } else {
+            Button(action: requestMemorySave) {
+                HStack(spacing: 6) {
+                    if memoryIsPending {
+                        ProgressView().controlSize(.small)
+                            .accessibilityIdentifier("family-window-memory-pending")
+                    } else {
+                        Image(systemName: "bookmark")
+                    }
+                    Text(hasImportedMemory ? "もう一度思い出に加える" : "取り込んで残す")
+                }
+                .font(.caption.weight(.semibold))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .disabled(memoryIsDisabled)
+            .accessibilityHint(memorySaveHint)
+            .accessibilityIdentifier("family-window-save-memory")
+        }
+    }
+}
+
 /// Only the available width and requested ratio determine layout. The decoded
 /// image, loading/error placeholders and captions must never size their parent.
 struct MomentReceivedPhotoSurface: View {
@@ -2410,9 +2508,7 @@ struct MomentReceivedPhotoThumbnail: View {
 struct MomentReceivedLayoutFixture: View {
     private struct Selection: Identifiable { let id: Int }
     @State private var selection: Selection?
-    @State private var didUseAction = false
-    @State private var didSave = false
-    @State private var didHeart = false
+    @StateObject private var actionFixture = ReceivedPhotoActionFixture()
     private let urls = Self.makePhotos()
     private let caption = String(repeating: "ねこの写真とひとことを、ゆっくり見返しています。", count: 3)
     private var largeText: Bool { CommandLine.arguments.contains("--received-large-text") }
@@ -2426,13 +2522,7 @@ struct MomentReceivedLayoutFixture: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("received-fixture-latest")
-                    Button("届いた写真の操作") { didUseAction = true }
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("received-fixture-actions")
-                    if didUseAction {
-                        Text("操作できました")
-                            .accessibilityIdentifier("received-fixture-action-result")
-                    }
+                    actionControls(photoID: 0)
                     Text("以前に届いた写真")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading), count: largeText ? 1 : 2), spacing: 10) {
                         ForEach(0..<4) { index in
@@ -2441,8 +2531,8 @@ struct MomentReceivedLayoutFixture: View {
                                     url: index < 3 ? urls[index] : urls[3],
                                     caption: index == 2 ? nil : caption,
                                     receivedAt: Date(timeIntervalSince1970: 1_788_846_000),
-                                    isSaved: index == 0,
-                                    hasSentHeart: index == 1,
+                                    isSaved: actionFixture.savedIDs.contains(index),
+                                    hasSentHeart: actionFixture.hearts[index] == .sent,
                                     photoIdentifier: "received-fixture-tile-photo-\(index)"
                                 )
                             }
@@ -2464,30 +2554,7 @@ struct MomentReceivedLayoutFixture: View {
                         caption: selected.id == 2 ? nil : caption,
                         captionIdentifier: "received-fixture-full-caption"
                     ) {
-                        VStack(spacing: 8) {
-                            MomentPhotoActionsLayout {
-                                Button { didSave = true } label: {
-                                    Label("取り込んで残す", systemImage: "bookmark")
-                                        .frame(maxWidth: .infinity, minHeight: 44)
-                                }
-                                .accessibilityIdentifier("received-fixture-detail-save")
-                                Button { didHeart = true } label: {
-                                    Label("ハートを送る", systemImage: "heart")
-                                        .frame(maxWidth: .infinity, minHeight: 44)
-                                }
-                                .accessibilityIdentifier("received-fixture-detail-heart")
-                            }
-                            .buttonStyle(.bordered).font(.caption.weight(.semibold))
-                            .multilineTextAlignment(.center)
-                            if didSave {
-                                Text("保存の操作を受け取りました").font(.footnote)
-                                    .accessibilityIdentifier("received-fixture-detail-save-result")
-                            }
-                            if didHeart {
-                                Text("ハートの操作を受け取りました").font(.footnote)
-                                    .accessibilityIdentifier("received-fixture-detail-heart-result")
-                            }
-                        }
+                        actionControls(photoID: selected.id)
                     }
                     .frame(maxWidth: CommandLine.arguments.contains("--received-narrow") ? 288 : .infinity)
                     .navigationTitle("届いた写真").navigationBarTitleDisplayMode(.inline)
@@ -2503,6 +2570,40 @@ struct MomentReceivedLayoutFixture: View {
         }
         .environment(\.dynamicTypeSize, largeText ? .accessibility5 : .large)
         .preferredColorScheme(largeText ? .light : .dark)
+    }
+
+    private func actionControls(photoID: Int) -> some View {
+        VStack(spacing: 8) {
+            MomentReceivedPhotoActions(
+                isSaved: actionFixture.savedIDs.contains(photoID),
+                hasImportedMemory: actionFixture.importedIDs.contains(photoID),
+                memoryIsPending: actionFixture.pending?.photoID == photoID && actionFixture.pending?.action != .heart,
+                memoryIsDisabled: actionFixture.pending != nil,
+                memorySaveHint: "確認用の操作を記録します。写真アプリへの保存は行いません。",
+                heartState: actionFixture.hearts[photoID] ?? .ready,
+                heartIsPending: actionFixture.pending?.photoID == photoID && actionFixture.pending?.action == .heart,
+                isPerformingAction: actionFixture.pending != nil,
+                requestMemorySave: { actionFixture.request(.save, photoID: photoID) },
+                requestMemoryRemoval: { actionFixture.request(.remove, photoID: photoID) },
+                sendHeart: { actionFixture.request(.heart, photoID: photoID) }
+            )
+            Text("操作表示の確認用です。通信・写真への保存は行いません。")
+                .font(.caption2).foregroundStyle(.secondary)
+            if let request = actionFixture.lastRequest, request.photoID == photoID {
+                Text(verbatim: request.description).font(.caption2)
+                    .accessibilityIdentifier("received-fixture-action-request")
+            }
+            if actionFixture.pending?.photoID == photoID {
+                Button { actionFixture.finishPresentation() } label: {
+                    Text("確認用の完了状態を表示").frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("received-fixture-complete-action")
+                Button { actionFixture.cancelPresentation() } label: {
+                    Text("確認用の待機を解除").frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("received-fixture-cancel-action")
+            }
+        }
     }
 
     private static func makePhotos() -> [URL] {

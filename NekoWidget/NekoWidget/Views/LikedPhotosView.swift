@@ -1717,7 +1717,6 @@ struct PhotoBrowserView: View {
     @State private var preheatedPhotoIdentifiers: Set<String> = []
     @State private var pendingExclusionIdentifier: String?
     @State private var showsExclusionConfirmation = false
-    @State private var pendingMemoryRemovalIdentifier: String?
     @State private var showsAssignmentSheet = false
     @State private var isExportingMemoryPhoto = false
     @State private var memoryPhotoExportTask: Task<Void, Never>?
@@ -1898,7 +1897,10 @@ struct PhotoBrowserView: View {
         if selectedPhoto.isLiked {
             Menu {
                 Button("思い出から外す", role: .destructive) {
-                    pendingMemoryRemovalIdentifier = selectedPhoto.localIdentifier
+                    let identifier = selectedPhoto.localIdentifier
+                    // This changes saved membership only; the Photos asset
+                    // and any previously imported copy remain in the library.
+                    setMemorySaved(identifier, false)
                 }
             } label: {
                 Image(systemName: "bookmark.fill")
@@ -2008,27 +2010,6 @@ struct PhotoBrowserView: View {
             Button("閉じる", role: .cancel) {}
         } message: {
             Text(widgetTimingMessage)
-        }
-        .confirmationDialog(
-            "思い出から外しますか？",
-            isPresented: Binding(
-                get: { pendingMemoryRemovalIdentifier != nil },
-                set: { isPresented in
-                    if !isPresented { pendingMemoryRemovalIdentifier = nil }
-                }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("思い出から外す", role: .destructive) {
-                guard let identifier = pendingMemoryRemovalIdentifier else { return }
-                pendingMemoryRemovalIdentifier = nil
-                setMemorySaved(identifier, false)
-            }
-            Button("キャンセル", role: .cancel) {
-                pendingMemoryRemovalIdentifier = nil
-            }
-        } message: {
-            Text("写真アプリの写真は削除されません。")
         }
         .confirmationDialog(
             "表示候補から外しますか？",

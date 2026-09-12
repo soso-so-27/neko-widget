@@ -4,6 +4,47 @@ import Foundation
 import SwiftUI
 import UIKit
 
+/// An offline driver for the shipping received-photo control view. Completion
+/// is explicit fixture input, not evidence of PhotoKit import or heart delivery.
+@MainActor
+final class ReceivedPhotoActionFixture: ObservableObject {
+    enum Action: String { case save, remove, heart }
+    struct Request {
+        let action: Action
+        let photoID: Int
+        var description: String { "\(action.rawValue)|\(photoID)" }
+    }
+
+    @Published private(set) var savedIDs = Set<Int>()
+    @Published private(set) var importedIDs = Set<Int>()
+    @Published private(set) var hearts: [Int: MomentReceivedPhotoActions.HeartState] = [2: .retry, 3: .unavailable]
+    @Published private(set) var pending: Request?
+    @Published private(set) var lastRequest: Request?
+
+    func request(_ action: Action, photoID: Int) {
+        guard pending == nil else { return }
+        let request = Request(action: action, photoID: photoID)
+        lastRequest = request
+        pending = request
+    }
+
+    func finishPresentation() {
+        guard let pending else { return }
+        switch pending.action {
+        case .save:
+            savedIDs.insert(pending.photoID)
+            importedIDs.insert(pending.photoID)
+        case .remove:
+            savedIDs.remove(pending.photoID)
+        case .heart:
+            hearts[pending.photoID] = .sent
+        }
+        self.pending = nil
+    }
+
+    func cancelPresentation() { pending = nil }
+}
+
 struct AppStoreScreenshotFixtureLoadedImage: Hashable {
     let localIdentifier: String
     let loaderIdentifier: UUID
@@ -42,6 +83,14 @@ enum AppStoreScreenshotFixture {
     private static var imageCache: [String: UIImage] = [:]
 
     static func image(for localIdentifier: String) -> UIImage? {
+        if let number = Int(localIdentifier.replacingOccurrences(
+            of: "app-store-screenshot-fixture-page-", with: "")),
+           localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
+           (1...50).contains(number) {
+            // Many unique assets, eight shared image objects: the paging test
+            // must not manufacture a large decoded-image memory footprint.
+            return image(for: "\(identifierPrefix)\((number - 1) % 8 + 1)")
+        }
         guard let index = identifiers.firstIndex(of: localIdentifier) else {
             return nil
         }
@@ -54,7 +103,10 @@ enum AppStoreScreenshotFixture {
     }
 
     static func isFixtureIdentifier(_ localIdentifier: String) -> Bool {
-        identifiers.contains(localIdentifier)
+        if localIdentifier.hasPrefix("app-store-screenshot-fixture-page-"),
+           let number = Int(localIdentifier.dropFirst("app-store-screenshot-fixture-page-".count)),
+           (1...50).contains(number) { return true }
+        return identifiers.contains(localIdentifier)
     }
 
     static var photos: [PhotoPresentation] {
@@ -268,7 +320,53 @@ struct AppStoreScreenshotFixtureRootView: View {
     @State private var showsFamilyWindow = false
     @ObservedObject private var loadTracker = AppStoreScreenshotFixture.loadTracker
 
-    private let photos = AppStoreScreenshotFixture.photos
+    private var photos: [PhotoPresentation] {
+        guard ProcessInfo.processInfo.environment["NEKO_UX_RECOVERY_CASE"] == "paging" else {
+            return AppStoreScreenshotFixture.photos
+        }
+        return (1...50).map { number in
+            PhotoPresentation(
+                localIdentifier: "app-store-screenshot-fixture-page-\(number)",
+                creationDate: Date(timeIntervalSince1970: 1_754_006_400 + Double(number) * 86_400)
+            )
+        }
+    }
+    private var widgetRecoveryCase: String? {
+        ProcessInfo.processInfo.environment["NEKO_UX_RECOVERY_CASE"]
+    }
+    private var scopedPhotos: [PhotoPresentation] {
+        if widgetRecoveryCase == "source-unavailable" { return [] }
+        if widgetRecoveryCase == "excluded" || widgetRecoveryCase == "scoped" {
+            return Array(photos.dropFirst())
+        }
+        return photos
+    }
+    private var sourceStatus: PhotoSourceAlbumStatus {
+        switch widgetRecoveryCase {
+        case "source-unavailable": return .unavailable
+        case "scoped":
+            return .selected(PhotoSourceAlbumOption(localIdentifier: "fixture-album",
+                title: "確認用アルバム", accessibleAssetCount: scopedPhotos.count))
+        default: return .allLibrary
+        }
+    }
+    private var catProfiles: CatProfilesPresentation {
+        guard widgetRecoveryCase == "cats" else { return CatProfilesPresentation() }
+        let all = photos.map {
+            CatProfilePhotoPresentation(localIdentifier: $0.localIdentifier,
+                                        creationDate: $0.creationDate)
+        }
+        return CatProfilesPresentation(profiles: (0..<2).map { index in
+            let identifier = "fixture-cat-\(index)"
+            var photo = all[index]
+            photo.assignedProfileIdentifiers = [identifier]
+            return CatProfilePresentation(
+                identifier: identifier, name: index == 0 ? "ミケ" : "ソラ",
+                coverPhoto: photo, confirmedPhotos: [photo],
+                manualCandidatePhotos: all.filter { $0.localIdentifier != photo.localIdentifier }
+            )
+        })
+    }
     private let likedPhotos = AppStoreScreenshotFixture.likedPhotos
     private let windowPhoto = AppStoreScreenshotFixture.windowPhoto
 
@@ -288,7 +386,7 @@ struct AppStoreScreenshotFixtureRootView: View {
         MainTabView(
             currentPhoto: windowPhoto,
             likedPhotos: likedPhotos,
-            catPhotos: photos,
+            catPhotos: scopedPhotos,
             libraryPhotos: photos,
             photoPresentationVersion: LibraryPresentationVersion(
                 snapshotUpdatedAt: .distantPast,
@@ -304,10 +402,10 @@ struct AppStoreScreenshotFixtureRootView: View {
             settings: SettingsPresentation(),
             detectionAccuracySample: DetectionAccuracySamplePresentation(),
             highResolutionRecoverySample: DetectionAccuracySamplePresentation(),
-            excludedCatPhotos: [],
+            excludedCatPhotos: widgetRecoveryCase == "excluded" ? [photos[0]] : [],
             photoSourceAlbums: [],
-            photoSourceStatus: .allLibrary,
-            catProfilesPresentation: CatProfilesPresentation(),
+            photoSourceStatus: sourceStatus,
+            catProfilesPresentation: catProfiles,
             profileAlbumPhotos: [:],
             catProfilesActions: .noOp,
             hasPhotoAccess: true,
@@ -342,7 +440,14 @@ struct AppStoreScreenshotFixtureRootView: View {
             refreshPhotoSourceAlbums: {},
             exportJSON: { nil }
         )
+        .environment(\.dynamicTypeSize, CommandLine.arguments.contains("--ux-large-text") ? .accessibility5 : .large)
         .accessibilityIdentifier("app-store-screenshot-fixture-root")
+        .task {
+            if ["excluded", "scoped", "available"].contains(widgetRecoveryCase ?? "") {
+                selectedPhotoIdentifier = photos[0].localIdentifier
+                selectedPhotoShownAt = Date()
+            }
+        }
         // Image views sit inside NavigationLink labels, whose accessibility
         // element can absorb child identifiers. Publish DEBUG-only completion
         // markers outside those links so XCTest observes actual loader state.
@@ -414,8 +519,12 @@ private struct MainlineAcceptanceFixtureRootView: View {
         Group {
             if finished {
                 Text("確認完了").accessibilityIdentifier("mainline-fixture-finished")
+            } else if scenario == "family-settings" {
+                NavigationStack { FamilyWindowView(initialPresentation: .settings) }
             } else if scenario == "solo-memories-rediscovery" {
                 SoloRediscoveryFixtureView()
+            } else if scenario == "monthly-save" || scenario == "monthly-save-unconfirmed" {
+                MonthlySaveFixtureView(confirmsRequests: scenario == "monthly-save")
             } else if scenario.hasPrefix("solo-memories-") {
                 SoloMemoriesFixtureView(scenario: scenario)
             } else if scenario == "monthly-empty" || scenario == "monthly-pending" {
@@ -637,6 +746,35 @@ private struct SoloMemoriesFixtureView: View {
 /// The real single-photo browser opens the real same-day grid. This fixture
 /// records which save callback is requested and republishes presentation state
 /// only; it never calls the memory store or writes a Photos asset.
+@MainActor
+private struct MonthlySaveFixtureView: View {
+    let confirmsRequests: Bool
+    @State private var isSaved = false
+    @State private var lastRequest = ""
+
+    var body: some View {
+        MonthlyWindowView(
+            presentation: MonthlyWindowPresentation(
+                monthStart: Date(timeIntervalSince1970: 1_754_006_400),
+                yearNumber: 2025, monthNumber: 8,
+                photos: [PhotoPresentation(
+                    localIdentifier: "app-store-screenshot-fixture-1",
+                    creationDate: Date(timeIntervalSince1970: 1_754_006_400),
+                    isLiked: isSaved
+                )], availableSceneCount: 1
+            ), setMemorySaved: { identifier, value in
+                lastRequest = "\(identifier)|\(value)"
+                if confirmsRequests { isSaved = value }
+            }
+        )
+        .overlay(alignment: .topLeading) {
+            Text(lastRequest).accessibilityIdentifier("monthly-fixture-memory-request")
+                .foregroundStyle(.clear).frame(width: 1, height: 1).clipped()
+                .allowsHitTesting(false)
+        }
+    }
+}
+
 @MainActor
 private struct SoloRediscoveryFixtureView: View {
     @State private var savedIdentifiers = Set<String>()

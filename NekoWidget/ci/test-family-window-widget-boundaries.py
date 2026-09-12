@@ -766,7 +766,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         resolver = section(
             family_view,
             "private func consumePendingMemoryTargetIfReady()",
-            "private func heartActionTitle(",
+            "private func heartResultIcon(",
         )
         self.assertIn("WidgetCacheBuilder.retainedFamilyMomentID(", resolver)
         self.assertIn("forSourceDigest: sourceDigest", resolver)
@@ -813,7 +813,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         rejection = section(
             family_view,
             "private func rejectPendingMemoryTarget()",
-            "private func heartActionTitle(",
+            "private func heartResultIcon(",
         )
         self.assertIn("pendingMemorySourceDigest = nil", rejection)
         self.assertIn("focusedMomentID = nil", rejection)
@@ -975,8 +975,10 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("写真を届けた相手にハートを送る", family_view)
         self.assertIn('Image(systemName: "bookmark")', family_view)
         self.assertIn('systemImage: "bookmark.fill"', family_view)
-        self.assertIn('return canRetry ? "ハートを再送" : "ハートを送れません"', family_view)
-        self.assertIn("heart?.phase == .sent", family_view)
+        self.assertIn('case .retry: "ハートを再送"', family_view)
+        self.assertIn('case .unavailable: "ハートを送れません"', family_view)
+        self.assertIn("heart.phase == .sent ? .sent : (canSendHeart ? .retry : .unavailable)", family_view)
+        self.assertIn(".disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)", family_view)
         self.assertNotIn("foregroundStyle(.pink)", family_view)
         self.assertIn(
             '.accessibilityLabel("ハートが届いています")',
@@ -1693,7 +1695,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("ForEach(connectedWindows)", main_tab)
         self.assertIn("ForEach(setupWindows)", main_tab)
         self.assertIn('"window-list-receiving"', main_tab)
-        self.assertIn('windowSectionTitle("設定中")', main_tab)
+        self.assertIn('"window-list-setup"', main_tab)
         self.assertIn("PrivateWindowListPresentationPolicy.make", main_tab)
         self.assertIn("if $0.createdAt != $1.createdAt", main_tab)
         self.assertNotIn("if $0.updatedAt != $1.updatedAt", main_tab)
@@ -1774,7 +1776,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         self.assertIn("SubtleWindowThumbnail(showsSetupMark:", window_list)
         self.assertIn("private struct SubtleWindowThumbnail: View", main_tab)
-        self.assertIn("Color.accentColor.opacity(0.07)", window_list)
+        self.assertNotIn("windowThumbnail(for:", window_list)
         self.assertNotIn("Color.accentColor.opacity(0.18)", window_list)
         self.assertIn("PairingStateStore.load(", reload_catalog)
         self.assertIn("case .awaitingInvitee:", window_list)
@@ -1813,7 +1815,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('Text("まどの設定")', settings)
         self.assertIn('Image(systemName: "rectangle.split.2x2")', settings)
         self.assertIn('Text("名前・相手・iPhone")', family)
-        self.assertIn('"相手と接続済み・まど名を変更できます"', family)
+        self.assertIn('"まど名の変更・参加中のiPhoneを確認"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
         self.assertIn(
             "await saveDetectionSettings(requestedConfidence, requestedMinimumArea)",
@@ -3132,13 +3134,15 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertNotIn("guard !isWorking", set_action)
         memory_control = section(
             family,
-            "private func memoryActionControl(",
-            "private func performMemoryAction(",
+            "private func receivedPhotoActionControls(",
+            "private var memorySaveDialogTitle:",
         )
+        shared_control = section(family, "struct MomentReceivedPhotoActions:", "struct MomentReceivedPhotoSurface:")
         self.assertIn("model.isPerformingAction", memory_control)
         self.assertIn("model.isShowingLastKnownState", memory_control)
         self.assertIn("model.isReportOnly", memory_control)
-        self.assertIn(".frame(width: 44, height: 44)", memory_control)
+        self.assertIn(".disabled(memoryIsDisabled)", shared_control)
+        self.assertIn(".frame(width: 44, height: 44)", shared_control)
         self.assertNotIn(".disabled(model.isWorking)", memory_control)
 
         for start, end in (
@@ -3417,6 +3421,13 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("sharingManagementLink", settings)
         self.assertIn("notificationSettingsCard", settings)
         self.assertIn("privacyDisclosure", settings)
+        self.assertLess(settings.index("widgetDisplaySettingsButton"), settings.index("notificationSettingsCard"))
+        self.assertLess(settings.index("notificationSettingsCard"), settings.index("sharingManagementLink"))
+        self.assertLess(settings.index("sharingManagementLink"), settings.index("privacyDisclosure"))
+        self.assertIn('Text("表示と通知")', settings)
+        self.assertIn('Text("まどの管理")', settings)
+        self.assertIn('Text(model.windowDisplayName)', settings)
+        self.assertIn("共有が終了したため、写真は表示されません", settings)
         self.assertNotIn("statusCard", paired)
         self.assertNotIn("howToSendCard", paired)
         self.assertNotIn("family-window-send-guide", family)
@@ -3469,7 +3480,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         primary = section(
             family,
             "private func momentCard(",
-            "private func memoryActionControl(",
+            "private var memorySaveDialogTitle:",
         )
         self.assertIn("MomentReceivedPhotoHeader(", primary)
         self.assertIn("contentMode: .fit", primary)
@@ -3497,12 +3508,16 @@ try MomentSharingStateStore.verifyPrivateAlias()
 
         memory = section(
             family,
-            "private func memoryActionControl(",
-            "private func performMemoryAction(",
+            "private func receivedPhotoActionControls(",
+            "private var memorySaveDialogTitle:",
         )
-        self.assertIn("if model.isSavedMemory(item)", memory)
-        self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', memory)
-        self.assertIn('Button("思い出から外す", role: .destructive)', memory)
+        shared_controls = section(family, "struct MomentReceivedPhotoActions:", "struct MomentReceivedPhotoSurface:")
+        self.assertIn("isSaved: model.isSavedMemory(item)", memory)
+        self.assertIn("hasImportedMemory: model.hasImportedMemory(item)", memory)
+        self.assertIn("if isSaved", shared_controls)
+        self.assertIn('Label("思い出に残した", systemImage: "bookmark.fill")', shared_controls)
+        self.assertIn('Button("思い出から外す", role: .destructive, action: requestMemoryRemoval)', shared_controls)
+        self.assertIn("Button(action: requestMemorySave)", shared_controls)
         self.assertIn("memoryRemovalTarget = item", memory)
         self.assertIn("widgetMemoryTarget = item", memory)
         self.assertIn("model.isShowingLastKnownState", memory)
@@ -3542,14 +3557,30 @@ try MomentSharingStateStore.verifyPrivateAlias()
         actions = section(
             family,
             "private func receivedPhotoActionControls(",
-            "private func memoryActionControl(",
+            "private var memorySaveDialogTitle:",
         )
-        self.assertIn("MomentPhotoActionsLayout", actions)
+        self.assertIn("return MomentReceivedPhotoActions(", actions)
+        self.assertIn("MomentPhotoActionsLayout", shared_controls)
+        self.assertIn("let canSendHeart = model.canSendHeart(for: item)", actions)
+        self.assertIn("heart.phase == .sent ? .sent : (canSendHeart ? .retry : .unavailable)", actions)
+        self.assertIn("canSendHeart ? .ready : nil", actions)
+        self.assertIn("heartActionMomentID == item.id && model.isPerformingAction", actions)
+        self.assertIn("memoryActionMomentID == item.id && model.isPerformingAction", actions)
+        self.assertIn("await model.sendHeart(item)", actions)
+        self.assertIn(".disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)", shared_controls)
+        self.assertIn("Button(action: sendHeart)", shared_controls)
+        fixture = section(family, "struct MomentReceivedLayoutFixture:", "struct MomentPhotoDetailBody")
+        self.assertIn("MomentReceivedPhotoActions(", fixture)
+        self.assertIn("actionControls(photoID: selected.id)", fixture)
+        for action in ("save", "remove", "heart"):
+            self.assertIn(f"actionFixture.request(.{action}, photoID: photoID)", fixture)
+        self.assertNotIn("received-fixture-detail-save", fixture)
+        self.assertNotIn("received-fixture-detail-heart", fixture)
         shared_actions = section(family, "struct MomentPhotoActionsLayout", "struct MomentReceivedPhotoSurface")
         self.assertIn("AnyLayout(VStackLayout", shared_actions)
         self.assertIn("AnyLayout(HStackLayout", shared_actions)
         self.assertIn("dynamicTypeSize.isAccessibilitySize", shared_actions)
-        self.assertIn("minHeight: 44", actions)
+        self.assertIn("minHeight: 44", shared_controls)
         self.assertIn("notificationAccessibilityFocus = momentID", family)
 
     def test_host_photo_picker_uses_the_existing_bounded_handoff(self) -> None:

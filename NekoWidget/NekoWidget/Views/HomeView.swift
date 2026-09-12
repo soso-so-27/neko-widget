@@ -25,6 +25,7 @@ struct HomeView: View {
     let albumHighlights: [CuratedAlbumPresentation]
 
     @State private var visibleDetectedPhotoCount = 24
+    @State private var openedCatProfileIdentifier: String?
 
     init(
         scan: ScanPresentation,
@@ -76,6 +77,12 @@ struct HomeView: View {
                         LimitedAccessBanner(chooseMorePhotos: chooseMorePhotos)
                     }
 
+                    catProfilesSection
+
+                    if case .unavailable = photoSourceStatus {
+                        photoSourceRecoveryLink
+                    }
+
                     if !catPhotos.isEmpty {
                         automaticAlbumsSection
                     }
@@ -89,8 +96,6 @@ struct HomeView: View {
                     } else {
                         emptyPhotoState
                     }
-
-                    photoLibraryActions
                 } else {
                     photoAccessCard
                 }
@@ -107,6 +112,21 @@ struct HomeView: View {
                 }
                 .accessibilityLabel("設定")
                 .accessibilityIdentifier("window-settings-button")
+            }
+        }
+        .navigationDestination(item: $openedCatProfileIdentifier) { identifier in
+            if let profile = catProfilesPresentation.profiles.first(where: { $0.identifier == identifier }) {
+                CatProfileConfirmedPhotosView(
+                    profile: profile,
+                    allProfiles: catProfilesPresentation.profiles,
+                    actions: catProfilesActions,
+                    profileSettingsAlbumOptions: catProfilesPresentation.photoAlbumOptions
+                )
+            }
+        }
+        .onChange(of: catProfilesPresentation.profiles.map(\.identifier)) { _, identifiers in
+            if let openedCatProfileIdentifier, !identifiers.contains(openedCatProfileIdentifier) {
+                self.openedCatProfileIdentifier = nil
             }
         }
     }
@@ -188,26 +208,27 @@ struct HomeView: View {
                         .aspectRatio(1, contentMode: .fit)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("photo-hub-photo-\(photo.localIdentifier)")
                     .accessibilityLabel(detectedPhotoAccessibilityLabel(photo))
                     .accessibilityHint("写真を大きく表示します")
+                    .onAppear {
+                        revealNextDetectedPhotos(after: photo.localIdentifier)
+                    }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14))
-
-            if visibleDetectedPhotoCount < catPhotos.count {
-                Button {
-                    visibleDetectedPhotoCount += 24
-                } label: {
-                    Text("もっと見る")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityHint("次の写真を24枚表示します")
-            }
         }
         .padding(.top, 2)
         .accessibilityIdentifier("photo-hub-detected-grid")
+    }
+
+    private func revealNextDetectedPhotos(after localIdentifier: String) {
+        let displayedCount = min(visibleDetectedPhotoCount, catPhotos.count)
+        guard displayedCount > 0, displayedCount < catPhotos.count,
+              catPhotos[displayedCount - 1].localIdentifier == localIdentifier else { return }
+        // Append to the same grid. Reappearing cells from an earlier batch
+        // cannot reveal another page or replace the user's scroll position.
+        visibleDetectedPhotoCount = min(catPhotos.count, displayedCount + 24)
     }
 
     private var automaticAlbumsSection: some View {
@@ -288,93 +309,87 @@ struct HomeView: View {
         } ?? album.coverPhoto
     }
 
-    private var photoLibraryActions: some View {
-        VStack(spacing: 0) {
-            NavigationLink {
-                CatCandidateCurationView(
-                    excludedPhotos: excludedCatPhotos,
-                    sourceAlbums: photoSourceAlbums,
-                    sourceStatus: photoSourceStatus,
-                    isLimitedAccess: isLimitedAccess,
-                    isScanning: scan.isScanning,
-                    chooseMorePhotos: chooseMorePhotos,
-                    restoreCatCandidates: restoreCatCandidates,
-                    selectSourceAlbum: selectPhotoSourceAlbum,
-                    refreshSourceAlbums: refreshPhotoSourceAlbums
-                )
-            } label: {
-                photoLibraryActionRow(
-                    title: "写真の対象と整理",
-                    detail: photoSourceDetail,
-                    systemImage: "photo.on.rectangle.angled"
-                )
-            }
-
-            Divider()
-                .padding(.leading, 54)
-
+    private var catProfilesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
             NavigationLink {
                 CatProfilesView(
                     presentation: catProfilesPresentation,
                     actions: catProfilesActions
                 )
             } label: {
-                photoLibraryActionRow(
-                    title: "猫ごとの写真",
-                    detail: profileDetail,
-                    systemImage: "cat.fill"
-                )
+                HStack {
+                    Label("猫ごとの写真", systemImage: "cat.fill")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("photo-hub-cat-profiles")
+            .accessibilityHint("猫の一覧と追加を開きます")
+
+            if !catProfilesPresentation.profiles.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(catProfilesPresentation.profiles) { profile in
+                            Button {
+                                openedCatProfileIdentifier = profile.identifier
+                            } label: {
+                                VStack(spacing: 6) {
+                                    CatProfileThumbnail(photo: profile.coverPhoto)
+                                        .frame(width: 64, height: 64)
+                                    Text(profile.displayName)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.primary)
+                                        .multilineTextAlignment(.center)
+                                        .lineLimit(2)
+                                }
+                                .frame(width: dynamicTypeSize.isAccessibilitySize ? 132 : 84)
+                                .contentShape(Rectangle())
+                            }
+                            .accessibilityLabel("\(profile.displayName)の写真、\(profile.confirmedPhotoCount.formatted())枚")
+                            .accessibilityIdentifier("photo-hub-cat-\(profile.identifier)")
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
             }
         }
         .buttonStyle(.plain)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
-        .accessibilityIdentifier("photo-hub-library-actions")
     }
 
-    private func photoLibraryActionRow(
-        title: String,
-        detail: String,
-        systemImage: String
-    ) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var photoSourceRecoveryLink: some View {
+        NavigationLink {
+            CatCandidateCurationView(
+                excludedPhotos: excludedCatPhotos,
+                sourceAlbums: photoSourceAlbums,
+                sourceStatus: photoSourceStatus,
+                isLimitedAccess: isLimitedAccess,
+                isScanning: scan.isScanning,
+                chooseMorePhotos: chooseMorePhotos,
+                restoreCatCandidates: restoreCatCandidates,
+                selectSourceAlbum: selectPhotoSourceAlbum,
+                refreshSourceAlbums: refreshPhotoSourceAlbums
+            )
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("写真の対象を確認")
+                    Text("選んだアルバムを利用できません")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: "exclamationmark.circle")
             }
-            Spacer(minLength: 8)
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, minHeight: 64)
-        .contentShape(Rectangle())
-    }
-
-    private var photoSourceDetail: String {
-        switch photoSourceStatus {
-        case .allLibrary:
-            isLimitedAccess ? "選択した写真から探しています" : "すべての写真から探しています"
-        case let .selected(album):
-            "「\(album.title)」から探しています"
-        case .unavailable:
-            "写真の対象を確認してください"
-        }
-    }
-
-    private var profileDetail: String {
-        if catProfilesPresentation.profiles.isEmpty {
-            return "写真から猫を追加できます"
-        }
-        return "\(catProfilesPresentation.profiles.count.formatted())匹の写真・プロフィール"
+        .accessibilityHint("選んだアルバムを利用できません。写真の対象を確認します")
+        .accessibilityIdentifier("photo-hub-source-recovery")
     }
 
     private func detectedPhotoAccessibilityLabel(_ photo: PhotoPresentation) -> String {
