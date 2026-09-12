@@ -1,4 +1,4 @@
-# 写真詳細の回復・拡大とCI選択 — Build156後
+# 写真詳細の回復・拡大とCI選択 — Build157アップロード済み
 
 起点: 最新main `0780c7a`。worktree `C:/dev/neko-photo-detail-20260912` / branch `codex/photo-detail-quality-20260912`。研究worktreeは対象外。
 
@@ -36,3 +36,23 @@ Appleの[requestImage](https://developer.apple.com/documentation/photos/phimagem
 - 再レビューでPhotos retryのキャッシュ迂回修正を確認。送信詳細は既存runtimeのhash不一致→元JPEG復元に、同じrecord/spaceで再解決し元JPEGと一致する確認を追加。ボタン操作そのもののnative fixtureは製品Model/Storeを通らないため追加せず、実機未確認として区別する。
 - CI選択20件、既存screenshot workflow12件を主担当でも実行成功。純粋な補間なしText/明示スタイル以外、追加/削除/移動/mode/type変更、条件付きfixture変更はfull。scope/versionが一致する成功jobまたはfullだけをmain再利用の根拠にする。縮小経路のmacOS実行時間は未実測。
 - 初回候補CI `34690078543` は旧表記 `if !showsFullImage, !degraded` を探す静的grepで停止（Swift policy実行は成功）。製品の新しい最終画像/エラーなし/thumbnail限定条件にgrepを追随させ、同stepの全shellガードをローカル再実行成功。未完了のnative/ビルドは次候補で実行する。
+
+## 候補eef6182の確認
+
+- CI `34690287093` attempt1: Release/境界ビルド成功、Simulator smoke成功。iOS18.5/26.2の共有runtimeは各37ケース成功。送信詳細のhash拒否→同じrecordの元JPEG復旧確認も通過。
+- iOS26.2 native主suiteは31件/失敗0。追加の `testPartialPhotoRetryPreservesZoomAndVisibleRegion` は14.274秒で成功。120pxプレビュー→再読み込み→最終画像、zoomとoffset保持、同じ写真IDの保存を確認。
+- artifact `10297556015` の `runtime-scope.json` はcommit `eef618218b03e69a39b1b4b563687dfd4e8dda55` / `full-v1` / 両OS / 全UI選択 / Gallery=trueと一致。取得先は `output/photo-detail/native`。
+- 追加試験の前後PNGを目視確認。画像の表示範囲と下部操作を保ち、回復後に再読み込みボタンが消える。合成イラストによるUI確認であり、実写真の画質評価ではない。
+- 同attemptの追加白背景/最大文字Widget Gallery撮影だけ、検索結果に「ねこのまど」が出ず失敗。最終AX/PNGでもSearch Widgetsの値が正しく、No Results表示、背後にアプリアイコンがあることを確認。Widget本体/Shared/撮影テストの差分はなく、full時のerase→boot→build/install手順も従来と同じ。独立レビューでも製品変更との因果は見つからず、Simulatorカタログ側の失敗が有力（登録遅延とは未断定）。
+- 成功条件は変えず、同じSHAでfailed jobだけ1回再実行（attempt2）。成功済みbuild/smokeは再実行しない。現状は共有runtime・アプリUI・Galleryが同じjobなので、その中の成功ケースも再実行される。
+- 残るCI構成の課題: Galleryを独立jobに分け、同種の環境失敗だけを局所再実行できるようにする余地がある。今回の軽い表示変更のscope選択とは別で、未着手。現行の必要ジョブ証拠を弱めて今回の失敗を成功扱いにはしない。
+- attempt2は全成功（sharing job `103551473803`、最終artifact `10298640828`）。両OS各37ケース、native31件/失敗0、追加の白背景/最大文字・文字なしGalleryも成功。追加のretry/zoom試験は14.484秒。job開始12:11:33Z、matrix終了13:04:23Z。写真の目視には同じSHAのattempt1のPNGを使用し、同じ画面のartifact再取得はしていない。
+
+## mainとTestFlight
+
+- 製品SHA `eef618218b03e69a39b1b4b563687dfd4e8dda55` をmainへfast-forward反映。main CI `34695491530` 成功。計画ログでcandidate `34690287093` の同じSHA/full-v1の必要ジョブ成功を再利用したことを確認。
+- TestFlight157: run `34695533104` / job `103558256728`、署名・検証・アップロード成功。既存testflight Environmentで従来どおりmedia-staging＋同じ公式preview feed、既存内部グループ向け。外部テスター追加・審査提出・課金開始はしていない。
+- 署名artifact `10298108507`、diagnostics `10298651258`。署名artifact内のmetadataでversion1.0 / build157 / sourceCommit eef6182 / releaseMode media-staging / run34695533104を確認。ローカルは `output/photo-detail/signed-157/moderation-release-metadata.json`。
+- **残る配布操作**: 長いCI待機中にApp Store Connectのセッションが失効。アップロードは完了したが、Apple側の処理完了・既存内部グループ「自分用」（1人）の157「テスト中」表示確認と、日本語のテスト内容保存はログイン待ち。利用者へログインを依頼済み。自動配布の有無を未確認のまま完了扱いにしない。
+- ログイン後は既存グループ `d315ba6b-0def-4490-8037-d2b17b13c4d6` で157を確認し、`output/photo-detail/testflight-notes.txt` の内容を保存する。再ビルドや再アップロードは不要。ASC appID6801962436 / team c0938ad3-2941-4079-8248-0769666c8fd8。
+- 原本との実写真の精細さ比較、実iCloudの障害回復、Photos権限変更後の実機操作、送信済み詳細retryボタン自体のnative操作は未確認。確認済みの合成UI/Store runtimeと区別する。
