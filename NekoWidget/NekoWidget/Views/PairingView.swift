@@ -358,12 +358,18 @@ struct PairingView: View {
                 Label("相手と接続済み", systemImage: "checkmark.seal.fill")
                     .foregroundStyle(.green)
                 if let phrase = state.verificationPhrase {
-                    LabeledContent("確認フレーズ", value: phrase)
-                        .font(.caption)
+                    DisclosureGroup("確認フレーズ") {
+                        Text(phrase)
+                            .font(.caption)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel("確認フレーズ、\(phrase.replacingOccurrences(of: "・", with: "、"))")
+                    }
                 }
             } footer: {
                 Text(model.isMediaSyncEnabled
-                    ? "写真は共有シートで1枚ずつ確認した時だけ届きます。"
+                    ? "写真は、選んで送ったときだけ共有されます。"
                     : "このビルドではペアリングだけが有効で、写真同期は無効です。")
             }
             if model.isMediaSyncEnabled && !model.hasCurrentMediaSharingConsent {

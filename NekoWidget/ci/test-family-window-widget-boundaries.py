@@ -1814,8 +1814,8 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn('FamilyWindowView(initialPresentation: .settings)', settings)
         self.assertIn('Text("まどの設定")', settings)
         self.assertIn('Image(systemName: "rectangle.split.2x2")', settings)
-        self.assertIn('Text("名前・相手・iPhone")', family)
-        self.assertIn('"まど名の変更・参加中のiPhoneを確認"', family)
+        self.assertIn('Text("名前と接続")', family)
+        self.assertIn('"まどの名前、接続相手、使っているiPhoneを確認します"', family)
         self.assertIn("savePhotoSettings(requestedRange, requestedAlbumLimit)", settings)
         self.assertIn(
             "await saveDetectionSettings(requestedConfidence, requestedMinimumArea)",

@@ -1095,28 +1095,21 @@ struct FamilyWindowView: View {
             showsWidgetGuide = true
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: "rectangle.on.rectangle")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        Color.accentColor.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
+                settingsSymbol("rectangle.on.rectangle")
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ウィジェットの表示")
                         .font(.subheadline.weight(.semibold))
-                    Text(model.isReportOnly
-                        ? "共有が終了したため、写真は表示されません"
-                        : "ホーム画面に表示するまどを選ぶ")
-                        .font(.caption)
-                        .foregroundStyle(model.isReportOnly ? Color.orange : .secondary)
+                    if model.isReportOnly {
+                        Text("共有が終了したため、写真は表示されません")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                settingsChevron
             }
+            .frame(minHeight: 44)
             .padding(14)
             .background(
                 Color(uiColor: .secondarySystemGroupedBackground),
@@ -1124,38 +1117,35 @@ struct FamilyWindowView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityHint("ホーム画面に表示するまどの選び方を確認します")
         .accessibilityIdentifier("family-window-widget-guide")
     }
 
     private var notificationSettingsCard: some View {
-        let layout = usesVerticalNotificationLayout
+        let layout = usesAccessibleSettingsLayout
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
             : AnyLayout(HStackLayout(spacing: 12))
         return layout {
             HStack(spacing: 12) {
-                Image(systemName: notificationAuthorizationState == .enabled
+                settingsSymbol(notificationAuthorizationState == .enabled
                     ? "bell.fill"
                     : "bell")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        Color.accentColor.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("写真とハートの通知")
+                    Text("通知")
                         .font(.subheadline.weight(.semibold))
+                        .accessibilityLabel("写真とハートの通知")
                     Text(notificationStatusText)
                         .font(.caption)
                         .foregroundStyle(notificationStatusColor)
                 }
+                .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("family-window-notification-settings")
-            if !usesVerticalNotificationLayout { Spacer(minLength: 0) }
+            if !usesAccessibleSettingsLayout { Spacer(minLength: 0) }
             notificationAction
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(
             Color(uiColor: .secondarySystemGroupedBackground),
@@ -1163,7 +1153,7 @@ struct FamilyWindowView: View {
         )
     }
 
-    private var usesVerticalNotificationLayout: Bool {
+    private var usesAccessibleSettingsLayout: Bool {
 #if DEBUG
         if Self.isSettingsFixture {
             // The fixture applies the text environment to settings content;
@@ -1172,6 +1162,26 @@ struct FamilyWindowView: View {
         }
 #endif
         return dynamicTypeSize.isAccessibilitySize
+    }
+
+    @ViewBuilder
+    private func settingsSymbol(_ systemName: String) -> some View {
+        // Text carries the meaning. At accessibility sizes, give it the full
+        // row instead of reserving a column for a decorative symbol.
+        if !usesAccessibleSettingsLayout {
+            Image(systemName: systemName)
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(.tint)
+                .frame(width: 32, height: 32)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var settingsChevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -1253,10 +1263,7 @@ struct FamilyWindowView: View {
     }
 
     private var sharingManagementLink: some View {
-        let canEditWindowName = model.pairingState.map {
-            $0.role != .invitee && $0.localDeviceIsAdditional != true
-        } ?? false
-        return NavigationLink {
+        NavigationLink {
 #if DEBUG
             if Self.isSettingsFixture {
                 ContentUnavailableView("表示確認用の画面です", systemImage: "person.2",
@@ -1269,40 +1276,23 @@ struct FamilyWindowView: View {
 #endif
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: "person.2.fill")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 40, height: 40)
-                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                settingsSymbol("person.2.fill")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("名前・相手・iPhone")
+                    Text("名前と接続")
                         .font(.subheadline.weight(.semibold))
-                    Label(
-                        model.isReportOnly
+                    if model.isReportOnly || model.isShowingLastKnownState {
+                        Text(model.isReportOnly
                             ? "共有は終了しています"
-                            : model.isShowingLastKnownState
-                            ? "接続状態を確認できません"
-                            : (canEditWindowName
-                                ? "まど名の変更・参加中のiPhoneを確認"
-                                : "接続相手・参加中のiPhoneを確認"),
-                        systemImage: model.isReportOnly
-                            ? "hand.raised.fill"
-                            : model.isShowingLastKnownState
-                            ? "exclamationmark.triangle.fill"
-                            : (canEditWindowName ? "pencil" : "checkmark.circle.fill")
-                    )
-                        .font(.caption)
-                        .foregroundStyle(
-                            model.isReportOnly || model.isShowingLastKnownState
-                                ? Color.orange
-                                : Color.secondary
-                        )
+                            : "接続状態を確認できません")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                settingsChevron
             }
+            .frame(minHeight: 44)
             .padding(14)
             .background(
                 Color(uiColor: .secondarySystemGroupedBackground),
@@ -2212,8 +2202,13 @@ struct FamilyWindowView: View {
         DisclosureGroup(isExpanded: $showsPrivacyDetails) {
             trustLinks
         } label: {
-            Label("安全とプライバシー", systemImage: "lock.shield")
-                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 12) {
+                settingsSymbol("lock.shield")
+                Text("安全とプライバシー")
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(minHeight: 44)
         }
         .padding(14)
         .background(
