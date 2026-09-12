@@ -1862,12 +1862,15 @@ struct PhotoBrowserView: View {
     @ViewBuilder
     private func photoDate(_ photo: PhotoPresentation) -> some View {
         if let creationDate = photo.creationDate {
-            let dateText = creationDate.formatted(.dateTime.year().month().day())
+            let spokenDate = creationDate.formatted(.dateTime.year().month().day())
+            let dateText = dynamicTypeSize.isAccessibilitySize
+                ? creationDate.formatted(date: .numeric, time: .omitted) : spokenDate
             if dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: creationDate) }) == true {
                 Text(dateText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(minHeight: 44)
+                    .accessibilityLabel(spokenDate)
             } else {
                 NavigationLink {
                     dayPhotosView(for: creationDate)
@@ -1879,7 +1882,7 @@ struct PhotoBrowserView: View {
                         .frame(minHeight: 44)
                 }
                 .accessibilityLabel("この日の写真をすべて見る")
-                .accessibilityValue(dateText)
+                .accessibilityValue(spokenDate)
                 .accessibilityIdentifier("photo-browser-same-day")
             }
         } else {

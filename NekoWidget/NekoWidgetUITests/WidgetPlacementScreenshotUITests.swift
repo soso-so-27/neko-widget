@@ -262,12 +262,24 @@ final class WidgetPlacementScreenshotUITests: XCTestCase {
                     fail("The Widget size page cannot be identified.", application: springboard)
                     return
                 }
-                let start = springboard.coordinate(
-                    withNormalizedOffset: CGVector(dx: 0.85, dy: 0.57)
+                // Begin inside the displayed preview, above its footer and
+                // heart. A screen-relative drag can start in the small
+                // preview's surrounding whitespace and fail to page.
+                guard let visiblePreview = gallery.buttons.matching(
+                    NSPredicate(format: "value BEGINSWITH %@", "Widget,")
+                ).allElementsBoundByIndex.first(where: {
+                    $0.exists && springboard.frame.contains($0.frame)
+                        && abs($0.frame.midX - springboard.frame.midX) < 20
+                }) else {
+                    fail("The visible Widget preview cannot be located for paging.", application: springboard)
+                    return
+                }
+                let start = visiblePreview.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.8, dy: 0.3)
                 )
-                let end = springboard.coordinate(
-                    withNormalizedOffset: CGVector(dx: 0.15, dy: 0.57)
-                )
+                let end = springboard.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: springboard.frame.minX + 20,
+                                         dy: visiblePreview.frame.minY + visiblePreview.frame.height * 0.3))
                 start.press(forDuration: 0.1, thenDragTo: end)
                 let changedPage = XCTNSPredicateExpectation(
                     predicate: NSPredicate(format: "value != %@", previousPage),

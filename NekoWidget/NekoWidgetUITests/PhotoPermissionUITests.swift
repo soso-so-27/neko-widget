@@ -96,7 +96,11 @@ final class OfficialWindowUITests: XCTestCase {
         capture("official-photo-large-text-zoom", app)
         app.buttons["official-photo-information"].tap()
         XCTAssertTrue(app.navigationBars["写真の情報"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["撮影日：2026-09-01"].exists)
+        let photographedOn = app.staticTexts["撮影日：2026-09-01"]
+        for _ in 0..<5 where !photographedOn.isHittable {
+            app.scrollViews["official-photo-information-content"].swipeUp()
+        }
+        XCTAssertTrue(photographedOn.isHittable)
         capture("official-photo-information-large-text", app)
         app.buttons["official-photo-information-close"].tap()
         XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
@@ -130,8 +134,12 @@ final class OfficialWindowUITests: XCTestCase {
         preview.tap()
         let retryPhoto = app.buttons["official-photo-retry"]
         XCTAssertTrue(retryPhoto.waitForExistence(timeout: 5))
+        XCTAssertEqual(retryPhoto.label, "写真をもう一度読み込む")
+        XCTAssertGreaterThanOrEqual(retryPhoto.frame.height, 44)
         retryPhoto.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10), "Same-file retry in the detail must reload the photo")
+        let recoveredPhoto = app.images["photo-detail-zoom-surface"]
+        XCTAssertTrue(recoveredPhoto.waitForExistence(timeout: 10), "Same-file retry must load the detail's photo, not just its background overview")
+        XCTAssertTrue(recoveredPhoto.isHittable)
         XCTAssertTrue(app.navigationBars["確認用の猫"].exists)
         capture("official-photo-retry-recovered", app)
         app.buttons["閉じる"].tap()
@@ -320,7 +328,11 @@ final class OfficialWindowUITests: XCTestCase {
         expectation(for: NSPredicate { _, _ in !information.exists }, evaluatedWith: app)
         waitForExpectations(timeout: 40)
         XCTAssertTrue(app.staticTexts["写真の掲載期間が終わりました"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+        // The full-screen dismiss animates after the deadline. Wait for its
+        // disappearing accessibility tree, while still requiring no photo.
+        let loadedPhoto = app.descendants(matching: .any)["official-window-image-loaded"].firstMatch
+        expectation(for: NSPredicate { _, _ in !loadedPhoto.exists }, evaluatedWith: app)
+        waitForExpectations(timeout: 5)
         capture("official-photo-expired-while-open", app)
     }
 
@@ -850,7 +862,11 @@ final class SoloMemoriesUITests: XCTestCase {
                                                         "day-photos-photo-")).count, 2)
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["1 / 2"].exists, "Two back actions return to the originally opened photo")
+        // The entry browser contains only the first photo; the same-day
+        // collection contains two. Only its second photo was saved above.
+        XCTAssertTrue(app.buttons["思い出に残す"].isHittable,
+                      "Two back actions return to the original, unsaved photo")
+        XCTAssertFalse(element("photo-browser-memory-saved-state", in: app).exists)
         app.terminate()
     }
 

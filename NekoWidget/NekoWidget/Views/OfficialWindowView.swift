@@ -683,6 +683,7 @@ struct OfficialWindowView: View {
 
 private struct OfficialPhotoDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showsInformation = false
     let photo: OfficialCatPhoto
     let store: OfficialWindowStore
@@ -736,6 +737,7 @@ private struct OfficialPhotoDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(20)
                     .textSelection(.enabled)
                 }
+                .accessibilityIdentifier("official-photo-information-content")
                 .navigationTitle("写真の情報").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) {
                     Button { showsInformation = false } label: {
@@ -745,6 +747,8 @@ private struct OfficialPhotoDetailView: View {
                     .accessibilityIdentifier("official-photo-information-close")
                 } }
             }
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
+            .preferredColorScheme(.dark)
         }
     }
 
@@ -791,33 +795,42 @@ private struct OfficialPhotoImage: View {
         ZStack {
             Color(.secondarySystemGroupedBackground)
             if let image {
-                if allowsZoom {
-                    MomentZoomablePhoto(image: image)
-                } else if fillsFrame {
-                    GeometryReader { geometry in
-                        Image(uiImage: image).resizable().interpolation(.high).scaledToFill()
-                            .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                ZStack {
+                    if allowsZoom {
+                        MomentZoomablePhoto(image: image)
+                    } else if fillsFrame {
+                        GeometryReader { geometry in
+                            Image(uiImage: image).resizable().interpolation(.high).scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        }
+                    } else {
+                        Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
                     }
-                } else {
-                    Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("\(photo.catName)の写真")
+                .accessibilityIdentifier("official-window-image-loaded")
             } else if isLoading {
                 ProgressView().padding().accessibilityLabel("写真を読み込んでいます")
+                    .accessibilityIdentifier("official-window-image-loading")
             } else {
                 VStack(spacing: 12) {
                     Label("写真を読み込めませんでした", systemImage: "photo")
                         .font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("official-window-image-unavailable")
                     if let onRetry {
-                        Button("もう一度読み込む", action: onRetry)
-                            .frame(minHeight: 44)
-                            .accessibilityIdentifier("official-photo-retry")
+                        Button(action: onRetry) {
+                            Text("もう一度読み込む")
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("写真をもう一度読み込む")
+                        .accessibilityIdentifier("official-photo-retry")
                     }
                 }.padding()
             }
         }
-        .accessibilityLabel("\(photo.catName)の写真")
-        .accessibilityIdentifier(image != nil ? "official-window-image-loaded"
-                                 : isLoading ? "official-window-image-loading" : "official-window-image-unavailable")
         .task(id: "\(photo.imageFilename)-\(isRefreshing)") {
             // A feed check must not replace an already displayed UIImage and
             // reset its zoom. A new cache revision recreates this view instead.
