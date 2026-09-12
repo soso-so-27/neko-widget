@@ -679,7 +679,9 @@ jobs:
           fi
           grep -Fq 'options.deliveryMode = .opportunistic' \
             NekoWidget/Views/PhotoAssetImageView.swift
-          grep -Fq 'if !showsFullImage, !degraded {' \
+          grep -Fq 'if !degraded && !failed {' \
+            NekoWidget/Views/PhotoAssetImageView.swift
+          grep -Fq 'if !loadKey.showsFullImage {' \
             NekoWidget/Views/PhotoAssetImageView.swift
           grep -Fq 'PhotoThumbnailCropPolicy.cropRect(' \
             NekoWidget/Views/PhotoAssetImageView.swift

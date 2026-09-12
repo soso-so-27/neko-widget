@@ -35,3 +35,4 @@ Appleの[requestImage](https://developer.apple.com/documentation/photos/phimagem
 - CIは別担当が実装し主担当が独立レビュー。キーワードによる危険変更の除外だけでは十分でないため、純粋な表示行の変更に限定し、それ以外をfullへ戻す方針へ絞った。
 - 再レビューでPhotos retryのキャッシュ迂回修正を確認。送信詳細は既存runtimeのhash不一致→元JPEG復元に、同じrecord/spaceで再解決し元JPEGと一致する確認を追加。ボタン操作そのもののnative fixtureは製品Model/Storeを通らないため追加せず、実機未確認として区別する。
 - CI選択20件、既存screenshot workflow12件を主担当でも実行成功。純粋な補間なしText/明示スタイル以外、追加/削除/移動/mode/type変更、条件付きfixture変更はfull。scope/versionが一致する成功jobまたはfullだけをmain再利用の根拠にする。縮小経路のmacOS実行時間は未実測。
+- 初回候補CI `34690078543` は旧表記 `if !showsFullImage, !degraded` を探す静的grepで停止（Swift policy実行は成功）。製品の新しい最終画像/エラーなし/thumbnail限定条件にgrepを追随させ、同stepの全shellガードをローカル再実行成功。未完了のnative/ビルドは次候補で実行する。
