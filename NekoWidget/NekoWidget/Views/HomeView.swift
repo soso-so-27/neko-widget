@@ -187,6 +187,8 @@ struct HomeView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("すべての猫写真")
                     .font(.title3.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("photo-hub-detected-grid")
                 Spacer()
                 Text("\(catPhotos.count.formatted())枚")
                     .font(.subheadline.monospacedDigit())
@@ -219,7 +221,6 @@ struct HomeView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .padding(.top, 2)
-        .accessibilityIdentifier("photo-hub-detected-grid")
     }
 
     private func revealNextDetectedPhotos(after localIdentifier: String) {
@@ -232,12 +233,19 @@ struct HomeView: View {
     }
 
     private var automaticAlbumsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        let headerLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 12))
+        return VStack(alignment: .leading, spacing: 10) {
+            headerLayout {
                 Text("自動アルバム")
                     .font(.title3.bold())
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("photo-hub-automatic-albums")
 
-                Spacer(minLength: 8)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Spacer(minLength: 8)
+                }
 
                 NavigationLink(value: PhotosRoute.automaticAlbums) {
                     HStack(spacing: 3) {
@@ -246,6 +254,7 @@ struct HomeView: View {
                             .font(.caption.weight(.bold))
                     }
                     .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
                 }
                 .accessibilityIdentifier("photos-open-automatic-albums")
                 .accessibilityHint("自動で整理されたすべてのアルバムを開きます")
@@ -271,7 +280,6 @@ struct HomeView: View {
                 }
             }
         }
-        .accessibilityIdentifier("photo-hub-automatic-albums")
     }
 
     private var albumHighlightColumns: [GridItem] {
@@ -321,6 +329,7 @@ struct HomeView: View {
                     Label("猫ごとの写真", systemImage: "cat.fill")
                         .font(.headline)
                         .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))

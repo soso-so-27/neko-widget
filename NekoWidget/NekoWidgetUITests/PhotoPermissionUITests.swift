@@ -900,19 +900,24 @@ final class SoloMemoriesUITests: XCTestCase {
             var arguments = ["--family-window-settings-fixture"]
             if largeText { arguments.append("--family-window-settings-large-text") }
             let app = launch("family-settings", arguments: arguments)
+            // This fixture contains one shipping settings ScrollView. Keep
+            // gestures inside it instead of swiping the application window.
+            let settings = app.scrollViews.firstMatch
+            XCTAssertTrue(settings.waitForExistence(timeout: 10))
             let widget = app.buttons["family-window-widget-guide"]
             XCTAssertTrue(widget.waitForExistence(timeout: 10))
             XCTAssertTrue(widget.isHittable)
+            if largeText { capture("window-settings-largest-text-before-scroll") }
             let notification = app.buttons["family-window-notification-open-settings"]
-            for _ in 0..<5 where !notification.isHittable { app.swipeUp() }
+            for _ in 0..<5 where !notification.isHittable { settings.swipeUp() }
             XCTAssertTrue(notification.isHittable)
-            XCTAssertGreaterThanOrEqual(notification.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(notification.frame.height + 0.001, 44)
             capture(largeText ? "window-settings-largest-text" : "window-settings")
             let management = app.buttons["family-window-sharing-settings"]
-            for _ in 0..<5 where !management.isHittable { app.swipeUp() }
+            for _ in 0..<5 where !management.isHittable { settings.swipeUp() }
             XCTAssertTrue(management.isHittable)
-            let privacy = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "安全とプライバシー")).firstMatch
-            for _ in 0..<5 where !privacy.isHittable { app.swipeUp() }
+            let privacy = app.buttons.matching(identifier: "family-window-privacy-details").firstMatch
+            for _ in 0..<5 where !privacy.isHittable { settings.swipeUp() }
             XCTAssertTrue(privacy.isHittable)
             privacy.tap()
             capture(largeText ? "window-settings-safety-largest-text" : "window-settings-safety")
@@ -927,7 +932,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(retry.waitForExistence(timeout: 15))
         XCTAssertEqual(retry.label, "写真をもう一度読み込む")
         XCTAssertTrue(retry.isHittable)
-        XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+        // AX converts point frames to floating values (44 can be 43.99999999999994).
+        XCTAssertGreaterThanOrEqual(retry.frame.height + 0.001, 44)
         capture("local-photo-load-failed")
         retry.tap()
         let image = app.images["photo-detail-zoom-surface"]
@@ -1577,6 +1583,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             for _ in 0..<4 where !latest.isHittable { app.scrollViews.firstMatch.swipeDown() }
             attach(app, name: "received-layout-\(variant)")
             latest.tap()
+            XCTAssertFalse(app.staticTexts["received-fixture-action-request"].exists,
+                           "Cancelling a fixture request must not leave debug rows in the photo footer.")
             verifySharpDetail(app, name: "received-detail-\(variant)")
             let detailCaption = app.buttons["photo-detail-read-caption"]
             XCTAssertTrue(detailCaption.exists)
@@ -1669,6 +1677,9 @@ final class MomentDeliveryComposerUITests: XCTestCase {
         let request = app.staticTexts["received-fixture-action-request"]
 
         tapReceivedDetailControl(app, identifier: "family-window-save-memory")
+        XCTAssertFalse(latest.exists, "The full-screen fixture must hide the presenting list from accessibility.")
+        XCTAssertEqual(app.staticTexts.matching(identifier: "received-fixture-action-request").count, 1,
+                       "Only the visible photo may expose the recorded request.")
         XCTAssertEqual(request.label, "save|0")
         XCTAssertFalse(save.isEnabled)
         XCTAssertFalse(heart.isEnabled, "A pending action must prevent another request.")
@@ -1725,7 +1736,8 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             else { footer.swipeUp() }
         }
         XCTAssertTrue(control.isHittable)
-        XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(control.frame.height + 0.001, 44,
+                                    "The action must retain a 44-point target, allowing only floating-point rounding.")
         control.tap()
     }
 

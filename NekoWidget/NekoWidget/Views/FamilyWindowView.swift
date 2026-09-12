@@ -1051,7 +1051,10 @@ struct FamilyWindowView: View {
 
     private var windowSettingsContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
+            // These four settings groups have a fixed count. Lay them out
+            // together so large text does not need lazy section measurement
+            // while the user scrolls to notification and safety controls.
+            VStack(alignment: .leading, spacing: 24) {
                 Text(model.windowDisplayName)
                     .font(.title2.bold())
                     .fixedSize(horizontal: false, vertical: true)
@@ -2523,6 +2526,8 @@ struct MomentReceivedLayoutFixture: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("received-fixture-latest")
                     actionControls(photoID: 0)
+                    Text("操作表示の確認用です。通信・写真への保存は行いません。")
+                        .font(.caption2).foregroundStyle(.secondary)
                     Text("以前に届いた写真")
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 10, alignment: .topLeading), count: largeText ? 1 : 2), spacing: 10) {
                         ForEach(0..<4) { index in
@@ -2543,6 +2548,9 @@ struct MomentReceivedLayoutFixture: View {
                 }
                 .frame(maxWidth: CommandLine.arguments.contains("--received-narrow") ? 288 : .infinity)
                 .padding(16)
+                // iOS 26 can retain this presenting list in the full-screen
+                // cover's AX tree. Only the visible photo may expose controls.
+                .accessibilityHidden(selection != nil)
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("届いた写真")
@@ -2587,13 +2595,11 @@ struct MomentReceivedLayoutFixture: View {
                 requestMemoryRemoval: { actionFixture.request(.remove, photoID: photoID) },
                 sendHeart: { actionFixture.request(.heart, photoID: photoID) }
             )
-            Text("操作表示の確認用です。通信・写真への保存は行いません。")
-                .font(.caption2).foregroundStyle(.secondary)
-            if let request = actionFixture.lastRequest, request.photoID == photoID {
+            // Fixture-only state controls exist during an explicit pending
+            // request. Idle detail geometry contains only the shipping footer.
+            if let request = actionFixture.pending, request.photoID == photoID {
                 Text(verbatim: request.description).font(.caption2)
                     .accessibilityIdentifier("received-fixture-action-request")
-            }
-            if actionFixture.pending?.photoID == photoID {
                 Button { actionFixture.finishPresentation() } label: {
                     Text("確認用の完了状態を表示").frame(minHeight: 44)
                 }

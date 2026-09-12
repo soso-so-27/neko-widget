@@ -1179,7 +1179,6 @@ private struct WindowListView: View {
                                     windowCard(window)
                                 }
                             }
-                            .accessibilityIdentifier("window-list-setup")
                         }
                     }
 
