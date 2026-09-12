@@ -28,5 +28,9 @@
 ## 検証状況
 
 - 共有／Widget境界: 61件、成功（既存skip 1件）。
-- 独立レビュー、Swift build、状態別Swift検証、native UI撮影: 進行中。
+- 独立レビュー: 取り消しの影響範囲を確認文へ明示し、failed専用の確認は戻るボタンを保つalertに修正。通信・鍵・CASの境界に他の具体的な問題は見つからなかった。
+- 候補a3a8c40、CI34699573983: Swift build・状態別Swift検証成功。SMOKE内の新しいリモート失敗UIテストは通常文字／最大AX5とも成功し、確認から戻る・取り消し失敗後の保持・次の成功での状態復帰を撮影できた。
+- 同SMOKEの残る2失敗はテストの期待に起因。disabledビルドへmedia文言を要求していた点は、ビルドの表示と対応する説明を照合するよう修正。従来のlocalDraftテストは上端で下向きスワイプだけを続けていた。失敗AXでunpairedの名前入力・仮保存へ戻り、スクロール位置が0%であることを確認。状態復帰を明示的に検証後、下にある設定選択へ進む操作へ修正した。
+- 保存したSMOKEの再現画像・AXは `output/pairing-recovery/smoke-native/`。これは写真共有disabledのiOS 18.6であり、media-stagingのiOS26画面とは分ける。
+- 修正したテストのCI、media-stagingのiOS26撮影確認は継続中。失敗・中断ジョブを成功として数えない。
 - 新規配布: 未実施。候補CI → main CI → 内部TestFlightの順序を守る。

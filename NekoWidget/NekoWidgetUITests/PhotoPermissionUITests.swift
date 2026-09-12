@@ -221,9 +221,15 @@ final class OfficialWindowUITests: XCTestCase {
             for _ in 0..<6 { if restart.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(restart.isHittable, "Failed setup must have a recovery action")
             restart.tap()
+            expectation(for: NSPredicate(format: "exists == false"),
+                        evaluatedWith: app.staticTexts["pairing-failure-title"])
+            waitForExpectations(timeout: 5)
             let create = app.buttons["新しいまどを作る"]
-            for _ in 0..<6 { if create.isHittable { break }; app.swipeDown() }
+            let setupForm = app.collectionViews.firstMatch
+            XCTAssertTrue(setupForm.waitForExistence(timeout: 5))
+            for _ in 0..<6 { if create.isHittable { break }; setupForm.swipeUp() }
             XCTAssertTrue(create.waitForExistence(timeout: 5), "Recovery reuses the slot for the setup choices")
+            XCTAssertTrue(create.isHittable)
             app.navigationBars["ねことも"].buttons.element(boundBy: 0).tap()
             XCTAssertTrue(addition.waitForExistence(timeout: 5), "Closing setup returns to the window list")
             addition.tap()
@@ -284,6 +290,8 @@ final class OfficialWindowUITests: XCTestCase {
         let app = launchFailedSetup("unavailable", largestText: false)
         let diagnostics = app.buttons["pairing-recovery-diagnostics"]
         XCTAssertTrue(diagnostics.waitForExistence(timeout: 10))
+        let expectedScope = app.staticTexts["このBuildでは写真を保存・送信しません"].exists
+            ? "共有鍵だけを設定し、写真は送りません" : "確認した1枚だけを届けます"
         XCTAssertTrue(diagnostics.isHittable)
         XCTAssertFalse(app.buttons["pairing-recovery-action"].exists)
         capture("pairing-failed-incomplete-information", app)
@@ -294,7 +302,8 @@ final class OfficialWindowUITests: XCTestCase {
         XCTAssertTrue(information.waitForExistence(timeout: 5))
         information.tap()
         XCTAssertTrue(app.navigationBars["共有について"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["確認した1枚だけを届けます"].exists)
+        XCTAssertTrue(app.staticTexts["共有されるもの"].exists)
+        XCTAssertTrue(app.staticTexts[expectedScope].exists)
         app.terminate()
     }
 
