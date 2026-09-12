@@ -1821,6 +1821,7 @@ struct WindowListNavigationFixture: View {
             .tabItem { Label("まど", systemImage: "rectangle.split.2x2") }.tag(2)
         }
         .environment(\.dynamicTypeSize,
+                     CommandLine.arguments.contains("--window-list-largest-text") ? .accessibility5 :
                      CommandLine.arguments.contains("--window-list-large-text") ? .accessibility3 : .large)
         .preferredColorScheme(CommandLine.arguments.contains("--window-list-dark") ? .dark : nil)
     }

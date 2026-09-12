@@ -236,6 +236,92 @@ final class OfficialWindowUITests: XCTestCase {
     }
 
     @MainActor
+    func testFailedRemoteSetupHasOneRecoveryPathAndPreservesItAfterFailure() {
+        continueAfterFailure = false
+        for largeText in [false, true] {
+            let app = launchFailedSetup("remote", largestText: largeText)
+            let title = app.staticTexts["pairing-failure-title"]
+            let restart = app.buttons["pairing-recovery-action"]
+            XCTAssertTrue(title.waitForExistence(timeout: 10))
+            XCTAssertEqual(app.staticTexts.matching(identifier: "pairing-failure-title").count, 1)
+            XCTAssertEqual(app.textFields.count, 0, "A failed connection must not offer name sharing")
+            XCTAssertFalse(app.staticTexts["画面の案内を確認してください"].exists)
+            XCTAssertFalse(app.staticTexts["まどの設定を完了できませんでした"].exists)
+            capture(largeText ? "pairing-failed-remote-largest-initial" : "pairing-failed-remote", app)
+            if largeText && !restart.isHittable { app.swipeUp() }
+            XCTAssertTrue(restart.isHittable, "Recovery comes before secondary settings and explanation")
+            XCTAssertEqual(restart.label, "つなぎ直す")
+            XCTAssertGreaterThanOrEqual(restart.frame.height + 0.001, 44)
+            capture(largeText ? "pairing-failed-remote-largest-action" : "pairing-failed-remote-action", app)
+            restart.tap()
+            let cancel = pairingConfirmationButton("pairing-reset-cancel", title: "戻る", in: app)
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+            capture(largeText ? "pairing-reset-confirmation-largest" : "pairing-reset-confirmation", app)
+            cancel.tap()
+            XCTAssertTrue(restart.waitForExistence(timeout: 5), "Cancel must keep the failed setup")
+            restart.tap()
+            pairingConfirmationButton("pairing-reset-confirm", title: "取り消してつなぎ直す", in: app).tap()
+            let error = app.staticTexts["pairing-recovery-error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 5))
+            XCTAssertEqual(app.staticTexts.matching(identifier: "pairing-recovery-error").count, 1)
+            XCTAssertFalse(app.buttons["新しいまどを作る"].exists,
+                           "A cancellation failure must not show fresh setup as if it succeeded")
+            for _ in 0..<2 where !restart.isHittable { app.swipeUp() }
+            XCTAssertTrue(restart.isHittable)
+            capture(largeText ? "pairing-reset-kept-after-failure-largest" : "pairing-reset-kept-after-failure", app)
+            restart.tap()
+            pairingConfirmationButton("pairing-reset-confirm", title: "取り消してつなぎ直す", in: app).tap()
+            let create = app.buttons["新しいまどを作る"]
+            for _ in 0..<5 where !create.isHittable { app.swipeUp() }
+            XCTAssertTrue(create.waitForExistence(timeout: 5))
+            XCTAssertFalse(title.exists)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testIncompleteSetupOpensDiagnosticsWithoutDestructiveReset() {
+        let app = launchFailedSetup("unavailable", largestText: false)
+        let diagnostics = app.buttons["pairing-recovery-diagnostics"]
+        XCTAssertTrue(diagnostics.waitForExistence(timeout: 10))
+        XCTAssertTrue(diagnostics.isHittable)
+        XCTAssertFalse(app.buttons["pairing-recovery-action"].exists)
+        capture("pairing-failed-incomplete-information", app)
+        diagnostics.tap()
+        XCTAssertTrue(app.navigationBars["診断ログ"].waitForExistence(timeout: 5))
+        app.navigationBars["診断ログ"].buttons.element(boundBy: 0).tap()
+        let information = app.buttons["pairing-sharing-information"]
+        XCTAssertTrue(information.waitForExistence(timeout: 5))
+        information.tap()
+        XCTAssertTrue(app.navigationBars["共有について"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["確認した1枚だけを届けます"].exists)
+        app.terminate()
+    }
+
+    @MainActor
+    private func launchFailedSetup(_ scenario: String, largestText: Bool) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--window-list-ui-fixture", "--window-list-mixed", "--window-list-dark",
+                               "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        if largestText { app.launchArguments.append("--window-list-largest-text") }
+        app.launchEnvironment["NEKO_PAIRING_FAILURE_FIXTURE"] = scenario
+        app.launch()
+        let setup = app.buttons["window-list-row-10000000-0000-0000-0000-000000000002"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 10))
+        for _ in 0..<4 where !setup.isHittable { app.swipeUp() }
+        setup.tap()
+        return app
+    }
+
+    @MainActor
+    private func pairingConfirmationButton(_ identifier: String, title: String, in app: XCUIApplication) -> XCUIElement {
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let identified = alert.buttons.matching(identifier: identifier).firstMatch
+        return identified.waitForExistence(timeout: 2) ? identified : alert.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+    }
+
+    @MainActor
     private func stopReceiving(_ app: XCUIApplication) {
         let manage = app.buttons["official-window-manage"]
         XCTAssertTrue(manage.waitForExistence(timeout: 5))

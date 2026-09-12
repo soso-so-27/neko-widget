@@ -13,6 +13,7 @@ struct PairingView: View {
     @State private var dailyUpdateTime = Self.defaultUpdateTime()
     @State private var hasAcceptedPairingTerms = false
     @State private var showsCancelConfirmation = false
+    @State private var showsFailedResetConfirmation = false
     @State private var showsAbandonRecoveryConfirmation = false
     @State private var showsCopyConfirmation = false
     @State private var showsCopyRecoveryConfirmation = false
@@ -57,9 +58,27 @@ struct PairingView: View {
                     }
                 }
 
-                privacySection
-                if model.isMediaSyncEnabled {
-                    safetyCheckSettingSection
+                if model.state?.phase == .failed {
+                    Section {
+                        NavigationLink("共有について") {
+                            Form {
+                                privacySection
+                                if model.isMediaSyncEnabled { safetyCheckSettingSection }
+                            }
+                            .navigationTitle("共有について")
+                            .navigationBarTitleDisplayMode(.inline)
+                        }
+                        .accessibilityIdentifier("pairing-sharing-information")
+                        if let state = model.state,
+                           FailedPairingRecoveryAction.resolve(state) != .unavailable {
+                            NavigationLink("診断情報") { LogView() }
+                        }
+                    }
+                } else {
+                    privacySection
+                    if model.isMediaSyncEnabled {
+                        safetyCheckSettingSection
+                    }
                 }
 
                 if let message = model.operationCompletionMessage {
@@ -69,7 +88,8 @@ struct PairingView: View {
                     }
                 }
 
-                if let message = model.userFacingStatusMessage,
+                if model.state?.phase != .failed,
+                   let message = model.userFacingStatusMessage,
                    model.isConfigured || model.state?.lastError != nil {
                     Section("確認してください") {
                         Label(message, systemImage: "exclamationmark.triangle")
@@ -139,6 +159,16 @@ struct PairingView: View {
             Button("戻る", role: .cancel) {}
         } message: {
             Text(cancelConfirmationMessage)
+        }
+        .alert("つなぎ直しますか？", isPresented: $showsFailedResetConfirmation) {
+            Button("取り消してつなぎ直す", role: .destructive) {
+                Task { await model.cancelAndReset() }
+            }
+            .accessibilityIdentifier("pairing-reset-confirm")
+            Button("戻る", role: .cancel) {}
+                .accessibilityIdentifier("pairing-reset-cancel")
+        } message: {
+            Text("このまどの共有を終了し、このiPhoneの接続情報と一時的な写真を削除します。写真アプリに保存した写真は残ります。通信に失敗した場合は設定を残します。")
         }
         .confirmationDialog(
             "このiPhoneの追加をやめますか？",
@@ -257,10 +287,10 @@ struct PairingView: View {
 
     @ViewBuilder
     private func pairingContent(_ state: PairingState) -> some View {
-        if state.phase != .unpaired, state.phase != .paired {
+        if state.phase != .unpaired, state.phase != .paired, state.phase != .failed {
             guidanceSection(state)
         }
-        if state.phase != .unpaired,
+        if state.phase != .unpaired, state.phase != .failed,
            model.shouldShowWindowName,
            ![.claimingRecovery, .pendingRecoveryApproval, .recoveryAwaitingCompletion]
             .contains(state.phase) {
@@ -383,24 +413,60 @@ struct PairingView: View {
             }
             pairedCancelSection
         case .failed:
-            Section {
-                Label("まどの設定を完了できませんでした", systemImage: "xmark.circle")
-            }
-            switch FailedPairingRecoveryAction.resolve(state) {
-            case .cancelRemote:
-                cancelSection
-            case .restartLocalDraft:
-                retrySection("設定をやり直す") { await model.resumeFailedSetup() }
-            case .resumeCreate:
-                retrySection("招待作成を再試行") { await model.resumeFailedSetup() }
-            case .resumeJoin:
-                retrySection("参加を再試行") { await model.resumeFailedSetup() }
-            case .unavailable:
-                Section {
-                    Text("設定の復元情報を確認できません。写真画面の設定から診断情報を確認できます。")
-                        .font(.footnote).foregroundStyle(.secondary)
+            failedSetupSection(state)
+        }
+    }
+
+    private func failedSetupSection(_ state: PairingState) -> some View {
+        let presentation = FailedPairingRecoveryPresentation.make(state)
+        return Section {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(presentation.title)
+                    .font(.headline)
+                    .accessibilityIdentifier("pairing-failure-title")
+                Text(presentation.detail)
+                    .foregroundStyle(.secondary)
+                // Fresh errors are sanitized by the model. Do not repeat an
+                // unknown, persisted error as a second generic warning.
+                if let message = model.operationErrorMessage {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("pairing-recovery-error")
+                }
+                if presentation.action == .unavailable {
+                    NavigationLink {
+                        LogView()
+                    } label: {
+                        primaryActionLabel(presentation.buttonTitle, systemImage: "stethoscope")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("pairing-recovery-diagnostics")
+                } else {
+                    Button {
+                        if presentation.action == .cancelRemote {
+                            showsFailedResetConfirmation = true
+                        } else {
+                            Task { await model.resumeFailedSetup() }
+                        }
+                    } label: {
+                        if model.isWorking {
+                            HStack {
+                                ProgressView().tint(.white)
+                                Text("確認中…")
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                        } else {
+                            primaryActionLabel(presentation.buttonTitle, systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isWorking)
+                    .accessibilityIdentifier("pairing-recovery-action")
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 8)
         }
     }
 

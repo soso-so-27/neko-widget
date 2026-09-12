@@ -32,6 +32,42 @@ enum FailedPairingRecoveryAction: Equatable, Sendable {
     }
 }
 
+/// Copy and actions share the same durable-state decision. A legacy error
+/// string is not reliable evidence of a network failure or an expired invite.
+struct FailedPairingRecoveryPresentation: Equatable, Sendable {
+    let action: FailedPairingRecoveryAction
+    let title: String
+    let detail: String
+    let buttonTitle: String
+
+    static func make(_ state: PairingState) -> Self {
+        let action = FailedPairingRecoveryAction.resolve(state)
+        let title = "まどの接続が未完了です"
+        switch action {
+        case .restartLocalDraft:
+            return Self(action: action, title: title,
+                        detail: "つなぎ方を選び直して、設定を始められます。",
+                        buttonTitle: "設定をやり直す")
+        case .resumeCreate:
+            return Self(action: action, title: title,
+                        detail: "途中まで進めた招待の作成を、もう一度試せます。",
+                        buttonTitle: "招待の作成を再開")
+        case .resumeJoin:
+            return Self(action: action, title: title,
+                        detail: "入力済みの招待で、参加をもう一度試せます。",
+                        buttonTitle: "参加を再開")
+        case .cancelRemote:
+            return Self(action: action, title: title,
+                        detail: "今の設定を取り消して、新しい招待でつなぎ直せます。",
+                        buttonTitle: "つなぎ直す")
+        case .unavailable:
+            return Self(action: action, title: title,
+                        detail: "再開に必要な情報を確認できません。調査に使う診断情報を開けます。",
+                        buttonTitle: "診断情報を開く")
+        }
+    }
+}
+
 struct PairingBuildPresentation {
     static var currentText: String {
         make(
@@ -237,8 +273,8 @@ struct PairingGuidancePresentation: Equatable, Sendable {
                 roleTitle: role == .invitee
                     ? "招待されたまどを確認できませんでした"
                     : "まどの準備を完了できませんでした",
-                nextActionTitle: "画面の案内を確認してください",
-                nextActionDetail: "必要な場合は設定を取り消し、新しい招待からやり直せます。",
+                nextActionTitle: "まどの接続が未完了です",
+                nextActionDetail: "保存されている設定に応じて、再開できる操作を表示します。",
                 refreshButtonTitle: nil
             )
         }

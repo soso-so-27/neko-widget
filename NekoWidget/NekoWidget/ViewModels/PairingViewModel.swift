@@ -33,12 +33,27 @@ final class PairingViewModel: ObservableObject {
     private var bootstrapRetryRequested = false
 #if DEBUG
     private var usesIsolatedPresentationState = false
+    private var isolatedCancellationAttempts = 0
 
     static func failedSetupFixture() -> PairingViewModel {
         let model = PairingViewModel()
         var state = PairingState.unpaired(installationMarker: UUID().uuidString)
         state.phase = .failed
         state.lastError = "fixture-setup-failure"
+        switch ProcessInfo.processInfo.environment["NEKO_PAIRING_FAILURE_FIXTURE"] {
+        case "remote":
+            // Match the user's failed setup with an existing remote identity.
+            // These placeholders must never reach a real API or Keychain.
+            state.role = .inviter
+            state.credentialAccount = "fixture-account"
+            state.participantID = "fixture-participant"
+            state.memberID = "fixture-member"
+            state.spaceID = "fixture-space"
+        case "unavailable":
+            state.credentialAccount = "fixture-incomplete-account"
+        default:
+            break
+        }
         model.state = state
         model.windowDisplayName = "ねことも"
         model.didBootstrap = true
@@ -1669,11 +1684,25 @@ final class PairingViewModel: ObservableObject {
 
     func cancelAndReset() async {
         clearTransientOperationFeedback()
+#if DEBUG
+        if usesIsolatedPresentationState {
+            guard let current = state,
+                  FailedPairingRecoveryAction.resolve(current) == .cancelRemote else { return }
+            isolatedCancellationAttempts += 1
+            if isolatedCancellationAttempts == 1 {
+                operationErrorMessage = "取り消しを確認できませんでした。設定は残っています。時間をおいて、もう一度お試しください。"
+            } else {
+                state = PairingState.unpaired(installationMarker: current.installationMarker)
+            }
+            return
+        }
+#endif
         guard let api else { return }
         let operation: PairingOperation
         do { operation = try beginOperation() }
         catch { record(error); return }
         var current = operation.expectedState
+        let wasFailedSetup = current.phase == .failed
         let lifecycleToken = operation.lifecycleToken
         guard
               current.role != nil,
@@ -1725,8 +1754,9 @@ final class PairingViewModel: ObservableObject {
                 operation: operation
             )
             try await resetLocalPairing(operation: operation)
-            operationCompletionMessage =
-                "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した思い出は残ります。"
+            operationCompletionMessage = wasFailedSetup
+                ? "設定を取り消しました。つなぎ方を選び直せます。"
+                : "共有を解除しました。このiPhoneの共有鍵と一時的な届いた写真を削除しました。写真アプリへ保存した思い出は残ります。"
             SharedLog.app.info("pairing", "Pairing cancelled and local keys removed")
         } catch {
             // A transport failure deliberately keeps the exact cancellation

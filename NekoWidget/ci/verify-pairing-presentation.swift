@@ -228,6 +228,14 @@ enum PairingPresentationVerifier {
             guard FailedPairingRecoveryAction.resolve(state) == expected else {
                 throw PairingPresentationVerificationError.failed("Unsafe failed-setup recovery choice")
             }
+            let presentation = FailedPairingRecoveryPresentation.make(state)
+            guard presentation.action == expected,
+                  !presentation.buttonTitle.isEmpty,
+                  !presentation.detail.contains("画面の案内"),
+                  !presentation.detail.contains("期限が切れ"),
+                  !presentation.detail.contains("通信に失敗") else {
+                throw PairingPresentationVerificationError.failed("Recovery copy invented a cause or disagreed with durable state")
+            }
         }
         try expect(.restartLocalDraft)
         state.role = .inviter
