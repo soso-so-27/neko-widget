@@ -34,5 +34,15 @@
 - 保存したSMOKEの再現画像・AXは `output/pairing-recovery/smoke-native/`。これは写真共有disabledのiOS 18.6であり、media-stagingのiOS26画面とは分ける。
 - 最大AX5の撮影画像を目視し、操作テストは成功してもLabelの大きなアイコン用領域でボタン名が「つなぎ…」と省略される問題を発見。failed画面の操作は文字だけにし、全文の折り返しと高さの拡張を明示した。自動操作成功と表示品質は別に確認する。
 - 最初のfixtureはホストのdisabled設定を引き継いでおり、iOS26でも実ユーザーにはない「ペアリングのみ」表示が載っていた。隔離fixtureの表示フラグだけを写真共有ありへ揃え、ユーザーと同じ画面構成を検証するよう修正。API・実同意・ストレージの能力は構成設定の既存ガードを維持する。以後は写真共有用の説明と、確認専用バナーがないことを明示して検証する。
-- 修正したテストのCI、media-stagingのiOS26撮影確認は継続中。失敗・中断ジョブを成功として数えない。
-- 新規配布: 未実施。候補CI → main CI → 内部TestFlightの順序を守る。
+- 最終候補 `88f07376c2f8e127c204bf5eb69b1f3693ca8a34` のCI [34701760451](https://github.com/soso-so-27/neko-widget/actions/runs/34701760451) は全必要ジョブ成功（full-v1）。Swiftビルド／状態別検証、SMOKE、共有runtimeを完了。共有runtimeのUIテスト33件と別実行のWidget/Galleryテスト各1件は失敗0件。失敗・中断した旧候補を成功に数えない。
+- 最終候補の実際のSwiftUI画面を、iOS 18.6と26.2で通常文字／最大アクセシビリティ文字にして目視確認。主要操作の全文表示、確認から戻る操作、取り消し失敗後の状態保持、不完全状態での診断導線を確認した。写真共有を有効に見せる隔離fixtureであり、media-stagingサーバーの取り消し成功や実機の接続復旧の証明にはしない。
+- 撮影結果: `output/pairing-recovery/final-native/ios-26-2/composer-screenshots/` と `output/pairing-recovery/final-smoke-native/mainline-screen-attachments/`。iOS26通常画面 `8FA3137E-7740-4353-8B04-7D624B6D3FB8.png`、最大文字の初期画面 `5450910D-041D-4B1B-9E40-5ED01B69CAF3.png`、確認画面 `2C66FD88-6D79-43AF-8261-38B3662ECD0A.png`。
+- mainへのfast-forward後、main CI [34704987029](https://github.com/soso-so-27/neko-widget/actions/runs/34704987029) が同一SHAの候補run34701760451を検証して再利用した。main側の省略ジョブを新たな実行成功とは数えない。
+
+## 配布と未確認事項
+
+- 2026-09-13 01:30 JST、Build158のAppleへのアップロード成功。[配布run34705174886](https://github.com/soso-so-27/neko-widget/actions/runs/34705174886) はsuccess。`VERIFY SUCCEEDED with no errors` と `UPLOAD SUCCEEDED with no errors` を実ログで確認。Delivery UUID: `126db556-5826-44eb-b40f-8c732f1d6361`。
+- 保持した署名成果物のメタデータで、version `1.0`、build `158`、release mode `media-staging`、source SHA `88f07376c2f8e127c204bf5eb69b1f3693ca8a34`、run `34705174886` の一致を確認。公式まどfeedは既存preview Workerを継続。証拠は `output/pairing-recovery/build158-signed/moderation-release-metadata.json` と `output/pairing-recovery/testflight158-job.log`。
+- 既存の内部配布のみ。外部テスター追加・公開・審査提出・課金開始はしない。
+- アップロード後もApp Store Connectはログイン画面。ログイン依頼済みで、返答待ち。内部グループ「自分用」での配布表示とテストメモ保存は未確認・未実施であり、アップロード成功と区別する。原稿は `output/pairing-recovery/testflight-notes-158.txt`。ログイン後はBuild158を開いて既存内部グループのみ確認し、原稿を保存する。再アップロードは不要。
+- 元の「ねことも」が失敗した原因は未確定。今回の変更は、保存状態に対応する実行可能な操作を迷わず選べるようにするもの。実機での取り消し・再接続の成功は別途結果が必要。
