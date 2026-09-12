@@ -761,6 +761,7 @@ actor SharingRuntimeSelfTestRunner {
             let catalogBefore = try PrivateWindowCatalogStore.load()
             let keyBefore = try PairingKeychainStore.load(account: credential.account, installationMarker: credential.installationMarker)
             var reads = 0
+            var newerCommittedState: PairingState?
             let model = PairingViewModel()
             model.runtimeSetFailedConnectionReader { isPending, _ in
                 reads += 1
@@ -776,7 +777,9 @@ actor SharingRuntimeSelfTestRunner {
                 if scenario == "stale" {
                     var changed = before
                     changed.lastError = "newer-operation-must-survive"
-                    _ = try PairingStateStore.save(changed, expected: before, lifecycleToken: initial.lifecycleToken)
+                    newerCommittedState = try PairingStateStore.save(
+                        changed, expected: before, lifecycleToken: initial.lifecycleToken
+                    )
                 }
                 let status = scenario == "pending" ? "pendingApproval"
                     : scenario == "approved" ? "approvedAwaitingCompletion"
@@ -811,7 +814,9 @@ actor SharingRuntimeSelfTestRunner {
             case "cancel":
                 guard reads == 0, after == before else { throw PairingError.stateUnavailable }
             case "stale":
-                guard after.lastError == "newer-operation-must-survive", after.phase == .failed else { throw PairingError.stateUnavailable }
+                guard after == newerCommittedState, after.phase == .failed,
+                      after.storageRevision == before.storageRevision.map({ $0 + 1 })
+                else { throw PairingError.stateUnavailable }
             default:
                 guard after.phase == .failed, after.pendingOperation == before.pendingOperation,
                       after.pendingClientRequestID == before.pendingClientRequestID,
