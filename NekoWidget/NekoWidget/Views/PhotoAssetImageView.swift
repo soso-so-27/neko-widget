@@ -86,8 +86,10 @@ struct PhotoAssetImageView: View {
     var targetPixelSize: CGSize
     var targetAspectRatio: CGFloat
     var showsFullImage: Bool
+    var allowsZoom: Bool
     var networkAccessAllowed: Bool
     var onLoadResult: (Bool) -> Void
+    var onZoomChange: (Bool) -> Void
 
     @StateObject private var loader = PhotoAssetImageLoader()
 
@@ -97,16 +99,20 @@ struct PhotoAssetImageView: View {
         targetPixelSize: CGSize = CGSize(width: 800, height: 800),
         targetAspectRatio: CGFloat = 1,
         showsFullImage: Bool = false,
+        allowsZoom: Bool = false,
         networkAccessAllowed: Bool = true,
-        onLoadResult: @escaping (Bool) -> Void = { _ in }
+        onLoadResult: @escaping (Bool) -> Void = { _ in },
+        onZoomChange: @escaping (Bool) -> Void = { _ in }
     ) {
         self.localIdentifier = localIdentifier
         self.catBoundingBox = catBoundingBox
         self.targetPixelSize = targetPixelSize
         self.targetAspectRatio = targetAspectRatio
         self.showsFullImage = showsFullImage
+        self.allowsZoom = allowsZoom
         self.networkAccessAllowed = networkAccessAllowed
         self.onLoadResult = onLoadResult
+        self.onZoomChange = onZoomChange
     }
 
     var body: some View {
@@ -115,7 +121,9 @@ struct PhotoAssetImageView: View {
 
             switch loader.state {
             case let .loaded(image):
-                if showsFullImage {
+                if showsFullImage && allowsZoom {
+                    PhotoAssetZoomView(image: image, onZoomChange: onZoomChange)
+                } else if showsFullImage {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
@@ -191,6 +199,65 @@ struct PhotoAssetImageView: View {
             return "写真を表示できません"
         case .loading, .loaded:
             return "猫の写真"
+        }
+    }
+}
+
+/// Reuse the photo-detail zoom surface while letting the outer photo pager own
+/// horizontal drags at fit size. A zoomed photo owns its own pan gesture.
+private struct PhotoAssetZoomView: UIViewRepresentable {
+    let image: UIImage
+    let onZoomChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onZoomChange: onZoomChange)
+    }
+
+    func makeUIView(context: Context) -> MomentZoomablePhoto.PhotoScrollView {
+        let view = MomentZoomablePhoto.PhotoScrollView()
+        view.delegate = context.coordinator
+        view.panGestureRecognizer.isEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: MomentZoomablePhoto.PhotoScrollView, context: Context) {
+        context.coordinator.onZoomChange = onZoomChange
+        view.setImage(image)
+    }
+
+    static func dismantleUIView(_ view: MomentZoomablePhoto.PhotoScrollView,
+                                coordinator: Coordinator) {
+        view.delegate = nil
+        coordinator.onZoomChange(false)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        var onZoomChange: (Bool) -> Void
+        private var wasZoomed = false
+
+        init(onZoomChange: @escaping (Bool) -> Void) {
+            self.onZoomChange = onZoomChange
+        }
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            (scrollView as? MomentZoomablePhoto.PhotoScrollView)?
+                .viewForZooming(in: scrollView)
+        }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            guard let view = scrollView as? MomentZoomablePhoto.PhotoScrollView else { return }
+            view.scrollViewDidZoom(scrollView)
+            let isZoomed = view.zoomScale > view.minimumZoomScale + 0.01
+            view.panGestureRecognizer.isEnabled = isZoomed
+            guard isZoomed != wasZoomed else { return }
+            wasZoomed = isZoomed
+            onZoomChange(isZoomed)
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            (scrollView as? MomentZoomablePhoto.PhotoScrollView)?
+                .scrollViewDidScroll(scrollView)
         }
     }
 }

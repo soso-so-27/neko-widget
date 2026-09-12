@@ -1688,6 +1688,7 @@ private struct MemoryPhotoJPEGActivityView: UIViewControllerRepresentable {
 /// with the primary private action, "思い出に残す".
 struct PhotoBrowserView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private static let imageTargetPixelSize = CGSize(width: 1600, height: 1600)
     private static let preheatRadius = 2
 
@@ -1706,6 +1707,7 @@ struct PhotoBrowserView: View {
     let replaceProfileAssignments: ([String: Set<String>]) async -> Bool
     private let browserPhotos: [PhotoPresentation]
     private let deliveryActions: PhotoWindowDeliveryActions?
+    private let dayCollectionDate: Date?
     private let browserPhotoIdentifiers: [String]
     private let browserPhotoByIdentifier: [String: PhotoPresentation]
     private let browserIndexByIdentifier: [String: Int]
@@ -1724,6 +1726,7 @@ struct PhotoBrowserView: View {
     @State private var deliveryPhoto: PhotoPresentation?
     @StateObject private var photoDeliveryModel = MomentSharingViewModel()
     @State private var stagedDeliveryID: String?
+    @State private var showsWidgetInformation = false
 
     init(
         photos: [PhotoPresentation],
@@ -1739,7 +1742,8 @@ struct PhotoBrowserView: View {
         profiles: [CatProfilePresentation],
         assignmentsByPhotoIdentifier: [String: Set<String>],
         replaceProfileAssignments: @escaping ([String: Set<String>]) async -> Bool,
-        deliveryActions: PhotoWindowDeliveryActions? = nil
+        deliveryActions: PhotoWindowDeliveryActions? = nil,
+        dayCollectionDate: Date? = nil
     ) {
         let constructionStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let browserPhotos = Self.makeBrowserPhotos(
@@ -1765,6 +1769,7 @@ struct PhotoBrowserView: View {
         self.assignmentsByPhotoIdentifier = assignmentsByPhotoIdentifier
         self.replaceProfileAssignments = replaceProfileAssignments
         self.deliveryActions = deliveryActions
+        self.dayCollectionDate = dayCollectionDate
         self.browserPhotos = browserPhotos
         browserPhotoIdentifiers = browserPhotos.map(\.localIdentifier)
         browserPhotoByIdentifier = Dictionary(
@@ -1787,7 +1792,7 @@ struct PhotoBrowserView: View {
     }
 
     private var browserContent: some View {
-        VStack(spacing: 0) {
+        PhotoDetailLayout {
             PhotoBrowserPager(
                 photos: browserPhotos,
                 selectedPhotoIdentifier: $selectedPhotoIdentifier,
@@ -1807,113 +1812,126 @@ struct PhotoBrowserView: View {
                 }
             }
 
-            if let selectedPhoto {
-                ScrollView {
-                    VStack(spacing: 12) {
-                        if let creationDate = selectedPhoto.creationDate {
-                            Text(creationDate.formatted(.dateTime.year().month().day().weekday(.wide)))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-
-                            NavigationLink {
-                                dayPhotosView(for: creationDate)
-                            } label: {
-                                Label("この日の写真をすべて見る", systemImage: "photo.stack")
-                                    .font(.subheadline.weight(.semibold))
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                        } else {
-                            Text("撮影日不明")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-
-                        if selectedPhoto.isLiked {
-                            HStack(spacing: 10) {
-                                Label("思い出に残した", systemImage: "bookmark.fill")
-                                    .font(.headline)
-                                Spacer(minLength: 4)
-                                Menu {
-                                    Button("思い出から外す", role: .destructive) {
-                                        pendingMemoryRemovalIdentifier = selectedPhoto.localIdentifier
-                                    }
-                                } label: {
-                                    Image(systemName: "ellipsis.circle")
-                                        .font(.title3)
-                                        .accessibilityLabel("思い出の操作")
-                                }
-                                .disabled(isExportingMemoryPhoto)
-                            }
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-                            .frame(maxWidth: .infinity, minHeight: 50)
-                            .background(
-                                Color(.secondarySystemBackground),
-                                in: RoundedRectangle(cornerRadius: 14)
-                            )
-                            .accessibilityIdentifier("photo-browser-memory-saved-state")
-                        } else {
-                            Button {
-                                setMemorySaved(selectedPhoto.localIdentifier, true)
-                            } label: {
-                                HStack(spacing: 9) {
-                                    Image(systemName: "bookmark")
-                                        .font(.system(size: 20, weight: .semibold))
-                                    Text("思い出に残す")
-                                }
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(Color.accentColor)
-                            .controlSize(.large)
-                            .disabled(isExportingMemoryPhoto)
-                            .accessibilityHint("自分の思い出一覧に残します")
-                        }
-
-                        if canDeliverToWindow {
-                            Button {
-                                // Capture the visible page, not initialPhoto or
-                                // a mutable selection read after an async load.
-                                deliveryPhoto = selectedPhoto
-                            } label: {
-                                Label("まどへ届ける", systemImage: "paperplane")
-                                    .frame(maxWidth: .infinity, minHeight: 28)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.large)
-                            .disabled(isExportingMemoryPhoto)
-                            .accessibilityIdentifier("photo-browser-deliver")
-                            .accessibilityHint("届け先を選んでから、写真とひとことを確認します")
-                        }
-
-                        if isExportingMemoryPhoto {
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                Text("写真を準備しています…")
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer(minLength: 8)
-                                Button("キャンセル", role: .cancel) {
-                                    cancelMemoryPhotoExport()
-                                }
-                                .font(.subheadline.weight(.semibold))
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                            .accessibilityElement(children: .contain)
-                        }
-
-                        if showsWidgetTiming {
-                            widgetTiming
-                        }
-                    }
-                    .padding(16)
-                }
-                .frame(maxHeight: 260)
-                .background(.ultraThinMaterial)
+            ViewThatFits(in: .vertical) {
+                browserFooter.fixedSize(horizontal: false, vertical: true)
+                ScrollView { browserFooter }
+                    .accessibilityIdentifier("photo-browser-actions-scroll")
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var browserFooter: some View {
+        VStack(spacing: 8) {
+            if let selectedPhoto {
+                if dynamicTypeSize.isAccessibilitySize {
+                    photoDate(selectedPhoto)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 0)
+                        photoActions(selectedPhoto)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        photoDate(selectedPhoto)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        photoActions(selectedPhoto)
+                    }
+                }
+            }
+
+            if isExportingMemoryPhoto {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("写真を準備しています…")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
+                    Button("キャンセル", role: .cancel) {
+                        cancelMemoryPhotoExport()
+                    }
+                    .frame(minHeight: 44)
+                }
+                .accessibilityElement(children: .contain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func photoDate(_ photo: PhotoPresentation) -> some View {
+        if let creationDate = photo.creationDate {
+            let dateText = creationDate.formatted(.dateTime.year().month().day())
+            if dayCollectionDate.map({ Calendar.current.isDate($0, inSameDayAs: creationDate) }) == true {
+                Text(dateText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+            } else {
+                NavigationLink {
+                    dayPhotosView(for: creationDate)
+                } label: {
+                    Label(dateText, systemImage: "photo.stack")
+                        .font(.subheadline)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minHeight: 44)
+                }
+                .accessibilityLabel("この日の写真をすべて見る")
+                .accessibilityValue(dateText)
+                .accessibilityIdentifier("photo-browser-same-day")
+            }
+        } else {
+            Text("撮影日不明")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(minHeight: 44)
+        }
+    }
+
+    @ViewBuilder
+    private func photoActions(_ selectedPhoto: PhotoPresentation) -> some View {
+        if selectedPhoto.isLiked {
+            Menu {
+                Button("思い出から外す", role: .destructive) {
+                    pendingMemoryRemovalIdentifier = selectedPhoto.localIdentifier
+                }
+            } label: {
+                Image(systemName: "bookmark.fill")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("思い出に残した")
+            .accessibilityHint("思い出から外す操作を開きます")
+            .disabled(isExportingMemoryPhoto)
+            .accessibilityIdentifier("photo-browser-memory-saved-state")
+        } else {
+            Button {
+                setMemorySaved(selectedPhoto.localIdentifier, true)
+            } label: {
+                Image(systemName: "bookmark")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("思い出に残す")
+            .accessibilityHint("自分の思い出一覧に残します")
+            .disabled(isExportingMemoryPhoto)
+        }
+
+        if canDeliverToWindow {
+            Button {
+                // Freeze the visible photo before opening destination selection.
+                deliveryPhoto = selectedPhoto
+            } label: {
+                Image(systemName: "paperplane")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("まどへ届ける")
+            .accessibilityHint("届け先を選んでから、写真とひとことを確認します")
+            .accessibilityIdentifier("photo-browser-deliver")
+            .disabled(isExportingMemoryPhoto)
         }
     }
 
@@ -1925,6 +1943,14 @@ struct PhotoBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if showsWidgetTiming {
+                        Button {
+                            showsWidgetInformation = true
+                        } label: {
+                            Label("ウィジェットの表示について", systemImage: "info.circle")
+                        }
+                        Divider()
+                    }
                     if exportMemoryPhoto != nil,
                        selectedPhoto?.isLiked == true {
                         if isExportingMemoryPhoto {
@@ -1975,6 +2001,11 @@ struct PhotoBrowserView: View {
 
     private var browserDialogs: some View {
         browserNavigation
+        .alert("ウィジェットの表示について", isPresented: $showsWidgetInformation) {
+            Button("閉じる", role: .cancel) {}
+        } message: {
+            Text(widgetTimingMessage)
+        }
         .confirmationDialog(
             "思い出から外しますか？",
             isPresented: Binding(
@@ -2260,33 +2291,19 @@ struct PhotoBrowserView: View {
                 profiles: profiles,
                 assignmentsByPhotoIdentifier: assignmentsByPhotoIdentifier,
                 replaceProfileAssignments: replaceProfileAssignments,
-                deliveryActions: deliveryActions
+                deliveryActions: deliveryActions,
+                dayCollectionDate: date
             )
         }
     }
 
-    private var widgetTiming: some View {
-        VStack(spacing: 4) {
-            Label(
-                "ウィジェットの写真は時間とともに変わります",
-                systemImage: "clock.arrow.circlepath"
-            )
-                .font(.caption.weight(.semibold))
-
-            if let widgetShownAt {
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    Text(lastChangedText(since: widgetShownAt, now: context.date))
-                        .font(.caption)
-                        .monospacedDigit()
-                }
-            }
-
-            Text("更新時刻は目安で、iOSにより前後します")
-                .font(.caption)
+    private var widgetTimingMessage: String {
+        var lines = ["ウィジェットの写真は時間とともに変わります"]
+        if let widgetShownAt {
+            lines.append(lastChangedText(since: widgetShownAt, now: .now))
         }
-        .multilineTextAlignment(.center)
-        .foregroundStyle(.secondary)
-        .accessibilityElement(children: .combine)
+        lines.append("更新時刻は目安で、iOSにより前後します")
+        return lines.joined(separator: "\n")
     }
 
     private func lastChangedText(since date: Date, now: Date) -> String {
@@ -2349,6 +2366,8 @@ private struct PhotoBrowserPager: UIViewControllerRepresentable {
         private var photoByIdentifier: [String: PhotoPresentation] = [:]
         private var indexByIdentifier: [String: Int] = [:]
         private var identifiersByController: [ObjectIdentifier: String] = [:]
+        private weak var pageController: UIPageViewController?
+        private var zoomedPhotoIdentifier: String?
 
         init(parent: PhotoBrowserPager) {
             self.parent = parent
@@ -2361,6 +2380,11 @@ private struct PhotoBrowserPager: UIViewControllerRepresentable {
         ) {
             let previousIndex = indexByIdentifier[self.parent.selectedPhotoIdentifier]
             self.parent = parent
+            pageController = controller
+            if zoomedPhotoIdentifier != parent.selectedPhotoIdentifier {
+                zoomedPhotoIdentifier = nil
+                setPagingEnabled(true)
+            }
             photoByIdentifier = Dictionary(
                 uniqueKeysWithValues: parent.photos.map {
                     ($0.localIdentifier, $0)
@@ -2431,7 +2455,23 @@ private struct PhotoBrowserPager: UIViewControllerRepresentable {
         }
 
         func removeAllControllers() {
+            setPagingEnabled(true)
             identifiersByController.removeAll()
+            pageController = nil
+            zoomedPhotoIdentifier = nil
+        }
+
+        private func photoZoomChanged(_ isZoomed: Bool, identifier: String) {
+            // An offscreen neighbour can finish loading or disappear later;
+            // only the currently selected photo may suspend horizontal paging.
+            guard identifier == parent.selectedPhotoIdentifier else { return }
+            zoomedPhotoIdentifier = isZoomed ? identifier : nil
+            setPagingEnabled(!isZoomed)
+        }
+
+        private func setPagingEnabled(_ enabled: Bool) {
+            pageController?.view.subviews.compactMap { $0 as? UIScrollView }
+                .forEach { $0.isScrollEnabled = enabled }
         }
 
         private func adjacentController(
@@ -2453,7 +2493,10 @@ private struct PhotoBrowserPager: UIViewControllerRepresentable {
                 rootView: PhotoBrowserPage(
                     photo: photo,
                     imageTargetPixelSize: parent.imageTargetPixelSize,
-                    performanceProbe: parent.performanceProbe
+                    performanceProbe: parent.performanceProbe,
+                    onZoomChange: { [weak self] isZoomed in
+                        self?.photoZoomChanged(isZoomed, identifier: identifier)
+                    }
                 )
             )
             controller.view.backgroundColor = .black
@@ -2476,7 +2519,10 @@ private struct PhotoBrowserPager: UIViewControllerRepresentable {
             hostingController.rootView = PhotoBrowserPage(
                 photo: photo,
                 imageTargetPixelSize: parent.imageTargetPixelSize,
-                performanceProbe: parent.performanceProbe
+                performanceProbe: parent.performanceProbe,
+                onZoomChange: { [weak self] isZoomed in
+                    self?.photoZoomChanged(isZoomed, identifier: identifier)
+                }
             )
         }
     }
@@ -2487,15 +2533,18 @@ private struct PhotoBrowserPage: View {
     let photo: PhotoPresentation
     let imageTargetPixelSize: CGSize
     let performanceProbe: PhotoBrowserPerformanceProbe
+    let onZoomChange: (Bool) -> Void
 
     init(
         photo: PhotoPresentation,
         imageTargetPixelSize: CGSize,
-        performanceProbe: PhotoBrowserPerformanceProbe
+        performanceProbe: PhotoBrowserPerformanceProbe,
+        onZoomChange: @escaping (Bool) -> Void
     ) {
         self.photo = photo
         self.imageTargetPixelSize = imageTargetPixelSize
         self.performanceProbe = performanceProbe
+        self.onZoomChange = onZoomChange
         performanceProbe.recordConstructedPage(localIdentifier: photo.localIdentifier)
     }
 
@@ -2504,7 +2553,9 @@ private struct PhotoBrowserPage: View {
             localIdentifier: photo.localIdentifier,
             targetPixelSize: imageTargetPixelSize,
             targetAspectRatio: 1,
-            showsFullImage: true
+            showsFullImage: true,
+            allowsZoom: true,
+            onZoomChange: onZoomChange
         )
     }
 }

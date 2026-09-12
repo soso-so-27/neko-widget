@@ -94,6 +94,13 @@ final class OfficialWindowUITests: XCTestCase {
         expectation(for: NSPredicate { _, _ in metric("zoom") > 1.1 }, evaluatedWith: zoomSurface)
         waitForExpectations(timeout: 5)
         capture("official-photo-large-text-zoom", app)
+        app.buttons["official-photo-information"].tap()
+        XCTAssertTrue(app.navigationBars["写真の情報"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["撮影日：2026-09-01"].exists)
+        capture("official-photo-information-large-text", app)
+        app.buttons["official-photo-information-close"].tap()
+        XCTAssertTrue(app.navigationBars["確認用の猫"].waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(metric("zoom"), 1.1, "Reading information must keep the photo and zoom position")
         XCTAssertTrue(app.buttons["閉じる"].isHittable)
         app.buttons["閉じる"].tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].exists)
@@ -120,8 +127,14 @@ final class OfficialWindowUITests: XCTestCase {
         for _ in 0..<5 { if subscribe.isHittable { break }; app.swipeUp() }
         subscribe.tap()
         XCTAssertTrue(app.descendants(matching: .any)["official-window-image-unavailable"].firstMatch.waitForExistence(timeout: 10))
-        app.buttons["official-window-refresh"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10), "Same-file retry did not reload the photo")
+        preview.tap()
+        let retryPhoto = app.buttons["official-photo-retry"]
+        XCTAssertTrue(retryPhoto.waitForExistence(timeout: 5))
+        retryPhoto.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.waitForExistence(timeout: 10), "Same-file retry in the detail must reload the photo")
+        XCTAssertTrue(app.navigationBars["確認用の猫"].exists)
+        capture("official-photo-retry-recovered", app)
+        app.buttons["閉じる"].tap()
         for _ in 0..<5 { if preview.isHittable { break }; app.swipeDown() }
         capture("official-window-photo", app)
         app.buttons["official-window-photo-fixture-photo"].tap()
@@ -289,6 +302,26 @@ final class OfficialWindowUITests: XCTestCase {
         overview.tap()
         XCTAssertTrue(app.navigationBars["どこかの猫"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["official-window-photo-fixture-photo"].exists)
+    }
+
+    @MainActor
+    func testFullscreenOfficialPhotoStopsAtItsDisplayDeadline() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--official-window-ui-fixture", "--window-list-subscribed",
+                               "--official-window-expiring-photo", "-AppleLanguages", "(ja)"]
+        app.launch()
+        let photo = app.buttons["official-window-photo-fixture-photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 10))
+        photo.tap()
+        let information = app.buttons["official-photo-information"]
+        XCTAssertTrue(information.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+        expectation(for: NSPredicate { _, _ in !information.exists }, evaluatedWith: app)
+        waitForExpectations(timeout: 40)
+        XCTAssertTrue(app.staticTexts["写真の掲載期間が終わりました"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["official-window-image-loaded"].firstMatch.exists)
+        capture("official-photo-expired-while-open", app)
     }
 
     @MainActor
@@ -790,6 +823,8 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["mainline-loaded-2"].waitForExistence(timeout: 15))
         secondPhoto.tap()
         XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["photo-browser-same-day"].exists,
+                       "A photo opened in this day's collection must not push the same collection again")
 
         let save = app.buttons["思い出に残す"]
         XCTAssertTrue(save.waitForExistence(timeout: 10))
@@ -813,6 +848,9 @@ final class SoloMemoriesUITests: XCTestCase {
         XCTAssertTrue(secondPhoto.isHittable)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
                                                         "day-photos-photo-")).count, 2)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(sameDay.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1 / 2"].exists, "Two back actions return to the originally opened photo")
         app.terminate()
     }
 
@@ -1093,6 +1131,44 @@ final class MomentDeliveryComposerUITests: XCTestCase {
             // Swipe the actual production pager away from initialPhoto.
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.30))
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.30))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
+            let zoom = app.images.matching(identifier: "photo-detail-zoom-surface")
+            expectation(for: NSPredicate { _, _ in zoom.allElementsBoundByIndex.contains { $0.isHittable } }, evaluatedWith: app)
+            waitForExpectations(timeout: 10)
+            guard let visiblePhoto = zoom.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+                XCTFail("The visible photo must expose its zoom surface")
+                return
+            }
+            func photoZoom() -> Double {
+                let value = visiblePhoto.value as? String ?? ""
+                let part = value.split(separator: ";").first { $0.hasPrefix("zoom=") }
+                return part.flatMap { Double($0.dropFirst(5)) } ?? 0
+            }
+            XCTAssertEqual(photoZoom(), 1, accuracy: 0.05)
+            XCTAssertGreaterThan(visiblePhoto.frame.height, app.frame.height * 0.55)
+            XCTAssertGreaterThanOrEqual(deliver.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(app.buttons["思い出に残す"].frame.height, 44)
+            attach(app, name: "photo-browser-compact-actions-\(variant)")
+            visiblePhoto.doubleTap()
+            expectation(for: NSPredicate { _, _ in photoZoom() > 1.1 }, evaluatedWith: app)
+            waitForExpectations(timeout: 5)
+            visiblePhoto.swipeRight()
+            XCTAssertTrue(app.staticTexts["2 / 2"].exists, "Panning a zoomed photo must not turn the page")
+            attach(app, name: "photo-browser-zoomed-\(variant)")
+            visiblePhoto.doubleTap()
+            expectation(for: NSPredicate { _, _ in abs(photoZoom() - 1) < 0.05 }, evaluatedWith: app)
+            waitForExpectations(timeout: 5)
+            if variant == "standard" {
+                visiblePhoto.pinch(withScale: 1.7, velocity: 1)
+                expectation(for: NSPredicate { _, _ in photoZoom() > 1.1 }, evaluatedWith: app)
+                waitForExpectations(timeout: 5)
+                visiblePhoto.doubleTap()
+                expectation(for: NSPredicate { _, _ in abs(photoZoom() - 1) < 0.05 }, evaluatedWith: app)
+                waitForExpectations(timeout: 5)
+            }
+            end.press(forDuration: 0.05, thenDragTo: start)
+            XCTAssertTrue(app.staticTexts["1 / 2"].waitForExistence(timeout: 5), "Paging resumes after returning to fit size")
             start.press(forDuration: 0.05, thenDragTo: end)
             XCTAssertTrue(app.staticTexts["2 / 2"].waitForExistence(timeout: 5))
             for _ in 0..<4 where !deliver.isHittable { app.scrollViews.firstMatch.swipeUp() }

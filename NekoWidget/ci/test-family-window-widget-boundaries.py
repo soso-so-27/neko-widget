@@ -3305,7 +3305,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
         )
         self.assertNotIn("spaceID", save_name)
         self.assertNotIn("participantID", save_name)
-        self.assertIn("window-list-setup-limit", main_tab)
+        self.assertIn("window-list-resume-setup", main_tab)
         self.assertIn("window-list-product-limit", main_tab)
 
     def test_cat_profile_detail_opens_photo_choices_without_an_extra_sources_page(self) -> None:

@@ -225,7 +225,8 @@ struct OfficialWindowView: View {
                                             imageRevision: state.imageRevision,
                                             isRefreshing: isChecking,
                                             previewImageData: previewData(for: photo),
-                                            showsCloseButton: false)
+                                            showsCloseButton: false,
+                                            onRetry: { Task { await refresh(interactive: true) } })
                 } else {
                     unavailableLinkedPhoto
                 }
@@ -238,23 +239,21 @@ struct OfficialWindowView: View {
             await refresh()
         }
         .task(id: nextPhotoDeadline) {
-            // Wake at the next exact display deadline, including while a photo
-            // is open offline. The bounded poll still notices other store changes.
-            while !Task.isCancelled {
-                let delay = min(30, max(0, nextPhotoDeadline?.timeIntervalSinceNow ?? 30))
-                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                state = store.snapshot()
-                displayDate = Date()
-                dismissUnavailablePhoto()
-            }
+            await observePhotoAvailability()
         }
-        .sheet(item: $selectedPhoto) { photo in
+        .fullScreenCover(item: $selectedPhoto) { photo in
             NavigationStack {
                 OfficialPhotoDetailView(photo: photo, store: store,
                                         imageRevision: state.imageRevision, isRefreshing: isChecking,
-                                        previewImageData: previewData(for: photo))
+                                        previewImageData: previewData(for: photo),
+                                        onRetry: { Task { await refresh(interactive: true) } })
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)
+            .task(id: nextPhotoDeadline) {
+                // A full-screen viewer owns its own display lease: its
+                // presenting overview may disappear and cancel its task.
+                await observePhotoAvailability()
+            }
         }
         .sheet(isPresented: $showsWidgetGuide) {
             widgetGuide
@@ -663,6 +662,18 @@ struct OfficialWindowView: View {
         WidgetCenter.shared.reloadTimelines(ofKind: "NekoWidget")
     }
 
+    private func observePhotoAvailability() async {
+        // Wake at the exact display deadline even offline, and also observe
+        // subscription/catalog changes made by another app surface.
+        while !Task.isCancelled {
+            let delay = min(30, max(0, nextPhotoDeadline?.timeIntervalSinceNow ?? 30))
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            state = store.snapshot()
+            displayDate = Date()
+            dismissUnavailablePhoto()
+        }
+    }
+
     private func dismissUnavailablePhoto() {
         if let selectedPhoto, !photos.contains(selectedPhoto) {
             self.selectedPhoto = nil
@@ -672,39 +683,40 @@ struct OfficialWindowView: View {
 
 private struct OfficialPhotoDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var showsInformation = false
     let photo: OfficialCatPhoto
     let store: OfficialWindowStore
     let imageRevision: UUID?
     var isRefreshing = false
     var previewImageData: Data? = nil
     var showsCloseButton = true
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store,
-                                       isRefreshing: isRefreshing, previewImageData: previewImageData, allowsZoom: true)
-                        .id("\(photo.imageFilename)-\(imageRevision?.uuidString ?? "")")
-                        .frame(width: geometry.size.width, height: max(280, geometry.size.height * 0.72))
-                        .clipped()
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let caption = photo.caption { Text(caption).font(.body) }
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("提供元：\(photo.credit)")
-                            if let date = photo.photographedOn { Text("撮影日：\(date)") }
-                            Text("掲載日：\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
-                        }
-                        .font(.footnote).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 20)
-                }
-                .padding(.bottom, 24)
+        PhotoDetailLayout {
+            OfficialPhotoImage(photo: photo, maximumPixelSize: 2048, store: store,
+                               isRefreshing: isRefreshing, previewImageData: previewImageData,
+                               allowsZoom: true, onRetry: onRetry)
+                .id("\(photo.imageFilename)-\(imageRevision?.uuidString ?? "")")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            ViewThatFits(in: .vertical) {
+                photoSummary.fixedSize(horizontal: false, vertical: true)
+                ScrollView { photoSummary }
             }
         }
+        .background(.black)
+        .preferredColorScheme(.dark)
         .navigationTitle(photo.catName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showsInformation = true } label: {
+                    Image(systemName: "info.circle").frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("写真の情報")
+                .accessibilityIdentifier("official-photo-information")
+            }
             if showsCloseButton {
                 ToolbarItem(placement: .confirmationAction) {
                     Button { dismiss() } label: { Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44) }
@@ -712,6 +724,51 @@ private struct OfficialPhotoDetailView: View {
                 }
             }
         }
+        .sheet(isPresented: $showsInformation) {
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if let caption = photo.caption { Text(verbatim: caption).font(.body) }
+                        Text("提供元：\(photo.credit)")
+                        if let date = photo.photographedOn { Text("撮影日：\(date)") }
+                        Text("掲載日：\(photo.publishedAt.formatted(date: .abbreviated, time: .omitted))")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(20)
+                    .textSelection(.enabled)
+                }
+                .navigationTitle("写真の情報").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) {
+                    Button { showsInformation = false } label: {
+                        Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("閉じる")
+                    .accessibilityIdentifier("official-photo-information-close")
+                } }
+            }
+        }
+    }
+
+    private var photoSummary: some View {
+        Button { showsInformation = true } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let caption = photo.caption {
+                        Text(verbatim: caption).font(.subheadline).lineLimit(2)
+                    }
+                    // Keep provenance, including AI disclosure, next to the
+                    // photo. Full caption and dates remain in its information.
+                    Text(verbatim: photo.credit).font(.caption).lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right").font(.caption2).accessibilityHidden(true)
+            }
+            .foregroundStyle(.secondary).multilineTextAlignment(.leading)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("ひとことの全文と写真の情報を開きます")
+        .accessibilityIdentifier("official-photo-summary")
     }
 }
 
@@ -723,6 +780,7 @@ private struct OfficialPhotoImage: View {
     var previewImageData: Data? = nil
     var allowsZoom = false
     var fillsFrame = false
+    var onRetry: (() -> Void)? = nil
     @State private var image: UIImage?
     @State private var loadedImageFilename: String?
     @State private var loadFailed = false
@@ -746,8 +804,15 @@ private struct OfficialPhotoImage: View {
             } else if isLoading {
                 ProgressView().padding().accessibilityLabel("写真を読み込んでいます")
             } else {
-                Label("写真を読み込めませんでした", systemImage: "photo")
-                    .font(.footnote).foregroundStyle(.secondary).padding()
+                VStack(spacing: 12) {
+                    Label("写真を読み込めませんでした", systemImage: "photo")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if let onRetry {
+                        Button("もう一度読み込む", action: onRetry)
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("official-photo-retry")
+                    }
+                }.padding()
             }
         }
         .accessibilityLabel("\(photo.catName)の写真")
@@ -887,7 +952,8 @@ final class OfficialWindowFixtureModel: ObservableObject {
             catID: "fixture-cat", catName: "確認用の猫", credit: isMixedShelf ? "ねこのまど（AI生成）" : "画面確認用の合成画像",
             caption: "窓辺でひと休み。", photographedOn: "2026-09-01",
             publishedAt: fixtureDate.addingTimeInterval(-86400 * Double(index)),
-            expiresAt: fixtureDate.addingTimeInterval(86400), imageFilename: hash + ".jpg", sha256: hash,
+            expiresAt: fixtureDate.addingTimeInterval(CommandLine.arguments.contains("--official-window-expiring-photo") ? 30 : 86400),
+            imageFilename: hash + ".jpg", sha256: hash,
             width: cgImage.width, height: cgImage.height
         )
         return (photo, data)

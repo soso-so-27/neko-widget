@@ -1290,9 +1290,6 @@ private struct WindowListView: View {
     @ViewBuilder
     private var windowAdditionControl: some View {
         if let pending = setupWindows.first {
-            Text("「\(pending.displayName)」の設定を続けられます。")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .accessibilityIdentifier("window-list-setup-limit")
             Button { open(pending) } label: {
                 Label("\(pending.displayName)の設定を開く", systemImage: "arrow.right.circle")
                     .frame(maxWidth: .infinity, minHeight: 44)

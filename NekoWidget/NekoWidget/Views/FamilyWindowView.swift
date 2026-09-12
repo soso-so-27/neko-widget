@@ -636,8 +636,7 @@ struct FamilyWindowView: View {
                         notificationAccessibilityFocus = nil
                     }
 
-                    if pendingNotificationRoute?.target == nil,
-                       model.errorMessage == nil {
+                    if pendingNotificationRoute?.target == nil {
                         sendPhotoAction
                     }
                 }
@@ -2539,7 +2538,7 @@ struct MomentPhotoDetailBody<Actions: View>: View {
     @State private var showsFullCaption = false
 
     var body: some View {
-        MomentPhotoDetailLayout {
+        PhotoDetailLayout {
             Group {
                 if isLoading {
                     ProgressView().tint(.white)
@@ -2618,7 +2617,7 @@ struct MomentPhotoDetailBody<Actions: View>: View {
 
 /// The footer gets only the height its content needs. A maximum is a safety
 /// ceiling for large text, not a permanently reserved band below every photo.
-private struct MomentPhotoDetailLayout: Layout {
+struct PhotoDetailLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         proposal.replacingUnspecifiedDimensions(by: CGSize(width: 320, height: 480))
     }
