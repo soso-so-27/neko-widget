@@ -438,7 +438,7 @@ struct PairingView: View {
                     NavigationLink {
                         LogView()
                     } label: {
-                        primaryActionLabel(presentation.buttonTitle, systemImage: "stethoscope")
+                        recoveryButtonTitle(presentation.buttonTitle)
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("pairing-recovery-diagnostics")
@@ -457,7 +457,7 @@ struct PairingView: View {
                             }
                             .frame(maxWidth: .infinity, minHeight: 44)
                         } else {
-                            primaryActionLabel(presentation.buttonTitle, systemImage: "arrow.clockwise")
+                            recoveryButtonTitle(presentation.buttonTitle)
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -468,6 +468,18 @@ struct PairingView: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.vertical, 8)
         }
+    }
+
+    private func recoveryButtonTitle(_ title: String) -> some View {
+        // A scaled Label reserves icon space and can truncate its title even
+        // though accessibility still reports the complete string. Give the
+        // recovery verb the full width and let its actual text wrap freely.
+        Text(title)
+            .font(.headline)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, minHeight: 44)
     }
 
     private func guidanceSection(_ state: PairingState) -> some View {
