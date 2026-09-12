@@ -2,6 +2,8 @@
 
 起点: 最新main `0baeae4`。worktree `C:/dev/neko-window-settings-20260912` / branch `codex/window-settings-clarity-20260912`。研究worktreeは対象外。
 
+**完了**: 製品SHA `f90bc7f6f2cb2556558d830caed861b49e1af745` をmainへ反映し、TestFlight **1.0 (156)** を既存内部グループ「自分用」へ配布。下記の実写真/初見の品質確認は引き続き未確認。
+
 ## 今回の範囲と完了条件
 
 - まど設定: 最大Dynamic Typeで装飾アイコンが本文の幅を奪わず、設定名・操作が読める。通常時の重複補足を減らし、通知の許可状態、共有終了、接続未確認の表示と既存操作は保つ。
@@ -29,3 +31,26 @@ Build155のnative最大文字画像で、40pt固定枠から拡大した装飾�
 - 接続済みの確認フレーズはDisclosureGroupで全文展開。承認待ち/承認必須/端末追加の処理は差分外。主担当がこの境界をレビュー。
 - 別担当がFamilyWindowView差分を独立レビューし、状態文言・VoiceOver名/ヒント・遷移/通知操作の具体的な回帰は認めず。最大文字の実画面と実際の読み上げ順は別途。
 - cheap checks: 共有/Widget境界61件（既存1件skip）、通知18件、pairing構成7件成功。既存2assertだけ新しい設定名へ追従。新規fixture/テストやCI変更は追加していない。
+
+## 配布待ち時間の課題
+
+現行CIはこの表示変更でも共有・写真・Widgetのruntime一式を選ぶ。前回成功run `34677534065` の同jobは06:22:33〜07:18:27 UTC（55分54秒）。今回もBuildとsmokeの成功後に同jobの完了を待った。途中で必須条件を緩めたり別の一式を重複実行したりせず、最初の候補が成功した。
+
+次の独立した開発効率改善候補: 表示だけの変更を安全に識別し、Releaseビルド/境界チェックと変更画面のnative確認へ絞れるCI経路。Widget・Shared・保存/通信/権限・workflowの変更や判別不能時は一式へ戻す。現時点では未設計・未実装で、今回のUI候補へ混ぜない。
+
+## 候補の確認結果
+
+候補SHA `f90bc7f6f2cb2556558d830caed861b49e1af745` / CI `34683264143` は全ジョブ成功。iOS26 UI30件成功、設定の通常/最大文字の操作は16.026秒で成功。既存のWidget各captureも成功。
+
+主担当がnative画像を確認。通常画面 `09F5AB2E-782B-4F84-938A-0F59F5738752.png`、最大文字の初期表示 `8BE00404-B5C0-493A-9D2A-75296B51F139.png`、管理/安全 `73937084-9E7E-4DAA-8A8F-527F5CFECEA2.png`。旧画像で縦長に折り返された管理行が「名前と接続」1行になり、装飾のはみ出しがなくなった。文字の縮小や省略を加えず、通知と安全メニューへ到達。
+
+画像は `output/window-settings/native/ios-26-2/composer-screenshots/`（未追跡）。artifact `10294923347`。確認は製品の設定描画を用いたfixtureであり、実送受信/PhotoKit/iCloud/VoiceOverの実聴の証拠ではない。PairingViewの接続済みフレーズはビルド・差分レビューで確認し、実機展開の確認は未実施。
+
+## main・内部TestFlight156
+
+- main CI `34685444320` 成功。ログのSelect checksで、同一SHAの候補 `34683264143` の成功を再利用したことを確認。
+- archive/署名/validate/upload run `34685477916` 成功。既存のtestflight環境承認を使用し、配布先や保護条件は変更していない。
+- 署名artifact `10295344440`。metadataのversion=`1.0`、buildNumber=`156`、sourceCommit=`f90bc7f6f2cb2556558d830caed861b49e1af745`、releaseMode=`media-staging` を照合。従来の公式まどpreview feedも維持。
+- App Store Connectで156のアップロード「終了」（Sep12 6:25PM）、既存「自分用」/内部1人、グループのビルド一覧で156「テスト中」/計119ビルドを確認。
+- 日本語変更説明の「保存済み」を確認。外部グループ・個人テスターの追加、App Store審査提出は行っていない。
+- Build URL: https://appstoreconnect.apple.com/teams/c0938ad3-2941-4079-8248-0769666c8fd8/apps/6801962436/testflight/ios/711e104e-f10f-4381-8ff4-7357c09f4324
