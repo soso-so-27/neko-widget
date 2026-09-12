@@ -251,6 +251,8 @@ final class OfficialWindowUITests: XCTestCase {
             XCTAssertTrue(title.waitForExistence(timeout: 10))
             XCTAssertEqual(app.staticTexts.matching(identifier: "pairing-failure-title").count, 1)
             XCTAssertEqual(app.textFields.count, 0, "A failed connection must not offer name sharing")
+            XCTAssertFalse(app.staticTexts["このBuildでは写真を保存・送信しません"].exists,
+                           "The isolated fixture must reproduce the user's photo-sharing presentation")
             XCTAssertFalse(app.staticTexts["画面の案内を確認してください"].exists)
             XCTAssertFalse(app.staticTexts["まどの設定を完了できませんでした"].exists)
             capture(largeText ? "pairing-failed-remote-largest-initial" : "pairing-failed-remote", app)
@@ -290,8 +292,6 @@ final class OfficialWindowUITests: XCTestCase {
         let app = launchFailedSetup("unavailable", largestText: false)
         let diagnostics = app.buttons["pairing-recovery-diagnostics"]
         XCTAssertTrue(diagnostics.waitForExistence(timeout: 10))
-        let expectedScope = app.staticTexts["このBuildでは写真を保存・送信しません"].exists
-            ? "共有鍵だけを設定し、写真は送りません" : "確認した1枚だけを届けます"
         XCTAssertTrue(diagnostics.isHittable)
         XCTAssertFalse(app.buttons["pairing-recovery-action"].exists)
         capture("pairing-failed-incomplete-information", app)
@@ -303,7 +303,7 @@ final class OfficialWindowUITests: XCTestCase {
         information.tap()
         XCTAssertTrue(app.navigationBars["共有について"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["共有されるもの"].exists)
-        XCTAssertTrue(app.staticTexts[expectedScope].exists)
+        XCTAssertTrue(app.staticTexts["確認した1枚だけを届けます"].exists)
         app.terminate()
     }
 

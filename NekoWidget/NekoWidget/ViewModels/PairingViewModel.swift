@@ -56,6 +56,7 @@ final class PairingViewModel: ObservableObject {
         }
         model.state = state
         model.windowDisplayName = "ねことも"
+        model.configurationMessage = nil
         model.didBootstrap = true
         model.usesIsolatedPresentationState = true
         return model
@@ -82,7 +83,15 @@ final class PairingViewModel: ObservableObject {
 #endif
         return api != nil
     }
-    var isMediaSyncEnabled: Bool { configuration.isMediaAvailable }
+    var isMediaSyncEnabled: Bool {
+#if DEBUG
+        // Isolated UI fixtures model the user's photo-sharing build, even
+        // when the host test bundle disables real sharing. No API, consent,
+        // or storage capability is enabled by this presentation-only flag.
+        if usesIsolatedPresentationState { return true }
+#endif
+        return configuration.isMediaAvailable
+    }
     var canEditWindowDisplayName: Bool {
         state?.role != .invitee && state?.localDeviceIsAdditional != true
     }
