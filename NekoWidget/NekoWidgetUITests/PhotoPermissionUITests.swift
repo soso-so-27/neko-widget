@@ -75,11 +75,11 @@ final class OfficialWindowUITests: XCTestCase {
         let photo = app.buttons["official-window-photo-fixture-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 5))
         photo.tap()
-        // SwiftUI exposes the zoomable UIView under the surrounding photo's
-        // identifier. Its metrics distinguish it from the overview thumbnail.
+        // The zoom surface keeps its own identity inside the photo's
+        // accessibility group. Its metrics exclude the overview thumbnail.
         let zoomSurface = app.images.matching(NSPredicate(
             format: "identifier == %@ AND value CONTAINS %@",
-            "official-window-image-loaded", "zoom="
+            "photo-detail-zoom-surface", "zoom="
         )).firstMatch
         XCTAssertTrue(zoomSurface.waitForExistence(timeout: 5))
         func metric(_ field: String) -> Double {

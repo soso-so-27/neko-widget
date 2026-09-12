@@ -93,3 +93,7 @@ Windows上の既存チェック: まど/Widget境界61件（1件skip）、公式
 - no-captionのWidget Galleryでsmall→mediumのdragが成立しなかった。小Widgetの写真・footer・ハートの描画は成功し、AXはpage 1 of 3のまま。独立担当が動画/画像で確認した。画面固定の開始点が小Widget右側余白にあり、プレビュー内の実frameから始める方法へ変更。page 2/3・3/3と写真pixelの成功条件、待機時間を維持する。Widget本体の変更や、失敗結果の合格扱いはしない。
 
 候補の公式UIはiOS 18.6と26.2、個別写真/送信/同日操作はiOS 26.2で実行。共有runtime本体はiOS 18.5/26.2であり、全アプリUIを両OSで操作したという意味ではない。修正後の一候補で必要なCIを再確認する。
+
+2回目 `002add4` / [CI 34667015046](https://github.com/soso-so-27/neko-widget/actions/runs/34667015046): 再読み込み（独立AX名・44pt・詳細の写真表示）と掲載期限は成功。大文字の公式写真テストには、以前の親画像から上書きされるIDを参照する箇所が残っていた。実AX `output/app-ux/smoke-second/mainline-screen-attachments/2B1A55E0-FDA1-4F75-B5B6-784D79737ED4.txt:66` は `photo-detail-zoom-surface`、`pixels=1200;zoom=1…` を示す。製品を戻さず、テストを独立した拡大面のIDへ更新する。残りの一般的な「画像がある/ない」は状態グループのIDで正しく、全参照を検索して使い分けを確認した。
+
+この更新漏れは主担当のもの。既知の失敗がある候補の完了を待ってから同じ確認を始め直す時間を避けるため、残りのrunは次のテスト修正候補で置換する。キャンセル・失敗部分を合格とは扱わず、最終候補で必要な全ジョブの成功を確認する。
