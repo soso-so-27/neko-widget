@@ -402,7 +402,10 @@ struct AppStoreScreenshotFixtureRootView: View {
             settings: SettingsPresentation(),
             detectionAccuracySample: DetectionAccuracySamplePresentation(),
             highResolutionRecoverySample: DetectionAccuracySamplePresentation(),
-            excludedCatPhotos: widgetRecoveryCase == "excluded" ? [photos[0]] : [],
+            excludedCatPhotos: widgetRecoveryCase == "excluded" ? [ExcludedCatPhotoPresentation(
+                localIdentifier: photos[0].localIdentifier,
+                creationDate: photos[0].creationDate, excludedAt: .distantPast
+            )] : [],
             photoSourceAlbums: [],
             photoSourceStatus: sourceStatus,
             catProfilesPresentation: catProfiles,
