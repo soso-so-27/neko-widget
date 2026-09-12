@@ -646,9 +646,11 @@ jobs:
           fi
           grep -Fq 'accessibilityIdentifier("family-window-saved-memory-state")' \
             NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq 'return canRetry ? "ハートを再送" : "ハートを送れません"' \
+          grep -Fq 'case .retry: "ハートを再送"' \
             NekoWidget/Views/FamilyWindowView.swift
-          grep -Fq 'heart?.phase == .sent' \
+          grep -Fq 'case .unavailable: "ハートを送れません"' \
+            NekoWidget/Views/FamilyWindowView.swift
+          grep -Fq '.disabled(isPerformingAction || heartState == .sent || heartState == .unavailable)' \
             NekoWidget/Views/FamilyWindowView.swift
           grep -Fq 'Image(systemName: isSelected ? "bookmark.fill" : "bookmark")' \
             NekoWidgetWidget/NekoWidgetView.swift
