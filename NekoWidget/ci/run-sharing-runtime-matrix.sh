@@ -10,6 +10,8 @@ ARTIFACT_DIRECTORY="${RUNNER_TEMP:?RUNNER_TEMP is required}/neko-sharing-runtime
 DERIVED_DATA_DIRECTORY="$RUNNER_TEMP/NekoWidgetSharingRuntimeDerivedData"
 DEVICE_INVENTORY="$RUNNER_TEMP/neko-sharing-runtime-devices.json"
 SELECTION_FILE="$RUNNER_TEMP/neko-sharing-runtime-selection.tsv"
+RUNTIME_SCOPE="${NEKO_IOS_RUNTIME_SCOPE:-full-v1}"
+UI_SELECTION_FILE="$RUNNER_TEMP/neko-sharing-runtime-ui-selection.txt"
 RUNTIME_LABELS=("ios-18-5" "ios-26-2")
 REQUESTED_RUNTIMES=(
     "com.apple.CoreSimulator.SimRuntime.iOS-18-5"
@@ -21,6 +23,22 @@ APP_BUNDLE_ID=""
 APP_GROUP_ID=""
 
 mkdir -p "$ARTIFACT_DIRECTORY"
+python3 "$PROJECT_DIRECTORY/ci/ios_ci_scope.py" \
+    --scope "$RUNTIME_SCOPE" \
+    --metadata "$ARTIFACT_DIRECTORY/runtime-scope.json" \
+    --tests "$UI_SELECTION_FILE"
+COMPOSER_TEST_ARGUMENTS=()
+while IFS= read -r test_argument; do
+    COMPOSER_TEST_ARGUMENTS+=("$test_argument")
+done < "$UI_SELECTION_FILE"
+if (( ${#COMPOSER_TEST_ARGUMENTS[@]} == 0 )); then
+    echo "The requested scope did not select any native UI tests." >&2
+    exit 1
+fi
+RUN_WIDGET_GALLERY=false
+if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then
+    RUN_WIDGET_GALLERY=true
+fi
 
 resolve_group_container() {
     local simulator_udid="$1"
@@ -364,6 +382,8 @@ for name, filename in [
     source = source.replace(marker, base64.b64encode(image).decode("ascii"))
 view.write_text(source, encoding="utf-8")
 PY
+        # Keep the same fixture preparation/build for full and mapped UI.
+        # Only test selection and the extra Gallery builds vary by scope.
         xcodebuild \
             -project NekoWidget.xcodeproj \
             -scheme NekoWidget \
@@ -372,11 +392,7 @@ PY
             -destination "platform=iOS Simulator,id=$simulator_udid" \
             -derivedDataPath "$DERIVED_DATA_DIRECTORY" \
             -resultBundlePath "$composer_result" \
-            -only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests \
-            -only-testing:NekoWidgetUITests/OfficialWindowUITests \
-            -only-testing:NekoWidgetUITests/CatProfilePhotoFlowUITests \
-            -only-testing:NekoWidgetUITests/SoloMemoriesUITests \
-            -only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/testCaptureSharedWidgetAllSupportedSizes \
+            "${COMPOSER_TEST_ARGUMENTS[@]}" \
             -parallel-testing-enabled NO \
             -testLanguage ja \
             -testRegion JP \
@@ -401,6 +417,9 @@ PY
         local widget_scenario_status=0
         local widget_scenario_test=""
         for widget_scenario in long-white-large no-caption; do
+            if [[ "$RUN_WIDGET_GALLERY" != true ]]; then
+                break
+            fi
             widget_scenario_test="testCaptureSharedWidgetAllSupportedSizes"
             case "$widget_scenario" in
                 long-white-large)

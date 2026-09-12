@@ -6257,6 +6257,13 @@ actor SharingRuntimeSelfTestRunner {
             validating: lifecycleToken
         ) == nil else { throw MomentSharingError.stateUnavailable }
         try SharingSecureFile.write(preview.jpeg, to: resolved)
+        // Rechecking the same current record may recover after the file is
+        // readable again; it must still resolve and validate the original JPEG.
+        guard let recovered = try MomentSharingStateStore.localDetailURL(
+            itemID: committed.id, expectedSpaceID: committed.context.spaceID,
+            validating: lifecycleToken
+        ), recovered == resolved, try Data(contentsOf: recovered) == preview.jpeg
+        else { throw MomentSharingError.stateUnavailable }
         let expiry = committed.createdAt.addingTimeInterval(30 * 24 * 60 * 60 + 1)
         // A late status update keeps the ledger, not the full-detail photo.
         _ = try MomentSharingStateStore.mutate(validating: lifecycleToken) { state in

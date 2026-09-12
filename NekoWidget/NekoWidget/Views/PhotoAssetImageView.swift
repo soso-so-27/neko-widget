@@ -123,7 +123,8 @@ struct PhotoAssetImageView: View {
             switch loader.state {
             case let .loaded(image):
                 if showsFullImage && allowsZoom {
-                    PhotoAssetZoomView(image: image, onZoomChange: onZoomChange)
+                    PhotoAssetZoomView(image: image, localIdentifier: localIdentifier,
+                                       onZoomChange: onZoomChange)
                 } else if showsFullImage {
                     Image(uiImage: image)
                         .resizable()
@@ -154,7 +155,7 @@ struct PhotoAssetImageView: View {
                         Button {
                             // Invalidate callbacks immediately, before SwiftUI
                             // schedules the task for this same photo again.
-                            loader.cancel()
+                            loader.cancel(preservingImage: true)
                             retryRevision &+= 1
                         } label: {
                             Label("再読み込み", systemImage: "arrow.clockwise")
@@ -178,6 +179,37 @@ struct PhotoAssetImageView: View {
             }
         }
         .clipped()
+        .overlay(alignment: .bottom) {
+            if showsFullImage, case .loaded = loader.state,
+               loader.fullImageLoadFailed {
+                Button {
+                    loader.cancel(preservingImage: true)
+                    retryRevision &+= 1
+                } label: {
+                    Label("再読み込み", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("写真をもう一度読み込む")
+                .accessibilityHint("読み込みを完了できませんでした。表示中の写真を保ったまま読み直します")
+                .accessibilityIdentifier("local-photo-retry")
+                .padding(12)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if showsFullImage, case .loaded = loader.state,
+               loader.isLoadingFullImage {
+                ProgressView()
+                    .padding(10)
+                    .background(.regularMaterial, in: Circle())
+                    .padding(12)
+                    .accessibilityLabel("写真を読み込み中")
+                    .allowsHitTesting(false)
+            }
+        }
         .task(id: PhotoAssetLoadRequest(key: LoadKey(
             localIdentifier: localIdentifier,
             boundingBox: catBoundingBox,
@@ -192,7 +224,8 @@ struct PhotoAssetImageView: View {
                 targetPixelSize: targetPixelSize,
                 targetAspectRatio: targetAspectRatio,
                 showsFullImage: showsFullImage,
-                networkAccessAllowed: networkAccessAllowed
+                networkAccessAllowed: networkAccessAllowed,
+                preservesDisplayedImage: retryRevision > 0
             )
         }
         .onDisappear {
@@ -215,6 +248,7 @@ struct PhotoAssetImageView: View {
 /// horizontal drags at fit size. A zoomed photo owns its own pan gesture.
 private struct PhotoAssetZoomView: UIViewRepresentable {
     let image: UIImage
+    let localIdentifier: String
     let onZoomChange: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -230,7 +264,9 @@ private struct PhotoAssetZoomView: UIViewRepresentable {
 
     func updateUIView(_ view: MomentZoomablePhoto.PhotoScrollView, context: Context) {
         context.coordinator.onZoomChange = onZoomChange
-        view.setImage(image)
+        let preservesViewport = context.coordinator.localIdentifier == localIdentifier
+        context.coordinator.localIdentifier = localIdentifier
+        view.setImage(image, preservingViewport: preservesViewport)
     }
 
     static func dismantleUIView(_ view: MomentZoomablePhoto.PhotoScrollView,
@@ -242,6 +278,7 @@ private struct PhotoAssetZoomView: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var onZoomChange: (Bool) -> Void
+        var localIdentifier: String?
         private var wasZoomed = false
 
         init(onZoomChange: @escaping (Bool) -> Void) {
@@ -326,6 +363,10 @@ private final class PhotoAssetDisplayCache: @unchecked Sendable {
     func storeAsset(_ asset: PHAsset) {
         assets.setObject(asset, forKey: asset.localIdentifier as NSString)
     }
+
+    func removeAsset(localIdentifier: String) {
+        assets.removeObject(forKey: localIdentifier as NSString)
+    }
 }
 
 private struct SendablePhotoAssetBatch: @unchecked Sendable {
@@ -341,8 +382,17 @@ private actor PhotoAssetResolver {
     private var waiters: [String: [CheckedContinuation<PHAsset?, Never>]] = [:]
     private var scheduledFlush: Task<Void, Never>?
 
-    func asset(localIdentifier: String) async -> PHAsset? {
-        if let cached = PhotoAssetDisplayCache.shared.cachedAsset(
+    func asset(localIdentifier: String, bypassingCache: Bool = false) async -> PHAsset? {
+        if bypassingCache {
+            // Explicit retry rechecks the user's current access instead of
+            // treating a cached PHAsset as proof it remains available.
+            let authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+            guard authorization == .authorized || authorization == .limited else {
+                PhotoAssetDisplayCache.shared.removeAsset(localIdentifier: localIdentifier)
+                return nil
+            }
+        }
+        if !bypassingCache, let cached = PhotoAssetDisplayCache.shared.cachedAsset(
             localIdentifier: localIdentifier
         ) {
             return cached
@@ -386,6 +436,7 @@ private actor PhotoAssetResolver {
         }
         for (identifier, continuations) in pendingWaiters {
             let asset = batch.values[identifier]
+            if asset == nil { PhotoAssetDisplayCache.shared.removeAsset(localIdentifier: identifier) }
             continuations.forEach { $0.resume(returning: asset) }
         }
     }
@@ -409,14 +460,18 @@ private final class PhotoAssetDisplayCacheKey: NSObject {
 @MainActor
 private final class PhotoAssetImageLoader: ObservableObject {
     @Published private(set) var state: PhotoAssetImageLoadState = .loading
+    @Published private(set) var isLoadingFullImage = false
+    @Published private(set) var fullImageLoadFailed = false
 
     private var requestID: PHImageRequestID?
     private var loadGeneration = 0
     private var finalImageGeneration: Int?
     private var displayedImageGeneration: Int?
+    private var lastLoadKey: LoadKey?
 #if DEBUG
     private let screenshotFixtureLoaderIdentifier = UUID()
     private var injectedFixtureFailure = false
+    private var injectedPreviewFailure = false
 #endif
 
     func load(
@@ -425,10 +480,9 @@ private final class PhotoAssetImageLoader: ObservableObject {
         targetPixelSize: CGSize,
         targetAspectRatio: CGFloat,
         showsFullImage: Bool,
-        networkAccessAllowed: Bool
+        networkAccessAllowed: Bool,
+        preservesDisplayedImage: Bool = false
     ) async {
-        cancel()
-        let generation = loadGeneration
         let loadKey = LoadKey(
             localIdentifier: localIdentifier,
             boundingBox: catBoundingBox,
@@ -437,7 +491,13 @@ private final class PhotoAssetImageLoader: ObservableObject {
             showsFullImage: showsFullImage,
             networkAccessAllowed: networkAccessAllowed
         )
-        state = .loading
+        // A retry may retain only this exact photo/rendition. A new asset or
+        // changed crop never inherits the previous image or its zoom state.
+        cancel(preservingImage: preservesDisplayedImage && lastLoadKey == loadKey)
+        let generation = loadGeneration
+        lastLoadKey = loadKey
+        if case .loaded = state { displayedImageGeneration = generation }
+        isLoadingFullImage = showsFullImage
 
 #if DEBUG
         // App Store screenshot capture uses deterministic illustrations that
@@ -449,10 +509,29 @@ private final class PhotoAssetImageLoader: ObservableObject {
                localIdentifier == "app-store-screenshot-fixture-1",
                !injectedFixtureFailure {
                 injectedFixtureFailure = true
+                isLoadingFullImage = false
                 state = .failed
                 return
             }
-            state = .loaded(fixture)
+            if showsFullImage,
+               ProcessInfo.processInfo.arguments.contains("--photo-load-preview-then-fail"),
+               localIdentifier == "app-store-screenshot-fixture-1",
+               !injectedPreviewFailure {
+                injectedPreviewFailure = true
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 1
+                let size = CGSize(width: 120, height: 120 * fixture.size.height / fixture.size.width)
+                let preview = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                    fixture.draw(in: CGRect(origin: .zero, size: size))
+                }
+                consumeResult(image: preview, cancelled: false, degraded: true,
+                              failed: false, generation: generation, loadKey: loadKey)
+                consumeResult(image: nil, cancelled: false, degraded: false,
+                              failed: true, generation: generation, loadKey: loadKey)
+            } else {
+                consumeResult(image: fixture, cancelled: false, degraded: false,
+                              failed: false, generation: generation, loadKey: loadKey)
+            }
             AppStoreScreenshotFixture.loadTracker.record(
                 localIdentifier: localIdentifier,
                 loaderIdentifier: screenshotFixtureLoaderIdentifier
@@ -468,9 +547,13 @@ private final class PhotoAssetImageLoader: ObservableObject {
         }
 
         guard let asset = await PhotoAssetResolver.shared.asset(
-            localIdentifier: localIdentifier
+            localIdentifier: localIdentifier,
+            bypassingCache: preservesDisplayedImage
         ) else {
             guard loadGeneration == generation, !Task.isCancelled else { return }
+            isLoadingFullImage = false
+            fullImageLoadFailed = true
+            displayedImageGeneration = nil
             state = .failed
             return
         }
@@ -511,34 +594,44 @@ private final class PhotoAssetImageLoader: ObservableObject {
             let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
             let error = info?[PHImageErrorKey] as? Error
             Task { @MainActor in
-                guard let self,
-                      self.loadGeneration == generation,
-                      !cancelled else { return }
-                if let image {
-                    if degraded, self.finalImageGeneration == generation {
-                        return
-                    }
-                    if !degraded {
-                        self.finalImageGeneration = generation
-                    }
-                    guard self.loadGeneration == generation else { return }
-                    self.displayedImageGeneration = generation
-                    if !showsFullImage, !degraded {
-                        PhotoAssetDisplayCache.shared.storeThumbnail(
-                            image,
-                            for: loadKey
-                        )
-                    }
-                    self.state = .loaded(image)
-                } else if (error != nil || !degraded),
-                          self.displayedImageGeneration != generation {
-                    self.state = .failed
-                }
+                self?.consumeResult(image: image, cancelled: cancelled, degraded: degraded,
+                                    failed: error != nil, generation: generation, loadKey: loadKey)
             }
         }
     }
 
-    func cancel() {
+    private func consumeResult(image: UIImage?, cancelled: Bool, degraded: Bool,
+                               failed: Bool, generation: Int, loadKey: LoadKey) {
+        guard loadGeneration == generation, !cancelled,
+              finalImageGeneration != generation else { return }
+        if let image {
+            // Keep a displayed preview during retry; a later degraded callback
+            // must not replace it with fewer pixels.
+            if case let .loaded(current) = state, degraded,
+               image.size.width * image.scale < current.size.width * current.scale {
+                // State below still records whether this request failed.
+            } else {
+                displayedImageGeneration = generation
+                state = .loaded(image)
+            }
+            if !degraded && !failed {
+                finalImageGeneration = generation
+                isLoadingFullImage = false
+                fullImageLoadFailed = false
+                if !loadKey.showsFullImage {
+                    PhotoAssetDisplayCache.shared.storeThumbnail(image, for: loadKey)
+                }
+                return
+            }
+        }
+        if failed || (image == nil && !degraded) {
+            isLoadingFullImage = false
+            fullImageLoadFailed = loadKey.showsFullImage
+            if displayedImageGeneration != generation { state = .failed }
+        }
+    }
+
+    func cancel(preservingImage: Bool = false) {
         loadGeneration &+= 1
         if let requestID {
             PhotoAssetImagePipeline.manager.cancelImageRequest(requestID)
@@ -546,7 +639,12 @@ private final class PhotoAssetImageLoader: ObservableObject {
         requestID = nil
         finalImageGeneration = nil
         displayedImageGeneration = nil
-        state = .loading
+        isLoadingFullImage = false
+        fullImageLoadFailed = false
+        if !preservingImage {
+            lastLoadKey = nil
+            state = .loading
+        }
     }
 
 }

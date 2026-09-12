@@ -2741,26 +2741,49 @@ struct PhotoDetailLayout: Layout {
 }
 
 private struct MomentSentPhotoDetail: View {
+    private struct LoadRequest: Equatable {
+        let recordID: String
+        let reference: MomentLocalDetailReference?
+        let retryRevision: Int
+    }
+
     @ObservedObject var model: MomentSharingViewModel
     let recordID: String
     let onClose: () -> Void
     @State private var detailURL: URL?
     @State private var isLoading = true
     @State private var showsInformation = false
+    @State private var retryRevision = 0
+    @State private var resolvedRequest: LoadRequest?
 
     private var record: MomentSentRecordPresentation? {
         guard !model.isShowingLastKnownState, !model.isReportOnly else { return nil }
         return model.outgoingPresentation.sentRecords.first { $0.id == recordID }
     }
 
+    private var loadRequest: LoadRequest {
+        LoadRequest(recordID: recordID,
+                    reference: record == nil ? nil : model.sentDetailReference(recordID: recordID),
+                    retryRevision: retryRevision)
+    }
+
+    private var hasResolvedCurrentPhoto: Bool {
+        resolvedRequest?.recordID == recordID && resolvedRequest?.reference == loadRequest.reference
+    }
+
+    private var displayedDetailURL: URL? {
+        guard loadRequest.reference != nil, resolvedRequest == loadRequest else { return nil }
+        return detailURL
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if let record {
-                    MomentPhotoDetailBody(imageURL: model.sentDetailReference(recordID: recordID) == nil ? nil : detailURL,
+                    MomentPhotoDetailBody(imageURL: displayedDetailURL,
                         legacyThumbnail: record.localThumbnailJPEG.flatMap { UIImage(data: $0) },
-                        isLoading: isLoading, caption: record.localCaption,
-                        captionIdentifier: "family-window-sent-caption") { EmptyView() }
+                        isLoading: isLoading && !hasResolvedCurrentPhoto, caption: record.localCaption,
+                        captionIdentifier: "family-window-sent-caption") { recoveryControls }
                 } else {
                     ContentUnavailableView("この写真は表示できません", systemImage: "photo")
                 }
@@ -2779,12 +2802,20 @@ private struct MomentSentPhotoDetail: View {
                         .accessibilityIdentifier("photo-detail-close")
                 }
             }
-            .task(id: model.sentDetailReference(recordID: recordID)) {
+            .task(id: loadRequest) {
+                let request = loadRequest
                 detailURL = nil
-                isLoading = true
-                let url = await model.sentDetailURL(recordID: recordID)
-                guard !Task.isCancelled else { return }
+                isLoading = request.reference != nil
+                guard request.reference != nil else {
+                    resolvedRequest = request
+                    return
+                }
+                // The resolver rechecks lifecycle, retention, file protection
+                // and hash. A retry never reads a retained path or fetches media.
+                let url = await model.sentDetailURL(recordID: request.recordID)
+                guard !Task.isCancelled, request == loadRequest else { return }
                 detailURL = url
+                resolvedRequest = request
                 isLoading = false
             }
             .sheet(isPresented: $showsInformation) {
@@ -2815,6 +2846,37 @@ private struct MomentSentPhotoDetail: View {
                 }
             }
         }.preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private var recoveryControls: some View {
+        if hasResolvedCurrentPhoto, loadRequest.reference != nil, displayedDetailURL == nil {
+            // A nil result can also be a safety rejection. Describe only a
+            // local recheck; the existing resolver remains the authority.
+            Button {
+                guard !isLoading, loadRequest.reference != nil else { return }
+                isLoading = true
+                retryRevision += 1
+            } label: {
+                HStack(spacing: 8) {
+                    if isLoading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise").accessibilityHidden(true)
+                    }
+                    Text(isLoading ? "このiPhoneの写真を確認中" : "このiPhoneの写真を再確認")
+                }
+                .font(.subheadline)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.bordered)
+            .disabled(isLoading)
+            .accessibilityHint("送信時にこのiPhoneへ保存した写真を確認します")
+            .accessibilityIdentifier("family-window-sent-detail-retry")
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
     }
 }
 
@@ -3014,8 +3076,20 @@ struct MomentZoomablePhoto: UIViewRepresentable {
             ]
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
-        func setImage(_ image: UIImage) {
+        func setImage(_ image: UIImage, preservingViewport: Bool = false) {
             guard photo.image !== image else { return }
+            // PhotoKit may replace a preview with the full display rendition
+            // while the user is inspecting it. Keep the fitted image bounds,
+            // zoom and pan when the owner confirms it is the same photo.
+            if preservingViewport, let previous = photo.image,
+               previous.size.height > 0, image.size.height > 0,
+               previous.size.width > 0, image.size.width > 0,
+               abs((previous.size.width / previous.size.height)
+                   / (image.size.width / image.size.height) - 1) < 0.01 {
+                photo.image = image
+                updateAccessibilityValue()
+                return
+            }
             photo.image = image
             needsPhotoLayout = true
             setNeedsLayout()

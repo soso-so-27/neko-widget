@@ -951,6 +951,48 @@ final class SoloMemoriesUITests: XCTestCase {
     }
 
     @MainActor
+    func testPartialPhotoRetryPreservesZoomAndVisibleRegion() {
+        let app = launch("rediscovery", arguments: ["--photo-load-preview-then-fail"])
+        let retry = app.buttons["local-photo-retry"]
+        let photo = app.images["photo-detail-zoom-surface"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 15))
+        XCTAssertTrue(photo.exists, "A failed final request keeps its usable preview")
+        func metric(_ name: String) -> Double {
+            let prefix = name + "="
+            return (photo.value as? String ?? "").split(separator: ";")
+                .first(where: { $0.hasPrefix(prefix) })
+                .flatMap { Double($0.dropFirst(prefix.count)) } ?? -1
+        }
+        XCTAssertEqual(metric("pixels"), 120)
+        XCTAssertGreaterThanOrEqual(retry.frame.height + 0.001, 44)
+        photo.doubleTap()
+        expectation(for: NSPredicate { _, _ in metric("zoom") > 1.1 }, evaluatedWith: photo)
+        waitForExpectations(timeout: 5)
+        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.4))
+            .press(forDuration: 0.1, thenDragTo:
+                photo.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)))
+        let previousZoom = metric("zoom")
+        let previousX = metric("offsetX")
+        let previousY = metric("offsetY")
+        capture("local-photo-preview-failed-zoomed")
+        retry.tap()
+        expectation(for: NSPredicate { _, _ in metric("pixels") >= 1_000 }, evaluatedWith: photo)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(retry.exists)
+        XCTAssertEqual(metric("zoom"), previousZoom, accuracy: 0.01)
+        XCTAssertEqual(metric("offsetX"), previousX, accuracy: 1)
+        XCTAssertEqual(metric("offsetY"), previousY, accuracy: 1)
+        XCTAssertTrue(app.buttons["思い出に残す"].isHittable)
+        capture("local-photo-quality-recovered-same-viewport")
+        app.buttons["思い出に残す"].tap()
+        let saved = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "app-store-screenshot-fixture-1|true"),
+            object: app.staticTexts["solo-rediscovery-memory-request"])
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
+        app.terminate()
+    }
+
+    @MainActor
     func testWidgetPhotoOutsideCurrentScopeOffersAPathBack() {
         for scenario in ["excluded", "scoped", "available"] {
             let app = XCUIApplication()

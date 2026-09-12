@@ -12,10 +12,12 @@ import subprocess
 import urllib.parse
 import urllib.request
 
+from ios_ci_scope import FULL_SCOPE, MAPPED_VIEWS, SCOPES, select_scope, sharing_job
+
 
 BUILD = "Build disabled app and extensions without signing"
 SMOKE = "Launch app and scan fixtures in Simulator"
-SHARING = "Sharing runtime self-test (iOS 18.5 / 26.2)"
+SHARING = sharing_job(FULL_SCOPE)
 FULL = (BUILD, SMOKE, SHARING)
 MOVIE_VIEW = "NekoWidget/NekoWidget/Views/SeasonalMovieView.swift"
 MOVIE_ADR = "NekoWidget/docs/ADR-023-季節の小さな映画.md"
@@ -26,19 +28,21 @@ SHA = re.compile(r"[0-9a-f]{40}")
 INDEPENDENT_RESEARCH = "experiments/PetIdentityProbe/"
 
 
-def required_jobs(paths: list[str] | None) -> tuple[str, ...]:
+def required_jobs(paths: list[str] | None, runtime_scope: str = FULL_SCOPE) -> tuple[str, ...]:
     # An explicit allowlist, not a broad Views/** exemption. All existing
     # boundary/selection tests still run in BUILD. Unknown changes run FULL.
     if paths and MOVIE_VIEW in paths and set(paths) <= {MOVIE_VIEW, MOVIE_ADR}:
         return (BUILD,)
-    return FULL
+    if not paths or not set(paths) <= MAPPED_VIEWS:
+        runtime_scope = FULL_SCOPE
+    return (BUILD, SMOKE, sharing_job(runtime_scope))
 
 
 def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], text=True, encoding="utf-8").rstrip("\n")
 
 
-def changed_paths(event: dict, env: dict) -> list[str] | None:
+def comparison_base(event: dict, env: dict) -> str | None:
     if env["GITHUB_EVENT_NAME"] == "workflow_dispatch":
         return None  # The manual workflow is the explicit full-check escape hatch.
     head = env["GITHUB_SHA"]
@@ -56,7 +60,45 @@ def changed_paths(event: dict, env: dict) -> list[str] | None:
         base = git("merge-base", "refs/remotes/origin/main", head)
     else:
         return None
-    return [p for p in git("diff", "--name-only", "--no-renames", "-z", base, head).split("\0") if p]
+    return base
+
+
+def changed_paths(event: dict, env: dict) -> list[str] | None:
+    base = comparison_base(event, env)
+    if base is None:
+        return None
+    return [p for p in git("diff", "--name-only", "--no-renames", "-z", base, env["GITHUB_SHA"]).split("\0") if p]
+
+
+def runtime_scope(paths: list[str] | None, event: dict, env: dict) -> str:
+    if not paths or not set(paths) <= MAPPED_VIEWS:
+        return FULL_SCOPE
+    try:
+        base = comparison_base(event, env)
+        if base is None:
+            return FULL_SCOPE
+        head = env["GITHUB_SHA"]
+        # --no-renames exposes moves as delete/add. Exact raw modes exclude
+        # symlinks, executable/type changes, new files and removals.
+        records = git("diff", "--raw", "--no-renames", "--no-abbrev", "-z", base, head).split("\0")
+        if records and records[-1] == "":
+            records.pop()
+        if len(records) != 2 * len(paths):
+            return FULL_SCOPE
+        seen = set()
+        for index in range(0, len(records), 2):
+            header, path = records[index:index + 2]
+            fields = header.split()
+            if len(fields) != 5 or fields[0:2] != [":100644", "100644"] or fields[4] != "M":
+                return FULL_SCOPE
+            if path not in paths or path in seen:
+                return FULL_SCOPE
+            seen.add(path)
+        if seen != set(paths):
+            return FULL_SCOPE
+        return select_scope({path: (git("show", f"{base}:{path}"), git("show", f"{head}:{path}")) for path in paths})
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+        return FULL_SCOPE
 
 
 def equivalent_inputs(candidate: str, head: str) -> bool:
@@ -101,7 +143,13 @@ def reusable_run(run: dict, current: dict, repository: str, now: dt.datetime) ->
 def covers_jobs(jobs: list[dict], required: tuple[str, ...], sha: str) -> bool:
     # Missing, skipped, failed or duplicate jobs are not evidence of execution.
     for name in required:
-        matching = [job for job in jobs if job.get("name") == name]
+        acceptable = {name}
+        if name in {sharing_job(scope) for scope in SCOPES}:
+            # Full native/Gallery execution covers a mapped subset. A subset
+            # never covers full or a different subset; legacy unscoped job
+            # names are not proof of which tests actually ran.
+            acceptable.add(SHARING)
+        matching = [job for job in jobs if job.get("name") in acceptable]
         if len(matching) != 1:
             return False
         job = matching[0]
@@ -142,9 +190,10 @@ def main() -> None:
     event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     try:
         paths = changed_paths(event, env)
-    except (subprocess.CalledProcessError, KeyError, ValueError):
+    except (OSError, subprocess.CalledProcessError, KeyError, TypeError, ValueError):
         paths = None
-    required = required_jobs(paths)
+    selected_scope = runtime_scope(paths, event, env)
+    required = required_jobs(paths, selected_scope)
 
     def api(path: str) -> dict:
         request = urllib.request.Request(
@@ -165,12 +214,13 @@ def main() -> None:
     values = {
         "build": str(evidence is None).lower(),
         "smoke": str(evidence is None and SMOKE in required).lower(),
-        "sharing": str(evidence is None and SHARING in required).lower(),
+        "sharing": str(evidence is None and len(required) == 3).lower(),
+        "runtime_scope": selected_scope,
     }
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in values.items():
             output.write(f"{key}={value}\n")
-    scope = "movie-screen-only" if required == (BUILD,) else "full"
+    scope = "movie-screen-only" if required == (BUILD,) else selected_scope
     summary = f"## iOS CI plan\n\nCommit: `{env['GITHUB_SHA']}`\n\nScope: `{scope}`.\n\n"
     if evidence is not None:
         run_id, tested_sha = evidence

@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import ios_ci_scope as scope
+
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parent
@@ -181,10 +183,12 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
         review = runtime.index('if (( validator_status == 0 )) && [[ "$label" == "ios-26-2" ]]')
         self.assertLess(runtime.index('python3 "$VALIDATOR"'), review)
         self.assertGreater(runtime.index(condition), review)
-        self.assertIn("-only-testing:NekoWidgetUITests/MomentDeliveryComposerUITests", runtime)
+        self.assertIn('"${COMPOSER_TEST_ARGUMENTS[@]}"', runtime)
+        self.assertIn('"NekoWidgetUITests/MomentDeliveryComposerUITests"',
+                      source("NekoWidget/ci/ios_ci_scope.py"))
         self.assertIn(
-            "-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
-            "testCaptureSharedWidgetAllSupportedSizes", runtime,
+            "NekoWidgetUITests/WidgetPlacementScreenshotUITests/"
+            "testCaptureSharedWidgetAllSupportedSizes", scope.native_tests(scope.FULL_SCOPE),
         )
         self.assertIn(
             "#if WIDGET_VISUAL_REVIEW_FIXTURE && (!DEBUG || !APP_STORE_SCREENSHOT_WIDGET_FIXTURE)",
@@ -204,11 +208,14 @@ class AppStoreScreenshotWorkflowTests(unittest.TestCase):
 
         # Extra comparisons remain independent of app UI failures, reuse only
         # the Gallery test, and cannot erase a preceding app UI failure.
+        self.assertIn('if [[ "$RUNTIME_SCOPE" == "full-v1" ]]; then\n    RUN_WIDGET_GALLERY=true', runtime)
         scenarios = runtime.index('for widget_scenario in long-white-large no-caption; do')
         normal_failure = runtime.index('if (( composer_status != 0 )); then')
         self.assertGreater(normal_failure, scenarios)
         self.assertIn('return "$composer_status"', runtime[normal_failure:])
         scenario_body = runtime[scenarios:runtime.index('\n        done', scenarios)]
+        self.assertIn('if [[ "$RUN_WIDGET_GALLERY" != true ]]; then\n                break', scenario_body)
+        self.assertLess(scenario_body.index('"$RUN_WIDGET_GALLERY"'), scenario_body.index('xcodebuild'))
         self.assertEqual(scenario_body.count('-only-testing:'), 1)
         self.assertIn(
             '-only-testing:NekoWidgetUITests/WidgetPlacementScreenshotUITests/'

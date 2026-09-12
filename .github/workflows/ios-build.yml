@@ -32,6 +32,7 @@ jobs:
       build: ${{ steps.scope.outputs.build }}
       smoke: ${{ steps.scope.outputs.smoke }}
       sharing: ${{ steps.scope.outputs.sharing }}
+      runtime_scope: ${{ steps.scope.outputs.runtime_scope }}
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -973,15 +974,13 @@ jobs:
           retention-days: 7
 
   sharing-runtime-matrix:
-    name: Sharing runtime self-test (iOS 18.5 / 26.2)
+    name: Sharing runtime self-test (iOS 18.5 / 26.2) [scope ${{ needs.plan.outputs.runtime_scope }}]
     needs: [plan, build-without-signing]
     if: needs.plan.outputs.sharing == 'true'
     runs-on: macos-15
-    # Includes offline sharing/profile/memories UI and three Widget Gallery scenarios.
-    # The merged profile suite took 42m42s; leave room for same-day photo navigation.
-    # The iOS 26 app UI suite and three existing Widget fixture builds can
-    # exceed 50 minutes on a shared runner. Keep the same checks and allow
-    # their final build and artifact export to finish.
+    # Both sharing runtimes always execute. A mapped app-view scope limits
+    # only native UI selection and Gallery captures; full still needs room
+    # for all app suites and three Widget fixture builds on a shared runner.
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -995,6 +994,8 @@ jobs:
       - name: Run sharing runtime matrix
         working-directory: NekoWidget
         shell: bash
+        env:
+          NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}
         run: bash ci/run-sharing-runtime-matrix.sh
 
       - name: Upload sharing runtime matrix artifacts

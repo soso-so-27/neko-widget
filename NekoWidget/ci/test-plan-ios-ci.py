@@ -7,10 +7,13 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import ios_ci_scope as scope
 
 
 spec = importlib.util.spec_from_file_location("planner", Path(__file__).with_name("plan-ios-ci.py"))
@@ -146,7 +149,195 @@ class PlanTests(unittest.TestCase):
                         patch.object(planner, "find_evidence", side_effect=error):
                     (root / "output").write_text("")
                     planner.main()
-                    self.assertEqual((root / "output").read_text(), "build=true\nsmoke=true\nsharing=true\n")
+                    self.assertEqual((root / "output").read_text(), "build=true\nsmoke=true\nsharing=true\nruntime_scope=full-v1\n")
+
+    def test_mapped_photo_and_official_ui_keep_build_smoke_and_core_runtime(self):
+        change = ('Text("before")\n', 'Text("after")\n')
+        for path in scope.PHOTO_VIEWS:
+            self.assertEqual(scope.select_scope({path: change}), scope.PHOTO_SCOPE)
+        self.assertEqual(scope.select_scope({scope.OFFICIAL_VIEW: change}), scope.OFFICIAL_SCOPE)
+        home = "NekoWidget/NekoWidget/Views/HomeView.swift"
+        selected = scope.select_scope({home: change, scope.OFFICIAL_VIEW: change})
+        self.assertEqual(selected, scope.COMBINED_SCOPE)
+        self.assertEqual(planner.required_jobs([home], scope.PHOTO_SCOPE),
+                         (planner.BUILD, planner.SMOKE, scope.sharing_job(scope.PHOTO_SCOPE)))
+        self.assertEqual(set(scope.native_tests(selected)), set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS))
+        self.assertEqual(set(scope.native_tests(scope.FULL_SCOPE)),
+                         set(scope.PHOTO_TESTS + scope.OFFICIAL_TESTS + (scope.GALLERY_TEST,)))
+        for selected in (scope.PHOTO_SCOPE, scope.OFFICIAL_SCOPE, scope.COMBINED_SCOPE):
+            self.assertNotIn(scope.GALLERY_TEST, scope.native_tests(selected))
+
+    def test_unknown_sensitive_and_inline_fixture_changes_force_full(self):
+        home = "NekoWidget/NekoWidget/Views/HomeView.swift"
+        change = ('Text("before")\n', 'Text("after")\n')
+        for extra in (
+            "NekoWidget/NekoWidget/Views/FamilyWindowView.swift",
+            "NekoWidget/NekoWidget/Views/PairingView.swift",
+            "NekoWidget/NekoWidget/Views/MainTabView.swift",
+            "NekoWidget/NekoWidget/Views/SettingsView.swift",
+            "NekoWidget/Shared/Models/WidgetManifest.swift",
+            "NekoWidget/NekoWidgetWidget/NekoWidgetView.swift",
+            "NekoWidget/NekoWidget/Info.plist", "NekoWidget/NekoWidget/NekoWidget.entitlements",
+            "NekoWidget/NekoWidget/App/AppStoreScreenshotFixture.swift",
+            "NekoWidget/NekoWidgetUITests/PhotoPermissionUITests.swift",
+            "NekoWidget/ci/ios_ci_scope.py", "NekoWidget/ci/run-sharing-runtime-matrix.sh",
+            ".github/workflows/ios-build.yml", "docs/scope.md", "unknown.swift",
+        ):
+            with self.subTest(extra=extra):
+                self.assertEqual(scope.select_scope({home: change, extra: change}), scope.FULL_SCOPE)
+                self.assertEqual(planner.required_jobs([home, extra], scope.PHOTO_SCOPE), planner.FULL)
+        protected = '#if DEBUG\n#if targetEnvironment(simulator)\nText("fixture")\n#endif\n#else\nText("shipping")\n#endif\n'
+        self.assertEqual(scope.select_scope({home: (protected + change[0], protected + change[1])}), scope.PHOTO_SCOPE)
+        for after in (protected.replace('"fixture"', '"changed"'),
+                      protected.replace('"shipping"', '"changed"'),
+                      protected.replace("#if DEBUG", "#if NEW"), protected + "#if DEBUG\n",
+                      protected + "#endif\n"):
+            self.assertEqual(scope.select_scope({home: (protected, after)}), scope.FULL_SCOPE)
+        for text in ('requestAuthorization()', 'hasPhotoPermission = true', 'consent = nil',
+                     'privacyURL = changed', 'fixtureTitle = "x"', '"--new-launch-switch"'):
+            self.assertEqual(scope.select_scope({home: (change[0], text)}), scope.FULL_SCOPE)
+
+    def test_only_literal_copy_and_known_literal_style_lines_can_use_ui_scope(self):
+        home = "NekoWidget/NekoWidget/Views/HomeView.swift"
+        for before, after in (
+            ('Text("Before")', 'Text("After")'),
+            ('.font(.title3.bold())', '.font(.headline)'),
+            ('.font(.system(size: 18, weight: .semibold))', '.font(.system(size: 17, weight: .regular))'),
+            ('.padding(.horizontal, 12)', '.padding(.horizontal, 16)'),
+            ('.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)',
+             '.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)'),
+            ('.foregroundStyle(.secondary)', '.foregroundStyle(Color.primary)'),
+            ('.multilineTextAlignment(.center)', '.multilineTextAlignment(.leading)'),
+            ('Text("Before").font(.body)', 'Text("After").font(.headline)'),
+        ):
+            with self.subTest(after=after):
+                self.assertEqual(scope.select_scope({home: (before, after)}), scope.PHOTO_SCOPE)
+        for before, after in (
+            ('save(photo)', 'remove(photo)'),
+            ('isSaved = true', 'isSaved = false'),
+            ('if mayDisplay {', 'if true {'),
+            ('HStack(spacing: 12) {', 'VStack(spacing: 12) {'),
+            ('.font(existingFont)', '.font(.body)'),
+            ('Text("Before")', 'Text("Value \\(helper())")'),
+            ('Text("Before")', 'Text(changedValue)'),
+            ('.padding(12)', '.padding(helper())'),
+            ('.frame(height: 44)', '.frame(height: model.value)'),
+            ('.foregroundStyle(.secondary)', '.foregroundStyle(computeColor())'),
+            ('.font(.body)', '.font(.body); save()'),
+            ('.disabled(true)', '.disabled(false)'),
+            ('@State var value = 1', '@State var value = 2'),
+            ('Text("Before")', '// Text("After")'),
+            ('"""\nText("Before")\n"""', '"""\nText("After")\n"""'),
+            ('Text(#"Before"#)', 'Text(#"After"#)'),
+        ):
+            with self.subTest(after=after):
+                self.assertEqual(scope.select_scope({home: (before, after)}), scope.FULL_SCOPE)
+
+    def test_reuse_requires_scope_version_and_exact_subset_or_full_execution(self):
+        required = (planner.BUILD, planner.SMOKE, scope.sharing_job(scope.PHOTO_SCOPE))
+        # Full executed coverage can serve a narrower main diff.
+        self.assertTrue(planner.covers_jobs(self.jobs, required, self.sha))
+        photo_jobs = copy.deepcopy(self.jobs)
+        photo_jobs[-1]["name"] = required[-1]
+        self.assertTrue(planner.covers_jobs(photo_jobs, required, self.sha))
+        self.assertFalse(planner.covers_jobs(photo_jobs, planner.FULL, self.sha))
+        for name in (scope.sharing_job(scope.OFFICIAL_SCOPE),
+                     scope.SHARING_JOB_PREFIX, required[-1].replace("v1", "v0")):
+            jobs = copy.deepcopy(photo_jobs)
+            jobs[-1]["name"] = name
+            self.assertFalse(planner.covers_jobs(jobs, required, self.sha))
+        for conclusion in ("skipped", "failure", "cancelled"):
+            jobs = copy.deepcopy(photo_jobs)
+            jobs[-1]["conclusion"] = conclusion
+            self.assertFalse(planner.covers_jobs(jobs, required, self.sha))
+        self.assertFalse(planner.covers_jobs(photo_jobs + [self.jobs[-1]], required, self.sha))
+        self.jobs = photo_jobs
+        self.assertEqual(planner.find_evidence(self.env, required, self.api, self.now), (10, self.sha))
+        self.assertIsNone(planner.find_evidence(self.env, planner.FULL, self.api, self.now))
+
+    def test_scope_metadata_and_arguments_are_generated_from_same_validated_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            metadata, tests = Path(directory) / "scope.json", Path(directory) / "tests.txt"
+            for selected in scope.SCOPES:
+                with patch("sys.argv", ["ios_ci_scope.py", "--scope", selected,
+                                        "--metadata", str(metadata), "--tests", str(tests)]):
+                    scope.main()
+                result = json.loads(metadata.read_text())
+                self.assertEqual(result["scope"], selected)
+                self.assertEqual(result["sharingRuntime"], ["ios-18-5", "ios-26-2"])
+                self.assertEqual(result["widgetGallery"], selected == scope.FULL_SCOPE)
+                self.assertEqual(tests.read_text().splitlines(),
+                                 ["-only-testing:" + name for name in result["nativeTests"]])
+        with self.assertRaises(ValueError):
+            scope.native_tests("unknown")
+
+    def test_selected_native_suites_still_exist_and_workflow_carries_scope_identity(self):
+        project = Path(__file__).resolve().parents[1]
+        sources = [path.read_text(encoding="utf-8") for path in (project / "NekoWidgetUITests").glob("*.swift")]
+        for identifier in scope.native_tests(scope.FULL_SCOPE):
+            parts = identifier.split("/")
+            self.assertEqual(parts[0], "NekoWidgetUITests")
+            found = [text for text in sources if re.search(r"class " + re.escape(parts[1]) + r"\s*:\s*XCTestCase", text)]
+            self.assertEqual(len(found), 1, identifier)
+            if len(parts) == 3:
+                self.assertIn("func " + parts[2] + "(", found[0])
+        workflow = (project.parent / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+        self.assertIn("name: " + scope.SHARING_JOB_PREFIX + " [scope ${{ needs.plan.outputs.runtime_scope }}]", workflow)
+        self.assertIn("runtime_scope: ${{ steps.scope.outputs.runtime_scope }}", workflow)
+        self.assertIn("NEKO_IOS_RUNTIME_SCOPE: ${{ needs.plan.outputs.runtime_scope }}", workflow)
+
+    def test_real_git_ui_selection_rejects_moves_additions_deletions_and_mode_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = "NekoWidget/NekoWidget/Views/HomeView.swift"
+            def git(*args):
+                return subprocess.check_output(["git", "-C", directory, *args], text=True,
+                                               encoding="utf-8", stderr=subprocess.PIPE).rstrip("\n")
+            def commit(stage=True):
+                if stage:
+                    git("add", ".")
+                git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
+                return git("rev-parse", "HEAD")
+            git("init", "-q")
+            git("config", "core.filemode", "false")
+            target = root / home
+            target.parent.mkdir(parents=True)
+            target.write_text('Text("before")\n')
+            base = commit()
+            git("update-ref", "refs/remotes/origin/main", base)
+            def selected():
+                env = dict(self.env, GITHUB_REF="refs/heads/codex/ui", GITHUB_SHA=git("rev-parse", "HEAD"))
+                paths = planner.changed_paths({}, env)
+                return planner.runtime_scope(paths, {}, env)
+            with patch.object(planner, "git", side_effect=git):
+                target.write_text('Text("after")\n')
+                commit()
+                self.assertEqual(selected(), scope.PHOTO_SCOPE)
+                env = dict(self.env, GITHUB_SHA=git("rev-parse", "HEAD"), GITHUB_EVENT_NAME="workflow_dispatch")
+                self.assertEqual(planner.runtime_scope([home], {}, env), scope.FULL_SCOPE)
+                git("checkout", "--detach", "-q", base)
+                git("mv", home, scope.OFFICIAL_VIEW)
+                commit()
+                self.assertEqual(selected(), scope.FULL_SCOPE)
+                git("checkout", "--detach", "-q", base)
+                (target.parent / "MonthlyWindowView.swift").write_text('Text("new")\n')
+                commit()
+                self.assertEqual(selected(), scope.FULL_SCOPE)
+                git("checkout", "--detach", "-q", base)
+                git("rm", "-q", home)
+                commit()
+                self.assertEqual(selected(), scope.FULL_SCOPE)
+                git("checkout", "--detach", "-q", base)
+                git("update-index", "--chmod=+x", home)
+                commit(stage=False)
+                self.assertEqual(selected(), scope.FULL_SCOPE)
+                git("checkout", "--detach", "-q", base)
+                blob = git("rev-parse", base + ":" + home)
+                git("update-index", "--cacheinfo", f"120000,{blob},{home}")
+                commit(stage=False)
+                self.assertEqual(selected(), scope.FULL_SCOPE)
+        with patch.object(planner, "git", side_effect=OSError):
+            self.assertEqual(planner.runtime_scope([home], {}, self.env), scope.FULL_SCOPE)
 
     def test_real_git_research_exception_is_narrow_and_ancestor_only(self):
         with tempfile.TemporaryDirectory() as directory:
