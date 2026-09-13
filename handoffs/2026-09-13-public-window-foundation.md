@@ -25,7 +25,9 @@ N07の第2段階。既存「どこかの猫」を維持し、追加の公開ま�
 - UI/Widgetの独立レビューで `contains` のSwift条件式の曖昧さを修正。IDの別まど・個人写真へのfallbackは見つからなかった。
 - Swiftの旧データ互換・複数まどの取得/停止/プレビュー、製品UIで二つ目を止めて旧公式の写真が残るケースを追加。WindowsではSwift/Xcodeを実行できないため、候補CIで確認する。
 
-CI結果と反映SHAは終了後に追記する。2まどの実端末運用や実Workers配信を完了済みとは扱わない。
+候補 `6d22fe7860f9f005adbf2ac2036a44b060c4639c` の[CI 34732148079](https://github.com/soso-so-27/neko-widget/actions/runs/34732148079)は全ジョブ成功。Swiftの境界123項目、iOS 18.6のUI13件（Official12件）、iOS 26.2のアプリUI34件とGallery3条件を含む。追加した2まどの操作は両OSで成功した。mainへ同じSHAを反映し、[main CI 34734412492](https://github.com/soso-so-27/neko-widget/actions/runs/34734412492)も成功。同じ候補の成功証拠を再利用し、再度一式を走らせていない。
+
+今回のCIは54分11秒。生ログは作業worktreeの `output/public-window-build.log`、`public-window-smoke.log`、`public-window-sharing.log` に保持し、約453MBの全artifactを手元へ再ダウンロードしていない。新規公開まどの実端末運用や実Workers配信を完了済みとは扱わない。現在のTestFlightは159で、この土台だけの新規配布はしていない。
 
 ## 配布確認の方針
 
