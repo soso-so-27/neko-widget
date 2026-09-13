@@ -85,6 +85,10 @@ private actor MomentProcessSynchronizationGate {
         next.resume()
     }
 
+    func hasPendingRequests() -> Bool {
+        !waiters.isEmpty
+    }
+
 #if DEBUG
     func runtimeWaitUntilPendingRequestCount(_ expectedCount: Int) async {
         guard waiters.count < expectedCount else { return }
@@ -121,16 +125,32 @@ private func runMomentProcessOperation<Value: Sendable>(
     request: MomentSynchronizationRequest,
     operation: @escaping @Sendable () async throws -> Value
 ) async throws -> Value {
-    await momentProcessSynchronizationGate.acquire()
-    do {
-        guard request.shouldBegin() else { throw CancellationError() }
-        let value = try await operation()
-        await momentProcessSynchronizationGate.release()
-        return value
-    } catch {
-        await momentProcessSynchronizationGate.release()
-        throw error
+    try await withTaskCancellationHandler {
+        await momentProcessSynchronizationGate.acquire()
+        do {
+            guard request.shouldBegin() else { throw CancellationError() }
+            let value = try await operation()
+            await momentProcessSynchronizationGate.release()
+            return value
+        } catch {
+            await momentProcessSynchronizationGate.release()
+            throw error
+        }
+    } onCancel: {
+        request.cancel()
     }
+}
+
+/// Called while holding the process permit, after mandatory photo/safety work.
+/// Let an already queued caller have its turn before starting optional metadata.
+/// Requests already in flight are never interrupted or reordered.
+private func runMomentBackgroundWindowNameSynchronization(
+    operation: @escaping @Sendable () async -> Bool
+) async -> Bool {
+    guard !(await momentProcessSynchronizationGate.hasPendingRequests()) else {
+        return false
+    }
+    return await operation()
 }
 
 actor MomentSharingCoordinator {
@@ -241,12 +261,8 @@ actor MomentSharingCoordinator {
     /// other device can receive the new label.
     func synchronizeWindowNameForUser(trigger: String) async throws {
         let request = MomentSynchronizationRequest()
-        try await withTaskCancellationHandler {
-            try await runMomentProcessOperation(request: request) { [self] in
-                try await performWindowNameSynchronizationForUser(trigger: trigger)
-            }
-        } onCancel: {
-            request.cancel()
+        try await runMomentProcessOperation(request: request) { [self] in
+            try await performWindowNameSynchronizationForUser(trigger: trigger)
         }
     }
 
@@ -1295,6 +1311,20 @@ actor MomentSharingCoordinator {
     /// unavailable, or not-yet-deployed name endpoint must never prevent photo
     /// upload, download, safety analysis, acknowledgement, or cursor progress.
     private func synchronizeWindowNameBestEffort(
+        api: any PrivateWindowNameAPIClientProtocol,
+        authorization: Authorization,
+        trigger: String
+    ) async -> Bool {
+        await runMomentBackgroundWindowNameSynchronization { [self] in
+            await performBackgroundWindowNameSynchronization(
+                api: api,
+                authorization: authorization,
+                trigger: trigger
+            )
+        }
+    }
+
+    private func performBackgroundWindowNameSynchronization(
         api: any PrivateWindowNameAPIClientProtocol,
         authorization: Authorization,
         trigger: String
@@ -2411,6 +2441,21 @@ actor MomentSharingCoordinator {
         count: Int = 1
     ) async {
         await momentProcessSynchronizationGate.runtimeWaitUntilPendingRequestCount(count)
+    }
+
+    func runtimeTestBackgroundWindowNameSynchronization(
+        operation: @escaping @Sendable () async -> Bool
+    ) async -> Bool {
+        await runMomentBackgroundWindowNameSynchronization(operation: operation)
+    }
+
+    func runtimeTestJoinProcessOperation(
+        operation: @escaping @Sendable () async throws -> Bool
+    ) async throws -> Bool {
+        try await runMomentProcessOperation(
+            request: MomentSynchronizationRequest(),
+            operation: operation
+        )
     }
 
     /// Generated-data simulator coverage for the download → moderation → ACK

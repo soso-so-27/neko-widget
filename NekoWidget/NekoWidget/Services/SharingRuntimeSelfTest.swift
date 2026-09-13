@@ -308,6 +308,16 @@ private actor RuntimeWindowNameAPI: PrivateWindowNameAPIClientProtocol {
 }
 
 private actor RuntimeMomentProcessQueueProbe {
+    enum Event: Equatable, Sendable {
+        case ownerPhotoCompleted
+        case ownerWindowName
+        case ownerWindowNameResult(Bool)
+        case trailingPhotoCompleted
+        case trailingWindowName
+        case trailingWindowNameResult(Bool)
+        case unqueuedWindowName
+    }
+
     private struct RunWaiter {
         let expectedCount: Int
         let continuation: CheckedContinuation<Void, Never>
@@ -320,6 +330,13 @@ private actor RuntimeMomentProcessQueueProbe {
         CheckedContinuation<MomentSynchronizationNotice?, Never>
     ] = []
     private var runWaiters: [RunWaiter] = []
+    private var recordedEvents: [Event] = []
+
+    func record(_ event: Event) {
+        recordedEvents.append(event)
+    }
+
+    func events() -> [Event] { recordedEvents }
 
     func run(
         firstNotice: MomentSynchronizationNotice?,
@@ -1751,22 +1768,41 @@ actor SharingRuntimeSelfTestRunner {
         let trailingNotice = MomentSynchronizationNotice.inboundModerationDisabled
         let first = Task {
             await firstCoordinator.runtimeTestJoinProcessSynchronization {
-                await probe.run(
+                let notice = await probe.run(
                     firstNotice: ownerNotice,
                     trailingNotice: trailingNotice
                 )
+                await probe.record(.ownerPhotoCompleted)
+                let nameChanged = await firstCoordinator
+                    .runtimeTestBackgroundWindowNameSynchronization {
+                        await probe.record(.ownerWindowName)
+                        return true
+                    }
+                await probe.record(.ownerWindowNameResult(nameChanged))
+                return notice
             }
         }
         await probe.waitUntilRunCount(1)
 
         let joined = Task {
             await joinedCoordinator.runtimeTestJoinProcessSynchronization {
-                await probe.run(
+                let notice = await probe.run(
                     firstNotice: ownerNotice,
                     trailingNotice: trailingNotice
                 )
+                await probe.record(.trailingPhotoCompleted)
+                let nameChanged = await joinedCoordinator
+                    .runtimeTestBackgroundWindowNameSynchronization {
+                        await probe.record(.trailingWindowName)
+                        return true
+                    }
+                await probe.record(.trailingWindowNameResult(nameChanged))
+                return notice
             }
         }
+        // Hold the owner's photo phase until the next photo pass has a real
+        // queue position. Its optional name request must then yield without
+        // starting, while the final queued pass still synchronizes names.
         await firstCoordinator.runtimeTestWaitUntilProcessSynchronizationIsPending()
         await probe.releaseFirst(with: ownerNotice)
         await probe.waitUntilRunCount(2)
@@ -1775,11 +1811,33 @@ actor SharingRuntimeSelfTestRunner {
         let actualRunCount = await probe.count()
         let firstRecordedNotice = await firstCoordinator.synchronizationNotice()
         let joinedRecordedNotice = await joinedCoordinator.synchronizationNotice()
+        let events = await probe.events()
         guard actualRunCount == 2,
               firstResult == ownerNotice,
               joinedResult == trailingNotice,
               firstRecordedNotice == ownerNotice,
-              joinedRecordedNotice == trailingNotice
+              joinedRecordedNotice == trailingNotice,
+              events == [
+                  .ownerPhotoCompleted,
+                  .ownerWindowNameResult(false),
+                  .trailingPhotoCompleted,
+                  .trailingWindowName,
+                  .trailingWindowNameResult(true)
+              ]
+        else { throw MomentSharingError.stateUnavailable }
+
+        // An ordinary pass with no queued caller must retain its name exchange.
+        let unqueuedResult = await firstCoordinator.runtimeTestJoinProcessSynchronization {
+            let nameChanged = await firstCoordinator
+                .runtimeTestBackgroundWindowNameSynchronization {
+                    await probe.record(.unqueuedWindowName)
+                    return true
+                }
+            return nameChanged ? ownerNotice : nil
+        }
+        let eventsAfterUnqueuedPass = await probe.events()
+        guard unqueuedResult == ownerNotice,
+              eventsAfterUnqueuedPass == events + [.unqueuedWindowName]
         else { throw MomentSharingError.stateUnavailable }
 
         // A cancelled queued caller must release its reserved turn without
@@ -1828,6 +1886,54 @@ actor SharingRuntimeSelfTestRunner {
               cancellationOwnerResult == ownerNotice,
               cancelledResult == nil,
               activeResult == trailingNotice
+        else { throw MomentSharingError.stateUnavailable }
+
+        // Name-only operations share the same admission guarantee: cancelling
+        // one while queued must skip its callback and release the next turn.
+        let operationOwner = MomentSharingCoordinator()
+        let cancelledOperationCoordinator = MomentSharingCoordinator()
+        let activeOperationCoordinator = MomentSharingCoordinator()
+        let operationProbe = RuntimeMomentProcessQueueProbe()
+        let operationOwnerTask = Task {
+            await operationOwner.runtimeTestJoinProcessSynchronization {
+                await operationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+            }
+        }
+        await operationProbe.waitUntilRunCount(1)
+        let cancelledOperationTask = Task {
+            try await cancelledOperationCoordinator.runtimeTestJoinProcessOperation {
+                _ = await operationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+                return true
+            }
+        }
+        await operationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending()
+        cancelledOperationTask.cancel()
+        let activeOperationTask = Task {
+            try await activeOperationCoordinator.runtimeTestJoinProcessOperation {
+                let notice = await operationProbe.run(
+                    firstNotice: ownerNotice,
+                    trailingNotice: trailingNotice
+                )
+                return notice == trailingNotice && !Task.isCancelled
+            }
+        }
+        await operationOwner.runtimeTestWaitUntilProcessSynchronizationIsPending(count: 2)
+        await operationProbe.releaseFirst(with: ownerNotice)
+        let operationOwnerResult = await operationOwnerTask.value
+        let cancelledOperationResult = await cancelledOperationTask.result
+        let activeOperationResult = try await activeOperationTask.value
+        let operationRunCount = await operationProbe.count()
+        guard operationOwnerResult == ownerNotice,
+              case let .failure(cancellationError) = cancelledOperationResult,
+              cancellationError is CancellationError,
+              activeOperationResult,
+              operationRunCount == 2
         else { throw MomentSharingError.stateUnavailable }
 
         // The next caller must not inherit cancellation from the Task that
