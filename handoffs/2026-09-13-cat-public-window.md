@@ -52,3 +52,7 @@ catalog期限は9月15日19:01 JST、次の期限保守判断は9月14日19:01 J
 TestFlight **1.0 (162)** は2026-09-13 20:22 JSTにAppleへのアップロード成功。[run34753891536](https://github.com/soso-so-27/neko-widget/actions/runs/34753891536) の実行ログで `UPLOAD SUCCEEDED with no errors` を確認した。製品SHAは上記c2c3118。固定release helperのdry-run後に同じ引数で1回dispatchし、既存testflight環境の承認を行った。
 
 Apple側の処理完了・内部グループ画面の再照合・利用者の実機は未確認。毎回のASC再ログインや画面確認は追加していない。外部テスター招待、App Store一般公開、課金、LP変更は行っていない。
+
+## 20:40追記：継続供給の初回補充
+
+[次の写真3枚を用意](2026-09-13-cat-window-supply.md)し、あくび1枚を配信、残り2枚を9/16・9/20に予定した。現在の猫別は2枚で、上の「追加在庫0枚」は初回実装時点の記録となる。アプリは162のまま。
