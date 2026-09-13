@@ -29,3 +29,11 @@
 ## 候補固定前
 
 実装と独立レビューを相互に分担。送信状態の通知はreceiveChanges正常復帰後、inbox/outbox/outgoingOutcomesの差分を確認し、MainActor内でもlifecycle tokenを再検証する。ハートの通知は別に維持。対象の既存境界3件成功、診断privacy13件中12成功・既存Swift実行1skip、開発flow事前確認成功（32.1秒）、diff確認成功。Swift coreには13種類の入力で分類、ユーザー文言、初回再試行間隔不変を追加。WindowsではSwiftは未実行。
+
+## 最終検証・配布
+
+製品候補 `6306aa9d339e0c7bd03def2866b85d04cb257204`。候補[CI34761273848](https://github.com/soso-so-27/neko-widget/actions/runs/34761273848)の8jobが一度で成功。Swift core／診断privacyをMac上でも実行済み、共有runtime・アプリUI・Widget3条件が成功。createdAt→最終job完了は37分52秒。mainへ同じSHAを反映し、[main CI34763149708](https://github.com/soso-so-27/neko-widget/actions/runs/34763149708)は成功証拠を再利用した。
+
+既存release helperのdry-run→同じ引数のdispatchで1.0 (164)を配布。共有・公式まどの配布構成は維持。[TestFlight34763229428](https://github.com/soso-so-27/neko-widget/actions/runs/34763229428)で2026-09-13 23:46:39 JSTに `UPLOAD SUCCEEDED with no errors` を確認。証拠はgit管理外の `output/testflight-164-upload-evidence.txt`、候補の全job結果は `output/candidate-ci-164.json`。App Store Connectの再ログイン／処理完了／内部グループ表示の再照合は行っていない。
+
+未確認：利用者の実機での164の送受信と表示、実際の通信時間の短縮。過去の接続失敗と76秒の内訳も未確定。今回の既存境界回帰は通知順・状態差分をソースで固定する確認であり、通信を遅延させた実サービス試験ではない。外部提出・招待・掲載・課金はしていない。

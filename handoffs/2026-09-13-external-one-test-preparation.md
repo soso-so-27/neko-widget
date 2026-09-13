@@ -1,4 +1,4 @@
-# 指定1名への外部TestFlight準備 — 1.0 (163)基準
+# 指定1名への外部TestFlight準備 — 1.0 (164)基準
 
 2026-09-13。準備資料であり、外部審査への提出、Apple承認、招待、相手端末での利用開始を示すものではない。指定1名への準備はN10の採用済み課題。一般募集・public link・2人目・課金・App Store一般公開は対象外。
 
@@ -6,13 +6,13 @@
 
 | 項目 | 現在の根拠／次に確定すること |
 |---|---|
-| 準備の基準 | 1.0 (163)、製品SHA `91a476c50dfd392cbb72fbe722921a2160fe0311`。9/13 22:16 JSTにAppleへのアップロード成功。163の実機確認、外部審査・配布は未確認 |
-| 最終対象 | 163は照合基準。次版候補が出たら対象build・source・ASC build IDと差分の案内を差し替える。旧buildの承認や検証で新binaryを証明しない |
+| 準備の基準 | 1.0 (164)、製品SHA `6306aa9d339e0c7bd03def2866b85d04cb257204`。9/13 23:46 JSTにAppleへのアップロード成功。164の実機確認、外部審査・配布は未確認 |
+| 最終対象 | 164は照合基準。次版候補が出たら対象build・source・ASC build IDと差分の案内を差し替える。旧buildの承認や検証で新binaryを証明しない |
 | 配布先 | 指定した既知の1名のみ。最終対象buildだけの専用external group、public link OFF。実連絡先・招待コード・確認フレーズはgit管理外に保持する |
 | 提出・招待 | 最終候補への所有者承認と当該buildの限定条件を確認してから別途行う。本資料作成や内部アップロードの承認を代用しない |
 | 担当と連絡 | 連絡先と安全対応担当は回答済み。安全上の連絡は48時間以内に初回確認し、必要時は停止を先行する。写真の更新頻度とは別の約束で、再質問しない |
 
-本資料の照合基点はmain `b7f1fac`。163の製品SHAから、この基点のapp／Shared／Widget／Configに差分がないことを読み取りで確認した。以下の掲載用本文に、この内部管理表や個別の連絡先を貼り付けない。
+紹介内容の初回照合基点はmain `b7f1fac`（163と同じ製品機能）。最終対象164では送信状態の通知順と通信診断を変更した。機能・操作・配布構成は維持し、[164の検証・アップロード](2026-09-13-delivery-state-and-transport.md)を記録した。以下の掲載用本文に、この内部管理表や個別の連絡先を貼り付けない。
 
 ## 共通紹介・日本語原稿
 
@@ -62,13 +62,13 @@ Community standards: https://soso-so-27.github.io/neko-widget/community/
 1. **最終対象だけの承認と配布条件**：build／source／ASC build ID／専用groupを結び、提出とApple承認後の指定1名への招待を確認する。既存release文書・workflowの外部例外はBuild71限定のままなので、選定したbuildだけの例外と証拠を整合させる。人数1・public link OFF・report OFF・署名／privacy／runtimeの実検査を維持し、ほかのbuildへ広げない。本資料はそのgateを変更しない。
 2. **一度の実機確認をまとめる**：テスト用まどで接続→同じ写真とひとことの実送受信→Widgetからその写真を開く→ハート到着／Photos保存を確認する。同じ写真で拡大画質も見る。その後ブロック→設定から解除→旧接続・削除した受信写真が戻らない→新招待と双方確認でのみ再開、までを1回記録する。取り込んだPhotosコピーが残ることは不具合扱いにしない。既存の同等実機証拠が得られた場合は再利用し、fixture合格を実サービスの到着証拠に置き換えない。
 3. **公開まどの体験と提供期間**：公開まどの任意受信、猫のまどへの入口、Widgetの表示元・対象写真・独立した受信停止を実機で確認する。現在の予定は9/27 09:00 JSTまで。提出／招待時に、試す期間を覆う承認済み予定があることを正本で確認する。HTTP成功をWidget反映済みと扱わず、定時到着や永久供給も約束しない。
-4. **案内と安全運用の照合**：旧「公開フィードなし」がPrivacy／Support／Community／ASC本文に残らないよう、現行原稿と実際の保存値を確認する。App Privacyは既存の公開済み状態を未実施へ戻さず、最終binaryとの必要差分を確認する。当該版のアップロード・処理状態と直近の共有監視／media・APNs ON／report OFFを結ぶ。連絡先と48時間担当は回答済みを使用する。旧71や146の結果を163の実績にしない。
+4. **案内と安全運用の照合**：旧「公開フィードなし」がPrivacy／Support／Community／ASC本文に残らないよう、現行原稿と実際の保存値を確認する。App Privacyは既存の公開済み状態を未実施へ戻さず、最終binaryとの必要差分を確認する。当該版のアップロード・処理状態と直近の共有監視／media・APNs ON／report OFFを結ぶ。連絡先と48時間担当は回答済みを使用する。旧71や146の結果を164の実績にしない。
 
 Apple審査・指定1名への招待・インストールは、この準備の後の別段階。配布や処理に問題がある場合、または実際に外部提出へ進む時に必要なApple側の状態を確認し、毎回の再ログインを通常開発の条件にしない。
 
 ## 根拠と確認範囲
 
-- [最新台帳のN08／N10](2026-09-13-current-task-board.md)、[163のアップロード記録](2026-09-13-widget-capture-spacing.md)、[運用窓口](2026-09-13-operating-desk.md)。連絡先・48時間担当は回答済み、163の実機と外部開始は未確認。
+- [最新台帳のN08／N10](2026-09-13-current-task-board.md)、[164のアップロード記録](2026-09-13-delivery-state-and-transport.md)、[運用窓口](2026-09-13-operating-desk.md)。連絡先・48時間担当は回答済み、164の実機と外部開始は未確認。
 - [3まどの定義](../NekoWidget/Shared/Storage/OfficialWindowStore.swift)の18–35行、[公開まど一覧](../NekoWidget/NekoWidget/Views/MainTabView.swift)の1105–1128行、[受信・停止・出自説明・猫のまど入口](../NekoWidget/NekoWidget/Views/OfficialWindowView.swift)の365–423／805–823行を限定読取。猫別追加の既存検証は[162の記録](2026-09-13-cat-public-window.md)。
 - [送信確認](../NekoWidget/NekoWidget/Views/MomentDeliveryComposer.swift)の64／123／147行、[12語照合](../NekoWidget/NekoWidget/Views/PairingView.swift)の879行、[受信保存・安全案内](../NekoWidget/NekoWidget/Views/FamilyWindowView.swift)の2233–2246行、[ブロック解除の制約](../NekoWidget/NekoWidget/Views/BlockedSharingView.swift)の62–63行。通報OFFは[SharingAPIConfiguration.swift](../NekoWidget/Shared/Sharing/SharingAPIConfiguration.swift)の129行、最低OS・購入OFFは[Config.xcconfig](../NekoWidget/Config.xcconfig)の11／26–29行。
 - [有限予定配信の記録](2026-09-13-continuous-operations.md)を参照。今回scheduleの再監査・再試験はしていない。新規原本、配備、外部連絡、審査提出、ASC／サイト保存は行っていない。
