@@ -28,6 +28,7 @@ CIの起動・修正・改善、候補のmain反映、TestFlight配布を扱う�
 
 - 軽微な修正ごとに配布せず、関連修正を一つのrelease candidateへまとめる。
 - 内部TestFlightは `NekoWidget/ci/release-testflight.py` のdry-runで対象SHA・成功CI・build番号・重複を確認してから同じ引数に `--dispatch` を付ける。毎回workflowのフラグを手入力しない。アプリを変更していない開発基盤だけの修正は、検証のために新しいTestFlightを作らない。
+- 配布runが `waiting` の場合は、そのrunの `pending_deployments` を確認する。既に承認された内部配布の対象SHA・buildに一致する場合に、そのrunの `testflight` 環境を承認する。環境の保護ルール自体は変更しない。対象や許可範囲が異なる操作へ流用しない。
 - Appleへのアップロード成功とエラーの有無を基本の完了証拠とし、毎回のApp Store Connect画面確認・再ログインを次の開発の前提にしない。配布が見えない、処理エラーなどの問題がある場合にだけ画面を確認する。アップロード成功と内部配布画面の確認済みは区別して記録する（2026-09-13ユーザー指定）。
 
 ## CIを改善するとき

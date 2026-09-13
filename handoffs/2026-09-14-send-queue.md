@@ -20,3 +20,15 @@ FIFO・写真の送信先・鍵・到着確認・共有解除・同じ送信要�
 独立担当がruntimeケースを実装し、主担当が確認。製品側は主担当が実装し、独立担当のレビューで修正必須の指摘なし。Windowsで既存の共有境界62件（既存skip1）・非アクティブ名7件、開発flow事前確認が成功。Swiftのビルド・実行結果は候補CIに残る。
 
 新しい164の実機診断はまだない。実回線の短縮効果と元の接続失敗は引き続き未確認。研究worktree、公開フィード、外部提出・招待、課金、CIの構成は変更しない。
+
+## 検証・配布の結果
+
+製品SHA `ec89b9393d29f8fe80310f5f5760cf65a983be31`。[候補CI34786441779](https://github.com/soso-so-27/neko-widget/actions/runs/34786441779)の8件が成功。Macで製品のビルド、拡張した同期runtime、アプリ起動・画面、Widget3条件を実行した。同じSHAをmainへ反映し、[main CI34788914100](https://github.com/soso-so-27/neko-widget/actions/runs/34788914100)で候補の成功証拠を再利用した。
+
+候補全体は49分53秒。164の37分52秒との差12分1秒のうち、画面確認ジョブの開始待ちは16秒→9分12秒（8分56秒増）、同ジョブの実行は37分36秒→40分41秒（3分5秒増）。開始待ちの増加が差の大半であり、再実行による増加ではない。実行部分の変動原因やアプリ通信時間の短縮を、この比較だけで断定しない。CI構成の新しい試作は行っていない。
+
+既存release helperのdry-runで164との番号重複がないことと同一SHAの成功証拠を確認し、同じ引数で1回dispatch。対象runの既存testflight環境ゲートを、承認済み内部配布の範囲で通した。保護設定・配信構成は変更していない。
+
+[TestFlight34789002299](https://github.com/soso-so-27/neko-widget/actions/runs/34789002299)で1.0 (165)を作成。2026-09-14 08:22:18 JSTに、実際のApple応答 `UPLOAD SUCCEEDED with no errors` を確認。候補・配布の結果と実ログの抜粋はgit管理外の `output/candidate-ci.json`、`output/testflight-165.json`、`output/testflight-165-upload-evidence.txt` に保存した。
+
+Appleの処理完了・内部グループ画面・利用者の実機は未確認。再ログインや再アップロードは求めない。原本・ひとこと・送信先・同じ要求での再試行を維持し、元の通信遅延と接続失敗はN02に残す。
