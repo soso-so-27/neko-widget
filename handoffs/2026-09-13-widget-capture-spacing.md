@@ -16,4 +16,13 @@
 
 `PhotoSelectors.swift` の `widgetDisplayOrder` を `WidgetCacheBuilder` の取得成功後にだけ適用。候補選定の前に並べ替えると、間に置いた画像の取得失敗で間隔が失われ、選ばれる写真自体も変わるため、この位置にした。
 
-既存 `verify-scan-recovery-policy.swift` に、循環境界・30分の内外・未表示優先・お気に入り保持・日時不明・0〜20枚・UTC/JST・キャッシュ対応を検証する決定的ケースを追加。rootが実装と呼出位置を独立レビューした。WindowsにはSwiftがないため、Swift実行は候補CIで行う。実機での写真選定の好み・継続価値は、CI成功と区別する。
+既存 `verify-scan-recovery-policy.swift` に、循環境界・30分の内外・未表示優先・お気に入り保持・日時不明・0〜20枚・UTC/JST・キャッシュ対応を検証する決定的ケースを追加。rootが実装と呼出位置を独立レビューした。WindowsにはSwiftがないため、候補CIでSwiftを実行し成功した。実機での写真選定の好み・継続価値は、CI成功と区別する。
+
+## 配布結果
+
+- 製品SHA：`91a476c50dfd392cbb72fbe722921a2160fe0311`。
+- [候補CI34756965850](https://github.com/soso-so-27/neko-widget/actions/runs/34756965850)：8件成功。所要40分48秒。追加Swift検証、App/Widgetビルド、Simulator、既存共有・Galleryを含む。
+- [main CI34758864182](https://github.com/soso-so-27/neko-widget/actions/runs/34758864182)：同じSHAの成功証拠を再利用。
+- [TestFlight34758945484](https://github.com/soso-so-27/neko-widget/actions/runs/34758945484)：1.0(163)、2026-09-13 22:16:10 JSTに `UPLOAD SUCCEEDED with no errors`。release helperのdry-runと同じ引数で1回dispatchした。
+
+Appleの処理完了画面・内部グループ表示・実機は別。アップロード成功を基本の完了証拠とし、毎回のASC画面確認は行っていない。後続の本線統合は運用コードとhandoffだけで、このアプリのコードを変更していない。
