@@ -20,6 +20,11 @@ private struct DiagnosticLogPrivacyVerifier {
         ]
         try expect(DiagnosticLogPrivacy.sanitizeMetadata(deliveryMetadata) == deliveryMetadata,
             "safe delivery diagnostics were discarded")
+        for reason in ["transport-timeout", "transport-offline", "transport-connection-lost",
+            "transport-connection-failed", "transport-secure-connection", "cancelled"] {
+            try expect(DiagnosticLogPrivacy.sanitizeMetadata(["deliveryReason": reason])
+                == ["deliveryReason": reason], "closed transport category was discarded")
+        }
         for key in deliveryMetadata.keys {
             for unsafe in ["private caption", "https://private.invalid/photo", "/private/photo.jpg",
                 "Bearer secret", "12345678-1234-4123-8123-123456789abc"] {

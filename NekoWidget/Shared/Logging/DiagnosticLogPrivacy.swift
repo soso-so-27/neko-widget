@@ -301,6 +301,8 @@ enum DiagnosticLogPrivacy {
         ],
         "deliveryReason": [
             "transport-unclassified", "authentication-rejected", "daily-quota",
+            "transport-timeout", "transport-offline", "transport-connection-lost",
+            "transport-connection-failed", "transport-secure-connection",
             "rate-limited", "server-error", "http-transient", "http-other",
             "reservation-expired", "local-state", "local-file-io", "cancelled",
             "invalid-payload", "unavailable", "unknown",

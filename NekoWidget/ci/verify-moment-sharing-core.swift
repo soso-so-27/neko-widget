@@ -596,6 +596,35 @@ require(
 
 // A failure's fixed diagnostic category must not depend on relay prose or
 // NSError userInfo. It does not replace or modify the actual retry policy.
+let transportCases: [(Error, MomentTransportFailure)] = [
+    (URLError(.timedOut), .timeout),
+    (URLError(.notConnectedToInternet), .offline),
+    (URLError(.networkConnectionLost), .connectionLost),
+    (URLError(.cannotFindHost), .connectionFailed),
+    (URLError(.cannotConnectToHost), .connectionFailed),
+    (URLError(.dnsLookupFailed), .connectionFailed),
+    (URLError(.secureConnectionFailed), .secureConnection),
+    (URLError(.serverCertificateUntrusted), .secureConnection),
+    (URLError(.cancelled), .cancelled),
+    (CancellationError(), .cancelled),
+    (URLError(.badURL), .unclassified),
+    (NSError(domain: "untrusted-domain", code: URLError.timedOut.rawValue), .unclassified),
+    (NSError(domain: NSURLErrorDomain, code: URLError.networkConnectionLost.rawValue,
+        userInfo: [NSLocalizedDescriptionKey: "private caption", NSURLErrorFailingURLErrorKey:
+            URL(string: "https://private.invalid/?token=secret")!]), .connectionLost)
+]
+for (error, expected) in transportCases {
+    let category = MomentTransportFailure.classify(error)
+    require(category == expected, "transport category lost the stable URL error code")
+    let classified = MomentSharingError.retryableServer(retryAfterSeconds: nil, transportFailure: category)
+    require(MomentDeliveryDiagnostic.reason(for: classified).rawValue == expected.rawValue,
+        "transport category disappeared before the delivery log")
+    require(classified.localizedDescription == MomentSharingError.retryableServer(retryAfterSeconds: nil).localizedDescription,
+        "private transport details changed user-facing copy")
+    require(MomentOutboxRetryPolicy.nextRetryAt(
+        for: classified, awaitingReservation: false, attemptCount: 1, now: afternoonUTC
+    ) == afternoonUTC.addingTimeInterval(30), "diagnostic classification changed retry timing")
+}
 let diagnosticCases: [(Error, MomentDeliveryDiagnostic.Reason)] = [
     (MomentSharingError.retryableServer(retryAfterSeconds: nil), .transport),
     (MomentSharingError.stateUnavailable, .state),

@@ -991,6 +991,15 @@ class DiagnosticLogPrivacyTests(unittest.TestCase):
         self.assertIn("let retryAt = recoveredItem.nextRetryAt", recovery)
         self.assertNotIn("addingTimeInterval", recovery)
         self.assertNotIn("candidate.attemptCount + 1", recovery)
+        client = source("NekoWidget/Services/MomentSharingAPIClient.swift")
+        transport = section(client, "    private func performRequest(", "    private func authenticate(")
+        self.assertIn("transportFailure: MomentTransportFailure.classify(error)", transport)
+        self.assertLess(transport.index("catch let error as MomentSharingError"),
+                        transport.index("MomentTransportFailure.classify(error)"))
+        classification = section(core, "enum MomentTransportFailure:", "enum MomentSharingError:")
+        self.assertIn("value.domain == NSURLErrorDomain", classification)
+        self.assertNotIn("userInfo", classification)
+        self.assertNotIn("localizedDescription", classification)
 
     def test_ios_build_runs_privacy_test_before_build(self) -> None:
         workflow = (REPOSITORY / ".github/workflows/ios-build.yml").read_text(

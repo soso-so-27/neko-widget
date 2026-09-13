@@ -2031,7 +2031,7 @@ try MomentSharingStateStore.verifyPrivateAlias()
             normal_sync.index("received = try await receiveChanges("),
             normal_sync.index("synchronizeWindowNameBestEffort("),
         )
-        self.assertIn("inboundState.inbox != localSharingState.inbox", normal_sync)
+        self.assertIn("photoState.inbox != localSharingState.inbox", normal_sync)
         self.assertIn(".momentSharingPresentationNeedsRefresh", normal_sync)
         self.assertIn(".momentSharingContentNeedsReload", normal_sync)
         self.assertLess(
@@ -2062,6 +2062,49 @@ try MomentSharingStateStore.verifyPrivateAlias()
         self.assertIn("PrivateWindowCatalogStore.widgetEntries()", configuration)
         self.assertIn("familyWindowIDPrefix + entry.localWindowID", configuration)
         self.assertNotIn("WidgetManifestReader", configuration)
+
+    def test_completed_photo_state_refresh_precedes_hearts_and_names(self) -> None:
+        coordinator = source("NekoWidget/Services/MomentSharingCoordinator.swift")
+        normal_sync = section(
+            coordinator,
+            "sent = try await sendOutbox(",
+            'SharedLog.app.info(\n                "moment-sharing"',
+        )
+        photo = section(normal_sync, "received = try await receiveChanges(", "                do {")
+        # A throwing receive must finish before reading or publishing any photo
+        # state; a partially processed change stream is not a committed refresh.
+        self.assertTrue(photo.startswith("received = try await receiveChanges("))
+        self.assertNotIn("catch", photo)
+        self.assertNotIn("try?", photo)
+        self.assertLess(photo.index("receiveChanges("), photo.index("let photoState"))
+        self.assertIn(
+            "let photoState = try MomentSharingStateStore.load(\n"
+            "                    validating: loadedAuthorization.lifecycleToken\n"
+            "                )",
+            photo,
+        )
+        # Outgoing-only commits/failures and inbound-only changes each trigger
+        # the same refresh, even when no heart or window-name request has ended.
+        self.assertIn(
+            "if photoState.inbox != localSharingState.inbox\n"
+            "                    || photoState.outbox != localSharingState.outbox\n"
+            "                    || photoState.outgoingOutcomes != localSharingState.outgoingOutcomes {",
+            photo,
+        )
+        for notice in (".momentSharingPresentationNeedsRefresh", ".momentSharingContentNeedsReload"):
+            self.assertEqual(photo.count(notice), 1)
+            self.assertLess(photo.index("let photoState"), photo.index(notice))
+            self.assertLess(photo.index("try await MainActor.run"), photo.index("try SharingLifecycleGate.validate("))
+            self.assertLess(photo.index("try SharingLifecycleGate.validate("), photo.index(notice))
+        self.assertNotIn(".momentSharingSynchronizationSucceeded", photo)
+        self.assertLess(normal_sync.index(".momentSharingContentNeedsReload"), normal_sync.index("sendPawOutbox("))
+        paw = section(normal_sync, "pawsReceived = try await receivePawChanges(", "let windowNameChanged")
+        self.assertIn("if inboundState.pawOutbox != localSharingState.pawOutbox", paw)
+        self.assertIn("|| inboundState.receivedPaws != localSharingState.receivedPaws", paw)
+        self.assertIn("try SharingLifecycleGate.validate(loadedAuthorization.lifecycleToken)", paw)
+        self.assertIn(".momentSharingContentNeedsReload", paw)
+        self.assertLess(coordinator.index("let windowNameChanged = await synchronizeWindowNameBestEffort("),
+                        coordinator.index("name: .momentSharingSynchronizationSucceeded"))
 
     def test_synchronized_window_name_verifies_stable_committed_fields(self) -> None:
         store = source("Shared/Sharing/PairingKeychainStore.swift")

@@ -344,6 +344,40 @@ enum MomentReportReason: String, Codable, CaseIterable, Sendable {
     case other
 }
 
+/// Keep only a closed transport category, never NSError userInfo (which may
+/// contain the signed URL, a file path or a server's description).
+enum MomentTransportFailure: String, CaseIterable, Sendable {
+    case unclassified = "transport-unclassified"
+    case timeout = "transport-timeout"
+    case offline = "transport-offline"
+    case connectionLost = "transport-connection-lost"
+    case connectionFailed = "transport-connection-failed"
+    case secureConnection = "transport-secure-connection"
+    case cancelled
+
+    static func classify(_ error: Error) -> Self {
+        if error is CancellationError { return .cancelled }
+        let value = error as NSError
+        guard value.domain == NSURLErrorDomain else { return .unclassified }
+        switch value.code {
+        case URLError.timedOut.rawValue: return .timeout
+        case URLError.notConnectedToInternet.rawValue: return .offline
+        case URLError.networkConnectionLost.rawValue: return .connectionLost
+        case URLError.cannotFindHost.rawValue, URLError.cannotConnectToHost.rawValue,
+             URLError.dnsLookupFailed.rawValue: return .connectionFailed
+        case URLError.secureConnectionFailed.rawValue,
+             URLError.serverCertificateHasBadDate.rawValue,
+             URLError.serverCertificateUntrusted.rawValue,
+             URLError.serverCertificateHasUnknownRoot.rawValue,
+             URLError.serverCertificateNotYetValid.rawValue,
+             URLError.clientCertificateRejected.rawValue,
+             URLError.clientCertificateRequired.rawValue: return .secureConnection
+        case URLError.cancelled.rawValue: return .cancelled
+        default: return .unclassified
+        }
+    }
+}
+
 enum MomentSharingError: LocalizedError, Equatable, Sendable {
     case featureDisabled
     case notPaired
@@ -356,7 +390,7 @@ enum MomentSharingError: LocalizedError, Equatable, Sendable {
     case outboxFull
     case stateUnavailable
     case reportOnly(until: Date)
-    case retryableServer(retryAfterSeconds: Int?)
+    case retryableServer(retryAfterSeconds: Int?, transportFailure: MomentTransportFailure = .unclassified)
     case requestRejected(status: Int, code: String?, message: String)
 
     var errorDescription: String? {
@@ -430,6 +464,11 @@ enum MomentDeliveryDiagnostic {
 
     enum Reason: String, CaseIterable, Sendable {
         case transport = "transport-unclassified"
+        case timeout = "transport-timeout"
+        case offline = "transport-offline"
+        case connectionLost = "transport-connection-lost"
+        case connectionFailed = "transport-connection-failed"
+        case secureConnection = "transport-secure-connection"
         case authentication = "authentication-rejected"
         case quota = "daily-quota"
         case rateLimited = "rate-limited"
@@ -454,7 +493,8 @@ enum MomentDeliveryDiagnostic {
         if error is CancellationError { return .cancelled }
         if let error = error as? MomentSharingError {
             switch error {
-            case .retryableServer: return .transport
+            case let .retryableServer(_, failure):
+                return Reason(rawValue: failure.rawValue) ?? .transport
             case .stateUnavailable: return .state
             case .invalidPayload, .payloadTooLarge: return .payload
             case let .requestRejected(status, code, _):

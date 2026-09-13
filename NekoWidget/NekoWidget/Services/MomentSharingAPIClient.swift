@@ -1141,7 +1141,10 @@ actor URLSessionMomentSharingAPIClient: MomentSharingAPIClientProtocol,
         } catch let error as MomentSharingError {
             throw error
         } catch {
-            throw MomentSharingError.retryableServer(retryAfterSeconds: nil)
+            throw MomentSharingError.retryableServer(
+                retryAfterSeconds: nil,
+                transportFailure: MomentTransportFailure.classify(error)
+            )
         }
     }
 

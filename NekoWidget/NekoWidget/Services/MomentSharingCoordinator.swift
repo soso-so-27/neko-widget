@@ -563,6 +563,29 @@ actor MomentSharingCoordinator {
                     credential: loadedAuthorization.credential,
                     lifecycleToken: loadedAuthorization.lifecycleToken
                 )
+                // Publish only after the complete bounded photo change stream,
+                // including ACKs and revocation tombstones, has succeeded.
+                // Sent-only progress must not wait for hearts or window names.
+                let photoState = try MomentSharingStateStore.load(
+                    validating: loadedAuthorization.lifecycleToken
+                )
+                if photoState.inbox != localSharingState.inbox
+                    || photoState.outbox != localSharingState.outbox
+                    || photoState.outgoingOutcomes != localSharingState.outgoingOutcomes {
+                    try await MainActor.run {
+                        // Window selection and cleanup invalidate this token.
+                        // Recheck after the actor hop before requesting a reload.
+                        try SharingLifecycleGate.validate(loadedAuthorization.lifecycleToken)
+                        NotificationCenter.default.post(
+                            name: .momentSharingPresentationNeedsRefresh,
+                            object: nil
+                        )
+                        NotificationCenter.default.post(
+                            name: .momentSharingContentNeedsReload,
+                            object: nil
+                        )
+                    }
+                }
                 do {
                     pawsSent = try await sendPawOutbox(
                         api: api,
@@ -585,18 +608,14 @@ actor MomentSharingCoordinator {
                     if Self.requiresLocalRevocationReset(error) { throw error }
                     Self.logNonterminalRequestRejection(error)
                 }
-                // Do not make a safely committed inbound photo (or a revoke)
-                // wait for the independent window-name request before Home and
-                // Widget publication. `receiveChanges` has already processed
-                // the complete bounded change stream, including ACKs and
-                // revocation tombstones, at this point.
+                // Hearts retain their own refresh before window-name requests.
                 let inboundState = try MomentSharingStateStore.load(
                     validating: loadedAuthorization.lifecycleToken
                 )
-                if inboundState.inbox != localSharingState.inbox
-                    || inboundState.pawOutbox != localSharingState.pawOutbox
+                if inboundState.pawOutbox != localSharingState.pawOutbox
                     || inboundState.receivedPaws != localSharingState.receivedPaws {
-                    await MainActor.run {
+                    try await MainActor.run {
+                        try SharingLifecycleGate.validate(loadedAuthorization.lifecycleToken)
                         NotificationCenter.default.post(
                             name: .momentSharingPresentationNeedsRefresh,
                             object: nil
@@ -1893,6 +1912,7 @@ actor MomentSharingCoordinator {
                 if item.phase == .prepared {
                     try SharingLifecycleGate.validate(lifecycleToken)
                     stage = .reserve
+                    Self.logDeliveryStage(trace: trace, stage: stage)
                     let reservation = try await api.reserve(
                         item: item,
                         pairingState: pairing,
@@ -1920,6 +1940,7 @@ actor MomentSharingCoordinator {
                     let ciphertext = try MomentSharingStateStore.readCiphertext(for: item)
                     try SharingLifecycleGate.validate(lifecycleToken)
                     stage = .upload
+                    Self.logDeliveryStage(trace: trace, stage: stage)
                     try await api.upload(
                         momentID: momentID,
                         ciphertext: ciphertext,
@@ -1956,6 +1977,7 @@ actor MomentSharingCoordinator {
                 }
                 if item.phase == .committing {
                     stage = .commit
+                    Self.logDeliveryStage(trace: trace, stage: stage)
                     guard let momentID = item.serverMomentID else {
                         throw MomentSharingError.stateUnavailable
                     }
@@ -2617,6 +2639,15 @@ actor MomentSharingCoordinator {
                     priorFailures: item.attemptCount, retryAt: retryAt)
             }
         }
+    }
+
+    private nonisolated static func logDeliveryStage(
+        trace: String, stage: MomentDeliveryDiagnostic.Stage
+    ) {
+        SharedLog.app.info("moment-delivery", "Photo delivery network stage started", metadata: [
+            "deliveryTrace": trace,
+            "deliveryStage": stage.rawValue
+        ])
     }
 
     private nonisolated static func logDeliveryWait(
